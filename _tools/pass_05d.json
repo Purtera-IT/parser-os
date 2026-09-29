@@ -1,0 +1,29 @@
+{
+ "document": "010237-hs-note-115206652190-Here you go.txt",
+ "purpose": "train",
+ "labels": [
+  {
+   "labelKey": "lbl_ee1b585f964fcaf1cefd",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "author=Trent Torrence"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "author_affiliation=internal"
+     }
+    ],
+    "entity_keys": [],
+    "note": "This is not a statement anybody made -- it is the parser own provenance banner (note_id, author, affiliation, timestamp) emitted as if it were content. The doctrine is explicit: nothing the parser writes is an atom, and if the parser has something to say it says it about a sentence someone said. The document is called Here you go.txt and the phrase Here you go appears nowhere in the atom, so the one thing a human actually typed has been replaced by metadata about it. Rejected as the type, but the real fix is upstream: these fields belong on the atom as attribution, not instead of it. This is the same class of defect as the eight message headers the gate dropped -- attribution and content have been swapped rather than joined."
+   }
+  }
+ ]
+}

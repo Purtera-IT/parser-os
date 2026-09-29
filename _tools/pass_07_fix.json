@@ -1,0 +1,41 @@
+{
+ "document": "numeric-key corrections",
+ "labels": [
+  {
+   "labelKey": "lbl_f69b46bfb946448e450a",
+   "fields": {
+    "entity_keys": [
+     "platform:workato",
+     "service:ams",
+     "quantity:6",
+     "term:6_months"
+    ],
+    "note": "The original ask, and the deal in one sentence: one resource, Workato middleware, AMS, six months. Every later document is an elaboration of it, and the six months here is the earliest statement of the number the Deal Kit multiplies by. It also says a RESOURCE -- singular, a person -- which is the staff-augmentation reading, not the managed-service reading, and the deal never resolves which of the two it is. Count key removed. The atom says a AMS resource -- singular by grammar, not a stated number -- so quantity:1 was me reading the article as a numeral. One resource is almost certainly right and it is still not what this sentence says, and a head trained on it learns to emit counts from indefinite articles. The singular reading survives where it belongs, in the note."
+   }
+  },
+  {
+   "labelKey": "lbl_f4b45cdf3301d6726435",
+   "fields": {
+    "entity_keys": [
+     "platform:workato",
+     "service:ams",
+     "quantity:6",
+     "term:6_months"
+    ],
+    "note": "The earliest statement of the deal, and word for word the same sentence that appears in the email thread -- the same ask travelling by two routes, which is why the fold between note and email matters on this deal. Kept as the note copy because the note is dated 19:25 and is the record HubSpot holds. One resource, six months, Workato AMS: the three facts the whole 121,518.99 rests on were fixed in this line before any document existed. Count key removed, same as on the email copy of this sentence: a AMS resource states no numeral, and inferring one from the article is exactly the fabrication the numeric invariant exists to catch."
+   }
+  },
+  {
+   "labelKey": "lbl_a301739e969392405764",
+   "fields": {
+    "entity_keys": [
+     "system:erp",
+     "system:procurement",
+     "platform:workato",
+     "environment:dev_test_prod"
+    ],
+    "note": "The only sizing statement in the engagement: two applications, three environments. It matches the customer RFI answers exactly -- 2 integrated applications, ERP and procuremnt, all 3 environments -- which makes it the one place the SLA demonstrably consumed the questionnaire rather than restating a template. Load-bearing because two applications is the closest thing this deal has to a quantity, and the 15 incidents a week the customer estimated has to be serviced across all three environments. Count key removed. The atom writes the count as the word two, not as a numeral, and the invariant compares digits -- but the rule underneath is the one that matters: the RFI atom answering how many applications are integrated states 2 properly and carries the key. This atom should reach that count through a link to that answer, not by restating it, which is the same correction the room keys on 010180 needed when they referred to a room rather than naming it."
+   }
+  }
+ ]
+}

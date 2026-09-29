@@ -1,0 +1,1146 @@
+{
+ "document": "PurteraIT-Abdul Rehman -Workato.pdf",
+ "purpose": "train",
+ "labels": [
+  {
+   "labelKey": "lbl_3b17934376c48dae7614",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "17+ years"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume. This row is the costliest of them: its left half carries 17+ years, the only seniority claim anywhere in the deal, and seniority is the one reading under which the Deal Kit PS-L3-ENG-LABOR-ONSITE rate code could be defended -- the service is L2 in four places, but the person proposed for it may well be an L3-grade engineer. So the fact that would settle the most valuable open question on this deal is sitting in an atom that cannot be labelled, and it is lost not because nobody read the CV but because of a column-order bug. Recorded here so the miss is visible rather than silent."
+   }
+  },
+  {
+   "labelKey": "lbl_eb743e5eb9df99fd80e1",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_f80875a9458932bb5325",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_e6f1a4264620a88be8e8",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_738a78e12f104bae9bb9",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_33fd15bf44d165ba09b0",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_aac920698839d878d021",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_866b6ab92a599ae118fc",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_ae4d3fa6b751cea2efc7",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_b1ac09cf17bfe8219bf0",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_74e30d9bff14ce669b62",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_9d5f46c088aecea7229e",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_765c7568ed1066220ed7",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_e0df81cd2381654b237c",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_260588928611cd0a730c",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_7c53e4954cc1c64e9ef4",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Lahore, Pakistan"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "entity_keys": [],
+    "note": "Glued like its neighbours, but its right half carries the one fact on this document with a commercial consequence: an employer in Lahore, Pakistan, from 2018 to 2021. The deal sells 8:00 AM to 5:00 PM EST coverage, which is a night shift from Pakistan, and the sibling opportunity in the same account is titled Off Shore Remote India -- so offshore delivery is the house pattern, not a leap. It must stay unresolved, though: the engineer current employer is listed as Multiple Locations and no atom states where he is now. By the doctrine that is the labelling rather than a gap in it -- two past Lahore employers cannot establish present residence, and the honest output is a question for NMC about which timezone the resource actually sits in, not a conclusion."
+   }
+  },
+  {
+   "labelKey": "lbl_1f56b5a8da5e5d251d70",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_92ba2f8334c710a82902",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_d6539032a7382b3e70c7",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_56bce4731fe3b438c05b",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_006e4f5e354ef51a7496",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_0694607eb127a9538492",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_6fbca48d69cdd97035d2",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_c51a1df29e93fc638103",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_dce360c336c69d0a20d3",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_f7f469af56a628013527",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_b5f6944ec6bbbce03309",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_c1a94f41a23b4eb19fba",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_57283faa1fddf470c685",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_0b4a128e3bb01585974d",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_6548f0cf41ef2476bbb8",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "entity_keys": [],
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "PROFESSIONAL SUMMARY:"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "note": "Two columns of a CV glued into one atom. This PDF sets PROFESSIONAL SUMMARY beside PROFESSIONAL EXPERIENCE and the text layer was read straight across the gutter, so every one of these rows is the tail of a sentence from the left column joined to an unrelated sentence from the right. Neither half is a statement anybody made, and the pair is not a statement either -- there is nothing here a type could be true of. Rejected as wreckage rather than typed, because the parser gave 33 of this document 51 atoms the type scope_item, and a scope head trained on a CV fragment learns that a candidate career history is deal scope. The defect is a reading-order problem, not a content problem: the same PDF read column by column would yield a clean resume."
+   }
+  },
+  {
+   "labelKey": "lbl_fdf2c65d1ce7da4890ee",
+   "fields": {
+    "label_type": "stakeholder",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Integration Expert"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Enterprise Integration Architecture"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "role:integration_expert",
+     "party:nmc",
+     "scope:integration_architecture"
+    ],
+    "note": "The resource headline: the title and specialisms NMC is putting forward for the 16,000 a month. Load-bearing because this document is the entire justification that the supplier can staff the engagement, and it is the only atom on it that states what the person is. The individual name appears only in the filename, never in any atom -- so the deal can say what was proposed and cannot say who, which is a gap worth having on the record for a staff-augmentation engagement."
+   }
+  },
+  {
+   "labelKey": "lbl_b103475f86a2bc923a65",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Increased project execution efficiency by 25%"
+     }
+    ],
+    "entity_keys": [],
+    "note": "A CV achievement claim about unrelated past work. It is readable, unlike most of this document, and it still decides nothing here: a 25% efficiency figure from a previous employer is not a fact about supporting Workato recipes for six months. Rejected on relevance rather than on wreckage, which is a distinction worth having in the training set for a document where both kinds sit side by side."
+   }
+  },
+  {
+   "labelKey": "lbl_26f8baa1def681afe970",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Multiple Companies"
+     }
+    ],
+    "entity_keys": [],
+    "note": "Column bleed of the simpler kind: an employment header with the tail of the previous bullet welded onto it, so the row ends mid-thought with methodology integration. Same reading-order defect as the PROFESSIONAL SUMMARY rows, without the two labels that make those ones obvious."
+   }
+  },
+  {
+   "labelKey": "lbl_9ccefd29c2627f2d0f5b",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Led enterprise programs for Mitel Communications"
+     }
+    ],
+    "entity_keys": [],
+    "note": "Past-client namedropping, and truncated: the sentence continues into the next atom with the country list. Past employers of a subcontractor engineer are not facts about this deal and must not reach the SOW."
+   }
+  },
+  {
+   "labelKey": "lbl_a5634fa589bc9f2995e4",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Dealer Track (USA)"
+     }
+    ],
+    "entity_keys": [],
+    "note": "The continuation of the previous line, orphaned. Read alone it is a list of three companies with no verb -- the clearest small example on this document of why a line torn off its sentence cannot be labelled."
+   }
+  },
+  {
+   "labelKey": "lbl_5ae67c0a27b3adaed203",
+   "fields": {
+    "label_type": "deal_metadata",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "using Workato and Pentaho"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "platform:workato",
+     "role:integration_expert",
+     "party:nmc"
+    ],
+    "note": "Names Workato in the engineer own history, which is the single thing this CV exists to prove and one of only two atoms on the document that actually proves it. It is load-bearing on a deal where the supplier was explicitly asked not to go searching for a resource -- the ask was for somebody already available, and this is the evidence that the person offered has the platform. about:deal rather than internal because it bears on whether this engagement can be delivered, not on how we work."
+   }
+  },
+  {
+   "labelKey": "lbl_fc5f0d8d3fdc90161cb4",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Led integration/migration of data based on API"
+     }
+    ],
+    "entity_keys": [],
+    "note": "Half a bullet, ending on a comma. Its other half is the next atom."
+   }
+  },
+  {
+   "labelKey": "lbl_fa7e884f0bfef47bab99",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Webhooks and scripting"
+     }
+    ],
+    "entity_keys": [],
+    "note": "The second half of the previous bullet, beginning mid-clause. The pair would be one readable sentence; split, neither is."
+   }
+  },
+  {
+   "labelKey": "lbl_472a544169ddb15b870e",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Workato monitoring, troubleshooting and optimizing integration flows"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "platform:workato",
+     "service:monitoring",
+     "service:triage",
+     "role:integration_expert",
+     "party:nmc"
+    ],
+    "note": "The closest match in the whole document to the work actually sold: Workato monitoring and troubleshooting of integration flows is almost word for word the SLA scope line covering monitoring and triage of recipe failures. This is the atom that makes the CV relevant rather than decorative, and it is one of only two clean Workato statements on a 51-atom document -- the rest of the evidence for this engineer suitability was destroyed by the column bleed."
+   }
+  },
+  {
+   "labelKey": "lbl_a8c78d4add945321c381",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "stability."
+     }
+    ],
+    "entity_keys": [],
+    "note": "A single orphaned word with a full stop: the tail of a right-column sentence whose body is in another atom. Wreckage."
+   }
+  },
+  {
+   "labelKey": "lbl_c2b78fc76e419f6618b6",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "system monitoring."
+     }
+    ],
+    "entity_keys": [],
+    "note": "Two words orphaned from the right column, and a duplicate of the same fragment lower in the document. The CV was read across the gutter twice over."
+   }
+  },
+  {
+   "labelKey": "lbl_cbbb23a0bea4c783a5ae",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "project lifecycles using Agile"
+     }
+    ],
+    "entity_keys": [],
+    "note": "The same column bleed a second time, now without the PROFESSIONAL SUMMARY labels to mark the seam -- this row and the five after it repeat text already glued higher up. A second lossy pass over the same region, which is worse than the first because nothing signals that it is a repeat."
+   }
+  },
+  {
+   "labelKey": "lbl_df8d5f85ce18f24b7a4b",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Evaluated and implemented API-led integration"
+     }
+    ],
+    "entity_keys": [],
+    "note": "Column bleed, second pass. Duplicate of content already captured and already broken."
+   }
+  },
+  {
+   "labelKey": "lbl_27321a86d2afa1be336a",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "reducing technical debt"
+     }
+    ],
+    "entity_keys": [],
+    "note": "Column bleed, second pass. Two half-sentences from opposite columns."
+   }
+  },
+  {
+   "labelKey": "lbl_4d0b9b689e643eb29f0c",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "system monitoring."
+     }
+    ],
+    "entity_keys": [],
+    "note": "The orphaned fragment from atom 22, emitted a second time. A duplicate of wreckage."
+   }
+  },
+  {
+   "labelKey": "lbl_057b54201acf413e81d3",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "CORE EXPERTISE"
+     }
+    ],
+    "entity_keys": [],
+    "note": "A section heading welded to a right-column bullet. The heading alone would be scaffolding; joined to unrelated prose it is scaffolding and wreckage at once."
+   }
+  },
+  {
+   "labelKey": "lbl_6086fc8fe6f4fded8911",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Integration architecture and design"
+     }
+    ],
+    "entity_keys": [],
+    "note": "A skills bullet glued to an achievement bullet from the other column. The left half duplicates the specialisms already carried cleanly by the document first atom."
+   }
+  },
+  {
+   "labelKey": "lbl_0f6089fa4a0521397252",
+   "fields": {
+    "label_type": "certification",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "M.Sc. Project Management"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Manchester"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "role:integration_expert",
+     "party:nmc",
+     "credential:msc_project_management"
+    ],
+    "note": "A clean atom on a broken document -- the education block escaped the column bleed because it is single-column. Kept as a real credential of the proposed resource. It is ordinary rather than load-bearing: a project management masters is not what this engagement buys, and the SLA explicitly puts project management out of scope."
+   }
+  },
+  {
+   "labelKey": "lbl_3e3c19501a90d3411f41",
+   "fields": {
+    "label_type": "certification",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "partner",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "BS Hons. Information Technology"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "Two-column CV PDF for the engineer NMC proposed, attached to the quote"
+     }
+    ],
+    "entity_keys": [
+     "role:integration_expert",
+     "party:nmc",
+     "credential:bs_information_technology"
+    ],
+    "note": "The second clean credential, from University of the Punjab. Worth keeping beside the Manchester masters because together they are the only verifiable statements about the engineer that survived the parse intact, and the Punjab degree is a second, independent pointer at a Pakistan-based career that the coverage question turns on."
+   }
+  },
+  {
+   "labelKey": "lbl_7b2f2c3d37f4e8ad039a",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "internal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Rolustech"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Lahore, Pakistan"
+     }
+    ],
+    "entity_keys": [],
+    "note": "An employment header carrying the label of the column it came from. It repeats the Lahore signal already noted, and like every other row on this document it arrives welded to its own section heading rather than standing as a statement."
+   }
+  }
+ ]
+}

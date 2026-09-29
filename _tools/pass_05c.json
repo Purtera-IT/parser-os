@@ -1,0 +1,24 @@
+{
+ "document": "010237-hs-note-115206706200-Note.txt",
+ "purpose": "train",
+ "labels": [
+  {
+   "labelKey": "lbl_4f5a4be4f74d13e9454a",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Note"
+     }
+    ],
+    "entity_keys": [],
+    "note": "The entire content of this document is the word Note. A 139-byte HubSpot note whose body is its own type name says nothing about anything. Rejected, and worth keeping visible in red rather than dropped so the record shows the deal holds a document with no content -- which is a different thing from a document the parser failed on."
+   }
+  }
+ ]
+}

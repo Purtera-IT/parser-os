@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from email import policy
 from email.parser import BytesParser
@@ -442,10 +443,29 @@ def _pick_best_cid_ocr(ocr_by_cid: dict[str, str]) -> tuple[str, str]:
     return cid, blob or ""
 
 
+#: Smallest inline image worth sending to OCR, in bytes.
+#:
+#: Every inline image in an email is billed OCR -- Azure Document Intelligence is
+#: tried first in ``_ocr_chain._ocr_image_bytes`` -- and there was no floor here
+#: at all. Measured on 010094, forty emails: 434 images sent, and 225 of them
+#: (51%) were under one kilobyte. A 207-byte PNG is a spacer, a tracking pixel or
+#: a social icon; it cannot hold readable text at any resolution. This is not a
+#: judgement about what a picture depicts -- the doctrine is right that a picture
+#: is content, and a 649KB image is a logo on this deal and a survey heatmap on
+#: the next -- it is arithmetic about what can physically be read.
+#:
+#: 3000 matches ``SOWSMITH_PDF_IMAGE_MIN_BYTES``, the floor the PDF image path
+#: has always had. The email path simply never got one.
+_OCR_MIN_BYTES = int(os.environ.get("SOWSMITH_EMAIL_IMAGE_MIN_BYTES", "3000"))
+
+
 def _ocr_cid_part(part: dict[str, Any]) -> str:
     text = str(part.get("text") or "")
     payload = part.get("payload")
     if payload and (part.get("is_image") or part.get("is_pdf")):
+        # A PDF is exempt: a small PDF is a page of text, not an icon.
+        if part.get("is_image") and len(bytes(payload)) < _OCR_MIN_BYTES:
+            return text
         ocr_text = _ocr_text_from_cid_inline(
             bytes(payload),
             content_type=str(part.get("content_type") or ""),

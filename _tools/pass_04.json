@@ -1,0 +1,719 @@
+{
+ "document": "Copy of SHI Workato questions RFI_RV updated.xlsx",
+ "purpose": "train",
+ "labels": [
+  {
+   "labelKey": "lbl_1f88faccd02ac1cdaeb9",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P3- 4-8"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [],
+    "note": "One severity tier torn off the question it answers, and the complete answer is already carried by the atom that holds the question with all four tiers. On its own this cannot be labelled: it does not say whether the number is a response or a resolution target, and it does not say it is Tentative, which the full answer does. Two of these six are also straight duplicates of two others. Rejected as table scaffolding -- the doctrine rule that a line torn off its label is worthless, and the reason the fix is to keep the question-plus-answer pair whole."
+   }
+  },
+  {
+   "labelKey": "lbl_a3a179d68bb41d577f50",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P4-8-16"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [],
+    "note": "One severity tier torn off the question it answers, and the complete answer is already carried by the atom that holds the question with all four tiers. On its own this cannot be labelled: it does not say whether the number is a response or a resolution target, and it does not say it is Tentative, which the full answer does. Two of these six are also straight duplicates of two others. Rejected as table scaffolding -- the doctrine rule that a line torn off its label is worthless, and the reason the fix is to keep the question-plus-answer pair whole."
+   }
+  },
+  {
+   "labelKey": "lbl_edb45836220e580d6d48",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P2- 2-4 hours"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [],
+    "note": "One severity tier torn off the question it answers, and the complete answer is already carried by the atom that holds the question with all four tiers. On its own this cannot be labelled: it does not say whether the number is a response or a resolution target, and it does not say it is Tentative, which the full answer does. Two of these six are also straight duplicates of two others. Rejected as table scaffolding -- the doctrine rule that a line torn off its label is worthless, and the reason the fix is to keep the question-plus-answer pair whole."
+   }
+  },
+  {
+   "labelKey": "lbl_7fd216f1b4641f6f73d9",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P1- 1"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [],
+    "note": "One severity tier torn off the question it answers, and the complete answer is already carried by the atom that holds the question with all four tiers. On its own this cannot be labelled: it does not say whether the number is a response or a resolution target, and it does not say it is Tentative, which the full answer does. Two of these six are also straight duplicates of two others. Rejected as table scaffolding -- the doctrine rule that a line torn off its label is worthless, and the reason the fix is to keep the question-plus-answer pair whole."
+   }
+  },
+  {
+   "labelKey": "lbl_a3a179d68bb41d577f50",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P4-8-16"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [],
+    "note": "One severity tier torn off the question it answers, and the complete answer is already carried by the atom that holds the question with all four tiers. On its own this cannot be labelled: it does not say whether the number is a response or a resolution target, and it does not say it is Tentative, which the full answer does. Two of these six are also straight duplicates of two others. Rejected as table scaffolding -- the doctrine rule that a line torn off its label is worthless, and the reason the fix is to keep the question-plus-answer pair whole."
+   }
+  },
+  {
+   "labelKey": "lbl_edb45836220e580d6d48",
+   "fields": {
+    "label_type": "_keep",
+    "weight_tier": "slight",
+    "about": "deal",
+    "wants": "nothing",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P2- 2-4 hours"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [],
+    "note": "One severity tier torn off the question it answers, and the complete answer is already carried by the atom that holds the question with all four tiers. On its own this cannot be labelled: it does not say whether the number is a response or a resolution target, and it does not say it is Tentative, which the full answer does. Two of these six are also straight duplicates of two others. Rejected as table scaffolding -- the doctrine rule that a line torn off its label is worthless, and the reason the fix is to keep the question-plus-answer pair whole."
+   }
+  },
+  {
+   "labelKey": "lbl_01468b026269a6759d22",
+   "fields": {
+    "label_type": "customer_instruction",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Not sure- May be 15 incidents a weeks"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "quantity:15",
+     "service:incident_support",
+     "party:customer",
+     "risk:volume_unknown"
+    ],
+    "note": "The only demand estimate in the deal, and it is a guess -- Not sure prefixes it. Fifteen incidents a week against a single resource on 8x5 is roughly two working hours per incident before any of the coordination the SLA also commits to. Load-bearing because on a fixed monthly managed service volume is the whole risk: we carry it, not the customer, and nobody has bounded it. The SLA does not cap incident count anywhere."
+   }
+  },
+  {
+   "labelKey": "lbl_c60ae91be17db3fc429e",
+   "fields": {
+    "label_type": "site_attribute",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "currently running in production"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "5"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "quantity:5",
+     "platform:workato",
+     "environment:prod"
+    ],
+    "note": "Five recipes in production -- the estate being supported, and a small one. Read beside the fifteen-incidents-a-week estimate it is the deal most interesting tension: five recipes generating fifteen incidents weekly would be a remarkably unstable platform, which either means the estimate is pessimistic or the estate is in trouble. Either answer changes what six months of support costs, and nobody asked which."
+   }
+  },
+  {
+   "labelKey": "lbl_fe2d11179b4d2dd468dd",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "runbooks"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "yes"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "artifact:runbook",
+     "artifact:recipe_inventory",
+     "phase:onboarding"
+    ],
+    "note": "A bare yes to a question listing four distinct artefacts -- design documents, recipe inventory, runbooks, architecture diagrams. It asserts they exist and says nothing about which, or whether they are current. The SLA then makes reviewing them an onboarding gate, so this one-word answer is load-bearing for the commencement date and cannot support the weight."
+   }
+  },
+  {
+   "labelKey": "lbl_ae6b2d7c70f6ee3c4cae",
+   "fields": {
+    "label_type": "service_line",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Workato- SAP integration"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "platform:workato",
+     "system:sap",
+     "service:ams"
+    ],
+    "note": "Names the thing being supported, and the SLA adopts it verbatim as the named integration that bounds scope. This is the clearest evidence the SLA was written from the questionnaire rather than from a template, which matters because most of the rest of the SLA is boilerplate and this tells you which parts are not."
+   }
+  },
+  {
+   "labelKey": "lbl_f3a294ce9661277d0223",
+   "fields": {
+    "label_type": "site_attribute",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "all 3"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "environment:dev_test_prod",
+     "platform:workato",
+     "quantity:3"
+    ],
+    "note": "Three environments exist -- which is not the same as three environments we can reach. NMC had to ask separately about non-production access, and the answer that came back was Prod and Test. So the SLA covers development, the customer confirmed development exists, and nobody granted access to it. Also note the question asked which Workato edition is in use and got no answer at all."
+   }
+  },
+  {
+   "labelKey": "lbl_a2ac7f7c66780ec2f07b",
+   "fields": {
+    "label_type": "open_question",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "??"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "scope:monitoring",
+     "platform:workato",
+     "party:customer",
+     "risk:unpriced_setup"
+    ],
+    "note": "Two question marks: the customer does not know what monitoring they have. This is the single most consequential non-answer in the deal, because two separate SLA clauses hang off it -- resolution targets assume monitoring is in place and commit us to setting it up during onboarding if not, and where alerting is missing the resolution clock starts from human detection instead of from failure. So this blank both adds unpriced onboarding work and silently weakens the only commitment we make. Typed open_question rather than customer_instruction: an answer of ?? instructs nothing."
+   }
+  },
+  {
+   "labelKey": "lbl_bbd821b770210e34965b",
+   "fields": {
+    "label_type": "acceptance_criterion",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "P1- 1, P2- 2-4 hours"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "(Tentative)"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "severity:p1",
+     "severity:p2",
+     "severity:p3",
+     "severity:p4",
+     "service:incident_support",
+     "party:customer"
+    ],
+    "note": "What the customer asked for, marked Tentative in their own hand -- and it is not what the SLA came back with. They asked P3 4-8 hours and P4 8-16 hours; SLA v1.1 answers P3 with 8 hours response and 2 business days resolution, and P4 with 24 hours and 5 business days. Moving a target from hours to business days is a materially weaker commitment, it was never flagged back, and Tentative means the customer believed these were still open. This is the deal second unreconciled gap after the sixth day."
+   }
+  },
+  {
+   "labelKey": "lbl_ff959e439af1a2a6dda0",
+   "fields": {
+    "label_type": "open_question",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "not sure"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "platform:workato",
+     "party:customer",
+     "risk:volume_unknown"
+    ],
+    "note": "Transaction volume unknown. Paired with the incident estimate it means neither the load on the platform nor the load on the support desk is known to anyone -- and we priced a fixed monthly fee against both. Typed open_question because not sure leaves the question open rather than answering it."
+   }
+  },
+  {
+   "labelKey": "lbl_9b0cad97a33b5714603b",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Admin- tech support"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "access:admin",
+     "platform:workato",
+     "party:customer",
+     "phase:onboarding"
+    ],
+    "note": "Admin access, granted in principle. It is the answer the SLA first assumption depends on, and it is three words describing a level rather than a commitment to provision it by a date -- which is why NMC restated it twice in the SLA, once as an assumption and once as an onboarding task. On a fixed monthly cost, access that arrives late is paid for and not used."
+   }
+  },
+  {
+   "labelKey": "lbl_6a08d6ad2d55be3e5600",
+   "fields": {
+    "label_type": "contract_term",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "(L1, L2, and/or L3)"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "L2"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "support_level:l2",
+     "party:customer",
+     "service:ams"
+    ],
+    "note": "The customer own answer, choosing L2 from a list that explicitly offered L3. That is what makes this the strongest of the four L2 statements: the others describe the service, this one is the client selecting it with the alternative in front of them. The deal was then priced under PS-L3-ENG-LABOR-ONSITE. The rate code may be describing the seniority of the engineer NMC proposed rather than the tier sold, which is a fair reading -- but no reading at all supports ONSITE, and this line is why L3 cannot be defended as the service level."
+   }
+  },
+  {
+   "labelKey": "lbl_05c2da7164bad17ef732",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "knowledge transfer"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Yes"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "party:customer",
+     "scope:knowledge_transfer",
+     "phase:onboarding"
+    ],
+    "note": "Yes to knowledge transfer, and no answer to the two things actually asked -- in what format and over what duration. The SLA turns this into an onboarding gate that involves an outgoing team, so duration is the number that sets the commencement date, and it is the one the answer omits."
+   }
+  },
+  {
+   "labelKey": "lbl_1173ac1d8dd1d568091f",
+   "fields": {
+    "label_type": "dependency",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "ServiceNow"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "system:servicenow",
+     "party:customer",
+     "scope:tooling"
+    ],
+    "note": "ServiceNow, confirmed by the customer and adopted by the SLA as the sole channel the service levels are measured through. A clean answer -- one of the few in this questionnaire -- and it carries a dependency: their tool, their queues, so our evidence of performance lives in a system we do not control."
+   }
+  },
+  {
+   "labelKey": "lbl_79e94a9e3a15cded3879",
+   "fields": {
+    "label_type": "customer_instruction",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "Break fix initially, but new"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "scope:break_fix",
+     "scope:development",
+     "party:customer",
+     "process:change_request",
+     "risk:scope_creep"
+    ],
+    "note": "The answer trails off mid-sentence -- Break fix initially, but new -- and the missing words are the ones that matter. It tells us development work is expected without saying when or how much, and the SLA answers it correctly by excluding development and routing it to the change procedure. Load-bearing because it is the deal growth path and its commercial trap in the same breath: on a fixed monthly fee, enhancement work absorbed as support is margin gone, and the customer has already said it is coming."
+   }
+  },
+  {
+   "labelKey": "lbl_848717f05320ad70d548",
+   "fields": {
+    "label_type": "system_mapping",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "ERP, procuremnt"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "system:erp",
+     "system:procurement",
+     "platform:workato"
+    ],
+    "note": "The two applications either end of the integration, misspelled in the source and carried through faithfully. The SLA restates them as two applications: ERP and procurement, which is the second place the questionnaire is demonstrably the SLA source. Typed system_mapping rather than the parser customer_instruction: it names which systems connect, it does not instruct anyone to do anything."
+   }
+  },
+  {
+   "labelKey": "lbl_9eaff46f37da1ac3a072",
+   "fields": {
+    "label_type": "site_attribute",
+    "weight_tier": "ordinary",
+    "about": "deal",
+    "wants": "nothing",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "integrated through Workato"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "2"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "quantity:2",
+     "platform:workato",
+     "system:erp",
+     "system:procurement"
+    ],
+    "note": "Two systems, which the SLA carries into scope verbatim. This is the closest thing the engagement has to a sizing quantity -- there are no sites, no devices and no drops to count -- so it is the number any estimate of the work has to rest on, alongside the five production recipes."
+   }
+  },
+  {
+   "labelKey": "lbl_300ab801ae59cb753aa0",
+   "fields": {
+    "label_type": "source_caveat",
+    "weight_tier": "load_bearing",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "supplier": "customer",
+    "hint_refs": [
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "(24/7, 16/5, 8/6)"
+     },
+     {
+      "hint": "own_words",
+      "kind": "text",
+      "text": "2026-08-06"
+     },
+     {
+      "hint": "table_column",
+      "kind": "text",
+      "text": "answer column (D), beside the question in C"
+     },
+     {
+      "hint": "doc_type",
+      "kind": "text",
+      "text": "RFI questionnaire drafted by NMC engineering, answered by the end customer, returned through PurTera -- question in one column, customer answer in the next"
+     }
+    ],
+    "entity_keys": [
+     "coverage:six_day_week",
+     "coverage:timezone",
+     "party:customer",
+     "risk:uncosted_weekend",
+     "artifact:rfi"
+    ],
+    "note": "This cell is wrong, and knowing that it is wrong is the most valuable fact the parse holds. The question offers three shorthand answers -- 24/7, 16/5, 8/6 -- and the customer picked the third. Excel had the cell formatted d-mmm, so 8/6 was silently converted to the date 6 August 2026 at the moment it was typed; the source workbook still holds datetime(2026, 8, 6), so the corruption is upstream of the parser and the parser is reporting the cell faithfully. Typed source_caveat because that is exactly what it is: a fact about a source document that changes how it must be read. The consequence is the whole thread of this deal -- eight hours a day over six days is a 48-hour week, NMC recovered it by reading the questionnaire in context and asked, the answer that came back gave the hours and dropped the days, and the SLA landed at 8x5 with weekends billable at 125 an hour that the Deal Kit does not budget. The time-zone half of the question was never answered here either and had to be chased separately."
+   }
+  }
+ ]
+}
