@@ -304,3 +304,31 @@ pymupdf_layout package for a greatly improved page layout analysis."* That is
 a different extraction strategy rather than a version bump, and the PDFs are
 where the scope lives, so it is worth evaluating properly -- on the gold-label
 corpus, not on a sample.
+
+---
+
+## 9. One open question: a test that only fails in a full run
+
+`test_copper_001_compile_keeps_material_aggregate_packets_with_copper_domain`
+failed once, in a full-suite run on this branch, asserting that the material
+aggregate packets carry `{rj45, cat6_utp, cat6_stp}`. It passes:
+
+* in isolation, on this tree
+* as a whole file (`tests/test_real_data_compile.py`), on this tree AND on
+  `67bd575`
+* with `SOWSMITH_SEMANTIC_RULES=0`, which is what a frozen "embedder
+  unavailable" verdict produces
+
+A full suite on `67bd575` is green, so the failure is not obviously
+pre-existing. My first explanation -- that the new per-compile embedder latch
+froze to `False` and starved the material rules -- is WRONG: the test passes
+in exactly that state, and it passes in the opposite state too, so only a
+MIXED state could produce it, and a mixed state is the behaviour the latch
+removes.
+
+An A/B is running (this tree with `_reset_semantic_backend` removed from
+`conftest`) to establish whether that fixture is doing anything here at all.
+Until it says otherwise, treat this as an unexplained intermittent and watch
+it in CI. Do not assume the conftest fixture fixed it -- that fixture is
+justified on its own terms (a process-wide frozen verdict should not leak
+between tests) and is not evidence about this failure.
