@@ -42,6 +42,8 @@ import ipaddress
 import json
 import logging
 import os
+
+from app.core import model_gates as _gates
 import re
 import socket
 import urllib.error
@@ -86,9 +88,9 @@ _INLINE_BULLET = re.compile("\\s+[•·▪‣*.‐‑‒–—―-]\\s+")
 
 
 def enabled() -> bool:
-    return os.environ.get("SOWSMITH_LINKED_PICTURE_VISION", "").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
+    # One definition of this flag, shared. It deliberately does NOT consult
+    # the global kill-switch -- see `app.core.model_gates` for why.
+    return _gates.linked_picture_vision_enabled()
 
 
 def connections_enabled() -> bool:

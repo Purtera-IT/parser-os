@@ -41,6 +41,8 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+
+from app.core import model_gates as _gates
 import re
 import urllib.request
 from typing import Any, Callable
@@ -705,7 +707,7 @@ def extract_all_entities_with_llm(atoms: list[Any]) -> dict[str, Any]:
     # cells, etc.) and tags them with entity_type kind. Stashed under
     # `vision_rows` for downstream injection.
     # ────────────────────────────────────────────────────────────
-    if not os.environ.get("SOWSMITH_VISION_DISABLE"):
+    if _gates.drawing_vision_enabled():
         try:
             from app.core.vision_extraction import (
                 find_all_pages_needing_vision,
@@ -2962,7 +2964,7 @@ def _call_ollama(prompt: str, *, max_tokens: int = 1024) -> str:
     # Global kill-switch: SOWSMITH_DISABLE_LLM forces every LLM path to its
     # deterministic fallback (empty == "no LLM result"). Also prevents a
     # wedged/unreachable host from blocking a compile in offline/CI runs.
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if _gates.models_disabled():
         return ""
     # Hosted-teacher route: when a TEACHER_API_BASE is configured, serve this
     # teacher call from the OpenAI-compatible client (DeepSeek/etc.) instead of

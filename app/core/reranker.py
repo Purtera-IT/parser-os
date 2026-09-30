@@ -39,6 +39,8 @@ from __future__ import annotations
 import logging
 import math
 import os
+
+from app.core import model_gates as _gates
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -239,7 +241,7 @@ def rerank(query: str, documents: list[str]) -> Optional[list[float]]:
         return scored
     # Global kill-switch: skip the real model backends (fail-open to the
     # bi-encoder). Test-injected overrides above still run.
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if _gates.models_disabled():
         return None
     if not enabled():
         return None

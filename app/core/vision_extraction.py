@@ -26,6 +26,8 @@ import io
 import json
 import logging
 import os
+
+from app.core import model_gates as _gates
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -152,7 +154,7 @@ def vision_endpoint_reachable() -> bool:
     """Quick health check for the vision model."""
     # Global kill-switch: vision is an LLM path, so SOWSMITH_DISABLE_LLM
     # disables it too (callers gate the vision pass on this predicate).
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if _gates.models_disabled():
         return False
     # Hosted teacher: the vision pass routes to the API (see call_vision_llm),
     # so the local-host health check is irrelevant — report reachable.
@@ -804,7 +806,7 @@ def extract_visual_pages(
        "raw_extraction": <specialized prompt output>,
        "rows": [{"kind", "text", "category"}]}
     """
-    if not pages or os.environ.get("SOWSMITH_VISION_DISABLE"):
+    if not pages or not _gates.drawing_vision_enabled():
         return []
     if not vision_endpoint_reachable():
         logger.info("vision endpoint not reachable, skipping vision pass")

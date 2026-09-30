@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core import model_gates as _gates
 import urllib.request
 
 # Reuse the same Ollama endpoint the rest of the pipeline targets.
@@ -54,9 +56,10 @@ def reset_reachability() -> None:
 
 
 def _llm_disabled() -> bool:
-    return os.environ.get("SOWSMITH_DISABLE_LLM", "").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
+    # This was the ONE site that parsed the flag properly; the other eight used
+    # bare truthiness, so SOWSMITH_DISABLE_LLM=0 disabled them and left this
+    # one running. See `app.core.model_gates`.
+    return _gates.models_disabled()
 
 
 # A caller that names a local model this way wants THAT model, hosted teacher

@@ -46,6 +46,8 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+
+from app.core import model_gates as _gates
 import re
 import sys
 import time
@@ -625,7 +627,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
     # previously ignored the flag and spent ~46s/compile hitting a reachable
     # but slow remote model even in "no-LLM" runs).
-    if os.environ.get("SOWSMITH_DISABLE_LLM") or not promotable:
+    if _gates.models_disabled() or not promotable:
         return taught_promoted
 
     # Deterministic deflect: a table_row already readable as a contact by

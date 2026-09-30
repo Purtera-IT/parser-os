@@ -35,6 +35,8 @@ import hashlib
 import json
 import logging
 import os
+
+from app.core import model_gates as _gates
 import time
 import re
 from contextlib import contextmanager
@@ -73,9 +75,9 @@ _IMAGE_KIND_CANDIDATES = [
 
 
 def enabled() -> bool:
-    return os.environ.get("SOWSMITH_PDF_IMAGE_VISION", "").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
+    # One definition of this flag, shared. It deliberately does NOT consult
+    # the global kill-switch -- see `app.core.model_gates` for why.
+    return _gates.pdf_image_vision_enabled()
 
 
 def _int_env(name: str, default: int) -> int:

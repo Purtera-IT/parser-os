@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import json
 import os
+
+from app.core import model_gates as _gates
 import re
 import urllib.request
 from typing import Any
@@ -1202,7 +1204,7 @@ def _call_ollama(prompt: str, *, max_tokens: int = 2048) -> str:
     """POST to /api/generate. Returns the raw response.text or ''."""
     # Global kill-switch: SOWSMITH_DISABLE_LLM forces the deterministic
     # fallback (empty == "no LLM result") and avoids blocking on a wedged host.
-    if os.environ.get("SOWSMITH_DISABLE_LLM"):
+    if _gates.models_disabled():
         return ""
     # Hosted-teacher route (default-off): if TEACHER_API_BASE is set, serve via
     # the OpenAI-compatible client; otherwise use the local Ollama below.
