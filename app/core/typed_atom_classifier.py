@@ -64,6 +64,8 @@ import app.core.ollama_host as _ollama_host
 DEFAULT_HOST = _ollama_host.FALLBACK_HOST
 DEFAULT_MODEL = "qwen2.5:3b"
 DEFAULT_TIMEOUT = 180
+from app.core import telemetry as _telemetry  # noqa: E402
+
 DEFAULT_BATCH_SIZE = 12  # dev proxy drops responses >~3KB; 12 atoms stays well under
 DEFAULT_PARALLEL = 4
 
@@ -1010,6 +1012,20 @@ def classify_atoms(atoms: list[Any]) -> int:
 
     _t_llm0 = time.perf_counter()
     results_by_atom_id: dict[str, dict[str, Any]] = {}
+    # SAY HOW FAR THROUGH THIS IS.
+    #
+    # This stage is the longest one in 44% of compiles, and a compile spends a
+    # median 47% of its wall clock inside its single longest stage. Until now
+    # it announced a start and a finish and nothing in between, so the deal
+    # could sit for eighteen minutes with no observable change -- and every
+    # estimate built on that blindness topped out at ~61% error.
+    #
+    # Counting COMPLETED BATCHES, not atoms: batches are what actually finish,
+    # they are near-uniform in size, and the count rises smoothly enough for a
+    # rate to be read off it. The reader turns "k of n, in t seconds" into a
+    # remaining time using this run's own pace.
+    _done_batches = 0
+    _telemetry.set_stage_progress(0, len(batches))
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         future_to_batch = {pool.submit(_classify_batch, b): b for b in batches}
         for fut in concurrent.futures.as_completed(future_to_batch):
@@ -1017,6 +1033,12 @@ def classify_atoms(atoms: list[Any]) -> int:
                 batch_results = fut.result()
             except Exception:
                 continue
+            finally:
+                # In the `finally`, because a batch that RAISED is still a batch
+                # that is over -- counting only successes would stall the bar on
+                # exactly the compile that is going wrong.
+                _done_batches += 1
+                _telemetry.set_stage_progress(_done_batches, len(batches))
             for atom_id, payload in batch_results.items():
                 results_by_atom_id[atom_id] = payload
     _t_llm = time.perf_counter() - _t_llm0
