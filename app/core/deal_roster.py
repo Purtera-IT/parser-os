@@ -161,7 +161,31 @@ def build_deal_roster(*, atoms: list[Any], documents: list[dict[str, Any]],
             kind = kind.value if hasattr(kind, "value") else str(kind or "")
             if kind != "stakeholder":
                 continue
-            got = read_signature(getattr(atom, "raw_text", "") or "")
+            # Read the STRUCTURED record first, and only parse the words when
+            # there is none. A stakeholder atom carries what the extractor
+            # already resolved --
+            #
+            #     raw_text 'Gregory Rivers | CEO'
+            #     value    {'name': 'Gregory Rivers',
+            #               'email': 'gregory.rivers@norvetmsp.com'}
+            #
+            # -- and re-deriving it from the text loses whatever the text does
+            # not happen to contain. `read_signature('Gregory Rivers | CEO')`
+            # finds a name and a role and NO EMAIL, so the `continue` below
+            # skipped the person entirely.
+            #
+            # Live 000113: three stakeholder atoms, each with a name, a role and
+            # an address in `value`, and `deal_roster.people == []`. The deal's
+            # own people were missing from the roster while
+            # `stakeholder_load` -- which reads the same atoms a different way
+            # -- listed all three by slug. Two sections describing the same
+            # people, one of them blank.
+            got = dict(read_signature(getattr(atom, "raw_text", "") or ""))
+            value = getattr(atom, "value", None)
+            if isinstance(value, dict):
+                for field in ("email", "name", "role", "phone"):
+                    if not got.get(field) and value.get(field):
+                        got[field] = str(value[field]).strip()
             if not got.get("email"):
                 continue
             row = slot(got["email"])
