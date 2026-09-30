@@ -51,6 +51,37 @@ class Calibrated:
 
 
 REGISTRY: dict[str, Calibrated] = {
+    "gate.low_confidence_floor": Calibrated(
+        value=0.50,
+        used_at="app.core.compiler.LOW_CONFIDENCE_FLOOR (confidence_floor stage)",
+        derivation=(
+            "NOT DERIVED. A hand-set constant that decides which atoms are "
+            "forced to needs_review and therefore stop governing a packet -- the "
+            "single number separating 'the brief asserts this' from 'a person "
+            "must look'. It was a bare module constant in compiler.py and absent "
+            "from this registry, which exists so that a number like this cannot "
+            "be invisible. "
+            "What IS measured (8 deals, models off, _tools/_phase5_authority.py): "
+            "confidence_recalibration moves 5201 confidences -- 1856 up by a mean "
+            "+0.182, 3345 down by a mean -0.115 -- and across the floor it is "
+            "almost entirely one-way. 754 atoms cross UP and gain the right to "
+            "govern; 3 cross DOWN, all three the deal's own CRM opportunity "
+            "number going 0.800 -> 0.450. "
+            "So the floor is not currently deciding much: recalibration is "
+            "net-promoting and hardly anything lands just below the line. That is "
+            "evidence the value is not ACTIVELY harmful, and no evidence at all "
+            "that 0.50 is right. Choosing it needs confidence paired with "
+            "correctness, which needs labels."
+        ),
+        corpus_n=8,
+        derived="2026-09-29",
+        stale_when=(
+            "atoms crossing DOWN through the floor stop being a handful per "
+            "corpus, or the review queue holds enough judged atoms to plot "
+            "confidence against correctness and pick the number from the curve "
+            "instead of by hand"
+        ),
+    ),
     "transcript.speaker_density": Calibrated(
         value=0.50,
         re_derive=lambda: _derive_speaker_density_bounds(),

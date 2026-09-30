@@ -16,6 +16,7 @@ is the only consumer-side contract.
 from __future__ import annotations
 
 import json
+import hashlib as _hashlib
 import os
 
 from app.core.label_key import label_key as _label_key
@@ -155,6 +156,72 @@ def apply_site_attributes(rows: list[dict], atoms: Iterable[Any]) -> tuple[int, 
 #: so a few hundred is more than a person will work through, and the envelope
 #: does not need to carry thousands of them to be useful.
 _SUPPRESSED_MAX = int(os.environ.get("SOWSMITH_SUPPRESSED_MAX", "300"))
+
+
+#: Cap on the rule decisions an envelope carries, same reasoning as
+#: `_SUPPRESSED_MAX`: a labelling aid must not double the payload.
+_RULE_DECISIONS_MAX = int(os.environ.get("SOWSMITH_RULE_DECISIONS_MAX", "600"))
+
+
+def _rule_decisions_for_review() -> list[dict]:
+    """The rule calls this compile made, for the Rules stage of the workspace.
+
+    These used to reach the workspace only by being hung on an atom whose text
+    matched the judged text exactly. That join is right in principle and empty
+    in practice -- a rule judges a CELL or a LINE ('Quantity', 'Cost',
+    'INTRODUCTION') while an atom carries assembled text. Live dev compile
+    cmp_863df5d394c69f33 recorded 1220 decisions and attached 0.
+
+    A rule judgment does not need an atom: what a person needs to say "this rule
+    was right" is the text it judged and how close the call was. Ambiguous calls
+    come FIRST, because a decision 0.001 from its threshold is worth a person's
+    attention and one at 0.4 is not -- 132 of that compile's 1220 were within
+    0.08 of the line.
+
+    The key is sha256(rule | text), which is deal-independent on purpose: a
+    threshold is a property of the RULE, so one verdict should count on every
+    deal that line appears in.
+    """
+    if os.environ.get("SOWSMITH_RULE_DECISIONS", "").strip() != "1":
+        return []
+    try:
+        from app.core.semantic_rules import all_decisions
+    except Exception:
+        return []
+    try:
+        rows = all_decisions(limit=_RULE_DECISIONS_MAX * 4)
+    except Exception:
+        return []
+    if not rows:
+        return []
+
+    def _margin(row: dict) -> float:
+        m = row.get("margin")
+        try:
+            return float(m)
+        except (TypeError, ValueError):
+            return 9.9
+
+    rows.sort(key=_margin)
+    out: list[dict] = []
+    for row in rows[:_RULE_DECISIONS_MAX]:
+        text = str(row.get("text") or "")
+        if not text.strip():
+            continue
+        out.append({
+            "rule": str(row.get("rule") or ""),
+            "text": text[:2000],
+            "fired": bool(row.get("decision") or row.get("fired")),
+            "best_pos": row.get("best_pos"),
+            "best_neg": row.get("best_neg"),
+            "threshold": row.get("threshold"),
+            "margin": row.get("margin"),
+            "unsure": (_margin(row) <= 0.08),
+            "target_key": "rule_" + _hashlib.sha256(
+                f"{row.get('rule') or ''}|{text}".encode("utf-8", "replace")
+            ).hexdigest()[:20],
+        })
+    return out
 
 
 def _emitted_by(atom) -> str:
@@ -603,6 +670,7 @@ def build_orbitbrief_envelope(
         # What the compile THREW AWAY, so a person can say whether it should
         # have. See `_suppressed_for_review`.
         "suppressed": _suppressed_for_review(compile_result, atoms),
+        "rule_decisions": _rule_decisions_for_review(),
         "coverage": {
             "unrecovered_regions": unrecovered_regions,
             # Line-level: what the parser read, dropped, or never touched.

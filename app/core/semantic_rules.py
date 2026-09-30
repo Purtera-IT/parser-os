@@ -220,6 +220,39 @@ def _record_decision(name: str, text: str, best_pos: float, best_neg: float,
             bucket.append(rec)
 
 
+def all_decisions(limit: int = 4000) -> list[dict]:
+    """Every decision this compile made, flat, newest-text-last.
+
+    `decisions_for(text)` answers "what did the rules say about THIS atom", and
+    `_attach_rule_decisions` uses it to hang decisions on atoms by exact text.
+    That join is honest and it is also nearly always empty: a rule judges a
+    CELL or a LINE -- 'Quantity', 'Cost', 'INTRODUCTION', '150ft CAT6 (non
+    plenum) Materials' -- while an atom carries assembled text. Live dev compile
+    cmp_863df5d394c69f33 recorded 1220 decisions and attached 0 to atoms.
+
+    A rule judgment does not need an atom. What a person needs in order to say
+    "this rule was right" is the text the rule was asked about and how close the
+    call was, and the decision carries both. So this returns them directly, and
+    the envelope ships them beside `suppressed` rather than hidden inside atoms
+    that mostly do not match.
+    """
+    out: list[dict] = []
+    with _DECISIONS_LOCK:
+        for text, recs in _DECISIONS.items():
+            for rec in recs:
+                row = dict(rec)
+                row.setdefault("text", text)
+                try:
+                    row["margin"] = round(
+                        abs(float(row.get("best_pos", 0.0)) - float(row.get("threshold", 0.0))), 4)
+                except Exception:
+                    row["margin"] = None
+                out.append(row)
+                if len(out) >= limit:
+                    return out
+    return out
+
+
 def _log_decision(name: str, text: str, best_pos: float, best_neg: float,
                   threshold: float, decision: bool) -> None:
     """Append one rule decision to the feedback log (JSONL) when
