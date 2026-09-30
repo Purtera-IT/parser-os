@@ -220,6 +220,30 @@ def _is_roster_site(atom: Any) -> bool:
     return False
 
 
+#: Stamped on a site a MODEL thinks is the vendor's own address. Not a deletion:
+#: the flag is what puts the atom in front of a person, and their verdict is what
+#: teaches the site-role head. See the call site for the live case that made this
+#: necessary.
+VENDOR_SUSPECT_FLAG = "vendor_address_suspected"
+
+
+def _propose_vendor_address(atom: Any, decision: Any) -> None:
+    """Keep the site, and ask about it. Never raises."""
+    try:
+        flags = getattr(atom, "review_flags", None)
+        if isinstance(flags, list) and VENDOR_SUSPECT_FLAG not in flags:
+            flags.append(VENDOR_SUSPECT_FLAG)
+        value = getattr(atom, "value", None)
+        if isinstance(value, dict):
+            value["vendor_role_proposal"] = {
+                "verdict": getattr(decision, "verdict", None),
+                "confidence": round(float(getattr(decision, "confidence", 0.0) or 0.0), 4),
+                "source": getattr(decision, "source", None),
+            }
+    except Exception:
+        pass
+
+
 def suppress_vendor_sites(
     atoms: list[Any], *, project_id: str
 ) -> tuple[list[Any], int]:
@@ -314,8 +338,33 @@ def suppress_vendor_sites(
             and decision.verdict == "vendor_or_billing_address"
             and decision.confidence >= _VENDOR_DROP_CONFIDENCE
         ):
-            drop_ids.add(aid)
-            _stamp_decision(a, decision)
+            # A TAUGHT answer may delete a site. A GUESS may only propose it.
+            #
+            # `Decision.source` is "store" when a correction someone made
+            # decided this, and "llm"/"fallback" when a model did. Both used to
+            # delete, and a model at 0.6 confidence is not evidence that a place
+            # named in the documents is not a job site.
+            #
+            # Live 000113 (Columbus AFB premise wiring), dev compile
+            # a257441f: "Park Place Tech LLC: 6500 Hollister Ave 210" and
+            # "Goleta, Ca 93117" were both deleted here, and NO surviving atom
+            # in the envelope mentioned Park Place, Hollister or Goleta -- in
+            # text or in value. The address is not on `vendor_site_ban`'s list.
+            # It is exactly the failure the comment above predicts: the party
+            # address counts as the second site, the model is asked to pick the
+            # vendor between two, and it can pick the customer.
+            #
+            # There is a site-role head for this, and the way it learns is by
+            # someone judging a proposal. A deletion teaches nothing -- the atom
+            # is gone, so nobody is ever asked. A kept-and-flagged atom reaches
+            # the labelling workspace, gets a verdict, and that verdict lands in
+            # the store as a correction -- after which `source == "store"` and
+            # this branch deletes it for free, on this deal and every other.
+            if getattr(decision, "source", None) == "store":
+                drop_ids.add(aid)
+                _stamp_decision(a, decision)
+            else:
+                _propose_vendor_address(a, decision)
 
     if not drop_ids:
         return atoms, det_dropped

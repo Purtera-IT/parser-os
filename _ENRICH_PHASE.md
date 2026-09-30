@@ -342,3 +342,93 @@ can only be as honest as the ledger**, and for four stages the ledger was
 silent. Two of the six defects above were invisible until the instrument was
 fixed, and one of them — the account number and the contract dates — was a
 deletion the compile had been performing, unrecorded, on every run.
+
+---
+
+# Re-audited with the models ON, because the audit had them off
+
+Every tool in `_tools/` sets `SOWSMITH_DISABLE_LLM`, and that flag does more
+than its name says: it switches off `typed_atom_classification` entirely,
+entity extraction via `multi_entity_llm`, the vendor-versus-job-site address
+judgment, all three vision pipelines' upstream reachability — **and the
+embedder**, so no `SemanticRule` can fire under it either.
+
+So everything above describes the deterministic configuration. A stage that was
+SWITCHED OFF looked like a stage that ran and decided nothing. That had to be
+re-checked rather than defended.
+
+Running it models-ON needed the parse fix from `app/core/model_gates.py` first:
+the tools `setdefault` the flag to `"1"`, and eight of nine call sites tested it
+with bare truthiness, so passing `=0` could not turn it back on until every site
+parsed the same way.
+
+## The coverage claim survives
+
+Same deal, both configurations:
+
+| stage | models off | models on |
+|---|---|---|
+| atoms into `pre_classify_dedup` | 1094 | 1206 (+112 from the extractors) |
+| `enrich_entities` dropped | 0 | **0** — purely additive |
+| `typed_atom_classification` dropped | 0 (switched off) | **0 (ran, still nothing)** |
+| `atom_type_sanity` | 20 / 20 / 0 | 20 / 20 / 0 |
+
+`typed_atom_classification` retypes and promotes; it does not delete. So
+"eleven of sixteen stages never suppress anything" holds in the configuration
+production actually runs.
+
+## What only the models-on run could see
+
+Eight figures leave the compile with models on, against **zero** with them off.
+The first is the serious one.
+
+**The deal's customer address is deleted.** Live 000113 (Columbus AFB premise
+wiring), dev compile `a257441f`:
+
+    Customer:: Address: | Park Place Tech LLC: 6500 Hollister Ave 210
+    Customer:: City/St: | Park Place Tech LLC: Goleta, Ca 93117
+
+Both dropped — by `pre_classify_dedup` and by `site_geo_fallback`. Checked
+against the live dev envelope: **no surviving atom mentions Park Place,
+Hollister or Goleta**, in `raw_text` or in `value`. The address is **not** on
+`vendor_site_ban`'s list.
+
+`site_geo_fallback`'s vendor suppression asked `decide()` and deleted any site
+the answer called `vendor_or_billing_address` at ≥ 0.6 confidence — whether a
+stored correction said so or a model guessed it. It is exactly the failure the
+function's own comment predicts: *"the party address counts as the second site,
+the LLM is asked to pick the vendor among two, and it can pick the customer's
+HQ."*
+
+Fixed by the distinction `Decision` already carries: **a taught answer
+(`source == "store"`) may delete a site; a guess (`llm`/`fallback`) may only
+propose one**, keeping the atom and stamping `vendor_address_suspected` with the
+verdict, confidence and source. The `Decision` docstring already prescribed it
+— "callers apply their own safe default, typically keep + flag".
+
+The reason to flag rather than delete is not caution, it is that **a deletion
+teaches nothing**. There is a site-role head for this question and it learns
+from judged proposals; a deleted atom is never shown to anyone, so the same
+guess repeats on every compile forever. A kept-and-flagged atom reaches the
+labelling workspace, gets a verdict, and that verdict lands in the store —
+after which `source == "store"` and the deletion happens for free, on this deal
+and every other.
+
+## The remaining seven, unfixed
+
+Three PM open questions dropped by `open_question_quality_filter`, each taking
+a contract-clause reference with it (`52.212`, `1.52.212-2`, `2.2.10`), plus a
+clarification asking whether as-built drawings are wanted in Visio, AutoCAD or
+PDF. Same class as the site: a filter deciding a question is not worth asking.
+Worth reading before the next labelling pass, because the Questions stage is
+where those verdicts would come from.
+
+## And the cost, since it was measured on the way
+
+`enrich_entities` is **669.5s of a 673s compile — 99.5%** — against 1.4s with
+models off. `multi_entity_llm` has 29 `_call_ollama` sites, two generating up to
+16,384 tokens. A live dev compile of the same deal took 13m 12s, so the
+magnitude holds on hosted Azure OpenAI too.
+
+Phase 3 is not LLM-heavy. **One stage is.** Anything aimed at cutting model cost
+belongs there and nowhere else in this phase.
