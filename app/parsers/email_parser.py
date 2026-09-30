@@ -878,6 +878,55 @@ _GREETING_CLOSE_RE = re.compile(r"\s*[,:\-–—!]+\s*$")
 _IDENTITY_NAME_RE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}$")
 
 
+#: A row of a table the email body parser flattened. `email_body._CELL_SEP`
+#: joins the cells of one `<tr>`, and until now nothing downstream read that
+#: separator -- the table was preserved in the text and then never recognised
+#: as a table again.
+_TABLE_ROW_SEP = " | "
+
+#: A model number, part code or quantity: what makes a flattened row DATA
+#: rather than a contact block laid out in a table.
+_TABLE_DATA_CELL_RE = re.compile(r"(?:\d+|[A-Z0-9]{3,}(?:-[A-Z0-9]{1,6}){1,})")
+
+#: Contact vocabulary. A signature is very often a table, and a phone
+#: number is digits -- so "has a number in a cell" would re-open the
+#: signature latch on exactly the lines it exists to close.
+_CONTACT_CELL_RE = re.compile(
+    r"^\s*(?:cell|mobile|office|direct|tel|telephone|phone|fax|email|e-?mail|web|www)\s*[:.]",
+    re.IGNORECASE,
+)
+
+
+def _is_data_table_row(text: str) -> bool:
+    """A flattened table row carrying values, not a signature in table clothes.
+
+    Mail clients lay contact blocks out in `<table>`, so "has cells" alone
+    cannot mean "is data" -- `email_body._looks_like_layout_table` already
+    drops the obvious ones, and this is the second gate. A row earns the name
+    by having at least two cells and something that reads as a value: a
+    number, or a part code like C9200L-48P-4X-E.
+    """
+    line = str(text or "").strip()
+    if _TABLE_ROW_SEP not in line:
+        return False
+    cells = [c.strip() for c in line.split(_TABLE_ROW_SEP) if c.strip()]
+    if len(cells) < 2:
+        return False
+    # A signature laid out in a table is still a signature. "Mobile:
+    # 832-560-1300 | Email: hanhle@cdw.com" has two cells and a number in one
+    # of them, and admitting it would re-open the latch on precisely the lines
+    # the latch exists to close.
+    if any(_CONTACT_CELL_RE.match(c) for c in cells):
+        return False
+    if any("@" in c for c in cells):
+        return False
+    # A header row ("Closet | Model | Amount") carries no values and is still
+    # part of the table: it is what makes the rows under it readable.
+    if any(_TABLE_DATA_CELL_RE.search(c) for c in cells):
+        return True
+    return len(cells) >= 3 and all(len(c) <= 24 for c in cells)
+
+
 def _is_identity_only_line(text: str, *, allow_name: bool = True) -> bool:
     """True for a line that is only a person's name, an email, a phone, or a
     punctuation fragment around one. Shape only -- no names, no domains.
@@ -3247,7 +3296,25 @@ class EmailParser(BaseParser):
             # 1) Signature block: once an authored message signs off, the rest
             #    is name/title/phone/URL chrome, not deal content.
             if in_signature:
-                continue
+                # A TABLE ENDS THE SIGNATURE. The latch never unlatches, so
+                # everything after a sign-off is dropped -- and mail clients
+                # put the signature ABOVE quoted content and above tables that
+                # were pasted under it. Live 010334: "Best regards" sits at
+                # line 6 of the extracted body and the switch BOM starts at
+                # line 9, so all 23 rows of it -- every site, closet, model and
+                # quantity -- were discarded as sign-off chrome. They reached
+                # neither the atoms nor the suppressed ledger, which is why no
+                # content-loss audit ever saw them go.
+                # THE LATCH STAYS ON. Only the table rows themselves pass.
+                #
+                # Clearing it let everything AFTER the table back in too, and
+                # the impact run said so: 190 atoms gained, of which ~25 were
+                # the confidentiality footer that follows the table ("Delivery
+                # of this message is not intended to waive any applicable
+                # privileges."). The sign-off was right about those lines and
+                # wrong only about the table.
+                if not _is_data_table_row(cleaned):
+                    continue
             # Quoted messages sign off too, and this was gated to the authored
             # one only -- so every quoted signature was atomised in full. A
             # forward chain carries one signature per message, and deal 010215's
