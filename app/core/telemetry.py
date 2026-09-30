@@ -53,6 +53,52 @@ def set_stage_item(item: str) -> None:
     _HB_ITEM[0] = str(item or "")[:200]
 
 
+# How far through its own work the current stage is.
+#
+# WHY A NUMBER AND NOT JUST A NAME. `set_stage_item` above makes a wedged stage
+# findable in a log. It cannot say how long is left, which is the thing people
+# actually ask.
+#
+# Measured over 485 real compiles: the median compile spends 47% of its wall
+# clock inside ONE stage (p75: 59%), and progress is written only at stage
+# boundaries -- so for about half of every compile nothing is observable. Ten
+# estimators were fitted against that telemetry and the best managed 61% median
+# error, 41% within 2x. Predicting even the single dominant stage from its own
+# input size -- the most favourable case available -- came out at 53.8%.
+#
+# The ceiling is the blindness, not the model. A stage that says "340 of 1200"
+# turns the estimate into arithmetic over a rate measured on THIS deal in THIS
+# run: a measurement, not an extrapolation from a corpus.
+_HB_PROGRESS: list[tuple[int, int]] = [(0, 0)]
+
+
+def set_stage_progress(done: int, total: int) -> None:
+    """Say how far through its items the current stage is. (0, 0) means unknown."""
+    try:
+        d, t = int(done), int(total)
+    except (TypeError, ValueError):
+        return
+    if t <= 0 or d < 0:
+        _HB_PROGRESS[0] = (0, 0)
+        return
+    _HB_PROGRESS[0] = (min(d, t), t)
+
+
+def clear_stage_progress() -> None:
+    """Between stages nothing is in progress, and a stale count is worse than none."""
+    _HB_PROGRESS[0] = (0, 0)
+
+
+def stage_progress() -> tuple[int, int]:
+    """(done, total) for the running stage, or (0, 0) when it does not say.
+
+    Read from another THREAD: the worker writes the deal's progress document on
+    its own timer while the compile runs in this process. The pair is replaced
+    atomically, so a reader sees one consistent pair, never a half-updated one.
+    """
+    return _HB_PROGRESS[0]
+
+
 def _heartbeat_interval() -> float:
     try:
         v = float(os.environ.get("SOWSMITH_HEARTBEAT_SECS", "30"))
@@ -252,6 +298,9 @@ class CompileTelemetry:
             warnings=warning_rows,
             errors=error_rows,
         )
+        # A finished stage is not in progress, and a stale count is worse than
+        # none: the next stage would inherit it and read as already underway.
+        clear_stage_progress()
         if self._on_stage_end is not None:
             try:
                 self._on_stage_end(stage, list(self.stages))
@@ -269,6 +318,17 @@ class CompileTelemetry:
         would raise AttributeError on the first artifact of every compile.
         """
         set_stage_item(item)
+
+    def set_stage_progress(self, done: int, total: int) -> None:
+        """Say how far through its items this stage is.
+
+        A method as well as a module function for the same reason as
+        `set_stage_item` above: inside the compiler `telemetry` is this
+        INSTANCE, and reaching for the module function there raises
+        AttributeError on the first artifact of every compile -- which is
+        exactly what it did until the telemetry tests caught it.
+        """
+        set_stage_progress(done, total)
 
     @contextmanager
     def stage(

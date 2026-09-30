@@ -829,12 +829,20 @@ def compile_project(
                 _prefetched = {}
 
     with telemetry.stage("parse_artifacts", input_count=len(artifacts)) as stage:
-        for artifact in artifacts:
+        # The longest stage in 23% of compiles. It already NAMES the file it is
+        # on; counting them as well is what lets a reader turn "9 of 35, in 40
+        # seconds" into a remaining time from this run's own pace.
+        telemetry.set_stage_progress(0, len(artifacts))
+        for _artifact_index, artifact in enumerate(artifacts):
             relative_name = str(artifact.relative_to(project_dir)).replace("\\", "/")
             # Name the file in the heartbeat. Without it a wedge on ONE artifact
             # is indistinguishable from a slow stage — 35 files, six hours, and
             # the log could not say which one had stopped.
             telemetry.set_stage_item(relative_name)
+            # Files ALREADY finished, so the count never claims the one in hand
+            # is done. A bar that counts the current item is a bar that reaches
+            # the end before the work does.
+            telemetry.set_stage_progress(_artifact_index, len(artifacts))
             artifact_id = stable_id("art", resolved_project_id, relative_name)
             artifact_paths[artifact_id] = artifact
             parsed_atoms = []
