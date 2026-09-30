@@ -253,6 +253,19 @@ def all_decisions(limit: int = 4000) -> list[dict]:
     return out
 
 
+def decision_count() -> int:
+    """How many decisions this compile has made, without building the list.
+
+    `all_decisions(limit=N)` stops at N, so it cannot be used to count: the
+    envelope needs to say "600 of 1220" and asking for the rows in order to
+    length them would materialise thousands of dicts to throw away. Note that
+    `limit=0` does NOT mean unlimited -- the guard is `len(out) >= limit`, so
+    zero returns after the first row. That is exactly the trap this avoids.
+    """
+    with _DECISIONS_LOCK:
+        return sum(len(recs) for recs in _DECISIONS.values())
+
+
 def _log_decision(name: str, text: str, best_pos: float, best_neg: float,
                   threshold: float, decision: bool) -> None:
     """Append one rule decision to the feedback log (JSONL) when
