@@ -262,6 +262,34 @@ def _where(atom) -> tuple[str, str]:
     return "", ""
 
 
+def _suppressed_total(compile_result: "CompileResult") -> int:
+    """How many atoms the compile dropped, before `_SUPPRESSED_MAX` cuts them.
+
+    Reported beside the capped list so a reader can tell "these are all of
+    them" from "these are the first 300 of several thousand". 0 when the
+    ledger is not being carried at all, which is the default.
+    """
+    if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
+        return 0
+    return len(list(getattr(compile_result, "suppressed_atoms", None) or []))
+
+
+def _rule_decisions_total() -> int:
+    """How many rule decisions this compile made, before the cap.
+
+    Counted from the same source the capped list is built from. Live dev
+    compile cmp_863df5d394c69f33 recorded 1220 of these against a cap of 600.
+    """
+    try:
+        from app.core.semantic_rules import decision_count
+    except Exception:
+        return 0
+    try:
+        return int(decision_count())
+    except Exception:
+        return 0
+
+
 def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[dict]:
     """The atoms the compile dropped, with the stage that dropped them.
 
@@ -670,7 +698,19 @@ def build_orbitbrief_envelope(
         # What the compile THREW AWAY, so a person can say whether it should
         # have. See `_suppressed_for_review`.
         "suppressed": _suppressed_for_review(compile_result, atoms),
+        # HOW MANY there were, before the cap. Without this the ledger is
+        # indistinguishable from a complete one: a deal that suppressed exactly
+        # 300 atoms and a deal that suppressed 4,591 both ship 300 rows, and
+        # nothing on the envelope says which. Measured 2026-09-30 on live dev:
+        # 13 of 18 compiles shipped exactly 300 and 5 shipped exactly 600, so
+        # the caps are not hypothetical -- they bind on most real deals.
+        #
+        # This matters beyond the UI. The suppression ledger is the instrument
+        # every content-loss audit reads, and an audit run against a truncated
+        # ledger under-reports loss while looking thorough.
+        "suppressed_total": _suppressed_total(compile_result),
         "rule_decisions": _rule_decisions_for_review(),
+        "rule_decisions_total": _rule_decisions_total(),
         "coverage": {
             "unrecovered_regions": unrecovered_regions,
             # Line-level: what the parser read, dropped, or never touched.
