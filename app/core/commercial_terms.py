@@ -25,7 +25,10 @@ from __future__ import annotations
 from typing import Any
 
 RELATION = "commercial_terms"
-BILLING_TYPES = ("fixed", "t_and_m", "milestone")
+#: Mirrors HEAD_REGISTRY["billing_type"]. `encode_commercial_verdict` filters
+#: on this, so a shape missing from here is dropped from the verdict rather
+#: than rejected -- which is how per-site billing went unrecorded.
+BILLING_TYPES = ("fixed", "t_and_m", "milestone", "per_site")
 _NUMBER_KEYS = ("pm_hours", "pc_hours", "travel_days")
 
 
