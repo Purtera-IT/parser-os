@@ -50,6 +50,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import telemetry as _telemetry
+
 RELATION = "document_job"
 CANDIDATES = ["this_deal", "other_job"]
 INSTRUCTION = (
@@ -453,7 +455,15 @@ def judge_documents(
     bundles = bundle_documents(by_doc, index)
     model, timeout, floor = judge_model(), judge_timeout(), min_confidence()
     idx = index if index is not None else manifest_index(project_dir)
-    for b in bundles.values():
+
+    # SAY HOW FAR THROUGH THIS IS. The unit is the DOCUMENT BUNDLE, because
+    # that is what costs: one judge call per bundle, however many atoms it
+    # holds. Measured over nine live compiles this stage runs 71s median and
+    # 193s max -- third largest in the pipeline, and it had no counter.
+    _total = len(bundles)
+    if _total:
+        _telemetry.set_stage_progress(0, _total)
+    for _i, b in enumerate(bundles.values(), 1):
         keys = list(b["docs"])
         # In the order they were written, so the opener's lines lead.
         keys.sort(key=lambda k: _when(str((idx.get(_doc_filename(by_doc[k][0], k)) or {}).get("authored_at") or "")) or datetime.max.replace(tzinfo=timezone.utc))
@@ -514,6 +524,10 @@ def judge_documents(
                         a.review_flags = flags
                     except Exception:
                         pass
+        # End of the body, which has no early exit -- verified, because a tick
+        # the loop can skip is a bar that stalls on some deals and not others.
+        if _total:
+            _telemetry.set_stage_progress(_i, _total)
     kept = [a for a in atoms if id(a) not in dropped_ids]
     dropped = [a for a in atoms if id(a) in dropped_ids]
     return kept, dropped, verdicts

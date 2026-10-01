@@ -5099,6 +5099,8 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
 
     Returns ``(atoms_enriched, total_keys_added)`` for telemetry.
     """
+    from app.core import telemetry as _telemetry
+
     atoms_enriched = 0
     total_keys_added = 0
     # Build the project-wide authoritative-site catalog ONCE per
@@ -5316,7 +5318,22 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         atom.entity_keys = non_site
         return True
 
-    for atom in atom_list:
+    # SAY HOW FAR THROUGH THIS IS. 60.5s median over nine live compiles.
+    #
+    # Ticked at the TOP of each iteration with the count COMPLETED, because the
+    # body below has five early exits and a tick placed after any of them is a
+    # bar that stalls on some deals and not others. The loop's own final value
+    # is set once it is over, so the counter still lands on its total.
+    #
+    # The prep above this loop -- the authoritative-site catalog -- is not
+    # counted and cannot be: it is one call over the whole corpus. It is part
+    # of why an estimate taken in this stage's first seconds reads long.
+    _total = len(atom_list)
+    if _total:
+        _telemetry.set_stage_progress(0, _total)
+    for _i, atom in enumerate(atom_list, 1):
+        if _total:
+            _telemetry.set_stage_progress(_i - 1, _total)
         # v49.1: skip schema-emitted atoms entirely
         _atype = getattr(atom, "atom_type", None)
         _atype_str = _atype.value if hasattr(_atype, "value") else str(_atype or "")
@@ -5417,6 +5434,9 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # key. This propagates LLM-found sites (especially those in
     # PDF cover-page headings) onto the atoms that reference them
     # so EntityRecord fusion has something to bind to.
+    if _total:
+        _telemetry.set_stage_progress(_total, _total)
+
     if _SITE_INJECTION_KEYS:
         already_emitted_site_slugs: set[str] = set()
         for atom in atom_list:

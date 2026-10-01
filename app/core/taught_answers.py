@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from app.core import telemetry as _telemetry
+
 RELATION = "question_answered"
 CANDIDATES: tuple[str, str] = ("answered", "open")
 INSTRUCTION = (
@@ -71,21 +73,49 @@ def resolve_taught_answers(atoms: list[Any], *, project_id: str = "") -> int:
         return 0
 
     scope = DecisionScope(deal_id=str(project_id or ""))
-    resolved = 0
+
+    # SAY HOW FAR THROUGH THIS IS.
+    #
+    # Measured over nine live compiles, `open_question_resolution` is the
+    # LARGEST stage in the pipeline -- 204s median, 278s max, 36.8% of the
+    # compile -- and larger than `typed_atom_classification`, which was the
+    # only stage with a counter. The cost is one decide() per open question,
+    # right below.
+    #
+    # The candidates are gathered first so the denominator is the work this
+    # stage will actually do. Counting all atoms would put the bar at a few
+    # percent on a corpus where only the questions cost anything, and a
+    # denominator the loop never approaches cannot produce a usable rate.
+    _candidates = []
     for atom in atoms:
         if _atom_type(atom) != "open_question":
             continue
         value = getattr(atom, "value", None)
         if isinstance(value, dict) and value.get("answered") is True:
             continue  # key overlap already closed it
-        text = _atom_text(atom)
-        if not text:
+        if not _atom_text(atom):
             continue
+        _candidates.append(atom)
+    _total = len(_candidates)
+    if _total:
+        _telemetry.set_stage_progress(0, _total)
+
+    resolved = 0
+    for _i, atom in enumerate(_candidates, 1):
+        value = getattr(atom, "value", None)
+        text = _atom_text(atom)
         try:
             d = decide(RELATION, text[:600], list(CANDIDATES),
                        instruction=INSTRUCTION, scope=scope, model=None)
         except Exception:
+            # In the `finally` below the tick still happens: a question whose
+            # decision RAISED is still a question this stage is done with, and
+            # counting only the successes would stall the bar on exactly the
+            # compile that is going wrong.
             continue
+        finally:
+            if _total:
+                _telemetry.set_stage_progress(_i, _total)
         # Only a taught verdict closes a question. A model guess does not: the
         # cost of wrongly closing one is a fact nobody ever chases, and that is
         # the failure this whole deal has been about.

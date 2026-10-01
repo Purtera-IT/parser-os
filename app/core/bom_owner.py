@@ -24,6 +24,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from app.core import telemetry as _telemetry
+
 RELATION = "bom_owner"
 CANDIDATES = ["we_supply", "customer_furnished"]
 INSTRUCTION = (
@@ -76,17 +78,37 @@ def stamp_bom_owners(atoms: list[Any], *, project_id: str = "") -> tuple[int, li
     scope = DecisionScope(deal_id=str(project_id or ""))
     stamped = 0
     verdicts: list[dict[str, Any]] = []
+
+    # SAY HOW FAR THROUGH THIS IS. 33.7s median and 107s max over nine live
+    # compiles, one decide() per bom_line, and no counter until now.
+    #
+    # The candidates are gathered first because the loop below has early exits
+    # and the denominator has to be the work this stage will actually do: on a
+    # 2,500-atom deal with 90 bom_lines, counting atoms would leave the bar at
+    # 4% when the stage finished.
+    _candidates: list[tuple[Any, str]] = []
     for a in atoms:
         if _atom_type(a) != "bom_line":
             continue
         text = " ".join(str(getattr(a, "raw_text", "") or "").split())
         if not text:
             continue
+        _candidates.append((a, text))
+    _total = len(_candidates)
+    if _total:
+        _telemetry.set_stage_progress(0, _total)
+
+    for _i, (a, text) in enumerate(_candidates, 1):
         try:
             d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=_context(a)[:1200],
                        scope=scope, exclude_created_by=("teacher",))
         except Exception:
             d = None
+        # Ticked here, before the verdict is applied: a decision that raised is
+        # still one this stage is finished with, and the rest of the body is
+        # free.
+        if _total:
+            _telemetry.set_stage_progress(_i, _total)
         verdict = getattr(d, "verdict", None)
         conf = float(getattr(d, "confidence", 0.0) or 0.0)
         source = getattr(d, "source", "fallback")
