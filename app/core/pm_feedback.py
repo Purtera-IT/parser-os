@@ -55,6 +55,25 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # engagement for the same customer. document_job_scope asks per document.
     "document_job": HeadSpec("document_job", "deal", "Document belongs to this job",
                              candidates=("this_deal", "other_job")),
+    # A LINK A LABELER DREW THAT TAUGHT NOTHING.
+    #
+    # `taught_answers` asks decide() for `question_answered` between
+    # ("answered", "open") once per open question -- and that stage,
+    # `open_question_resolution`, is the LARGEST in the pipeline: 204s median,
+    # 36.8% of the compile.
+    #
+    # The labelling API has forwarded those lessons since `answers` links
+    # shipped: atom-labeling-routes.js `forwardAnswersEdge` posts
+    # head="question_answered" to /feedback/correction with the question as the
+    # exemplar. There was no row here, so the endpoint answered
+    # `422 unknown head 'question_answered'` to every one of them.
+    #
+    # The link itself was never lost -- it is INSERTed into
+    # public.atom_label_links before the forward is attempted, so the nightly
+    # retrain still has it. What failed is the instant-learning half: a labeler
+    # closes a question, and the very next compile asks it again.
+    "question_answered": HeadSpec("question_answered", "gap", "Question already answered",
+                                  candidates=("answered", "open")),
     # Who supplies a hardware line. A kit's materials are what we buy; a
     # hardware list in the documents is often the customer's own (010095:
     # four SHI-supplied lines reached the prefill as BOM rows). bom_owner
