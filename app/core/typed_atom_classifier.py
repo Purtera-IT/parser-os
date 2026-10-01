@@ -735,6 +735,30 @@ def classify_atoms(atoms: list[Any]) -> int:
     _t_start = time.perf_counter()
     _t_llm = 0.0
 
+    # HOW FAR THROUGH THE STAGE, IN ATOMS RESOLVED.
+    #
+    # Counting BATCHES was the first attempt and it was wrong twice over,
+    # measured against a real compile rather than reasoned about:
+    #
+    #   - batches do not exist until deflection has finished, so the counter
+    #     stayed silent for the first 72 SECONDS of a 129s stage and the
+    #     panel's rate -- elapsed-in-stage over items-done -- came out an order
+    #     of magnitude too slow. Scored honestly that was 508% to 2626% error.
+    #   - the count reached its total before the stage ended, because applying
+    #     the verdicts comes after.
+    #
+    # Atoms are the unit that spans the whole thing. Every promotable atom is
+    # resolved exactly once -- by a deflect layer, or by the LLM -- so the
+    # denominator is known before any work starts and the count only rises.
+    _total_atoms = len(promotable)
+    _resolved_elsewhere = 0
+
+    def _tick() -> None:
+        """Atoms resolved so far: everything that has left `promotable`."""
+        _telemetry.set_stage_progress(_total_atoms - len(promotable) + _resolved_elsewhere, _total_atoms)
+
+    _tick()
+
     def _lap():
         return time.perf_counter()
 
@@ -794,6 +818,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
         _dfl_ms["store"] += _lap() - _t
+        _tick()
         if not promotable:
             _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
             return 0
@@ -828,6 +853,7 @@ def classify_atoms(atoms: list[Any]) -> int:
             except Exception:
                 pass
         _dfl_ms["student"] += _lap() - _t
+        _tick()
         if not promotable:
             _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
             return 0
@@ -874,6 +900,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
         _dfl_ms["type_head_gpu"] += _lap() - _t
+        _tick()
         if not promotable:
             _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
@@ -908,6 +935,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
         _dfl_ms["type_head"] += _lap() - _t
+        _tick()
         if not promotable:
             _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
@@ -970,6 +998,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
         _dfl_ms["contrastive"] += _lap() - _t
+        _tick()
         if not promotable:
             _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
@@ -996,6 +1025,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         except Exception:
             pass
         _dfl_ms["rubric_gate"] += _lap() - _t
+        _tick()
         if not promotable:
             _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
             return head_deflected
@@ -1024,8 +1054,10 @@ def classify_atoms(atoms: list[Any]) -> int:
     # they are near-uniform in size, and the count rises smoothly enough for a
     # rate to be read off it. The reader turns "k of n, in t seconds" into a
     # remaining time using this run's own pace.
-    _done_batches = 0
-    _telemetry.set_stage_progress(0, len(batches))
+    # Atoms still unresolved when the LLM phase begins. `promotable` no longer
+    # shrinks from here, so the batch loop adds its own tally on top.
+    _pre_llm_resolved = _total_atoms - len(promotable)
+    _llm_resolved = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         future_to_batch = {pool.submit(_classify_batch, b): b for b in batches}
         for fut in concurrent.futures.as_completed(future_to_batch):
@@ -1037,8 +1069,13 @@ def classify_atoms(atoms: list[Any]) -> int:
                 # In the `finally`, because a batch that RAISED is still a batch
                 # that is over -- counting only successes would stall the bar on
                 # exactly the compile that is going wrong.
-                _done_batches += 1
-                _telemetry.set_stage_progress(_done_batches, len(batches))
+                # In the `finally`, because a batch that RAISED is still a
+                # batch that is over -- counting only successes would stall the
+                # bar on exactly the compile that is going wrong.
+                _llm_resolved += len(future_to_batch[fut])
+                _telemetry.set_stage_progress(
+                    min(_pre_llm_resolved + _llm_resolved, _total_atoms), _total_atoms,
+                )
             for atom_id, payload in batch_results.items():
                 results_by_atom_id[atom_id] = payload
     _t_llm = time.perf_counter() - _t_llm0
