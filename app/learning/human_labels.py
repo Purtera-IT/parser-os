@@ -599,10 +599,21 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
         # Postgres, refused by /feedback/correction with `422 unknown head`,
         # and skipped here -- teaching nothing by either route, silently.
         if spec is None:
-            report.skip(
-                f"judgment head {head!r} is not in HEAD_REGISTRY: this is a "
-                f"labelling surface whose verdicts reach no head"
-            )
+            # `rule` is not a miss. Nothing DECIDES a rule at compile time --
+            # SemanticRule thresholds are fitted offline into
+            # models/semantic_rule_thresholds.json and loaded at construction --
+            # so it has no decide() relation and belongs in no registry. Its
+            # verdicts are read by `rule_feedback.rows_from_judgments`, which
+            # turns each one into the row `_train_semantic_rules` already reads.
+            # Saying "reaches no head" about it would be wrong in the other
+            # direction.
+            if head == "rule":
+                report.skip("rule judgments train offline via rule_feedback, not through a head")
+            else:
+                report.skip(
+                    f"judgment head {head!r} is not in HEAD_REGISTRY: this is a "
+                    f"labelling surface whose verdicts reach no head"
+                )
             continue
         if not verdict or len(text) < 3:
             report.skip(f"judgment on {head!r} has no verdict or too little text")

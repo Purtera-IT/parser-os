@@ -153,9 +153,19 @@ def test_an_unregistered_judgment_head_is_reported_as_a_dead_surface():
     # `skipped` is keyed by the reason, so the reason IS the report.
     reasons = list(report.skipped)
     assert len(reasons) == 1, reasons
-    assert "'rule'" in reasons[0], reasons
-    assert "HEAD_REGISTRY" in reasons[0], reasons
+    assert "rule" in reasons[0], reasons
+    # `rule` is not a dead surface any more: nothing decides a rule at compile
+    # time, so it has no relation and no registry row by design, and
+    # `rule_feedback.rows_from_judgments` reads its verdicts directly.
+    assert "rule_feedback" in reasons[0], reasons
     assert report.skipped[reasons[0]] == 1
+
+    # A head that genuinely reaches nothing still says so.
+    dead = IngestReport()
+    rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        {"head": "not_a_head", "target_key": "x", "verdict": "yes", "text": "some text here"},
+    ]}, report=dead)
+    assert any("HEAD_REGISTRY" in r for r in dead.skipped), dead.skipped
 
     # And the message must not be the old one, which said the same thing for a
     # malformed row as for a dead surface.
