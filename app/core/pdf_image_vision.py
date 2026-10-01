@@ -43,6 +43,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from app.core import telemetry as _telemetry
+
 from app.core import crop_thumbnail
 from app.core.ids import stable_id
 from app.core.normalizers import normalize_text
@@ -1242,7 +1244,26 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     budget_s = _float_env("SOWSMITH_PDF_IMAGE_BUDGET_SEC", 480.0)
     t_stage = time.monotonic()
     markers = list(_iter_image_markers(atoms))
+
+    # SAY HOW FAR THROUGH THIS IS. 15.7s median but 136s max over nine live
+    # compiles -- the most VARIABLE stage measured, because it is one or two
+    # vision calls per image at up to a 120s request timeout each. A deal with
+    # thirty drawings sits here for minutes with nothing to show.
+    #
+    # The denominator is capped the same way the loop is: `max_images` is the
+    # most it can ever process, so a deal with 200 markers and a cap of 40
+    # does not read as 20% done when it finished.
+    #
+    # Ticked at the top with the count COMPLETED: the body has two `continue`s
+    # and three `break`s (the host breaker and the time budget among them), and
+    # a tick after any of them would stall on exactly the compiles that are
+    # going slowly.
+    _total = min(len(markers), max_images)
+    if _total:
+        _telemetry.set_stage_progress(0, _total)
     for idx, (marker, pdf_name, page_index, region_ref, saved_path, caption) in enumerate(markers):
+        if _total:
+            _telemetry.set_stage_progress(min(idx, _total), _total)
         if processed >= max_images:
             break
         if _host_tripped():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.core import telemetry as _telemetry
 from app.core.textio import read_text
 
 import csv
@@ -1051,8 +1052,17 @@ def replay_atom_receipts(atom: EvidenceAtom, artifact_paths: dict[str, Path]) ->
 
 
 def attach_receipts_to_atoms(atoms: list[EvidenceAtom], artifact_paths: dict[str, Path]) -> list[EvidenceAtom]:
-    for atom in atoms:
+    # SAY HOW FAR THROUGH THIS IS. 10.9s median over nine live compiles but
+    # 111.7s max: it re-reads every artifact from disk to verify each atom's
+    # receipt, so the cost tracks the SIZE of the documents, not their number.
+    # A deal of large PDFs spends two minutes here.
+    _total = len(atoms)
+    if _total:
+        _telemetry.set_stage_progress(0, _total)
+    for _i, atom in enumerate(atoms, 1):
         atom.receipts = replay_atom_receipts(atom, artifact_paths)
+        if _total:
+            _telemetry.set_stage_progress(_i, _total)
     return atoms
 
 
