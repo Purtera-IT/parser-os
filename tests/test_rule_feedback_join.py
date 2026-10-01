@@ -118,3 +118,111 @@ def test_the_written_rows_are_what_the_trainer_reads():
 
 def test_no_log_means_no_rows_rather_than_a_crash():
     assert read_decisions(Path(tempfile.mkdtemp()) / "absent.jsonl") == []
+
+
+# ---------------------------------------------------------------------------
+# The Rules stage teaches
+# ---------------------------------------------------------------------------
+
+class TestAJudgmentIsAWholeTrainingRow:
+    """The Rules stage was the one labelling surface that reached nothing.
+
+    Measured 2026-10-01 against the live service: a verdict made there was
+    stored in Postgres, refused by /feedback/correction with
+    `422 unknown head 'rule'`, and skipped by the nightly retrain. Three ways to
+    the trainer and none of them connected.
+
+    It needs no decide() relation -- nothing decides a rule at compile time, the
+    thresholds are fitted offline into models/semantic_rule_thresholds.json and
+    loaded at rule construction. What it needed was this: the judgment turned
+    into the row `_train_semantic_rules._feedback_examples` already reads.
+    """
+
+    def _judgment(self, verdict: str, *, rule: str = "list_item_under_label",
+                  text: str = "  (2) terminate  both   ends ", fired: bool = True):
+        return {
+            "head": "rule",
+            "verdict": verdict,
+            "labeler": "griffin@purtera-it.com",
+            "target": {
+                "rule": rule, "text": text, "fired": fired,
+                "bestPos": 0.61, "bestNeg": 0.54, "threshold": 0.58, "margin": 0.03,
+            },
+        }
+
+    def test_the_card_already_carries_every_feature_the_trainer_wants(self):
+        from app.learning.rule_feedback import rows_from_judgments
+
+        rows = rows_from_judgments([self._judgment("should_fire")])
+        assert len(rows) == 1
+        r = rows[0]
+        # The exact shape `_feedback_examples` filters on: rule, text, label.
+        assert r["rule"] == "list_item_under_label"
+        assert r["text"] == "(2) terminate both ends", "text is normalised both sides of the join"
+        assert r["label"] == 1
+        # ...plus the decision's own features, so nothing has to be joined to
+        # the log for a judged row.
+        assert r["best_pos"] == 0.61 and r["best_neg"] == 0.54
+        assert r["threshold"] == 0.58
+        assert r["decision"] is True
+        assert r["truth_source"] == "judgment"
+
+    def test_should_not_fire_is_the_negative_the_corpus_has_none_of(self):
+        from app.learning.rule_feedback import rows_from_judgments
+
+        rows = rows_from_judgments([self._judgment("should_not_fire", fired=False)])
+        assert rows[0]["label"] == 0
+        # 65 rows from two labelled deals, 65 positive, 0 negative. A threshold
+        # fitted on that collapses to zero and the rule admits every line in
+        # the corpus. This is the only route to a negative on a line that made
+        # no atom.
+        assert rows[0]["decision"] is False
+
+    def test_a_verdict_it_does_not_know_is_dropped_not_guessed(self):
+        from app.learning.rule_feedback import rows_from_judgments
+
+        assert rows_from_judgments([self._judgment("maybe")]) == []
+        assert rows_from_judgments([{"head": "gap", "verdict": "valid"}]) == []
+        assert rows_from_judgments([]) == []
+
+    def test_a_target_stored_as_json_text_is_read(self):
+        # Postgres hands back jsonb as a dict through the driver, but an export
+        # or a backup round-trips it as a string.
+        import json as _json
+        from app.learning.rule_feedback import rows_from_judgments
+
+        j = self._judgment("should_fire")
+        j["target"] = _json.dumps(j["target"])
+        assert rows_from_judgments([j])[0]["label"] == 1
+
+    def test_a_person_overrules_the_inference(self):
+        """`join` labels a decision by what became of the atom. A judgment says
+        it directly, and where both exist the direct statement wins."""
+        from app.learning.rule_feedback import join, judged_index
+
+        text = "(2) terminate both ends"
+        decisions = [{"rule": "list_item_under_label", "text": text, "decision": True,
+                      "best_pos": 0.61, "best_neg": 0.54, "threshold": 0.58}]
+        # The atom was accepted, so inference alone says the rule was right (1).
+        inferred = list(join(decisions, {text: True}))
+        assert inferred[0]["label"] == 1 and inferred[0]["truth_source"] == "inferred"
+
+        # A person says it should not have fired. That wins.
+        judged = judged_index([self._judgment("should_not_fire")])
+        overruled = list(join(decisions, {text: True}, judged))
+        assert overruled[0]["label"] == 0
+        assert overruled[0]["truth_source"] == "judgment"
+
+    def test_it_labels_a_silent_skip_that_inference_leaves_unlabelled(self):
+        """The case `join`'s own docstring calls unlabelled: the rule did not
+        fire and left nothing behind, so there is no atom to look at."""
+        from app.learning.rule_feedback import join, judged_index
+
+        text = "page 3 of 14 confidential"
+        decisions = [{"rule": "list_item_under_label", "text": text, "decision": False,
+                      "best_pos": 0.55, "best_neg": 0.57, "threshold": 0.58}]
+        assert list(join(decisions, {})) == [], "inference cannot label this, by design"
+
+        judged = judged_index([self._judgment("should_not_fire", text=text, fired=False)])
+        rows = list(join(decisions, {}, judged))
+        assert len(rows) == 1 and rows[0]["label"] == 0
