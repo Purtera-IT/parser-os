@@ -1058,22 +1058,24 @@ def classify_atoms(atoms: list[Any]) -> int:
     # shrinks from here, so the batch loop adds its own tally on top.
     _pre_llm_resolved = _total_atoms - len(promotable)
     _llm_resolved = 0
-    # THE DENOMINATOR GROWS ONCE, HERE, AND THAT IS HONEST.
+    # THE APPLY PHASE IS NOT COUNTED, AND THAT IS THE MEASURED ANSWER.
     #
-    # Every atom is resolved once, but only the ones that reach the LLM are
-    # then APPLIED -- and applying them is real time that the counter used to
-    # ignore. Measured on a 491s run of this stage, the count reached its total
-    # 28 seconds before the stage ended, and the estimate at 2495/2507 said 1s
-    # when 28 remained: 96% error on the last readings.
+    # It was counted, briefly, to close a 28-second gap at the end of the
+    # stage. Scored on the very next live compile that made the estimate far
+    # WORSE -- 129% median error against 28% without it, 2% of readings within
+    # 2x against 75%.
     #
-    # How many atoms reach the LLM is not knowable until deflection has
-    # finished, so the total cannot be right from the start. It rises once, at
-    # a boundary, and a reader measuring a rate across polls recovers within a
-    # sample or two. A denominator that is briefly low is better than one that
-    # is permanently wrong.
-    _apply_total = len(promotable)
-    _stage_total = _total_atoms + _apply_total
-    _telemetry.set_stage_progress(_pre_llm_resolved, _stage_total)
+    # The reason is in the trajectory: the counter moved 1325 items in 87
+    # seconds while the LLM worked, and then +1337 items in TWO SECONDS once
+    # applying began. The two phases differ in cost per item by about 35x, so a
+    # single denominator spanning both cannot produce a usable rate -- the
+    # remaining count is dominated by work that is nearly free, and every
+    # estimate reads far too long.
+    #
+    # The counter therefore measures the expensive phase only, and the reader
+    # stops estimating in the last tenth, which covers the cheap tail without
+    # pretending to measure it.
+    _stage_total = _total_atoms
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         future_to_batch = {pool.submit(_classify_batch, b): b for b in batches}
         for fut in concurrent.futures.as_completed(future_to_batch):
@@ -1104,13 +1106,7 @@ def classify_atoms(atoms: list[Any]) -> int:
     # next run. We teach the enacted decision, never the raw LLM label, so a
     # rejected ghost teaches "_keep" (what we kept), not the bad promotion.
     applied_verdict: dict[str, str] = {}
-    _applied = 0
     for atom in promotable:
-        _applied += 1
-        # Every 25 so the counter keeps moving through a phase that can run
-        # half a minute, without a blob write per atom.
-        if _applied % 25 == 0:
-            _telemetry.set_stage_progress(_total_atoms + _applied, _stage_total)
         atom_id = _atom_id(atom)
         if not atom_id or atom_id not in results_by_atom_id:
             continue
