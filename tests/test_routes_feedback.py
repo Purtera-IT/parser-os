@@ -534,3 +534,39 @@ def test_correction_without_exemplar_is_refused():
         json={"head": "gap", "text": "   ", "new_value": "not_relevant"},
     )
     assert r.status_code == 422
+
+
+def test_per_site_is_a_billing_shape_the_head_accepts():
+    """The CRM says "Per Site" on real deals, and it is not a fixed fee.
+
+    `commercial_terms.encode_commercial_verdict` FILTERS on BILLING_TYPES, so a
+    shape missing from the set is dropped from the verdict rather than refused.
+    Every per-site deal therefore had its billing silently unrecorded.
+    """
+    from app.core.commercial_terms import BILLING_TYPES, encode_commercial_verdict
+    from app.core.pm_feedback import HEAD_REGISTRY
+
+    assert "per_site" in HEAD_REGISTRY["billing_type"].candidates
+    # The two must agree, or the head accepts a verdict the encoder then drops.
+    assert set(BILLING_TYPES) == set(HEAD_REGISTRY["billing_type"].candidates)
+    assert "billing=per_site" in encode_commercial_verdict(billing="per_site")
+
+    set_store(_store())
+    client = _client()
+    r = client.post("/projects/p1/feedback/correction", json={
+        "head": "billing_type", "deal_id": "p1", "target_id": "deal",
+        "text": "12 sites, priced per site", "old_value": "fixed", "new_value": "per_site",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["relation"] == "billing_type"
+
+
+def test_a_billing_shape_nobody_declared_is_still_refused():
+    """Adding a class is not the same as opening the set."""
+    set_store(_store())
+    client = _client()
+    r = client.post("/projects/p1/feedback/correction", json={
+        "head": "billing_type", "deal_id": "p1", "target_id": "deal",
+        "text": "priced by the hour on Tuesdays", "old_value": "fixed", "new_value": "whatever",
+    })
+    assert r.status_code == 422, r.text

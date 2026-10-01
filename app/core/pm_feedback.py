@@ -132,7 +132,22 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # invoiced. Every Deal Kit states it on page one, so the labels already
     # exist; nothing was reading them.
     "billing_type": HeadSpec("billing_type", "deal", "How is this billed?",
-                             candidates=("fixed", "t_and_m", "milestone")),
+                             # PER-SITE IS A FOURTH SHAPE, not a flavour of fixed.
+                             #
+                             # The CRM states billing in its own words and
+                             # "Per Site" is a live value on real deals, beside
+                             # "T&M" and "Fixed Fee". It is not a fixed fee: the
+                             # price is a unit multiplied by a site count, which
+                             # the deal header carries, and it prices and risks
+                             # differently. Collapsed into `fixed` the head would
+                             # learn to call two different things the same thing
+                             # and no consumer could tell them apart again.
+                             #
+                             # Left out, which is what happened until now, it was
+                             # worse than wrong: `commercial_terms.BILLING_TYPES`
+                             # filters on this set, so every per-site deal had
+                             # its billing silently dropped from the verdict.
+                             candidates=("fixed", "t_and_m", "milestone", "per_site")),
     "site":      HeadSpec("same_physical_site", "entity", "Site identity",
                           candidates=("same_site", "distinct_site")),
     # A table of addresses is not automatically a table of SITES: a contact

@@ -974,6 +974,41 @@ def _mention_context(atoms: list[Any], i: int, *, mentions: list[tuple[int, str]
     return head + "lines around it:\n" + "\n".join(lines)
 
 
+#: At most this many rejected places are kept on one atom. A recap naming
+#: thirty cities should not turn one atom into a corpus, and the labelling card
+#: shows a handful.
+_MAX_REJECTED_PER_ATOM = 12
+
+
+def record_rejected_mention(atom: Any, *, label: str, verdict: str | None,
+                            confidence: float, source: str, mentions: int) -> bool:
+    """Keep a place we declined, on the atom whose text named it.
+
+    Returns whether it was kept, so the cap is observable. Named rather than
+    inlined because a silent cap is one nothing can check.
+    """
+    bag = getattr(atom, "value", None)
+    if not isinstance(bag, dict):
+        bag = {}
+        try:
+            atom.value = bag
+        except Exception:
+            return False
+    rejected = bag.setdefault("geo_mention_rejected", [])
+    if not isinstance(rejected, list) or len(rejected) >= _MAX_REJECTED_PER_ATOM:
+        return False
+    rejected.append({
+        "label": label,
+        # What we decided and how sure: an abstain and a confident
+        # `mention_only` are different mistakes.
+        "verdict": verdict or "abstain",
+        "confidence": round(float(confidence or 0.0), 3),
+        "source": source or "fallback",
+        "mentions": int(mentions),
+    })
+    return True
+
+
 def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str, Any]] | None = None) -> list[EvidenceAtom]:
     """Mint inferred ``physical_site`` atoms for places the documents name
     that no site carries yet, when the store or the model calls them job
@@ -1098,6 +1133,30 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
             pass
         bar = _MENTION_MIN_CONF if (lv and lv[0] is not None) else _PROSE_MIN_CONF
         if verdict != "job_site" or not (source == "store" or conf >= bar):
+            # THE PLACES WE SAID NO TO ARE THE ONLY NEGATIVES THIS HEAD CAN GET.
+            #
+            # A candidate that clears the bar becomes a physical_site atom and a
+            # person can overturn it. One that does not leaves NOTHING -- so
+            # until now there was no way to say "that one IS a job site", and
+            # `geo_mention_role` could only ever be taught on its positives.
+            #
+            # That is the shape that wrecked the rules corpus: 65 rows from two
+            # labelled deals, 65 positive, 0 negative, because an atom exists
+            # only where the thing fired. A boundary fitted on one side of
+            # itself collapses.
+            #
+            # So the rejection is stamped on the atom whose text mentioned the
+            # place. That atom already survives to the envelope and its `value`
+            # is projected as `structured`, which is how `supplied_by` and
+            # `image_kind` reach the labelling cards -- no new envelope key and
+            # no allowlist to negotiate.
+            try:
+                record_rejected_mention(
+                    atoms[i], label=label, verdict=verdict, confidence=conf,
+                    source=source, mentions=len(entry["mentions"]),
+                )
+            except Exception:
+                pass
             continue
         atom = atoms[i]
         artifact_id = _artifact_of(atom)
