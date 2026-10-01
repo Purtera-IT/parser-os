@@ -110,6 +110,62 @@ def test_judgments_become_rows_for_their_own_heads():
     assert all(r["teacher"] == "human" for r in rows)
 
 
+def test_the_dropped_stage_teaches_the_admission_head():
+    """Judging what the compile threw away is the `admission` question.
+
+    The labelling workspace has offered a Dropped stage ("What the compile
+    threw away") since it shipped, and `suppression` was in no registry. So
+    every verdict made there was stored in Postgres, refused by
+    /feedback/correction with `422 unknown head`, and skipped here -- it taught
+    nothing by either route, and nothing said so.
+
+    It asks `admission`'s question in different words, so it is mapped onto it.
+    """
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        {"head": "suppression", "target_key": "s1", "verdict": "should_have_been_kept",
+         "text": "Remote hands technician, 8 hours, Building B704"},
+        {"head": "suppression", "target_key": "s2", "verdict": "correctly_dropped",
+         "text": "Page 3 of 14 -- CONFIDENTIAL"},
+    ]})
+    by = {(r["relation"], r["label"]) for r in rows}
+    # should_have_been_kept means the suppression was WRONG, so the atom should
+    # have been admitted. Backwards, this would teach the head to drop exactly
+    # what a person rescued.
+    assert ("admission", "keep") in by, by
+    assert ("admission", "drop") in by, by
+
+
+def test_an_unregistered_judgment_head_is_reported_as_a_dead_surface():
+    """Three different failures shared one message and the worst was invisible.
+
+    An unregistered head is not a malformed row -- it is a whole labelling
+    surface whose verdicts reach no head. The corpus report has to be able to
+    say which one.
+    """
+    from app.learning.human_labels import IngestReport
+
+    report = IngestReport()
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        {"head": "rule", "target_key": "r1", "verdict": "should_not_fire",
+         "text": "a line the list_item_under_label rule fired on"},
+    ]}, report=report)
+    assert rows == [], "an unregistered head must not produce gold under a guessed relation"
+    # `skipped` is keyed by the reason, so the reason IS the report.
+    reasons = list(report.skipped)
+    assert len(reasons) == 1, reasons
+    assert "'rule'" in reasons[0], reasons
+    assert "HEAD_REGISTRY" in reasons[0], reasons
+    assert report.skipped[reasons[0]] == 1
+
+    # And the message must not be the old one, which said the same thing for a
+    # malformed row as for a dead surface.
+    empty = IngestReport()
+    rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        {"head": "gap", "target_key": "g1", "verdict": "", "text": "a real question here"},
+    ]}, report=empty)
+    assert list(empty.skipped) != reasons, "two different failures still share one message"
+
+
 def test_evidence_links_become_human_edges():
     rows = rows_for_deal({"deal_id": "d1", "labels": [], "links": [
         {"from_head": "gap", "from_key": "g1", "from_text": "Who provides the lift?", "to_kind": "atom",
