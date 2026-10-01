@@ -534,6 +534,39 @@ def _link_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestRepo
     return rows
 
 
+#: Judgment heads that ask an EXISTING head's question in different words.
+#:
+#: The Dropped stage asks "was this atom right to throw away?", which is the
+#: `admission` head's question exactly -- same decision, same two outcomes --
+#: asked about an atom the compile suppressed rather than one it kept. It had no
+#: registry row of its own, so the answers reached nothing; mapped onto
+#: `admission` they join the gold that head already learns from.
+#:
+#: Note the direction. `should_have_been_kept` means the suppression was WRONG,
+#: so the atom should have been admitted: admission `keep`. This is the same
+#: collision of names the atom-label mapping above documents, and getting it
+#: backwards would teach the head to drop exactly what a person rescued.
+_JUDGMENT_HEAD_ALIASES: dict[str, tuple[str, dict[str, str]]] = {
+    "suppression": ("admission", {
+        "should_have_been_kept": "keep",
+        "correctly_dropped": "drop",
+    }),
+}
+
+
+def _translate_judgment(head: str, verdict: str) -> tuple[str, str]:
+    """Map a judgment surface onto the head whose question it asks.
+
+    Returns the pair unchanged when there is nothing to translate, so an
+    unregistered head still reaches the skip that names it.
+    """
+    alias = _JUDGMENT_HEAD_ALIASES.get(head)
+    if alias is None:
+        return head, verdict
+    target, verdicts = alias
+    return target, verdicts.get(verdict, verdict)
+
+
 def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
     """Conflict / site / site_role / gap / document_job verdicts -> one row each,
     under the relation that head decides (pm_feedback.HEAD_REGISTRY), so the
@@ -547,11 +580,32 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
         if not _is_a_person(j.get("labeler")):
             report.skip("labeler is not a person")
             continue
-        spec = HEAD_REGISTRY.get(str(j.get("head") or ""))
+        head = str(j.get("head") or "")
         verdict = str(j.get("verdict") or "").strip()
+        head, verdict = _translate_judgment(head, verdict)
+        spec = HEAD_REGISTRY.get(head)
         text = " ".join(str(j.get("text") or "").split())
-        if spec is None or not verdict or len(text) < 3:
-            report.skip("judgment without a known head, verdict or text")
+        # THREE DIFFERENT FAILURES SHARED ONE MESSAGE, AND THE WORST OF THEM
+        # WAS INVISIBLE.
+        #
+        # "judgment without a known head, verdict or text" was reported for an
+        # unregistered head, an empty verdict and a two-character text alike.
+        # The first is not a malformed row -- it is a whole LABELLING SURFACE
+        # that teaches nothing, and the corpus report could not say so.
+        #
+        # Measured 2026-10-01: the labelling workspace offers a Rules stage and
+        # a Dropped stage, and neither `rule` nor `suppression` was in
+        # HEAD_REGISTRY. So every judgment made on either was stored in
+        # Postgres, refused by /feedback/correction with `422 unknown head`,
+        # and skipped here -- teaching nothing by either route, silently.
+        if spec is None:
+            report.skip(
+                f"judgment head {head!r} is not in HEAD_REGISTRY: this is a "
+                f"labelling surface whose verdicts reach no head"
+            )
+            continue
+        if not verdict or len(text) < 3:
+            report.skip(f"judgment on {head!r} has no verdict or too little text")
             continue
         if spec.candidates and verdict not in spec.candidates:
             report.skip(f"judgment verdict outside {j.get('head')}'s classes")
