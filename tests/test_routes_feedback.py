@@ -371,6 +371,7 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "admission": "admission",
     "gap": "gap_valid",
     "conflict": "edge_relation",
+    "question_answered": "question_answered",
     "site": "same_physical_site",
     "roster": "site_roster_table",
     "norm": "value_norm",
@@ -472,6 +473,56 @@ def test_image_head_is_valid_on_both_correction_endpoints():
     r2 = client.post("/projects/p1/feedback/correction/chip", json=payload)
     assert r2.status_code == 200, r2.text
     assert r2.json()["relation"] == "pdf_image_kind"
+
+
+def test_an_answers_link_is_accepted_by_the_endpoint_it_is_sent_to():
+    """The link a labeler drew that taught nothing.
+
+    `atom-labeling-routes.js forwardAnswersEdge` has posted exactly this body
+    since `answers` links shipped -- the QUESTION as the exemplar, "open" ->
+    "answered". With no registry row the endpoint answered `422 unknown head`
+    to every one of them, so a labeler closed a question and the next compile
+    asked it again.
+
+    The payload below is the one that function builds, field for field.
+    """
+    set_store(_store())
+    client = _client()
+    payload = {
+        "head": "question_answered",
+        "deal_id": "p1",
+        "compile_id": "c1",
+        "target_id": "q_label_key",
+        "text": "Any chance you have another way of sharing the recording?",
+        "old_value": "open",
+        "new_value": "answered",
+        "scope": "deal",
+    }
+    r = client.post("/projects/p1/feedback/correction", json=payload)
+    assert r.status_code == 200, r.text
+    # The relation has to be the one `taught_answers` ASKS for, or the lesson is
+    # banked where nothing looks it up.
+    assert r.json()["relation"] == "question_answered"
+
+    r2 = client.post("/projects/p1/feedback/correction/chip", json=payload)
+    assert r2.status_code == 200, r2.text
+
+
+def test_a_question_verdict_outside_the_head_vocabulary_is_refused():
+    """`taught_answers` acts on "answered" and nothing else. A verdict it has
+    no class for would shape the fitted boundary and then be thrown away."""
+    set_store(_store())
+    client = _client()
+    r = client.post("/projects/p1/feedback/correction", json={
+        "head": "question_answered",
+        "deal_id": "p1",
+        "target_id": "q1",
+        "text": "Who supplies the switches?",
+        "old_value": "open",
+        "new_value": "withdrawn",
+    })
+    assert r.status_code == 422, r.text
+    assert "question_answered" in r.text
 
 
 def test_correction_without_exemplar_is_refused():
