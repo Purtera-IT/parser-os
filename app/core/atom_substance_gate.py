@@ -904,6 +904,25 @@ def _has_scope_object(text: str, entity_keys: list[str]) -> bool:
     return False
 
 
+def _speech_or_stated_fact(atom: Any, text: str) -> bool:
+    """Words that were never OCR'd, or that state a job fact, are not debris.
+
+    A call turn is speech-to-text: its words are words, and the debris test
+    only ever met it through a wordlist gap -- 010087's "So that'll be the
+    only region that won't have a stack coordinator." was dropped as OCR
+    debris on "that'll", "won't" and "coordinator". And a line about a site,
+    a quantity, the schedule or the crew is held to the bar of real debris
+    (most of its words not words at all), not the bar of prose."""
+    refs = getattr(atom, "source_refs", None) or []
+    at = getattr(refs[0], "artifact_type", None) if refs else None
+    if str(getattr(at, "value", at) or "") == "transcript":
+        return True
+    from app.core.utterance_typing import asks_or_states_deal_fact
+    from app.core.text_quality import readability
+
+    return asks_or_states_deal_fact(text) and readability(text) >= 0.3
+
+
 _ROUTING_HEADER_KINDS = frozenset({"email_header", "quoted_message_header", "hubspot_note_meta"})
 
 
@@ -933,7 +952,7 @@ def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
             kept.append(atom)
             continue
         text = _atom_text(atom)
-        if is_unreadable(text):
+        if is_unreadable(text) and not _speech_or_stated_fact(atom, text):
             flags = list(getattr(atom, "review_flags", None) or [])
             if "unreadable_ocr" not in flags:
                 flags.append("unreadable_ocr")

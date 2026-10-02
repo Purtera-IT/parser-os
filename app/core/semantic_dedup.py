@@ -2103,6 +2103,7 @@ def _resolve_cross_type_group(members: list[Any], pool: list[Any] | None = None)
     pool = pool or members
     winner = max(pool, key=lambda a: (_cross_type_priority(a), _rank(a)))
     winner = _not_at_the_cost_of_the_words(winner, pool)
+    winner = _not_at_the_cost_of_the_address(winner, pool)
     # Only a member of a DIFFERENT type is a lossy retyping of the winner's
     # sentence. A member of the SAME type is an intra-type duplicate, which
     # is semantic_dedup's job and not this one's -- as the docstring above

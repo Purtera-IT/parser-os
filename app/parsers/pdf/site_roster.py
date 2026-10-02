@@ -15,6 +15,26 @@ from typing import Any
 import re
 
 
+def facility_key(name: Any) -> str | None:
+    """A dedupe key for a site known only by its facility name."""
+    n = re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).strip()
+    return f"facility:{n}" if n else None
+
+
+def site_row_address_text(site_row: Any) -> str | None:
+    """The row's address as the source wrote it: street, then the city /
+    state / ZIP line when the row resolved one. The atom's text is its
+    evidence, so the city line read off the page belongs in it (010003)."""
+    street = str(getattr(site_row, "street_address", None) or "").strip()
+    city = str(getattr(site_row, "city", None) or "").strip()
+    state = str(getattr(site_row, "state", None) or "").strip()
+    zip_ = str(getattr(site_row, "zip", None) or "").strip()
+    tail = ", ".join(x for x in (city, " ".join(x for x in (state, zip_) if x)) if x)
+    if street and tail and tail.lower() not in street.lower():
+        return f"{street}, {tail}"
+    return street or None
+
+
 def _fitz_site_roster_fallback(
     *,
     pdf_path: Path,
@@ -180,7 +200,17 @@ def _fitz_site_roster_fallback(
                             sid = compact
                     if sid in already_emitted:
                         continue
+                    # The structured path already emitted this row, keyed by
+                    # its facility (a roster with no site-id column has no id
+                    # to dedupe on): a second, poorer copy of the site is noise
+                    # (010003: "facility: NYC Office | address: 40 10th Ave
+                    # Fl 4" beside the full row).
+                    _fkey = facility_key(site_row.facility_name)
+                    if not sid and _fkey and _fkey in already_emitted:
+                        continue
                     already_emitted.add(sid)
+                    if _fkey:
+                        already_emitted.add(_fkey)
                     canon_id = sid or site_row.facility_name or ""
                     if not canon_id:
                         continue
@@ -189,7 +219,7 @@ def _fitz_site_roster_fallback(
                         for k, v in [
                             ("site_id", sid or site_row.site_id),
                             ("facility", site_row.facility_name),
-                            ("address", site_row.street_address),
+                            ("address", site_row_address_text(site_row)),
                             ("mdf_idf", site_row.mdf_idf),
                             ("access", site_row.access_window),
                             ("escort", site_row.escort_owner),

@@ -38,6 +38,10 @@ _SHORT_WORDS = frozenset({
 })
 
 
+#: What follows the apostrophe of an English contraction.
+_CLITICS = frozenset({"t", "s", "re", "ve", "ll", "d", "m"})
+
+
 #: Abbreviations a priced or scheduled line is written in. Not in an English
 #: wordlist, and short and consonant-heavy, which is exactly what debris looks
 #: like: live signed SOW "Engineer (est 3 hrs per site) ... 99 ... $9,504" was
@@ -88,6 +92,24 @@ def _is_word(tok: str, _compound: bool = True) -> bool:
         # simple possessive / hyphen halves
         if core.endswith("'s") and core[:-2] in words:
             return True
+        # A contraction is its word plus a clitic: "don't", "won't",
+        # "doesn't", "we'll", "they're". 010087: "we don't have a stack
+        # coordinator" was dropped as OCR debris on "don't" and
+        # "coordinator" alone.
+        if "'" in core or "’" in core:
+            head, _, tail = core.replace("’", "'").rpartition("'")
+            if tail in _CLITICS and head and (
+                head in words or head in _SHORT_WORDS
+                or (tail == "t" and head.endswith("n") and (head[:-1] in words or head[:-1] in _SHORT_WORDS))
+            ):
+                return True
+        # An agent noun the list lacks: "coordinator", "integrator",
+        # "estimator" read as their verb ("coordinate").
+        for suf in ("or", "ors"):
+            if core.endswith(suf) and len(core) - len(suf) >= 4:
+                stem = core[: -len(suf)]
+                if stem + "e" in words or stem in words:
+                    return True
         parts = [p for p in core.split("-") if p]
         if len(parts) > 1 and all(p in words or len(p) < 3 for p in parts):
             return True

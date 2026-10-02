@@ -21,9 +21,15 @@ import re
 from pathlib import Path
 from typing import Any
 
-#: Text we can read back and diff. A PDF's line breaks are a rendering, not
-#: the source, so it is out of scope here.
+#: Text we can read back and diff.
 TEXT_SUFFIXES = {".eml", ".txt", ".md", ".msg", ".html", ".htm"}
+#: A PDF is read back line by line off its text layer. Its line breaks are a
+#: rendering, so a line is claimed by the atoms that between them carry its
+#: words, not by one atom that merely touches it (010003: "f. Complete
+#: billing tasks" and the PO's "CDW PO's are not transferrable." were never
+#: atoms and never showed as unread).
+PDF_SUFFIXES = {".pdf"}
+_MAX_PDF_PAGES = 200
 
 _CHROME_RE = re.compile(
     r"^\s*(?:"
@@ -137,6 +143,62 @@ def _html_to_text(html: str) -> str:
     return "\n".join(re.sub(r"[ \t]+", " ", x).strip() for x in t.splitlines())
 
 
+def _read_pdf_lines(path: Path) -> list[tuple[int | None, str]]:
+    try:
+        import fitz  # PyMuPDF
+    except Exception:
+        return []
+    out: list[tuple[int | None, str]] = []
+    try:
+        with fitz.open(str(path)) as doc:
+            for pno in range(min(doc.page_count, _MAX_PDF_PAGES)):
+                for ln in (doc.load_page(pno).get_text("text") or "").splitlines():
+                    out.append((pno + 1, ln))
+    except Exception:
+        return []
+    return out
+
+
+def _read_lines(path: Path) -> list[tuple[int | None, str]]:
+    """(page, line) pairs: page is None for a text artifact."""
+    if path.suffix.lower() in PDF_SUFFIXES:
+        return _read_pdf_lines(path)
+    return [(None, ln) for ln in _read_text(path).splitlines()]
+
+
+def _is_claimed(n: str, claimed: list[str], joined: str = "") -> bool:
+    """Is the normalized line ``n`` carried by the atoms?
+
+    Claimed when one atom's text contains the whole line, or when atoms whose
+    text sits INSIDE the line together cover all of it but an enumerator or
+    a stray word ("a." before "Coordinate resources..."). One short atom
+    inside a long line no longer claims the line: "Line 1 | ... | $4,500.00
+    CDW PO's are not transferrable." is not read because "4 500 00" was.
+    """
+    if any(n in c for c in claimed):
+        return True
+    # A wrapped line is a fragment of an atom; a line that runs across a
+    # sentence break ("... by Friday. Also the riser") is the tail of one
+    # atom and the head of the next, so it is also read against the atoms
+    # laid end to end.
+    if len(n) >= _MIN_CHARS and n in joined:
+        return True
+    covered = bytearray(len(n))
+    for c in claimed:
+        if len(c) < 3 or len(c) >= len(n):
+            continue
+        start = n.find(c)
+        while start != -1:
+            end = start + len(c)
+            # whole words only
+            if (start == 0 or n[start - 1] == " ") and (end == len(n) or n[end] == " "):
+                for k in range(start, end):
+                    covered[k] = 1
+            start = n.find(c, start + 1)
+    residue = "".join(ch for ch, cv in zip(n, covered) if not cv and ch != " ")
+    return len(residue) <= max(2, int(0.1 * len(n.replace(" ", ""))))
+
+
 def _read_text(path: Path) -> str:
     try:
         raw = path.read_bytes()
@@ -194,25 +256,18 @@ def _atom_texts(atoms: list[Any], artifact_id: str | None) -> list[str]:
                 n = _norm(lead)
                 if n:
                     out.append(n)
-        loc = getattr(a, "locator", None)
-        if isinstance(loc, dict):
-            for lead in loc.get("lead_in") or []:
+        locs = [getattr(a, "locator", None)]
+        locs += [getattr(r, "locator", None) for r in (getattr(a, "source_refs", None) or [])[:1]]
+        for loc in locs:
+            if not isinstance(loc, dict):
+                continue
+            # A heading the parser read as structure (the section an atom
+            # sits under) was read, not missed.
+            for lead in list(loc.get("lead_in") or []) + list(loc.get("section_path") or []):
                 n = _norm(lead)
                 if n:
                     out.append(n)
     return out
-
-
-def _is_claimed(n: str, claimed: list[str], joined: str) -> bool:
-    """Some atom quotes this line. A wrapped line is a fragment of an atom; a
-    line that runs across a sentence break ("... by Friday. Also the riser")
-    is the tail of one atom and the head of the next, so it is also read
-    against the atoms laid end to end, and sentence by sentence."""
-    if any(n in c or c in n for c in claimed):
-        return True
-    if len(n) >= _MIN_CHARS and n in joined:
-        return True
-    return False
 
 
 def _sentences_claimed(line: str, claimed: list[str], joined: str) -> bool:
@@ -223,17 +278,22 @@ def _sentences_claimed(line: str, claimed: list[str], joined: str) -> bool:
     return all(len(p) < _MIN_CHARS or _is_claimed(p, claimed, joined) for p in parts)
 
 
-def _source_lines(text: str) -> list[tuple[int, str, bool]]:
-    """``(line_no, stripped_line, quoted)`` for every non-blank line."""
-    raw_lines = text.splitlines()
+def _source_lines(path: Path) -> list[tuple[int, int | None, str, bool]]:
+    """``(line_no, page, stripped_line, quoted)`` for every non-blank line;
+    page is None for a text artifact."""
+    return _lines_of(_read_lines(path))
+
+
+def _lines_of(pairs: list[tuple[int | None, str]]) -> list[tuple[int, int | None, str, bool]]:
+    raw_lines = [ln for _, ln in pairs]
     q_from = _quoted_from(raw_lines)
     out = []
-    for i, raw in enumerate(raw_lines, start=1):
+    for i, (page, raw) in enumerate(pairs, start=1):
         line = raw.strip()
         if not _norm(line):
             continue
         quoted = (q_from is not None and i - 1 >= q_from) or line.startswith(">")
-        out.append((i, line, quoted))
+        out.append((i, page, line, quoted))
     return out
 
 
@@ -252,8 +312,8 @@ def coverage_for_artifact(
     reply quoting the message it answers -- is listed as ``copy``: still
     visible, never counted as unread a second time.
     """
-    text = _read_text(path)
-    if not text:
+    source_lines = _source_lines(path)
+    if not source_lines:
         return {}
     # A signature, a quoted history, a repeated ask: read ONCE for the deal on
     # purpose. Looking only at this artifact's atoms, every later copy reads as
@@ -266,7 +326,7 @@ def coverage_for_artifact(
     lines: list[dict[str, Any]] = []
     n_claimed = 0
     counted_here: set[str] = set()
-    for i, line, quoted in _source_lines(text):
+    for i, page, line, quoted in source_lines:
         n = _norm(line)
         if _is_claimed(n, claimed, joined) or _sentences_claimed(line, claimed, joined):
             n_claimed += 1
@@ -301,6 +361,8 @@ def coverage_for_artifact(
         row = {"line": i, "text": line[:400], "state": state}
         if quoted:
             row["quoted"] = True
+        if page is not None:
+            row["page"] = page
         lines.append(row)
     total = n_claimed + len(lines)
     return {
@@ -326,7 +388,7 @@ def _line_owners(texts: dict[str, str]) -> dict[str, str]:
     owner: dict[str, str] = {}
     quoted_owner: dict[str, str] = {}
     for aid, text in texts.items():
-        for _i, line, quoted in _source_lines(text):
+        for _i, _page, line, quoted in _lines_of([(None, ln) for ln in text.splitlines()]):
             n = _norm(line)
             if len(n) < _MIN_CHARS:
                 continue
@@ -352,10 +414,10 @@ def build_text_coverage(
     for artifact_id, path in (artifact_paths or {}).items():
         try:
             p = Path(path)
-            if p.suffix.lower() not in TEXT_SUFFIXES:
+            if p.suffix.lower() not in TEXT_SUFFIXES | PDF_SUFFIXES:
                 continue
             paths[str(artifact_id)] = p
-            texts[str(artifact_id)] = _read_text(p)
+            texts[str(artifact_id)] = "\n".join(ln for _, ln in _read_lines(p))
         except Exception:
             continue
     try:
@@ -372,4 +434,4 @@ def build_text_coverage(
     return out
 
 
-__all__ = ["build_text_coverage", "coverage_for_artifact", "TEXT_SUFFIXES"]
+__all__ = ["build_text_coverage", "coverage_for_artifact", "PDF_SUFFIXES", "TEXT_SUFFIXES"]

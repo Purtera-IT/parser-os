@@ -388,7 +388,27 @@ def _is_table(rows: list[list[_Seg]], cols: list[list[_Seg]]) -> bool:
             return True
         if aligned >= 0.8 * len(rows) and lw < 0.5 * rw:
             return True
+        # Every row is a full row or a right cell wrapped under one, and a
+        # wrap is a row's own (one between two full rows, or an address's
+        # "City, ST ZIP" line closing the last row): a grid whose left cells
+        # name what the right cells hold. Its width ratio says nothing --
+        # "New York, NY 10014" is narrower than "NEW YORK, NY 10014" and the
+        # 010003 site table fell apart into two boxes on the case.
+        wraps = [
+            i for i in range(1, len(rows))
+            if len(rows[i - 1]) >= 2 and len(rows[i]) == 1 and id(rows[i][0]) not in left_ids
+        ]
+        full = sum(1 for r in rows if len(r) >= 2)
+        if wraps and full >= 2 and full + len(wraps) == len(rows) and lw < rw and all(
+            (i + 1 < len(rows) and len(rows[i + 1]) >= 2) or _CITY_LINE.search(rows[i][0].text)
+            for i in wraps
+        ):
+            return True
     return False
+
+
+#: The city line of an address: "New York, NY 10014".
+_CITY_LINE = re.compile(r"[A-Za-z .'-]+,\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\s*$")
 
 
 def _style_key(s: _Seg) -> tuple:

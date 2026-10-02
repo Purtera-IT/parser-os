@@ -137,6 +137,11 @@ class AtomType(str, Enum):
 
     # ─── Tier 1: deal/commercial context ───
     deal_metadata = "deal_metadata"
+    # Relationship talk kept as a reject-able line: a greeting, a sign-off, a
+    # signature, a call's banter. Assigned only at the end of a compile
+    # (``deal_chatter.retype_small_talk``); every stage before it sees
+    # deal_metadata + chatter, as it always has.
+    small_talk = "small_talk"
     commercial_total = "commercial_total"
     payment_term = "payment_term"
     change_order_rule = "change_order_rule"
