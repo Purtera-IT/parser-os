@@ -684,6 +684,30 @@ def dedup_quoted_history(
         for stamp in _minute_stamps_around(str(v.get("date") or "")) if addr else ():
             originals.setdefault(et["thread_id"], set()).add((addr, stamp))
 
+    # 1c) The same, deal-wide, keyed by WHO wrote the line and WHEN. A reply
+    # filed under another thread (a new subject, no In-Reply-To) still quotes
+    # a message the deal holds as its own file; those lines are that file's,
+    # not the reply's (live 010003: 20 lines of earlier mail sat under three
+    # later emails). Matching the author and the minute keeps two people who
+    # wrote the same sentence apart.
+    authored_by: dict[str, set[tuple[str, str]]] = {}
+    for atom in atoms:
+        if _thread_of(atom) is None or _is_quoted(atom):
+            continue
+        key = _norm_key(atom)
+        ident = _message_identity(atom) if len(key) >= _MIN_DEDUP_LEN else None
+        if ident is not None:
+            for stamp in ident[2]:
+                authored_by.setdefault(key, set()).add((ident[1], stamp))
+    all_originals: set[tuple[str, str]] = set().union(*originals.values()) if originals else set()
+
+    def _quotes_a_held_message(atom: EvidenceAtom, key: str) -> bool:
+        who = authored_by.get(key)
+        if not who:
+            return False
+        ident = _message_identity(atom)
+        return ident is not None and any((ident[1], st) in who for st in ident[2])
+
     # 2) Walk atoms in thread order; drop a quoted atom whose key matches an
     # authored original OR an earlier-kept quoted copy in the same thread.
     #
@@ -712,7 +736,8 @@ def dedup_quoted_history(
         if et is not None and v.get("kind") == "quoted_message_header":
             tid = et["thread_id"]
             key = (_address(str(v.get("sender") or "")), _minute_stamp(str(v.get("sent_at") or "")))
-            if key[0] and key[1] and (key in originals.get(tid, ()) or key in seen_headers.get(tid, ())):
+            if key[0] and key[1] and (key in originals.get(tid, ()) or key in seen_headers.get(tid, ())
+                                      or key in all_originals):
                 dropped.append(atom)
                 continue
             seen_headers.setdefault(tid, set()).add(key)
@@ -726,7 +751,9 @@ def dedup_quoted_history(
             kept.append(atom)
             continue
         tid = et["thread_id"]
-        if key in authored_keys.get(tid, ()):  # echo of an authored original
+        if key in authored_keys.get(tid, ()) or _quotes_a_held_message(atom, key):
+            # echo of an authored original (in this thread, or the same
+            # author's message held as a file under another thread)
             dropped.append(atom)
             continue
         seen = seen_quoted.setdefault(tid, set())

@@ -532,9 +532,35 @@ def build_orbitbrief_envelope(
     held_chatter = [a for a in _kept if _held(a)]
     atoms = [a for a in _kept if not _held(a)]
     _copy_ids_by_artifact: dict[str, list[str]] = defaultdict(list)
+    # (document, canonical atom) pairs where the document holds its own copy:
+    # that document lists its copy, not the other document's atom.
+    _copied_here: set[tuple[str, str]] = set()
+    from app.core.cross_doc_copies import (
+        holds_own_line as _holds_own_line,
+        line_key as _line_key,
+        quoted_in as _quoted_in,
+    )
+
+    _own_by_artifact: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for _a in atoms:
+        _own_by_artifact[str(_a.artifact_id or "")].append(_line_key(_a))
+
+    def _holds_own(artifact_id: str, a: Any) -> bool:
+        """Another document's atom that cites ``artifact_id`` (a dedup
+        survivor carrying its ref) is not this document's: it is left out of
+        ``atom_ids`` when the document holds its own copy or its own atom of
+        that line (000132: 35 v1 atoms listed in v2's section), or when its
+        line there was only a quote of the atom's own message (010003)."""
+        if (artifact_id, str(a.id)) in _copied_here or artifact_id in _quoted_in(a):
+            return True
+        return _holds_own_line(a, _own_by_artifact.get(artifact_id, ()))
+
     for _a in held_chatter:
         if _is_copy(_a):
             _copy_ids_by_artifact[str(_a.artifact_id or "")].append(str(_a.id))
+            _dup = (_a.value or {}).get("duplicate_of") if isinstance(_a.value, dict) else None
+            if isinstance(_dup, dict) and _dup.get("atom_id"):
+                _copied_here.add((str(_a.artifact_id or ""), str(_dup["atom_id"])))
     _inherit_message_stamps(_kept, mail_files={
         fp.artifact_id for fp in (manifest.artifact_fingerprints if manifest is not None else [])
         if fp.artifact_type.value == "email"
@@ -830,7 +856,11 @@ def build_orbitbrief_envelope(
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
                 "structured": structured_projection,
-                "atom_ids": sorted(a.id for a in artifact_atoms),
+                "atom_ids": sorted(
+                    a.id for a in artifact_atoms
+                    if str(a.artifact_id or "") == fp.artifact_id
+                    or not _holds_own(fp.artifact_id, a)
+                ),
                 # This document's own copies of lines an earlier document owns
                 # (``structured.duplicate_of`` names the canonical atom). Kept
                 # apart from ``atom_ids`` so nothing that counts atom_ids counts
