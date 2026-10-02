@@ -244,19 +244,31 @@ def split_trigger_clause(sentence: str) -> list[str]:
 #: Where one sentence joins two statements that each stand on their own:
 #:
 #:   ", so I ..."      -- a fact, then what the writer does about it
+#:   ") so I ..."      -- the same, after a parenthetical aside, no comma
+#:   " so I/we ..."    -- the same, no comma, first person only
 #:   "; it ..."        -- two clauses a semicolon holds side by side
 #:   " and I also ..." -- a fact, then a separate undertaking
 #:
 #: Each boundary requires a PRONOUN SUBJECT right after it, so the right-hand
 #: side is a clause with its own subject. That is what keeps lists ("Rack A;
-#: Rack B; the IDF"), addresses and "cats and dogs" whole.
+#: Rack B; the IDF"), addresses and "cats and dogs" whole, and "so that",
+#: "so far" and "and so on" whole (no subject after the "so").
+#:
+#: Live 010003 wrote the TV sentence with NO comma: "... (it is with the
+#: shipping carrier now) so I also need to keep my eye on the delivery
+#: status." -- the comma-only boundary never fired on the real mail.
 _COMPOUND_BOUNDARY_RE = re.compile(
     r",\s+(?=so\s+(?:i|we|you|they|he|she|it)\s+\w)"
+    r"|(?<=\))\s+(?=so\s+(?:i|we|you|they|he|she|it)\s+\w)"
+    r"|(?<![,)])\s+(?=so\s+(?:i|we)\s+\w)"
     r"|;\s+(?=(?:i|we|you|they|he|she|it)(?:['’]\w+)?\s+\w)"
     r"|,?\s+and\s+(?=(?:i|we)\s+also\s+\w)",
     re.I,
 )
 _COMPOUND_MIN_WORDS = 4
+#: A word right before " so <subject>" that makes the "so" part of a phrase
+#: rather than the start of a new clause.
+_SO_NOT_A_BOUNDARY_RE = re.compile(r"\b(?:and|or|but|not|just|even|only|if)$", re.I)
 
 
 def split_compound_clauses(sentence: str) -> list[str]:
@@ -282,6 +294,8 @@ def split_compound_clauses(sentence: str) -> list[str]:
         before = t[: m.start()]
         if before.count("(") != before.count(")"):
             continue  # inside a parenthetical aside
+        if _SO_NOT_A_BOUNDARY_RE.search(before):
+            continue  # "and so I", "not so we": the "so" is not a connector here
         head, tail = t[start: m.start()], t[m.end():]
         if len(head.split()) < _COMPOUND_MIN_WORDS or len(tail.split()) < _COMPOUND_MIN_WORDS:
             continue
