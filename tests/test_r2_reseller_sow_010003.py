@@ -300,3 +300,42 @@ def test_change_order_cut_across_a_layout_gap_in_a_pdf(tmp_path: Path) -> None:
     texts = [a.raw_text for a in _pdf_atoms(pdf)]
     assert any(t.startswith("After a Change Order that requires") for t in texts), texts
     assert not any(t.startswith("Order that requires") for t in texts), texts
+
+
+# ── 10: page footers are boilerplate chatter and never a conflict ──
+
+def test_footer_lines_never_make_a_cross_document_conflict() -> None:
+    from app.core.cross_document_conflicts import find_cross_document_conflicts
+
+    a = _mk("f1", AtomType.scope_item, "2026 CDW LLC. All rights reserved. | 800.800.4239 | CDW.com", [])
+    b = _mk("f2", AtomType.scope_item, "CDW LLC. All rights reserved. | CDW.com | Terms and conditions apply", [])
+    b.artifact_id = "quote"
+    # Phone numbers are contacts, not clause figures.
+    c = _mk("c1", AtomType.scope_item, "Call the CDW install desk at 800.800.4239 to book the crew visit", [])
+    d = _mk("c2", AtomType.scope_item, "Call the CDW install desk at 877.555.0100 to book the crew visit", [])
+    d.artifact_id = "quote"
+    assert find_cross_document_conflicts([a, b, c, d], project_id="p") == []
+    # A real clause still conflicts.
+    e = _mk("e1", AtomType.scope_item, "A cancellation fee of $500 applies to visits cancelled late", [])
+    f = _mk("e2", AtomType.scope_item, "A cancellation fee of $300 applies to visits cancelled late", [])
+    f.artifact_id = "quote"
+    assert len(find_cross_document_conflicts([e, f], project_id="p")) == 1
+
+
+def test_pdf_footer_band_is_a_chatter_atom(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf = tmp_path / "sow.pdf"
+    doc = fitz.open()
+    for n in (1, 2):
+        p = doc.new_page(width=612, height=792)
+        p.insert_text((36, 60), "Statement of Work" if n == 1 else "Invoicing Procedures", fontsize=12, fontname="hebo")
+        p.insert_text((36, 84), f"CDW will install the displays listed in section {n} of this SOW.", fontsize=10)
+        p.insert_text((36, 770), "© 2026 CDW LLC. All rights reserved. | 800.800.4239 | CDW.com", fontsize=7)
+        p.insert_text((540, 770), f"Page {n} of 2", fontsize=7)
+    doc.save(str(pdf))
+    doc.close()
+    atoms = _pdf_atoms(pdf)
+    band = [a for a in atoms if "All rights reserved" in a.raw_text]
+    assert band, [a.raw_text for a in atoms]
+    for a in band + [a for a in atoms if a.raw_text.startswith("Page ")]:
+        assert a.atom_type == AtomType.deal_metadata and "chatter" in a.review_flags, a.raw_text

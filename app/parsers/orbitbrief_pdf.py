@@ -2682,6 +2682,10 @@ def _mark_blocks_on_a_drawing(sections: list[dict[str, Any]]) -> None:
         _mark_blocks_on_a_drawing(section.get("subsections") or [])
 
 
+#: ``rejected_by`` of a page footer / header band kept as a chatter atom.
+PAGE_FOOTER_RULE = "page_footer"
+
+
 def _chatter_atom(
     text: str,
     rule: str,
@@ -2825,6 +2829,11 @@ def _atoms_for_block(
         # 25-107 Wireless Equipment ... Page 17 of 25").  These appear
         # once per page and bloat the atom set N-fold for an N-page PDF.
         if _looks_like_page_footer(text):
+            # Kept as boilerplate chatter, never a fact: every line of the
+            # source is an atom or a recorded suppression, and a footer
+            # read as a clause fed a cross-document "conflict" (010003).
+            yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
             return
         # P1.3 (band-prefix variant): when PDF extraction folded the
         # header/footer band into the *start* of a real paragraph,
@@ -3320,7 +3329,11 @@ def _atoms_for_block(
             return
         # P1.3 / P1.2 / P1.4: notes also catch page-footer text and
         # form-field templates on some layouts; same filters as paragraph.
-        if _looks_like_form_field(text) or _looks_like_page_footer(text) or _looks_like_fragment(text):
+        if _looks_like_page_footer(text):
+            yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
+            return
+        if _looks_like_form_field(text) or _looks_like_fragment(text):
             return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="note")
         yield _make_atom(
@@ -3367,6 +3380,10 @@ def _atoms_for_bullet(
     # three of the four items a signed SOW says we may install per site (live
     # 010300) and a ten-character floor silently dropped them. A list item
     # needs letters or digits, not a minimum width.
+    if text and len(re.sub(r"[^0-9A-Za-z]", "", text)) >= 3 and _looks_like_page_footer(text):
+        yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator,
+                            str(base_locator.get("block_id") or ""), project_id,
+                            artifact_id, filename, parser_version)
     if (
         text
         and len(re.sub(r"[^0-9A-Za-z]", "", text)) >= 3
@@ -5498,7 +5515,16 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             for x in paragraph_lines
             if x.strip() and not _looks_like_page_footer(x.strip())
         ]
+        # ...but it is still a line of the page: its own block, which the
+        # atom emitter keeps as boilerplate chatter.
+        footers = [
+            x.strip()
+            for x in paragraph_lines
+            if x.strip() and _looks_like_page_footer(x.strip())
+        ]
         paragraph_lines = []
+        for f in footers:
+            current_blocks.append({"kind": "paragraph", "text": f, "lines": [f], "page_footer": True})
         if not kept:
             return
         # An unambiguous record-list (signature roster, "Name: decision."
