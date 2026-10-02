@@ -1681,6 +1681,16 @@ def compile_project(
                 _ptype_v = _ptype.value if hasattr(_ptype, "value") else str(_ptype or "")
                 if _ptype_v not in _splittable_types:
                     continue
+                # A table row is one record whose cells are its fields, not a
+                # list of facts. Split at its " | " it shed one atom per cell
+                # ("FULL NAME: Chase Smith |", "EMAIL ADDRESS: John"), and
+                # those cell atoms, read as "Name:/Title:/Date:" rows, were
+                # merged ACROSS the page's tables into one signature block
+                # (live 010353: "FULL NAME: Chase Smith, John Ozuna-Diaz /
+                # Danny Berry | JOB TITLE: ...").
+                _pval = getattr(parent, "value", None)
+                if isinstance(_pval, dict) and _pval.get("kind") == "table_row" and _pval.get("columns"):
+                    continue
                 _ptext = getattr(parent, "raw_text", "") or ""
                 items = split_prose_paragraph(_ptext)
                 if not items:
