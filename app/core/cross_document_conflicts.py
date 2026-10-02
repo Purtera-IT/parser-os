@@ -56,7 +56,15 @@ def _text(atom: Any) -> str:
 
 #: A phone number is a contact, not a figure of a clause.
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\d)")
-_BAND_RE = re.compile(r"all rights reserved|(?:\(c\)|\u00a9|copyright)\s*(?:19|20)\d{2}|\bpage\s+\d+\s+of\s+\d+\b", re.I)
+_BAND_RE = re.compile(
+    r"all rights reserved|(?:\(c\)|\u00a9|copyright)\s*(?:19|20)\d{2}|\bpage\s+\d+\s+of\s+\d+\b"
+    # A company footer's links and notices: "CDW Trust Center", "Privacy
+    # Policy", an unsubscribe or confidentiality line (010003: "2026 vs (no
+    # figure)" between a footer with the year and one without).
+    r"|\btrust center\b|\bprivacy (?:policy|notice|statement)\b|\bterms of (?:use|service)\b"
+    r"|\bunsubscribe\b|\bconfidentiality notice\b|\bintended (?:solely|only) for\b",
+    re.I,
+)
 
 
 def _is_boilerplate_band(text: str) -> bool:

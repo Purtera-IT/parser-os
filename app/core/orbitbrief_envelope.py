@@ -152,10 +152,18 @@ def apply_site_attributes(rows: list[dict], atoms: Iterable[Any]) -> tuple[int, 
 
 
 
-#: How many dropped atoms to carry. The judgment builder caps a head at 150,
-#: so a few hundred is more than a person will work through, and the envelope
-#: does not need to carry thousands of them to be useful.
-_SUPPRESSED_MAX = int(os.environ.get("SOWSMITH_SUPPRESSED_MAX", "300"))
+#: How many dropped atoms to carry PER DOCUMENT. This was a global cap of 300,
+#: taken off the front of the ledger: on live 010353 the ledger held 477 drops
+#: and the 177 cut were whatever stages ran last -- 26 dropped SOW lines never
+#: reached the labelling view, and nothing said so. A per-document cap keeps
+#: the payload bounded on a pathological file without letting one noisy
+#: document (a 4,000-line mail thread) starve every other one of its drops.
+#: What the cap cuts is counted in the envelope's `suppressed_truncated`.
+_SUPPRESSED_MAX = int(
+    os.environ.get("SOWSMITH_SUPPRESSED_MAX_PER_DOC")
+    or os.environ.get("SOWSMITH_SUPPRESSED_MAX")
+    or "300"
+)
 
 
 #: Cap on the rule decisions an envelope carries, same reasoning as
@@ -274,6 +282,41 @@ def _suppressed_total(compile_result: "CompileResult") -> int:
     return len(list(getattr(compile_result, "suppressed_atoms", None) or []))
 
 
+def _suppressed_doc_key(atom: Any) -> str:
+    return str(getattr(atom, "artifact_id", "") or "")
+
+
+def _suppressed_capped(dropped: list) -> tuple[list, dict[str, int]]:
+    """The ledger with at most `_SUPPRESSED_MAX` drops per document, in ledger
+    order, plus how many each document had cut. Never a global cut."""
+    kept: list = []
+    seen: dict[str, int] = {}
+    cut: dict[str, int] = {}
+    for atom in dropped:
+        doc = _suppressed_doc_key(atom)
+        n = seen.get(doc, 0)
+        if n >= _SUPPRESSED_MAX:
+            cut[doc] = cut.get(doc, 0) + 1
+            continue
+        seen[doc] = n + 1
+        kept.append(atom)
+    return kept, cut
+
+
+def _suppressed_truncated(compile_result: "CompileResult") -> dict[str, Any]:
+    """What the per-document cap cut from the ledger: a total and the count per
+    artifact. Zero when nothing was cut or the ledger is not carried."""
+    if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
+        return {"count": 0, "per_document_cap": _SUPPRESSED_MAX, "by_artifact": {}}
+    dropped = list(getattr(compile_result, "suppressed_atoms", None) or [])
+    _kept, cut = _suppressed_capped(dropped)
+    return {
+        "count": sum(cut.values()),
+        "per_document_cap": _SUPPRESSED_MAX,
+        "by_artifact": cut,
+    }
+
+
 def _rule_decisions_total() -> int:
     """How many rule decisions this compile made, before the cap.
 
@@ -326,7 +369,7 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
         survivors.setdefault(norm(atom), atom)
 
     out: list[dict] = []
-    for atom in dropped[:_SUPPRESSED_MAX]:
+    for atom in _suppressed_capped(dropped)[0]:
         stage = ""
         for flag in (getattr(atom, "review_flags", None) or []):
             if str(flag).startswith("suppressed:"):
@@ -434,6 +477,16 @@ def build_orbitbrief_envelope(
         fp.artifact_id for fp in (manifest.artifact_fingerprints if manifest is not None else [])
         if fp.artifact_type.value == "email"
     })
+    # Who said each line, on every atom the result holds -- held chatter,
+    # copies and atoms stamped just above included -- and, in a HubSpot note,
+    # the sender of an email pasted into it from its "From:" row on (010087).
+    try:
+        from app.core.deal_parties import stamp_note_parties, stamp_parties
+
+        stamp_parties(_kept)
+        stamp_note_parties(_kept)
+    except Exception:
+        pass
     packets = list(compile_result.packets or [])
     entities = list(compile_result.entities or [])
     edges = list(compile_result.edges or [])
@@ -660,10 +713,14 @@ def build_orbitbrief_envelope(
                 # runs as a compile stage and stamps every atom, but only the
                 # atoms -- so a reader above atom level could not group 33 email
                 # files into the 6 conversations they actually are.
-                "email_thread": _document_thread(
+                "email_thread": (_doc_thread := _document_thread(
                     artifact_atoms, artifact_id=fp.artifact_id,
                     is_message=fp.artifact_type.value == "email",
-                ),
+                )),
+                # A message's author IS its sender. The header carried only
+                # `sender`, so every email read "author: null" next to it.
+                **(_email_author(_doc_thread, prov.get("sender_email"))
+                   if fp.artifact_type.value == "email" else {}),
                 # Who the forwarded chain STARTED with -- claimed ONLY when this
                 # message actually carried something.
                 #
@@ -801,6 +858,8 @@ def build_orbitbrief_envelope(
         # every content-loss audit reads, and an audit run against a truncated
         # ledger under-reports loss while looking thorough.
         "suppressed_total": _suppressed_total(compile_result),
+        # What the per-document cap cut, so a short ledger is never silent.
+        "suppressed_truncated": _suppressed_truncated(compile_result),
         "rule_decisions": _rule_decisions_for_review(),
         "rule_decisions_total": _rule_decisions_total(),
         "coverage": {
@@ -2183,6 +2242,36 @@ def _originating_sender(
             if index > best_index:
                 best_index, best_sender = index, sender
     return best_sender
+
+
+def _email_author(thread: dict[str, Any] | None, sender_email: Any = None) -> dict[str, Any]:
+    """``{"author", "author_email"}`` for an email document, from its sender.
+
+    The display name wins over the bare address ("Quinton James", not
+    "quinton.james@cdw.com"); with no name the address is the author. A
+    message with no sender at all gets nothing -- never a guessed author.
+    """
+    from email.utils import parseaddr
+
+    raw = str((thread or {}).get("sender") or "").strip() or str(sender_email or "").strip()
+    if not raw or raw.lower() == "unknown":
+        return {}
+    name, addr = parseaddr(raw)
+    name = " ".join(name.strip().strip('"\'').split())
+    addr = addr.strip().lower()
+    if "@" not in addr:
+        addr = ""
+        if not name and "@" not in raw:
+            name = raw
+    if not addr and sender_email and "@" in str(sender_email):
+        addr = str(sender_email).strip().lower()
+    if name and "@" in name:
+        # "quinton.james@cdw.com <quinton.james@cdw.com>": no display name.
+        name = ""
+    author = name or addr
+    if not author:
+        return {}
+    return {"author": author, "author_email": addr or None}
 
 
 def _note_author(artifact_atoms: list[Any], artifact_id: str) -> dict[str, Any]:

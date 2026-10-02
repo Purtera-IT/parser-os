@@ -85,7 +85,7 @@ def under_exclusion_heading(section_path: Iterable[str] | None) -> bool:
 _SOW_SECTION_LABEL_RE = re.compile(
     rf"^\s*{_NUM_PREFIX}(?:"
     r"(?:project\s+|services?\s+|professional\s+services\s+)?(?:fees?|pricing|price|costs?|investment|rates?)(?:\s+(?:and|&)\s+\w+)?|"
-    r"payment(?:\s+(?:terms|schedule))?|invoic(?:e|ing)|billing|"
+    r"(?:payment|invoic(?:e|ing)|billing)(?:\s+(?:terms|schedule|procedures?|process|instructions|details))?|"
     r"(?:project\s+)?assumptions?(?:\s+(?:and|&)\s+dependencies)?|dependencies|"
     r"(?:project\s+)?deliverables?|acceptance(?:\s+criteria)?|"
     # Any party's responsibilities ("PurTera Responsibilities", "Customer

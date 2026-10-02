@@ -923,6 +923,9 @@ def _speech_or_stated_fact(atom: Any, text: str) -> bool:
     return asks_or_states_deal_fact(text) and readability(text) >= 0.3
 
 
+_ROUTING_HEADER_KINDS = frozenset({"email_header", "quoted_message_header", "hubspot_note_meta"})
+
+
 def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Drop atoms whose text is OCR debris rather than words (see text_quality).
 
@@ -938,6 +941,14 @@ def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     for atom in atoms:
         at = _atom_type_str(atom)
         if at in {"physical_site", "stakeholder", "signatory", "quantity", "bom_line", "raw_table_row"}:
+            kept.append(atom)
+            continue
+        # A message's routing header ("From: Stephanie Hechsel <s@amtivo.com>
+        # | Sent: Tuesday, July 7, 2026 3:36 PM") is composed by the parser
+        # from header fields, never OCR'd; names and addresses are not
+        # dictionary words, so it scored as debris and every email lost the
+        # header that names its sender and date (live 010087).
+        if str(_atom_value(atom).get("kind") or "") in _ROUTING_HEADER_KINDS:
             kept.append(atom)
             continue
         text = _atom_text(atom)
