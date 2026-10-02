@@ -87,16 +87,23 @@ def _split_spanning_cells(page: Any, cell_rows: list[Any], rows: list[list[Any]]
     """
     if len(cell_rows) < 2 or len(rows) != len(cell_rows):
         return
-    heads = list(getattr(cell_rows[0], "cells", []) or [])
+    # The header is the first row that draws every column: a title band
+    # merged across the grid ("Service Order Lines") can sit above it.
+    hi = next((i for i, r in enumerate(cell_rows[:-1])
+               if (getattr(r, "cells", None) or [])
+               and all(c is not None for c in r.cells)), None)
+    if hi is None:
+        return
+    heads = list(cell_rows[hi].cells)
     ncols = len(heads)
-    if ncols < 2 or any(h is None for h in heads) or len(rows[0]) != ncols:
+    if ncols < 2 or len(rows[hi]) != ncols:
         return
     spans = [(float(h[0]), float(h[2])) for h in heads]
     try:
         words = page.get_text("words") or []
     except Exception:
         return
-    for ri in range(1, len(cell_rows)):
+    for ri in range(hi + 1, len(cell_rows)):
         geo = list(getattr(cell_rows[ri], "cells", []) or [])
         if len(geo) != ncols or len(rows[ri]) != ncols:
             continue

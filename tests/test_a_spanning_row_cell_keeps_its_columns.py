@@ -85,3 +85,50 @@ def test_a_note_across_the_grid_is_left_whole(tmp_path):
     assert [str(c or "").strip() for c in rows[0]] == HEADER
     assert " ".join(str(rows[1][0]).split()) == note
     assert all(c is None for c in rows[1][1:])
+
+
+def _po_titled(path: Path) -> None:
+    """The real PO's own drawing: a filled title band merged across the grid,
+    filled header cells, and only the outer border round the item row."""
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((22, 80), "Purchase Order", fontsize=16, fontname="hebo")
+    page.insert_text((22, 110), "Order lines are listed below.", fontsize=9)
+    grey = (0.85, 0.85, 0.85)
+    edges = [21.0, 133.4, 245.9, 358.3, 470.8, 583.2]
+
+    def fill(r):
+        page.draw_rect(fitz.Rect(*r), color=None, fill=grey, width=0)
+
+    fill((21.0, 513.5, 583.2, 527.3))
+    for x0, x1 in zip(edges, edges[1:]):
+        fill((x0, 527.3, x1, 538.4))
+    for a, b in [((22.1, 513.5), (22.1, 585.1)), ((582.1, 513.5), (582.1, 585.1)),
+                 ((21.0, 514.6), (583.2, 514.6)), ((21.0, 584.0), (583.2, 584.0))]:
+        page.draw_line(a, b, width=0.8)
+    page.insert_text((265.5, 525), "Order Lines", fontsize=8)
+    for x, t in zip([62.9, 175.4, 258.9, 389.1, 501.2], HEADER):
+        page.insert_text((x, 536.7), t, fontsize=7)
+    page.insert_text((251.9, 548), "Facilities-Contract labor", fontsize=7)
+    page.insert_text((396.3, 548), "$2,480.00", fontsize=7)
+    for k, t in enumerate(DESC):
+        page.insert_text((476.0, 548 + k * 9.6), t, fontsize=7)
+    doc.save(str(path))
+    doc.close()
+
+
+def test_a_title_band_above_the_header_does_not_hide_the_columns(tmp_path):
+    from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
+
+    pdf = tmp_path / "po_titled.pdf"
+    _po_titled(pdf)
+    atoms = list(getattr(OrbitBriefPdfParser().parse(pdf), "atoms", []))
+    rows = [a for a in atoms if (a.value or {}).get("kind") == "table_row"
+            and "Ordered Amount" in ((a.value or {}).get("columns") or [])]
+    assert len(rows) == 1, [a.raw_text for a in atoms]
+    cells = {k: " ".join(str(c).split()) for k, c in rows[0].value["cells"].items() if str(c).strip()}
+    assert cells == {
+        "Spend Category": "Facilities-Contract labor",
+        "Ordered Amount": "$2,480.00",
+        "Line Description": " ".join(DESC),
+    }
