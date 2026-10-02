@@ -606,7 +606,7 @@ def build_orbitbrief_envelope(
                 # runs as a compile stage and stamps every atom, but only the
                 # atoms -- so a reader above atom level could not group 33 email
                 # files into the 6 conversations they actually are.
-                "email_thread": _document_thread(artifact_atoms),
+                "email_thread": _document_thread(artifact_atoms, artifact_id=fp.artifact_id),
                 # Who the forwarded chain STARTED with -- claimed ONLY when this
                 # message actually carried something.
                 #
@@ -2114,7 +2114,9 @@ def _originating_sender(
     return best_sender
 
 
-def _document_thread(artifact_atoms: list[Any]) -> dict[str, Any] | None:
+def _document_thread(
+    artifact_atoms: list[Any], artifact_id: str | None = None
+) -> dict[str, Any] | None:
     """The thread block for a whole email document, lifted from its atoms.
 
     email_threading.py groups messages by RFC 5322 Message-ID / In-Reply-To /
@@ -2125,8 +2127,22 @@ def _document_thread(artifact_atoms: list[Any]) -> dict[str, Any] | None:
     Document-level fields only: which conversation, where in it, and what it is
     called. The per-atom `gist` of the message being replied to stays on the
     atoms, where it belongs -- it is context for one utterance, not for a file.
+
+    ``artifact_id`` limits the read to atoms MINTED from this document.
+    ``artifact_atoms`` also holds atoms that only cite it: a fold or dedup
+    hands the winner the loser's source_refs. Live 000132: Trent's HubSpot
+    notes 110373542233 and 110373542437 shared their city list with
+    Christopher Picchietti's forward, the email lines won, and each note then
+    read its thread block off the email's atoms -- so both notes were filed as
+    message "2 of 3" of the email thread, under his name, merged under one
+    header in the labeling walk, and they pulled the thread's start back to
+    the notes' own date. A note is not a message; a block that belongs to
+    another file is never this file's.
     """
+    want = str(artifact_id or "")
     for atom in artifact_atoms or []:
+        if want and str(getattr(atom, "artifact_id", "") or "") != want:
+            continue
         block = None
         structured = getattr(atom, "structured", None)
         if isinstance(structured, dict):
@@ -3220,6 +3236,10 @@ def _parse_loose_datetime(text: str) -> str:
 
 
 def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list[Any]:
+    # Last resort for atoms that still tie: the order they were produced in,
+    # which is the order the parser read them. The atom id is a hash; ordering
+    # by it shuffles any line that yields several atoms and no index.
+    emitted = {id(a): i for i, a in enumerate(atoms or [])}
     doc_when = {}
     doc_pos = {}
     for i, d in enumerate(documents or []):
@@ -3261,7 +3281,14 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
             seq = int(loc.get("sentence_index") or 0)
         except (TypeError, ValueError):
             seq = 0
-        return (when, doc_pos.get(aid, 10**6), pos, page, line, seq, str(getattr(a, "id", "")))
+        # Several atoms cut from one line without a sentence index (a note's
+        # " - "-separated list, live 000132) still have a column.
+        try:
+            col = int(loc.get("char_start") or 0)
+        except (TypeError, ValueError):
+            col = 0
+        return (when, doc_pos.get(aid, 10**6), pos, page, line, seq, col,
+                emitted.get(id(a), 10**9), str(getattr(a, "id", "")))
 
     return sorted(atoms, key=key)
 
