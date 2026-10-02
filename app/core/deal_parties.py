@@ -77,6 +77,59 @@ def party(raw: str) -> dict[str, Any] | None:
     }
 
 
+def _name_tokens(name: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z]+", str(name or "").lower()) if t]
+
+
+def address_for_name(name: str, texts: list[str] | tuple[str, ...] = (), parties: list[Any] | tuple = ()) -> str:
+    """The address a person signs with, found elsewhere: a party already
+    resolved to that name, or an address in ``texts`` whose mailbox spells it
+    ("Stephanie.Hechsel@summit360.com", "shechsel@..."). Empty when unsure.
+
+    A pasted email often keeps the sender's name and drops the address; the
+    same person's address sits in the deal's other mail and the SOW's contact
+    table (010087)."""
+    toks = _name_tokens(name)
+    if len(toks) < 2:
+        return ""
+    first, last = toks[0], toks[-1]
+    for p in parties or ():
+        if isinstance(p, dict) and p.get("email") and _name_tokens(p.get("name") or "") == toks:
+            return str(p["email"]).lower()
+    spellings = {first + last, first + "." + last, first + "_" + last, first + "-" + last,
+                 first[0] + last, first[0] + "." + last, last + "." + first}
+    for text in texts or ():
+        for m in _ADDR_RE.finditer(str(text or "")):
+            if m.group(0).split("@")[0].lower() in spellings:
+                return m.group(0).lower()
+    return ""
+
+
+def pasted_sender_party(name: str, email: str = "", *, internal: bool = False) -> dict[str, Any] | None:
+    """The party of someone whose email was pasted into a note.
+
+    ``party`` needs an address; a pasted email often has only the sender's
+    name. Without one we still know who said it and that it was not the note's
+    author, so the party is that name on the side their affiliation says --
+    never the note author's (010087: 15 of 16 lines of Stephanie's pasted
+    email were said_by Trent)."""
+    p = party(email) if email else None
+    if p:
+        if name:
+            p["name"] = " ".join(str(name).split())
+        return p
+    name = " ".join(str(name or "").split())
+    if not name:
+        return None
+    return {
+        "email": "",
+        "name": name,
+        "company": "",
+        "side": "ours" if internal else "theirs",
+        "role_guess": ROLE_INTERNAL if internal else ROLE_UNKNOWN,
+    }
+
+
 def parties_for_message(thread_block: dict[str, Any] | None) -> dict[str, Any]:
     """``{said_by, said_to}`` for one message, from its thread block."""
     tb = thread_block if isinstance(thread_block, dict) else {}
@@ -135,6 +188,38 @@ _PASTED_FROM_RE = re.compile(r"^[\s>*_]*from\s*:[\s*_]*(?P<who>[^|]+?)\s*(?:\|.*
 _PASTED_WROTE_RE = re.compile(r"^[\s>]*on\s.+?\d.*?(?P<who>[A-Z][^<>]*?<[^<>@\s]+@[^<>\s]+>)\s*wrote:\s*$", re.I)
 
 
+def _resolve_pasted_senders(atoms: list[Any]) -> None:
+    """Give a pasted email's sender the address and company the rest of the
+    deal knows them by. The note named Stephanie Hechsel but not her address;
+    her own mail and the SOW's contact table carry
+    Stephanie.Hechsel@summit360.com (010087)."""
+    todo = [a for a in atoms or [] if isinstance(getattr(a, "value", None), dict)
+            and a.value.get("pasted_email") and isinstance(a.value.get("said_by"), dict)
+            and not a.value["said_by"].get("email") and a.value["said_by"].get("name")]
+    if not todo:
+        return
+    known: list[Any] = []
+    texts: list[str] = []
+    for a in atoms or []:
+        v = getattr(a, "value", None)
+        if isinstance(v, dict):
+            known.append(v.get("said_by"))
+            known.extend(v.get("said_to") or [])
+        texts.append(str(getattr(a, "raw_text", "") or ""))
+    found: dict[str, dict[str, Any] | None] = {}
+    for a in todo:
+        by = a.value["said_by"]
+        name = str(by.get("name") or "")
+        if name not in found:
+            addr = address_for_name(name, texts, known)
+            found[name] = pasted_sender_party(name, addr) if addr else None
+        p = found[name]
+        if p and p["side"] == by.get("side"):
+            v = dict(a.value)
+            v["said_by"] = dict(p)
+            a.value = v
+
+
 def stamp_note_parties(atoms: list[Any]) -> int:
     """Who said each line of a HubSpot note.
 
@@ -158,6 +243,7 @@ def stamp_note_parties(atoms: list[Any]) -> int:
         except (TypeError, ValueError):
             return None
 
+    _resolve_pasted_senders(atoms)
     by_doc: dict[str, list[Any]] = {}
     for a in atoms or []:
         by_doc.setdefault(str(getattr(a, "artifact_id", "") or ""), []).append(a)
@@ -203,4 +289,4 @@ def stamp_note_parties(atoms: list[Any]) -> int:
     return stamped
 
 
-__all__ = ["party", "parties_for_message", "stamp_parties", "stamp_note_parties", "address_of", "domain_of", "OUR_DOMAINS"]
+__all__ = ["party", "pasted_sender_party", "address_for_name", "parties_for_message", "stamp_parties", "stamp_note_parties", "address_of", "domain_of", "OUR_DOMAINS"]

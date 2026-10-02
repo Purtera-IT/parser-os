@@ -2935,10 +2935,12 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
             same_doc = str(getattr(b, "artifact_id", "")) == str(getattr(a, "artifact_id", ""))
             fb, lb = _parts(b)
             if same_doc and _near_surname(la, lb) and (fa[:3] == fb[:3]) and _subsumed(a, b):
+                _snap = _provenance_snapshot(b)
                 _merge_atom_metadata(b, a)
                 _union_person_fields(b, a)
                 if _detail_lost(b, a):
                     _fold_or_keep(b, a)  # stands (an instruction becomes a task)
+                    _restore_provenance(b, _snap)
                     break
                 drop.add(id(a))
                 break
@@ -2946,10 +2948,12 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
             # contradicting email or phone. Live 010215: Quinton James's two
             # signatures (one with a phone, one with an email) were two records.
             if (not same_doc) and _full_name(a) and _full_name(a) == _full_name(b) and _agree(a, b) and _richness(a) <= _richness(b):
+                _snap = _provenance_snapshot(b)
                 _merge_atom_metadata(b, a)
                 _union_person_fields(b, a)
                 if _detail_lost(b, a):
                     _fold_or_keep(b, a)
+                    _restore_provenance(b, _snap)
                     break
                 drop.add(id(a))
                 break
@@ -2975,12 +2979,35 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
                     role = str(va.get("role") or "").strip()
                     if role and not vb.get("title") and role.lower() not in {"stakeholder", "person"}:
                         vb["title"] = role
+                _snap = _provenance_snapshot(b)
                 _merge_atom_metadata(b, a)
                 if _detail_lost(b, a) and not _fold_or_keep(b, a):
+                    _restore_provenance(b, _snap)
                     break
                 drop.add(id(a))
                 break
     return [a for a in atoms if id(a) not in drop]
+
+
+def _provenance_snapshot(atom: Any) -> tuple[list, list, list]:
+    return (list(getattr(atom, "source_refs", None) or []),
+            list(getattr(atom, "receipts", None) or []),
+            list(getattr(atom, "review_flags", None) or []))
+
+
+def _restore_provenance(atom: Any, snap: tuple[list, list, list]) -> None:
+    """A fold that was REFUSED (the loser stands on its own) folded nothing:
+    the survivor must not keep citing the loser's document. Left in place, the
+    loser's ref made the SOW's contacts row (010353) cite both intake files
+    that merely name one of its people, and the own-copy sweep then cloned
+    the PDF row into each of them.
+    """
+    try:
+        atom.source_refs = list(snap[0])
+        atom.receipts = list(snap[1])
+        atom.review_flags = list(snap[2])
+    except Exception:
+        pass
 
 
 __all__ = ["semantic_dedup_atoms", "cross_type_dedup_atoms", "dedupe_stakeholder_atoms"]

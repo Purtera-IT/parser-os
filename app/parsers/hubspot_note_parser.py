@@ -259,6 +259,8 @@ def _pasted_email_sender(parsed: dict[str, Any]) -> tuple[dict[str, str], int] |
         if not m or not any(_PASTED_HDR_RE.match(x) for x in lines[i + 1:i + 5]):
             continue
         nm, addr = parseaddr(m.group("v"))
+        if "@" not in addr:  # "From: Morgan Ellery": a name, not a mailbox
+            nm, addr = nm or m.group("v"), ""
         nm = " ".join((nm or "").split()) or (m.group("v").split("<")[0].strip(' "') if not addr else "")
         if not nm and not addr:
             continue
@@ -311,6 +313,15 @@ def _credit_pasted_email(atoms: list[EvidenceAtom], parsed: dict[str, Any]) -> N
         start_line = next((i + 1 for i in range(body_at, len(raw_lines))
                            if raw_lines[i].strip() == target), 0) or 10 ** 9
     affiliation = classify_author_affiliation(sender.get("name"), author_email=sender.get("email") or None)
+    # Who said it, for the label walk: the sender, never the note's author.
+    # Their address, when the paste dropped it, may still be in the note.
+    from app.core.deal_parties import address_for_name, pasted_sender_party
+
+    said_by = pasted_sender_party(
+        sender.get("name") or "",
+        sender.get("email") or address_for_name(sender.get("name") or "", raw_lines),
+        internal=affiliation == "internal",
+    )
     for atom in atoms:
         val = atom.value if isinstance(atom.value, dict) else None
         if val is None or val.get("kind") in ("hubspot_note_meta", "automated_note"):
@@ -328,6 +339,8 @@ def _credit_pasted_email(atoms: list[EvidenceAtom], parsed: dict[str, Any]) -> N
         val["author_email"] = sender.get("email") or ""
         val["author_affiliation"] = affiliation
         val["pasted_email"] = True
+        if said_by:
+            val["said_by"] = dict(said_by)
         atom.value = val
         if affiliation != "internal" and "internal_author" in (atom.review_flags or []):
             atom.review_flags = [f for f in atom.review_flags
@@ -537,8 +550,11 @@ _INLINE_DASH_ITEM_RE = re.compile(r"(?:^|\s)-(?=[A-Za-z0-9(])")
 
 
 def _split_list_value(value: str) -> list[str]:
+    from app.core.sentences import strip_list_marker
+
     if "\n" in value:
-        lines = [ln.strip(" .;") for ln in value.split("\n") if ln.strip(" .;")]
+        lines = [strip_list_marker(ln.strip())[1].strip(" .;") for ln in value.split("\n")]
+        lines = [ln for ln in lines if ln]
         return [ln for ln in lines if len(re.sub(r"[^A-Za-z0-9]", "", ln)) >= 3]
     parts = [p.strip(" .;") for p in re.split(r",\s*(?:and\s+)?|;\s*|\s+and\s+(?=[a-z])", value) if p.strip(" .;")]
     return [p for p in parts if len(re.sub(r"[^A-Za-z0-9]", "", p)) >= 3]
@@ -1345,32 +1361,62 @@ class HubspotNoteParser(BaseParser):
             # greeting, the context and the ask together. Each sentence is its
             # own evidence, the way email and transcript lines already are;
             # the paragraph travels on each as context.
-            from app.core.sentences import split_inline_dash_list, split_sentences, split_trigger_clause
+            from app.core.sentences import (
+                split_inline_dash_list, split_sentences, split_trigger_clause, strip_list_marker,
+            )
 
             # The author's own line breaks come first: "Hi Trent," on its own
             # line is a greeting, not the start of the request beneath it
             # (010095), and no sentence segmenter splits after a comma.
             sentences: list[str] = []
+            markers: dict[str, str] = {}
             for line in str(prose or "").splitlines() or [str(prose or "")]:
+                # A pasted HTML list ("<ul><li>A</li><li>B</li></ul>") is one
+                # item per <li>; the tags are markup, not text.
+                if re.search(r"<li\b", line, re.I):
+                    lead, *lis = re.split(r"<li\b[^>]*>", line, flags=re.I)
+                    lead = re.sub(r"<[^>]+>", " ", lead).strip()
+                    if lead:
+                        sentences.append(" ".join(lead.split()))
+                    for li in lis:
+                        item = " ".join(re.sub(r"<[^>]+>", " ", li).split())
+                        if item:
+                            sentences.append(item)
+                            markers.setdefault(item, "li")
+                    continue
+                # A bullet on its own line ("- 24/7 on-call availability",
+                # live 000132 note 110373542437) is the item after the marker,
+                # exactly as the same bullet flattened into a " - " run is.
+                marker, line = strip_list_marker(line)
                 # A bullet list flattened onto one line ("Support for ... -
                 # Support for ... - 24/7 on-call availability", live 000132)
                 # is one item per " - " segment, not one atom.
                 dash_items = split_inline_dash_list(line)
                 if dash_items:
-                    sentences.extend(p for p in dash_items if p.strip())
+                    for k, p in enumerate(dash_items):
+                        if p.strip():
+                            sentences.append(p)
+                            if k or marker:
+                                markers.setdefault(p, marker or "-")
                     continue
                 for _s in split_sentences(line):
-                    sentences.extend(p for p in split_trigger_clause(_s.strip()) if p)
+                    for p in split_trigger_clause(_s.strip()):
+                        if p:
+                            sentences.append(p)
+                            if marker:
+                                markers.setdefault(p, marker)
             # A note file repeats its title as the body's first line; a body
             # that IS the title ("Need Troy and Wilmington sites removed.",
             # live 000132) is one statement, not two.
             sentences = list(dict.fromkeys(sentences))
             if len(sentences) > 1:
                 for sentence in sentences:
-                    _mint_prose_one(sentence, paragraph=" ".join(str(prose or "").split()))
+                    _mint_prose_one(sentence, paragraph=" ".join(str(prose or "").split()),
+                                    list_marker=markers.get(sentence, ""))
                 return
             if len(sentences) == 1:
-                _mint_prose_one(" ".join(sentences[0].split()), paragraph=None)
+                _mint_prose_one(" ".join(sentences[0].split()), paragraph=None,
+                                list_marker=markers.get(sentences[0], ""))
                 return
             _mint_prose_one(" ".join(str(prose or "").split()), paragraph=None)
 
@@ -1435,7 +1481,7 @@ class HubspotNoteParser(BaseParser):
                 })
             return source_ref
 
-        def _mint_prose_one(prose: str, paragraph: str | None) -> None:
+        def _mint_prose_one(prose: str, paragraph: str | None, list_marker: str = "") -> None:
             is_title = bool(
                 prose and title
                 and " ".join(prose.lower().split()) == " ".join(title.lower().split())
@@ -1445,6 +1491,10 @@ class HubspotNoteParser(BaseParser):
             minted = atoms[first_atom:]
             if not minted:
                 return
+            if list_marker:
+                # The marker is list metadata, never atom text.
+                for a in minted:
+                    a.value["list_marker"] = list_marker
             # "Update on that they do have wall mounts and parking": the author
             # revising the statement just before, within this note. Both ends
             # carry the link so neither is read without the other.
