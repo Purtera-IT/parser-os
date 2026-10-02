@@ -57,6 +57,16 @@ def _emit(text: str, *, heading: bool = False):
     )
 
 
+def _is_chatter_reject(atoms) -> bool:
+    """Exactly one atom, flagged chatter, never typed as content."""
+    return (
+        len(atoms) == 1
+        and "chatter" in atoms[0].review_flags
+        and atoms[0].value.get("chatter") is True
+        and atoms[0].atom_type.value == "deal_metadata"
+    )
+
+
 def test_overview_prose_without_scope_verb_is_captured_not_dropped() -> None:
     # The SOW overview sentence carries the deal's headline quantity but uses
     # no scope/install/exclude verb — the lexical classifier matches nothing.
@@ -80,7 +90,9 @@ def test_section_heading_not_emitted_as_content_atom() -> None:
     # beneath it instead (matching the PDF parser). So the graph is never flooded
     # with header labels masquerading as scope_items.
     assert _emit("Project Overview", heading=True) == []
-    assert _emit("Scope") == []
+    # A bare label that is NOT a heading is still never content: it is kept
+    # only as a chatter reject so the labeler can see and reject it.
+    assert _is_chatter_reject(_emit("Scope"))
 
 
 def test_matched_scope_prose_keeps_full_confidence() -> None:
@@ -97,9 +109,9 @@ def test_short_numeric_fact_line_is_kept(tmp_path: Path) -> None:
     # the prose gate must keep it. A bare label with no digit stays dropped.
     assert _emit("Estimated quantity: 110 units") != []
     assert _emit("Project duration: 2 weeks") != []
-    # No digit / no context -> dropped.
-    assert _emit("Project Overview") == []
-    assert _emit("110") == []
+    # No digit / no context -> rejected, kept only as a chatter atom.
+    assert _is_chatter_reject(_emit("Project Overview"))
+    assert _is_chatter_reject(_emit("110"))
 
 
 def test_full_parse_does_not_drop_body_paragraph_near_table(tmp_path: Path) -> None:
