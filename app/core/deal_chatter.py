@@ -35,7 +35,7 @@ _PIPELINE_RE = re.compile(
 _HANDOFF_RE = re.compile(
     r"\b(?:"
     r"sending (?:it|this) (?:over|along)|"
-    r"(?:will|ill|i'll|we'll|we will) (?:get back|come back|revert|follow up|circle back|be in touch)|"
+    r"(?:will|ill|i'll|we'll|we will|i will) (?:get back|come back|revert|follow up|circle back|be in touch|keep you (?:posted|updated|in the loop))|"
     r"^will be in touch|"
     r"(?:looping|adding|copying) (?:in |)\w+|"
     r"(?:passing|handing) (?:it|this) (?:to|over)|"
@@ -49,7 +49,7 @@ _HANDOFF_RE = re.compile(
 
 #: Gratitude and greetings that carry no object.
 _SOCIAL_RE = re.compile(
-    r"^(?:"
+    r"^(?:(?:well|ok(?:ay)?|oh|and)[,!]?\s+)?(?:"
     r"thank(?:s| you)\b|thanks!|much appreciated|appreciate it|no worries|"
     r"happy to help|sounds good|will do|got it|perfect|great|awesome|"
     r"hope (?:you|all)|good (?:morning|afternoon|evening)"
@@ -69,11 +69,35 @@ _SUBSTANCE_RE = re.compile(
 #: happens to contain a phrase that also shows up in pipeline chatter, and the
 #: rule hid the sentence that named the deal's decision maker. A first-person
 #: undertaking is never small talk, whatever else it sounds like.
+#:
+#: The apostrophe is required: ``we'?ll`` read "Well, thanks again for your
+#: time" as an undertaking, so the pleasantry could never be chatter (the same
+#: rule app.core.sentences already applies).
 _PROMISE_RE = re.compile(
-    r"\b(?:i|we)\s*(?:'ll|will|can|shall)\s+\w+|\b(?:i'?ll|we'?ll)\b|"
+    r"\b(?:i|we)\s*(?:['’]ll|will|can|shall)\s+\w+|\b(?:i|we)['’]ll\b|"
     r"\b(?:i|we)\s+(?:am|are)\s+going\s+to\b|\blet me\s+\w+",
     re.I,
 )
+
+
+def _is_undertaking(text: str) -> bool:
+    """A first-person promise about the work.
+
+    "We'll get back to you" / "I'll circle back" promise only to keep talking:
+    with the hand-off phrase removed nothing is promised and nothing about the
+    job is left, so they are not protected. "We'll schedule the techs once the
+    floor is done" (a PM/PC/SA commitment) promises work and always is.
+    """
+    if not _PROMISE_RE.search(text):
+        return False
+    rest = _HANDOFF_RE.sub(" ", text)
+    if rest == text or _PROMISE_RE.search(rest):
+        return True
+    try:
+        from app.core.sentences import _WORK_CUE_RE
+    except Exception:  # pragma: no cover
+        return True
+    return bool(_WORK_CUE_RE.search(rest))
 
 
 #: A wait or a dependency is a fact about the job's timeline, never small
@@ -118,7 +142,7 @@ def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
             return False
     if _SUBSTANCE_RE.search(t):
         return False
-    if _PROMISE_RE.search(t):
+    if _is_undertaking(t):
         return False
     if _DEPENDENCY_RE.search(t):
         return False

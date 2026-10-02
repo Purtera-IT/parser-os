@@ -3098,6 +3098,12 @@ class EmailParser(BaseParser):
                 "reason": reason,
                 "message_index": block["message_index"],
                 "quoted": block["quoted"],
+                # WHO wrote the line, as every body line records it. Without
+                # it a quoted "Let's go!!" could not be told apart from the
+                # same words in another message, and its quoted copies were
+                # credited to whichever message the viewer grouped them with.
+                "author": str(block.get("locator_sender") or block.get("sender") or "").strip() or None,
+                "authored_at": str(block.get("locator_sent_at") or block.get("sent_at") or "").strip() or None,
             },
             entity_keys=[],
             source_refs=[source_ref],

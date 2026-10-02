@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core import telemetry as _telemetry
+from app.core.utterance_typing import is_untyped_speech as _untyped_speech
 
 RELATION = "document_job"
 CANDIDATES = ["this_deal", "other_job"]
@@ -365,7 +366,7 @@ def _first_lines(atoms: list[Any], skip: set[str], limit: int) -> list[str]:
     lines: list[str] = []
     for a in _own_words_first(atoms):
         v = _value(a)
-        if v.get("kind") in _META_KINDS or v.get("field_name") in _META_KINDS or v.get("non_deal") or _atom_type(a) in ("raw_utterance",):
+        if v.get("kind") in _META_KINDS or v.get("field_name") in _META_KINDS or v.get("non_deal") or _atom_type(a) in ("raw_utterance",) or _untyped_speech(a):
             continue
         t = " ".join(str(getattr(a, "raw_text", "") or "").split())
         if not t or t in lines or _norm(t)[:80] in skip or t.startswith("[Image extracted"):

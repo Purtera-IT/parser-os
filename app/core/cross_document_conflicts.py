@@ -83,6 +83,10 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
         at = _atom_type(atom)
         if at in _SKIP_TYPES:
             continue
+        from app.core.utterance_typing import is_untyped_speech
+
+        if is_untyped_speech(atom):
+            continue
         v = getattr(atom, "value", None)
         kind = str((v or {}).get("kind") or "") if isinstance(v, dict) else ""
         if kind.endswith(_SKIP_KINDS[:2]) or kind in _SKIP_KINDS:

@@ -1018,6 +1018,9 @@ class HubspotNoteParser(BaseParser):
                 # it. Genuinely empty; the header atom already records the note.
                 return
             atom_types: list[AtomType] = []
+            chatter_reason: str | None = None
+            from app.core.sentences import sentence_kind as _sentence_kind
+
             if is_title and _is_upload_caption(prose):
                 # The note's prose IS its title: a caption on an upload ("SOW",
                 # "psow from current partner"), not scope. Live 010300: three such
@@ -1026,6 +1029,13 @@ class HubspotNoteParser(BaseParser):
                 # mint nothing, which left every title-only note ("PO!!", "Need
                 # Troy and Wilmington sites removed." on 000132) with no atom.
                 atom_types = [AtomType.deal_metadata]
+            elif prose and not is_title and _sentence_kind(prose) == "banter":
+                # "Hope you had a great 4th of July!", "Thanks!": a pleasantry,
+                # not scope. Kept as an admission-chatter atom, the way the
+                # email parser keeps the same line, so the admission head sees
+                # the negative and no other head reads it.
+                atom_types = [AtomType.deal_metadata]
+                chatter_reason = "banter"
             elif prose:
                 atom_types = [AtomType.scope_item]
                 if _INSTRUCTION_RE.search(prose):
@@ -1086,6 +1096,10 @@ class HubspotNoteParser(BaseParser):
                             author_affiliation=affiliation,
                         )
                     )
+                    if chatter_reason:
+                        from app.core.admission_chatter import mark_admission_chatter
+
+                        mark_admission_chatter(atoms[-1], chatter_reason)
 
                 if AtomType.scope_item not in deduped:
                     return

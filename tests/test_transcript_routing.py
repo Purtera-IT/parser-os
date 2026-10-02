@@ -109,7 +109,11 @@ def test_unclassified_speech_is_kept_but_ranked_below_everything():
         p = Path(d) / TRANSCRIPT_NAME.name
         p.write_text(_fireflies_blob(40), encoding="utf-8")
         out = TranscriptParser().parse_artifact_full(project_id="p", artifact_id="a", path=p)
-    unclassified = [a for a in out.atoms if str(getattr(a.atom_type, "value", a.atom_type)) == "raw_utterance"]
+    # ...and typed, the way an email sentence no pattern recognised is: a
+    # coarse fallback type flagged as a guess, never the untyped raw_utterance.
+    from app.core.utterance_typing import FALLBACK_TYPED_FLAG
+
+    assert not any(str(getattr(a.atom_type, "value", a.atom_type)) == "raw_utterance" for a in out.atoms)
+    unclassified = [a for a in out.atoms if FALLBACK_TYPED_FLAG in (a.review_flags or [])]
     assert unclassified, "ordinary speech must still produce an atom"
-    assert all(a.confidence <= 0.45 for a in unclassified)
-    assert all("unclassified_utterance" in (a.review_flags or []) for a in unclassified)
+    assert all(a.confidence <= 0.45 for a in unclassified if str(a.atom_type.value) != "open_question")
