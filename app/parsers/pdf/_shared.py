@@ -421,6 +421,47 @@ def _cell_is_bold(spans: list[tuple[Any, bool]], cell: Any) -> bool:
     return bool(inside) and all(inside)
 
 
+def _label_column_is_shaded(page: Any, geo: list[list[Any]]) -> bool:
+    """Every column-0 cell sits on a filled (non-white) rectangle, no column-1
+    cell does, and each label is set in another face or a smaller size than
+    its value: a PO header's grey label cells ("Purchase Order Number",
+    Times 8.3) beside their values (Helvetica 10) (010003)."""
+    try:
+        fills = [
+            d["rect"] for d in page.get_drawings() or []
+            if d.get("fill") is not None and d.get("rect") is not None
+            and not all(float(c) >= 0.95 for c in d["fill"])
+        ]
+        spans = [
+            (tuple(float(v) for v in sp.get("bbox")), str(sp.get("font") or ""), float(sp.get("size") or 0))
+            for blk in (page.get_text("dict") or {}).get("blocks", []) or []
+            for ln in blk.get("lines", []) or []
+            for sp in ln.get("spans", []) or []
+            if str(sp.get("text") or "").strip()
+        ]
+    except Exception:
+        return False
+
+    def _filled(cell: Any) -> bool:
+        x0, y0, x1, y1 = (float(v) for v in cell)
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        return any(r.x0 - 1 <= cx <= r.x1 + 1 and r.y0 - 1 <= cy <= r.y1 + 1 for r in fills)
+
+    def _face(cell: Any) -> tuple[str, float] | None:
+        x0, y0, x1, y1 = (float(v) for v in cell)
+        inside = [(f, z) for (bx0, by0, bx1, by1), f, z in spans
+                  if x0 - 1 <= (bx0 + bx1) / 2.0 <= x1 + 1 and y0 - 1 <= (by0 + by1) / 2.0 <= y1 + 1]
+        return inside[0] if inside else None
+
+    for g in geo:
+        if not _filled(g[0]) or _filled(g[1]):
+            return False
+        lab, val = _face(g[0]), _face(g[1])
+        if lab and val and lab[0] == val[0] and lab[1] >= val[1] - 0.5:
+            return False
+    return True
+
+
 def _key_value_rows(page: Any, table: Any, rows: list[list[Any]]) -> list[str] | None:
     """Read a two- or three-column LABEL | VALUE grid as the field pairs it holds.
 
@@ -470,8 +511,15 @@ def _key_value_rows(page: Any, table: Any, rows: list[list[Any]]) -> list[str] |
     def _short(t: str) -> bool:
         return len(t) <= 40 and len(t.split()) <= 5 and not t.endswith((".", "!", "?"))
 
+    shaded: bool | None = None
     for i, t in enumerate(labels):
-        if not (_short(t) and (t.endswith(":") or _cell_is_bold(spans, geo[i][0]))):
+        if not _short(t):
+            return None
+        if t.endswith(":") or _cell_is_bold(spans, geo[i][0]):
+            continue
+        if shaded is None:
+            shaded = _label_column_is_shaded(page, geo)
+        if not shaded:
             return None
     for i, v in enumerate(values):
         if v and (v.endswith(":") or _cell_is_bold(spans, geo[i][1])):
