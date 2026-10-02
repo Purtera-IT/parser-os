@@ -5914,7 +5914,13 @@ def _text_rich_sections(
         # any glued Q&A as its OWN unit so the question/answer stays clean and the
         # request reads as the images' reference, not buried text. Multi-line
         # instructions are gathered (the continuation sentence-lines that follow).
-        if _is_photo_request(line.strip()) and idx > skip_through:
+        # A list item is already its own unit: a line that opens with a bullet
+        # marker, or the text after a lone glyph, stays a bullet whatever it
+        # says, so its marker is stripped and its wrapped tail joins it. Taken
+        # here, 010353's "<glyph> Capture clear completion photographs ..."
+        # kept its glyph as a paragraph and "finished work area." split off.
+        if (_is_photo_request(line.strip()) and idx > skip_through
+                and not pending_bullet and not _BULLET_LINE_RE.match(line)):
             flush_paragraph()
             flush_bullets()
             req = [line.strip()]
