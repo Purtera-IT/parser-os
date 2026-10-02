@@ -3272,11 +3272,35 @@ def compile_project(
     # at a canonical atom still in the result -- gives each such document its
     # own copy, so no line of a document is shown only as another's atom.
     try:
-        from app.core.cross_doc_copies import ensure_own_copies, resolve_canonical
+        from app.core.cross_doc_copies import (
+            drop_unheld_copies,
+            ensure_own_copies,
+            resolve_canonical,
+            source_lines_reader,
+        )
 
+        # A copy is a line its document HOLDS: never one minted only because
+        # the document names the same person, or names them in its header.
+        _doc_lines = source_lines_reader(artifact_paths)
         if held_copies:
             resolve_canonical(held_copies, atoms)
-        _swept = ensure_own_copies(atoms, held_copies)
+            _kept_copies, _refused = drop_unheld_copies(held_copies, atoms, _doc_lines)
+            if _refused:
+                held_copies[:] = _kept_copies
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        _refused, [], stage="own_copy_gate",
+                        reason="folded onto another document's atom; this document's text does not hold the line",
+                    ),
+                )
+                warnings.append(f"INFO: own_copy_gate refused {len(_refused)} copy(ies) their document does not hold")
+        _swept = ensure_own_copies(atoms, held_copies, doc_lines=_doc_lines, dropped=suppressed_atoms)
+        if _swept:
+            # A folded line its own document got back as its copy is no
+            # longer suppressed.
+            _back_ids = {id(a) for a in _swept}
+            suppressed_atoms[:] = [a for a in suppressed_atoms if id(a) not in _back_ids]
         if _swept:
             held_copies.extend(_swept)
             warnings.append(f"INFO: own_copy_sweep gave {len(_swept)} document line(s) their own copy")
