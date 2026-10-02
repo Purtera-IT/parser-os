@@ -168,6 +168,59 @@ _NON_ARTIFACT_PATTERNS = (
 )
 
 
+#: Spreadsheets are what the table rollup exists for (a 9 MB rate card is
+#: tens of thousands of rows); everything else -- a PDF or a Word table --
+#: is a document a person reads line by line.
+_SPREADSHEET_TYPES = frozenset({"xlsx", "xls", "xlsm", "csv", "tsv"})
+
+
+def _is_spreadsheet_atom(atom: Any) -> bool:
+    for ref in list(getattr(atom, "source_refs", None) or [])[:1]:
+        at = getattr(ref, "artifact_type", None)
+        at = str(getattr(at, "value", at) or "").lower()
+        fn = str(getattr(ref, "filename", "") or "").lower()
+        if at in _SPREADSHEET_TYPES or fn.rsplit(".", 1)[-1] in _SPREADSHEET_TYPES:
+            return True
+    return False
+
+
+def _keep_unsurvived_document_rows(before: list[Any], after: list[Any], warnings: list[str]) -> list[Any]:
+    """table_rollup must not hide a document's lines behind a count.
+
+    A rolled-up summary reads "N table rows (rolled up)"; no kept atom carries
+    the rows' words. On a PDF/Word document every such row goes back, and a
+    summary none of whose rows stay folded is removed (nothing was folded).
+    Spreadsheets keep the rollup: that is what it is for.
+    """
+    from app.core.suppression_ledger import keep_unsurvived_lines
+
+    after, restored = keep_unsurvived_lines(
+        before, after, stage="table_rollup", eligible=lambda a: not _is_spreadsheet_atom(a),
+    )
+    if not restored:
+        return after
+    after_ids = {id(a) for a in after}
+    still_folded = {
+        str(getattr(a, "artifact_id", "") or "")
+        for a in before
+        if id(a) not in after_ids
+    }
+    before_ids = {id(a) for a in before}
+    out = []
+    for a in after:
+        v = getattr(a, "value", None)
+        if (
+            id(a) not in before_ids
+            and isinstance(v, dict)
+            and v.get("_source") == "table_rollup_backstop"
+            and str(getattr(a, "artifact_id", "") or "") not in still_folded
+        ):
+            continue
+        out.append(a)
+    warnings.append(f"INFO: table_rollup kept {len(restored)} document rows no survivor contains")
+    return out
+
+
 def _deal_state_atom(template: Any, line: Any) -> Any:
     """One line of where-the-deal-stands, as an atom.
 
@@ -1568,6 +1621,14 @@ def compile_project(
         try:
             from app.core.entity_resolution import collapse_duplicate_atoms
             atoms = collapse_duplicate_atoms(atoms)
+            # A "near duplicate" whose words no survivor carries is a
+            # different line (numbered steps 6-15 on a two-column PDF page).
+            from app.core.suppression_ledger import keep_unsurvived_lines
+            atoms, _kept_back = keep_unsurvived_lines(before_atoms, atoms, stage="duplicate_atom_collapse")
+            if _kept_back:
+                warnings.append(
+                    f"INFO: duplicate_atom_collapse kept {len(_kept_back)} lines no survivor contains"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: duplicate_atom_collapse failed: {type(exc).__name__}: {exc}")
         dropped = before - len(atoms)
@@ -1625,11 +1686,13 @@ def compile_project(
         try:
             from app.core.table_rollup import roll_up_table_rows
             atoms, tr_stats = roll_up_table_rows(atoms)
+            atoms = _keep_unsurvived_document_rows(before_tr_atoms, atoms, warnings)
         except Exception as exc:
             tr_stats = {}
             warnings.append(f"WARNING: table_rollup failed: {type(exc).__name__}: {exc}")
         folded_tr = before_tr - len(atoms)
-        if folded_tr > 0:
+        _tr_kept_ids = {id(a) for a in atoms}
+        if any(id(a) not in _tr_kept_ids for a in before_tr_atoms):
             merge_suppressed(
                 suppressed_atoms,
                 capture_suppressed(

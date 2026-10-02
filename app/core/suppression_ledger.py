@@ -120,4 +120,82 @@ def merge_suppressed(
         ledger.append(atom)
 
 
-__all__ = ["capture_suppressed", "merge_suppressed", "SUPPRESSION_FLAG_PREFIX"]
+def _line_key(text: Any) -> str:
+    import re
+
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", str(text or "").lower()).split())
+
+
+#: Below this a line is punctuation or a page number, not content.
+_MIN_GUARD_KEY = 3
+
+
+def keep_unsurvived_lines(
+    before: list[Any],
+    after: list[Any],
+    *,
+    stage: str,
+    eligible: Any = None,
+) -> tuple[list[Any], list[Any]]:
+    """Put back every removed atom whose text no kept atom contains.
+
+    A collapse/rollup gate removes a line on the claim that another atom
+    already says it. On two-column PDF pages that claim was false: a spec
+    panel and numbered steps 6-15 were collapsed as "duplicates" of a
+    neighbouring line (or rolled into a "N table rows" count) and survived
+    only in the suppression ledger, where nobody can see or label them.
+
+    So the claim is checked: a removed atom stays removed only when some atom
+    in ``after`` carries its text (case and punctuation folded, substring
+    match on ``raw_text``). Otherwise it is returned to the list, next to the
+    atom that preceded it in ``before``, and marked ``_survivor_guard``.
+    ``eligible(atom)`` limits which removed atoms the guard may restore.
+
+    Returns ``(after_with_restored, restored)``.
+    """
+    after_ids = {id(a) for a in after}
+    removed = [a for a in before if id(a) not in after_ids]
+    if not removed:
+        return list(after), []
+    corpus = "\x00".join(_line_key(getattr(a, "raw_text", "") or getattr(a, "normalized_text", "")) for a in after)
+    restored: list[Any] = []
+    for atom in removed:
+        if eligible is not None and not eligible(atom):
+            continue
+        key = _line_key(getattr(atom, "raw_text", "") or getattr(atom, "normalized_text", ""))
+        if len(key) < _MIN_GUARD_KEY or key in corpus:
+            continue
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict):
+            val["_survivor_guard"] = {
+                "stage": stage,
+                "reason": "no kept atom contains this line, so it was not removed",
+            }
+        restored.append(atom)
+    if not restored:
+        return list(after), []
+
+    # Re-insert each restored atom after the nearest preceding atom (in the
+    # original order) that is still in the list.
+    restored_ids = {id(a) for a in restored}
+    follow: dict[int, list[Any]] = {}
+    lead: list[Any] = []
+    anchor = None
+    for atom in before:
+        if id(atom) in after_ids:
+            anchor = atom
+        elif id(atom) in restored_ids:
+            if anchor is None:
+                lead.append(atom)
+            else:
+                follow.setdefault(id(anchor), []).append(atom)
+    out: list[Any] = list(lead)
+    for atom in after:
+        out.append(atom)
+        out.extend(follow.get(id(atom), ()))
+    return out, restored
+
+
+__all__ = [
+    "capture_suppressed", "merge_suppressed", "keep_unsurvived_lines", "SUPPRESSION_FLAG_PREFIX",
+]
