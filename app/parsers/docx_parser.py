@@ -285,6 +285,52 @@ def _dedupe_repeated_text(atoms: list[Any]) -> list[Any]:
     return out
 
 
+def _stamp_reading_order(atoms: list[Any], para_order: dict[int, int], table_order: dict[int, int]) -> None:
+    """Give every docx atom a document-order locator.
+
+    The parser already emits atoms in body order (``_body_key``), but nothing
+    downstream keeps that list order: the compiler re-keys atoms by id, and
+    readers restore reading order from the LOCATOR. The envelope sorts on
+    ``(page, line_start, sentence_index, id)`` and the Platform-infra walk on
+    ``(page|row, block_index|row, line_start, sentence_index)``. A docx locator
+    carried none of those -- only ``paragraph_index`` / ``table_index`` /
+    ``row`` -- so every docx atom tied at 0 and fell through to the atom id (a
+    hash), and the walk sorted table rows by ``row`` ahead of every paragraph.
+    Live 010003: 24 of 55 atoms stepped backward; 010087's SOWs read PRICING,
+    ASSUMPTIONS, OUT OF SCOPE, SCOPE OF WORK.
+
+    Stamped here, after the reading-order sort and dedup:
+      * ``block_index`` -- the body element's position (paragraphs, tables and
+        content-control content interleaved), shared by all atoms of one block;
+      * ``line_start``/``line_end`` -- the atom's reading position, unique and
+        monotonic, so rows of one table and clauses of one paragraph keep order;
+      * ``page`` = None -- docx has no pages; an explicit null sorts as 0 in the
+        walk instead of falling back to ``row`` (which put row 3 of a table
+        after every paragraph), and ``label_key`` / the UI still see no page.
+    Existing values are never overwritten.
+    """
+    tail = max([*para_order.values(), *table_order.values(), -1]) + 1
+    for pos, atom in enumerate(atoms):
+        refs = getattr(atom, "source_refs", None) or []
+        if not refs:
+            continue
+        loc = getattr(refs[0], "locator", None)
+        if not isinstance(loc, dict):
+            continue
+        pi, ti = loc.get("paragraph_index"), loc.get("table_index")
+        if isinstance(pi, int) and pi in para_order:
+            block = para_order[pi]
+        elif isinstance(ti, int) and ti in table_order:
+            block = table_order[ti]
+        else:  # comments, tracked changes, headers, recovered regions
+            block = tail
+        loc.setdefault("block_index", block)
+        if loc.get("line_start") is None:
+            loc["line_start"] = pos
+            loc["line_end"] = pos
+        loc.setdefault("page", None)
+
+
 def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, Any]:
     from app.core.address_parse import enrich_location_fields
 
@@ -1030,6 +1076,7 @@ class DocxParser(BaseParser):
                 _cb_seen.add(k)
             _deduped.append(a)
         atoms = _deduped
+        _stamp_reading_order(atoms, para_order, table_order)
 
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
