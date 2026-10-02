@@ -35,7 +35,9 @@ def _sha256_file(path: Path) -> str:
 
 
 def _artifact_type_for_path(path: Path) -> ArtifactType:
-    suffix = path.suffix.lower()
+    from app.core.filetype import content_suffix
+
+    suffix = content_suffix(path)
     if suffix == ".xlsx":
         return ArtifactType.xlsx
     if suffix == ".csv":

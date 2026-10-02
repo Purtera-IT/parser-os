@@ -138,3 +138,45 @@ def sniff(path: Path) -> str | None:
         except Exception:
             return None
     return None
+
+
+#: Formats whose signature is decisive: a %PDF header or an OOXML container
+#: is that format whatever the file is called.
+_DECISIVE_SUFFIXES = frozenset({".pdf", ".docx", ".xlsx", ".pptx"})
+
+
+def content_suffix(path: Path) -> str:
+    """The extension a reader should dispatch on: what the bytes say when the
+    signature is decisive, else the file's own extension (lower-cased).
+
+    The parser registry already routes on content, but every reader that runs
+    AFTER parsing -- receipt replay, the content census, the manifest --
+    dispatched on ``path.suffix``. A signed SOW that is a Docusign PDF named
+    ``.docx`` was parsed as a PDF and then replayed through python-docx: every
+    receipt failed and its atoms could not be located on the page.
+
+    Only the binary signatures are trusted to overrule a name; a text sniff
+    (an RFC 822 header at the top of a .txt) is left to the extension.
+    """
+    p = Path(path)
+    suffix = p.suffix.lower()
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return suffix
+    cached = _CONTENT_SUFFIX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    sniffed = sniff(p)
+    out = sniffed if sniffed in _DECISIVE_SUFFIXES and sniffed != suffix else suffix
+    # .xlsm / .dotx / .dotm are their family's container; keep the real name.
+    if out != suffix and (out, suffix) in {(".xlsx", ".xlsm"), (".docx", ".dotx"), (".docx", ".dotm")}:
+        out = suffix
+    if len(_CONTENT_SUFFIX_CACHE) > 512:
+        _CONTENT_SUFFIX_CACHE.clear()
+    _CONTENT_SUFFIX_CACHE[key] = out
+    return out
+
+
+_CONTENT_SUFFIX_CACHE: dict[tuple[str, int, int], str] = {}
