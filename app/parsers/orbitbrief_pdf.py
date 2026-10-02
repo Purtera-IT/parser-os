@@ -4387,17 +4387,26 @@ def _split_structured_records(lines: list[str]) -> list[str] | None:
     if not _RECORD_LABEL_RE.match(body[0]):
         return None
     records: list[str] = []
+    broken = 0  # records opened by a hard line break, not a label
+    prev_ln = ""
     for ln in body:
         if _RECORD_LABEL_RE.match(ln):
             records.append(ln)
+        elif records and _hard_line_break(prev_ln, ln):
+            # A cell row, or the line after one, is not the tail of the
+            # record above it (010003's PO: "Ship To: ..." | "Line 1 | ... |
+            # $4,500.00" | "CDW PO's are not transferrable.").
+            records.append(ln)
+            broken += 1
         elif records:
             records[-1] += " " + ln
         else:
             return None
+        prev_ln = ln
     label_starts = sum(1 for ln in body if _RECORD_LABEL_RE.match(ln))
     # Need ≥2 real records and every record genuinely label-opened (guards
     # against one stray "Word:" opener in an otherwise prose paragraph).
-    if len(records) < 2 or label_starts < len(records):
+    if len(records) - broken < 2 or label_starts < len(records) - broken:
         return None
     return prefix + records
 
@@ -5551,12 +5560,22 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             for rec in records:
                 current_blocks.append({"kind": "paragraph", "text": rec, "lines": [rec]})
             return
-        text = " ".join(kept).strip()
-        if text:
-            # Keep the per-line structure alongside the joined text: a glued
-            # "key = value" metadata block needs the real line boundaries so a
-            # trailing prose line isn't swallowed into the last value.
-            current_blocks.append({"kind": "paragraph", "text": text, "lines": kept})
+        # A row of cells, or a line that closes on an amount, ends what came
+        # before it: 010003's PO glued "Ship To: ...", "Line 1 | ... |
+        # $4,500.00" and "CDW PO's are not transferrable." into one paragraph,
+        # and the clause never stood as its own atom.
+        runs: list[list[str]] = [[]]
+        for ln in kept:
+            if runs[-1] and _hard_line_break(runs[-1][-1], ln):
+                runs.append([])
+            runs[-1].append(ln)
+        for run in runs:
+            text = " ".join(run).strip()
+            if text:
+                # Keep the per-line structure alongside the joined text: a glued
+                # "key = value" metadata block needs the real line boundaries so a
+                # trailing prose line isn't swallowed into the last value.
+                current_blocks.append({"kind": "paragraph", "text": text, "lines": run})
 
     def flush_bullets() -> None:
         nonlocal bullet_buffer
@@ -5813,6 +5832,20 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
 
 
 _TERMINAL_PUNCT_RE = re.compile(r"[.!?:;]\s*[\"”’')\]]*\s*$")
+#: A line that ends on a money amount ("$4,500.00", "4,500.00 USD").
+_ENDS_ON_AMOUNT_RE = re.compile(r"(?:[$€£]\s?\d[\d,]*(?:\.\d{2})?|\d[\d,]*\.\d{2}(?:\s?(?:usd|cad|eur))?)\s*$", re.I)
+
+
+def _hard_line_break(prev: str, cur: str) -> bool:
+    """Two adjacent page lines that can never be one sentence: either is a
+    row of cells ("a | b | c"), or the first closes on an amount and the
+    second opens a new capitalised line."""
+    prev, cur = (prev or "").strip(), (cur or "").strip()
+    if not prev or not cur:
+        return False
+    if " | " in prev or " | " in cur:
+        return True
+    return bool(_ENDS_ON_AMOUNT_RE.search(prev)) and cur[:1].isupper()
 
 
 def _is_wrapped_tail(
@@ -5838,6 +5871,13 @@ def _is_wrapped_tail(
     if not prev or not cur or _TERMINAL_PUNCT_RE.search(prev):
         return False
     if cur.isupper():
+        return False
+    # A row of cells is not prose: neither a "a | b | c" row nor the line
+    # after it is a wrapped sentence. A line that closes on an amount and a
+    # next line that opens a new capitalised sentence are two lines: 010003's
+    # PO glued "Line 1 | ... | $4,500.00" and "CDW PO's are not
+    # transferrable." into one atom and the clause read as claimed.
+    if _hard_line_break(prev, cur):
         return False
     if _BULLET_LINE_RE.match(cur) or _BARE_BULLET_RE.match(cur) or _BARE_ENUM_RE.match(cur):
         return False
