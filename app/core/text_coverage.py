@@ -22,6 +22,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from app.core.textio import decode_html_entities
+
 #: Text we can read back and diff.
 TEXT_SUFFIXES = {".eml", ".txt", ".md", ".msg", ".html", ".htm"}
 #: A PDF is read back line by line off its text layer. Its line breaks are a
@@ -129,7 +131,14 @@ _MIN_CHARS = 12
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
+    # HubSpot escapes note bodies, some exports twice ("server &amp;amp;
+    # virtualization", 000132). The parser reads the decoded text, so the
+    # source line and every atom text are folded from it too: "amp amp" left
+    # in the line is a residue no atom can claim.
+    s = str(s or "")
+    if "&" in s:
+        s = decode_html_entities(s)
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
 def _html_to_text(html: str) -> str:

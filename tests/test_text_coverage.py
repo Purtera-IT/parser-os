@@ -175,3 +175,17 @@ def test_one_small_piece_does_not_claim_a_long_line(tmp_path):
     cov = coverage_for_artifact(_note(tmp_path), "art_n", kept)
     unread = [x["text"] for x in cov["unclaimed"] if x["state"] == "unread"]
     assert len(unread) == 1 and unread[0].startswith("Maintenance and support:")
+
+
+def test_a_double_escaped_entity_line_is_claimed(tmp_path):
+    # 000132: HubSpot exported the note escaped twice. The parser reads
+    # "server & virtualization"; coverage must fold the line the same way, or
+    # "amp amp" is residue no atom can claim.
+    line = "Refresh the server &amp;amp; virtualization stack."
+    p = tmp_path / "000132-hs-note-10-scope.txt"
+    p.write_text("Scope call with the customer today.\n\n" + line + "\n", encoding="utf-8")
+    for atom_text in ("Refresh the server & virtualization stack.",
+                      "Refresh the server &amp; virtualization stack."):
+        kept = [_atom("Scope call with the customer today.", artifact="art_e"), _atom(atom_text, artifact="art_e")]
+        cov = coverage_for_artifact(p, "art_e", kept)
+        assert not [x for x in cov["unclaimed"] if x["state"] == "unread"], (atom_text, cov["unclaimed"])
