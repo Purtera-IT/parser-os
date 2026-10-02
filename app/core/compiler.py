@@ -1534,6 +1534,21 @@ def compile_project(
             with telemetry.stage("pdf_image_vision", input_count=len(atoms)) as stage:
                 image_atoms = pdf_image_vision.process_image_markers(atoms)
                 if image_atoms:
+                    # A picture of text the page's text layer already reads
+                    # is a copy (often with its step number swapped): kept
+                    # as a suppression naming the text atom, not emitted.
+                    _vis_kept, _vis_copies = pdf_image_vision.split_text_layer_copies(image_atoms, atoms)
+                    if _vis_copies:
+                        merge_suppressed(
+                            suppressed_atoms,
+                            capture_suppressed(
+                                image_atoms, _vis_kept,
+                                stage="vision_copy_of_text_layer",
+                                reason="the page's text layer already reads this line; "
+                                       "the vision transcription is a copy",
+                            ),
+                        )
+                    image_atoms = _vis_kept
                     atoms.extend(image_atoms)
                 telemetry.end_stage(stage, output_count=len(image_atoms))
     except Exception as _piv_exc:
