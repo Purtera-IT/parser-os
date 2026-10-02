@@ -1509,6 +1509,29 @@ def _looks_like_signature_row(text: str) -> bool:
     return has_name or has_party
 
 
+def _is_table_record_row(atom: Any) -> bool:
+    """A row of a table whose header row names its columns ("FULL NAME |
+    JOB TITLE | EMAIL ADDRESS", "SOW VERSION | QUOTED BY | DATE | REVISION
+    HISTORY"): already one record per row, never a line of a signature block
+    to be regrouped by party, however its "FULL NAME:" / "JOB TITLE:" /
+    "DATE:" field names look. Live 010353 / 010087: the SOW's revision row and
+    its sales and customer contact rows were grouped as one signature block
+    read column by column across the three tables ("QUOTED BY: Tanner Norris
+    | FULL NAME: Chase Smith, John Ozuna-Diaz / Danny Berry | JOB TITLE:
+    ..."), and Chase's own row was rewritten as that record. A signature
+    table's cells carry their own signature label ("CDW Technologies LLC:
+    By: Mike Murphy"); a row with one is still a signature row."""
+    v = getattr(atom, "value", None)
+    if not isinstance(v, dict) or v.get("kind") != "table_row":
+        return False
+    cols = [str(c or "").strip() for c in (v.get("columns") or [])]
+    if len(cols) < 2 or any(not c or c.startswith("col_") for c in cols):
+        return False
+    cells = v.get("cells") if isinstance(v.get("cells"), dict) else {}
+    vals = [str(x or "") for x in cells.values()] or re.split(r"\s*\|\s*", _atom_text(atom))
+    return not any(re.match(r"\s*(?:By|Name|Title|Date|Signature)\s*:", x, re.I) for x in vals)
+
+
 def _sig_figures(text: str):
     """A figure a signature row states. One definition, shared with every other
     fold site in the compile: see `app.core.fold_invariants`."""
@@ -1543,7 +1566,7 @@ def merge_signature_rows(atoms: list[Any]) -> int:
         # acknowledgement that the parties below have read...", live 010300
         # round 26: the Contact Persons and Expenses clauses) is not a row of
         # the signature table and must not be folded away with it.
-        if _is_row and (
+        if _is_row and not _is_table_record_row(a) and (
             _atom_type_str(a) == "signatory"
             or _atom_type_str(a) in ("scope_item", "deal_metadata", "stakeholder", "entity")
         ):
