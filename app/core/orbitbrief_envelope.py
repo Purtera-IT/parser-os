@@ -763,6 +763,7 @@ def build_orbitbrief_envelope(
                     if (lifecycle or {}).get("type") == "DEAL_KIT" else {}
                 ),
                 "sender_email": prov.get("sender_email"),
+                **({"carried_by": prov["carried_by"]} if prov.get("carried_by") else {}),
                 "size_bytes": fp.size_bytes,
                 "parser_name": fp.parser_name,
                 "parser_version": fp.parser_version,
@@ -1260,6 +1261,11 @@ def build_orbitbrief_envelope(
         _enrich_atom_threads(envelope.get("atoms") or [], threads)
     if held_chatter:
         _merge_held_chatter(envelope, held_chatter, atoms, documents, threads)
+    # Last, once every atom is in place: who brought each document in and
+    # which way it went, on the document and on each of its atoms.
+    from app.core.doc_origin import annotate_doc_origin
+
+    annotate_doc_origin(documents, envelope)
     return envelope
 
 
@@ -2379,6 +2385,9 @@ def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
             # "this message is where the SOWs came from".
             "attachment_ids": [str(x) for x in (md.get("attachmentIds") or []) if x],
             "sender_email": md.get("senderEmail"),
+            # The email or HubSpot note that brought this artifact in, joined
+            # by Purpulse from HubSpot's attachment ids. See doc_origin.py.
+            "carried_by": art.get("carried_by") if isinstance(art.get("carried_by"), dict) else None,
         }
     return out
 
