@@ -64,9 +64,86 @@ def _table_rows_repaired(page: Any, table: Any) -> list[list[Any]]:
                 continue
             if sorted(a.replace(" ", "")) == sorted(b.replace(" ", "")):
                 rows[ri][ci] = b
+    _rejoin_words_split_at_walls(page, cell_rows, rows)
     _restore_clipped_prefixes(page, cell_rows, rows)
     _split_spanning_cells(page, cell_rows, rows)
     return rows
+
+
+def _rejoin_words_split_at_walls(page: Any, cell_rows: list[Any], rows: list[list[Any]]) -> None:
+    """Put a word the grid cut in two back into ONE cell.
+
+    ``extract()`` assigns each glyph to the cell holding most of its box, so a
+    word whose first letter sits on a cell wall is torn in two. A Word table
+    exported to PDF shades each cell with an outer band and an inset padding
+    band, every band edge becomes a wall, and the text starts exactly on the
+    inset's edge: 010087's signed SOW read its revision row as "v.1 | O |
+    ctavian Mitroi" -- the "O" in the margin sliver, a phantom column holding
+    it -- and the row stopped matching anything, its own document included.
+
+    A repair needs the page to say so: a word of the text layer lying across
+    (or on) the wall between two neighbouring cells of the row, whose two
+    halves are the last token of the left cell's line and the first token of
+    the right cell's. The whole word goes to the cell holding most of its
+    width; the other cell loses only that fragment.
+    """
+    try:
+        words = page.get_text("words") or []
+    except Exception:
+        return
+    for ri, row in enumerate(cell_rows):
+        if ri >= len(rows):
+            break
+        geo = [(ci, c) for ci, c in enumerate(getattr(row, "cells", []) or [])
+               if c is not None and ci < len(rows[ri])]
+        geo.sort(key=lambda t: float(t[1][0]))
+        for (li, lc), (rj, rc) in zip(geo, geo[1:]):
+            wall = float(rc[0])
+            if abs(float(lc[2]) - wall) > 1.5:
+                continue
+            left = str(rows[ri][li] or "")
+            right = str(rows[ri][rj] or "")
+            if not left.strip() or not right.strip():
+                continue
+            y0 = max(float(lc[1]), float(rc[1]))
+            y1 = min(float(lc[3]), float(rc[3]))
+            for w in words:
+                text = str(w[4])
+                wx0, wx1 = float(w[0]), float(w[2])
+                if len(text) < 2 or not (y0 - 1 <= (float(w[1]) + float(w[3])) / 2.0 <= y1 + 1):
+                    continue
+                if not (wx0 <= wall + 2.0 and wx1 >= wall - 2.0):
+                    continue
+                l_lines, r_lines = left.split("\n"), right.split("\n")
+                hit = None
+                for a, ll in enumerate(l_lines):
+                    lt = ll.split()
+                    if not lt or not text.startswith(lt[-1]) or lt[-1] == text:
+                        continue
+                    rest = text[len(lt[-1]):]
+                    for b, rl in enumerate(r_lines):
+                        rt = rl.split()
+                        if rt and rt[0] == rest:
+                            hit = (a, b)
+                            break
+                    if hit:
+                        break
+                if not hit:
+                    continue
+                a, b = hit
+                lt, rt = l_lines[a].split(), r_lines[b].split()
+                left_w = max(0.0, min(wx1, wall) - wx0)
+                right_w = max(0.0, wx1 - max(wx0, wall))
+                if right_w >= left_w:
+                    lt, rt = lt[:-1], [text] + rt[1:]
+                else:
+                    lt, rt = lt[:-1] + [text], rt[1:]
+                l_lines[a], r_lines[b] = " ".join(lt), " ".join(rt)
+                left = "\n".join(x for x in l_lines if x.strip())
+                right = "\n".join(x for x in r_lines if x.strip())
+                rows[ri][li], rows[ri][rj] = left, right
+                if not left.strip() or not right.strip():
+                    break
 
 
 def _split_spanning_cells(page: Any, cell_rows: list[Any], rows: list[list[Any]]) -> None:
