@@ -123,3 +123,11 @@ def test_compile_deal_kit_v2_sell_rates_with_survey_terms_derives_no_state(tmp_p
     assert not [s for s in states if "survey" in s.lower()], states
     # The priced survey line itself is still an atom.
     assert any("Site Survey" in a.raw_text and "250" in a.raw_text for a in r.atoms)
+
+
+def test_unpriced_note_row_counts_off_a_rate_sheet_only():
+    note = "Customer wants us to schedule a site survey before we can quote."
+    on_kit = _Typed(note, "Deal Kit", atom_type="pricing_assumption", value={"kind": "unpriced_sheet_row"})
+    on_rates = _Typed(note, "Sell Rates", atom_type="pricing_assumption", value={"kind": "unpriced_sheet_row"})
+    assert read_deal_state([on_kit]).get("stage").value == "awaiting site survey"
+    assert read_deal_state([on_rates]).get("stage") is None

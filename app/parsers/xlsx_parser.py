@@ -3531,9 +3531,19 @@ class XlsxParser(BaseParser):
             return False
 
         current_section: str | None = None
+        # Rows that carry no price and are not structure (header band, a
+        # block's own header, a category divider) used to be skipped without
+        # a trace: a SELL RATES title, an "After Hours | billed at 150% of the
+        # standard rate" line, a Notes block. They are collected here and
+        # kept as atoms below (see _commercial_unpriced_atoms).
+        _unpriced: list[tuple[int, list[str], bool]] = []
+        _structure_rows: set[int] = set(_header_rows)
         for row_idx, _raw in enumerate(rows):
             _full = [("" if c is None else str(c).strip()) for c in _raw]
             if not any(_full):
+                continue
+            if row_idx < _data_floor and row_idx not in _header_rows:
+                _unpriced.append((row_idx, _full, True))
                 continue
             if row_idx in _header_rows or row_idx < _data_floor:
                 # Header band rows AND everything above the data block (dropdown
@@ -3542,6 +3552,7 @@ class XlsxParser(BaseParser):
                 continue
             for _gi, _lo, _hi, _hdrs, _under_main in _plan.get(row_idx, [(0, 0, len(_raw), _headers, True)]):
                 if (row_idx, _gi) in _reheader:
+                    _structure_rows.add(row_idx)
                     continue  # this block's own header row: structure, bound into its rows
                 if _multi:
                     row = [(_raw[c] if _lo <= c < _hi else None) for c in range(len(_raw))]
@@ -3563,6 +3574,7 @@ class XlsxParser(BaseParser):
                     # Becomes the running section breadcrumb for the rows beneath it
                     # (e.g. Materials > CAT6…); not emitted as a priced atom itself.
                     current_section = max((c for c in cells if c), key=len).strip(" .…")[:60]
+                    _structure_rows.add(row_idx)
                     continue
                 _aligned = (
                     _hdrs
@@ -3580,6 +3592,7 @@ class XlsxParser(BaseParser):
                     # isn't silently dropped. Catalogs stay strict (money only) so
                     # their rollup counts don't drift.
                     if collapse_to_summary or _aligned or not _is_side_label_value(cells):
+                        _unpriced.append((row_idx, cells, False))
                         continue
                 all_values.extend(values)
                 money_keys = sorted({f"money:{int(round(v))}" for v in values})
@@ -3695,6 +3708,13 @@ class XlsxParser(BaseParser):
         box_atoms = self._commercial_label_box_atoms(
             project_id, artifact_id, artifact_type, filename, sheet_name, rows, _emitted_rows,
         )
+        _box_rows = {(a.source_refs[0].locator or {}).get("row") for a in box_atoms if a.source_refs}
+        box_atoms = box_atoms + self._commercial_unpriced_atoms(
+            project_id, artifact_id, artifact_type, filename, sheet_name, role,
+            [u for u in _unpriced
+             if u[0] not in _structure_rows and (u[0] + 1) not in _emitted_rows
+             and (u[0] + 1) not in _box_rows],
+        )
         if line_count == 0:
             return box_atoms
 
@@ -3742,6 +3762,77 @@ class XlsxParser(BaseParser):
                 },
             }
         return [summary, *atoms]
+
+    def _commercial_unpriced_atoms(
+        self, project_id, artifact_id, artifact_type, filename, sheet_name, role, unpriced,
+    ) -> list[EvidenceAtom]:
+        """Atoms for the rows of a priced sheet that carry no price.
+
+        A row ABOVE the data block (a sheet title, a dropdown source list, a
+        scratch row) is scaffolding: kept as a chatter atom a labeler can
+        reject (rejected_by commercial_sheet_scaffolding). A row inside it
+        with no money is a term or note of the sheet ("After Hours | billed at
+        150% of the standard rate", "Travel billed at cost"): kept as a
+        pricing_assumption flagged unpriced_sheet_row, for review. Neither is
+        folded into the rollup, so its counts do not move.
+        """
+        from app.core.deal_chatter import CHATTER_FLAG
+
+        out: list[EvidenceAtom] = []
+        seen: set[int] = set()
+        for row_idx, cells, above in unpriced:
+            if row_idx in seen:
+                continue
+            seen.add(row_idx)
+            parts = [c for c in cells if c]
+            if not parts:
+                continue
+            # A tick-box cell is its own fact, never glued onto the row's
+            # name ("Delphos, OH | ☐ Assessment ☒ Installation").
+            from app.parsers.checkbox_cells import checkbox_atom, is_checkbox_cell
+
+            boxes = [c for c in parts if is_checkbox_cell(c)]
+            if boxes and len(boxes) < len(parts):
+                parts = [c for c in parts if c not in boxes]
+                for b in dict.fromkeys(boxes):
+                    out.append(checkbox_atom(
+                        project_id=project_id, artifact_id=artifact_id,
+                        artifact_type=artifact_type, filename=filename, text=b,
+                        column="", subject=parts[0],
+                        locator={"sheet": sheet_name, "row": row_idx + 1,
+                                 "section_path": [sheet_name] if sheet_name else []},
+                        extraction_method="xlsx_checkbox_cell_v1",
+                        parser_version=self.parser_version, site_row=False,
+                    ))
+            text = " | ".join(dict.fromkeys(parts))[:4000]
+            aid = stable_id("atm", artifact_id, "commercial_unpriced", sheet_name, row_idx)
+            value: dict[str, Any] = {
+                "kind": "commercial_sheet_scaffolding" if above else "unpriced_sheet_row",
+                "sheet_name": sheet_name, "sheet_role": getattr(role, "value", str(role)),
+                "cells": parts,
+            }
+            if above:
+                value.update({"chatter": True, "rejected_by": "commercial_sheet_scaffolding"})
+            out.append(EvidenceAtom(
+                id=aid, project_id=project_id, artifact_id=artifact_id,
+                atom_type=AtomType.deal_metadata if above else AtomType.pricing_assumption,
+                raw_text=text, normalized_text=text.lower(), value=value, entity_keys=[],
+                source_refs=[SourceRef(
+                    id=stable_id("src", aid), artifact_id=artifact_id,
+                    artifact_type=artifact_type, filename=filename,
+                    locator={"sheet": sheet_name, "row": row_idx + 1,
+                             "section_path": [sheet_name] if sheet_name else [],
+                             "extraction": "commercial_unpriced_row_v1"},
+                    extraction_method="commercial_unpriced_row_v1",
+                    parser_version=self.parser_version)],
+                receipts=[], authority_class=AuthorityClass.vendor_quote,
+                confidence=0.1 if above else 0.6, confidence_raw=0.1 if above else 0.6,
+                calibrated_confidence=0.1 if above else 0.6,
+                review_status=ReviewStatus.needs_review,
+                review_flags=[CHATTER_FLAG] if above else ["unpriced_sheet_row"],
+                parser_version=self.parser_version,
+            ))
+        return out
 
     def _commercial_label_box_atoms(
         self, project_id, artifact_id, artifact_type, filename, sheet_name, rows, emitted_rows,

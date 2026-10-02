@@ -105,11 +105,16 @@ _RATE_SHEET_NAME = re.compile(r"\b(?:rates?|pric(?:e|es|ing)|rate ?card|catalog)
 
 
 def _priced_sheet_row(atom: Any) -> bool:
+    val = getattr(atom, "value", None) or {}
+    if isinstance(val, dict) and val.get("kind") == "unpriced_sheet_row":
+        # A note row of a priced sheet carries no price of its own; only the
+        # sheet's name can make it part of the rate card.
+        return any(_RATE_SHEET_NAME.search(str((getattr(r, "locator", None) or {}).get("sheet") or ""))
+                   for r in (getattr(atom, "source_refs", None) or []))
     at = getattr(atom, "atom_type", None)
     at = str(getattr(at, "value", at) or "")
     if at in _PRICED_ROW_TYPES:
         return True
-    val = getattr(atom, "value", None) or {}
     if isinstance(val, dict) and (val.get("kind") in _PRICED_ROW_KINDS or val.get("sheet_role")
                                   or val.get("money_keys")):
         return True
