@@ -250,6 +250,24 @@ def _address_columns(rows_lr: list[list[str]]) -> list[str]:
     return out
 
 
+def _box_runs_on_above(lines: list[dict[str, Any]], top: int, rail: float, line_h: float) -> bool:
+    """Two or more left-only lines set one line pitch apart directly above
+    line ``top``, starting at its left edge: the left column is a box that
+    started higher, not a table column."""
+    x0 = float(lines[top]["x0"])
+    run = 0
+    cur = top
+    for k in range(top - 1, max(-1, top - 4), -1):
+        ln = lines[k]
+        if float(lines[cur]["y0"]) - float(ln["y1"]) > 0.9 * line_h:
+            break
+        if abs(float(ln["x0"]) - x0) > 3.0 or any(float(t[2]) > rail - 1.0 for t in ln["words"]):
+            break
+        run += 1
+        cur = k
+    return run >= 2
+
+
 def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[str, Any]], list[Any]]:
     """Recover UNRULED column tables on a text-rich page from word geometry.
 
@@ -449,6 +467,16 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
                 break  # left-only line before any 2-col row → not a clean table
         # require ≥2 rows and both columns genuinely populated across the region.
         if len(rows_lr) < 2:
+            continue
+        # 4a. The left "cells" are the bottom of a BOX that began above the
+        #     region: two or more left-only lines stacked tight above the first
+        #     row, on the same left edge. A table's left column does not run on
+        #     above its first row (a caption is one line); a ship-to box beside
+        #     a "Shipping Method" box does, and pairing their lines fused
+        #     "NEW YORK, NY 10014-1066 | Shipping Method: DROP SHIP-GROUND" and
+        #     folded the box's "Phone:" line into it (010003). Boxes are left
+        #     to the column-aware layout reader.
+        if _box_runs_on_above(lines, region_lis[0] if region_lis else top_li, X, line_h):
             continue
         if sum(1 for r in rows_lr if r[0]) < 2 or sum(1 for r in rows_lr if r[1]) < 2:
             continue

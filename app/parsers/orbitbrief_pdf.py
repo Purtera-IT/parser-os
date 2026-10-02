@@ -5182,6 +5182,18 @@ def _looks_like_section_heading(stripped: str) -> bool:
     # every atom after it and no atom carried it).
     if re.search(r",\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\s*$", stripped):
         return False
+    # Its street line ("40 10TH AVE FL 4") is a value too: as a heading the
+    # ship-to box lost its street and the next line became its section.
+    if re.match(r"^P\.?\s*O\.?\s+BOX\s+\d", stripped):
+        return False
+    if re.match(r"^\d", stripped):
+        try:
+            from app.core.address_parse import looks_like_street_address
+
+            if looks_like_street_address(stripped):
+                return False
+        except Exception:  # pragma: no cover
+            pass
     # Headings don't end with sentence punctuation.
     if stripped[-1] in ".,;":
         return False
@@ -5768,8 +5780,14 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             current_heading = stripped
             continue
 
-        # heading guess (all caps or markdown-style #)
-        if len(stripped) <= 80 and _looks_like_section_heading(stripped):
+        # heading guess (all caps or markdown-style #) -- but not the value
+        # line straight under a "<label>:" line of its box ("SHIP TO:" /
+        # "ACME CORPORATION", "Shipping Method:" / "DROP SHIP-GROUND"): read
+        # as a heading the value vanished into a section name.
+        _prev_line = lines[idx - 1].strip() if idx > 0 else ""
+        if (len(stripped) <= 80 and _looks_like_section_heading(stripped)
+                and not (_prev_line.endswith(":") and len(_prev_line) <= 40
+                         and not stripped.startswith("#"))):
             flush_section()
             current_heading = stripped.lstrip("# ").strip()
             continue
