@@ -1030,6 +1030,18 @@
       "label": "When the work starts",
       "values": "the confirmed or proposed start date/time",
       "desc": "The line sets or proposes when on-site work begins: \"see you Friday at 9am\". Copy the date and time as said. Label the confirmed start once, on the line that confirms it; an earlier proposal that changed is superseded by it."
+    },
+    {
+      "key": "intake_gap",
+      "label": "Should have been asked at quoting",
+      "values": "true/false",
+      "desc": "A planning or delivery question about a site or customer fact that intake should have collected before the quote: \"is there power at the TV location?\" asked after the PO. Orbit learns to ask it earlier."
+    },
+    {
+      "key": "needed_by",
+      "label": "Who needs the answer",
+      "values": "project_manager | atlas | portal",
+      "desc": "The downstream consumer that needs this fact: the PM running the job, Atlas planning, or the customer portal."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
