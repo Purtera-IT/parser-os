@@ -164,6 +164,10 @@ def format_checks(row: dict[str, Any]) -> list[dict[str, str]]:
             f"A reject needs a {marker} line saying the rule and its effect on this line.")
     if marker in note.lower() and not has_line:
         add("marker_inline", "conduct.action", f"{marker} must start its own line, or the WHY and the rule cannot be told apart.")
+    n_exclude = note.upper().count("EXCLUDE_FROM_TRAINING")
+    if n_exclude > 1 or (n_exclude == 1 and not re.match(r"\s*\[?EXCLUDE_FROM_TRAINING", note, re.I)):
+        add("exclude_marker_misplaced", "meta.bookkeeping",
+            "EXCLUDE_FROM_TRAINING belongs once, at the very start of the note.")
     universal, _ = split_note(note, company)
     if POLICY_WORDS.search(_QUOTED.sub("", universal)):
         add("policy_words_in_why", "rationale.why",

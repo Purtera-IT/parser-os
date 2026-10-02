@@ -74,6 +74,10 @@ def test_checks():
     assert "value_outside_vocab" in _checks(_row(reads_set={"co_action": "maybe"}))
     assert "unregistered_read" in _checks(_row(reads_set={"made_up": "x"}))
     assert "marker_inline" in _checks(_row(note="Why. [purtera] keep: feeds crew."))
+    ok = "[EXCLUDE_FROM_TRAINING: old manual Deal Kit]\nA rate row.\n[purtera] ignore: old kit."
+    assert "exclude_marker_misplaced" not in _checks(_row(note=ok))
+    assert "exclude_marker_misplaced" in _checks(_row(note=ok + "\nEXCLUDE_FROM_TRAINING: old manual internal pricing workbook"))
+    assert "exclude_marker_misplaced" in _checks(_row(note="A rate row. EXCLUDE_FROM_TRAINING: old kit"))
 
 
 def test_derived_from_stand_in_links_become_the_relation():
