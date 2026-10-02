@@ -3457,6 +3457,17 @@ _NON_PERSON_NAME_PREFIXES: frozenset[str] = frozenset({
 })
 
 
+#: A clock time ("8:00 AM", "5 PM", "1:48 p.m.") -- its AM/PM is no role cue.
+_CLOCK_TIME_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s*(?:[AaPp]\.?[Mm]\b\.?)")
+#: A determiner opens a noun phrase ("The Buyer"), never a person's name.
+_DETERMINERS = frozenset({
+    "the", "a", "an", "this", "that", "these", "those", "each", "every",
+    "any", "all", "such", "said", "no", "our", "your", "their", "its",
+})
+#: Right after a phrase: a colon and a figure -- the phrase labels a value.
+_LABEL_VALUE_AFTER_RE = re.compile(r"\s*:\s*[$€£(]?\d")
+
+
 def _emit_stakeholders(text: str) -> set[str]:
     """Extract named approvers / stakeholders as ``stakeholder:first_last``
     entities.
@@ -3536,6 +3547,11 @@ def _emit_stakeholders(text: str) -> set[str]:
         ).strip()
         if not sentence:
             continue
+        # A clock time's meridiem is not a Project Manager: "8:00 AM to
+        # 5:00 PM" made every capitalised phrase of a rate table a person
+        # (010353 / 010003: "Business Hours", "After Hours", "Stated Rate").
+        # Blank it to the same length so match offsets are kept.
+        sentence = _CLOCK_TIME_RE.sub(lambda m: " " * len(m.group(0)), sentence)
         # Skip sentences without a role cue — saves work
         if not _STAKEHOLDER_ROLE_PATTERNS.search(sentence):
             continue
@@ -3618,6 +3634,11 @@ def _emit_stakeholders(text: str) -> set[str]:
                 continue
             first_lower = tokens[0].lower()
             if first_lower in _NON_PERSON_NAME_PREFIXES:
+                continue
+            # A field label, not a name: a phrase led by a determiner ("The
+            # Buyer and Provider Contact Persons shall ... approve") or a
+            # "Label:" that a figure follows ("Business Hours: 8:00 AM").
+            if first_lower in _DETERMINERS or _LABEL_VALUE_AFTER_RE.match(sentence, match.end()):
                 continue
             # Reject if the name's tail token is a CORPORATE suffix
             # ("Acme Corp" / "OPTBOT Inc"). Place suffixes (park,
