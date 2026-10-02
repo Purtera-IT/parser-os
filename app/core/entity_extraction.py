@@ -5756,6 +5756,22 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         "scolaris", "infinite_campus", "skyward", "tyler",
     }
 
+    # A "City, ST" entry the document itself lists as a site (the
+    # authoritative catalog: a Site List section, an address-anchored roster)
+    # is a site. The positive-signal gate below kept such a phrase only by the
+    # accident of the site-code shape -- two tokens of <=6 characters -- so
+    # "Troy, OH" and "Lima, OH" survived and "Delphos, OH" and "Wilmington,
+    # OH" from the same table were dropped (live 000132). Only catalog
+    # entries of exactly that shape are exempt; the denylist still applies.
+    from app.core.address_parse import US_STATES as _US_STATES
+
+    def _catalog_city_state(slug: str) -> bool:
+        if slug not in _SITE_INJECTION_KEYS:
+            return False
+        toks = slug.split("_")
+        return (2 <= len(toks) <= 4 and toks[-1].upper() in _US_STATES
+                and all(t.isalpha() and len(t) >= 2 for t in toks[:-1]))
+
     for atom in atom_list:
         current = atom.entity_keys or []
         if not current:
@@ -5767,6 +5783,17 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 # Universal store-learned role gate first; denylist second.
                 if k in _site_role_drops:
                     dropped_any = True
+                    continue
+                if _is_obvious_non_site is not None and _catalog_city_state(k[len("site:"):]):
+                    _phrase_cs = k[len("site:"):].replace("_", " ")
+                    try:
+                        from app.core.site_llm_verify import _OBVIOUS_NON_SITES as _ONS
+                    except Exception:
+                        _ONS = frozenset()
+                    if _phrase_cs in _ONS:
+                        dropped_any = True
+                        continue
+                    kept.append(k)
                     continue
                 if _is_obvious_non_site is not None:
                     phrase = k[len("site:"):].replace("_", " ")

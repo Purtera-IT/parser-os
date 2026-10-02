@@ -152,3 +152,38 @@ def test_no_gap_when_the_list_is_complete():
                            value={"kind": "physical_site", "id": name.upper(), "name": name}))
     assert not [a for a in declared_scope_questions(project_id="p", atoms=atoms)
                 if a.value["declared_scope"]["kind"] == "site_count_gap"]
+
+
+# ── every row of a name-only site table is a site ───────────────────────────
+
+
+def test_name_only_site_table_makes_every_row_a_site(tmp_path: Path):
+    # "Troy, OH" and "Lima, OH" became sites; "Delphos, OH" and "Wilmington,
+    # OH" did not. The hygiene gate kept a two-token phrase only when both
+    # tokens were <=6 characters (the site-code shape), so a longer city name
+    # had no "positive site signal" and its site: key was dropped.
+    from app.core.compiler import compile_project
+    from app.core.orbitbrief_core import build_site_readiness
+
+    doc = Document()
+    doc.add_heading("Site List", 1)
+    t = doc.add_table(rows=1, cols=2)
+    t.cell(0, 0).text, t.cell(0, 1).text = "Site Location", "Service Type"
+    for name, cb in CB.items():
+        r = t.add_row().cells
+        r[0].text, r[1].text = name, cb
+    doc.save(tmp_path / "SOW v2.docx")
+    r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
+    keys = {k for a in r.atoms for k in a.entity_keys if k.startswith("site:")}
+    for name in CB:
+        slug = "site:" + name.lower().replace(", ", "_")
+        assert slug in keys, (slug, keys)
+    assert build_site_readiness(atoms=r.atoms, edges=r.edges)["site_count"] == 4
+
+
+def test_city_state_hygiene_is_narrow():
+    from app.core.site_llm_verify import _is_obvious_non_site
+
+    # Outside the document's own site catalog a bare city/state is still not
+    # a site by itself; the gate is unchanged.
+    assert _is_obvious_non_site("delphos oh")
