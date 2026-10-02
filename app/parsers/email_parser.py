@@ -2018,6 +2018,19 @@ def _quoted_header_source_lines(lines: list[str], sender: str, sent_at: str, sta
     return out
 
 
+def _own_message_place(values: dict[str, str]) -> dict[str, Any]:
+    """Locator fields placing a file's header on its own message (index 0),
+    at line 0 -- above the body's first line, which is line 1."""
+    return {
+        "message_index": 0,
+        "line_start": 0,
+        "line_end": 0,
+        "sender": str(values.get("from") or ""),
+        "sent_at": str(values.get("date") or values.get("sent") or ""),
+        "quoted": False,
+    }
+
+
 def _city_list_lines_are_sites(atoms: list[EvidenceAtom], blocks: list[dict[str, Any]] | None) -> None:
     """A run of "City, ST" lines in a message is a list of job sites.
 
@@ -2277,7 +2290,7 @@ class EmailParser(BaseParser):
             atoms.extend(
                 self._header_display_name_people(
                     project_id=project_id, artifact_id=artifact_id,
-                    filename=path.name, text=text, existing=atoms,
+                    filename=path.name, text=text, existing=atoms, blocks=blocks,
                 )
             )
         except Exception:
@@ -2365,7 +2378,7 @@ class EmailParser(BaseParser):
             artifact_id=artifact_id,
             artifact_type=artifact_type,
             filename=path.name,
-            locator={"kind": "email_header"},
+            locator={"kind": "email_header", **_own_message_place(values)},
             extraction_method="email_headers_plaintext",
             parser_version=self.parser_version,
         )
@@ -2380,7 +2393,7 @@ class EmailParser(BaseParser):
             atom_type=AtomType.deal_metadata,
             raw_text=text,
             normalized_text=normalize_text(text),
-            value={"kind": "email_header", **values},
+            value={"kind": "email_header", **values, "message_index": 0, "quoted": False},
             authority_class=AuthorityClass.machine_extractor,
             confidence=0.86,
             review_status=ReviewStatus.auto_accepted,
@@ -2402,6 +2415,7 @@ class EmailParser(BaseParser):
         filename: str,
         text: str,
         existing: list[EvidenceAtom],
+        blocks: list[dict] | None = None,
     ) -> list[EvidenceAtom]:
         """One stakeholder per distinct address written as ``Display Name <addr>``
         anywhere in the message (top-level or quoted routing lines), when no
@@ -2418,11 +2432,28 @@ class EmailParser(BaseParser):
         # A quote attribution ("On ... 9:04 AM Patrick Kelly <x> wrote:") is
         # chrome: its author is credited on the quoted message, never minted
         # as a stakeholder from the line (live 010003: "AM Sarah Halpern").
-        text = "\n".join(
-            ln for ln in str(text or "").splitlines()
-            if not (BLOCK_SPLIT_RE.match(ln.lstrip("> ").strip()) and " wrote:" in ln.lower())
-        )
-        for m in self._NAMED_ADDRESS_RE.finditer(text or ""):
+        #
+        # Matched line by line so each person keeps the line (and so the
+        # message) it was read from. Without a line the atom sorted to the top
+        # of its file: live 000132 listed "Heather Rosenthal | heatros@cdw.com",
+        # read off a quoted "From:" deep in the chain, above the sender's own
+        # first line.
+        def _block_of(line_no: int):
+            for b in blocks or []:
+                try:
+                    lo, hi = int(b.get("line_start") or 0), int(b.get("line_end") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if lo <= line_no <= hi:
+                    return b
+            return None
+
+        matches = []
+        for i, ln in enumerate(str(text or "").splitlines()):
+            if BLOCK_SPLIT_RE.match(ln.lstrip("> ").strip()) and " wrote:" in ln.lower():
+                continue
+            matches.extend((i + 1, m) for m in self._NAMED_ADDRESS_RE.finditer(ln))
+        for line_no, m in matches:
             name = re.sub(r"\s+", " ", m.group(1)).strip().strip('"')
             addr = m.group(2).strip().lower().rstrip(".,;")
             if not name or "@" not in addr or addr in known or addr in seen:
@@ -2435,15 +2466,23 @@ class EmailParser(BaseParser):
                 continue
             seen.add(addr)
             slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+            _blk = _block_of(line_no)
             src = SourceRef(
                 id=stable_id("src", artifact_id, "header_display_name", addr),
                 artifact_id=artifact_id,
                 artifact_type=ArtifactType.email,
                 filename=filename,
-                locator={"kind": "email_header_display_name", "email": addr},
+                locator={"kind": "email_header_display_name", "email": addr, "line_start": line_no, "line_end": line_no,
+                         **({"message_index": _blk.get("message_index"),
+                             "sender": _blk.get("locator_sender") or _blk.get("sender"),
+                             "sent_at": _blk.get("locator_sent_at") or _blk.get("sent_at"),
+                             "quoted": bool(_blk.get("quoted"))} if _blk is not None else {})},
                 extraction_method="email_headers",
                 parser_version=self.parser_version,
             )
+            _where = {}
+            if _blk is not None and _blk.get("message_index") is not None:
+                _where = {"message_index": _blk.get("message_index"), "quoted": bool(_blk.get("quoted"))}
             out.append(
                 EvidenceAtom(
                     id=stable_id("atm", project_id, artifact_id, "header_person", addr),
@@ -2455,6 +2494,7 @@ class EmailParser(BaseParser):
                     value={
                         "kind": "person", "name": name, "email": addr,
                         "source": "email_header_display_name", "quoted": True,
+                        **_where,
                     },
                     entity_keys=_stakeholder_keys(slug),
                     source_refs=[src],
@@ -2578,7 +2618,10 @@ class EmailParser(BaseParser):
             artifact_id=artifact_id,
             artifact_type=ArtifactType.email,
             filename=path.name,
-            locator={"kind": "email_header"},
+            # The file's own message (index 0), above its first body line:
+            # without a place the header sorted after every message of the
+            # file and belonged to none of them (live 000132).
+            locator={"kind": "email_header", **_own_message_place(values)},
             extraction_method="email_headers",
             parser_version=self.parser_version,
         )
@@ -2607,6 +2650,8 @@ class EmailParser(BaseParser):
                 "field_name": "email_metadata",
                 **values,
                 "email_thread_meta": thread_meta,
+                "message_index": 0,
+                "quoted": False,
             },
             entity_keys=[],
             source_refs=[src],

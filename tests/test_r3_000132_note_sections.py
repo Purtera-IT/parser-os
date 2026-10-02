@@ -124,6 +124,9 @@ def test_document_thread_reads_only_the_documents_own_atoms():
     # The note's atom list holds the mail line because the mail line cites it.
     assert _document_thread([mail_line, note_line], artifact_id="art_note") is None
     assert _document_thread([mail_line], artifact_id="art_mail")["thread_id"] == "thr_1"
+    # A note atom that took an email_thread in a dedup merge is still a note.
+    note_line.value["email_thread"] = dict(mail_line.value["email_thread"])
+    assert _document_thread([note_line], artifact_id="art_note", is_message=False) is None
 
 
 # -- 2. reading order ------------------------------------------------------

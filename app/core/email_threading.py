@@ -600,11 +600,27 @@ def dedup_quoted_history(
 
     # 2) Walk atoms in thread order; drop a quoted atom whose key matches an
     # authored original OR an earlier-kept quoted copy in the same thread.
+    #
+    # "Earlier" is the thread's send order, not the order the files happened
+    # to be listed in: the EARLIEST file that quotes a message owns it, and
+    # every later quoted copy is the repetition. Walking in list order kept
+    # the copy in whichever reply was listed first -- live 010003, sixteen
+    # lines of earlier emails (and their signatures) sat on a late reply,
+    # "You guys are the best! Thank you!" among them.
+    def _file_rank(item: tuple[int, EvidenceAtom]) -> tuple[int, int]:
+        i, atom = item
+        et = _thread_of(atom) or {}
+        try:
+            ti = int(et.get("thread_index")) if et.get("thread_index") is not None else 10**6
+        except (TypeError, ValueError):
+            ti = 10**6
+        return (ti, i)
+
     seen_quoted: dict[str, set[str]] = {}
     seen_headers: dict[str, set[tuple[str, str]]] = {}
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
-    for atom in atoms:
+    for _i, atom in sorted(enumerate(atoms), key=_file_rank):
         et = _thread_of(atom)
         v = atom.value if isinstance(atom.value, dict) else {}
         if et is not None and v.get("kind") == "quoted_message_header":
@@ -634,6 +650,8 @@ def dedup_quoted_history(
         seen.add(key)
         kept.append(atom)
 
+    gone = {id(a) for a in dropped}
+    kept = [a for a in atoms if id(a) not in gone]
     return kept, dropped
 
 

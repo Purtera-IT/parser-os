@@ -416,6 +416,10 @@ def build_orbitbrief_envelope(
 
     held_chatter = [a for a in _kept if _is_admission_chatter(a)]
     atoms = [a for a in _kept if not _is_admission_chatter(a)]
+    _inherit_message_stamps(_kept, mail_files={
+        fp.artifact_id for fp in (manifest.artifact_fingerprints if manifest is not None else [])
+        if fp.artifact_type.value == "email"
+    })
     packets = list(compile_result.packets or [])
     entities = list(compile_result.entities or [])
     edges = list(compile_result.edges or [])
@@ -606,7 +610,10 @@ def build_orbitbrief_envelope(
                 # runs as a compile stage and stamps every atom, but only the
                 # atoms -- so a reader above atom level could not group 33 email
                 # files into the 6 conversations they actually are.
-                "email_thread": _document_thread(artifact_atoms, artifact_id=fp.artifact_id),
+                "email_thread": _document_thread(
+                    artifact_atoms, artifact_id=fp.artifact_id,
+                    is_message=fp.artifact_type.value == "email",
+                ),
                 # Who the forwarded chain STARTED with -- claimed ONLY when this
                 # message actually carried something.
                 #
@@ -2115,7 +2122,7 @@ def _originating_sender(
 
 
 def _document_thread(
-    artifact_atoms: list[Any], artifact_id: str | None = None
+    artifact_atoms: list[Any], artifact_id: str | None = None, *, is_message: bool = True
 ) -> dict[str, Any] | None:
     """The thread block for a whole email document, lifted from its atoms.
 
@@ -2140,9 +2147,16 @@ def _document_thread(
     another file is never this file's.
     """
     want = str(artifact_id or "")
-    for atom in artifact_atoms or []:
-        if want and str(getattr(atom, "artifact_id", "") or "") != want:
-            continue
+    own = [
+        a for a in (artifact_atoms or [])
+        if not want or str(getattr(a, "artifact_id", "") or "") == want
+    ]
+    # Only a MESSAGE (an email artifact) has a thread. A note atom can still carry a block -- a
+    # dedup winner takes the loser's empty fields, email_thread among them --
+    # and that must not make the note a message either.
+    if want and not is_message:
+        return None
+    for atom in own:
         block = None
         structured = getattr(atom, "structured", None)
         if isinstance(structured, dict):
@@ -3235,6 +3249,88 @@ def _parse_loose_datetime(text: str) -> str:
     return m.group(1) if m else ""
 
 
+def _inherit_message_stamps(atoms: list[Any], *, mail_files: set[str] | None = None) -> int:
+    """Give an email file's unstamped atoms the message their line belongs to.
+
+    Threading stamps ``value["email_thread"]`` (with ``message``: index,
+    author, sent_at) on the atoms that exist when it runs. Atoms made later
+    miss it: a ``bom_line`` typed out of a quoted sentence, a site rebuilt by
+    the site dedup (whose value whitelist drops the stamp), the file's own
+    header atom (no message index). Without a stamp they belong to no message,
+    so a reader that sections an email by message split them off -- live
+    000132, an atom sorted "to the end of the paragraphs" it came from.
+
+    Same file only, never across files: an atom with a line takes the stamp of
+    another atom on that line; one with no line takes the file's own message
+    (index 0). Returns how many were stamped. Mutates in place.
+    """
+    def _loc(a: Any) -> dict:
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        return loc if isinstance(loc, dict) else {}
+
+    def _line(a: Any):
+        loc = _loc(a)
+        ln = loc.get("line_start") if loc.get("line_start") is not None else loc.get("line")
+        try:
+            return int(ln) if ln is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    # Only a message carries a message stamp. A note or a file whose atom
+    # won a dedup against an email line took the loser's email_thread with it
+    # (semantic_dedup._merge_values fills the winner's empty fields), and a
+    # note line then read as part of an email message.
+    if mail_files is None:
+        mail_files = {
+            str(getattr(a, "artifact_id", "") or "")
+            for a in atoms or []
+            if isinstance(getattr(a, "value", None), dict) and a.value.get("kind") == "email_header"
+        }
+    for a in atoms or []:
+        v = getattr(a, "value", None)
+        if isinstance(v, dict) and "email_thread" in v and str(getattr(a, "artifact_id", "") or "") not in mail_files:
+            v.pop("email_thread", None)
+            try:
+                a.value = v
+            except Exception:
+                pass
+
+    by_line: dict[tuple[str, int], dict] = {}
+    own: dict[str, dict] = {}
+    for a in atoms or []:
+        v = getattr(a, "value", None)
+        et = v.get("email_thread") if isinstance(v, dict) else None
+        if not isinstance(et, dict) or not isinstance(et.get("message"), dict):
+            continue
+        aid = str(getattr(a, "artifact_id", "") or "")
+        ln = _line(a)
+        if ln is not None:
+            by_line.setdefault((aid, ln), et)
+        if et["message"].get("index") == 0:
+            own.setdefault(aid, et)
+    n = 0
+    for a in atoms or []:
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict):
+            continue
+        et = v.get("email_thread")
+        if isinstance(et, dict) and isinstance(et.get("message"), dict):
+            continue
+        aid = str(getattr(a, "artifact_id", "") or "")
+        ln = _line(a)
+        src = by_line.get((aid, ln)) if ln is not None else own.get(aid)
+        if src is None:
+            continue
+        v["email_thread"] = dict(src)
+        try:
+            a.value = v
+        except Exception:
+            pass
+        n += 1
+    return n
+
+
 def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list[Any]:
     # Last resort for atoms that still tie: the order they were produced in,
     # which is the order the parser read them. The atom id is a hash; ordering
@@ -3247,47 +3343,92 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         doc_when[aid] = _parse_loose_datetime(str(d.get("authored_at") or "")) or "9999"
         doc_pos[aid] = i
 
-    def key(a: Any):
-        aid = str(getattr(a, "artifact_id", "") or "")
-        v = getattr(a, "value", None)
-        v = v if isinstance(v, dict) else {}
+    def _loc(a: Any) -> dict:
         refs = getattr(a, "source_refs", None) or []
         loc = getattr(refs[0], "locator", None) if refs else None
-        loc = loc if isinstance(loc, dict) else {}
+        return loc if isinstance(loc, dict) else {}
+
+    def _int(x: Any, default: int = 0) -> int:
+        try:
+            return int(x) if x is not None and x != "" else default
+        except (TypeError, ValueError):
+            return default
+
+    def _line(loc: dict) -> int | None:
+        line = loc.get("line_start") if loc.get("line_start") is not None else loc.get("line")
+        return _int(line) if line is not None else None
+
+    def _thread(a: Any) -> dict:
+        v = getattr(a, "value", None)
+        et = v.get("email_thread") if isinstance(v, dict) else None
+        return et if isinstance(et, dict) else {}
+
+    # Where each message of an email file reads, by the lines its atoms sit
+    # on. An atom a later stage DERIVED from a line (a bom_line typed out of a
+    # quoted sentence) carries no thread stamp, and the file's own header atom
+    # carries no line: both used to sort after every message of the file --
+    # live 000132, an atom "at the end of the paragraphs" it came from.
+    pos_by_line: dict[tuple[str, int], int] = {}
+    own_pos: dict[str, int] = {}
+    for a in atoms or []:
+        et = _thread(a)
+        p = et.get("position_in_file")
+        if p is None:
+            continue
+        aid = str(getattr(a, "artifact_id", "") or "")
+        ln = _line(_loc(a))
+        if ln is not None:
+            pos_by_line.setdefault((aid, ln), _int(p))
+        if (et.get("message") or {}).get("index") == 0:
+            own_pos[aid] = _int(p)
+
+    # A workbook's sheets in the order the parser met them.
+    sheet_rank: dict[tuple[str, str], int] = {}
+    for a in atoms or []:
+        sh = _loc(a).get("sheet")
+        if sh is not None:
+            k = (str(getattr(a, "artifact_id", "") or ""), str(sh))
+            sheet_rank.setdefault(k, len(sheet_rank))
+
+    def key(a: Any):
+        aid = str(getattr(a, "artifact_id", "") or "")
+        loc = _loc(a)
         when = doc_when.get(aid, "9999")
         # Inside one email file the quoted history reads oldest first
         # (position_in_file 1 = earliest); the file itself sits at its own
         # header date. Quoted "Sent:" clocks are local and unzoned, so they
         # are never compared against header dates from other files.
-        pos = ((v.get("email_thread") or {}).get("position_in_file") if isinstance(v.get("email_thread"), dict) else None)
-        try:
-            pos = int(pos) if pos is not None else 10**6
-        except (TypeError, ValueError):
-            pos = 10**6
-        page = loc.get("page")
-        try:
-            page = int(page) if page is not None else 0
-        except (TypeError, ValueError):
-            page = 0
-        line = loc.get("line_start") if loc.get("line_start") is not None else loc.get("line")
-        try:
-            line = int(line) if line is not None else 0
-        except (TypeError, ValueError):
-            line = 0
+        line = _line(loc)
+        pos = _thread(a).get("position_in_file")
+        if pos is None and line is not None:
+            pos = pos_by_line.get((aid, line))
+        if pos is None and line is None:
+            pos = own_pos.get(aid)
+        pos = _int(pos, 10**6)
+        page = _int(loc.get("page"))
+        if loc.get("sheet") is not None:
+            page = sheet_rank.get((aid, str(loc.get("sheet"))), 0)
+        # Within a page: the paragraph of a docx, the row of a sheet or a
+        # table. Ignoring them read 010003-style SOW paragraphs back to front
+        # and interleaved a sheet's rows.
+        if loc.get("paragraph_index") is not None:
+            blk = (0, _int(loc.get("paragraph_index")), 0)
+        elif loc.get("table_index") is not None:
+            blk = (1, _int(loc.get("table_index")), _int(loc.get("row", loc.get("row_index"))))
+        elif loc.get("block_index") is not None:
+            blk = (0, _int(loc.get("block_index")), 0)
+        elif loc.get("row") is not None or loc.get("row_index") is not None:
+            blk = (0, _int(loc.get("row", loc.get("row_index"))), 0)
+        else:
+            blk = (0, 0, 0)
         # Sentences split from one line share its number. Their own index
         # breaks the tie; without it this fell through to the atom id, which
         # is a hash -- live 010288 read one paragraph back to front.
-        try:
-            seq = int(loc.get("sentence_index") or 0)
-        except (TypeError, ValueError):
-            seq = 0
+        seq = _int(loc.get("sentence_index"))
         # Several atoms cut from one line without a sentence index (a note's
         # " - "-separated list, live 000132) still have a column.
-        try:
-            col = int(loc.get("char_start") or 0)
-        except (TypeError, ValueError):
-            col = 0
-        return (when, doc_pos.get(aid, 10**6), pos, page, line, seq, col,
+        col = _int(loc.get("char_start"))
+        return (when, doc_pos.get(aid, 10**6), pos, page, blk, line or 0, seq, col,
                 emitted.get(id(a), 10**9), str(getattr(a, "id", "")))
 
     return sorted(atoms, key=key)
