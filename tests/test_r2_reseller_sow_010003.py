@@ -68,3 +68,43 @@ def test_one_clause_is_capped_and_a_specific_exclusion_still_conflicts() -> None
     site_ex = _mk("ex_site", AtomType.exclusion, "NYC Office is removed from scope", ["site:nyc_office"])
     edges = [e for e in build_edges("p", [site_ex] + scope[:3], []) if e.edge_type == EdgeType.excludes]
     assert len(edges) == 3
+
+
+# ── 9: quoted signature blocks collapse to the message that authored them ──
+
+_SIG_P = "Patrick Kelly\nSenior Account Manager\n770.769.7311\n"
+_SIG_S = "Sarah Halpern\nFacilities Director\n212.555.0199\n"
+
+
+def _write_long_chain(d: Path, *, with_address: bool) -> None:
+    chain = "Hi Sarah,\n\nThe TVs ship next week.\n\nThanks,\n" + _SIG_P
+    for i in range(8):
+        sarah = i % 2 == 0
+        body = ("Hi Patrick,\n\nPlease confirm the mount count.\n\n" + _SIG_S) if sarah else \
+            ("Hi Sarah,\n\nConfirmed, 12 mounts.\n\n" + _SIG_P)
+        prev = ("Patrick Kelly", "patrick.kelly@purtera-it.com") if sarah else ("Sarah Halpern", "sarah@acme.com")
+        frm = f"{prev[0]} <{prev[1]}>" if with_address else prev[0]
+        chain = (body + "\n________________________________\n"
+                 f"From: {frm}\nSent: Monday, July {i + 6}, 2026 9:0{i} AM\nTo: x\nSubject: TVs\n\n" + chain)
+        if i >= 4:
+            me = ("Sarah Halpern", "sarah@acme.com") if sarah else ("Patrick Kelly", "patrick.kelly@purtera-it.com")
+            (d / f"m{i}.eml").write_text(
+                f"From: {me[0]} <{me[1]}>\nTo: x <x@acme.com>\nSubject: RE: TVs\n"
+                f"Date: Mon, {i + 7} Jul 2026 10:0{i}:00 -0400\nMessage-ID: <m{i}@x>\n"
+                "Content-Type: text/plain; charset=utf-8\n\n" + chain, encoding="utf-8")
+
+
+@pytest.mark.parametrize("with_address", [True, False])
+def test_quoted_signature_lines_are_one_atom_per_authored_message(tmp_path: Path, with_address: bool) -> None:
+    from app.core.compiler import compile_project
+
+    _write_long_chain(tmp_path, with_address=with_address)
+    r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
+    # Patrick authored two of the four emails in the deal, Sarah two.
+    for line in ("Patrick Kelly", "770.769.7311", "Sarah Halpern", "212.555.0199", "Facilities Director"):
+        hits = [a for a in r.atoms if a.raw_text == line]
+        assert len(hits) == 2, (line, len(hits))
+        assert all("chatter" in a.review_flags for a in hits)
+        assert all(not (a.value or {}).get("quoted") for a in hits), line
+    # The copies are recorded, not lost.
+    assert [a for a in r.suppressed_atoms if a.raw_text == "770.769.7311"]
