@@ -1009,7 +1009,7 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 target = _pick_alias_merge_target(alias_atom, location_backed)
                 if target is not None:
                     _merge_physical_site_alias_metadata(target, alias_atom)
-                    if _states_more_than_the_site(alias_atom, target):
+                    if _states_more_than_the_site(alias_atom, target) or _detail_lost(target, alias_atom):
                         _demote_from_site(alias_atom)
                         kept_for_words.add(id(alias_atom))
             name_only_ids -= kept_for_words
@@ -1152,7 +1152,10 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     consumed_ids: set[int] = set(dropped_ids)
     for canon, group in grouped.items():
         group_sorted = sorted(group, key=lambda a: _physical_site_quality(a, canon), reverse=True)
-        winner = group_sorted[0]
+        # The copy that carries the ZIP (phone, email) survives when it states
+        # everything the top-ranked copy does -- 010353's only full address.
+        winner = _survivor_keeping_detail(group_sorted)
+        group_sorted = [winner] + [a for a in group_sorted if a is not winner]
         # Force the canonical display id onto the winner before merging.
         if isinstance(getattr(winner, "value", None), dict):
             winner.value["id"] = canon
@@ -1174,6 +1177,11 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 continue
             _merge_physical_site_values(winner, loser)
             _merge_atom_metadata(winner, loser)
+            if _detail_lost(winner, loser):
+                # The merge could not carry it across (a ZIP in a sentence, a
+                # second phone): the copy keeps its words, not its site claim.
+                _demote_from_site(loser)
+                continue
             consumed_ids.add(id(loser))
         # v56: AFTER the merge loop, force entity_keys to a SINGLE
         # canonical site:<slug>. Doing this before the merge would have
@@ -2440,6 +2448,86 @@ def collapse_repeated_speech(atoms: list[Any], *, threshold: float = 0.8) -> lis
     return out
 
 
+# ── a fold never drops the only copy of a detail ────────────────────
+#
+# Ox 010353 lost three things to three dedup passes, all one defect: the copy
+# folded away was the ONLY one carrying something the survivor lacked.
+#
+#   physical_site      the one address with its ZIP ("..., Findlay, OH 45840")
+#                      lost to a higher-quality copy without it
+#   atom_type_sanity   Megan's full contact row (email, phone) folded into a
+#                      signature record that holds name and title only
+#   stakeholder dedup  "Call Client Support Manager John Ozuna-Diaz ... upon
+#                      arrival" -- a SOW step -- keyed on John's name and
+#                      folded into his person record; no copy survived
+#
+# The rule (``fold_invariants.detail_only_the_loser_states``): after the
+# loser's value is merged in, a fold may go ahead only when the survivor
+# states every ZIP, phone, email and instruction the loser did. Otherwise the
+# copy that carries the detail becomes the survivor when it says everything
+# the other does, and stays standing when it does not.
+
+
+def _detail_lost(winner: Any, loser: Any) -> frozenset[str]:
+    return _fold.detail_only_the_loser_states(winner, loser)
+
+
+def _survivor_keeping_detail(ranked: list[Any]) -> Any:
+    """``ranked[0]`` unless a later member states every detail it does and more.
+
+    An instruction never promotes its atom to survivor: a SOW step that names a
+    person is not the better copy of the person.
+    """
+    best = ranked[0]
+    for m in ranked[1:]:
+        if _fold.actions_stated(m):
+            continue
+        if _detail_lost(best, m) and _fold.covers(m, best):
+            best = m
+    return best
+
+
+def _keep_instruction_standing(atom: Any) -> None:
+    """A person record that is really a step ("Call ... John ... upon
+    arrival") keeps its words as a task naming that person, instead of being
+    folded into the person and lost. The person stays linked through the
+    atom's entity keys."""
+    try:
+        from app.core.schemas import AtomType
+
+        atom.atom_type = AtomType.task
+    except Exception:
+        return
+    value = getattr(atom, "value", None)
+    if isinstance(value, dict):
+        name = value.pop("name", None)
+        if name and not value.get("contact_name"):
+            value["contact_name"] = name
+        value["kind"] = "instruction"
+    flags = getattr(atom, "review_flags", None)
+    if isinstance(flags, list) and "kept_over_dedup" not in flags:
+        flags.append("kept_over_dedup")
+
+
+def _fold_or_keep(winner: Any, loser: Any) -> bool:
+    """Merge ``loser`` into ``winner``; False when the loser must stay standing
+    because the survivor would still lack a detail only it carries. A person
+    record that is an instruction is retyped to a task as it stays."""
+    _merge_values(winner, loser)
+    if _atom_type_value(winner) == "stakeholder":
+        _union_person_fields(winner, loser)
+    lost = _detail_lost(winner, loser)
+    if not lost:
+        return True
+    if any(x.startswith("action:") for x in lost) and _atom_type_value(loser) == "stakeholder":
+        _keep_instruction_standing(loser)
+    else:
+        flags = getattr(loser, "review_flags", None)
+        if isinstance(flags, list) and "kept_over_dedup" not in flags:
+            flags.append("kept_over_dedup")
+    return False
+
+
 def _earliest_first(doc_order: dict[str, tuple] | None):
     """Sort key: the earliest document first, then the best copy within it.
 
@@ -2532,21 +2620,22 @@ def semantic_dedup_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | None
         if key is None:
             continue
         slot = _slot_for(atom, key)
+        if slot in winners and not _fold_or_keep(winners[slot], atom):
+            # The only copy of a ZIP / phone / email / instruction stands on
+            # its own slot rather than being folded away.
+            slot = (*slot, f"#kept:{id(atom)}")
         slot_of[id(atom)] = slot
         if slot not in winners:
             winners[slot] = atom
-        else:
-            _merge_values(winners[slot], atom)
 
     # Rebuild in original document order at first-occurrence positions.
     seen: set[tuple] = set()
     ordered: list[Any] = []
     for atom in atoms:
-        key = _key_for_generic_pass(atom)
-        if key is None:
+        if id(atom) not in slot_of and _key_for_generic_pass(atom) is None:
             ordered.append(atom)
             continue
-        slot = slot_of.get(id(atom), key)
+        slot = slot_of[id(atom)]
         if slot in seen:
             continue
         ordered.append(winners[slot])
@@ -2585,16 +2674,19 @@ def dedupe_stakeholder_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | 
         return atoms
 
     winners: dict[tuple, Any] = {}
+    key_of: dict[int, tuple] = {}
     for atom in sorted(atoms, key=_earliest_first(doc_order)):
         if _atom_type_value(atom) not in _DEFERRED_IDENTITY_TYPES:
             continue
         key = _value_key(atom)
         if key is None:
             continue
+        if key in winners and not _fold_or_keep(winners[key], atom):
+            # Never the only copy of a detail: it stands on its own key.
+            key = (*key, f"#kept:{id(atom)}")
+        key_of[id(atom)] = key
         if key not in winners:
             winners[key] = atom
-        else:
-            _merge_values(winners[key], atom)
 
     if not winners:
         return atoms
@@ -2602,10 +2694,7 @@ def dedupe_stakeholder_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | 
     seen: set[tuple] = set()
     out: list[Any] = []
     for atom in atoms:
-        if _atom_type_value(atom) not in _DEFERRED_IDENTITY_TYPES:
-            out.append(atom)
-            continue
-        key = _value_key(atom)
+        key = key_of.get(id(atom))
         if key is None:
             out.append(atom)
             continue
@@ -2711,6 +2800,9 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
             if same_doc and _near_surname(la, lb) and (fa[:3] == fb[:3]) and _subsumed(a, b):
                 _merge_atom_metadata(b, a)
                 _union_person_fields(b, a)
+                if _detail_lost(b, a):
+                    _fold_or_keep(b, a)  # stands (an instruction becomes a task)
+                    break
                 drop.add(id(a))
                 break
             # Across documents the bar is higher: the SAME full name and no
@@ -2719,6 +2811,9 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
             if (not same_doc) and _full_name(a) and _full_name(a) == _full_name(b) and _agree(a, b) and _richness(a) <= _richness(b):
                 _merge_atom_metadata(b, a)
                 _union_person_fields(b, a)
+                if _detail_lost(b, a):
+                    _fold_or_keep(b, a)
+                    break
                 drop.add(id(a))
                 break
     # A record with NO name but a phone or email that another record of the
@@ -2744,6 +2839,8 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
                     if role and not vb.get("title") and role.lower() not in {"stakeholder", "person"}:
                         vb["title"] = role
                 _merge_atom_metadata(b, a)
+                if _detail_lost(b, a) and not _fold_or_keep(b, a):
+                    break
                 drop.add(id(a))
                 break
     return [a for a in atoms if id(a) not in drop]

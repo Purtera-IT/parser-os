@@ -1661,8 +1661,13 @@ def merge_signature_rows(atoms: list[Any]) -> int:
         # sorts first loses its own content to the rewrite, which deletes the
         # account number just as surely as dropping the atom would.
         _merged_figs = _sig_figures(text)
+        _merged_rec = _TextOnly(text)
         keep = next(
-            (r for r in rows if not (_sig_figures(_atom_text(r)) - _merged_figs)),
+            (
+                r for r in rows
+                if not (_sig_figures(_atom_text(r)) - _merged_figs)
+                and not _fold.detail_only_the_loser_states(_merged_rec, r)
+            ),
             rows[0],
         )
         _set_text(keep, text)
@@ -1707,7 +1712,13 @@ def merge_signature_rows(atoms: list[Any]) -> int:
         _merged_figs = _sig_figures(text)
 
         def _fully_said(a: Any) -> bool:
-            return not (_sig_figures(_atom_text(a)) - _merged_figs)
+            # Figures, and the details a reader acts on: a contact row on the
+            # signature page (Ox 010353: Megan's name, title, email and phone)
+            # matched as a "Name:" row and was folded into a record that holds
+            # name and title only. Its email and phone left the compile.
+            if _sig_figures(_atom_text(a)) - _merged_figs:
+                return False
+            return not _fold.detail_only_the_loser_states(_TextOnly(text), a)
 
         for a in rows:
             if a is keep or not _fully_said(a):
@@ -1735,10 +1746,21 @@ def merge_signature_rows(atoms: list[Any]) -> int:
             if _atom_type_str(a) not in ("deal_metadata", "signatory", "scope_item"):
                 continue
             toks = _sig_tokens(_atom_text(a))
-            if toks and all(t in covered for t in toks):
+            if toks and all(t in covered for t in toks) and _fully_said(a):
                 atoms.remove(a)
                 folded += 1
     return folded
+
+
+class _TextOnly:
+    """A stand-in atom that states exactly ``text`` -- the merged signature
+    record, which is what survives a fold, before it is written anywhere."""
+
+    __slots__ = ("raw_text", "value")
+
+    def __init__(self, text: str) -> None:
+        self.raw_text = text
+        self.value = None
 
 
 def _sig_tokens(text: str) -> set[str]:
