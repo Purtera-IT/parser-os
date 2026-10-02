@@ -331,6 +331,8 @@ PACKET_NON_ANCHOR: frozenset[AtomType] = frozenset(
         AtomType.schematic_line_run,
         # v47 deal taxonomy — contextual / section-rendered, not packet anchors.
         AtomType.deal_metadata,
+        # Relationship talk, typed at the very end of a compile: never an anchor.
+        AtomType.small_talk,
         AtomType.payment_term,
         AtomType.change_order_rule,
         AtomType.physical_site,

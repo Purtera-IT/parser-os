@@ -122,7 +122,21 @@ def _priced_sheet_row(atom: Any) -> bool:
         loc = getattr(ref, "locator", None) or {}
         if isinstance(loc, dict) and _RATE_SHEET_NAME.search(str(loc.get("sheet") or "")):
             return True
-    return False
+    return _under_a_rate_section(atom)
+
+
+def _under_a_rate_section(atom: Any) -> bool:
+    """A row under a rate block of a sheet named for something else: the
+    Deal Kit's "SELL RATES" band. 010003's derived survey lines were pinned
+    to a row there."""
+    val = getattr(atom, "value", None) or {}
+    titles = [val.get("section")] if isinstance(val, dict) else []
+    for ref in getattr(atom, "source_refs", None) or []:
+        loc = getattr(ref, "locator", None) or {}
+        if isinstance(loc, dict):
+            titles += list(loc.get("section_path") or [])[1:]
+            titles.append(loc.get("section_title"))
+    return any(_RATE_SHEET_NAME.search(str(t or "")) for t in titles)
 
 
 def _sheet_cell_asks_for_a_survey(text: str) -> bool:

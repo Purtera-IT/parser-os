@@ -256,5 +256,128 @@ def mark_chatter(atoms: list[Any]) -> int:
     return marked
 
 
-__all__ = ["is_chatter", "is_rejected_line", "mark_chatter", "states_dependency",
-           "CHATTER_FLAG", "STRUCTURE_REJECTS"]
+#: Admission reasons that are relationship talk, not chrome: a quote
+#: attribution, a bare link or a robot's mailbox is plumbing and stays
+#: deal_metadata.
+SMALL_TALK_REASONS = frozenset({"banter", "greeting", "signoff", "signature", "identity_only"})
+
+
+def is_small_talk_line(atom: Any) -> bool:
+    """A kept chatter line that is relationship talk: a greeting, a sign-off,
+    a signature, a call's banter or a turn the substance gate found about
+    nothing. Structure (headings, lookup lists, stamps, diagram labels),
+    plumbing (headers, footers) and lines that only CARRY a small-talk guess
+    while keeping a content type are not."""
+    t = getattr(atom, "atom_type", None)
+    if str(getattr(t, "value", t) or "") != "deal_metadata":
+        return False
+    val = getattr(atom, "value", None)
+    val = val if isinstance(val, dict) else {}
+    flags = [str(f) for f in (getattr(atom, "review_flags", None) or [])]
+    if not (val.get(CHATTER_FLAG) or CHATTER_FLAG in flags):
+        return False
+    if val.get("rejected_by") or val.get("structure"):
+        return False
+    reason = val.get("admission_regex")
+    if reason:
+        return str(reason) in SMALL_TALK_REASONS
+    if "transcript_smalltalk_demoted" in flags:
+        return True
+    return any(isinstance(r, dict) and r.get("key") == "small_talk" and r.get("value")
+               for r in val.get("reads") or ())
+
+
+#: A turn made only of acknowledgement and filler: "Yeah.", "Okay, okay.",
+#: "Right, right.", "Mm-hmm", "Got it, thanks."
+_BACKCHANNEL_RE = re.compile(
+    r"^(?:(?:yeah|yea|yep|yup|yes|ok(?:ay)?|right|sure|cool|great|good|nice|perfect|awesome|"
+    r"alright|all right|got it|gotcha|uh[- ]?huh|mm[- ]?hmm|hmm+|um+|uh+|oh|ah|wow|so|well|"
+    r"thanks|thank you|exactly|true|totally|absolutely|for sure|sounds good|makes sense|"
+    r"i see|i know|no worries|fair enough|bye|cheers)[\s,.!?…-]*)+$",
+    re.I,
+)
+#: A yes/no that may be the answer to the question just asked.
+_ANSWER_WORDS_RE = re.compile(r"\b(?:yes|yeah|yep|yup|no|correct|exactly|true|right|sure)\b", re.I)
+
+
+def is_backchannel(text: str) -> bool:
+    t = " ".join(str(text or "").split())
+    return bool(t) and len(t) <= 60 and bool(_BACKCHANNEL_RE.match(t))
+
+
+def _spoken_turn_is_small_talk(atom: Any, previous: Any | None) -> bool:
+    """A call turn the gate found to carry nothing (``low_substance`` /
+    fallback-typed deal_metadata) is small talk when it is only
+    acknowledgement or banter -- unless it may be the answer to the question
+    right before it ("Yeah." after "Is the dock open?")."""
+    refs = getattr(atom, "source_refs", None) or []
+    at = getattr(refs[0], "artifact_type", None) if refs else None
+    if str(getattr(at, "value", at) or "") != "transcript":
+        return False
+    flags = [str(f) for f in (getattr(atom, "review_flags", None) or [])]
+    if not ({"low_substance", "utterance_fallback_typed"} & set(flags)):
+        return False
+    text = str(getattr(atom, "raw_text", "") or "")
+    from app.core.sentences import sentence_kind
+
+    if not (is_backchannel(text) or sentence_kind(text) == "banter"):
+        return False
+    if previous is not None and _ANSWER_WORDS_RE.search(text):
+        pt = getattr(previous, "atom_type", None)
+        if (str(getattr(pt, "value", pt) or "") == "open_question"
+                or str(getattr(previous, "raw_text", "") or "").rstrip().endswith("?")):
+            return False
+    return True
+
+
+def _previous_turns(atoms: list[Any]) -> dict[int, Any]:
+    """id(atom) -> the turn spoken just before it in the same call."""
+    by_turn: dict[tuple[str, int], Any] = {}
+    for a in atoms:
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        if isinstance(loc, dict) and isinstance(loc.get("utterance_index"), int):
+            by_turn.setdefault((str(getattr(a, "artifact_id", "")), loc["utterance_index"]), a)
+    out: dict[int, Any] = {}
+    for (art, i), a in by_turn.items():
+        prev = by_turn.get((art, i - 1))
+        if prev is not None:
+            out[id(a)] = prev
+    return out
+
+
+def retype_small_talk(atoms: list[Any]) -> int:
+    """Type relationship talk as ``small_talk``, the reject type the labeler
+    already has, instead of deal_metadata (010087: 478 of a call's 717 lines
+    came out deal_metadata, greetings and signatures with them). Run once, at
+    the end of a compile, so no stage ever reads the new type. The old type
+    stays an alternative for the labeler."""
+    from app.core.schemas import AtomType
+
+    n = 0
+    previous = _previous_turns(atoms)
+    for atom in atoms:
+        if not is_small_talk_line(atom):
+            t = getattr(atom, "atom_type", None)
+            if str(getattr(t, "value", t) or "") != "deal_metadata":
+                continue
+            if not _spoken_turn_is_small_talk(atom, previous.get(id(atom))):
+                continue
+            flags = list(getattr(atom, "review_flags", None) or [])
+            if CHATTER_FLAG not in flags:
+                atom.review_flags = flags + [CHATTER_FLAG]
+        val = dict(getattr(atom, "value", None) or {})
+        alt = list(val.get("alt_atom_types") or [])
+        if "deal_metadata" not in alt:
+            alt.append("deal_metadata")
+        val["alt_atom_types"] = alt
+        val.setdefault("rejected_by", str(val.get("admission_regex") or "small_talk"))
+        val[CHATTER_FLAG] = True
+        atom.value = val
+        atom.atom_type = AtomType.small_talk
+        n += 1
+    return n
+
+
+__all__ = ["is_chatter", "is_rejected_line", "is_small_talk_line", "mark_chatter", "retype_small_talk",
+           "states_dependency", "CHATTER_FLAG", "SMALL_TALK_REASONS", "STRUCTURE_REJECTS"]

@@ -253,6 +253,16 @@ def _deal_state_atom(template: Any, line: Any) -> Any:
     if hasattr(atom, "id"):
         atom.id = stable_id("atm", str(getattr(atom, "project_id", "")),
                             "deal_state", line.key)
+    # Nobody wrote this line, so it has no page, row or cell: the copied
+    # locator pointed a reader at a cell that says something else (010003:
+    # a Deal Kit SELL RATES row). Keep the artifact; name the evidence.
+    _ev_ids = [str(getattr(a, "id", "")) for a in (getattr(line, "evidence_atoms", None) or []) if getattr(a, "id", None)]
+    atom.value["evidence_atom_ids"] = _ev_ids
+    for ref in getattr(atom, "source_refs", None) or []:
+        try:
+            ref.locator = {"derived": True, "derived_from": _ev_ids}
+        except Exception:
+            pass
     return atom
 
 
@@ -1949,6 +1959,16 @@ def compile_project(
             warnings.append(f"WARNING: typed_atom_classifier failed: {type(exc).__name__}: {exc}")
         if promoted:
             warnings.append(f"INFO: typed-atom classifier promoted {promoted} atoms from scope_item/entity")
+        # A callout read off a drawing ("Solar Panel", "Cell Modem") is a
+        # label, never a site_infrastructure fact (010246).
+        try:
+            from app.core.diagram_labels import retype_diagram_labels
+
+            _dl = retype_diagram_labels(atoms)
+            if _dl:
+                warnings.append(f"INFO: {_dl} diagram callout(s) kept as diagram_label rejects")
+        except Exception as exc:
+            warnings.append(f"WARNING: diagram_labels failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=promoted)
 
     # Work-order reassembly: the per-atom classifier answers "is this span a
@@ -2790,7 +2810,13 @@ def compile_project(
                     # Pin the line to the artifact its evidence came from; the
                     # first atom of the deal is only a last resort (000132's
                     # survey line landed on an unrelated note).
-                    template = next(iter(getattr(line, "evidence_atoms", None) or []), None) or fallback
+                    # A sentence outranks a sheet row as the anchor: a row's
+                    # locator names a cell the line was never written in
+                    # (010003: survey lines pinned to the Deal Kit SELL RATES).
+                    from app.core.deal_state import _from_a_sheet as _ds_sheet
+
+                    _ev = list(getattr(line, "evidence_atoms", None) or [])
+                    template = next((a for a in _ev if not _ds_sheet(a)), None) or next(iter(_ev), None) or fallback
                     if template is None:
                         break
                     atoms.append(_deal_state_atom(template, line))
@@ -3227,6 +3253,17 @@ def compile_project(
             f"INFO: cross_doc_copies kept {len(_back_copies)} later-document copy(ies) "
             f"of lines an earlier document owns"
         )
+
+    # Relationship talk is typed as what it is now that every stage has run:
+    # small_talk, the labeler's reject type, not deal_metadata (010087).
+    try:
+        from app.core.deal_chatter import retype_small_talk
+
+        _st = retype_small_talk(atoms)
+        if _st:
+            warnings.append(f"INFO: {_st} small-talk line(s) typed small_talk")
+    except Exception as exc:
+        warnings.append(f"WARNING: small_talk typing failed: {type(exc).__name__}: {exc}")
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.
