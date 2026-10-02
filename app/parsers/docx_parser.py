@@ -1692,6 +1692,31 @@ class DocxParser(BaseParser):
         return cls._SUBSECTION_BLOCK_RULE.fires(h)
 
     @staticmethod
+    def _in_address_box(children: list[Any], k: int, document: Any, text: str) -> bool:
+        """``text`` is a line of a postal-address box: an address line
+        itself, or a line set directly above a street / City-ST-ZIP line or
+        directly under an address caption (the company line of a ship-to)."""
+        from app.core.address_parse import _ADDRESS_BOX_CAPTION_RE, is_address_block_line
+
+        if is_address_block_line(text):
+            return True
+
+        def _text_at(j: int) -> str:
+            if 0 <= j < len(children) and children[j][0] == "p":
+                try:
+                    return (_DocxParagraph(children[j][1], document).text or "").strip()
+                except Exception:
+                    return ""
+            return ""
+
+        nxt, prv = _text_at(k + 1), _text_at(k - 1)
+        if prv and _ADDRESS_BOX_CAPTION_RE.match(prv):
+            return True
+        if nxt and is_address_block_line(nxt) and not _ADDRESS_BOX_CAPTION_RE.match(nxt):
+            return True
+        return False
+
+    @staticmethod
     def _is_bold_subheading(paragraph: Any) -> bool:
         """A short, fully-bold, non-list line that Word left on the ``Normal``
         style is a VISUAL sub-heading (e.g. "Configuration Support") the author
@@ -2062,7 +2087,12 @@ class DocxParser(BaseParser):
                     # bold sub-heading Word left on Normal style — nest it below
                     # style headings so its following bullets inherit the section.
                     lvl = 3
-                if lvl is None and caps:
+                if lvl is not None and not explicit and self._in_address_box(children, k, document, text):
+                    # A bold / all-caps line of a postal-address box (caption,
+                    # company, street, City ST ZIP) is the box's content, not a
+                    # section: 010003's "40 10TH AVE FL 4" headed 13 atoms.
+                    lvl = None
+                if lvl is None and caps and not self._in_address_box(children, k, document, text):
                     # A short standalone ALL-CAPS line ("PURTERA RESPONSIBILITIES",
                     # "CUSTOMER RESPONSIBILITIES:") is a heading even when it is
                     # neither styled nor bold: 010087 left them on Normal, so they

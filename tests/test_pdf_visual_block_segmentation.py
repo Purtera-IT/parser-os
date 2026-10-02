@@ -68,6 +68,10 @@ def _blocks(pdf: Path) -> list[str]:
             for b in s.get("blocks") or []:
                 if b.get("kind") == "bullet_list":
                     out.extend(i.get("text", "") for i in b.get("items") or [])
+                elif b.get("kind") == "table":
+                    # a header over its values reads as one labelled row
+                    out.extend(" | ".join(f"{k}: {v}" for k, v in r.items())
+                               for r in b.get("rows") or [] if isinstance(r, dict))
                 elif b.get("text"):
                     out.append(b["text"])
             walk(s.get("subsections") or [])

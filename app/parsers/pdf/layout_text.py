@@ -657,6 +657,7 @@ def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -
     except Exception:
         return []
     out: list[tuple[dict[str, Any], Any]] = []
+    taken: set[int] = set()
     i = 0
     while i < len(rows):
         head = rows[i]
@@ -697,11 +698,10 @@ def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -
             used.append(row)
             prev_bottom = max(s.y1 for s in row)
             j += 1
-        # One header over one value row with nothing under it is a set of
-        # labelled values ("QUOTE # | QUOTE DATE ..."), which the reader
-        # already keeps as one "label: value | ..." line.
-        tails = any(rec["extra"] or any(len(v) > 1 for v in rec["cells"].values()) for rec in records)
-        if numeric_cols and (len(records) >= 2 or (records and tails)):
+        # One header over one value row ("QUOTE # | QUOTE DATE | ... |
+        # GRAND TOTAL" over "PSNV676 | 1/14/2026 | ...") is a set of labelled
+        # values: one row whose cells pair each header with its value.
+        if numeric_cols and records:
             columns = [h.text.strip() for h in heads]
             out_rows = []
             for rec in records:
@@ -716,7 +716,34 @@ def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -
                             max(s.x1 for r in used for s in r), max(s.y1 for r in used for s in r))
             out.append(({"kind": "table", "columns": columns, "rows": out_rows,
                          "extraction": "header_grid_v1"}, box))
+            taken.update(id(r) for r in used)
             i = j
         else:
             i += 1
+    # Totals: "SUBTOTAL  $5,694.50", "SALES TAX  $0.00", "GRAND TOTAL  $4,691.64"
+    # set as a label with its amount to the right. Read as two boxes the
+    # amount came away from its label; each is one labelled value.
+    for row in rows:
+        if id(row) in taken or len(row) < 2:
+            continue
+        segs = sorted(row, key=lambda s: s.x0)
+        label = " ".join(s.text.strip() for s in segs[:-1]).strip().rstrip(":").strip()
+        amount = segs[-1].text.strip()
+        if not (_TOTAL_LABEL.match(label) and _MONEY.fullmatch(amount)):
+            continue
+        try:
+            box = fitz.Rect(min(s.x0 for s in segs), min(s.y0 for s in segs),
+                            max(s.x1 for s in segs), max(s.y1 for s in segs))
+        except Exception:
+            continue
+        out.append(({"kind": "table", "columns": [label], "rows": [{label: amount}],
+                     "extraction": "labelled_total_v1"}, box))
     return out
+
+
+_TOTAL_LABEL = re.compile(
+    r"^(?:(?:sub|grand|order|quote|estimated|est\.?)\s*)?total(?:\s+(?:amount|price|due|cost))?|"
+    r"^(?:sales\s+|use\s+)?tax(?:es)?|^shipping(?:\s*(?:&|and)\s*handling)?|^freight|^handling|"
+    r"^(?:environmental|recycling|ewaste|e-waste)\s+fees?|^discount|^balance\s+due|^amount\s+due",
+    re.I)
+_MONEY = re.compile(r"-?\(?\$?\s?\d[\d,]*(?:\.\d{2})?\)?|\$?0\.00|free|tbd|included", re.I)
