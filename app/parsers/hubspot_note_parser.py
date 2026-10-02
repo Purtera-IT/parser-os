@@ -1013,9 +1013,16 @@ class HubspotNoteParser(BaseParser):
             if not words or not raw_lines:
                 return source_ref
             probe = words[: min(len(words), 40)]
-            for i in range(body_line_index, len(raw_lines)):
-                joined = " ".join(raw_lines[i].split())
-                col = joined.find(probe)
+            # The line that holds the WHOLE text wins over the first line that
+            # merely starts the same way: a note repeats its title, truncated
+            # ("Maintenance and support of their technical IT infrastructure
+            # covering network…"), as the body's first line, and the 40-char
+            # probe found that title for the full sentence two lines below.
+            normed = [" ".join(raw_lines[i].split()) for i in range(len(raw_lines))]
+            whole = next((i for i in range(body_line_index, len(raw_lines)) if words in normed[i]), None)
+            for i in ([whole] if whole is not None else range(body_line_index, len(raw_lines))):
+                joined = normed[i]
+                col = joined.find(words if whole is not None else probe)
                 if col < 0:
                     continue
                 # A sentence the author wrapped runs onto following lines.
@@ -1025,7 +1032,14 @@ class HubspotNoteParser(BaseParser):
                     end += 1
                     acc = f"{acc} {' '.join(raw_lines[end].split())}"
                 locator = dict(source_ref.locator or {})
-                locator.update({"line_start": i + 1, "line_end": end + 1, "region": "body"})
+                # Where on the line it starts, too. A bullet list flattened
+                # onto one line (" - "-separated, live 000132) is ten atoms on
+                # ONE line; with only the line number they tie, and every
+                # reader broke the tie by atom id -- a hash -- so the list
+                # read in random order ("Troubleshooting" above "Support for
+                # physical server"). The column is the source order.
+                locator.update({"line_start": i + 1, "line_end": end + 1, "region": "body",
+                                "char_start": col})
                 return source_ref.model_copy(update={
                     "id": stable_id("src", artifact_id, "hubspot_note", str(i + 1), probe),
                     "locator": locator,
