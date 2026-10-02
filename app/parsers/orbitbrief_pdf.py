@@ -5641,7 +5641,10 @@ def _split_glued_meeting_summary_paragraph(
                 body = _checkbox_owner_action_body("I " + rest)
             if body:
                 bullet_items.append({"text": body})
-                trailing_header = None
+            # Prose after the word ("customer facing notes per date, and ...")
+            # means it was a word in a sentence, not a trailing header: never
+            # a header-only carry that drops the paragraph (010003 PAYMENT TERMS).
+            trailing_header = None
             continue
         trailing_header = None
         body = _checkbox_owner_action_body(chunk)
