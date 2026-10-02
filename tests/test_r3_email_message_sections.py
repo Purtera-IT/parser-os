@@ -173,3 +173,25 @@ def test_every_message_of_a_thread_gets_one_chronological_number(tmp_path: Path)
     assert pos("art_b", "We need 12") == (1, 3)  # B's quote of A is A's message
     files = {x.artifact_id: x.value["email_thread"]["thread_index"] for x in atoms}
     assert files == {"art_a": 1, "art_b": 2}
+
+
+def test_a_logo_image_is_signature_chatter_with_no_borrowed_heading():
+    """010087: AMTIVO / ASCDI logo alt text typed scope_item under "Equipment list"."""
+    from app.core.schemas import ArtifactType, AtomType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef
+    from app.parsers.email_parser import _logo_images_are_chatter
+
+    def cid(text):
+        src = SourceRef(id=f"src_{text}", artifact_id="a", artifact_type=ArtifactType.email, filename="m.eml",
+                        locator={"kind": "email_cid_inline", "lead_in": ["Equipment list"], "line_start": 3},
+                        extraction_method="x", parser_version="t")
+        return EvidenceAtom(id=f"atm_{text[:5]}", project_id="p", artifact_id="a", atom_type=AtomType.scope_item,
+                            raw_text=text, normalized_text=text.lower(),
+                            value={"kind": "email_cid_inline_body", "lead_in": ["Equipment list"], "intro": "Equipment list"},
+                            source_refs=[src], authority_class=AuthorityClass.customer_current_authored,
+                            confidence=0.7, review_status=ReviewStatus.needs_review, parser_version="t")
+
+    logo, table = cid("AMTIVO"), cid("Cisco C9300-48P switch qty 4 rack mounted in MDF")
+    _logo_images_are_chatter([logo, table])
+    assert logo.value.get("chatter") and "lead_in" not in logo.value
+    assert "lead_in" not in logo.source_refs[0].locator
+    assert not table.value.get("chatter") and table.value["lead_in"] == ["Equipment list"]

@@ -2018,6 +2018,36 @@ def _quoted_header_source_lines(lines: list[str], sender: str, sent_at: str, sta
     return out
 
 
+def _logo_images_are_chatter(atoms: list[EvidenceAtom]) -> None:
+    """An inline image whose whole reading is a name or a word -- a company
+    logo or a signature badge ("AMTIVO", "ASCDI") -- is signature chrome.
+
+    Live 010087: two logos' alt text became scope_item atoms headed "Equipment
+    list", the lead-in the equipment screenshot handler gives every inline
+    image. Shape only: at most three words, no digit. Kept as an atom (a
+    labeler can reject it), held as chatter, with no borrowed heading.
+    """
+    from app.core.admission_chatter import mark_admission_chatter
+
+    for atom in atoms:
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if v.get("kind") != "email_cid_inline_body":
+            continue
+        words = str(atom.raw_text or "").split()
+        if not words or len(words) > 3 or any(ch.isdigit() for ch in atom.raw_text):
+            continue
+        mark_admission_chatter(atom, "signature_logo")
+        refs = list(atom.source_refs or [])
+        if refs:
+            loc = {k: x for k, x in dict(refs[0].locator or {}).items() if k not in ("lead_in", "section_path")}
+            refs[0] = refs[0].model_copy(update={"locator": loc})
+            atom.source_refs = refs
+        val = dict(atom.value)
+        for k in ("lead_in", "section_path", "intro"):
+            val.pop(k, None)
+        atom.value = val
+
+
 def _own_message_place(values: dict[str, str]) -> dict[str, Any]:
     """Locator fields placing a file's header on its own message (index 0),
     at line 0 -- above the body's first line, which is line 1."""
@@ -2844,6 +2874,7 @@ class EmailParser(BaseParser):
                         )
                     )
 
+        _logo_images_are_chatter(atoms)
         return atoms
 
     def _unresolved_cid_atom(
