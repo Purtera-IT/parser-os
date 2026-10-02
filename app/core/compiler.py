@@ -2512,8 +2512,12 @@ def compile_project(
 
             state = read_deal_state(atoms)
             if state.lines:
-                template = atoms[0] if atoms else None
+                fallback = atoms[0] if atoms else None
                 for line in state.lines:
+                    # Pin the line to the artifact its evidence came from; the
+                    # first atom of the deal is only a last resort (000132's
+                    # survey line landed on an unrelated note).
+                    template = next(iter(getattr(line, "evidence_atoms", None) or []), None) or fallback
                     if template is None:
                         break
                     atoms.append(_deal_state_atom(template, line))
