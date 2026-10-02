@@ -49,7 +49,8 @@ _ENUMERATOR = re.compile(r"^(?:(?:step\s+)?\(?\d{1,2}[.):]?|[•▪●◦‣■�
 class _Seg:
     """A run of spans on one text line with no wide horizontal gap inside."""
 
-    __slots__ = ("x0", "y0", "x1", "y1", "text", "size", "bold", "color", "link", "fill", "boxes")
+    __slots__ = ("x0", "y0", "x1", "y1", "text", "size", "bold", "color", "link", "fill", "boxes",
+                 "fill_x", "ruled")
 
     def __init__(self, x0, y0, x1, y1, text, size, bold, color):
         self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
@@ -61,6 +62,10 @@ class _Seg:
         self.fill = -1
         #: Stroked frames drawn around this segment: ``((area, index), ...)``.
         self.boxes: tuple[tuple[float, int], ...] = ()
+        #: The x extent of the filled rectangle under this segment, if any.
+        self.fill_x: tuple[float, float] | None = None
+        #: A vertical rule runs past this segment on each side (a ruled box).
+        self.ruled = False
 
     @property
     def cy(self) -> float:
@@ -363,7 +368,34 @@ def _mark_links_and_fills(page: Any, segs: list[_Seg]) -> None:
         for i, fr in enumerate(fills):
             if _inside(s.x0 + 1, s.cy, fr) and _inside(s.x1 - 1, s.cy, fr):
                 s.fill = i
+                s.fill_x = (float(fr.x0), float(fr.x1))
                 break
+    _mark_rules(page, segs)
+
+
+def _mark_rules(page: Any, segs: list[_Seg]) -> None:
+    """Flag segments with a vertical rule on each side: the inside of a box
+    drawn with lines. PyMuPDF's table finder drops a one-column box, so a
+    PO's "Ship To" box reaches the reader as plain text."""
+    try:
+        rules = []
+        for d in page.get_drawings() or []:
+            if d.get("color") is None:
+                continue
+            for it in d.get("items") or []:
+                if it[0] == "l":
+                    a, b = it[1], it[2]
+                    if abs(a.x - b.x) <= 1.0 and abs(a.y - b.y) >= 8:
+                        rules.append(((a.x + b.x) / 2.0, min(a.y, b.y), max(a.y, b.y)))
+                elif it[0] == "re":
+                    r = it[1]
+                    if r.width >= 20 and r.height >= 8:
+                        rules += [(r.x0, r.y0, r.y1), (r.x1, r.y0, r.y1)]
+    except Exception:
+        return
+    for s in segs:
+        here = [x for x, y0, y1 in rules if y0 <= s.cy <= y1]
+        s.ruled = any(x <= s.x0 + 1 for x in here) and any(x >= s.x1 - 1 for x in here)
 
 
 def _rows(segs: list[_Seg]) -> list[list[_Seg]]:
@@ -418,6 +450,13 @@ def _regions(rows: list[list[_Seg]]) -> list[tuple[list[list[_Seg]], list[tuple[
         # its gutter COUNT by coincidence, and kept together the
         # table below was read column by column ("CDW# 7506872 5502114",
         # "Mfg# QM75C WMN6575SE") under the boxes' columns.
+        # A label band filled across the region's gutter ("Disclaimer" under a
+        # PO's Supplier / Ship To boxes) is full width: the columns end above it.
+        if cur_g and any(s.fill_x and any(s.fill_x[0] < a and s.fill_x[1] > b for a, b in cur_g)
+                         for s in row):
+            regions.append((cur, cur_g))
+            cur, cur_g = [row], row_g
+            continue
         if cur_g and min(s.y0 for s in row) - max(s.y1 for s in cur[-1]) > 2.5 * med \
                 and not _gutters_kept(cur_g, trial_g):
             regions.append((cur, cur_g))
@@ -563,29 +602,25 @@ def _style_key(s: _Seg) -> tuple:
     return (s.bold, s.color, s.link)
 
 
-def _box_head(prow: list[_Seg], row: list[_Seg], rows: list[list[_Seg]]) -> bool:
-    """``prow`` is a box's label set on its shaded header bar and ``row`` the
-    first line of the framed box under it: "Ship To" over the address on a
-    PO. The fill change read as a block boundary, so the label became an atom
-    of its own, apart from its value (010003). It is a box head only when the
-    label is a short bold line wholly on one fill, the line below is off that
-    fill, inside a stroked frame of at most eight lines, directly beneath."""
+def _field_label(prow: list[_Seg], row: list[_Seg]) -> bool:
+    """``prow`` labels the lines under it: a short plain line set on a filled
+    header cell ("Ship To", "Message" on a PO), with the line below off any
+    fill and directly beneath, inside a ruled box or set larger than the
+    label. Each label read as an atom of its own, apart from its value
+    (010003). A bold or larger heading on a banner is not a field label."""
     text = " ".join(s.text for s in prow).strip()
     if not text or len(text) > 32 or len(text.split()) > 4 or text[-1] in ".!?;,":
         return False
     fill = prow[0].fill
-    if fill < 0 or any(s.fill != fill or not s.bold for s in prow):
+    if fill < 0 or any(s.fill != fill or s.bold for s in prow):
         return False
-    if any(s.fill == fill for s in row):
+    if any(s.fill != -1 for s in row):
         return False
-    frames = set.intersection(*(set(s.boxes) for s in row))
-    if not frames:
+    psize = max(s.size for s in prow) or 10.0
+    csize = min(s.size for s in row) or 10.0
+    if not (all(s.ruled for s in row) or psize < csize - 0.5):
         return False
-    frame = min(frames)
-    if len([r for r in rows if any(frame in s.boxes for s in r)]) > 8:
-        return False
-    size = max(s.size for s in prow + row) or 10.0
-    return min(s.y0 for s in row) - max(s.y1 for s in prow) <= 1.5 * size
+    return min(s.y0 for s in row) - max(s.y1 for s in prow) <= 1.5 * max(psize, csize)
 
 
 def _leaf_lines(segs: list[_Seg]) -> list[str]:
@@ -606,15 +641,18 @@ def _leaf_lines(segs: list[_Seg]) -> list[str]:
     pitch = statistics.median(pitches) if pitches else None
 
     out: list[str] = []
+    #: The field label the lines below belong to, and whether its box is ruled.
+    field: tuple[str, bool] | None = None
     for i, (row, text) in enumerate(lines):
         if i == 0:
             out.append(text)
             continue
         prow, ptext = lines[i - 1]
-        if out[-1] == ptext and _box_head(prow, row, rows):
+        if out[-1] == ptext and _field_label(prow, row):
             # The label and its value are one field: "Ship To: <address>".
-            label = ptext.strip()
-            out[-1] = f"{label} {text}" if label.endswith(":") else f"{label}: {text}"
+            label = ptext.strip().rstrip(":").strip()
+            out[-1] = f"{label}: {text}"
+            field = (label, all(s.ruled for s in row))
             continue
         ps = max(prow, key=lambda s: len(s.text))
         cs = max(row, key=lambda s: len(s.text))
@@ -657,6 +695,20 @@ def _leaf_lines(segs: list[_Seg]) -> list[str]:
                 )
                 if wrapped:
                     soft = False
+        if field and (hard or cs.fill != -1):
+            field = None
+        if field and not field[1]:
+            # An unruled band ("Message") labels each line under it, down to
+            # the next band; a line wrapped from the one above stays with it.
+            wrapped = (
+                width > 0
+                and (max(s.x1 for s in prow) - lefts[i - 1]) >= 0.8 * width
+                and not _TERMINAL.search(ptext)
+            )
+            if not wrapped:
+                out.append("")
+                out.append(f"{field[0]}: {text}")
+                continue
         if hard or soft:
             out.append("")
         out.append(text)
