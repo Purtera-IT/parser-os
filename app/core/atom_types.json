@@ -1006,6 +1006,18 @@
       "label": "How many people go",
       "values": "a number",
       "desc": "The number of techs or crew sent or planned for the job: \"Tanner chose to send 2 techs out\" is 2. A count of devices or sites is job_scale, not crew size."
+    },
+    {
+      "key": "trigger_event",
+      "label": "An event that starts a task",
+      "values": "true/false",
+      "desc": "The line only reports that something happened, and that happening starts a waiting task: \"TVs were delivered today\". It is not scope and adds no work of its own, so planning and runbooks skip it. Link the task's atom to it with triggered_by."
+    },
+    {
+      "key": "fires_task",
+      "label": "Which task it starts",
+      "values": "which task it fires",
+      "desc": "The task this event starts, in short words: \"PM schedules the install date with the customer\". Pairs with trigger_event."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
