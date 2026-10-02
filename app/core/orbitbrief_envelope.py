@@ -629,6 +629,10 @@ def build_orbitbrief_envelope(
                     else None
                 ),
                 "attachment_ids": prov.get("attachment_ids") or [],
+                # A HubSpot note's author is the person who wrote the NOTE, read
+                # off its own export header -- never the sender of an email
+                # pasted into it (010087: Trent's note read as Stephanie's).
+                **_note_author(artifact_atoms, fp.artifact_id),
                 # The HubSpot note this file was attached to (author, date,
                 # note id, and how the link was made), and for a note with real
                 # text, the files it carried.
@@ -2123,6 +2127,20 @@ def _originating_sender(
             if index > best_index:
                 best_index, best_sender = index, sender
     return best_sender
+
+
+def _note_author(artifact_atoms: list[Any], artifact_id: str) -> dict[str, Any]:
+    for a in artifact_atoms or []:
+        v = getattr(a, "value", None)
+        if (str(getattr(a, "artifact_id", "") or "") == artifact_id and isinstance(v, dict)
+                and v.get("kind") == "hubspot_note_meta"):
+            return {"note_author": {
+                "name": v.get("author") or None,
+                "email": v.get("author_email") or None,
+                "date": v.get("date") or None,
+                "note_id": v.get("hubspot_note_id") or None,
+            }}
+    return {}
 
 
 def _document_thread(
