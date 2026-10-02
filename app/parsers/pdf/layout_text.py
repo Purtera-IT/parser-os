@@ -605,3 +605,118 @@ def region_is_side_by_side_boxes(page: Any, bbox: Any) -> bool:
         return False
     except Exception:
         return False
+
+
+# ── Vendor quote / PO line-item grids ────────────────────────────────────
+#
+# A reseller quote (CDW, SHI, Insight ...) or a PO sets its items under a
+# header row ("ITEM | QTY | CDW# | UNIT PRICE | EXT. PRICE"). Each item is an
+# ANCHOR line carrying the figures, then lines under it in the text column
+# only: the wrapped description, "Mfg. Part#: QM55C", "Contract: Standard
+# Pricing". Read as text, the anchor line was one row and its tail glued to
+# the NEXT item ("...Standard Pricing Samsung QM75C ..."); read by the
+# whitespace-column extractor, a right-aligned quantity drifted out of the
+# QTY column and the item number landed under QTY (010003). This reads the
+# grid by its header: every cell is assigned to the header it sits under,
+# every tail line folds into the item above it, and a "Label: value" tail
+# line becomes a field of its own.
+
+_LABEL_VALUE = re.compile(r"^([A-Za-z][\w .#/&'-]{0,30}?)\s*:\s*(\S.*)$")
+_HEADER_WORD = re.compile(r"^[A-Za-z][A-Za-z .#/&'()-]*$")
+
+
+def _cell_column(seg: _Seg, heads: list[_Seg]) -> int:
+    best, best_ov = -1, 0.0
+    for i, h in enumerate(heads):
+        ov = min(seg.x1, h.x1) - max(seg.x0, h.x0)
+        if ov > best_ov:
+            best, best_ov = i, ov
+    if best >= 0:
+        return best
+    cx = (seg.x0 + seg.x1) / 2.0
+    return min(range(len(heads)), key=lambda i: abs(cx - (heads[i].x0 + heads[i].x1) / 2.0))
+
+
+def _is_header_row(row: list[_Seg]) -> bool:
+    if len(row) < 3:
+        return False
+    for s in row:
+        t = s.text.strip()
+        if not t or len(t.split()) > 3 or not _HEADER_WORD.match(t) or len(t) > 24:
+            return False
+    return True
+
+
+def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> list[tuple[dict[str, Any], Any]]:
+    """``[(table block, fitz.Rect)]`` for each line-item grid on the page."""
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        segs = _segments(page, exclude_bboxes or [])
+        rows = _rows(segs)
+    except Exception:
+        return []
+    out: list[tuple[dict[str, Any], Any]] = []
+    i = 0
+    while i < len(rows):
+        head = rows[i]
+        if not _is_header_row(head):
+            i += 1
+            continue
+        heads = sorted(head, key=lambda s: s.x0)
+        lh = statistics.median([max(1.0, s.y1 - s.y0) for r in rows for s in r]) if rows else 10.0
+        records: list[dict[str, Any]] = []
+        numeric_cols: set[int] = set()
+        prev_bottom = max(s.y1 for s in head)
+        used = [head]
+        j = i + 1
+        while j < len(rows):
+            row = rows[j]
+            gap = min(s.y0 for s in row) - prev_bottom
+            if gap > (2.5 if not records else 1.6) * lh:
+                break
+            cells: dict[int, list[str]] = {}
+            for s in row:
+                cells.setdefault(_cell_column(s, heads), []).append(s.text.strip())
+            nums = {c for c, ts in cells.items() if all(_NUMERICISH.match(t) for t in ts)}
+            if 0 in cells and len(cells) >= 2 and nums:
+                records.append({"cells": cells, "extra": []})
+                numeric_cols |= nums
+            elif records and not nums and not (set(cells) & numeric_cols) \
+                    and not _is_header_row(row):
+                rec = records[-1]
+                for c, ts in cells.items():
+                    for t in ts:
+                        m = _LABEL_VALUE.match(t)
+                        if m and c == 0:
+                            rec["extra"].append((m.group(1).strip(), m.group(2).strip()))
+                        else:
+                            rec["cells"].setdefault(c, []).append(t)
+            else:
+                break
+            used.append(row)
+            prev_bottom = max(s.y1 for s in row)
+            j += 1
+        # One header over one value row with nothing under it is a set of
+        # labelled values ("QUOTE # | QUOTE DATE ..."), which the reader
+        # already keeps as one "label: value | ..." line.
+        tails = any(rec["extra"] or any(len(v) > 1 for v in rec["cells"].values()) for rec in records)
+        if numeric_cols and (len(records) >= 2 or (records and tails)):
+            columns = [h.text.strip() for h in heads]
+            out_rows = []
+            for rec in records:
+                d: dict[str, str] = {}
+                for c, name in enumerate(columns):
+                    d[name] = " ".join(rec["cells"].get(c, [])).strip()
+                for k, v in rec["extra"]:
+                    if k not in d:
+                        d[k] = v
+                out_rows.append(d)
+            box = fitz.Rect(min(s.x0 for r in used for s in r), min(s.y0 for r in used for s in r),
+                            max(s.x1 for r in used for s in r), max(s.y1 for r in used for s in r))
+            out.append(({"kind": "table", "columns": columns, "rows": out_rows,
+                         "extraction": "header_grid_v1"}, box))
+            i = j
+        else:
+            i += 1
+    return out
