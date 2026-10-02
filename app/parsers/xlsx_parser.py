@@ -3670,6 +3670,20 @@ class XlsxParser(BaseParser):
         # header / above-data scaffolding so they are never emitted as priced
         # lines. ``_header_rows`` = the band; ``_data_floor`` = first emittable row.
         _headers, _header_rows, _data_floor = _commercial_header_band(rows, money_cols)
+        # A lone label just above the header row, over some of its columns
+        # ("Stated Rate" over "Business Hours | After Hours"), is the band's
+        # merged group caption: structure, never an atom of its own (010353).
+        if _header_rows:
+            from app.parsers.table_headers import is_label_cell
+
+            _top = min(_header_rows)
+            _base = [("" if c is None else str(c).strip()) for c in rows[_top]]
+            _first = next((k for k, c in enumerate(_base) if c), 0)
+            _above = [("" if c is None else str(c).strip()) for c in rows[_top - 1]] if _top > 0 else []
+            _ne = [(k, c) for k, c in enumerate(_above) if c]
+            if (len({c for _k, c in _ne}) == 1 and _ne[0][0] > _first
+                    and is_label_cell(_ne[0][1])):
+                _header_rows = set(_header_rows) | {_top - 1}
         # The money columns were judged from the sheet's first twenty rows.
         # On a rate sheet whose dropdown lists fill the top of the sheet the
         # matrix's own header sits far below that, so judge them again from
@@ -3758,9 +3772,18 @@ class XlsxParser(BaseParser):
         # kept as atoms below (see _commercial_unpriced_atoms).
         _unpriced: list[tuple[int, list[str], bool]] = []
         _structure_rows: set[int] = set(_header_rows)
+        # An unpriced block's own header row ("Name | Title | Email" over a
+        # contact list) names the rows beneath it; it is structure, and a
+        # row holding one value under it reads "Name: Chase Smith".
+        from app.parsers.table_headers import is_header_only_row
+
+        _srows = [[("" if c is None else str(c).strip()) for c in r] for r in rows]
+        _u_hdr: list[str] | None = None
+        _u_hdrs: dict[int, list[str]] = {}
         for row_idx, _raw in enumerate(rows):
             _full = [("" if c is None else str(c).strip()) for c in _raw]
             if not any(_full):
+                _u_hdr = None
                 continue
             if row_idx < _data_floor and row_idx not in _header_rows:
                 if not _numbers_under_headers(_full, _headers):
@@ -3818,6 +3841,12 @@ class XlsxParser(BaseParser):
                     # isn't silently dropped. Catalogs stay strict (money only) so
                     # their rollup counts don't drift.
                     if collapse_to_summary or _aligned or not _is_side_label_value(cells):
+                        if not _multi and is_header_only_row(_srows, row_idx):
+                            _u_hdr = list(cells)
+                            _structure_rows.add(row_idx)
+                            continue
+                        if _u_hdr is not None:
+                            _u_hdrs[row_idx] = _u_hdr
                         _unpriced.append((row_idx, cells, False))
                         continue
                 all_values.extend(values)
@@ -3940,6 +3969,7 @@ class XlsxParser(BaseParser):
             [u for u in _unpriced
              if u[0] not in _structure_rows and (u[0] + 1) not in _emitted_rows
              and (u[0] + 1) not in _box_rows],
+            headers=_u_hdrs,
         )
         if line_count == 0:
             return box_atoms
@@ -4065,6 +4095,7 @@ class XlsxParser(BaseParser):
 
     def _commercial_unpriced_atoms(
         self, project_id, artifact_id, artifact_type, filename, sheet_name, role, unpriced,
+        headers: dict[int, list[str]] | None = None,
     ) -> list[EvidenceAtom]:
         """Atoms for the rows of a priced sheet that carry no price.
 
@@ -4092,19 +4123,31 @@ class XlsxParser(BaseParser):
             from app.parsers.checkbox_cells import checkbox_atom, is_checkbox_cell
 
             boxes = [c for c in parts if is_checkbox_cell(c)]
+            _row_hdr = (headers or {}).get(row_idx) or []
+
+            def _hdr_of(box: str) -> str:
+                k = cells.index(box) if box in cells else -1
+                return str(_row_hdr[k]).strip() if 0 <= k < len(_row_hdr) and _row_hdr[k] else ""
+
             if boxes and len(boxes) < len(parts):
                 parts = [c for c in parts if c not in boxes]
                 for b in dict.fromkeys(boxes):
                     out.append(checkbox_atom(
                         project_id=project_id, artifact_id=artifact_id,
                         artifact_type=artifact_type, filename=filename, text=b,
-                        column="", subject=parts[0],
+                        column=_hdr_of(b), subject=parts[0],
                         locator={"sheet": sheet_name, "row": row_idx + 1,
                                  "section_path": [sheet_name] if sheet_name else []},
                         extraction_method="xlsx_checkbox_cell_v1",
                         parser_version=self.parser_version, site_row=False,
                     ))
             text = " | ".join(dict.fromkeys(parts))[:4000]
+            if headers and row_idx in headers:
+                # Under its block's header row: each cell carries its column's
+                # name ("Name: Chase Smith", "Site Name: Delphos, OH").
+                from app.parsers.table_headers import bind_row
+
+                text = bind_row([c if c in parts else "" for c in cells], headers[row_idx])[:4000] or text
             aid = stable_id("atm", artifact_id, "commercial_unpriced", sheet_name, row_idx)
             value: dict[str, Any] = {
                 "kind": "commercial_sheet_scaffolding" if above else "unpriced_sheet_row",
@@ -5807,6 +5850,14 @@ class XlsxParser(BaseParser):
             # Skip the header row itself so it doesn't reappear as data.
             if row_idx == header_idx:
                 continue
+            # One value alone on its row ("Chase Smith", the rest blank) is
+            # nothing without its column's name: "Name: Chase Smith".
+            if header_idx >= 0:
+                from app.parsers.table_headers import bind_lone_cell
+
+                raw_text = bind_lone_cell(
+                    [str(c).strip() if c is not None else "" for c in row[: len(columns)]], columns,
+                ) or raw_text
 
             source_ref = self._build_source_ref(
                 artifact_id=artifact_id,

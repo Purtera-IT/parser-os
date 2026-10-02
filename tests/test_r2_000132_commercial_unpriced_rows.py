@@ -38,7 +38,10 @@ def _workbook(path: Path) -> list[list]:
 def test_every_cell_of_a_priced_workbook_is_in_an_atom(tmp_path: Path):
     rows = _workbook(tmp_path / "Deal Kit v2.xlsx")
     atoms = XlsxParser().parse(tmp_path / "Deal Kit v2.xlsx")
-    blob = "\n".join(a.raw_text for a in atoms)
+    # A header row's labels are the field names of the cells beneath it
+    # (the row itself is no atom): a tick-box cell carries its column's name.
+    blob = "\n".join(a.raw_text for a in atoms) + "\n" + "\n".join(
+        str((a.value or {}).get("column") or "") for a in atoms)
     for row in rows:
         for cell in row:
             assert str(cell) in blob, (cell, blob)
@@ -52,8 +55,10 @@ def test_unpriced_rows_are_typed_for_review(tmp_path: Path):
     ah = by["After Hours | After-hours work is billed at 150% of the standard rate"]
     assert ah.atom_type.value == "pricing_assumption" and "unpriced_sheet_row" in ah.review_flags
     assert by["Travel billed at cost."].atom_type.value == "pricing_assumption"
-    # the tick boxes are their own atom, not part of the site row
-    assert "Delphos, OH | 123 Main St" in by
+    # the tick boxes are their own atom, not part of the site row, which
+    # reads under its header row's column names (the header is no atom)
+    assert "Site Name: Delphos, OH | Address: 123 Main St" in by
+    assert "Site Name | Address | Service Type" not in by
     box = by["☐ Assessment ☐ Configuration ☒ Installation"]
     assert box.value["selected"] == ["Installation"] and box.value["subject"] == "Delphos, OH"
     # priced rows unchanged

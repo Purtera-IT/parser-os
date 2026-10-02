@@ -717,10 +717,36 @@ class DocxParser(BaseParser):
             # entity extraction. Skip the all-cell header row when
             # row 0 looks like field labels.
             header_cells = table_rows[0] if table_rows else []
+            # A header row need not be row 0: under a caption row, or below a
+            # group label ("Stated Rate" over "Business Hours | After Hours"),
+            # the column names sit lower. Such a row names the cells beneath
+            # it and is never an atom itself (010353). Looked for only above
+            # the first data row, and not in a merged-title property block
+            # ("City | Marion | State | SC" is label/value pairs, not names).
+            from app.parsers.table_headers import (
+                bind_lone_cell, is_banner_row, is_caption_row, is_header_only_row, merge_header,
+            )
+
+            active_header = list(header_cells)
+            _titled_block = len(header_cells) >= 2 and len(set(header_cells)) <= 1
+            _seen_data = False
+            # A block caption ("The Buyer" over "Signature: | Name: | Date:")
+            # names the fields beneath it: it rides on their section path.
+            _caption = header_cells[0] if _titled_block and is_caption_row(table_rows, 0) else None
             for row_idx, row_cells in enumerate(table.rows):
                 cell_texts = [c.text.strip() for c in row_cells.cells if c.text.strip()]
                 if not cell_texts:
                     continue
+                if row_idx > 0 and is_caption_row(table_rows, row_idx):
+                    _caption = cell_texts[0]
+                    continue
+                _sp = table_section.get(table_idx, []) + ([_caption] if _caption else [])
+                if not _seen_data and not _titled_block:
+                    if row_idx > 0 and is_header_only_row(table_rows, row_idx):
+                        active_header = merge_header(active_header, table_rows[row_idx])
+                        continue
+                    if is_banner_row(table_rows, row_idx):
+                        continue
                 # Skip the header row (first row) ONLY when its cells are PURE
                 # COLUMN LABELS — short AND value-free (no digit / @ / $). A
                 # header-less table whose first row is real data ("Dan Pratt |
@@ -761,7 +787,12 @@ class DocxParser(BaseParser):
                     )
                 ):
                     continue
+                _seen_data = True
                 row_text = " | ".join(cell_texts)
+                # One value alone on its row ("Chase Smith", the rest blank)
+                # says nothing without its column's name: "Name: Chase Smith".
+                if row_idx > 0:
+                    row_text = bind_lone_cell(_pos_cells, active_header) or row_text
                 # Checkbox cells ("☐ Assessment ☒ Installation") are their own
                 # facts: split off the row so a site name never carries them.
                 from app.parsers.checkbox_cells import checkbox_atom, is_checkbox_cell, looks_like_site_column
@@ -769,13 +800,13 @@ class DocxParser(BaseParser):
                 _cb_cells = [
                     (i, c.text.strip()) for i, c in enumerate(row_cells.cells)
                     if c.text.strip() and is_checkbox_cell(c.text)
-                ] if row_idx > 0 or not header_cells else []
+                ] if row_idx > 0 or not active_header else []
                 _cb_texts = {t for _i, t in _cb_cells}
                 _plain_cells = [t for t in cell_texts if t not in _cb_texts]
                 if _cb_cells and _plain_cells:
                     row_text = " | ".join(_plain_cells)
                     _subject = _plain_cells[0]
-                    _site_like = bool(header_cells) and looks_like_site_column(header_cells[0] if header_cells else "")
+                    _site_like = bool(active_header) and looks_like_site_column(active_header[0] if active_header else "")
                     _seen_cb: set[str] = set()
                     for _ci, _ct in _cb_cells:
                         if _ct in _seen_cb:  # a merged cell repeats its text
@@ -784,10 +815,10 @@ class DocxParser(BaseParser):
                         atoms.append(checkbox_atom(
                             project_id=project_id, artifact_id=artifact_id,
                             artifact_type=ArtifactType.docx, filename=path.name, text=_ct,
-                            column=(header_cells[_ci] if _ci < len(header_cells) else ""),
+                            column=(active_header[_ci] if _ci < len(active_header) else ""),
                             subject=_subject,
                             locator={"table_index": table_idx, "row": row_idx, "cell": _ci,
-                                     "section_path": table_section.get(table_idx, [])},
+                                     "section_path": list(_sp)},
                             extraction_method="docx_checkbox_cell_v1",
                             parser_version=self.parser_version, site_row=_site_like,
                         ))
@@ -795,7 +826,7 @@ class DocxParser(BaseParser):
                 # row blob. The centralized _enrich_table_atoms() in
                 # entity_extraction will classify all raw_table_row
                 # atoms in one pass using the column schema registry.
-                if header_cells and row_idx > 0:
+                if active_header and row_idx > 0:
                     _row_cells_full = [c.text.strip() for c in row_cells.cells]
                     _rtr_id = stable_id("atm", artifact_id, "raw_table_row", table_idx, row_idx)
                     _rtr_src = SourceRef(
@@ -803,7 +834,7 @@ class DocxParser(BaseParser):
                         artifact_id=artifact_id,
                         artifact_type=ArtifactType.docx,
                         filename=path.name,
-                        locator={"table_index": table_idx, "row": row_idx, "extraction": "raw_table_row_v49_2", "section_path": table_section.get(table_idx, []), "lead_in": getattr(self, "_table_lead_in", {}).get(table_idx, [])},
+                        locator={"table_index": table_idx, "row": row_idx, "extraction": "raw_table_row_v49_2", "section_path": list(_sp), "lead_in": getattr(self, "_table_lead_in", {}).get(table_idx, [])},
                         extraction_method="raw_table_row_v49_2",
                         parser_version=self.parser_version,
                     )
@@ -815,7 +846,7 @@ class DocxParser(BaseParser):
                         raw_text=row_text[:4000],
                         normalized_text=row_text.lower()[:4000],
                         value={
-                            "_columns": list(header_cells),
+                            "_columns": list(active_header),
                             "_row": _row_cells_full,
                             "_table_idx": table_idx,
                             "_row_idx": row_idx,
@@ -849,7 +880,7 @@ class DocxParser(BaseParser):
                         "table_index": table_idx,
                         "row": row_idx,
                         "extraction": "docx_table_row_v1",
-                        "section_path": table_section.get(table_idx, []),
+                        "section_path": list(_sp),
                         "lead_in": getattr(self, "_table_lead_in", {}).get(table_idx, []),
                     },
                     extraction_method="docx_table_row_v1",
@@ -865,8 +896,8 @@ class DocxParser(BaseParser):
                         normalized_text=row_text.lower(),
                         value={
                             "kind": "table_row",
-                            "columns": header_cells,
-                            "cells": _cells_by_column(header_cells, cell_texts),
+                            "columns": active_header,
+                            "cells": _cells_by_column(active_header, cell_texts),
                             **({"checkbox_cells_split": True} if (_cb_cells and _plain_cells) else {}),
                         },
                         entity_keys=[],
