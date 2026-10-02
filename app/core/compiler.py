@@ -2182,7 +2182,9 @@ def compile_project(
             warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
         dropped_sem = before_sem - len(atoms)
         _sem_notes: list[str] = []
-        if dropped_sem > 0:
+        # Measured from the snapshot, so a turn only the speech collapse
+        # dropped still gets its suppression entry.
+        if len(before_sem_atoms) > len(atoms):
             merge_suppressed(
                 suppressed_atoms,
                 capture_suppressed(
