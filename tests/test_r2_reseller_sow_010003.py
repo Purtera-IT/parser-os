@@ -212,3 +212,91 @@ def test_note_and_call_dependency_is_not_small_talk(tmp_path: Path) -> None:
         assert part in by, list(by)
         assert "chatter" not in by[part].review_flags
         assert by[part].atom_type != AtomType.deal_metadata, (part, by[part].atom_type)
+
+
+# ── 2: a site address whose city/ZIP line wraps under its street ──
+
+def _pdf_atoms(path: Path):
+    from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
+
+    out = OrbitBriefPdfParser().parse(path)
+    return list(getattr(out, "atoms", out))
+
+
+def _site_table_pdf(path: Path, *, table: bool) -> None:
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    p = doc.new_page(width=612, height=792)
+    p.insert_text((36, 60), "Statement of Work", fontsize=12, fontname="hebo")
+    p.insert_text((36, 80), "This Statement of Work is made between CDW Direct, LLC and Customer.", fontsize=10)
+    p.insert_text((36, 104), "Project Locations", fontsize=12, fontname="hebo")
+    if table:
+        p.insert_text((36, 124), "Site Name", fontsize=9, fontname="hebo")
+        p.insert_text((200, 124), "Address", fontsize=9, fontname="hebo")
+        p.insert_text((36, 138), "NYC Office", fontsize=9)
+        p.insert_text((200, 138), "40 10th Ave Fl 4", fontsize=9)
+        p.insert_text((200, 150), "NEW YORK, NY 10014", fontsize=9)
+    else:
+        for i, line in enumerate(["NYC Office", "40 10th Ave Fl 4", "NEW YORK, NY 10014"]):
+            p.insert_text((36, 124 + 13 * i), line, fontsize=10)
+    p.insert_text((36, 190), "Project Management", fontsize=12, fontname="hebo")
+    p.insert_text((36, 210), "CDW will provide project management for the duration of the project.", fontsize=10)
+    doc.save(str(path))
+    doc.close()
+
+
+def test_site_table_address_keeps_its_wrapped_city_line(tmp_path: Path) -> None:
+    pdf = tmp_path / "sow.pdf"
+    _site_table_pdf(pdf, table=True)
+    atoms = _pdf_atoms(pdf)
+    sites = [a for a in atoms if a.atom_type == AtomType.physical_site]
+    assert len(sites) == 1, [a.raw_text for a in atoms]
+    site = sites[0]
+    assert "NEW YORK, NY 10014" in site.raw_text and "40 10th Ave Fl 4" in site.raw_text
+    assert (site.value["city"], site.value["state"], site.value["zip"]) == ("NEW YORK", "NY", "10014")
+    for a in atoms:
+        loc = a.source_refs[0].locator if a.source_refs else {}
+        assert "NEW YORK, NY 10014" not in (loc.get("section_path") or []), a.raw_text
+
+
+def test_an_all_caps_city_line_is_not_a_heading(tmp_path: Path) -> None:
+    pdf = tmp_path / "sow.pdf"
+    _site_table_pdf(pdf, table=False)
+    atoms = _pdf_atoms(pdf)
+    assert any("NEW YORK, NY 10014" in a.raw_text for a in atoms), [a.raw_text for a in atoms]
+    for a in atoms:
+        loc = a.source_refs[0].locator if a.source_refs else {}
+        assert "NEW YORK, NY 10014" not in (loc.get("section_path") or []), a.raw_text
+
+
+# ── 11: "After a Change" / "Order that requires..." is one sentence ──
+
+def test_change_order_cut_by_a_line_break_is_not_a_heading() -> None:
+    from app.parsers.orbitbrief_pdf import _text_rich_sections
+
+    text = ("Change Management\n\nAfter a Change\n\n"
+            "Order that requires additional work is signed, CDW will schedule the work.\n")
+    sections = _text_rich_sections(text)
+    blocks = [b.get("text") for s in sections for b in s["blocks"]]
+    assert "After a Change Order that requires additional work is signed, CDW will schedule the work." in blocks
+    assert "After a Change" not in blocks
+    assert not any(s.get("heading") == "After a Change" for s in sections)
+    # A real heading over a capitalised sentence stays a heading.
+    sections = _text_rich_sections("Customer Responsibilities\n\nCustomer will provide power at each location.\n")
+    assert [b.get("text") for s in sections for b in s["blocks"]] == ["Customer will provide power at each location."]
+
+
+def test_change_order_cut_across_a_layout_gap_in_a_pdf(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf = tmp_path / "sow.pdf"
+    doc = fitz.open()
+    p = doc.new_page(width=612, height=792)
+    p.insert_text((36, 60), "Change Management", fontsize=12, fontname="hebo")
+    p.insert_text((36, 84), "Either party may request changes to this SOW through the Change Order process.", fontsize=10)
+    p.insert_text((36, 110), "After a Change", fontsize=10)
+    p.insert_text((36, 140), "Order that requires additional work is signed, CDW will schedule the work.", fontsize=10)
+    doc.save(str(pdf))
+    doc.close()
+    texts = [a.raw_text for a in _pdf_atoms(pdf)]
+    assert any(t.startswith("After a Change Order that requires") for t in texts), texts
+    assert not any(t.startswith("Order that requires") for t in texts), texts

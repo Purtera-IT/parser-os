@@ -299,6 +299,13 @@ def _is_table(rows: list[list[_Seg]], cols: list[list[_Seg]]) -> bool:
         left = cols[0]
         colon = sum(1 for s in left if s.text.rstrip().endswith(":"))
         aligned = sum(1 for r in rows if len(r) >= 2)
+        # A right cell wrapped onto one more line under a full row (a site's
+        # "NEW YORK, NY 10014" under its street, 010003) is still that row.
+        left_ids = {id(s) for s in left}
+        aligned += sum(
+            1 for prev, r in zip(rows, rows[1:])
+            if len(prev) >= 2 and len(r) == 1 and id(r[0]) not in left_ids
+        )
         lw = max(s.x1 for s in left) - min(s.x0 for s in left)
         rw = max(s.x1 for s in cols[1]) - min(s.x0 for s in cols[1])
         if colon >= 0.5 * len(left):

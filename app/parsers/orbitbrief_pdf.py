@@ -3202,7 +3202,7 @@ def _atoms_for_block(
                         for k, v in [
                             ("site_id", site_row.site_id),
                             ("facility", site_row.facility_name),
-                            ("address", site_row.street_address),
+                            ("address", _site_row_address_text(site_row)),
                             ("mdf_idf", site_row.mdf_idf),
                             ("access", site_row.access_window),
                             ("escort", site_row.escort_owner),
@@ -4183,6 +4183,21 @@ def _merge_table_extractions(
     return blocks, bboxes
 
 
+def _site_row_address_text(site_row: Any) -> str | None:
+    """The row's address as the source wrote it: street, then the city /
+    state / ZIP line when the row resolved one ("40 10th Ave Fl 4, NEW YORK,
+    NY 10014"). The atom's text is its evidence; the city line read off the
+    page must be in it, not only in the value (010003)."""
+    street = str(getattr(site_row, "street_address", None) or "").strip()
+    city = str(getattr(site_row, "city", None) or "").strip()
+    state = str(getattr(site_row, "state", None) or "").strip()
+    zip_ = str(getattr(site_row, "zip", None) or "").strip()
+    tail = ", ".join(x for x in (city, " ".join(x for x in (state, zip_) if x)) if x)
+    if street and tail and tail.lower() not in street.lower():
+        return f"{street}, {tail}"
+    return street or None
+
+
 def _drop_side_by_side_box_tables(
     pdf_path: Path, page_index: int, blocks: list[dict[str, Any]], bboxes: list[Any]
 ) -> tuple[list[dict[str, Any]], list[Any]]:
@@ -5135,6 +5150,11 @@ def _looks_like_section_heading(stripped: str) -> bool:
         return True
     if not (stripped.isupper() and len(stripped) >= 3):
         return False
+    # "NEW YORK, NY 10014" is the city line of an address, written in caps the
+    # way a mailing label is, not a heading (010003: it became the section of
+    # every atom after it and no atom carried it).
+    if re.search(r",\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\s*$", stripped):
+        return False
     # Headings don't end with sentence punctuation.
     if stripped[-1] in ".,;":
         return False
@@ -5780,10 +5800,35 @@ def _is_wrapped_tail(
         return False
     if _numbered_heading(cur) or _looks_like_section_heading(cur):
         return False
+    # A line cut mid-phrase: the next line opens in lower case, or its first
+    # word completes the term the previous line ended on. "After a Change" /
+    # "Order that requires additional work is signed..." (010003) is one
+    # sentence that a layout break set apart, and "After a Change" read as a
+    # heading.
+    if _completes_cut_phrase(prev, cur):
+        return True
     full = max((len((l or "").rstrip()) for l in lines), default=0)
     if full < 40:
         return False
     return len(prev) >= fill * full
+
+
+#: Two-word terms a line break can cut in half ("Change" / "Order").
+_CUT_TERMS = frozenset({
+    ("change", "order"), ("change", "orders"), ("change", "request"), ("purchase", "order"),
+    ("purchase", "orders"), ("work", "order"), ("sales", "order"), ("service", "order"),
+    ("statement", "of"), ("bill", "of"), ("scope", "of"), ("notice", "to"), ("certificate", "of"),
+})
+
+
+def _completes_cut_phrase(prev: str, cur: str) -> bool:
+    prev_words = re.findall(r"[A-Za-z]+", prev or "")
+    cur_words = re.findall(r"[A-Za-z]+", cur or "")
+    if not prev_words or not cur_words:
+        return False
+    if (cur or "").lstrip()[:1].islower():
+        return True
+    return (prev_words[-1].lower(), cur_words[0].lower()) in _CUT_TERMS
 
 
 def _stamp_section_and_block_ids(sections: list[dict[str, Any]], page_index: int) -> None:

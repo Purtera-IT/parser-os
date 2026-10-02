@@ -214,6 +214,18 @@ def _fitz_generic_table_fallback(
     return out
 
 
+def _continues_address(cell: str, line: str) -> bool:
+    """Is ``line`` the city/state/ZIP line of the street address in ``cell``?"""
+    try:
+        from app.core.address_parse import _CITY_STATE_ZIP_RE, looks_like_street_address
+    except Exception:  # pragma: no cover
+        return False
+    line = (line or "").strip()
+    if not line or not _CITY_STATE_ZIP_RE.search(line) or _CITY_STATE_ZIP_RE.search(cell or ""):
+        return False
+    return bool(looks_like_street_address((cell or "") + ", " + line) or re.match(r"^\s*\d+\s+\S", cell or ""))
+
+
 def _address_columns(rows_lr: list[list[str]]) -> list[str]:
     """The columns of a two-column region that each read, top to bottom, as one
     US postal address (a street line and a City, ST ZIP line). Empty unless
@@ -385,7 +397,16 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
         rows_lr: list[list[str]] = []
         region_lis: list[int] = []
         cont_run = 0
-        for li in range(top_li, bot_li + 1):
+        # A right cell that wraps under the last anchor -- the "NEW YORK, NY
+        # 10014" line of a site's address (010003) -- is part of that row:
+        # follow right-only lines set tight under the span.
+        span_end = bot_li
+        while (span_end + 1 < len(lines) and span_end + 1 - bot_li <= 3
+               and lines[span_end + 1]["words"]
+               and all(t[0] >= X - 1.0 for t in lines[span_end + 1]["words"])
+               and lines[span_end + 1]["y0"] - lines[span_end]["y1"] <= 0.9 * line_h):
+            span_end += 1
+        for li in range(top_li, span_end + 1):
             ws = lines[li]["words"]
             if any(t[0] < X - 2.0 and t[2] > X + 2.0 for t in ws):
                 break  # a word crosses the rail → not a cell boundary → prose
@@ -393,6 +414,13 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
             right = [t for t in ws if t[0] >= X - 1.0]
             ltxt = " ".join(t[4] for t in left).strip()
             rtxt = " ".join(t[4] for t in right).strip()
+            if right and not left and rows_lr and _continues_address(rows_lr[-1][1], rtxt):
+                # The address cell's city/state/ZIP line, wrapped under it.
+                rows_lr[-1][1] = (rows_lr[-1][1] + ", " + rtxt).strip(", ")
+                region_lis.append(li)
+                continue
+            if li > bot_li:
+                break
             if right:
                 rows_lr.append([ltxt, rtxt])
                 region_lis.append(li)
