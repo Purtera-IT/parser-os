@@ -3458,12 +3458,14 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         # Within a page: the paragraph of a docx, the row of a sheet or a
         # table. Ignoring them read 010003-style SOW paragraphs back to front
         # and interleaved a sheet's rows.
-        if loc.get("paragraph_index") is not None:
+        # A docx atom carries block_index, its body element's position, so
+        # paragraphs, tables and content controls interleave; it wins.
+        if loc.get("block_index") is not None:
+            blk = (0, _int(loc.get("block_index")), 0)
+        elif loc.get("paragraph_index") is not None:
             blk = (0, _int(loc.get("paragraph_index")), 0)
         elif loc.get("table_index") is not None:
             blk = (1, _int(loc.get("table_index")), _int(loc.get("row", loc.get("row_index"))))
-        elif loc.get("block_index") is not None:
-            blk = (0, _int(loc.get("block_index")), 0)
         elif loc.get("row") is not None or loc.get("row_index") is not None:
             blk = (0, _int(loc.get("row", loc.get("row_index"))), 0)
         else:
