@@ -201,12 +201,19 @@ def test_verbless_phrase_closes_the_sentence_before_it():
     ]) == [[0], [1], [2]]
 
 
-def test_restart_is_not_a_continuation_and_the_cut_head_closes_the_sentence_before():
+def test_restart_is_not_a_continuation_and_the_restarted_head_stays_off_the_sentence_before():
+    # The speaker restarts "How are we gonna." as a new question; the cut head
+    # opens that question and is not glued onto the finished sentence before.
     assert _groups([
         ("A", 10.0, "Because we'll need to know exactly where the racks sit in the rooms."),
         ("A", 15.0, "How are we gonna."),
         ("A", 16.2, "How are we thinking?"),
-    ]) == [[0, 1], [2]]
+    ]) == [[0], [1], [2]]
+    assert _groups([
+        ("A", 10.0, "We can move fast, finish Denver first and then do Ohio."),
+        ("A", 20.0, "What was the."),
+        ("A", 20.7, "What was the last day we need it all done by?"),
+    ]) == [[0], [1], [2]]
     # an elliptical answer ending on an auxiliary is not a cut tail
     assert _groups([
         ("A", 12.0, "Yeah, if you have a form from another job, we can reuse it."),
@@ -271,3 +278,75 @@ def test_interjection_is_not_skipped_into_a_new_sentence():
         ("B", 12.0, "Yeah."),
         ("A", 13.0, "At the north gate."),
     ]) == [[0], [1], [2]]
+
+
+# ---------------------------------------------------------------------------
+# Tuned on two real calls' full cue lists: shapes main glued that are two
+# separate sentences, and cut words it missed (synthetic text).
+# ---------------------------------------------------------------------------
+
+def test_two_complete_sentences_are_not_glued():
+    for a, b in (
+        ("Quiet.", "How about you?"),                  # verbless word, then a question
+        ("Great.", "Another site done."),              # two verbless exclamations
+        ("Yeah, we just had coffee.", "Yeah, that coffee."),  # a new turn opening on "yeah"
+        ("They map the rooms for us per school.", "What happens after that?"),  # a question restating a word
+        ("I think I see the row, but just mark Oakdale.", "Yeah, yeah, just mark it in the sheet."),
+        ("Anything else?", "Priya?"),                  # a question, then a name
+        ("Hey.", "Hey, Omar."),                         # greetings
+        ("All good.", "All good."),
+        ("Bye.", "Bye."),
+    ):
+        assert _groups([("A", 1.0, a), ("A", 2.0, b)]) == [[0], [1]], (a, b)
+
+
+def test_an_auxiliary_after_its_subject_ends_an_elliptical_clause():
+    for a, b in (
+        ("In case the van breaks down and we lose track of where it is.", "And then we hope your team goes out."),
+        ("Yeah, Denver.", "That's where it was."),
+        ("We do.", "Okay then."),
+        ("I mean, honestly, yeah, she will.", "I'll."),
+        ("Sure thing.", "I believe we do."),
+    ):
+        assert _groups([("A", 1.0, a), ("A", 2.5, b)]) == [[0], [1]], (a, b)
+    # still a cut: a subordinator opens it, or the next cue picks the auxiliary up
+    assert _groups([("A", 1.0, "Just so I can."), ("A", 2.0, "Like a checklist for my crew.")]) == [[0, 1]]
+    assert _groups([("A", 1.0, "Denver, I can."), ("A", 2.0, "We can move fast and finish Denver first.")]) == [[0, 1]]
+    assert _groups([("A", 1.0, "How are we gonna."), ("A", 2.0, "Get the carts in?")]) == [[0, 1]]
+
+
+def test_a_trailing_conjunction_does_not_run_into_a_new_question():
+    assert _groups([("A", 1.0, "Those get attached here as well, but."), ("A", 7.0, "Any questions?")]) == [[0], [1]]
+    assert _groups([("A", 1.0, "Do you bill per."), ("A", 2.0, "Is it per floor?")]) == [[0, 1]]
+
+
+def test_a_verbless_head_only_opens_a_sentence_into_a_short_cut_cue():
+    # after a joined sentence a verbless cue does not reach forward
+    assert _groups([
+        ("A", 10.0, "They're pretty relaxed on the."),
+        ("A", 11.6, "The dates."),
+        ("A", 12.5, "If we."),
+        ("A", 13.0, "Say we do one from 8 to 12 and the next from 12 to 4."),
+    ]) == [[0, 1], [2, 3]]
+    # nor into a complete sentence
+    assert _groups([("A", 1.0, "At the latest."), ("A", 2.0, "Hoping sooner, but yeah.")]) == [[0], [1]]
+    # an elaboration of the sentence before still closes it
+    assert _groups([("A", 1.0, "Just keep them on site all day."), ("A", 2.0, "Full shift day.")]) == [[0, 1]]
+    assert _groups([("A", 1.0, "Today."), ("A", 1.4, "I'm a bit busy, but."), ("A", 4.8, "Yeah, should be fine.")]) == [[0, 1, 2]]
+
+
+def test_a_dropped_subject_aside_is_not_glued_to_the_answer_before():
+    assert _groups([
+        ("A", 10.0, "Yeah, that sounds about right."),
+        ("A", 12.3, "Think there's a cap."),
+        ("B", 14.0, "Okay."),
+    ]) == [[0], [1], [2]]
+
+
+def test_a_word_cut_before_its_stem_joins():
+    assert _groups([("A", 1.0, "Yeah, before 2 o'."), ("A", 2.0, "Clock.")]) == [[0, 1]]
+    assert _groups([
+        ("A", 1.0, "We have an offsite today, but tomorrow I'm just gonna re."),
+        ("A", 4.8, "Quote."),
+        ("A", 6.4, "Just refresh the numbers."),
+    ]) == [[0, 1], [2]]
