@@ -123,6 +123,16 @@ def _restore_clipped_prefixes(page: Any, cell_rows: list[Any], rows: list[list[A
             #     "Anova UTM(R) INSTALLATION GUIDE plus HDP SENSOR
             #      lcome you to coordinate the time and place of your installs"
             # and the second line kept its truncation.
+            # The clipped characters sit just left of the cell, never inside
+            # the cell beside it: a page line that starts in a neighbouring
+            # cell is two cells on one baseline ("QUOTED BY: Tanner Norris" +
+            # "FULL NAME: Chase Smith"), and "restoring" it glued the
+            # neighbour's text onto this cell (010353 / 010087 contact grids).
+            left_edge = max(
+                [float(o[2]) for k, o in enumerate(getattr(row, "cells", []) or [])
+                 if o is not None and k != ci and float(o[2]) <= cx0 + 1.0],
+                default=float("-inf"),
+            )
             out_lines: list[str] = []
             changed = False
             for piece in raw_cell.split("\n"):
@@ -133,7 +143,7 @@ def _restore_clipped_prefixes(page: Any, cell_rows: list[Any], rows: list[list[A
                 best: str | None = None
                 for ly0, ly1, lx0, text in lines:
                     # The line must sit in this cell's band and start to its left.
-                    if ly1 <= cy0 or ly0 >= cy1 or lx0 >= cx0:
+                    if ly1 <= cy0 or ly0 >= cy1 or lx0 >= cx0 or lx0 < left_edge - 1.0:
                         continue
                     if len(text) <= len(current) or not text.endswith(current):
                         continue
@@ -146,6 +156,52 @@ def _restore_clipped_prefixes(page: Any, cell_rows: list[Any], rows: list[list[A
                     out_lines.append(piece)
             if changed:
                 rows[ri][ci] = "\n".join(out_lines)
+
+#: A cell that labels its own value: "FULL NAME: Chase Smith", "DATE: Sep 17".
+_SELF_LABELLED_CELL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 .#/&()'-]{0,30}?:\s+\S")
+
+
+def _cell_labels_itself(cell: Any) -> bool:
+    text = " ".join(str(cell or "").split())
+    m = _SELF_LABELLED_CELL_RE.match(text)
+    return bool(m) and len(m.group(0).split(":", 1)[0].split()) <= 4
+
+
+def _grid_is_self_labelled(rows: list[list[Any]]) -> bool:
+    """A form / contact grid whose every cell carries its own label
+    ("QUOTED BY: Tanner Norris | FULL NAME: Chase Smith | JOB TITLE: ...")
+    has no header row: its first row is a record like the others. Read with
+    row 0 as the header, every value of the rows below was keyed by the first
+    record's text ("QUOTED BY: Tanner Norris: PREPARED FOR: Ox")."""
+    if not rows or len(rows) < 1:
+        return False
+    head = [c for c in rows[0] if str(c or "").strip()]
+    if len(head) < 2 or sum(1 for c in head if _cell_labels_itself(c)) < max(2, 0.6 * len(head)):
+        return False
+    body = [c for r in rows[1:] for c in (r or []) if str(c or "").strip()]
+    return not body or sum(1 for c in body if _cell_labels_itself(c)) >= 0.5 * len(body)
+
+
+def _drop_title_band(rows: list[list[Any]]) -> list[list[Any]]:
+    """Drop a title band set as the grid's first row: one filled cell (the
+    page or form title, "STATEMENT OF WORK", merged across the grid) over rows of
+    two or more cells. Read as the header, the title named the first column
+    and prefixed every row's first cell ("STATEMENT OF WORK: FULL NAME: ...")
+    while the other columns had no name at all."""
+    if not rows or len(rows) < 2:
+        return rows
+    head = [str(c or "").strip() for c in rows[0]]
+    if len(head) < 2 or sum(1 for c in head if c) != 1:
+        return rows
+    # The band is ONE cell merged across the grid: the extractor reports the
+    # cells it spans as None (an empty header cell of its own is "").
+    if any(c is not None for c in rows[0] if not str(c or "").strip()):
+        return rows
+    body_cells = [sum(1 for c in (r or []) if str(c or "").strip()) for r in rows[1:]]
+    if not body_cells or max(body_cells) < 2:
+        return rows
+    return rows[1:]
+
 
 _FORM_INTERROG_RE = re.compile(
     r"^(?:did|is|are|was|were|have|has|had|do|does|can|could|will|would|should|"
