@@ -1907,14 +1907,27 @@ def compile_project(
                 # judgement that let it in.
                 _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
                 if _dropped_djs:
-                    merge_suppressed(
-                        suppressed_atoms,
-                        capture_suppressed(
-                            _before_djs, atoms,
-                            stage="document_job_scope",
-                            reason="document describes another job for this customer, not the work this deal is named for",
-                        ),
-                    )
+                    # Each set-aside conversation carries ITS reason (who said
+                    # other_job, how sure, about which title) onto every atom it
+                    # drops -- a drop with no recorded reason cannot be audited.
+                    _djs_kept_ids = {id(_a) for _a in atoms}
+                    _djs_reason_by_id: dict[str, str] = {}
+                    for _v in _djs_verdicts:
+                        if _v.get("verdict") == "other_job":
+                            for _aid in _v.get("atom_ids") or []:
+                                _djs_reason_by_id.setdefault(_aid, _v.get("reason") or "")
+                    _djs_default = "document describes another job for this customer, not the work this deal is named for"
+                    _djs_groups: dict[str, list] = {}
+                    for _a in _before_djs:
+                        if id(_a) in _djs_kept_ids:
+                            continue
+                        _aid = str(getattr(_a, "id", "") or "")
+                        _djs_groups.setdefault(_djs_reason_by_id.get(_aid) or _djs_default, []).append(_a)
+                    for _reason, _group in _djs_groups.items():
+                        merge_suppressed(
+                            suppressed_atoms,
+                            capture_suppressed(_group, [], stage="document_job_scope", reason=_reason),
+                        )
                     _djs_dropped = len(_dropped_djs)
                 warnings.extend(_djs_notes)
         except Exception as exc:
