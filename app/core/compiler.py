@@ -1186,6 +1186,24 @@ def compile_project(
     # omission complaint ("you missed the Lookup tab") localize to the stage
     # that removed them — instead of the sheet vanishing without a trace.
     # Universal: keys off the suppression-flag prefix, not any file type.
+    # Chrome a parser still emitted as an atom -- a signature logo / badge /
+    # banner read off an inline image, an e-signature page stamp -- leaves
+    # the atom set here, into the ledger at stage ``chrome`` with its reason,
+    # so the envelope lists it under ``suppressed_chrome`` and nothing else
+    # ever carries it. See app/core/email_chrome.py.
+    try:
+        from app.core.email_chrome import divert_chrome
+
+        _n_before = len(atoms)
+        atoms = divert_chrome(atoms, suppressed_atoms)
+        if len(atoms) != _n_before:
+            warnings.append(
+                f"INFO: diverted {_n_before - len(atoms)} chrome atom(s) (signature images, "
+                f"e-sign stamps) to the ledger"
+            )
+    except Exception as exc:  # never fail a compile over chrome
+        warnings.append(f"WARNING: chrome diversion failed: {type(exc).__name__}: {exc}")
+
     pre_suppressed = [
         a
         for a in atoms

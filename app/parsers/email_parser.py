@@ -2152,6 +2152,23 @@ def _cid_anchor_in_signature(blocks: list[dict[str, Any]], message_index: int, l
         for idx in range(0, min(len(lines), line - base)):
             if _SIGNOFF_RE.match(str(lines[idx] or "").lstrip("> ").strip()):
                 return True
+        # No sign-off, but the image sits right under the sender's contact
+        # block (an address or a phone in the lines just above it, no blank
+        # between) with no sentence after it:
+        # "Jane Roe | Account Manager / M: 555... / jane@x.com / [logo]".
+        # Live 010087: signature logos of a mail with no "Thanks," above them
+        # were still typed scope.
+        if lines:
+            k = min(max(0, line - base), len(lines))
+            run: list[str] = []
+            for j in range(k - 1, -1, -1):
+                t = str(lines[j] or "").lstrip("> ").strip()
+                if not t:
+                    break
+                run.append(t)
+            has_contact = any(_PARTY_EMAIL_RE.search(t) or _PARTY_PHONE_RE.search(t) for t in run)
+            if has_contact and not _has_sentence_after(lines, max(0, k - 1)):
+                return True
     return False
 
 
@@ -2920,8 +2937,10 @@ class EmailParser(BaseParser):
                 lead_in=None if in_signature else (equipment_lead_in or None),
             )
             if in_signature:
+                # Every reading of a signature image -- whole-image text or
+                # "rows" OCR found in an address banner -- is the signature's.
                 for a in out:
-                    if (a.value or {}).get("kind") == "email_cid_inline_body":
+                    if (a.value or {}).get("kind") in ("email_cid_inline_body", "email_cid_equipment_line"):
                         _signature_image_atom(a, "signature_image")
             return out
 

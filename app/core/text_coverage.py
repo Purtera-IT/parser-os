@@ -21,6 +21,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.core.email_chrome import atom_chrome_reason, chrome_reason
+
 #: Text we can read back and diff.
 TEXT_SUFFIXES = {".eml", ".txt", ".md", ".msg", ".html", ".htm"}
 #: A PDF is read back line by line off its text layer. Its line breaks are a
@@ -122,6 +124,10 @@ def _quoted_from(lines: list[str]) -> int | None:
 #: content may be incorrect., Picture, Picture]". The picture is real content
 #: nobody read -- 010289's door diagram arrived exactly this way.
 _IMAGE_PLACEHOLDER_RE = re.compile(r"^\s*\[[^\]]*(?:picture|image|screenshot|logo|cid:)[^\]]*\]?\s*$", re.I)
+
+#: A row of a signature block under a sign-off: a name or a title, a few
+#: capitalised words and no sentence.
+_SIG_ROW_RE = re.compile(r"^[A-Z][\w.'&,/-]*(?:\s+[A-Za-z&|/-][\w.'&,/-]*){0,5}(?<![.?!:])$")
 
 #: A line shorter than this cannot carry a fact on its own.
 _MIN_CHARS = 12
@@ -315,6 +321,8 @@ def coverage_for_artifact(
     source_lines = _source_lines(path)
     if not source_lines:
         return {}
+    is_pdf = path.suffix.lower() in PDF_SUFFIXES
+    sig_from: int | None = None
     # A signature, a quoted history, a repeated ask: read ONCE for the deal on
     # purpose. Looking only at this artifact's atoms, every later copy reads as
     # a miss -- live 010289 reported 84, nearly all of them "Account
@@ -322,7 +330,26 @@ def coverage_for_artifact(
     own = _atom_texts(kept, artifact_id)
     claimed = own + list(claimed_anywhere or [])
     joined = " ".join(own) + " \x00 " + " ".join(claimed_anywhere or [])
-    dropped = _atom_texts(list(suppressed or []), artifact_id)
+    # A dropped atom that is mail / page chrome (a signature row, a quoted
+    # header, an e-sign stamp) marks its line `chrome`, with its reason;
+    # only a dropped FACT marks a line `suppressed`.
+    content_drops: list[Any] = []
+    chrome_drops: list[tuple[str, str]] = []
+    for a in list(suppressed or []):
+        try:
+            why = atom_chrome_reason(a)
+        except Exception:
+            why = None
+        if why:
+            if artifact_id is not None and str(getattr(a, "artifact_id", "") or "") != artifact_id:
+                continue
+            # Its own words only: a heading it sat under is not chrome.
+            t = _norm(getattr(a, "raw_text", "") or "")
+            if t:
+                chrome_drops.append((t, why))
+        else:
+            content_drops.append(a)
+    dropped = _atom_texts(content_drops, artifact_id)
     lines: list[dict[str, Any]] = []
     n_claimed = 0
     counted_here: set[str] = set()
@@ -332,7 +359,24 @@ def coverage_for_artifact(
             n_claimed += 1
             continue
         hdr = _header_norm(line)
-        if _IMAGE_PLACEHOLDER_RE.match(line):
+        # Mail chrome by shape (a signature contact row, a wrapped link, a
+        # quoted header row, a greeting or a sign-off): listed with its
+        # reason, and never upgraded to `suppressed` below because a gate
+        # happened to drop the same words -- that read as a possible miss on
+        # every email (deal 000132: 33-64 per mail).
+        chrome_why = None if is_pdf else chrome_reason(line)
+        if not is_pdf:
+            # The name and title under a sign-off ("Thanks," / "Jane Roe" /
+            # "Account Executive") are the signature, up to the next blank.
+            if sig_from is not None and i == sig_from + 1 and not chrome_why and _SIG_ROW_RE.match(line):
+                chrome_why = "signature"
+            sig_from = i if chrome_why in ("signoff", "signature", "signature_contact", "wrapped_link") else None
+        if not chrome_why:
+            chrome_why = next((why for d, why in chrome_drops
+                               if n in d or (d in n and (len(d) >= _MIN_CHARS or d == n))), None)
+        if chrome_why:
+            state = "chrome"
+        elif _IMAGE_PLACEHOLDER_RE.match(line):
             # A picture sat in this mail and nothing read it. Not chrome, not
             # prose we missed: its own answer ("go look at the image").
             state = "image"
@@ -345,7 +389,7 @@ def coverage_for_artifact(
         # enough to mean something: a gate can drop a bare "Thanks," and a
         # "thanks" inside a real unread sentence ("thanks -- we need 40
         # drops") must stay `unread`.
-        if any(n in d or (d in n and (len(d) >= _MIN_CHARS or d == n)) for d in dropped):
+        if not chrome_why and any(n in d or (d in n and (len(d) >= _MIN_CHARS or d == n)) for d in dropped):
             state = "suppressed"
         if state == "unread":
             owner = (owner_of or {}).get(n)
@@ -359,6 +403,8 @@ def coverage_for_artifact(
             else:
                 counted_here.add(n)
         row = {"line": i, "text": line[:400], "state": state}
+        if state == "chrome":
+            row["reason"] = chrome_why or ("short" if len(line) < _MIN_CHARS else "furniture")
         if quoted:
             row["quoted"] = True
         if page is not None:
@@ -373,6 +419,8 @@ def coverage_for_artifact(
         "unread_count": sum(1 for x in lines if x["state"] == "unread"),
         "image_count": sum(1 for x in lines if x["state"] == "image"),
         "copy_count": sum(1 for x in lines if x["state"] == "copy"),
+        "suppressed_count": sum(1 for x in lines if x["state"] == "suppressed"),
+        "chrome_count": sum(1 for x in lines if x["state"] == "chrome"),
     }
 
 
