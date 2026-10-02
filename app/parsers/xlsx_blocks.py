@@ -258,6 +258,45 @@ def _best_header_idx(body, scan=5):
     return best_i
 
 
+_BOX_LABEL_END = re.compile(r"[:#?]\s*$")
+
+
+def _is_label_value_box(body):
+    """Is this a two-column info box -- a label per row, its value beside it?
+
+    "Customer | OxBlue" over "OPPTY # | 010246" passed the header test (two
+    words), so the box was read as a table and its second row bound to the
+    first: "Customer: OPPTY # | OxBlue: 010246". A box like that is pairs, not
+    columns: every row holds a short text label in the same left column and at
+    most one value beside it, and the labels say so -- one ends in ":", "#" or
+    "?", or the values under the would-be header are a mix of numbers and
+    words (a column of one kind of thing is a real two-column table, e.g.
+    "Item | Qty" over quantities).
+    """
+    rows = [r for r in body if _filled(r)]
+    if len(rows) < 2:
+        return False
+    cols = set()
+    for r in rows:
+        cols |= {c for c, x in enumerate(r) if x != ""}
+    if len(cols) != 2:
+        return False
+    left, right = sorted(cols)
+    labels = [r[left] if left < len(r) else "" for r in rows]
+    if any(not lab or _is_num(lab) or _is_date(lab) or len(lab) > 40 for lab in labels):
+        return False
+    # A label that ends in ":" anywhere, or in "#" / "?" below the first row
+    # (a header's own "Part #" names a column; "OPPTY #" under "Customer"
+    # names a field).
+    if labels[0].rstrip().endswith(":") or any(_BOX_LABEL_END.search(lab) for lab in labels[1:]):
+        return True
+    vals = [r[right] for r in rows[1:] if right < len(r) and r[right] != ""]
+    nums = sum(1 for v in vals if _is_num(v) or _is_date(v))
+    # Values of different kinds under one would-be header are fields, not a
+    # column ("Customer | OxBlue" / "Date | 3/1/2025" / "Sites | 12").
+    return len(vals) >= 2 and 0 < nums < len(vals)
+
+
 def _classify_block(block):
     """-> (title, header_idx_into_block, kind). kind in {table, keyval, text}."""
     if sum(_filled(r) for r in block) <= 1:
@@ -275,6 +314,8 @@ def _classify_block(block):
     body = block[i:]
     if not body:
         return title, None, "text"
+    if _is_label_value_box(body):
+        return title, i, "labelbox"
     hb = _best_header_idx(body)
     if hb is not None:
         return title, i + hb, "table"
@@ -413,6 +454,84 @@ def _style_index(grid, styles):
     return banner_titles, label_fill
 
 
+
+def _split_at_reheaders(body):
+    """Cut a headed table where a NEW header row starts another table.
+
+    A rate sheet stacks a service-rate block (``Service | Sell | Cost``) flush
+    under its per-country matrix (``Country | Request | ...``) with no blank
+    row between. Read as one table, the service header and its rows were bound
+    to the matrix's columns -- "Country: PC | Request: 50". A row is a new
+    header when it is all labels (no numbers, no dates), it is not shaped like
+    a row of the current table (it fills fewer than half its named columns),
+    and the next row's cells all sit under its labels and carry a number.
+    """
+    if len(body) < 3:
+        return [body]
+    parts, cur = [], [body[0]]
+    hdr = body[0]
+    for k in range(1, len(body)):
+        r = body[k]
+        if any(_filled(x) for x in cur[1:]) and _is_reheader(cur[1:], r, body[k + 1:k + 4]):
+            parts.append(cur)
+            cur, hdr = [r], r
+            continue
+        cur.append(r)
+    parts.append(cur)
+    return parts
+
+
+def _is_reheader(data, r, after):
+    cells = [x for x in r if x != ""]
+    if len(cells) < 2 or len(set(cells)) < 2:
+        return False
+    if any(_is_num(x) or _is_date(x) or len(x) > 40 for x in cells):
+        return False
+    cols = {c for c, x in enumerate(r) if x != ""}
+    # A word where this table keeps numbers: the row names that column
+    # rather than filling it ("Sell" over a column of rates).
+    def _numeric_col(c):
+        vals = [x[c] for x in data if c < len(x) and x[c] != ""]
+        return len(vals) >= 2 and sum(1 for v in vals if _is_num(v)) * 2 > len(vals)
+    if not any(_numeric_col(c) for c in cols):
+        return False
+    nxt = next((x for x in after if _filled(x)), None)
+    if nxt is None:
+        return False
+    nf = {c for c, x in enumerate(nxt) if x != ""}
+    return nf <= cols and any(_is_num(x) for x in nxt if x != "")
+
+
+def _emit_table(out, title, body):
+    """Append one table block (header row + its data rows) to ``out``."""
+    header = [h if h != "" else f"col{j+1}" for j, h in enumerate(body[0])]
+    filled = [r for r in body[1:] if _filled(r)]
+    # A lone label row inside a table of >=3 named columns, with a real
+    # row (>=2 cells) under it, is a phase / section heading for the
+    # rows beneath it (a Gantt's "Install" over its tasks) -- context
+    # for those rows, not a row of its own. A lone row with nothing
+    # under it stays a row, so nothing is dropped.
+    wide = sum(1 for h in body[0] if h != "") >= 3
+    data, sections, section = [], [], None
+    for i, r in enumerate(filled):
+        lab = _lone_label(r) if wide else None
+        nxt = filled[i + 1] if i + 1 < len(filled) else None
+        if lab is not None and nxt is not None and _filled(nxt) >= 2:
+            section = lab
+            continue
+        data.append(r)
+        sections.append(section)
+    if data:
+        out.append({
+            "title": title, "kind": "table", "header": header, "rows": data,
+            # 1-based worksheet row for each data row, so an atom can cite
+            # where it actually came from and source replay can find it.
+            "row_indices": [getattr(r, "sheet_row", None) for r in data],
+            # The phase/section heading each row sits under (None if none).
+            "row_sections": sections,
+        })
+
+
 def sheet_blocks(rows, styles=None):
     """Detect blocks in a sheet's rows. Returns a list of block dicts in reading
     order, with titles carried onto the table/keyval block they head.
@@ -458,34 +577,9 @@ def sheet_blocks(rows, styles=None):
             continue
         title = _clean_title(title)
         if kind == "table":
-            body = block[hidx:]
-            header = [h if h != "" else f"col{j+1}" for j, h in enumerate(body[0])]
-            filled = [r for r in body[1:] if _filled(r)]
-            # A lone label row inside a table of >=3 named columns, with a real
-            # row (>=2 cells) under it, is a phase / section heading for the
-            # rows beneath it (a Gantt's "Install" over its tasks) -- context
-            # for those rows, not a row of its own. A lone row with nothing
-            # under it stays a row, so nothing is dropped.
-            wide = sum(1 for h in body[0] if h != "") >= 3
-            data, sections, section = [], [], None
-            for i, r in enumerate(filled):
-                lab = _lone_label(r) if wide else None
-                nxt = filled[i + 1] if i + 1 < len(filled) else None
-                if lab is not None and nxt is not None and _filled(nxt) >= 2:
-                    section = lab
-                    continue
-                data.append(r)
-                sections.append(section)
-            if data:
-                out.append({
-                    "title": title, "kind": "table", "header": header, "rows": data,
-                    # 1-based worksheet row for each data row, so an atom can cite
-                    # where it actually came from and source replay can find it.
-                    "row_indices": [getattr(r, "sheet_row", None) for r in data],
-                    # The phase/section heading each row sits under (None if none).
-                    "row_sections": sections,
-                })
-        elif kind == "keyval":
+            for sub in _split_at_reheaders(block[hidx:]):
+                _emit_table(out, title, sub)
+        elif kind in ("keyval", "labelbox"):
             body = block if hidx is None else block[hidx:]
             # Same reason as the table branch: an atom's `row` must be a
             # worksheet row, and pairs alone lose which row each came from.
@@ -530,6 +624,9 @@ def sheet_blocks(rows, styles=None):
                         "pairs": [(p[0], p[1]) for p in run_pairs],
                         "pair_rows": [p[2] if len(p) > 2 else None for p in run_pairs],
                         "fill": run_fill,
+                        # A two-column label/value box recognised as such
+                        # (not a headerless table that fell through).
+                        "label_box": kind == "labelbox",
                     })
         else:
             txt = " ".join(x for r in block for x in r if x != "")

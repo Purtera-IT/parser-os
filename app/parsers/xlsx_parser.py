@@ -997,6 +997,18 @@ def _commercial_blocks(
                 return any(_isnum(x) for x in nxt) and nf <= cols
             return False
 
+        block_rows: list[list[str]] = []
+
+        def _names_numbers(cells: list[str]) -> bool:
+            # A word where the block so far keeps numbers names that column.
+            for c, x in enumerate(cells):
+                if not x:
+                    continue
+                vals = [r[c] for r in block_rows if r[c]]
+                if len(vals) >= 2 and sum(1 for v in vals if _isnum(v)) * 2 > len(vals):
+                    return True
+            return False
+
         gap = False
         seen = False
         for i in range(len(rows)):
@@ -1008,11 +1020,11 @@ def _commercial_blocks(
                     gap = True
                 continue
             if active is not None and [x for x in cells if x] == [h for h in active if h]:
-                reheader.add((i, gi)); gap = False; seen = False
+                reheader.add((i, gi)); gap = False; seen = False; block_rows = []
                 continue
-            if _is_header(i, cells) and not _fits(active, cells):
+            if _is_header(i, cells) and (not _fits(active, cells) or _names_numbers(cells)):
                 active = cells
-                reheader.add((i, gi)); gap = False; seen = False
+                reheader.add((i, gi)); gap = False; seen = False; block_rows = []
                 continue
             if gap:
                 if _fits(main, cells):
@@ -1021,6 +1033,7 @@ def _commercial_blocks(
                     active = None
                 gap = False
             seen = True
+            block_rows.append(cells)
             plan.setdefault(i, []).append((gi, lo, hi, active, active is main))
     return plan, reheader
 
@@ -1085,6 +1098,18 @@ def _commercial_header_band(
     # Walk up from the data block, collecting contiguous header rows (>=2
     # multi-char labels), skipping lone category/banner cells, stopping at a
     # blank or a numeric/marker row.
+    #
+    # A row holding a number (other than a year) is a VALUE row, never a header:
+    # a Gantt "Financials" block whose first resources have their totals still
+    # uncomputed ("Niagara Tech #1 | Field Tech | Onsite | 40 | 55") is not
+    # dense enough to join the data run, and three of them were walked up into
+    # the "header band" -- every priced row below then read "Niagara Tech #1
+    # Niagara Tech #2 PC: PPE Tech 1 | ...", four rows in one atom, and the
+    # three resources never became atoms. Such rows extend the data block up
+    # instead, and the walk goes on looking for the real header above them.
+    def _has_value(cs: list[str]) -> bool:
+        return any(_isnum(c) and not re.fullmatch(r"(19|20)\d{2}", c) for c in cs)
+
     band: list[int] = []
     i = data_start - 1
     while i >= 0 and len(band) < 3:
@@ -1094,6 +1119,10 @@ def _commercial_header_band(
             break
         if len(ne) == 1:
             i -= 1; continue
+        if _has_value(ne):
+            if band:
+                break
+            data_start = i; i -= 1; continue
         if sum(1 for c in ne if len(c) >= 3 and not _isnum(c)) >= 2:
             band.append(i); i -= 1; continue
         break
@@ -4939,7 +4968,11 @@ class XlsxParser(BaseParser):
         # single-table sheet stays on the tuned legacy model so its quantity /
         # money / wide-column extraction is preserved.
         substantive = [b for b in blocks if b.get("kind") in ("table", "keyval")]
-        if len(substantive) < 2:
+        # ...or a sheet that is one label/value info box ("Customer | OxBlue" /
+        # "OPPTY # | 010246"): the legacy model takes its first pair as the
+        # column header, binds the rest to it, and never emits that pair.
+        lone_box = all(b.get("label_box") for b in substantive) and bool(substantive)
+        if len(substantive) < 2 and not lone_box:
             return []
 
         atoms: list[EvidenceAtom] = []
