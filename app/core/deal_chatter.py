@@ -169,6 +169,33 @@ def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
     return bool(_PIPELINE_RE.search(t) or _HANDOFF_RE.search(t) or _SOCIAL_RE.match(t))
 
 
+#: Reasons a parser keeps a source line as an atom only so it can be
+#: labeled (and rejected): it is document structure or a lookup list, not a
+#: statement. Such a line feeds nothing downstream -- no entity keys, no
+#: derived state, no packet.
+STRUCTURE_REJECTS = frozenset({
+    "section_heading", "list_lead_in", "lookup_list", "doc_stamp",
+    "commercial_sheet_scaffolding", "diagram_label",
+})
+
+
+def is_rejected_line(atom: Any) -> bool:
+    """A line kept as a chatter atom with a structural ``rejected_by``.
+
+    Headings, list lead-ins and dropdown / lookup lists are atoms so every
+    source line can be labeled, but they say nothing about the job. Callers
+    that build on content (entity keys, deal state, packets) skip them.
+    """
+    val = getattr(atom, "value", None)
+    if not isinstance(val, dict):
+        return False
+    if val.get("structure") and val.get("chatter"):
+        return True
+    flags = getattr(atom, "review_flags", None) or []
+    chat = bool(val.get("chatter")) or CHATTER_FLAG in flags
+    return chat and str(val.get("rejected_by") or "") in STRUCTURE_REJECTS
+
+
 def _under_exclusion_heading(atom: Any) -> bool:
     try:
         from app.parsers.sow_sections import under_exclusion_heading
@@ -229,4 +256,5 @@ def mark_chatter(atoms: list[Any]) -> int:
     return marked
 
 
-__all__ = ["is_chatter", "mark_chatter", "states_dependency", "CHATTER_FLAG"]
+__all__ = ["is_chatter", "is_rejected_line", "mark_chatter", "states_dependency",
+           "CHATTER_FLAG", "STRUCTURE_REJECTS"]
