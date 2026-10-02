@@ -1255,6 +1255,10 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             del nxt_sections[0]
 
 
+#: A line opened by a section number: "1. Scope", "2.1 Survey", "3) Fees".
+_NUMBERED_LINE_RE = re.compile(r"^\s*\d{1,2}(?:\.\d{1,2})*[.)]?\s+[A-Za-z]")
+
+
 def _carry_cross_page_section_headings(pages: list[dict[str, Any]]) -> None:
     """Root a page's heading-less opening content under the clause it continues.
 
@@ -1984,7 +1988,10 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         if not _diarized:
             prose_text = _regroup_form_qa(prose_text)
 
-        sections = _text_rich_sections(prose_text)
+        sections = _text_rich_sections(
+            prose_text,
+            heading_hints=_page_heading_lines(pdf_path, page_index, table_bboxes if table_blocks else []),
+        )
         if table_blocks:
             _place_tables_in_sections(
                 pdf_path, page_index, sections, table_blocks, table_bboxes
@@ -2045,6 +2052,9 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         return {
             "page": page_index,
             "title": page_title,
+            # A transcript export's chrome line ("Executive Summary") is
+            # its title on purpose; see the document-title pick below.
+            "title_is_chrome": bool(_diarized and page_title),
             "metadata": metadata,
             "outline": [
                 {"level": s.get("level", 2), "heading": s.get("heading"),
@@ -2184,12 +2194,21 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             # as the title force-nests all other sections beneath it
             # ("INTRODUCTION > General Conditions"). Reject it, and fall back to
             # the page's first real (non-section) heading — the cover org name.
-            if page_title and _is_section_title(page_title):
+            # A summary-section label ("Executive Summary", "Agenda",
+            # "Notes") is a section too: a signed SOW whose cover title is a
+            # logo opened on "Executive Summary", and every section after it
+            # (Introduction, Scope, Responsibilities, Fees) nested under it.
+            # A numbered line ("1. EXECUTIVE SUMMARY") is the first of its
+            # sections, never the document's title.
+            if page_title and (_is_section_title(page_title) or _NUMBERED_LINE_RE.match(page_title) or (
+                    not p.get("title_is_chrome") and _is_meeting_section_heading_line(page_title))):
                 page_title = None
             if not page_title:
                 for s in (p.get("sections") or []):
                     h = (s.get("heading") or "").strip()
-                    if h and len(h.split()) >= 2 and not _is_section_title(h):
+                    if h and len(h.split()) >= 2 and not _is_section_title(h) \
+                            and not _NUMBERED_LINE_RE.match(h) \
+                            and not _is_meeting_section_heading_line(h):
                         page_title = h
                         break
             if page_title:
@@ -4379,6 +4398,20 @@ def _drop_side_by_side_box_tables(
     return [b for b, _ in keep], [bb for _, bb in keep]
 
 
+def _page_heading_lines(pdf_path: Path, page_index: int, bboxes: list[Any]) -> set[str]:
+    """Lines the page sets bold or large as headings (``pdf/layout_text.py``);
+    empty on any failure."""
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        from app.parsers.pdf.layout_text import heading_lines
+
+        with fitz.open(str(pdf_path)) as doc:
+            return heading_lines(doc[page_index], bboxes)
+    except Exception:
+        return set()
+
+
 def _layout_prose_text(
     pdf_path: Path, page_index: int, bboxes: list[Any], reference_text: str
 ) -> str | None:
@@ -5622,7 +5655,9 @@ def _promote_list_intros_to_subsections(sections: list[dict[str, Any]]) -> None:
         sec["subsections"] = subs
 
 
-def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
+def _text_rich_sections(
+    page_text: str, heading_hints: Iterable[str] | None = None
+) -> list[dict[str, Any]]:
     """Lightweight prose splitter for text-rich PDF pages.
 
     The heavyweight layout pipeline costs 5–10 s/page; on a
@@ -5639,12 +5674,15 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
       * leading bullet glyph or "1." style → bullet item
       * an all-caps line (or markdown ``#``-prefixed) → heading;
         starts a new section, prior content flushed
+      * a line the page sets bold or large (``heading_hints``, see
+        ``pdf/layout_text.heading_lines``) over a body → heading too
       * otherwise → paragraph line, accumulated then joined.
     """
     if not page_text or not page_text.strip():
         return []
 
     lines = page_text.splitlines()
+    hints = {" ".join(str(h).split()) for h in (heading_hints or ()) if str(h or "").strip()}
     sections: list[dict[str, Any]] = []
     current_heading: str | None = None
     current_blocks: list[dict[str, Any]] = []
@@ -5944,6 +5982,17 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             current_heading = stripped.lstrip("# ").strip()
             continue
 
+        # A Title-Case heading the page sets bold or large ("Introduction",
+        # "Fees") over its body: the text layer lost the weight, so without
+        # the hint it read as one more prose line and every section after it
+        # stayed under the last heading that happened to be in capitals.
+        if (hints and not _is_form_pg and not pending_bullet
+                and " ".join(stripped.split()) in hints
+                and _is_set_heading(stripped, lines, idx)):
+            flush_section()
+            current_heading = stripped
+            continue
+
         # A lowercase line right after a bullet is that bullet wrapped across
         # lines (the PDF broke a long item) — append it to the last bullet
         # instead of orphaning it as a separate fragment paragraph. The wrap
@@ -5973,6 +6022,32 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
     # Drop empty sections that may have been created by trailing
     # whitespace.
     return [s for s in sections if s.get("blocks") or s.get("heading") or s.get("subsections")]
+
+
+def _is_set_heading(stripped: str, lines: list[str], idx: int) -> bool:
+    """A bold / large label line (see ``_text_rich_sections``) is a section
+    heading when it opens a body: the next content line is a list item or a
+    prose line of five or more words. A box caption over its short value
+    ("Shipping Method" / "UPS Ground") and a value under a "<label>:" line are
+    not headings, nor is a line of an address box."""
+    if len(stripped) > 80 or stripped[-1:] in tuple(".,;:!?"):
+        return False
+    prev = lines[idx - 1].strip() if idx > 0 else ""
+    if prev.endswith(":") and len(prev) <= 40:
+        return False
+    try:
+        from app.core.address_parse import is_address_block_line
+
+        if is_address_block_line(stripped):
+            return False
+    except Exception:  # pragma: no cover
+        pass
+    nxt = next((ln.strip() for ln in lines[idx + 1:] if ln.strip()), "")
+    if not nxt:
+        return False
+    if _LIST_ITEM_OPENER_RE.match(nxt) or _BULLET_LINE_RE.match(nxt) or _BARE_BULLET_RE.match(nxt):
+        return True
+    return len(nxt.split()) >= 5
 
 
 _TERMINAL_PUNCT_RE = re.compile(r"[.!?:;]\s*[\"”’')\]]*\s*$")

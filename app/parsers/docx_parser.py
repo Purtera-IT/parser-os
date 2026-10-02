@@ -2655,7 +2655,22 @@ class DocxParser(BaseParser):
     ) -> EvidenceAtom:
         """A heading / list lead-in kept as a reject-able atom (see caller)."""
         from app.core.deal_chatter import CHATTER_FLAG
+        from app.parsers.sow_sections import heading_carries_content
 
+        flags = [CHATTER_FLAG, kind]
+        value = {"text": text, "kind": kind, "structure": True,
+                 "chatter": True, "rejected_by": kind}
+        # A bare heading ("INTRODUCTION") is its section's header -- the
+        # section_path of every line under it -- not a line of its own: it is
+        # pre-suppressed, so the compiler keeps it in the suppressed sidecar
+        # (auditable, never unread) instead of the atom list. One that says
+        # more than its title ("Fees: $24,500") stays a reject-able atom.
+        if kind == "section_heading" and not heading_carries_content(text):
+            flags.append("suppressed:section_heading")
+            value["_suppression"] = {
+                "stage": "section_heading",
+                "reason": "a heading is the section_path of the lines under it, not an atom",
+            }
         locator = {
             "paragraph_index": paragraph_index,
             "table_index": table_index,
@@ -2672,8 +2687,7 @@ class DocxParser(BaseParser):
             atom_type=AtomType.deal_metadata,
             raw_text=text,
             normalized_text=normalize_text(text),
-            value={"text": text, "kind": kind, "structure": True,
-                   "chatter": True, "rejected_by": kind},
+            value=value,
             entity_keys=[],
             source_refs=[SourceRef(
                 id=stable_id("src", artifact_id, paragraph_index, table_index, row, cell,
@@ -2688,7 +2702,7 @@ class DocxParser(BaseParser):
             authority_class=AuthorityClass.contractual_scope,
             confidence=0.1,
             review_status=ReviewStatus.needs_review,
-            review_flags=[CHATTER_FLAG, kind],
+            review_flags=flags,
             parser_version=self.parser_version,
         )
 

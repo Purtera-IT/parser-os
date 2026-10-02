@@ -250,8 +250,37 @@ def is_doc_stamp(text: str) -> bool:
     return bool(s) and not s[1]
 
 
+
+# ── headings ──────────────────────────────────────────────────────────────
+
+#: A heading's enumerator: "1.", "2.1", "4)", "A.", "(b)", "IV.", "Section 3",
+#: "Article 2:".
+_HEADING_ENUM_RE = re.compile(
+    r"^\s*(?:(?i:section|article|part)\s+[0-9IVXivx]{1,4}[.:)]?\s+|\(?\d{1,2}(?:\.\d{1,2})*[.)]?\s+|"
+    r"\(?[A-Za-z][.)]\s+|[IVX]{1,4}[.)]\s+)"
+)
+
+
+def heading_carries_content(text: str) -> bool:
+    """A heading line that says more than its own title: a figure, an amount
+    or a date ("Fees: $24,500", "Term: 12 months"), or a sentence run into it
+    ("Scope. Provider will install ..."). Such a line is content as well as
+    structure. A bare title ("INTRODUCTION", "3. Customer Responsibilities",
+    "A. IT Infrastructure Support") is only its section's header: it rides
+    as the section_path of the lines under it and is not a line of its own."""
+    t = _HEADING_ENUM_RE.sub("", str(text or ""), count=1).strip().rstrip(":").strip()
+    if not t:
+        return False
+    if re.search(r"\d|[$€£]", t):
+        return True
+    if len(t.split()) > 10:
+        return True
+    # A sentence after the title ("Scope. Provider will ...").
+    return bool(re.search(r"[.!?;:]\s+\S", t))
+
 __all__ = [
     "DOC_STAMP_RULE",
+    "heading_carries_content",
     "is_doc_stamp",
     "is_esign_furniture",
     "is_esign_marker",
