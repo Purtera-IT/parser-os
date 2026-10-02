@@ -1024,6 +1024,12 @@
       "label": "Where the deal was when this was said",
       "values": "quoting | planning | delivery | closeout",
       "desc": "quoting: before the SOW is signed or the PO is received. planning: after the PO, before the first on-site visit. delivery: visits underway. closeout: after the last visit (completion reports, invoicing). Set it from the source's date against the deal's milestones. The same question or promise means different things at different stages."
+    },
+    {
+      "key": "start_date",
+      "label": "When the work starts",
+      "values": "the confirmed or proposed start date/time",
+      "desc": "The line sets or proposes when on-site work begins: \"see you Friday at 9am\". Copy the date and time as said. Label the confirmed start once, on the line that confirms it; an earlier proposal that changed is superseded by it."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
