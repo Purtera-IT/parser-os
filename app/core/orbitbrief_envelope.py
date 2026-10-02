@@ -279,7 +279,69 @@ def _suppressed_total(compile_result: "CompileResult") -> int:
     """
     if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
         return 0
-    return len(list(getattr(compile_result, "suppressed_atoms", None) or []))
+    return len(_split_chrome(list(getattr(compile_result, "suppressed_atoms", None) or []))[0])
+
+
+def _split_chrome(dropped: list) -> tuple[list, list[tuple[Any, str]]]:
+    """(content drops, [(chrome drop, why)]).
+
+    Mail chrome a stage happened to drop -- a signature contact row, a
+    wrapped link, a quoted "From:/Sent:/To:" row, a greeting or a sign-off --
+    is not a fact the compile threw away. Left in ``suppressed`` it reads as a
+    possible miss (000132: 33-64 per email). It travels in
+    ``suppressed_chrome`` instead, with its reason. See app/core/email_chrome.
+    """
+    try:
+        from app.core.email_chrome import atom_chrome_reason
+    except Exception:  # pragma: no cover - classification is never fatal
+        return list(dropped), []
+    content: list = []
+    chrome: list[tuple[Any, str]] = []
+    for atom in dropped:
+        try:
+            why = atom_chrome_reason(atom)
+        except Exception:
+            why = None
+        if why:
+            chrome.append((atom, why))
+        else:
+            content.append(atom)
+    return content, chrome
+
+
+def _suppressed_chrome_total(compile_result: "CompileResult") -> int:
+    if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
+        return 0
+    return len(_split_chrome(list(getattr(compile_result, "suppressed_atoms", None) or []))[1])
+
+
+def _suppressed_chrome_for_review(compile_result: "CompileResult") -> list[dict]:
+    """The chrome half of the ledger: what was dropped, by which stage, and
+    why it is chrome. Same per-document cap as ``suppressed``. Opt-in with it."""
+    if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
+        return []
+    _content, chrome = _split_chrome(list(getattr(compile_result, "suppressed_atoms", None) or []))
+    if not chrome:
+        return []
+    why_of = {id(a): why for a, why in chrome}
+    out: list[dict] = []
+    for atom in _suppressed_capped([a for a, _ in chrome])[0]:
+        stage = ""
+        for flag in (getattr(atom, "review_flags", None) or []):
+            if str(flag).startswith("suppressed:"):
+                stage = str(flag).split(":", 1)[1]
+                break
+        _fname, _page = _where(atom)
+        out.append({
+            "id": str(getattr(atom, "id", "") or ""),
+            "artifact_id": str(getattr(atom, "artifact_id", "") or ""),
+            "text": (getattr(atom, "raw_text", "") or getattr(atom, "text", "") or "")[:2000],
+            "stage": stage,
+            "reason": why_of.get(id(atom), ""),
+            "filename": _fname,
+            "page": _page,
+        })
+    return out
 
 
 def _suppressed_doc_key(atom: Any) -> str:
@@ -308,7 +370,7 @@ def _suppressed_truncated(compile_result: "CompileResult") -> dict[str, Any]:
     artifact. Zero when nothing was cut or the ledger is not carried."""
     if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
         return {"count": 0, "per_document_cap": _SUPPRESSED_MAX, "by_artifact": {}}
-    dropped = list(getattr(compile_result, "suppressed_atoms", None) or [])
+    dropped = _split_chrome(list(getattr(compile_result, "suppressed_atoms", None) or []))[0]
     _kept, cut = _suppressed_capped(dropped)
     return {
         "count": sum(cut.values()),
@@ -355,7 +417,7 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
     """
     if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
         return []
-    dropped = list(getattr(compile_result, "suppressed_atoms", None) or [])
+    dropped = _split_chrome(list(getattr(compile_result, "suppressed_atoms", None) or []))[0]
     if not dropped:
         return []
 
@@ -861,6 +923,12 @@ def build_orbitbrief_envelope(
         "suppressed_total": _suppressed_total(compile_result),
         # What the per-document cap cut, so a short ledger is never silent.
         "suppressed_truncated": _suppressed_truncated(compile_result),
+        # Mail chrome a stage dropped (signature/contact rows, wrapped links,
+        # quoted header rows, greetings, sign-offs), each with its reason. Not
+        # in `suppressed` and not in `suppressed_total`: it is furniture, not
+        # a possible miss. A UI may hide it. See app/core/email_chrome.py.
+        "suppressed_chrome": _suppressed_chrome_for_review(compile_result),
+        "suppressed_chrome_total": _suppressed_chrome_total(compile_result),
         "rule_decisions": _rule_decisions_for_review(),
         "rule_decisions_total": _rule_decisions_total(),
         "coverage": {
