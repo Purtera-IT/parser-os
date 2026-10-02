@@ -824,6 +824,15 @@ class OrbitBriefPdfParser(BaseParser):
                 if isinstance(a.value, dict) and a.value.get("kind") == "physical_site"
             }
             existing_site_ids.discard(None)
+            from app.parsers.pdf.site_roster import facility_key as _facility_key
+
+            for a in atoms:
+                v = a.value if isinstance(a.value, dict) else {}
+                if v.get("kind") == "physical_site" or a.atom_type == AtomType.physical_site:
+                    for nm in (v.get("facility_name"), v.get("name")):
+                        k = _facility_key(nm)
+                        if k:
+                            existing_site_ids.add(k)
             atoms.extend(
                 _fitz_site_roster_fallback(
                     pdf_path=path,
