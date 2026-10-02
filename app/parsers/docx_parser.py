@@ -1800,6 +1800,22 @@ class DocxParser(BaseParser):
                 return 0
         return 0
 
+    @staticmethod
+    def _explicit_list_level(paragraph: Any) -> int | None:
+        """The paragraph's own ``w:numPr/w:ilvl``, or ``None`` when the paragraph
+        does not set one (a list styled by its paragraph style alone, whose
+        level ``_list_level`` cannot see)."""
+        el = getattr(paragraph, "_p", None)
+        pPr = el.find(qn("w:pPr")) if el is not None else None
+        numPr = pPr.find(qn("w:numPr")) if pPr is not None else None
+        ilvl = numPr.find(qn("w:ilvl")) if numPr is not None else None
+        if ilvl is None:
+            return None
+        try:
+            return max(0, int(ilvl.get(qn("w:val"))))
+        except Exception:
+            return None
+
     # A sentence whose grammatical job is to ANNOUNCE a following list / section
     # ("PurTera will provide field technicians to perform the following services.",
     # "The scope is as follows."). It carries no standalone fact — it frames its
@@ -2209,6 +2225,10 @@ class DocxParser(BaseParser):
         # rows (a qualifier may be a bullet, so it's caught here, not via is_framing).
         # Cleared at the section boundary (heading).
         section_qualifiers: list[str] = []
+        # A list item that opens a sub-section ("Install the display:" over its
+        # sub-steps), with its own w:ilvl: the sub-section closes at the next
+        # item of that list at the same or a shallower level (see below).
+        list_intros: list[tuple[tuple, int]] = []
         pidx = -1
         tidx = -1
         seq = 0
@@ -2278,6 +2298,19 @@ class DocxParser(BaseParser):
                     para_section[pidx] = [t for _, t, _, _, _, _ in stack if t]
                     para_lead_in[pidx] = []
                     continue
+                item_ilvl = self._explicit_list_level(para) if (is_list and text) else None
+                if item_ilvl is not None:
+                    # A colon list item governs only the items indented under
+                    # it. The next item at its own level is its sibling: in
+                    # 010003's signed SOW "Install the display:" has one "o"
+                    # sub-step and the "•" steps after it are top-level, but
+                    # the sub-section stayed open to the end of the list.
+                    while stack and stack[-1][2]:
+                        top = stack[-1]
+                        own = next((lv for e, lv in list_intros if e is top), None)
+                        if own is None or own < item_ilvl:
+                            break
+                        stack.pop()
                 lvl = self._heading_level(style)
                 if lvl is None and text and not is_list:
                     # The style name said nothing. Ask the XML, which is not
@@ -2448,7 +2481,10 @@ class DocxParser(BaseParser):
                         # lifted onto its bullets. Semantic + cached; colon list-intros
                         # ("Services include:") never block.
                         blocks = (not is_intro) and self._subsection_blocks_lift(label)
-                        stack.append((lvl, label, is_intro, None, blocks, (caps or label_head, explicit)))
+                        entry = (lvl, label, is_intro, None, blocks, (caps or label_head, explicit))
+                        stack.append(entry)
+                        if is_intro and item_ilvl is not None:
+                            list_intros.append((entry, item_ilvl))
                 else:
                     # plain content: if we've left the bullet list, close any open
                     # tight list-intro sub-section(s) so a following paragraph doesn't
