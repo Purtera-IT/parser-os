@@ -117,6 +117,7 @@ from app.parsers.sow_sections import (  # noqa: E402
     is_esign_marker,
     is_exclusion_heading,
     is_signature_heading,
+    is_signature_label_line,
     is_signature_line,
     is_sow_section_label,
     split_doc_stamp,
@@ -1461,16 +1462,22 @@ def _mark_signature_blocks(sections: list[dict[str, Any]]) -> None:
     in_sig = False
     for sec in sections:
         heading = (sec.get("heading") or "").strip()
-        if heading and is_signature_heading(heading):
+        own_heading = bool(heading) and is_signature_heading(heading)
+        if own_heading:
             in_sig = True
         elif heading and (is_exclusion_heading(heading) or is_sow_section_label(heading)):
             in_sig = False
         blocks = sec.get("blocks") or []
-        sec_has_badge = any(
-            is_esign_marker(ln)
-            for b in blocks if b.get("kind") == "paragraph"
+        para_lines = [
+            ln for b in blocks if b.get("kind") == "paragraph"
             for ln in (b.get("lines") or [b.get("text") or ""])
-        )
+        ]
+        sec_has_badge = any(is_esign_marker(ln) for ln in para_lines)
+        # A section merely FOLLOWING a signature section (a company name over
+        # its badge) is part of the block only with a labelled row of its own;
+        # "EXHIBIT A" after the signatures is not.
+        if in_sig and not own_heading and not any(is_signature_label_line(ln) for ln in para_lines):
+            in_sig = False
         tagged_any = False
         for b in blocks:
             if b.get("kind") != "paragraph":

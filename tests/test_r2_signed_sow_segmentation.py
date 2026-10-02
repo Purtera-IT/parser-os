@@ -386,3 +386,20 @@ def test_ocr_debris_is_still_debris_with_a_price(debris):
     from app.core.text_quality import is_unreadable
 
     assert is_unreadable(debris)
+
+
+def test_a_section_after_the_signatures_is_not_a_signature_block():
+    from app.parsers.orbitbrief_pdf import _mark_signature_blocks
+
+    sections = [
+        {"heading": "Signatures", "blocks": [
+            {"kind": "paragraph", "text": "DocuSigned by:", "lines": ["DocuSigned by:"]}]},
+        {"heading": "AMTIVO", "blocks": [
+            {"kind": "paragraph", "text": "Jane Doe", "lines": ["Jane Doe", "Title: VP Operations"]}]},
+        {"heading": "EXHIBIT A", "blocks": [
+            {"kind": "paragraph", "text": "Site List", "lines": ["Site List"]}]},
+    ]
+    _mark_signature_blocks(sections)
+    assert sections[0]["blocks"][0].get("signature_block")
+    assert sections[1]["blocks"][0].get("signature_block")
+    assert not sections[2]["blocks"][0].get("signature_block")

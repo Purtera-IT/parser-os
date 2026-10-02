@@ -142,6 +142,13 @@ def is_esign_furniture(line: str) -> bool:
     return bool(_ESIGN_FURNITURE_RE.match(str(line or "")))
 
 
+def is_signature_label_line(line: str) -> bool:
+    """A labelled signature row ("Name: ...", "Title: ...", "Date: ...") or
+    an e-signature badge line: positive evidence of a signature block."""
+    t = str(line or "")
+    return bool(_SIG_LABEL_RE.match(t) or is_esign_marker(t))
+
+
 def is_signature_line(line: str) -> bool:
     """A line with the shape of a signature-block entry: a label row
     ("Name: ...", "Title: ...", "Date: ..."), a date, badge furniture, or a
@@ -194,6 +201,7 @@ __all__ = [
     "is_esign_marker",
     "is_exclusion_heading",
     "is_signature_heading",
+    "is_signature_label_line",
     "is_signature_line",
     "is_sow_section_label",
     "split_doc_stamp",
