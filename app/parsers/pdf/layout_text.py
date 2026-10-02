@@ -41,6 +41,9 @@ from typing import Any, Iterable
 _TERMINAL = re.compile(r"[.!?:;]\s*[\"”’')\]]*\s*$")
 _NUMERICISH = re.compile(r"^[\s$€£#%()+\-.,/:x\d]*\d[\s$€£#%()+\-.,/:x\d]*(?:[A-Za-z]{0,3})$")
 _SALUTATION = re.compile(r"^(?:(?:dear|hi|hello|greetings|attn:?)\s+)?[A-Z][\w.'’ -]{1,40},$", re.I)
+# A list marker standing alone on its line: a step number ("6", "6.", "(6)",
+# "Step 6") or a bullet glyph.
+_ENUMERATOR = re.compile(r"^(?:(?:step\s+)?\(?\d{1,2}[.):]?|[•▪●◦‣■□➢►\-–—*])$", re.I)
 
 
 class _Seg:
@@ -108,7 +111,55 @@ def _segments(page: Any, exclude: Iterable[Any]) -> list[_Seg]:
                                       or str(s.get("font") or "").lower().endswith(("-bd", "bo"))))
                 color = _dominant(inked, lambda s: int(s.get("color") or 0))
                 out.append(_Seg(x0, y0, x1, y1, " ".join(text.split()), size, bold, color))
-    return out
+    return _attach_enumerators(out)
+
+
+def _attach_enumerators(segs: list[_Seg]) -> list[_Seg]:
+    """Glue a free-standing list marker to the step text beside it.
+
+    A numbered instruction sheet sets the step number apart from its text
+    ("6" in a large bold face, the sentence a few characters to its right).
+    Left as its own segment the number became a column of figures, so a
+    two-column step layout was read as a TABLE, row by row across both
+    columns ("1 Flip the two breakers... | 2 | Loosen the turnbuckles..."),
+    and the lone "6" reached the atomizer as a value. The marker belongs to
+    the sentence that starts on its line, just to its right.
+
+    Narrow: the marker must be alone in its segment, the text must start on
+    the same line within a few characters, and the text must read as a
+    sentence (a capitalised word followed by at least two more words), so a
+    number cell in a grid of figures is never glued to its neighbour.
+    """
+    used: set[int] = set()
+    by_id = list(segs)
+    for i, s in enumerate(by_id):
+        if i in used or not _ENUMERATOR.match(s.text.strip()):
+            continue
+        h = max(1.0, s.y1 - s.y0)
+        best = None
+        for j, t in enumerate(by_id):
+            if j == i or j in used:
+                continue
+            gap = t.x0 - s.x1
+            if gap < -0.5 or gap > 3.0 * max(s.size, t.size, 6.0):
+                continue
+            ov = min(s.y1, t.y1) - max(s.y0, t.y0)
+            if ov < 0.3 * min(h, max(1.0, t.y1 - t.y0)):
+                continue
+            words = t.text.split()
+            if len(words) < 3 or not words[0][:1].isupper() or _ENUMERATOR.match(t.text.strip()):
+                continue
+            if best is None or gap < best[0]:
+                best = (gap, j)
+        if best is None:
+            continue
+        t = by_id[best[1]]
+        t.text = f"{s.text.strip()} {t.text}"
+        t.x0 = min(t.x0, s.x0)
+        t.y0 = min(t.y0, s.y0)
+        t.y1 = max(t.y1, s.y1)
+        used.add(i)
+    return [s for i, s in enumerate(by_id) if i not in used]
 
 
 def _inside(cx: float, cy: float, r: Any) -> bool:

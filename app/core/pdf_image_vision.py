@@ -1233,6 +1233,7 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     out: list[EvidenceAtom] = []
     processed = 0
     seen_hashes: set[str] = set()
+    page_steps: dict[tuple[str, int, str], EvidenceAtom] = {}
     # Time budget for the whole stage. Dev volume round 2026-09-16 00:14Z,
     # eight compiles in flight: the vision host answered every call, but
     # slowly (up to the 120 s request timeout each, gate then describe, up
@@ -1297,7 +1298,7 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
                 max_page_chars=max_page_chars, guard_min=guard_min,
                 caption_min=caption_min,
             )
-            out.extend(new_atoms)
+            out.extend(_drop_repeated_steps(new_atoms, page_steps, pdf_name, page_index))
         except Exception as exc:  # one bad image never breaks the compile
             logger.warning("pdf_image_vision: %s %s failed: %s", pdf_name, region_ref, exc)
             continue
@@ -1305,6 +1306,45 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
         logger.info(
             "pdf_image_vision: %d atoms from %d images", len(out), processed,
         )
+    return out
+
+
+_STEP_PREFIX_RE = re.compile(r"^\s*step\s+\S+\s*:\s*", re.I)
+
+
+def _step_key(text: str) -> str:
+    """An instruction step's identity: its words, without the "Step N:" label."""
+    return " ".join(re.findall(r"[a-z0-9]+", _STEP_PREFIX_RE.sub("", text or "").lower()))
+
+
+def _drop_repeated_steps(
+    atoms: list[EvidenceAtom], seen: dict[tuple[str, int, str], EvidenceAtom],
+    pdf_name: str, page_index: int,
+) -> list[EvidenceAtom]:
+    """One instruction step per page, however many crops carried it.
+
+    The same instruction graphic is often cropped twice (the whole figure and a
+    column of it), and each crop is transcribed on its own, so one return step
+    arrived as "Step 3:" from one crop and "Step 5:" from the other. Identical
+    step WORDS on the same page are one step; the repeat is recorded on the
+    surviving atom (``duplicate_step_numbers`` / ``duplicate_regions``) rather
+    than silently lost. Distinct steps never collide: the key is the full text.
+    """
+    out: list[EvidenceAtom] = []
+    for a in atoms:
+        v = a.value if isinstance(getattr(a, "value", None), dict) else {}
+        if v.get("fact_kind") != "image_instruction_step":
+            out.append(a)
+            continue
+        key = (pdf_name, page_index, _step_key(a.raw_text))
+        prior = seen.get(key)
+        if prior is None or not key[2]:
+            seen[key] = a
+            out.append(a)
+            continue
+        m = re.match(r"^\s*step\s+(\S+?)\s*:", a.raw_text or "", re.I)
+        prior.value.setdefault("duplicate_step_numbers", []).append(m.group(1) if m else None)
+        prior.value.setdefault("duplicate_regions", []).append(v.get("region_ref"))
     return out
 
 
@@ -1483,6 +1523,11 @@ def _transcribe(
         if a:
             atoms.append(a)
     steps = obj.get("steps") or []
+    # The same instruction transcribed twice under two numbers ("Step 3:" and
+    # "Step 5:" carrying one identical return step) is one step: a two-column
+    # instruction graphic is easy for the model to read once per column pass.
+    # The repeat is recorded on the atom that carries the step, never lost.
+    emitted_steps: dict[str, Any] = {}
     if isinstance(steps, list):
         for s in steps:
             if not isinstance(s, dict):
@@ -1504,6 +1549,14 @@ def _transcribe(
             )
             if not cmd_ok or not _verbatim_ok(action or command, ocr_norm):
                 continue
+            step_key = " ".join(re.findall(r"[a-z0-9]+", f"{action} {command}".lower()))
+            prior = emitted_steps.get(step_key)
+            if prior is not None:
+                try:
+                    prior.value.setdefault("duplicate_step_numbers", []).append(n)
+                except Exception:
+                    pass
+                continue
             a = _emit_atom(
                 marker=marker, pdf_name=pdf_name, region_ref=region_ref,
                 page_index=page_index, text=line, image_kind=image_kind,
@@ -1511,4 +1564,5 @@ def _transcribe(
             )
             if a:
                 atoms.append(a)
+                emitted_steps[step_key] = a
     return atoms

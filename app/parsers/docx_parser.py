@@ -26,6 +26,7 @@ from app.core.schemas import (
     ParserMatch,
 )
 from app.parsers.clause_split import split_clauses
+from app.parsers.sow_sections import under_exclusion_heading
 from app.parsers.base import BaseParser, PerThreadState
 from app.parsers.segmenters import segment_docx
 from app.parsers.structured_projection import (
@@ -2041,6 +2042,22 @@ class DocxParser(BaseParser):
         prose_fallback = False
         section_typed = False
         chatter_reject = False
+        exclusion_alt: list[AtomType] = []
+        if (
+            not heading
+            and table_index is None
+            and under_exclusion_heading(section_path)
+            and re.search(r"[A-Za-z0-9]", text or "")
+        ):
+            # The governing heading says "Out of Scope" / "Exclusions": a line
+            # under it is negative scope whatever its verbs say ("Chromebook
+            # imaging", "Install ..."), and never chatter however short. The
+            # lexical guesses ride along as alternatives for the type head.
+            exclusion_alt = [t for t in atom_types if t != AtomType.exclusion]
+            atom_types = [AtomType.exclusion]
+            section_typed = True
+            weak_label = False
+            weak_lexical = set()
         if not atom_types:
             # Bullet list items are deliberate, load-bearing content (deliverables,
             # assumptions, checklists) — fail OPEN regardless of length, even when
@@ -2125,6 +2142,8 @@ class DocxParser(BaseParser):
             primary = (strong or ranked)[0]
             alt_types = [t for t in atom_types if t != primary]
             atom_types = [primary]
+        if exclusion_alt:
+            alt_types = alt_types + [t for t in exclusion_alt if t not in alt_types]
         atoms: list[EvidenceAtom] = []
         for atom_type in atom_types:
             authority_class = AuthorityClass.contractual_scope if heading else AuthorityClass.meeting_note
