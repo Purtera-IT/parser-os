@@ -208,6 +208,14 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
 _TIER_WEIGHT = {"load_bearing": 3.0, "ordinary": 1.0, "slight": 0.3}
 
 
+#: Label types that say "this line should never have been an atom". The
+#: admission head reads them as `drop`; the type head still learns the class.
+ADMISSION_DROP_TYPES = frozenset({KEEP, "small_talk"})
+
+#: Values of the `rejected` column that are a flag, not a type name.
+_REJECT_FLAGS = frozenset({"true", "t", "1", "yes", "false", "f", "0", "no"})
+
+
 def _row_weight(lb: dict[str, Any]) -> float:
     return _TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0)
 
@@ -393,16 +401,32 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     # names -- the label TYPE `_keep` means "not a fact worth typing", and the
     # admission verdict `keep` means "this is work this deal quotes". A `_keep`
     # label is therefore admission `drop`.
+    #
+    # `small_talk` is the same verdict with a name: "Hi Trent,", "Hope you had
+    # a great 4th of July!", "Thank you,". The atom-types registry says it
+    # "carries no fact about the work", so it is an admission `drop` -- and,
+    # unlike `_keep`, even when the labeler highlighted it by hand. Greetings
+    # and sign-offs are cut by a regex before they become atoms, so the only
+    # way a person can show the admission head one is to highlight it and say
+    # "small talk"; reading that as "the parser missed a fact" would teach the
+    # exact opposite.
     origin = str(lb.get("origin") or "").strip().lower()
     label_type = str(lb.get("label_type") or "").strip()
-    if origin == "labeler":
+    if label_type in ADMISSION_DROP_TYPES and (label_type != KEEP or origin != "labeler"):
+        rows.append(_axis_row("admission", "drop", lb, base, prov, "judgment",
+                              {"parser_admitted_a_non_fact": origin != "labeler",
+                               "rejected_as": label_type, "origin": origin or "parser"}))
+    elif origin == "labeler":
         rows.append(_axis_row("admission", "keep", lb, base, prov, "judgment",
                               {"parser_missed": True, "origin": "labeler"}))
-    elif label_type == KEEP:
-        rows.append(_axis_row("admission", "drop", lb, base, prov, "judgment",
-                              {"parser_admitted_a_non_fact": True}))
 
+    # `rejected` is two things in one column: the labeling page and
+    # write_labels.py store the FLAG "true" on a reject, while older rows hold
+    # the type the labeler ruled out. Only the second is a contrastive pair; a
+    # flag here minted `rejected="true"` rows -- a class called "true".
     rejected = str(lb.get("rejected") or "").strip()
+    if rejected.lower() in _REJECT_FLAGS:
+        rejected = ""
     if rejected and rejected != str(lb.get("label_type") or "").strip():
         rows.append(_axis_row("rejected", rejected, lb, base, prov, "judgment",
                               {"chosen": lb.get("label_type"),

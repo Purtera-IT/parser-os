@@ -112,3 +112,80 @@ def test_a_hand_added_keep_counts_as_a_miss_not_a_non_fact():
                text="Executive Summary"),
     ]))
     assert [r["label"] for r in _admission(rows)] == ["keep"]
+
+
+# --- small talk is an admission reject --------------------------------------
+#
+# "Hi Trent,", "Hope you had a great 4th of July!", "Thank you,". The registry
+# says small_talk "carries no fact about the work"; the admission head must
+# see it as `drop` or it never learns what a greeting looks like.
+
+def test_small_talk_says_the_parser_should_not_have():
+    rows = rows_for_deal(_doc([
+        _label(label_key="lbl_h", label_type="small_talk", origin="parser",
+               text="Hope you had a great 4th of July!"),
+    ]))
+    adm = _admission(rows)
+    assert [r["label"] for r in adm] == ["drop"]
+    assert _prov(adm[0])["rejected_as"] == "small_talk"
+    # The type head still learns the class itself.
+    assert any(r["relation"] == "atom_type" and r["label"] == "small_talk" for r in rows)
+
+
+def test_hand_highlighted_small_talk_is_a_drop_not_a_miss():
+    """Greetings and sign-offs are cut by a regex before they are atoms, so a
+    labeler can only show one by highlighting it. That is a negative."""
+    rows = rows_for_deal(_doc([
+        _label(label_key="lbl_i", label_type="small_talk", origin="labeler",
+               text="Hi Trent,"),
+        _label(label_key="lbl_j", label_type="small_talk", origin="labeler",
+               text="Thank you,"),
+    ]))
+    adm = _admission(rows)
+    assert [r["label"] for r in adm] == ["drop", "drop"]
+    assert all(not _prov(r).get("parser_missed") for r in adm)
+
+
+def test_a_reject_flag_is_not_a_contrastive_type():
+    """The labeling page writes rejected="true" on a reject. That is a flag,
+    not the type the labeler ruled out, so it must not mint a `rejected` row
+    whose class is the word "true"."""
+    rows = rows_for_deal(_doc([
+        _label(label_key="lbl_k", label_type="_keep", origin="parser",
+               rejected="true", text="Stephanie Hechsel"),
+        _label(label_key="lbl_l", label_type="small_talk", origin="parser",
+               rejected=True, text="Thank you,"),
+    ]))
+    assert [r for r in rows if r["relation"] == "rejected"] == []
+    assert sorted(r["label"] for r in _admission(rows)) == ["drop", "drop"]
+
+
+def test_a_rejected_type_name_still_teaches_the_contrast():
+    rows = rows_for_deal(_doc([
+        _label(label_key="lbl_m", label_type="quantity", rejected="scope_item"),
+    ]))
+    assert [r["label"] for r in rows if r["relation"] == "rejected"] == ["scope_item"]
+
+
+def test_admission_drop_rows_survive_the_training_blob_filter():
+    """`is_placeholder_label` drops `_keep` as a TYPE label (right: the type
+    head must not learn a placeholder). The admission row's label is `drop`,
+    so the negative reaches the admission head."""
+    from app.core.training_row_blob import is_placeholder_label, jsonl_to_rows
+
+    rows = rows_for_deal(_doc([
+        _label(label_key="lbl_n", label_type="_keep", origin="parser",
+               text="Stephanie Hechsel"),
+        _label(label_key="lbl_o", label_type="small_talk", origin="labeler",
+               text="Hi Trent,"),
+    ]))
+    lines = []
+    for r in rows:
+        d = {k: r[k] for k in ("relation", "label", "raw_text", "masked_text", "label_kind",
+                               "teacher", "weight", "deal_id", "split")}
+        d["provenance"] = _prov(r)
+        lines.append(json.dumps(d))
+    back = jsonl_to_rows("\n".join(lines))
+    assert sorted(r.label for r in back if r.relation == "admission") == ["drop", "drop"]
+    assert not any(r.label == "_keep" for r in back)
+    assert is_placeholder_label("_keep") and not is_placeholder_label("drop")

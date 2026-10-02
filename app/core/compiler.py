@@ -650,6 +650,7 @@ def _maybe_wire_feedback_store() -> None:
 #: A real deal document lands in the hundreds; the largest legitimate scope
 #: workbook measured across the corpus is far under this. 94,047 from a single
 #: customer report is what this exists to catch.
+_ADMISSION_REJECT_FLAG = f"{SUPPRESSION_FLAG_PREFIX}admission_regex"
 _MAX_ATOMS_PER_ARTIFACT = int(os.environ.get("SOWSMITH_MAX_ATOMS_PER_ARTIFACT", "12000"))
 
 
@@ -1031,6 +1032,14 @@ def compile_project(
                     # loudly is honest, and the routing row says exactly what
                     # happened so a real oversized scope file is visible rather
                     # than mysterious.
+                    # Lines the admission regexes refused (a greeting, a
+                    # sign-off) ride along pre-suppressed and are diverted
+                    # below. They were never counted before they were emitted,
+                    # so they are not counted now: no routing number moves.
+                    kept_parsed = sum(
+                        1 for _a in parsed_atoms
+                        if _ADMISSION_REJECT_FLAG not in (getattr(_a, "review_flags", None) or [])
+                    )
                     if _MAX_ATOMS_PER_ARTIFACT and len(parsed_atoms) > _MAX_ATOMS_PER_ARTIFACT:
                         warning = (
                             f"WARNING: {relative_name} produced {len(parsed_atoms):,} atoms "
@@ -1055,7 +1064,7 @@ def compile_project(
                     candidates.extend(parsed_candidates)
                     parse_warnings.extend(per_artifact_warnings)
                     atoms.extend(parsed_atoms)
-                    parser_atom_counts[parser_key] += len(parsed_atoms)
+                    parser_atom_counts[parser_key] += kept_parsed
                     if parser_routing:
                         # Successful parse — record concrete outcome.
                         # Use ``ok`` when the parser produced ≥1 atom;
@@ -1065,10 +1074,10 @@ def compile_project(
                         # so reviewers know whether a 0-atom file means
                         # "parser is healthy, just no content" vs "parser
                         # silently failed."
-                        status = "ok" if len(parsed_atoms) > 0 else "ok_empty"
+                        status = "ok" if kept_parsed > 0 else "ok_empty"
                         parser_routing[-1]["outcome"] = {
                             "status": status,
-                            "atom_count": len(parsed_atoms),
+                            "atom_count": kept_parsed,
                             "warning_count": len(per_artifact_warnings),
                             "cache_hit": cache_hit,
                         }
@@ -1081,7 +1090,7 @@ def compile_project(
                         # warning so the reviewer knows an input contributed
                         # nothing, instead of the file vanishing without a
                         # trace. Universal: keys off atom_count, not file type.
-                        if len(parsed_atoms) == 0:
+                        if kept_parsed == 0:
                             parse_warnings.append(
                                 f"WARNING: artifact '{relative_name}' parsed cleanly "
                                 f"with {parser_name} but yielded 0 atoms — no content "
