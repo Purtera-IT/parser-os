@@ -1289,9 +1289,20 @@ def compile_project(
         try:
             from app.core.email_threading import dedup_quoted_chatter
 
+            from app.core.cross_doc_copies import settle_folds as _settle_chatter
+            from app.core.suppression_ledger import take_folds as _take_chatter_folds
+
             _before_chatter = list(held_chatter)
+            _take_chatter_folds()
             held_chatter, _dropped_chatter = dedup_quoted_chatter(held_chatter, context=atoms)
-            if _dropped_chatter:
+            # Each dropped copy names the line it repeats, or comes back.
+            held_chatter, _, _chatter_back = _settle_chatter(
+                _before_chatter, held_chatter, [], _take_chatter_folds(),
+                stage="quoted_chatter_dedup", standing=atoms, make_copies=False,
+            )
+            if _chatter_back:
+                warnings.append(f"INFO: quoted_chatter_dedup kept {len(_chatter_back)} line(s) it had folded into nothing")
+            if len(held_chatter) < len(_before_chatter):
                 merge_suppressed(
                     suppressed_atoms,
                     capture_suppressed(
@@ -1359,7 +1370,7 @@ def compile_project(
         held_copies.extend(got)
         return got
 
-    def _settle_folds(before: list, after: list, copies: list, stage_name: str) -> tuple[list, list]:
+    def _settle_folds(before: list, after: list, copies: list, stage_name: str, **kw: Any) -> tuple[list, list]:
         """Each atom this stage dropped names a survivor that stands, becomes
         its document's copy of one in another document, or comes back
         (``cross_doc_copies.settle_folds``). Returns ``(atoms, copies)``."""
@@ -1367,7 +1378,7 @@ def compile_project(
             from app.core.cross_doc_copies import settle_folds
             from app.core.semantic_dedup import take_folds
 
-            after, more, restored = settle_folds(before, after, copies, take_folds(), stage=stage_name)
+            after, more, restored = settle_folds(before, after, copies, take_folds(), stage=stage_name, **kw)
         except Exception as exc:  # never fail a compile over the guard
             warnings.append(f"WARNING: settle_folds failed after {stage_name}: {type(exc).__name__}: {exc}")
             return after, copies
@@ -1380,9 +1391,13 @@ def compile_project(
         try:
             from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
 
+            from app.core.suppression_ledger import take_folds as _take_folds
+
             before_paste = list(atoms)
+            _take_folds()
             atoms, _pasted = collapse_pasted_note_duplicates(atoms, doc_order=_doc_order)
             _paste_copies = _hold_copies(before_paste, atoms, "pasted_note_dedup")
+            atoms, _paste_copies = _settle_folds(before_paste, atoms, _paste_copies, "pasted_note_dedup")
             # Gate on the LIST, not on the helper's report. The two disagreed
             # on live 010237: three atoms left and `_pasted` was empty, so
             # nothing reached the ledger. What was removed is the only thing
@@ -1417,11 +1432,17 @@ def compile_project(
         try:
             from app.core.email_threading import dedup_quoted_history
 
+            from app.core.suppression_ledger import take_folds as _take_folds
+
             before_qh_atoms = list(atoms)
+            _take_folds()
             atoms, dropped_qh = dedup_quoted_history(
                 atoms, project_id=resolved_project_id
             )
-            if dropped_qh:
+            # A quoted echo is the quoted message's line: it stays suppressed
+            # naming that line, never becomes the reply's copy.
+            atoms, _ = _settle_folds(before_qh_atoms, atoms, [], "quoted_history_dedup", make_copies=False)
+            if len(atoms) < len(before_qh_atoms):
                 merge_suppressed(
                     suppressed_atoms,
                     capture_suppressed(
@@ -1459,6 +1480,9 @@ def compile_project(
                 # First: a line the parser split into several atoms. The other
                 # two rules cannot see inside one line, so this runs before
                 # them and marks those questions answered.
+                from app.core.suppression_ledger import take_folds as _take_folds
+
+                _take_folds()
                 _inline = pair_within_one_line(atoms)
                 if _inline:
                     # The answer is now part of its question's text. Keeping the
@@ -1469,6 +1493,7 @@ def compile_project(
                         _before_abs = list(atoms)
                         atoms = [a for a in atoms
                                  if not (getattr(a, "value", None) or {}).get("absorbed_into")]
+                        atoms, _ = _settle_folds(_before_abs, atoms, [], "qa_pairing_merge", make_copies=False)
                         merge_suppressed(
                             suppressed_atoms,
                             capture_suppressed(
@@ -1629,6 +1654,17 @@ def compile_project(
                     # as a suppression naming the text atom, not emitted.
                     _vis_kept, _vis_copies = pdf_image_vision.split_text_layer_copies(image_atoms, atoms)
                     if _vis_copies:
+                        from app.core.cross_doc_copies import settle_folds as _settle_vis
+
+                        _by_id = {str(getattr(_a, "id", "")): _a for _a in atoms}
+                        _vis_folds = {
+                            id(_c): (_c, _by_id.get(str((_c.value or {}).get("covered_by_text_atom") or "")))
+                            for _c in _vis_copies
+                        }
+                        _vis_kept, _, _ = _settle_vis(
+                            image_atoms, _vis_kept, [], _vis_folds,
+                            stage="vision_copy_of_text_layer", standing=atoms, make_copies=False,
+                        )
                         merge_suppressed(
                             suppressed_atoms,
                             capture_suppressed(
@@ -1823,6 +1859,8 @@ def compile_project(
         before = len(atoms)
         try:
             from app.core.entity_resolution import collapse_duplicate_atoms
+            from app.core.suppression_ledger import take_folds as _take_folds
+            _take_folds()
             atoms = collapse_duplicate_atoms(atoms)
             # A "near duplicate" whose words no survivor carries is a
             # different line (numbered steps 6-15 on a two-column PDF page).
@@ -1832,6 +1870,7 @@ def compile_project(
                 warnings.append(
                     f"INFO: duplicate_atom_collapse kept {len(_kept_back)} lines no survivor contains"
                 )
+            atoms, _ = _settle_folds(before_atoms, atoms, [], "duplicate_atom_collapse", make_copies=False)
         except Exception as exc:
             warnings.append(f"WARNING: duplicate_atom_collapse failed: {type(exc).__name__}: {exc}")
         dropped = before - len(atoms)
@@ -1888,8 +1927,11 @@ def compile_project(
         before_tr = len(atoms)
         try:
             from app.core.table_rollup import roll_up_table_rows
+            from app.core.suppression_ledger import take_folds as _take_folds
+            _take_folds()
             atoms, tr_stats = roll_up_table_rows(atoms)
             atoms = _keep_unsurvived_document_rows(before_tr_atoms, atoms, warnings)
+            atoms, _ = _settle_folds(before_tr_atoms, atoms, [], "table_rollup", make_copies=False)
         except Exception as exc:
             tr_stats = {}
             warnings.append(f"WARNING: table_rollup failed: {type(exc).__name__}: {exc}")
@@ -2675,10 +2717,14 @@ def compile_project(
         try:
             from app.core.quote_line_head import consolidate_quote_line_tasks
 
+            from app.core.suppression_ledger import take_folds as _take_folds
+
             _before_quote_line = list(atoms)
+            _take_folds()
             atoms, quote_line_n = consolidate_quote_line_tasks(
                 atoms, project_id=resolved_project_id
             )
+            atoms, _ = _settle_folds(_before_quote_line, atoms, [], "quote_line_head", make_copies=False)
             # A PMO/admin step ("Complete billing tasks", "Develop schedule
             # for installation activities") is not a quote line, and the
             # head drops it -- which removed the line from the deal without a
@@ -3051,7 +3097,23 @@ def compile_project(
                 if getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", None))
                 == "physical_site"
             )
+            from app.core.cross_doc_copies import settle_folds as _settle_sites
+            from app.core.suppression_ledger import take_folds as _take_folds
+
+            _before_site_dedup = list(atoms)
+            _take_folds()
             atoms = _dedupe_physical_site_atoms(atoms)
+            # These sites used to vanish with no ledger entry at all.
+            atoms, _, _ = _settle_sites(_before_site_dedup, atoms, [], _take_folds(),
+                                        stage="site_backfill_dedup", make_copies=False)
+            if len(atoms) < len(_before_site_dedup):
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        _before_site_dedup, atoms, stage="site_backfill_dedup",
+                        reason="a backfilled site folded into the roster site for the same address",
+                    ),
+                )
             phys_after = sum(
                 1
                 for a in atoms
@@ -3322,6 +3384,15 @@ def compile_project(
             _kept_copies, _refused = drop_unheld_copies(held_copies, atoms, _doc_lines)
             if _refused:
                 held_copies[:] = _kept_copies
+                # Folded onto a canonical atom that stands: that is its survivor.
+                from app.core.suppression_ledger import SURVIVOR_KEY as _SURV
+
+                for _r in _refused:
+                    _dv = _r.value if isinstance(getattr(_r, "value", None), dict) else None
+                    _dup = (_dv or {}).get("duplicate_of") or {}
+                    if _dv is not None and _dup.get("atom_id"):
+                        _dv[_SURV] = {"atom_id": _dup.get("atom_id"), "artifact_id": _dup.get("artifact_id"),
+                                      "stage": "own_copy_gate"}
                 merge_suppressed(
                     suppressed_atoms,
                     capture_suppressed(
@@ -3365,6 +3436,21 @@ def compile_project(
             f"INFO: cross_doc_copies kept {len(_back_copies)} later-document copy(ies) "
             f"of lines an earlier document owns"
         )
+
+    # No atom vanishes without a recorded survivor: a fold whose survivor a
+    # later stage folded or dropped is re-pointed along the chain, and one
+    # that ends nowhere comes back.
+    try:
+        from app.core.suppression_ledger import settle_ledger
+
+        atoms, suppressed_atoms, _settled = settle_ledger(atoms, suppressed_atoms)
+        if any(_settled.values()):
+            warnings.append(
+                "INFO: settle_ledger re-pointed {repointed}, named {named_by_text} by text, "
+                "dropped {dropped_with_survivor} with their dropped survivor, restored {restored}".format(**_settled)
+            )
+    except Exception as exc:  # never fail a compile over the ledger check
+        warnings.append(f"WARNING: settle_ledger failed: {type(exc).__name__}: {exc}")
 
     # Relationship talk is typed as what it is now that every stage has run:
     # small_talk, the labeler's reject type, not deal_metadata (010087).

@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core.suppression_ledger import note_folded_into
+
 #: "How many doors - 1 external access point" -- the answer typed after a dash
 #: on the same line. Not an em-dash sentence ("the kit -- which we supply --").
 _INLINE_ANSWER_RE = re.compile(r"^(?P<q>[^?]{6,120}?)\s+[-–—:]\s+(?P<a>\S.{2,200})$")
@@ -337,6 +339,7 @@ def _absorb(question: Any, answer: Any) -> None:
     av["absorbed_into"] = str(getattr(question, "id", "") or "")
     av["absorbed_reason"] = "answer merged into its question on the same line"
     answer.value = av
+    note_folded_into(answer, question)
 
 
 def pair_across_thread(atoms: list[Any]) -> int:

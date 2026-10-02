@@ -28,6 +28,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core.suppression_ledger import note_folded_into
+
 #: The note's own scaffolding (``note_id=…``, a field label) is not a paste of
 #: anything; only body prose and list items can be duplicates of a mail line.
 _NOTE_KINDS = ("hubspot_note_body", "note_field_item", "note_field", "note_field_image")
@@ -393,6 +395,7 @@ def collapse_pasted_note_duplicates(
                     a.source_refs = srcs
                 except Exception:
                     pass
+                note_folded_into(twin, a)
                 folded.add(id(twin))
                 dropped.append(twin)
             continue
@@ -408,6 +411,7 @@ def collapse_pasted_note_duplicates(
                 a.value = v
                 continue
             _fold(a, original)
+            note_folded_into(a, original)
             folded.add(id(a))
             dropped.append(a)
 

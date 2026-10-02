@@ -48,6 +48,8 @@ import os
 from collections import OrderedDict
 from typing import Any
 
+from app.core.suppression_ledger import note_folded_into
+
 # Commercial (money-bearing) tables fold at this row count: they are rolled
 # into the commercial summary downstream regardless, so per-row atoms buy
 # nothing but cost.
@@ -239,6 +241,7 @@ def roll_up_table_rows(atoms: list[Any]) -> tuple[list[Any], dict[str, int]]:
         fold_summary[key] = summary
         for a in members:
             folded_ids.add(id(a))
+            note_folded_into(a, summary)
         stats["groups_folded"] += 1
         stats["rows_folded"] += len(members)
         stats["summary_atoms"] += 1

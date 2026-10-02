@@ -236,7 +236,7 @@ def test_esign_stamp_is_diverted_to_chrome(monkeypatch):
     ledger: list = []
     kept = divert_chrome([stamp, fact], ledger)
     assert kept == [fact] and ledger == [stamp]
-    assert stamp.value["_suppression"] == {"stage": "chrome", "reason": "esign_stamp"}
+    assert stamp.value["_suppression"] == {"stage": "chrome", "reason": "esign_stamp", "kind": "drop"}
     monkeypatch.setenv("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "1")
     result = SimpleNamespace(suppressed_atoms=ledger, project_id="p")
     assert env._suppressed_for_review(result, kept) == []
