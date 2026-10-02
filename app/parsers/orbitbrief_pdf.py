@@ -944,6 +944,17 @@ class OrbitBriefPdfParser(BaseParser):
                 exc_info=True,
             )
 
+        # A row the parser rebuilt from cells ("SUBTOTAL | $4,309.20", a
+        # header row over its value row) is nowhere on the page as one
+        # string: name where each of its cells is, so the source pane can
+        # mark them. Additive -- text, grouping and ids are untouched.
+        try:
+            from app.parsers.cell_fragments import stamp_pdf_cell_fragments
+            atoms = stamp_pdf_cell_fragments(atoms, path)
+        except Exception:  # pragma: no cover - provenance never fails a parse
+            import logging
+            logging.getLogger(__name__).debug("cell fragments skipped", exc_info=True)
+
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files,
