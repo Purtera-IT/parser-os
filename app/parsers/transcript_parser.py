@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.core.textio import read_text
+from app.core.textio import decode_html_entities, read_text
 
 import json
 import re
@@ -760,6 +760,14 @@ class TranscriptParser(BaseParser):
             return self._segments_from_text(self._clean_vtt(raw)), None
         if suffix == ".srt":
             return self._segments_from_text(self._clean_srt(raw)), None
+        # A CRM meeting export (HubSpot's recap) carries its title and body
+        # HTML-escaped, the title twice over: 010087's recap read "Summit 360
+        # &amp;amp; PurTera IT". Two decode rounds undo the two encoding
+        # layers (HubSpot's HTML storage, then the export); stopping there
+        # keeps an "&amp;" the author actually typed (stored "&amp;amp;amp;")
+        # as written instead of collapsing it to "&". Line breaks stay as
+        # stored, so every segment keeps its line number.
+        raw = decode_html_entities(raw, max_rounds=2)
         header, body, offset = peel_export_header(raw)
         segments = self._segments_from_text(body)
         for seg in segments:
