@@ -336,6 +336,87 @@ def _normalize_banded_grid(table: Any, rows: list[list[Any]]) -> list[list[Any]]
     return out
 
 
+def _cell_is_bold(spans: list[tuple[Any, bool]], cell: Any) -> bool:
+    """Every text span inside ``cell`` is set bold (and there is one)."""
+    x0, y0, x1, y1 = (float(v) for v in cell)
+    inside = [bold for (bx0, by0, bx1, by1), bold in spans
+              if x0 - 1 <= (bx0 + bx1) / 2.0 <= x1 + 1 and y0 - 1 <= (by0 + by1) / 2.0 <= y1 + 1]
+    return bool(inside) and all(inside)
+
+
+def _key_value_rows(page: Any, table: Any, rows: list[list[Any]]) -> list[str] | None:
+    """Read a two- or three-column LABEL | VALUE grid as the field pairs it holds.
+
+    A SOW cover table sets each field's label in column 0 (bold, "Project
+    Name:", often on a filled band), its value in column 1, and may carry a
+    side column of cells that each span several rows ("Seller Representative:
+    <name> <phone>", "Drafted By: <name>"). Such a grid has no header row. Read
+    with row 0 as the header, the first field became the column names and
+    every other row read "Project Name: Customer Name: | 4 TV Install NYC:
+    CHECKOUT LLC", and no row ever said what the project was called (010003).
+
+    Returns one text per field ("Project Name: 4 TV Install NYC") and per side
+    cell (once, at the row it starts on), or None when the grid is not one.
+    It is one only when every column-0 cell is a short label (ends with ":"
+    or is set bold) and no column-1 cell is a label: a header row ("Phase |
+    Start") sets its value column bold or as a label too, so it never matches.
+    """
+    if len(rows) < 2:
+        return None
+    ncols = len(rows[0])
+    if ncols not in (2, 3) or any(len(r) != ncols for r in rows):
+        return None
+    try:
+        geo = [list(getattr(r, "cells", []) or []) for r in (getattr(table, "rows", []) or [])]
+    except Exception:
+        return None
+    if len(geo) != len(rows) or any(len(g) != ncols for g in geo):
+        return None
+    if any(g[0] is None or g[1] is None for g in geo):
+        return None
+    labels = [_text_of(r[0]) for r in rows]
+    values = [_text_of(r[1]) for r in rows]
+    if not all(labels) or not values[0] or sum(1 for v in values if v) < 0.5 * len(rows):
+        return None
+    try:
+        spans = [
+            (tuple(float(v) for v in sp.get("bbox")), bool(int(sp.get("flags") or 0) & 16)
+             or "bold" in str(sp.get("font") or "").lower())
+            for blk in (page.get_text("dict") or {}).get("blocks", []) or []
+            for ln in blk.get("lines", []) or []
+            for sp in ln.get("spans", []) or []
+            if str(sp.get("text") or "").strip()
+        ]
+    except Exception:
+        return None
+
+    def _short(t: str) -> bool:
+        return len(t) <= 40 and len(t.split()) <= 5 and not t.endswith((".", "!", "?"))
+
+    for i, t in enumerate(labels):
+        if not (_short(t) and (t.endswith(":") or _cell_is_bold(spans, geo[i][0]))):
+            return None
+    for i, v in enumerate(values):
+        if v and (v.endswith(":") or _cell_is_bold(spans, geo[i][1])):
+            return None
+    # A third column holds side cells spanning rows, each labelling itself;
+    # a per-row third column is a data column and the grid keeps its header.
+    if ncols == 3:
+        side = [_text_of(r[2]) for r in rows if _text_of(r[2])]
+        if not any(g[2] is None for g in geo) or not all(
+                _cell_labels_itself(s) for s in side):
+            return None
+    out: list[str] = []
+    for r, label, value in zip(rows, labels, values):
+        if value:
+            out.append(f"{label} {value}" if label.endswith(":") else f"{label}: {value}")
+        else:
+            out.append(label)
+        if ncols == 3 and _text_of(r[2]):
+            out.append(_text_of(r[2]))
+    return out
+
+
 #: A cell that labels its own value: "FULL NAME: Chase Smith", "DATE: Sep 17".
 _SELF_LABELLED_CELL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 .#/&()'-]{0,30}?:\s+\S")
 

@@ -90,6 +90,7 @@ from app.parsers.pdf._shared import (  # noqa: E402
     _grid_is_self_labelled,
     _drop_title_band,
     _normalize_banded_grid,
+    _key_value_rows,
 )
 
 # Moved to app.parsers.pdf.schematic_pre_pass. Re-exported so every existing import keeps working;
@@ -3518,6 +3519,8 @@ def _atoms_for_block(
             }
             if isinstance(row, dict):
                 value.update(_line_item_fields(row))
+            if block.get("key_value"):
+                value["key_value"] = True
             if row_trunc:
                 value["truncated_cols"] = list(row_trunc)
             yield _make_atom(
@@ -4338,6 +4341,19 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                 try:
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
+                    continue
+                # A LABEL | VALUE grid has no header row: one row per field.
+                kv = _key_value_rows(page, table, extracted)
+                if kv:
+                    table_blocks.append({
+                        "kind": "table", "columns": ["col_0"],
+                        "rows": [{"col_0": t} for t in kv],
+                        "self_labelled": True, "key_value": True,
+                    })
+                    try:
+                        bboxes.append(fitz.Rect(table.bbox))
+                    except Exception:
+                        pass
                     continue
                 extracted = _normalize_banded_grid(table, extracted)
                 extracted = _drop_title_band(extracted)
