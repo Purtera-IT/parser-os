@@ -234,3 +234,11 @@ def test_an_outlook_quoted_header_splits_at_any_quote_depth_or_in_bold(tmp_path:
         loc = sw.source_refs[0].locator
         assert loc["message_index"] == 1, name
         assert "Stephanie Hechsel" in loc["sender"] and "July 7, 2026" in loc["sent_at"], name
+
+
+def test_each_body_atom_names_its_message(tmp_path: Path):
+    atoms = _parse(tmp_path, OUTLOOK_REPLY.replace("{F}", ""), "label.eml")
+    sw = next(a for a in atoms if a.raw_text.endswith("4 switches"))
+    assert sw.source_refs[0].locator["message_label"] == "Stephanie Hechsel · Tuesday, July 7, 2026 3:12 PM"
+    hdr = next(a for a in atoms if a.value.get("kind") == "email_header")
+    assert hdr.source_refs[0].locator["message_label"].startswith("Trent Torrence · ")

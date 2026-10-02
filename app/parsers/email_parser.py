@@ -2060,6 +2060,19 @@ def _logo_images_are_chatter(atoms: list[EvidenceAtom]) -> None:
         atom.value = val
 
 
+def _message_label(sender: str, sent_at: str) -> str:
+    """ "Stephanie Hechsel · Tuesday, July 7, 2026 3:12 PM" from a block's
+    sender and send time; the address alone when there is no display name."""
+    from email.utils import parseaddr
+
+    raw = str(sender or "").strip()
+    if not raw or raw.lower() == "unknown":
+        raw = ""
+    name, addr = parseaddr(raw)
+    who = (name or addr or raw).strip().strip('"')
+    return " · ".join(x for x in (who, str(sent_at or "").strip()) if x)
+
+
 def _own_message_place(values: dict[str, str]) -> dict[str, Any]:
     """Locator fields placing a file's header on its own message (index 0),
     at line 0 -- above the body's first line, which is line 1."""
@@ -2070,6 +2083,7 @@ def _own_message_place(values: dict[str, str]) -> dict[str, Any]:
         "sender": str(values.get("from") or ""),
         "sent_at": str(values.get("date") or values.get("sent") or ""),
         "quoted": False,
+        "message_label": _message_label(str(values.get("from") or ""), str(values.get("date") or values.get("sent") or "")),
     }
 
 
@@ -3319,6 +3333,12 @@ class EmailParser(BaseParser):
             "sender": block.get("locator_sender") or block["sender"],
             "sent_at": block.get("locator_sent_at") or block["sent_at"],
             "quoted": block["quoted"],
+            # Who and when, ready to show: the message's identity, so a reader
+            # can head its atoms "Stephanie Hechsel · Tuesday, July 7, 2026
+            # 3:12 PM" without re-deriving it (010087).
+            "message_label": _message_label(
+                block.get("locator_sender") or block["sender"], block.get("locator_sent_at") or block["sent_at"]
+            ),
         }
         # Sentences of one line share its number; without this the reading
         # order sort ties and falls back to the atom id (010288 showed a
