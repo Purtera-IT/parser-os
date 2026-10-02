@@ -826,14 +826,19 @@ def test_gateway_banner_carries_no_author(tmp_path):
         "This Message Is From an External Sender\n"
         "This message came from outside your organization.\n"
         "Report Suspicious<https://us-phishalarm-ewt.proofpoint.com/EWT/v1/abc>\n"
-        "Thank you for the opportunity!\n",
+        "Thank you for the opportunity! We can swap the phones on Monday.\n",
         encoding="utf-8",
     )
     atoms = EmailParser().parse_artifact("p", "a", eml)
+    # "Thank you for the opportunity!" alone is banter: a kept chatter atom
+    # (admission_regex), not on the content list API. The sentence beside it
+    # is the real one, and it keeps its author.
+    full = EmailParser().parse_artifact_full(project_id="p", artifact_id="a", path=eml).atoms
+    assert any(a.raw_text == "Thank you for the opportunity!" and "chatter" in a.review_flags for a in full)
     banners = [a for a in atoms if isinstance(a.value, dict) and a.value.get("kind") == "email_banner"]
     assert banners, [a.raw_text for a in atoms]
     assert all(not a.value.get("author") for a in banners)
-    thanks = [a for a in atoms if "Thank you for the opportunity" in a.raw_text]
+    thanks = [a for a in atoms if "We can swap the phones on Monday" in a.raw_text]
     assert thanks and all("t@purtera-it.com" in str(a.value.get("author") or "") for a in thanks)
 
 

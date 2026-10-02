@@ -30,6 +30,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from app.core.atom_type_sanity import number_is_naming_label
+from app.core.automated_senders import is_automated_address
 from app.core.phones import find_phones
 from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
@@ -3712,6 +3713,10 @@ def _emit_email_keys(text: str) -> set[str]:
         email = m.group(1).lower()
         # Drop trailing dots/punctuation artifacts
         email = email.rstrip(".,;:!)\\")
+        # An automated sender (echosign@, dse@docusign.net, noreply@) is a
+        # channel, not a party: no entity for it.
+        if is_automated_address(email):
+            continue
         slug = _slug_simple(email)
         if slug and len(slug) >= 5:
             keys.add(f"email:{slug}")
@@ -3798,6 +3803,17 @@ def _emit_person_from_contact(text: str) -> set[str]:
     # Email-anchored back-scan
     bad_starts = ("At ", "By ", "For ", "From ", "To ", "Of ",
                   "In ", "On ", "The ", "An ", "A ", "Or ")
+    # "Adobe Sign <echosign@echosign.com>" is name-shaped and anchored on an
+    # address, and it is a robot. Blank each automated sender's address and
+    # the display name in front of it, so neither its own back-scan nor the
+    # next address's (whose 100-char window reaches back over it) reads the
+    # robot's label as a person.
+    for em in list(_EMAIL_REGEX.finditer(text)):
+        if is_automated_address(em.group(1)):
+            head = text[:em.start()]
+            cut = max(head.rfind(c) for c in "|,;:\n>")
+            lo = cut + 1 if cut >= 0 else 0
+            text = text[:lo] + " " * (em.end() - lo) + text[em.end():]
     for em in _EMAIL_REGEX.finditer(text):
         start = max(0, em.start() - 100)
         window = text[start:em.start()]

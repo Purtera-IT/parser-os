@@ -670,7 +670,7 @@ def _maybe_wire_feedback_store() -> None:
 #: A real deal document lands in the hundreds; the largest legitimate scope
 #: workbook measured across the corpus is far under this. 94,047 from a single
 #: customer report is what this exists to catch.
-_ADMISSION_REJECT_FLAG = f"{SUPPRESSION_FLAG_PREFIX}admission_regex"
+from app.core.admission_chatter import ADMISSION_REGEX_FLAG as _ADMISSION_REJECT_FLAG  # noqa: E402
 _MAX_ATOMS_PER_ARTIFACT = int(os.environ.get("SOWSMITH_MAX_ATOMS_PER_ARTIFACT", "12000"))
 
 
@@ -1053,7 +1053,7 @@ def compile_project(
                     # happened so a real oversized scope file is visible rather
                     # than mysterious.
                     # Lines the admission regexes refused (a greeting, a
-                    # sign-off) ride along pre-suppressed and are diverted
+                    # sign-off) ride along as chatter atoms and are held aside
                     # below. They were never counted before they were emitted,
                     # so they are not counted now: no routing number moves.
                     kept_parsed = sum(
@@ -1184,6 +1184,19 @@ def compile_project(
             f"atom(s) (e.g. whole-sheet drops) to the suppressed sidecar"
         )
 
+    # Lines a parser's admission regex refused (a greeting, a sign-off, the
+    # name under it) are KEPT atoms flagged chatter, so the labeling page can
+    # show them and the admission head gets its negatives. They are held out
+    # of every stage from here to packetizing -- threading, dedup, the
+    # substance gate, typing, entity resolution, signals, packets -- and put
+    # back only for text coverage and the result. So no head ever reads one,
+    # and every other atom, entity, edge and packet is exactly what it would be
+    # without them.
+    held_chatter = [a for a in atoms if _ADMISSION_REJECT_FLAG in (getattr(a, "review_flags", None) or [])]
+    if held_chatter:
+        _held_ids = {id(a) for a in held_chatter}
+        atoms = [a for a in atoms if id(a) not in _held_ids]
+
     # Email threading: each .eml is a separate artifact, so a short reply
     # ("yes, go ahead with 36") parses as an atom with no idea what it answers.
     # Reconstruct the conversation across files (RFC In-Reply-To/References,
@@ -1210,6 +1223,28 @@ def compile_project(
                 f"WARNING: email_threading failed: {type(exc).__name__}: {exc}"
             )
         telemetry.end_stage(stage, output_count=len(atoms))
+
+    # The held chatter atoms read where their message reads: each copies the
+    # thread stamp of a kept atom from the same file and message, so the
+    # envelope's reading order puts "Hi Trent," above the body it opens.
+    # Copying is one-way -- nothing here touches a kept atom.
+    if held_chatter:
+        try:
+            _stamp_by_msg: dict[tuple[str, Any], dict] = {}
+            for _a in atoms:
+                _v = _a.value if isinstance(getattr(_a, "value", None), dict) else {}
+                _et = _v.get("email_thread")
+                if isinstance(_et, dict):
+                    _stamp_by_msg.setdefault((str(_a.artifact_id), _v.get("message_index")), _et)
+            for _a in held_chatter:
+                _v = _a.value if isinstance(getattr(_a, "value", None), dict) else None
+                if _v is None or "email_thread" in _v:
+                    continue
+                _et = _stamp_by_msg.get((str(_a.artifact_id), _v.get("message_index")))
+                if _et is not None:
+                    _v["email_thread"] = dict(_et)
+        except Exception:  # pragma: no cover - ordering sugar, never fatal
+            pass
 
     # A HubSpot note that is a pasted email is the same message, not a second
     # source -- and the fold has to happen HERE, before the first pass that
@@ -3043,6 +3078,23 @@ def compile_project(
             ]
             packet.risk = score_packet_risk(packet, packet_atoms, edges)
         telemetry.end_stage(stage, output_count=len(packets))
+
+    # The held chatter atoms come back now: after every head has run, before
+    # coverage, so their lines count as claimed by an atom.
+    if held_chatter:
+        try:
+            for _atom in held_chatter:
+                if getattr(_atom, "source_refs", None) and not getattr(_atom, "receipts", None):
+                    _atom.receipts = replay_atom_receipts(_atom, artifact_paths)
+        except Exception as exc:  # never fail a compile over a chatter receipt
+            warnings.append(f"WARNING: chatter receipts failed: {type(exc).__name__}: {exc}")
+        _seen_ids = {a.id for a in atoms}
+        _back: list = []
+        for _atom in held_chatter:
+            if _atom.id not in _seen_ids:
+                _seen_ids.add(_atom.id)
+                _back.append(_atom)
+        atoms = atoms + _back
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.

@@ -61,11 +61,11 @@ def _atoms():
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "010215-hs-email-1.eml"
         p.write_text(EML, encoding="utf-8")
-        # Kept atoms only: chrome the admission regex refused rides along as
-        # a `suppressed:admission_regex` atom, which the compiler diverts to
-        # suppressed_atoms -- labelable, never kept.
+        # Content atoms only: chrome the admission regex refused rides along
+        # as a chatter atom flagged `admission_regex` -- labelable, held out
+        # of every head.
         return [a for a in EmailParser().parse_artifact_full(project_id="p", artifact_id="a", path=p).atoms
-                if "suppressed:admission_regex" not in (a.review_flags or [])]
+                if "admission_regex" not in (a.review_flags or [])]
 
 
 def _texts(atoms):

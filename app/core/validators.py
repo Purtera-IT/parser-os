@@ -209,6 +209,10 @@ def validate_compile_result(result: CompileResult, source_files_available: bool 
 
     # Errors: edge references + warnings: low confidence atoms.
     for atom in result.atoms:
+        # A regex-refused line kept as chatter carries 0.0 on purpose: it is
+        # labeling data, not a claim, and warning on each one is noise.
+        if "admission_regex" in (atom.review_flags or []):
+            continue
         if atom.confidence < 0.75:
             messages.append(f"WARNING: Atom {atom.id} has low confidence {atom.confidence:.2f}")
 
