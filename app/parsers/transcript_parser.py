@@ -126,6 +126,12 @@ _CUT_DETERMINERS = frozenset({"my", "our", "your", "their", "his", "her", "its",
 _CUT_PREPOSITIONS = frozenset({"of", "per", "into", "onto", "between", "among", "toward", "towards", "via", "versus", "than"})
 _CUT_CONJUNCTIONS = frozenset({"and", "or", "but", "because", "if", "nor"})
 _CUT_PRONOUNS = frozenset({"i", "we", "they", "he", "she"})
+#: A word stub the diariser cut before its stem ("I'm gonna re." / "Quote.",
+#: "before 1 o'." / "Clock.").
+_CUT_PREFIXES = frozenset({"re", "pre", "un", "non", "co"})
+#: An auxiliary right after its subject ends an elliptical clause ("We do.",
+#: "she will.", "where it is.") unless a subordinator opens it ("so I can.").
+_ELLIPSIS_SUBJECTS = frozenset({"i", "we", "you", "they", "he", "she", "it"})
 #: Auxiliaries end a cut ("And we'll do.") but also a short answer ("Yes, we
 #: do."), so they count only when the cue does not open as an answer.
 _CUT_AUXILIARIES = frozenset({
@@ -178,9 +184,6 @@ _VERBS = frozenset({
     "understand", "agree", "thank", "thanks", "hope", "please",
 })
 _CONTRACTED_SUBJECTS = frozenset({"it", "that", "there", "what", "here", "he", "she", "who", "where", "how", "let"})
-#: "(I) think there's a max." drops its subject and comments on the sentence before.
-_DROPPED_SUBJECT_VERBS = frozenset({"think", "guess", "believe", "suppose", "figure"})
-_CLAUSE_OPENERS = frozenset({"there's", "that", "that's", "it's", "it", "so", "there", "this"}) | _SUBJECTS
 #: A cut cue ending on an auxiliary is an elliptical answer ("I believe we
 #: do.") unless it is a subordinate clause with no main one ("Just so I can.").
 _SUBORDINATORS = frozenset({"so", "because", "if", "when", "unless", "until", "since"})
@@ -193,7 +196,8 @@ _BACKCHANNEL = frozenset({
     "okay", "ok", "yeah", "yes", "yep", "yup", "right", "mhm", "mm", "hmm", "uh",
     "huh", "um", "sure", "cool", "great", "got", "it", "gotcha", "alright", "nice",
     "perfect", "oh", "i", "see", "true", "exactly", "correct", "good", "thanks",
-    "thank", "you", "awesome", "wow",
+    "thank", "you", "awesome", "wow", "all", "definitely", "absolutely", "hey",
+    "hi", "hello", "bye",
 })
 _INTERJECTION_MAX_WORDS = 3
 #: The earlier cue's length in words stands in for its duration (cues carry
@@ -221,12 +225,22 @@ def _cue_ends_cut(text: str) -> bool:
     if not words:
         return False
     last = words[-1].lower()
+    if last in _CUT_PREFIXES or (len(last) <= 2 and last.endswith("'")):
+        return True
     if last in _CUT_ARTICLES or last in _CUT_DETERMINERS or last in _CUT_PREPOSITIONS:
         return True
     if last in _CUT_CONJUNCTIONS or last in _CUT_PRONOUNS:
         return True
     if last in _CUT_AUXILIARIES:
-        return words[0].lower() not in _ANSWER_OPENERS
+        lower = [w.lower() for w in words]
+        if (
+            last not in ("gonna", "wanna", "gotta")
+            and len(lower) >= 2
+            and lower[-2] in _ELLIPSIS_SUBJECTS
+            and not (len(lower) >= 3 and lower[-3] in _SUBORDINATORS)
+        ):
+            return False
+        return lower[0] not in _ANSWER_OPENERS
     return False
 
 
@@ -288,7 +302,7 @@ def _continues(text: str) -> bool:
         _, comma, after = text.partition(",")
         rest = _lower_words(after)
         return not comma or not rest or rest[0] in _SUBORDINATORS or rest[0] in _TRAILING_OPENERS
-    return len(words) > 1 and words[0] in _DROPPED_SUBJECT_VERBS and words[1] in _CLAUSE_OPENERS
+    return False
 
 
 def _content_stems(text: str) -> set[str]:
@@ -341,22 +355,59 @@ def _within_pause(prev: dict[str, Any], nxt: dict[str, Any], *, both_sides: bool
     return 0 <= b - a <= min(spoken + pause, _PAUSE_CEILING)
 
 
-def _continues_cue(prev: dict[str, Any], seg: dict[str, Any], after: dict[str, Any] | None) -> bool:
+def _resumes(text: str, nxt: str) -> bool:
+    """The next cue picks up the auxiliary the cue stopped on ("I can." /
+    "We can ramp up ..."): the clause was cut, not elliptical."""
+    a, b = _lower_words(text), _lower_words(nxt)
+    return bool(a) and a[-1] in _CUT_AUXILIARIES and a[-1] in b[:2]
+
+
+_ASIDE_OPENERS = frozenset({"yeah", "yes", "yep", "yup", "okay", "ok", "oh", "right", "sure", "um", "uh", "hmm", "mhm"})
+
+
+def _opens_aside(text: str) -> bool:
+    """The cue opens on a response word ("Yeah, just do it."): a new turn."""
+    words = _lower_words(text)
+    return bool(words) and words[0] in _ASIDE_OPENERS
+
+
+def _continues_cue(
+    prev: dict[str, Any], seg: dict[str, Any], after: dict[str, Any] | None, *, prev_alone: bool = True
+) -> bool:
     """``seg`` belongs to the sentence ``prev`` (same speaker) is part of.
-    ``after`` is the speaker's next cue reachable from ``seg``, if any."""
+    ``after`` is the speaker's next cue reachable from ``seg``, if any;
+    ``prev_alone`` is False when ``prev`` already closes a joined sentence."""
     p, s = str(prev.get("text", "")), str(seg.get("text", ""))
     if _is_backchannel(p) or _is_backchannel(s):
         return False
-    prev_open = _cue_ends_cut(p) and not _is_restart(p, s)
+    s_question = s.rstrip().endswith("?")
+    prev_open = (_cue_ends_cut(p) or _resumes(p, s)) and not _is_restart(p, s)
+    # "..., too, but." / "Any questions?": the speaker trailed off and asks anew.
+    if prev_open and _lower_words(p)[-1] in _CUT_CONJUNCTIONS and s_question:
+        prev_open = False
     if prev_open or _cue_echoes(p, s):
         return _within_pause(prev, seg, both_sides=_is_fragment(s))
-    if _continues(s) or (_is_verbless(s) and not p.rstrip().endswith("?") and _restates(p, s)):
+    if _continues(s) or (
+        _is_verbless(s) and not p.rstrip().endswith("?") and not s_question
+        and not _opens_aside(s) and _restates(p, s)
+    ):
         return _within_pause(prev, seg, both_sides=_is_verbless(p))
-    if _is_verbless(p) and len(_cue_words(p)) <= _HEAD_MAX_WORDS and _is_fragment(s):
+    # A verbless head ("Like texts.") runs only into a short cut cue ("Do you
+    # do per."), and only when it opens the sentence.
+    if (
+        prev_alone
+        and _is_verbless(p)
+        and not p.rstrip().endswith("?")
+        and len(_cue_words(p)) <= _HEAD_MAX_WORDS
+        and _cue_ends_cut(s)
+        and len(_cue_words(s)) <= _TAIL_MAX_WORDS
+    ):
         return _within_pause(prev, seg, both_sides=True)
+    # A short cut cue nothing of the speaker's picks up closes the sentence
+    # before it. One the speaker restarts ("What was the." / "What was the
+    # last day ...?") heads the next sentence instead.
     if _is_open_tail(s):
-        a = str(after.get("text", "")) if after is not None else ""
-        if after is None or _is_restart(s, a) or not _within_pause(seg, after, both_sides=True):
+        if after is None or not _within_pause(seg, after, both_sides=True):
             return _within_pause(prev, seg, both_sides=False)
     return False
 
@@ -406,7 +457,10 @@ def join_cut_fragments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if (
                 cur.get("section") == seg.get("section")
                 and len(cur.get("joined_utterance_indexes") or [cur["utterance_index"]]) < _JOIN_MAX_CUES
-                and _continues_cue(tails[target], seg, speaker_next(i))
+                and _continues_cue(
+                    tails[target], seg, speaker_next(i),
+                    prev_alone="joined_utterance_indexes" not in cur,
+                )
             ):
                 joined = list(cur.get("joined_utterance_indexes") or [cur["utterance_index"]])
                 joined.append(seg["utterance_index"])
