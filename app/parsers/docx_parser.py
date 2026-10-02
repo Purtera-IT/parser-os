@@ -172,6 +172,24 @@ def _unwrap_content_controls(document, placeholders: list[str] | None = None) ->
         for offset, child in enumerate(children):
             parent.insert(idx + offset, child)
         parent.remove(sdt)
+    # The same blindness for the other inline field wrappers: a simple field
+    # (``w:fldSimple`` -- a form/merge field whose shown result is its runs),
+    # a smart tag (``w:smartTag``, which Word wraps around address parts:
+    # Street / City / State / PostalCode) and custom XML (``w:customXml``).
+    # Paragraph.text skips all three, so a ZIP typed into its own field was
+    # simply gone. Their runs are lifted in place, exactly like a control's.
+    for tag in ("w:fldSimple", "w:smartTag", "w:customXml"):
+        wrappers = list(body.iter(qn(tag)))
+        for el in reversed(wrappers):
+            parent = el.getparent()
+            if parent is None:
+                continue
+            idx = parent.index(el)
+            for offset, child in enumerate(
+                [c for c in el if c.tag not in (qn("w:smartTagPr"), qn("w:customXmlPr"))]
+            ):
+                parent.insert(idx + offset, child)
+            parent.remove(el)
     return len(controls)
 
 
@@ -614,11 +632,26 @@ class DocxParser(BaseParser):
             # Collected here and emitted once per document below, so a document
             # describing one site yields one site rather than one per row.
             try:
-                from app.parsers.site_property_block import fields_from_property_row
+                from app.parsers.site_property_block import (
+                    _match_label,
+                    fields_from_property_row,
+                    property_cells_from_line,
+                )
 
+                _label_header: list[str] | None = None
                 for _r_idx, _row_cells in enumerate(table.rows):
                     _texts = [c.text.strip() for c in _row_cells.cells]
-                    _cells = {str(i): v for i, v in enumerate(_texts)}
+                    # A cell may itself be a form line ("Zip: 45840").
+                    _flat = [v for t in _texts for v in (property_cells_from_line(t).values() if ":" in t or "\t" in t else [t])]
+                    # Labels in a header row, values in the row beneath
+                    # ("Street | City | State | Zip" over "15733 US-224 |
+                    # Findlay | OH | 45840"): pair them column by column.
+                    if (_label_header and len(_texts) == len(_label_header)
+                            and not any(_match_label(t) for t in _texts if t)):
+                        _flat = [x for lab, val in zip(_label_header, _texts) for x in (lab, val)]
+                    _label_header = (_texts if len([t for t in _texts if t]) >= 2
+                                     and all(_match_label(t) for t in _texts if t) else None)
+                    _cells = {str(i): v for i, v in enumerate(_flat)}
                     _f = fields_from_property_row(_cells)
                     # Collect on STRUCTURE too, not only on a label we happen to
                     # recognise: a vendor whose block says "Site" and "Location"
@@ -841,6 +874,34 @@ class DocxParser(BaseParser):
                     )
                 )
 
+        # The same block written as a FORM in body paragraphs rather than a
+        # table: "Site Address: 15733 US-224, Findlay, OH" with the ZIP in its
+        # own form field / content control / tab stop, or on the next line
+        # ("Zip: 45840"). Each labelled location line is one property row, so
+        # the ZIP joins its street. Only location fields are read here, and a
+        # line naming the vendor's own office is never a site.
+        try:
+            from app.parsers.site_property_block import (
+                fields_from_property_row as _ffp,
+                property_cells_from_line as _pcl,
+            )
+            from app.core.vendor_site_ban import is_purtera_vendor_address as _vendor_addr
+            from app.parsers.value_shapes import classify_value as _cv2
+
+            for _p_idx, _para in enumerate(_all_paragraphs(document)):
+                _pt = _para.text or ""
+                if ":" not in _pt or len(_pt) > 300 or self._paragraph_in_table(_para):
+                    continue
+                _pcells = _pcl(_pt)
+                _pf = _ffp(_pcells)
+                if _pf.get("zip") and _cv2(_pf["zip"]) != "postal":
+                    _pf.pop("zip")
+                if not (_pf.keys() & {"address", "zip"}) or _vendor_addr(text=_pt):
+                    continue
+                _property_site_rows.append((_pcells, None, _p_idx))
+        except Exception:  # never let a site read break the parse
+            pass
+
         # One document describing one site yields ONE site — not one per row,
         # and not none. See site_property_block for the 010215 measurement.
         if _property_site_rows:
@@ -856,14 +917,18 @@ class DocxParser(BaseParser):
                     _t_idx, _r_idx = _property_site_rows[0][1], _property_site_rows[0][2]
                     _label = site_display_name(_site)
                     _sid = stable_id("atm", artifact_id, "docx_property_site", _label)
+                    # The atom carries the whole postal address, ZIP included,
+                    # even when the form split it across fields.
+                    _full = _site.get("full_address") or ""
+                    _text = _label if not _full or _full in _label else f"{_label} | {_full}"
                     atoms.append(
                         EvidenceAtom(
                             id=_sid,
                             project_id=project_id,
                             artifact_id=artifact_id,
                             atom_type=AtomType.physical_site,
-                            raw_text=_label,
-                            normalized_text=_label.lower(),
+                            raw_text=_text,
+                            normalized_text=_text.lower(),
                             # `id` is what site_readiness keys on. It must be
                             # the per-site identity the document states, not the
                             # cost centre — all ten 010215 SOWs share 94575001,
@@ -896,11 +961,10 @@ class DocxParser(BaseParser):
                                     artifact_id=artifact_id,
                                     artifact_type=ArtifactType.docx,
                                     filename=path.name,
-                                    locator={
-                                        "table_index": _t_idx,
-                                        "row": _r_idx,
-                                        "extraction": "docx_site_property_block_v1",
-                                    },
+                                    locator=(
+                                        {"table_index": _t_idx, "row": _r_idx}
+                                        if _t_idx is not None else {"paragraph_index": _r_idx}
+                                    ) | {"extraction": "docx_site_property_block_v1"},
                                     extraction_method="docx_site_property_block_v1",
                                     parser_version=self.parser_version,
                                 )
