@@ -1907,6 +1907,16 @@ def compile_project(
             warnings.append(f"WARNING: typed_atom_classifier failed: {type(exc).__name__}: {exc}")
         if promoted:
             warnings.append(f"INFO: typed-atom classifier promoted {promoted} atoms from scope_item/entity")
+        # A callout read off a drawing ("Solar Panel", "Cell Modem") is a
+        # label, never a site_infrastructure fact (010246).
+        try:
+            from app.core.diagram_labels import retype_diagram_labels
+
+            _dl = retype_diagram_labels(atoms)
+            if _dl:
+                warnings.append(f"INFO: {_dl} diagram callout(s) kept as diagram_label rejects")
+        except Exception as exc:
+            warnings.append(f"WARNING: diagram_labels failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=promoted)
 
     # Work-order reassembly: the per-atom classifier answers "is this span a

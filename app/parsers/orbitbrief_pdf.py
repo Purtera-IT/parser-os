@@ -2395,6 +2395,13 @@ def atoms_from_structured_doc(
             parser_version=parser_version,
         ):
             _atom = _root_atom(_atom)
+            if page.get("is_drawing"):
+                # Read off a drawing sheet: a callout there is a label, not a
+                # site fact (see app.core.diagram_labels).
+                try:
+                    _atom.source_refs[0].locator["on_drawing"] = True
+                except Exception:
+                    pass
             if _is_ocr_page:
                 # The words are the OCR engine's reading of a scan, so a
                 # text-layer copy of the same clause outranks this one in
