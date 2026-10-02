@@ -319,6 +319,9 @@ _MEASURE_WORDS = frozenset({
     "hz", "khz", "mhz", "ghz", "kbps", "mbps", "gbps",
     "kb", "mb", "gb", "tb", "pb",
     "percent", "pct", "degree", "degrees", "px", "dpi", "ppi",
+    # Imaging / video / power specs: "2 MP camera" is a 2-megapixel camera.
+    "mp", "megapixel", "megapixels", "k", "p", "fps", "lm", "lumen", "lumens",
+    "kw", "kwh", "wh", "mah", "va", "kva", "btu", "db", "nit", "nits",
     # Port count / interface density is a device attribute in phrases like
     # "2 48 port switches"; it must not become "48 switches".
     "port",
@@ -415,6 +418,31 @@ def _context_sentence(text: str, span: tuple[int, int]) -> str:
     return picked
 
 
+#: Units that, glued to a number, make it a specification: "2MP", "4K",
+#: "1080p", "500GB", "12V", "65in", "60Hz". Glued letters that are NOT a unit
+#: leave the count alone -- "2nvr" is two NVRs, "4E7" is four E7 APs.
+_GLUED_SPEC_UNITS = frozenset({
+    "mp", "megapixel", "megapixels", "k", "p", "i", "fps",
+    "kb", "mb", "gb", "tb", "pb", "kbps", "mbps", "gbps",
+    "w", "kw", "kwh", "wh", "mw", "v", "kv", "mv", "a", "ma", "mah", "ah", "va", "kva",
+    "hz", "khz", "mhz", "ghz", "db", "dbi", "dbm", "lm", "nit", "nits", "btu", "ohm",
+    "ft", "in", "inch", "mm", "cm", "m", "km", "yd", "mi", "lb", "lbs", "kg", "g", "oz",
+    "f", "c", "u", "ru",
+})
+_GLUED_SUFFIX_RE = re.compile(r"[A-Za-z]+")
+
+
+def _is_unit_suffixed_number(text: str, num_end: int) -> bool:
+    """True when the digits ending at ``num_end`` carry a unit glued to them --
+    "2MP", "4K", "1080p", "500GB", "12V", "65in", "60Hz". That number is a
+    spec of the thing named after it, never how many of it there are: live
+    010353 read "Sapphire PTZ 2MP Camera" as two cameras."""
+    m = _GLUED_SUFFIX_RE.match(text, num_end)
+    if not m or num_end == 0 or not text[num_end - 1].isdigit():
+        return False
+    return m.group(0).lower() in _GLUED_SPEC_UNITS
+
+
 def _iter_quantity_mentions(text: str) -> list[tuple[int, str, dict[str, Any]]]:
     mentions: list[tuple[int, str, dict[str, Any]]] = []
     seen_spans: list[tuple[int, int]] = []
@@ -433,6 +461,10 @@ def _iter_quantity_mentions(text: str) -> list[tuple[int, str, dict[str, Any]]]:
         if descriptor_tokens and descriptor_tokens[0] in _MEASURE_WORDS:
             continue
         if number_is_naming_label(text, m.start("num")):
+            continue
+        if _is_unit_suffixed_number(text, m.end("num")) or (
+            m.group("num2") and _is_unit_suffixed_number(text, m.end("num2"))
+        ):
             continue
         quantity = max(n1, n2) if n2 is not None else n1
         if quantity < 1 or quantity > 100_000:
