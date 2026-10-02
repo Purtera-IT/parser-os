@@ -1310,6 +1310,7 @@ def _carry_cross_page_section_headings(pages: list[dict[str, Any]]) -> None:
         if last_heading and not (first.get("heading") or "").strip() \
                 and (first.get("blocks") or []):
             first["heading"] = last_heading
+            first["heading_carried"] = True
         for s in secs:
             h = (s.get("heading") or "").strip()
             if h:
@@ -2415,9 +2416,10 @@ def atoms_from_structured_doc(
     """Stream EvidenceAtoms from a structured document.
 
     One atom per content block (paragraph, bullet item, table row, or
-    note).  Headings are not atoms — they become locator context
-    (``section_path``) on the atoms beneath them so OrbitBrief can
-    re-classify or re-aggregate without re-parsing.
+    note).  Headings become locator context (``section_path``) on the
+    atoms beneath them so OrbitBrief can re-classify or re-aggregate
+    without re-parsing; a heading that leads child lines is also kept as
+    one reject-able ``block_kind: heading`` structure atom.
     """
     # Root every atom's section_path at the document's main section (its
     # title), so a sub-heading renders as a path ("<main section> > <heading>")
@@ -2451,7 +2453,11 @@ def atoms_from_structured_doc(
         if "line_start" not in loc:
             loc["line_start"] = emit_seq[0]
             loc["line_end"] = emit_seq[0]
-        emit_seq[0] += 1
+        # A heading atom shares the reading-order index of the line it leads,
+        # so every other atom keeps the index it had before headings were
+        # emitted.
+        if loc.get("block_kind") != "heading":
+            emit_seq[0] += 1
         if not doc_title:
             return atom
         sp = loc.get("section_path") or []
@@ -2473,6 +2479,8 @@ def atoms_from_structured_doc(
                 val["intro"] = vlead[-1] if len(vlead) > 1 else vlead[0]
         return atom
 
+    _meeting_doc = bool(re.search(r"\b(?:meeting\s+summary|transcripts?)\b", str(doc_title or ""), re.I)) or any(
+        p.get("title_is_chrome") for p in structured_doc.get("pages", []) or [])
     for page in structured_doc.get("pages", []):
         page_index = int(page.get("page", 0))
         sections = page.get("sections", []) or []
@@ -2488,6 +2496,12 @@ def atoms_from_structured_doc(
             filename=filename,
             parser_version=parser_version,
         ):
+            if (_atom.source_refs[0].locator or {}).get("block_kind") == "heading" and (
+                    page.get("is_drawing") or _meeting_doc
+                    or (doc_title and _atom.raw_text == doc_title)):
+                # a drawing's callout, a meeting summary's section label (not
+                # a document section), or the document's own title
+                continue
             _atom = _root_atom(_atom)
             if page.get("is_drawing"):
                 # Read off a drawing sheet: a callout there is a label, not a
@@ -2624,6 +2638,16 @@ def _atoms_for_sections(
         heading = section.get("heading")
         path = section_path + ([heading] if heading else [])
         blocks = section.get("blocks", []) or []
+        if (heading or "").strip() and not section.get("heading_carried") \
+                and _section_has_content(section):
+            # A heading that leads child lines is an atom of its own, so a
+            # label can govern its group; its section_path is its children's,
+            # ending at itself. One carried over a page break was printed on
+            # the page before, and a heading with nothing under it stays
+            # section_path only.
+            yield _heading_atom(
+                str(heading).strip(), path, section, page_index, project_id,
+                artifact_id, filename, parser_version)
 
         def _emit(b, lead=None):
             yield from _atoms_for_block(
@@ -2792,6 +2816,48 @@ def _mark_blocks_on_a_drawing(sections: list[dict[str, Any]]) -> None:
 
 #: ``rejected_by`` of a page footer / header band kept as a chatter atom.
 PAGE_FOOTER_RULE = "page_footer"
+
+
+def _section_has_content(section: dict[str, Any]) -> bool:
+    if any(b for b in (section.get("blocks") or [])):
+        return True
+    return any(_section_has_content(s) for s in (section.get("subsections") or []))
+
+
+def _heading_atom(
+    text: str,
+    path: list[str],
+    section: dict[str, Any],
+    page_index: int,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+) -> EvidenceAtom:
+    """A section heading kept as a reject-able structure atom, the same shape
+    the docx path gives one (deal_metadata, flagged chatter, rejected_by
+    section_heading): it is the group's lead line, not a statement."""
+    from app.core.deal_chatter import CHATTER_FLAG
+    from app.core.schemas import ReviewStatus
+
+    block_id = section.get("id") or stable_id("sec", page_index, text)
+    atom = _make_atom(
+        text=text,
+        project_id=project_id,
+        artifact_id=artifact_id,
+        filename=filename,
+        parser_version=parser_version,
+        atom_type=AtomType.deal_metadata,
+        authority_class=_classify_text_block(text=text, section_path=list(path), kind="paragraph")[1],
+        confidence=0.1,
+        locator={"page": page_index, "block_id": block_id, "block_kind": "heading",
+                 "section_path": list(path), "lead_in": []},
+        value={"text": text, "kind": "section_heading", "structure": True,
+               "chatter": True, "rejected_by": "section_heading"},
+        review_flags=[CHATTER_FLAG, "section_heading"],
+    )
+    atom.review_status = ReviewStatus.needs_review
+    return atom
 
 
 def _chatter_atom(

@@ -174,6 +174,15 @@ _NON_ARTIFACT_PATTERNS = (
 _SPREADSHEET_TYPES = frozenset({"xlsx", "xls", "xlsm", "csv", "tsv"})
 
 
+def _is_heading_atom(atom: Any) -> bool:
+    """A structure atom a parser kept for a heading that leads child lines."""
+    refs = list(getattr(atom, "source_refs", None) or [])
+    loc = getattr(refs[0], "locator", None) if refs else None
+    val = getattr(atom, "value", None)
+    return (isinstance(loc, dict) and loc.get("block_kind") == "heading"
+            and isinstance(val, dict) and bool(val.get("structure")))
+
+
 def _is_spreadsheet_atom(atom: Any) -> bool:
     for ref in list(getattr(atom, "source_refs", None) or [])[:1]:
         at = getattr(ref, "artifact_type", None)
@@ -1233,6 +1242,15 @@ def compile_project(
     if held_chatter:
         _held_ids = {id(a) for a in held_chatter}
         atoms = [a for a in atoms if id(a) not in _held_ids]
+    # A heading that leads child lines ("SCOPE OF WORK", "A. IT Infrastructure
+    # Support") is kept as a structure atom so a label can govern its group.
+    # It is held out the same way -- no dedup folds it onto a child line or
+    # onto the next draft's copy of itself, no gate or head reads it -- and
+    # comes back with the held chatter.
+    held_headings = [a for a in atoms if _is_heading_atom(a)]
+    if held_headings:
+        _hh_ids = {id(a) for a in held_headings}
+        atoms = [a for a in atoms if id(a) not in _hh_ids]
 
     # Email threading: each .eml is a separate artifact, so a short reply
     # ("yes, go ahead with 36") parses as an atom with no idea what it answers.
@@ -3357,6 +3375,18 @@ def compile_project(
                 _seen_ids.add(_atom.id)
                 _back.append(_atom)
         atoms = atoms + _back
+    if held_headings:
+        try:
+            for _atom in held_headings:
+                if getattr(_atom, "source_refs", None) and not getattr(_atom, "receipts", None):
+                    _atom.receipts = replay_atom_receipts(_atom, artifact_paths)
+        except Exception as exc:  # never fail a compile over a heading receipt
+            warnings.append(f"WARNING: heading receipts failed: {type(exc).__name__}: {exc}")
+        _seen_ids = {a.id for a in atoms}
+        for _atom in held_headings:
+            if _atom.id not in _seen_ids:
+                _seen_ids.add(_atom.id)
+                atoms.append(_atom)
 
     # The cross-document copies come back the same way: after every head, so
     # nothing counted, priced or packetized them; before coverage, so each
