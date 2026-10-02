@@ -1798,6 +1798,13 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             col_blocks, col_bboxes = [], []
         else:
             col_blocks, col_bboxes = _extract_column_tables(pdf_path, page_index)
+            # Boxes standing side by side are not a table: the column extractor
+            # pairs their lines into fused "rows" ("UPS Ground CDW Government |
+            # Sarah Halpern"). Leave those regions to the column-aware reader.
+            if col_blocks:
+                col_blocks, col_bboxes = _drop_side_by_side_box_tables(
+                    pdf_path, page_index, col_blocks, col_bboxes
+                )
         table_blocks, table_bboxes = _merge_table_extractions(
             ruled_blocks, ruled_bboxes, col_blocks, col_bboxes
         )
@@ -1808,6 +1815,15 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             )
             if stripped is not None:
                 prose_text = stripped
+        # Column-aware reading order with a blank line at every visual-block
+        # boundary (gap, size / weight / colour change, button, link run).
+        # Plain get_text() has no paragraph breaks, so without this every run
+        # of text between two headings became one atom.
+        laid_out = _layout_prose_text(
+            pdf_path, page_index, table_bboxes if table_blocks else [], prose_text
+        )
+        if laid_out is not None:
+            prose_text = laid_out
 
         # Diarized transcript pages (meeting summary + full transcript exports)
         # must not go through form Q&A regroup / form_field tagging — speaker
@@ -2466,11 +2482,28 @@ def _atoms_for_sections(
                 sticky = btext
                 yield from _emit(block)
                 continue
+            # A list lead-in glued to the end of a content paragraph ("Provide
+            # onsite installation services ... . Provider will perform the
+            # following:"). Taken whole as a framing lead-in, the content
+            # sentence vanished into the next block's context. Emit the body,
+            # emit the lead-in as its own atom, and still lift it onto the
+            # block it governs.
+            if btext.endswith(":") and nxt is not None:
+                from app.parsers.clause_split import split_clauses
+
+                parts = split_clauses(btext)
+                if len(parts) >= 2 and parts[-1].endswith(":"):
+                    for k, part in enumerate(parts):
+                        sub = {**block, "text": part, "lines": [part],
+                               "id": f"{block.get('id') or 'blk'}#c{k}"}
+                        yield from _emit(sub)
+                    pending = (None, parts[-1])
+                    continue
             if btext and _pdf_is_framing_lead_in(btext):
                 pending = (block, btext)   # short lead-in: attach to the next block
                 continue
             yield from _emit(block)
-        if pending is not None:
+        if pending is not None and pending[0] is not None:
             # Nothing followed it — a lead-in with no governed block is just a
             # statement; emit it normally (never drop it).
             yield from _emit(pending[0])
@@ -2759,7 +2792,20 @@ def _atoms_for_block(
         # one atom, so none of those figures existed downstream. Sentences
         # keep the paragraph's locator plus their index; the split is by
         # sentence boundary, not by any word.
-        sentences = _split_long_paragraph(text)
+        # The same clause split the DOCX parser uses, so a draft SOW (.docx) and
+        # its signed PDF produce matching atoms; a trailing list lead-in ("...
+        # Provider will perform the following:") is split off as its own atom.
+        from app.parsers.clause_split import split_clauses
+
+        # The block's own line breaks let a lead-in over row lines ("Business
+        # hours are as follows:" / "After hours: 150%" / ...) split per row.
+        _blines = [str(x) for x in (block.get("lines") or []) if str(x or "").strip()]
+        sentences = split_clauses("\n".join(_blines) if len(_blines) > 1 else text)
+        if sentences and _blines and len(_blines) > 1 and \
+                "".join(" ".join(sentences).split()) != "".join(text.split()):
+            # The block's text was rewritten upstream (page-band strip etc.);
+            # split the text itself, not the raw lines.
+            sentences = split_clauses(text)
         if sentences:
             for s_idx, sent in enumerate(sentences):
                 s_type, s_auth = _classify_text_block(text=sent, section_path=section_path, kind="paragraph")
@@ -3902,6 +3948,52 @@ def _merge_table_extractions(
     return blocks, bboxes
 
 
+def _drop_side_by_side_box_tables(
+    pdf_path: Path, page_index: int, blocks: list[dict[str, Any]], bboxes: list[Any]
+) -> tuple[list[dict[str, Any]], list[Any]]:
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        from app.parsers.pdf.layout_text import region_is_side_by_side_boxes
+
+        with fitz.open(str(pdf_path)) as doc:
+            page = doc[page_index]
+            keep = [
+                (b, bb) for b, bb in zip(blocks, bboxes)
+                if not region_is_side_by_side_boxes(page, bb)
+            ]
+    except Exception:
+        return blocks, bboxes
+    return [b for b, _ in keep], [bb for _, bb in keep]
+
+
+def _layout_prose_text(
+    pdf_path: Path, page_index: int, bboxes: list[Any], reference_text: str
+) -> str | None:
+    """Layout-aware prose for a text-rich page (see ``pdf/layout_text.py``),
+    or ``None`` to keep ``reference_text``.
+
+    Only used when it reads the same text as the reference: an OCR-promoted
+    page has no text layer to lay out, and a page whose layout read loses
+    text keeps the plain reading rather than drop content."""
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        from app.parsers.pdf.layout_text import layout_page_text
+
+        with fitz.open(str(pdf_path)) as doc:
+            text = layout_page_text(doc[page_index], bboxes)
+    except Exception:
+        return None
+    if not text:
+        return None
+    ref = re.sub(r"[\s|:]", "", reference_text or "")
+    got = re.sub(r"[\s|:]", "", text)
+    if not ref or abs(len(got) - len(ref)) > 0.05 * len(ref) + 5:
+        return None
+    return text
+
+
 def _page_prose_excluding_tables(pdf_path: Path, page_index: int, bboxes: list[Any]) -> str | None:
     """Return the page's text with any text falling inside a table bbox removed.
 
@@ -4081,6 +4173,34 @@ def _split_dotted_section(line: str) -> tuple[str, str] | None:
     if not head or len(head.split()) > 12 or not head[:1].isupper():
         return None
     return (f"{num} {head}", body)
+
+
+_WRAP_TAIL_WORDS = {
+    "a", "an", "the", "and", "or", "of", "to", "for", "in", "on", "with", "by",
+    "at", "from", "into", "onto", "is", "are", "be", "will", "shall", "that",
+    "this", "its", "their", "your", "our", "as",
+}
+
+
+def _ends_mid_phrase(text: str) -> bool:
+    """Text that stops on an article / preposition / auxiliary ("Verify the live
+    view in the") cannot end there: the next line is its continuation."""
+    words = (text or "").split()
+    return bool(words) and words[-1].lower() in _WRAP_TAIL_WORDS
+
+
+def _numbered_line_wraps(head: str, lines: list[str], idx: int) -> bool:
+    """A numbered STEP wrapped across lines ("8. Mount the camera bracket to the"
+    / "pole using the supplied stainless") is not a numbered heading over a body:
+    it stops on a function word, or its next line opens lowercase."""
+    words = head.split()
+    if words and words[-1].lower() in _WRAP_TAIL_WORDS:
+        return True
+    for j in range(idx + 1, len(lines)):
+        nxt = lines[j].strip()
+        if nxt:
+            return nxt[:1].islower()
+    return False
 
 
 def _next_content_is_body(lines: list[str], idx: int) -> bool:
@@ -5267,7 +5387,8 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         # number and treat the title as a list item). Only when a body line,
         # not another numbered item, follows — so a numbered list stays a list.
         num_head = _numbered_heading(line)
-        if num_head and _next_content_is_body(lines, idx):
+        if num_head and _next_content_is_body(lines, idx) \
+                and not _numbered_line_wraps(num_head, lines, idx):
             flush_section()
             current_heading = num_head
             continue
@@ -5355,6 +5476,7 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
         # Product..." — four clauses cut in half, the tails mistyped).
         if bullet_buffer and not paragraph_lines and (
             stripped[:1].islower() or _is_wrapped_tail(lines, idx)
+            or _ends_mid_phrase(bullet_buffer[-1])
         ):
             bullet_buffer[-1] = f"{bullet_buffer[-1]} {stripped}".strip()
             continue
