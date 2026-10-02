@@ -3319,6 +3319,7 @@ def _inherit_message_stamps(atoms: list[Any], *, mail_files: set[str] | None = N
                 pass
 
     by_line: dict[tuple[str, int], dict] = {}
+    by_msg: dict[tuple[str, Any], dict] = {}
     own: dict[str, dict] = {}
     for a in atoms or []:
         v = getattr(a, "value", None)
@@ -3329,6 +3330,7 @@ def _inherit_message_stamps(atoms: list[Any], *, mail_files: set[str] | None = N
         ln = _line(a)
         if ln is not None:
             by_line.setdefault((aid, ln), et)
+        by_msg.setdefault((aid, et["message"].get("index")), et)
         if et["message"].get("index") == 0:
             own.setdefault(aid, et)
     n = 0
@@ -3342,6 +3344,11 @@ def _inherit_message_stamps(atoms: list[Any], *, mail_files: set[str] | None = N
         aid = str(getattr(a, "artifact_id", "") or "")
         ln = _line(a)
         src = by_line.get((aid, ln)) if ln is not None else own.get(aid)
+        if src is None:
+            # The locator still names the message (a site rebuilt by the
+            # site dedup keeps its source ref, not its value).
+            mi = _loc(a).get("message_index")
+            src = by_msg.get((aid, mi)) if mi is not None else None
         if src is None:
             continue
         v["email_thread"] = dict(src)

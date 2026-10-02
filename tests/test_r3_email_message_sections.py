@@ -242,3 +242,11 @@ def test_each_body_atom_names_its_message(tmp_path: Path):
     assert sw.source_refs[0].locator["message_label"] == "Stephanie Hechsel · Tuesday, July 7, 2026 3:12 PM"
     hdr = next(a for a in atoms if a.value.get("kind") == "email_header")
     assert hdr.source_refs[0].locator["message_label"].startswith("Trent Torrence · ")
+
+
+def test_an_atom_rebuilt_without_its_stamp_finds_its_message_by_locator():
+    stamp = {"thread_id": "t", "position_in_file": 1, "message": {"index": 2, "author": "Saga"}}
+    body = _atom("mail", "We need 12 APs", line=7, value={"email_thread": stamp})
+    site = _atom("mail", "Dallas, TX", loc={"line_start": 9, "message_index": 2})  # site dedup rebuilt it
+    _inherit_message_stamps([body, site], mail_files={"mail"})
+    assert site.value["email_thread"]["message"]["index"] == 2
