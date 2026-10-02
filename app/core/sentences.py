@@ -98,6 +98,33 @@ def count_sentences(text: str) -> int:
     return len(split_sentences(text))
 
 
+#: A list marker at the start of a line: a bullet glyph ("-", "*", "•", "◦",
+#: the Word Symbol-font bullet U+F0B7, en/em dash), Word's "o" sub-bullet, or
+#: an ordinal ("1.", "1)", "(a)", "a)"), always followed by whitespace and then
+#: text. "-5", "-based" and "1.5" have no space after the sign, so they never
+#: match; "o" counts only before a capital, a digit or a bracket.
+_LIST_MARKER_RE = re.compile(
+    r"^[^\S\n]*(?P<marker>[-*•◦▪●‣·–—]|o(?=[^\S\n]+[A-Z0-9(])|\(?\d{1,3}[.)]|\(?[A-Za-z]\))"
+    r"[^\S\n]+(?=\S)"
+)
+
+
+def strip_list_marker(text: str) -> tuple[str, str]:
+    """``(marker, item)`` for a list line, ``("", text)`` for anything else.
+
+    Live 000132: one HubSpot note typed its scope one "- " bullet per line and
+    another flattened the same list onto one " - " line. The flattened items
+    came out bare and the per-line ones kept "- ", so the same bullet had two
+    texts, two keys and two highlights. Every list path strips the marker the
+    same way, here; the item text is what follows it on the line.
+    """
+    s = str(text or "")
+    m = _LIST_MARKER_RE.match(s)
+    if not m:
+        return "", s
+    return m.group("marker"), s[m.end():]
+
+
 #: An inline list separator: a hyphen or en dash with a space on each side.
 #: "4-8 hours" and "on-call" have no spaces, so they never match.
 _INLINE_DASH_SEP = re.compile(r"\s+[-–]\s+")
