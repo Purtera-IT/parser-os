@@ -943,6 +943,22 @@ def _states_more_than_the_site(atom: Any, winner: Any) -> bool:
     return bool(extra & _STATEMENT_VERBS)
 
 
+def _covered_by_a_site(atom: Any, sites: list[Any]) -> bool:
+    """Does some site in ``sites`` state every ZIP, phone, email and
+    instruction ``atom`` does, so dropping ``atom`` loses nothing?"""
+    if not _fold.detail_only_the_loser_states(_NO_DETAIL, atom):
+        return True
+    return any(s is not atom and _fold.covers(s, atom) for s in sites)
+
+
+class _NoDetail:
+    raw_text = ""
+    value = None
+
+
+_NO_DETAIL = _NoDetail()
+
+
 def _demote_from_site(atom: Any) -> None:
     """Keep the sentence, drop its claim to be a site declaration."""
     try:
@@ -1007,6 +1023,13 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             kept_for_words: set[int] = set()
             for alias_atom in [a for a in physical if id(a) in name_only_ids]:
                 target = _pick_alias_merge_target(alias_atom, location_backed)
+                if target is None:
+                    # An alias of nothing has no survivor: it may go only
+                    # when a located site already states its details.
+                    if not _covered_by_a_site(alias_atom, location_backed):
+                        _demote_from_site(alias_atom)
+                        kept_for_words.add(id(alias_atom))
+                    continue
                 if target is not None:
                     _merge_physical_site_alias_metadata(target, alias_atom)
                     if _states_more_than_the_site(alias_atom, target) or _detail_lost(target, alias_atom):
@@ -1147,6 +1170,17 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         grouped.setdefault(canon, []).append(atom)
 
     grouped = _merge_grouped_by_location_buckets(grouped)
+
+    # A "ghost" (no id, or one no canonical site resolves) is dropped with no
+    # survivor, so it may go only when a site that stays states every ZIP,
+    # phone and email it does. Otherwise it is the only copy -- 010353's
+    # intake "Job site" line "<street>, <city>, <ST> <ZIP>", typed a site with
+    # no id, went while the one site kept was a ZIP-less sentence fragment --
+    # and it keeps its words, losing only its claim to be a site.
+    for atom in [a for a in physical if id(a) in dropped_ids]:
+        if not _covered_by_a_site(atom, [m for g in grouped.values() for m in g]):
+            _demote_from_site(atom)
+            dropped_ids.discard(id(atom))
 
     merged_physical: list[Any] = []
     consumed_ids: set[int] = set(dropped_ids)

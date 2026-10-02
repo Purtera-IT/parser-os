@@ -2503,10 +2503,28 @@ def _emit_part_numbers(text: str) -> set[str]:
             and first_segment.isalpha()
             and first_segment in _AIRPORT_CITY_PREFIXES):
             continue
+        # A highway route in a street address ("15733 US-224, Findlay, OH")
+        # has the SKU shape but is a road. Read as a part number it became
+        # the only entity key of 010353's job-site line.
+        if _ROUTE_DESIGNATOR_RE.match(sku) and _reads_as_street(text, match):
+            continue
         slug = _slugify(sku)
         if slug:
             keys.add(f"part_number:{slug}")
     return keys
+
+
+#: US / state / county / farm-to-market route designators: US-224, SR-9, CR-12.
+_ROUTE_DESIGNATOR_RE = re.compile(r"^(?:US|SR|CR|FM|RM|HWY|RTE|RT|SH|IH|STH|CTH|CSAH)-\d{1,4}[A-Z]?$")
+
+
+def _reads_as_street(text: str, match: "re.Match[str]") -> bool:
+    """Is the route at ``match`` the street of an address: a house number
+    before it, or a comma / compass direction / exit after it?"""
+    before = text[max(0, match.start() - 12):match.start()]
+    after = text[match.end():match.end() + 12]
+    return bool(re.search(r"\b\d{1,6}[A-Z]?\s+$", before)
+                or re.match(r"\s*(?:,|\b(?:N|S|E|W|North|South|East|West|Exit|Bypass)\b)", after))
 
 
 # 3-letter airport / city / region codes that appear in project IDs

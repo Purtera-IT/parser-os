@@ -678,41 +678,11 @@ def _iter_markdown_blocks(text: str):
             yield from flush_paragraph(i - 1)
             continue
 
-        if _is_record_line(stripped):
-            # A record line ("15733 US-224, Findlay, OH 45840", "Height
-            # requirement: 30 ft") is its own block, not a wrap of the prose
-            # around it. Joined, an intake form's address and the field under
-            # it became one paragraph and the address never stood as a line.
-            yield from flush_paragraph(i - 1)
-            yield MarkdownBlock(stripped, i, i, section_path(), "paragraph")
-            continue
-
         if not paragraph:
             paragraph_start = i
         paragraph.append(line)
 
     yield from flush_paragraph(len(lines))
-
-
-#: "Height requirement: 30 ft" / "**Request:** Install" -- a short field label
-#: (at most four words) opening a short line.
-_RECORD_LABEL_RE = re.compile(r"^\**[A-Z][\w()&/'-]*(?: [\w()&/'-]+){0,3}:\**\s+\S")
-
-
-def _is_record_line(line: str) -> bool:
-    """True when a line is a field of its own: a labelled value, or a whole
-    postal address (house number, street, city, state, ZIP)."""
-    if not line or len(line) > 90:
-        return False
-    if _RECORD_LABEL_RE.match(line):
-        return True
-    if not re.match(r"\d", line) or not re.search(r"\b\d{5}(?:-\d{4})?$", line):
-        return False
-    from app.core.address_parse import parse_us_address_line
-
-    parsed = parse_us_address_line(line)
-    return bool(parsed.city and parsed.state and parsed.zip and not parsed.aliases
-                and re.match(r"\d", parsed.street_address or ""))
 
 
 # ────────────────────────────── classifiers ────────────────────────────
