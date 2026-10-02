@@ -129,6 +129,60 @@ def _segment_inline_titles(band):
     return [s for s in segs if s]
 
 
+def _lone_label(r):
+    """The text of a row holding a single short non-numeric cell, else None."""
+    nz = [x for x in r if x != ""]
+    if len(nz) == 1 and not _is_num(nz[0]) and len(nz[0]) <= 70:
+        return nz[0]
+    return None
+
+
+def _rejoin_sections(segs):
+    """Put a table's phase/section rows back into the table they divide.
+
+    `_segment_inline_titles` cuts a band at every lone text row, which is
+    right for a stack of separate boxes but wrong for one table whose rows
+    are grouped under phase rows -- a Gantt's "Planning" / "Install" /
+    "Closeout". Cut there, the header row was left alone in its own
+    segment, each phase became a headerless table, and its first task row
+    was promoted to the header the rest were bound to.
+
+    A segment is rejoined to the headed table above it when it reads as
+    more rows of that table: every row has >=2 cells, all of them under
+    the header's columns, and at least one row has >=3. A stacked box of
+    label/value pairs (2 cells a row) never qualifies, so it still splits.
+    """
+    if len(segs) < 2:
+        return segs
+    base = segs[0]
+    hi = _best_header_idx(base)
+    if hi is None:
+        return segs
+    hdr = base[hi]
+    hcols = {c for c, x in enumerate(hdr) if x != ""}
+    if len(hcols) < 3:
+        return segs
+    out = [list(base)]
+    k = 1
+    while k < len(segs):
+        seg = segs[k]
+        if not seg or _lone_label(seg[0]) is None:
+            break
+        rows = [r for r in seg[1:] if _filled(r)]
+        if not rows:
+            break
+        fits = all(
+            _filled(r) >= 2
+            and {c for c, x in enumerate(r) if x != ""} <= hcols
+            for r in rows
+        ) and any(_filled(r) >= 3 for r in rows)
+        if not fits:
+            break
+        out[0].extend(seg)
+        k += 1
+    return out + segs[k:]
+
+
 def _header_score(r):
     cells = [x for x in r if x != ""]
     if len(cells) < 2:
@@ -137,18 +191,67 @@ def _header_score(r):
     return len(cells) + nonnum
 
 
+_DATE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
+    r"|\d{1,2}/\d{1,2}/\d{2,4})$"
+)
+
+
+def _is_date(s):
+    return bool(_DATE.match(s.strip())) if s else False
+
+
 def _looks_header(r):
+    """Does this row name the columns, rather than fill them?
+
+    A date is a VALUE in a data row and a column name only in a timeline's
+    week strip, so dates are judged apart from the other cells: a row of
+    dates with no number beside them is a week strip; otherwise they are left
+    out of the vote. A one-character cell (a Gantt "x" bar mark) names
+    nothing either. Without this, a Gantt task row -- "Cable pulls | 120 |
+    2025-03-10 | 2025-03-28" -- read as three labels out of four, became the
+    table's header, and every task under it was glued to it column by column
+    ("Cable pulls: Rack and stack | 120: 40 | ...").
+    """
     cells = [x for x in r if x != ""]
     if len(cells) < 2:
         return False
-    nonnum = sum(1 for x in cells if not _is_num(x) and len(x) <= 40)
-    return nonnum >= max(2, int(0.6 * len(cells)))
+    dates = [x for x in cells if _is_date(x)]
+    rest = [x for x in cells if not _is_date(x)]
+    labels = sum(1 for x in rest if not _is_num(x) and 2 <= len(x) <= 40)
+    if len(dates) >= 3 and not any(_is_num(x) for x in rest):
+        return True                         # a week / date strip
+    return labels >= max(2, int(0.6 * len(rest)))
+
+
+_YEAR = re.compile(r"^(19|20)\d{2}$")
+
+
+def _is_data_row_over_data(body, i, look=3):
+    """Is row ``i`` a data row, judged by the column under it?
+
+    A column's NAME is not a number. A candidate holding a plain number
+    (not a year, which does head columns) above a column that carries
+    numbers too is the first record of the table, not its header --
+    "Planning | Kickoff meeting | 4" over "Planning | Site survey | 16".
+    """
+    row = body[i]
+    below = [r for r in body[i + 1:i + 1 + look] if _filled(r)]
+    if len(below) < 2:
+        return False
+    for c, x in enumerate(row):
+        if x == "" or not _is_num(x) or _YEAR.match(x.strip()):
+            continue
+        under = sum(1 for r in below if c < len(r) and _is_num(r[c]))
+        if under >= 2:
+            return True
+    return False
 
 
 def _best_header_idx(body, scan=5):
     best_i, best_s = None, -1
     for i in range(min(scan, len(body))):
-        if _looks_header(body[i]):
+        if _looks_header(body[i]) and not _is_data_row_over_data(body, i):
             s = _header_score(body[i])
             if s > best_s:
                 best_i, best_s = i, s
@@ -330,7 +433,7 @@ def sheet_blocks(rows, styles=None):
             # Summary" + "Deal Kit Excluding Expenses" + "Gross Margin Deal Kit").
             # Without this they collapse into one block and the lower ones vanish.
             for band2 in _band_split(colblock):
-                for subband in _segment_inline_titles(band2):
+                for subband in _rejoin_sections(_segment_inline_titles(band2)):
                     title, hidx, kind = _classify_block(subband)
                     items.append([gi, a, b, subband, title, hidx, kind])
                     gi += 1
@@ -357,13 +460,30 @@ def sheet_blocks(rows, styles=None):
         if kind == "table":
             body = block[hidx:]
             header = [h if h != "" else f"col{j+1}" for j, h in enumerate(body[0])]
-            data = [r for r in body[1:] if _filled(r)]
+            filled = [r for r in body[1:] if _filled(r)]
+            # A lone label row inside a table of >=3 named columns, with a real
+            # row (>=2 cells) under it, is a phase / section heading for the
+            # rows beneath it (a Gantt's "Install" over its tasks) -- context
+            # for those rows, not a row of its own. A lone row with nothing
+            # under it stays a row, so nothing is dropped.
+            wide = sum(1 for h in body[0] if h != "") >= 3
+            data, sections, section = [], [], None
+            for i, r in enumerate(filled):
+                lab = _lone_label(r) if wide else None
+                nxt = filled[i + 1] if i + 1 < len(filled) else None
+                if lab is not None and nxt is not None and _filled(nxt) >= 2:
+                    section = lab
+                    continue
+                data.append(r)
+                sections.append(section)
             if data:
                 out.append({
                     "title": title, "kind": "table", "header": header, "rows": data,
                     # 1-based worksheet row for each data row, so an atom can cite
                     # where it actually came from and source replay can find it.
                     "row_indices": [getattr(r, "sheet_row", None) for r in data],
+                    # The phase/section heading each row sits under (None if none).
+                    "row_sections": sections,
                 })
         elif kind == "keyval":
             body = block if hidx is None else block[hidx:]
