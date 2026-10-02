@@ -64,6 +64,26 @@ _REFERENCE_NO_RE = re.compile(
 )
 
 
+def _row_texts_once(row) -> list[str]:
+    """A table row's cell texts by grid column, a merged cell's text ONCE.
+
+    python-docx's ``row.cells`` returns one entry per grid column, so a cell
+    spanning four columns (``w:gridSpan="4"``) comes back four times: the
+    010087 fee table's total row read "ESTIMATED TOTAL FEES | ESTIMATED TOTAL
+    FEES | ESTIMATED TOTAL FEES | ESTIMATED TOTAL FEES | $9,504.00". The span's
+    text stays in its first column and the columns it covers are blank, so the
+    list still lines up with the header (the amount stays under "ESTIMATED
+    FEES"). A vertical merge (``w:vMerge``) is left as python-docx reads it:
+    each row repeats the value it sits under, once, in its own column.
+    """
+    cells = list(row.cells)
+    out: list[str] = []
+    for i, c in enumerate(cells):
+        spanned = i > 0 and c._tc is cells[i - 1]._tc
+        out.append("" if spanned else (c.text or "").strip())
+    return out
+
+
 def _cells_by_column(header_cells, cell_texts) -> dict:
     """Map a table row's cells onto its column names WITHOUT losing any.
 
@@ -754,7 +774,8 @@ class DocxParser(BaseParser):
             # names the fields beneath it: it rides on their section path.
             _caption = header_cells[0] if _titled_block and is_caption_row(table_rows, 0) else None
             for row_idx, row_cells in enumerate(table.rows):
-                cell_texts = [c.text.strip() for c in row_cells.cells if c.text.strip()]
+                _once = _row_texts_once(row_cells)
+                cell_texts = [t for t in _once if t]
                 if not cell_texts:
                     continue
                 if row_idx > 0 and is_caption_row(table_rows, row_idx):
@@ -773,11 +794,14 @@ class DocxParser(BaseParser):
                 # dan@x.com", "V1 | 5/27/26") must NOT be skipped, or that row is
                 # silently lost. Real headers ("FULL NAME | JOB TITLE | EMAIL",
                 # "SOW VERSION | QUOTED BY | DATE") carry no values, so they skip.
+                # Judged per grid column: a title merged across the row is a
+                # header too ("The Seller" over "Signature: | ____").
+                _grid_texts = [t for t in table_rows[row_idx] if t]
                 if (
                     row_idx == 0
-                    and len(cell_texts) >= 2
-                    and all(len(c) <= 30 for c in cell_texts)
-                    and not any(re.search(r"[\d@$]", c) for c in cell_texts)
+                    and len(_grid_texts) >= 2
+                    and all(len(c) <= 30 for c in _grid_texts)
+                    and not any(re.search(r"[\d@$]", c) for c in _grid_texts)
                 ):
                     continue
                 # R1: a property row whose VALUE cells are all blank is an empty
@@ -847,7 +871,7 @@ class DocxParser(BaseParser):
                 # entity_extraction will classify all raw_table_row
                 # atoms in one pass using the column schema registry.
                 if active_header and row_idx > 0:
-                    _row_cells_full = [c.text.strip() for c in row_cells.cells]
+                    _row_cells_full = _once
                     _rtr_id = stable_id("atm", artifact_id, "raw_table_row", table_idx, row_idx)
                     _rtr_src = SourceRef(
                         id=stable_id("src", _rtr_id),
@@ -917,7 +941,12 @@ class DocxParser(BaseParser):
                         value={
                             "kind": "table_row",
                             "columns": active_header,
-                            "cells": _cells_by_column(active_header, cell_texts),
+                            "cells": (
+                                _cells_by_column(active_header, cell_texts)
+                                if _once == _pos_cells
+                                # A merged cell: each value under its own column.
+                                else {k: v for k, v in _cells_by_column(active_header, _once).items() if v}
+                            ),
                             **({"checkbox_cells_split": True} if (_cb_cells and _plain_cells) else {}),
                         },
                         entity_keys=[],
@@ -2949,7 +2978,7 @@ class DocxParser(BaseParser):
                 try:
                     for table in getattr(story, "tables", []) or []:
                         for row in table.rows:
-                            cells = [(c.text or "").strip() for c in row.cells]
+                            cells = _row_texts_once(row)
                             joined = " | ".join(c for c in cells if c)
                             if joined:
                                 texts.append(joined)
