@@ -190,7 +190,9 @@ Carl Painter
 """
 
 _VOLATILE = {"compile_id", "generated_at", "created_at", "output_signature", "duration_ms",
-             "stage_durations_ms", "trace", "telemetry", "coverage"}
+             "stage_durations_ms", "trace", "telemetry", "coverage",
+             # process-wide "last run" model counters, not envelope content
+             "deflect_counts"}
 
 
 def _envelope_without(env, drop_ids):
