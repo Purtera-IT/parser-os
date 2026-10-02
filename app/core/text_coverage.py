@@ -18,10 +18,12 @@ judgement rather than trust it.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
 from app.core.email_chrome import atom_chrome_reason, chrome_reason
+from app.core.textio import decode_html_entities
 
 #: Text we can read back and diff.
 TEXT_SUFFIXES = {".eml", ".txt", ".md", ".msg", ".html", ".htm"}
@@ -134,7 +136,14 @@ _MIN_CHARS = 12
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
+    # HubSpot escapes note bodies, some exports twice ("server &amp;amp;
+    # virtualization", 000132). The parser reads the decoded text, so the
+    # source line and every atom text are folded from it too: "amp amp" left
+    # in the line is a residue no atom can claim.
+    s = str(s or "")
+    if "&" in s:
+        s = decode_html_entities(s)
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
 def _html_to_text(html: str) -> str:
@@ -203,6 +212,49 @@ def _is_claimed(n: str, claimed: list[str], joined: str = "") -> bool:
             start = n.find(c, start + 1)
     residue = "".join(ch for ch, cv in zip(n, covered) if not cv and ch != " ")
     return len(residue) <= max(2, int(0.1 * len(n.replace(" ", ""))))
+
+
+#: Words a splitter drops between the clauses it cuts a sentence into ("X,
+#: Y and Z" -> X / Y / Z). Uncovered, they are glue, not an unread fact.
+_GLUE_WORDS = frozenset("a an and or but nor the also plus then as well so to".split())
+#: A run of words an atom shares with a line counts as that atom's piece of
+#: the line only when it is a phrase (three words, a fact's length): "of the"
+#: or "the customer" shared by chance is not a quote.
+_MIN_PIECE_WORDS = 3
+
+
+def _pieces_claimed(n: str, own: list[str]) -> bool:
+    """Is the long normalized line ``n`` carried by this document's atoms
+    taken together?
+
+    A long line the parser cut into clauses (000132's HubSpot note line 9,
+    "Maintenance and support...", eleven atoms) is not inside any one atom,
+    and the atoms are not always inside it either: a clause keeps its label
+    ("Maintenance and support: ...") or runs on into the next line. So each
+    atom contributes the runs of words it shares with the line, and the line
+    is claimed when those runs between them cover nearly all of it -- the
+    splitter's dropped "and"s aside. One short piece never claims a long
+    line: whatever it leaves uncovered is the residue.
+    """
+    words = n.split()
+    if len(n) < _MIN_CHARS or len(words) < 4:
+        return False
+    vocab = set(words)
+    covered = [False] * len(words)
+    for c in own:
+        cw = c.split()
+        if not cw or not (vocab & set(cw)):
+            continue
+        for blk in SequenceMatcher(None, words, cw, autojunk=False).get_matching_blocks():
+            if not blk.size:
+                continue
+            piece = words[blk.a:blk.a + blk.size]
+            whole = blk.size == len(cw) and len(c) >= 3
+            if whole or (blk.size >= _MIN_PIECE_WORDS and len(" ".join(piece)) >= _MIN_CHARS):
+                covered[blk.a:blk.a + blk.size] = [True] * blk.size
+    total = sum(len(w) for w in words)
+    residue = sum(len(w) for w, cv in zip(words, covered) if not cv and w not in _GLUE_WORDS)
+    return residue <= max(2, int(0.1 * total))
 
 
 def _read_text(path: Path) -> str:
@@ -355,7 +407,8 @@ def coverage_for_artifact(
     counted_here: set[str] = set()
     for i, page, line, quoted in source_lines:
         n = _norm(line)
-        if _is_claimed(n, claimed, joined) or _sentences_claimed(line, claimed, joined):
+        if (_is_claimed(n, claimed, joined) or _sentences_claimed(line, claimed, joined)
+                or _pieces_claimed(n, own)):
             n_claimed += 1
             continue
         hdr = _header_norm(line)
