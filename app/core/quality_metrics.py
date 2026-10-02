@@ -80,8 +80,14 @@ def compute_quality(
     # Regex-refused lines kept as chatter atoms are labeling data, not parse
     # yield: they never move a quality number.
     from app.core.admission_chatter import is_admission_chatter
+    from app.core.cross_doc_copies import is_cross_doc_copy
 
-    atoms = [a for a in (result.atoms or []) if not is_admission_chatter(a)]
+    # Nor do a later document's copies of lines an earlier one owns: the line
+    # is counted once, on its canonical atom.
+    atoms = [
+        a for a in (result.atoms or [])
+        if not is_admission_chatter(a) and not is_cross_doc_copy(a)
+    ]
     entities = list(result.entities or [])
     edges = list(result.edges or [])
     packets = list(result.packets or [])
