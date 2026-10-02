@@ -107,6 +107,48 @@ def _iter_block_items(parent):
                 yield from _iter_block_items(content)
 
 
+def _unwrap_content_controls(document) -> int:
+    """Lift the content of every ``w:sdt`` content control in the body into its
+    parent, in place, so python-docx's own views see it. Returns the count.
+
+    ``_iter_block_items`` already descends through BLOCK-level controls under
+    ``w:body``, but a content control can sit anywhere: inside a paragraph
+    (inline, around runs), inside a table cell (around the cell's paragraphs),
+    around a table row, or around a cell within a row. python-docx's
+    ``Paragraph.text`` reads only ``w:r`` / ``w:hyperlink``, ``Table.rows`` only
+    direct ``w:tr``, ``_Row.cells`` only direct ``w:tc`` and ``_Cell.text`` only
+    direct ``w:p`` -- so a SOW whose fields are content controls read as
+    "The contractor shall deliver  to the site." with the controlled words
+    gone, and controlled rows / cells vanished from its tables.
+
+    Replacing each control with its ``w:sdtContent`` children is lossless for
+    the text (properties carry no content) and keeps document order. A control
+    still showing its placeholder ("Click or tap here to enter text.") holds no
+    content anyone wrote, so it is lifted out empty. The document is
+    in-memory only; the file on disk is never touched.
+    """
+    from docx.oxml.ns import qn
+
+    SDT, SDTC, SDTPR, PLC = qn("w:sdt"), qn("w:sdtContent"), qn("w:sdtPr"), qn("w:showingPlcHdr")
+    body = document.element.body
+    # Reverse document order: an inner control is lifted before the outer
+    # one that contains it, so every control still has a parent when reached.
+    controls = list(body.iter(SDT))
+    for sdt in reversed(controls):
+        parent = sdt.getparent()
+        if parent is None:
+            continue
+        content = sdt.find(SDTC)
+        pr = sdt.find(SDTPR)
+        placeholder = pr is not None and pr.find(PLC) is not None
+        children = [] if content is None or placeholder else list(content)
+        idx = parent.index(sdt)
+        for offset, child in enumerate(children):
+            parent.insert(idx + offset, child)
+        parent.remove(sdt)
+    return len(controls)
+
+
 def _all_paragraphs(document):
     """All body paragraphs in reading order, including those inside content
     controls (drop-in replacement for ``document.paragraphs``)."""
@@ -273,6 +315,9 @@ class DocxParser(BaseParser):
                 path = rewritten
 
         document = Document(path)
+        # Content controls inside paragraphs, cells and rows are invisible to
+        # python-docx's views; lift their content in place before reading.
+        _unwrap_content_controls(document)
         atoms: list[EvidenceAtom] = []
         # Universal reading-order section map: every paragraph/table learns the
         # heading chain it lives under, so site/section attribution has real
