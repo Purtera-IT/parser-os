@@ -156,10 +156,65 @@ def _with_one_deal_summary(labels: list[dict[str, Any]]) -> list[dict[str, Any]]
     return out
 
 
+#: A labeler marks a row "do not learn from this" -- e.g. old hand-built Deal
+#: Kit lines no parser should be taught to produce or to drop. Rejecting them
+#: would teach the heads to drop real Deal Kit facts, so they are left out of
+#: training entirely. Labelers reached for whichever field was at hand; all of
+#: these mean the same thing.
+EXCLUDE_NOTE_PREFIX = "EXCLUDE_FROM_TRAINING"
+
+
+def is_excluded_from_training(row: dict[str, Any]) -> bool:
+    note = str(row.get("note") or "").lstrip().upper()
+    if note.startswith(EXCLUDE_NOTE_PREFIX):
+        return True
+    if str(row.get("weight_tier") or "").strip().lower() == "exclude":
+        return True
+    if str(row.get("consumer") or "").strip().lower() == "ignore":
+        return True
+    reads = row.get("reads_set")
+    if isinstance(reads, dict) and str(reads.get("exclude_from_training")).strip().lower() in ("true", "1", "yes"):
+        return True
+    return False
+
+
+def _without_excluded(doc: dict[str, Any], report: IngestReport) -> dict[str, Any]:
+    """The deal file minus excluded labels, and minus every link or judgment
+    that touches an excluded atom (by label key or atom id) or is itself
+    marked -- so an older link drawn to that atom need not be deleted."""
+    labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
+    gone = [lb for lb in labels if is_excluded_from_training(lb)]
+    if not gone and not any(
+        isinstance(x, dict) and is_excluded_from_training(x)
+        for x in (doc.get("links") or []) + (doc.get("judgments") or [])
+    ):
+        return doc
+    keys = {str(v) for lb in gone for v in (lb.get("label_key"), lb.get("atom_id")) if v}
+    for _ in gone:
+        report.skip("excluded from training")
+
+    def touches(x: dict[str, Any]) -> bool:
+        refs = (x.get("from_key"), x.get("from_atom_id"), x.get("to_key"), x.get("to_atom_id"),
+                x.get("target_key"), x.get("label_key"), x.get("atom_id"))
+        return is_excluded_from_training(x) or any(str(r) in keys for r in refs if r)
+
+    out = {**doc, "labels": [lb for lb in labels if lb not in gone]}
+    for field in ("links", "judgments"):
+        kept = []
+        for x in doc.get(field) or []:
+            if isinstance(x, dict) and touches(x):
+                report.skip(f"{field[:-1]} touches an atom excluded from training")
+                continue
+            kept.append(x)
+        out[field] = kept
+    return out
+
+
 def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> list[dict[str, Any]]:
     from app.core.training_log import assign_split
 
     report = report if report is not None else IngestReport()
+    doc = _without_excluded(doc, report)
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
     labels = _with_one_deal_summary(labels)

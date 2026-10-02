@@ -1937,6 +1937,15 @@ def _atom_cell_locator(atom: Any) -> str:
         loc = getattr(ref, "locator", None) or {}
         if not isinstance(loc, dict):
             continue
+        # A JSON form field is identified by its path. The text key strips
+        # digits and punctuation, so "equipment.items[0].quantity: 1",
+        # "...items[1]..." and "...items[2]..." -- three equipment lines whose
+        # only difference is the index -- all keyed as one, and on live 010353
+        # the solar unit's count was folded into the camera's. Same leaf typed
+        # twice still shares the pointer and still collapses.
+        if loc.get("kind") == "json_value" and loc.get("json_pointer") is not None:
+            art = getattr(atom, "artifact_id", "") or ""
+            return f"{art}:json:{loc['json_pointer']}"
         # A drawing has the same structure under different names: the layer is
         # the table and a baseline is the row -- which is exactly how
         # `rows_from_entities` buckets text entities, on (layer, round(y, 1)).
@@ -1969,6 +1978,17 @@ def _atom_cell_locator(atom: Any) -> str:
             continue
         art = getattr(atom, "artifact_id", "") or ""
         return f"{art}:{table}:r{row}"
+    return ""
+
+
+def _json_field_path(atom: Any) -> str:
+    """The JSON pointer of a flattened JSON leaf, or '' for anything else."""
+    for ref in (getattr(atom, "source_refs", None) or []):
+        loc = getattr(ref, "locator", None) or {}
+        if isinstance(loc, dict) and loc.get("kind") == "json_value":
+            ptr = loc.get("json_pointer")
+            if ptr is not None:
+                return str(ptr)
     return ""
 
 
@@ -2463,6 +2483,14 @@ def semantic_dedup_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | None
     # appears at onto the survivor.
     def _key_for_generic_pass(atom: Any) -> tuple | None:
         key = _value_key(atom)
+        if key is not None:
+            # Two JSON form fields are two facts whatever their values say:
+            # items[0].quantity and items[1].quantity keyed alike on their
+            # value alone. The field path keeps them apart; the same field
+            # quoted twice still shares it.
+            ptr = _json_field_path(atom)
+            if ptr:
+                key = (*key, f"json:{ptr}")
         if key is not None and _atom_type_value(atom) in _DEFERRED_IDENTITY_TYPES:
             # Collapse duplicates WITHIN one document now (they share a site
             # anyway); defer only the cross-document collapse until each

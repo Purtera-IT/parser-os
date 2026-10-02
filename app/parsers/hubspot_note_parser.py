@@ -109,6 +109,63 @@ def _automated_sender_lines_as_chatter(atoms: list[EvidenceAtom]) -> list[Eviden
     return out
 
 
+#: Author names a CRM gives a note no person wrote: the HubSpot system user,
+#: an integration or API user, a workflow. Whole-name match only.
+_SYSTEM_AUTHOR_RE = re.compile(
+    r"^(?:hubspot(?:\s+(?:system|integration|automation|api|workflows?|bot|app)(?:\s+user)?)?"
+    r"|(?:system|integration|automation|api|workflow|bot|service)(?:\s+(?:user|account))?"
+    r"|workflows?|zapier|make\.com)$",
+    re.I,
+)
+
+#: What the note export writes when HubSpot resolved NO owner for a note
+#: (platform-infra `mapHubspotNoteProperties`). Every API-created note carries
+#: it -- the OxBlue intake notification among them -- but so does a person's
+#: note whose owner did not resolve (000061's meeting recap). So on its own it
+#: decides nothing; with a notification-shaped body it is the system user.
+_UNRESOLVED_AUTHORS = frozenset({"hubspot user"})
+
+_FIELD_LINE_RE = re.compile(r"^[A-Za-z][\w /&().-]{0,40}:\s*\S")
+
+#: A field value that is an identifier or a date: one token carrying a digit
+#: ("OXR-1042", a UUID, "2026-08-14"). The fact an automated note may be the
+#: only place to state; its prose is a restatement.
+_ID_OR_DATE_VALUE_RE = re.compile(
+    r"^(?=[^\s]*\d)[A-Za-z0-9][A-Za-z0-9#/_.:+-]*$"
+)
+
+
+def _is_automated_note_author(author: str, author_email: str) -> bool:
+    """Is the author unmistakably a machine -- the CRM's system user, an
+    integration, a no-reply address -- rather than a person on the deal?"""
+    from app.core.automated_senders import is_automated_address, is_automated_sender
+
+    name = " ".join(str(author or "").split()).strip(" .")
+    if author_email and is_automated_address(author_email):
+        return True
+    if not name or name.lower() in _UNRESOLVED_AUTHORS:
+        return False
+    return bool(_SYSTEM_AUTHOR_RE.match(name)) or is_automated_sender("", name=name)
+
+
+def _is_notification_shaped(parsed: dict[str, Any]) -> bool:
+    """One short announcing line, then nothing but ``Label: value`` fields --
+    the shape a system writes, never a person's recap."""
+    lines = [str(ln).strip() for ln in (parsed.get("body_lines") or []) if str(ln).strip()]
+    if len(lines) < 3 or len(lines[0].split()) > 12 or _FIELD_LINE_RE.match(lines[0]):
+        return False
+    return all(_FIELD_LINE_RE.match(ln) for ln in lines[1:])
+
+
+def _note_is_automated(parsed: dict[str, Any]) -> bool:
+    author = str(parsed.get("author") or "")
+    email = str(parsed.get("author_email") or "")
+    if _is_automated_note_author(author, email):
+        return True
+    unresolved = " ".join(author.split()).lower() in _UNRESOLVED_AUTHORS and not email
+    return unresolved and _is_notification_shaped(parsed)
+
+
 def _place_unlined_atoms(atoms: list[EvidenceAtom], raw_lines: list[str], body_at: int) -> None:
     """Give every atom of a note the line it was read from.
 
@@ -621,6 +678,11 @@ class HubspotNoteParser(BaseParser):
             parsed=parsed,
         )
         atoms = _automated_sender_lines_as_chatter(atoms)
+        if _note_is_automated(parsed):
+            atoms = self._automated_note_as_chatter(
+                atoms, project_id=project_id, artifact_id=artifact_id,
+                filename=path.name, parsed=parsed,
+            )
         _place_unlined_atoms(atoms, [str(x) for x in (parsed.get("raw_lines") or [])],
                              int(parsed.get("body_line_index") or 0))
         structured_doc = self._build_structured_doc(filename=path.name, parsed=parsed)
@@ -629,6 +691,79 @@ class HubspotNoteParser(BaseParser):
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
         )
+
+    def _automated_note_as_chatter(
+        self,
+        atoms: list[EvidenceAtom],
+        *,
+        project_id: str,
+        artifact_id: str,
+        filename: str,
+        parsed: dict[str, Any],
+    ) -> list[EvidenceAtom]:
+        """A note an automated author wrote is a notification, not evidence.
+
+        Live 010353: "OxBlue customer portal intake received.", posted by the
+        HubSpot system user when the portal created the deal, became eight
+        deal_metadata atoms restating the intake that the intake JSON already
+        states. The labelling checklist is explicit: an automated sender is
+        always a reject and never a stakeholder. So the note becomes ONE
+        chatter atom flagged ``automated_sender`` and rejected. Two things
+        survive beside it: the note's own header metadata (non_deal, flagged
+        too), and a field whose value is an identifier or a date -- an intake
+        id may be stated nowhere else.
+        """
+        from app.core.admission_chatter import mark_admission_chatter
+
+        author = str(parsed.get("author") or parsed.get("author_email") or "").strip()
+        kept: list[EvidenceAtom] = []
+        for atom in atoms:
+            val = atom.value if isinstance(atom.value, dict) else {}
+            kind = str(val.get("kind") or "")
+            at = getattr(atom.atom_type, "value", atom.atom_type)
+            keep = kind == "hubspot_note_meta" or (
+                kind == "note_field"
+                and at != "stakeholder"
+                and bool(_ID_OR_DATE_VALUE_RE.match(
+                    str(atom.raw_text or "").split(":", 1)[-1].strip()
+                ))
+            )
+            if not keep:
+                continue
+            val = dict(val)
+            val["automated_sender"] = author
+            atom.value = val
+            if "automated_sender" not in (atom.review_flags or []):
+                atom.review_flags = [*(atom.review_flags or []), "automated_sender"]
+            kept.append(atom)
+
+        title = str(parsed.get("title") or "").strip()
+        body = "\n".join(str(ln) for ln in (parsed.get("body_lines") or []) if str(ln).strip())
+        body = body or str(parsed.get("body") or "").strip()
+        text = body
+        if title and not _is_placeholder_note_title(title) and not body.lower().startswith(title.lower()):
+            text = f"{title}\n{body}"
+        if not text:
+            return kept
+        chatter = self._mint_atom(
+            project_id=project_id, artifact_id=artifact_id, filename=filename,
+            atom_type=AtomType.deal_metadata, text=text,
+            value={
+                "kind": "automated_note", "non_deal": True,
+                "hubspot_note_id": str(parsed.get("note_id") or ""),
+                "author": str(parsed.get("author") or ""),
+                "author_email": str(parsed.get("author_email") or ""),
+                "date": str(parsed.get("date_raw") or ""),
+                "title": title, "source": "hubspot_note",
+                "automated_sender": author,
+            },
+            source_ref=self._base_source_ref(artifact_id, filename),
+            confidence=0.5,
+            review_flags=["automated_sender"],
+        )
+        mark_admission_chatter(chatter, "automated_sender")
+        chatter.review_status = ReviewStatus.rejected
+        return [chatter, *kept]
 
     def _base_source_ref(self, artifact_id: str, filename: str) -> SourceRef:
         return SourceRef(

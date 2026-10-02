@@ -152,10 +152,18 @@ def apply_site_attributes(rows: list[dict], atoms: Iterable[Any]) -> tuple[int, 
 
 
 
-#: How many dropped atoms to carry. The judgment builder caps a head at 150,
-#: so a few hundred is more than a person will work through, and the envelope
-#: does not need to carry thousands of them to be useful.
-_SUPPRESSED_MAX = int(os.environ.get("SOWSMITH_SUPPRESSED_MAX", "300"))
+#: How many dropped atoms to carry PER DOCUMENT. This was a global cap of 300,
+#: taken off the front of the ledger: on live 010353 the ledger held 477 drops
+#: and the 177 cut were whatever stages ran last -- 26 dropped SOW lines never
+#: reached the labelling view, and nothing said so. A per-document cap keeps
+#: the payload bounded on a pathological file without letting one noisy
+#: document (a 4,000-line mail thread) starve every other one of its drops.
+#: What the cap cuts is counted in the envelope's `suppressed_truncated`.
+_SUPPRESSED_MAX = int(
+    os.environ.get("SOWSMITH_SUPPRESSED_MAX_PER_DOC")
+    or os.environ.get("SOWSMITH_SUPPRESSED_MAX")
+    or "300"
+)
 
 
 #: Cap on the rule decisions an envelope carries, same reasoning as
@@ -274,6 +282,41 @@ def _suppressed_total(compile_result: "CompileResult") -> int:
     return len(list(getattr(compile_result, "suppressed_atoms", None) or []))
 
 
+def _suppressed_doc_key(atom: Any) -> str:
+    return str(getattr(atom, "artifact_id", "") or "")
+
+
+def _suppressed_capped(dropped: list) -> tuple[list, dict[str, int]]:
+    """The ledger with at most `_SUPPRESSED_MAX` drops per document, in ledger
+    order, plus how many each document had cut. Never a global cut."""
+    kept: list = []
+    seen: dict[str, int] = {}
+    cut: dict[str, int] = {}
+    for atom in dropped:
+        doc = _suppressed_doc_key(atom)
+        n = seen.get(doc, 0)
+        if n >= _SUPPRESSED_MAX:
+            cut[doc] = cut.get(doc, 0) + 1
+            continue
+        seen[doc] = n + 1
+        kept.append(atom)
+    return kept, cut
+
+
+def _suppressed_truncated(compile_result: "CompileResult") -> dict[str, Any]:
+    """What the per-document cap cut from the ledger: a total and the count per
+    artifact. Zero when nothing was cut or the ledger is not carried."""
+    if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
+        return {"count": 0, "per_document_cap": _SUPPRESSED_MAX, "by_artifact": {}}
+    dropped = list(getattr(compile_result, "suppressed_atoms", None) or [])
+    _kept, cut = _suppressed_capped(dropped)
+    return {
+        "count": sum(cut.values()),
+        "per_document_cap": _SUPPRESSED_MAX,
+        "by_artifact": cut,
+    }
+
+
 def _rule_decisions_total() -> int:
     """How many rule decisions this compile made, before the cap.
 
@@ -326,7 +369,7 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
         survivors.setdefault(norm(atom), atom)
 
     out: list[dict] = []
-    for atom in dropped[:_SUPPRESSED_MAX]:
+    for atom in _suppressed_capped(dropped)[0]:
         stage = ""
         for flag in (getattr(atom, "review_flags", None) or []):
             if str(flag).startswith("suppressed:"):
@@ -801,6 +844,8 @@ def build_orbitbrief_envelope(
         # every content-loss audit reads, and an audit run against a truncated
         # ledger under-reports loss while looking thorough.
         "suppressed_total": _suppressed_total(compile_result),
+        # What the per-document cap cut, so a short ledger is never silent.
+        "suppressed_truncated": _suppressed_truncated(compile_result),
         "rule_decisions": _rule_decisions_for_review(),
         "rule_decisions_total": _rule_decisions_total(),
         "coverage": {
