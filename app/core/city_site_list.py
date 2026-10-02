@@ -93,6 +93,63 @@ def find_city_site_lists(lines: Iterable[str]) -> list[CitySite]:
     return out
 
 
+#: "Supported Locations: Delphos, OH, Hudson, WI" -- a short lead, a colon,
+#: then the list on the same line.
+_INLINE_LEAD_RE = re.compile(r"^\s*([^:\n]{1,60}?)\s*:\s*(.+?)\s*$", re.S)
+
+
+def _is_lead(head: str) -> bool:
+    head = head.strip()
+    return bool(head) and len(head) <= 60 and len(head.split()) <= 5 and _city_state(head) is None
+
+
+def split_city_list_paragraph(text: str) -> tuple[str, list[CitySite]] | None:
+    """A paragraph that is a lead and a list of "City, ST" places.
+
+    Two shapes, both from a SOW (live 000132 v1)::
+
+        Supported Locations: Delphos, OH, Hudson, WI, ..., Wilmington, DE
+
+        Supported Locations:
+        Delphos, OH
+        Hudson, WI
+
+    Returns the lead as written (colon kept) and one ``CitySite`` per place,
+    each labelled with the lead, or None when the paragraph is anything else:
+    every token after the lead must pair into a city and a state, and there
+    must be at least ``MIN_RUN`` of them.
+    """
+    raw = str(text or "")
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lines) > 1:
+        head, rest = lines[0], lines[1:]
+        if not head.endswith(":") or not _is_lead(head.rstrip(":")) or len(rest) < MIN_RUN:
+            return None
+        found = find_city_site_lists(rest)
+        if len(found) != len(rest):
+            return None
+        label = head.rstrip(":").strip()
+        return head, [CitySite(i, cs.text, cs.city, cs.state, label) for i, cs in enumerate(found)]
+    m = _INLINE_LEAD_RE.match(" ".join(raw.split()))
+    if not m or not _is_lead(m.group(1)):
+        return None
+    label, body = m.group(1).strip(), m.group(2).rstrip(";.").strip()
+    toks = [t.strip() for t in re.split(r"\s*[,;]\s*", body)]
+    if toks and toks[-1].lower().startswith("and "):
+        toks[-1] = toks[-1][4:].strip()
+    if len(toks) < 2 * MIN_RUN or len(toks) % 2:
+        return None
+    sites: list[CitySite] = []
+    for i in range(0, len(toks), 2):
+        city_tok = re.sub(r"^and\s+", "", toks[i], flags=re.I)
+        written = f"{city_tok}, {toks[i + 1]}"
+        cs = _city_state(written)
+        if cs is None:
+            return None
+        sites.append(CitySite(i // 2, written, cs[0], cs[1], label))
+    return f"{label}:", sites
+
+
 def city_site_value(site: CitySite, **extra) -> dict:
     """The ``physical_site`` value for one list line."""
     name = f"{site.city}, {site.state}"
@@ -117,4 +174,4 @@ def city_site_value(site: CitySite, **extra) -> dict:
     return val
 
 
-__all__ = ["CitySite", "find_city_site_lists", "city_site_value", "MIN_RUN"]
+__all__ = ["CitySite", "find_city_site_lists", "split_city_list_paragraph", "city_site_value", "MIN_RUN"]
