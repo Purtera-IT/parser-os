@@ -183,7 +183,14 @@ def roll_up_table_rows(atoms: list[Any]) -> tuple[list[Any], dict[str, int]]:
         # Reconstruct the cell matrix for the parser's money detectors.
         row_values = [views[id(a)][3] for a in members]
         money_cols = _money_columns([headers, *row_values])
-        is_commercial = bool(money_cols)
+        # A money HEADER with no money VALUE under it is a form / blank
+        # response table, not a price list: it has nothing to roll up, so it
+        # gets the non-commercial (bulk) threshold. Before, a 53-row form
+        # under a "Unit Price" header folded at 40 into ": 53 table rows
+        # (rolled up)" and every row left the labeller's view.
+        is_commercial = bool(money_cols) and any(
+            _row_money_values(rv, money_cols) for rv in row_values
+        )
 
         # Fold decision: commercial tables fold at commercial_min; other
         # tables only at the much larger bulk_min (protects real per-row

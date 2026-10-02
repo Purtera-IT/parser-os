@@ -386,6 +386,95 @@ def _row_money_values(row: list[Any], money_cols: set[int]) -> list[float]:
     return vals
 
 
+_RATE_UNIT_RE = re.compile(
+    r"^(?:per\s+[a-z][a-z \-]{0,20}|/\s*(?:hr|hour|day|week|month|site|device|unit)"
+    r"|hourly|daily|weekly|monthly|each|ea|flat(?:\s+fee)?|lump\s+sum)$",
+    re.I,
+)
+_RATE_ROLE_HEADER_RE = re.compile(
+    r"\b(?:role|title|position|skill|level|labou?r|resource|service|description|name|item)\b",
+    re.I,
+)
+_RATE_UNIT_HEADER_RE = re.compile(r"\b(?:unit|uom|per|billing\s+type|basis)\b", re.I)
+_RATE_MINIMUM_RE = re.compile(r"(\d+(?:\.\d+)?)\s*-?\s*(?:hr|hour)s?\.?\s*min", re.I)
+
+
+def _rate_row_fields(
+    headers: list[str],
+    cells: list[str],
+    row: list[Any],
+    money_cols: set[int],
+    *,
+    country_col: int | None,
+) -> dict[str, Any]:
+    """Structured fields of ONE rate-card / catalog row: who (role), what it
+    costs (rate + unit), and where (country) when the sheet is per-country.
+
+    Two universal shapes (no customer names, no sheet-name keywords):
+      * a per-country matrix -- one row per country, each money column a
+        ``<role> <N> hr. min`` rate -- yields ``rates=[{role, minimum, rate}]``;
+      * a role list -- ``Code | Role | Unit | Rate`` -- yields one
+        ``role`` / ``unit`` / ``rate``.
+    """
+    def _h(ci: int) -> str:
+        return headers[ci] if ci < len(headers) and headers[ci] else ""
+
+    fields: dict[str, Any] = {}
+    if country_col is not None and country_col < len(cells) and cells[country_col]:
+        fields["country"] = cells[country_col]
+
+    rates: list[dict[str, Any]] = []
+    for ci in sorted(money_cols):
+        if ci == country_col or ci >= len(row) or not _is_money_number(row[ci]):
+            continue
+        entry: dict[str, Any] = {"rate": float(row[ci])}
+        hdr = _h(ci)
+        if hdr:
+            entry["column"] = hdr
+            m = _RATE_MINIMUM_RE.search(hdr)
+            if m:
+                entry["minimum_hours"] = float(m.group(1))
+                role = hdr[: m.start()].strip(" -,.")
+                if role:
+                    entry["role"] = role
+        rates.append(entry)
+
+    unit = ""
+    for ci, c in enumerate(cells):
+        if not c or ci == country_col:
+            continue
+        if _RATE_UNIT_RE.match(c) or (_RATE_UNIT_HEADER_RE.search(_h(ci)) and len(c) <= 30
+                                      and not _is_bare_numeric(c)):
+            unit = c
+            break
+    if unit:
+        fields["unit"] = unit
+
+    if "country" not in fields:
+        role = ""
+        for ci, c in enumerate(cells):
+            if c and ci not in money_cols and c != unit and _RATE_ROLE_HEADER_RE.search(_h(ci)) \
+                    and not _is_bare_numeric(c):
+                role = c
+                break
+        if not role:
+            labels = [
+                c for ci, c in enumerate(cells)
+                if c and ci not in money_cols and c != unit and not _is_bare_numeric(c)
+            ]
+            role = max(labels, key=len) if labels else ""
+        if role:
+            fields["role"] = role[:200]
+
+    if len(rates) == 1:
+        fields["rate"] = rates[0]["rate"]
+        if "role" not in fields and rates[0].get("role"):
+            fields["role"] = rates[0]["role"]
+    if rates:
+        fields["rates"] = rates
+    return fields
+
+
 def _is_side_label_value(cells: list[str]) -> bool:
     """A short ``label -> number`` fact sitting in a side calc block beside the
     main priced table (e.g. a travel breakdown's "Team | 4", "Weeks per tech |
@@ -2552,6 +2641,12 @@ class XlsxParser(BaseParser):
     # This cap bounds envelope size for pathological sheets while staying
     # far above any realistic rate table.
     _COMMERCIAL_FOLD_CAP = 5000
+    # Rate cards / catalogs ALSO emit one atom per priced row (beside the
+    # rollup summary) so a person can label each rate. Bounded per sheet so a
+    # 30,000-line price book cannot flood the envelope; rows past the cap stay
+    # in the summary's ``value.rows`` only. A Deal Kit's rate sheets are a few
+    # hundred rows -- far below this.
+    _COMMERCIAL_ROW_ATOM_CAP = int(os.environ.get("SOWSMITH_COMMERCIAL_ROW_ATOM_CAP", "2000") or 2000)
 
     def _emit_financial_summary_rows(
         self,
@@ -3098,6 +3193,21 @@ class XlsxParser(BaseParser):
         # has that column empty, so it falls back to its plain form instead of
         # being mis-mapped onto the main table's headers.
         _first_hdr_col = next((i for i, h in enumerate(_headers) if h), None)
+        # Per-country rate matrix: the column whose header says Country (or,
+        # on a content-classified country table, the label column).
+        _country_col = next(
+            (i for i, h in enumerate(_headers) if h and re.match(r"^country\b", h.strip(), re.I)),
+            None,
+        )
+        if _country_col is None and getattr(classification, "reason", "") == "country_rate_card_table":
+            _country_col = 0
+        # Rate-card rows are service lines (role + rate + unit); catalog rows
+        # keep the parser's pricing type. ``rate_card`` is label-only (v2) in
+        # the type registry, so the prod enum cannot carry it yet.
+        row_atom_type = (
+            AtomType.service_line if role is SheetRole.RATE_CARD else atom_type
+        )
+        row_atoms_emitted = 0
 
         # Which rows carry money — used to tell a CATEGORY-DIVIDER row (a label
         # that HEADS a run of priced data rows, e.g. a "CAT6…" banner over the
@@ -3176,9 +3286,19 @@ class XlsxParser(BaseParser):
                 c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
             ).strip()[:300]
 
+            row_value: dict[str, Any] = {
+                "label": label,
+                "money_keys": money_keys,
+                "sheet_role": role.value,
+                "sheet_name": sheet_name,
+                "cells": [c for c in cells if c],
+            }
+            this_type = atom_type
             if collapse_to_summary:
-                # Fold into the rollup — summary-only emission for rate cards /
-                # catalogs. No per-row atoms (the flood that broke #010063).
+                # Fold into the rollup (full matrix for drill-down / the
+                # pricing_rollup packet) AND emit the row as its own atom: a
+                # rate a person cannot see cannot be labelled. The rollup
+                # alone hid ~850 rate rows on one deal behind a count line.
                 folded_rows.append(
                     {
                         "row": row_idx + 1,
@@ -3188,10 +3308,25 @@ class XlsxParser(BaseParser):
                         "cells": [c for c in cells if c],
                     }
                 )
-                continue
+                if row_atoms_emitted >= self._COMMERCIAL_ROW_ATOM_CAP:
+                    continue
+                row_atoms_emitted += 1
+                this_type = row_atom_type
+                row_value.update(
+                    _rate_row_fields(
+                        _headers, cells, row, set(money_cols), country_col=_country_col,
+                    )
+                )
+                row_value["kind"] = (
+                    "rate_card_row" if role is SheetRole.RATE_CARD else "catalog_row"
+                )
+                # The sheet name leads the text: COST and SELL sheets often
+                # carry identical rows, and are different facts.
+                if sheet_name:
+                    row_text = f"{sheet_name} | {row_text}"[:4000]
 
             atom_id = stable_id(
-                "atm", artifact_id, atom_type.value, sheet_name, row_idx
+                "atm", artifact_id, this_type.value, sheet_name, row_idx
             )
             src = SourceRef(
                 id=stable_id("src", atom_id),
@@ -3215,16 +3350,10 @@ class XlsxParser(BaseParser):
                     id=atom_id,
                     project_id=project_id,
                     artifact_id=artifact_id,
-                    atom_type=atom_type,
+                    atom_type=this_type,
                     raw_text=row_text,
                     normalized_text=row_text.lower(),
-                    value={
-                        "label": label,
-                        "money_keys": money_keys,
-                        "sheet_role": role.value,
-                        "sheet_name": sheet_name,
-                        "cells": [c for c in cells if c],
-                    },
+                    value=row_value,
                     entity_keys=money_keys,
                     source_refs=[src],
                     receipts=[],
@@ -3266,8 +3395,8 @@ class XlsxParser(BaseParser):
             values=all_values,
             folded_rows=folded_rows,
         )
-        # Summary-only: one atom per reference sheet, full matrix in value.rows.
-        return [summary]
+        # Summary first (full matrix in value.rows), then one atom per row.
+        return [summary, *atoms]
 
     def _commercial_summary_atom(
         self,

@@ -2125,13 +2125,28 @@ def compile_project(
         # commitment. Speech only — two similar lines in a document are two facts.
         from app.core.semantic_dedup import collapse_repeated_speech
 
+        # Snapshot BEFORE the speech collapse: its drops used to happen ahead
+        # of the ledger snapshot below, so a collapsed utterance left no atom
+        # AND no suppression entry -- nothing a labeller could find.
+        before_sem_atoms = list(atoms)
         _before_speech = len(atoms)
-        atoms = collapse_repeated_speech(atoms)
+        # Only CLAIMS collapse. An untyped utterance (raw_utterance) asserts
+        # nothing, so a repeat of it cannot double-count anything; folding it
+        # into a longer line by word overlap took real turns off the page
+        # ("the only region that won't have a stack coordinator" vanished
+        # into an earlier, longer turn that shared its words).
+        _untyped = {
+            id(a) for a in atoms
+            if str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", ""))) == "raw_utterance"
+        }
+        _speech_kept = {
+            id(a) for a in collapse_repeated_speech([a for a in atoms if id(a) not in _untyped])
+        }
+        atoms = [a for a in atoms if id(a) in _untyped or id(a) in _speech_kept]
         if len(atoms) != _before_speech:
             warnings.append(
                 f"INFO: collapsed {_before_speech - len(atoms)} repeated spoken claim(s)"
             )
-        before_sem_atoms = list(atoms)
         before_sem = len(atoms)
         try:
             from app.core.semantic_dedup import (

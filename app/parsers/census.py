@@ -716,7 +716,9 @@ def census(path: str | Path, *, artifact_id: str = "") -> ContentCensus:
     """
     path = Path(path)
     artifact_id = artifact_id or path.stem
-    reader = _READERS.get(path.suffix.lower(), _census_text)
+    from app.core.filetype import content_suffix
+
+    reader = _READERS.get(content_suffix(path), _census_text)
     try:
         return reader(path, artifact_id)
     except Exception:

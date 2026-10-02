@@ -361,7 +361,9 @@ def _read_text_preview(path: Path, max_bytes: int = 6 * 1024) -> str:
     office-doc deals route on their actual scope content. Never raises —
     routing must not fail on a single unreadable artifact.
     """
-    suffix = path.suffix.lower()
+    from app.core.filetype import content_suffix
+
+    suffix = content_suffix(path)
     if suffix in {".txt", ".md", ".csv"}:
         try:
             return read_text(path)[:max_bytes]
