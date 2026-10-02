@@ -840,11 +840,31 @@ def dedup_quoted_chatter(
             authored_chrome.add((_chrome_scope(atom), k))
     seen_chrome: set[tuple[str, str]] = set()
 
+    # The messages the deal holds as their OWN email, by thread, sender and
+    # minute (as dedup_quoted_history keys its quoted headers). A quoted
+    # message's "On <date> <name> wrote:" line opens a quote of one of them;
+    # that email already heads its own section, so the line is repetition.
+    # Live 010003: each reply kept a one-line section of its quoted history.
+    originals: set[tuple[str, str, str]] = set()
+    for atom in context:
+        v = atom.value if isinstance(atom.value, dict) else {}
+        et = v.get("email_thread")
+        if v.get("kind") != "email_header" or not isinstance(et, dict) or not et.get("thread_id"):
+            continue
+        addr = _address(str(v.get("from") or ""))
+        for st in _minute_stamps_around(str(v.get("date") or "")) if addr else ():
+            originals.add((str(et["thread_id"]), addr, st))
+
     seen: set[tuple[str, str, str, str]] = set()
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
     for atom in chatter:
         v = atom.value if isinstance(atom.value, dict) else {}
+        if v.get("quoted") and str(v.get("reason") or "") == "quote_attribution":
+            ident = _message_identity(atom)
+            if ident is not None and any((ident[0], ident[1], st) in originals for st in ident[2]):
+                dropped.append(atom)
+                continue
         if v.get("quoted") and str(v.get("reason") or "") in _SIGNATURE_CHROME_REASONS:
             k = _key(atom)
             ck = (_chrome_scope(atom), k)
@@ -871,4 +891,63 @@ def dedup_quoted_chatter(
     return kept, dropped
 
 
-__all__ = ["thread_emails", "dedup_quoted_history", "dedup_quoted_chatter"]
+#: Reject reasons that mark a line as an author's sign-off block: the same
+#: words under every message that author writes.
+_REPEATING_CHROME_REASONS = frozenset({"signature", "identity_only", "link_only", "footer"})
+
+
+def mark_repeated_signature_copies(chatter: list[EvidenceAtom]) -> int:
+    """An author's signature in a later email is a copy of the first one.
+
+    A signature is a reject with its reason; the same block under each of an
+    author's emails is the same line again (live 010003: Patrick Kelly's six
+    signature lines under every email he sent, twelve rejects to label). The
+    earliest email keeps the line; each later one keeps its own atom, flagged
+    ``cross_doc_copy`` and pointing at the first through ``duplicate_of``, as
+    every other line two documents share. Authored lines only -- quoted
+    copies are dedup_quoted_chatter's. Returns how many were marked.
+    """
+    from app.core.cross_doc_copies import COPY_FLAG
+
+    def _when(atom: EvidenceAtom) -> tuple[int, float, int]:
+        et = (atom.value or {}).get("email_thread") if isinstance(atom.value, dict) else None
+        et = et if isinstance(et, dict) else {}
+        try:
+            from email.utils import parsedate_to_datetime
+
+            t = parsedate_to_datetime(str(et.get("date") or "")).timestamp()
+            return (0, t, 0)
+        except Exception:
+            ti = et.get("thread_index")
+            return (1, float(ti) if isinstance(ti, (int, float)) else 1e12, 0)
+
+    first: dict[tuple[str, str], EvidenceAtom] = {}
+    marked = 0
+    for i, atom in sorted(enumerate(chatter), key=lambda p: (_when(p[1]), p[0])):
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if v.get("quoted") or str(v.get("reason") or "") not in _REPEATING_CHROME_REASONS:
+            continue
+        et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+        msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+        who = _address(str(msg.get("author") or v.get("author") or et.get("sender") or ""))
+        k = _norm_key(atom)
+        if not who or not k:
+            continue
+        canon = first.get((who, k))
+        if canon is None:
+            first[(who, k)] = atom
+            continue
+        if str(canon.artifact_id) == str(atom.artifact_id):
+            continue
+        flags = list(atom.review_flags or [])
+        if COPY_FLAG in flags:
+            continue
+        atom.review_flags = flags + [COPY_FLAG]
+        v["duplicate_of"] = {"atom_id": str(canon.id), "artifact_id": str(canon.artifact_id),
+                             "stage": "repeated_signature"}
+        atom.value = v
+        marked += 1
+    return marked
+
+
+__all__ = ["thread_emails", "dedup_quoted_history", "dedup_quoted_chatter", "mark_repeated_signature_copies"]

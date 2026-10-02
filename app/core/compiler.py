@@ -1269,6 +1269,14 @@ def compile_project(
                 )
         except Exception as exc:
             warnings.append(f"WARNING: quoted_chatter_dedup failed: {type(exc).__name__}: {exc}")
+        try:
+            from app.core.email_threading import mark_repeated_signature_copies
+
+            _sig_copies = mark_repeated_signature_copies(held_chatter)
+            if _sig_copies:
+                warnings.append(f"INFO: {_sig_copies} repeated signature line(s) marked as copies of their first email")
+        except Exception as exc:
+            warnings.append(f"WARNING: repeated_signature_copies failed: {type(exc).__name__}: {exc}")
 
     # A HubSpot note that is a pasted email is the same message, not a second
     # source -- and the fold has to happen HERE, before the first pass that
