@@ -50,7 +50,7 @@ class _Seg:
     """A run of spans on one text line with no wide horizontal gap inside."""
 
     __slots__ = ("x0", "y0", "x1", "y1", "text", "size", "bold", "color", "link", "fill", "boxes",
-                 "fill_x", "ruled")
+                 "fill_x", "ruled", "text_x0")
 
     def __init__(self, x0, y0, x1, y1, text, size, bold, color):
         self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
@@ -66,6 +66,9 @@ class _Seg:
         self.fill_x: tuple[float, float] | None = None
         #: A vertical rule runs past this segment on each side (a ruled box).
         self.ruled = False
+        #: Where the words start: right of a list marker set apart from its
+        #: text (the hanging indent a wrapped item's next line returns to).
+        self.text_x0 = x0
 
     @property
     def cy(self) -> float:
@@ -162,7 +165,10 @@ def _segments(page: Any, exclude: Iterable[Any]) -> list[_Seg]:
                                       or "bold" in str(s.get("font") or "").lower()
                                       or str(s.get("font") or "").lower().endswith(("-bd", "bo"))))
                 color = _dominant(inked, lambda s: int(s.get("color") or 0))
-                out.append(_Seg(x0, y0, x1, y1, " ".join(text.split()), size, bold, color))
+                seg = _Seg(x0, y0, x1, y1, " ".join(text.split()), size, bold, color)
+                if len(inked) > 1 and _ENUMERATOR.match(str(inked[0].get("text") or "").strip()):
+                    seg.text_x0 = float(inked[1]["bbox"][0])
+                out.append(seg)
     return _attach_enumerators(out)
 
 
@@ -222,6 +228,7 @@ def _attach_enumerators(segs: list[_Seg]) -> list[_Seg]:
             continue
         t = by_id[best[1]]
         t.text = f"{s.text.strip()} {t.text}"
+        t.text_x0 = t.x0
         t.x0 = min(t.x0, s.x0)
         t.y0 = min(t.y0, s.y0)
         t.y1 = max(t.y1, s.y1)
@@ -960,6 +967,36 @@ def heading_lines(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> set
         large = body > 0 and min(s.size for s in row) >= 1.15 * body
         if bold or large:
             out.add(" ".join(words))
+    return out
+
+
+def line_lefts(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> dict[str, tuple[float, float]]:
+    """Where each one-segment line of the page starts: ``(x0, text_x0)`` keyed
+    by the line's text with all whitespace removed. ``x0`` is the line's left
+    edge (its list marker, when it has one) and ``text_x0`` where its words
+    begin. The reader's text has no indentation, so the prose splitter looks
+    lines up here to nest a sub-bullet under the item it is indented beneath,
+    and to keep a wrapped item's next line (set at the item's hanging indent)
+    with its item. A text that occurs twice at different indents is left out."""
+    try:
+        segs = _segments(page, exclude_bboxes or [])
+    except Exception:
+        return {}
+    out: dict[str, tuple[float, float]] = {}
+    clash: set[str] = set()
+    for row in _rows(segs):
+        if len(row) != 1:
+            continue
+        s = row[0]
+        key = re.sub(r"\s+", "", s.text)
+        if not key:
+            continue
+        val = (round(s.x0, 1), round(s.text_x0, 1))
+        if key in out and out[key] != val:
+            clash.add(key)
+        out[key] = val
+    for key in clash:
+        out.pop(key, None)
     return out
 
 
