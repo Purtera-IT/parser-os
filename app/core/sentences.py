@@ -80,6 +80,31 @@ def _get_segmenter():
     return seg
 
 
+#: A piece that ends on an ellipsis -- three or more dots, or "\u2026" -- with
+#: no whitespace after it.
+_GLUED_ELLIPSIS_END_RE = re.compile(r"(?:\.{3,}|\u2026)$")
+
+
+def _rejoin_glued_ellipsis(pieces: list[str]) -> list[str]:
+    """Undo a split at an ellipsis that runs straight into the next word.
+
+    pysbd ends a sentence at "...." even when a letter follows with no space:
+    live 000132's "NFL is back tonight....preseason but I'll take it." came
+    back as "NFL is back tonight...." and "preseason but I'll take it.", two
+    atoms for one trailing-off thought. With ``clean=False`` a piece keeps the
+    whitespace that followed it, so a piece ending exactly on the dots was
+    glued to the next word in the source; rejoin those. "He left... Then came
+    back." keeps its boundary: there the piece ends in a space.
+    """
+    out: list[str] = []
+    for piece in pieces:
+        if out and _GLUED_ELLIPSIS_END_RE.search(out[-1]) and piece[:1].isalpha():
+            out[-1] = out[-1] + piece
+        else:
+            out.append(piece)
+    return out
+
+
 def split_sentences(text: str) -> list[str]:
     """Split prose into sentences, keeping abbreviations intact."""
     if not text or not text.strip():
@@ -88,7 +113,7 @@ def split_sentences(text: str) -> list[str]:
     if seg is None:  # pragma: no cover - dependency-free fallback
         return [s for s in _NAIVE_SPLIT.split(text) if s.strip()]
     try:
-        return [s for s in seg.segment(text) if s and s.strip()]
+        return _rejoin_glued_ellipsis([s for s in seg.segment(text) if s and s.strip()])
     except Exception:  # pragma: no cover - never fail a parse over segmentation
         return [s for s in _NAIVE_SPLIT.split(text) if s.strip()]
 
