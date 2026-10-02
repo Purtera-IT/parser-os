@@ -102,13 +102,22 @@ SCOPE_IMPACTING_TYPES = {
 # later and from the same speaker, by "I guess the locations, because it should
 # be doable." One atom per cue then gives the brief a dangling half sentence
 # ("Do you do per.", "And we'll do.") and a second atom that has lost its
-# subject. The cut is visible in the words: nobody ends a sentence on "the",
-# "per", "my" or "gonna". So consecutive cues from the SAME speaker are joined
-# when the earlier one stops on such a word (or, for a short cue, when the next
-# cue opens by repeating its last content word: "We'll do about three." /
-# "Three to four a day."), and the next cue starts soon enough to be the same
-# breath. Two complete sentences ("Is that doable?" / "Is that too tight?") are
-# never joined, nor are two different speakers.
+# subject. Whether two consecutive cues of the SAME speaker are one sentence is
+# read from how complete each side is:
+#   - the earlier cue stops on a word no sentence ends on ("the", "per", "my",
+#     "gonna"), or a short cue's last content word opens the next one;
+#   - the later cue continues the earlier one: it opens on a preposition ("...
+#     until next week." / "On what's actually at the sites.") or is a phrase
+#     with no verb that picks up a word of the earlier one ("... a lot of those
+#     for start of the year." / "A lot of site directors.");
+#   - a verbless head runs into another fragment ("Like texts." / "Do you do per.");
+#   - a short cut cue that nothing of the speaker's continues ("Is it per
+#     school?" / "How do you kind of." and the other speaker answers) closes
+#     the sentence before it.
+# Another speaker's back-channel ("Okay.") between the two halves is skipped:
+# it stays its own atom, in order. Two complete sentences ("Is that doable?" /
+# "Is that too tight?"), a restart ("How are we gonna." / "How are we
+# thinking?") and two different speakers are never joined.
 # ---------------------------------------------------------------------------
 
 #: Words a sentence does not end on. A cue that stops on one was cut.
@@ -139,9 +148,68 @@ _ECHO_MAX_WORDS = 8
 _JOIN_MAX_CUES = 6
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 
+#: Prepositions that open a phrase continuing the sentence before it.
+_CONT_PREPOSITIONS = frozenset({
+    "on", "at", "with", "for", "from", "about", "to", "in", "into", "of", "by",
+    "around", "until", "including", "regarding", "without", "within", "across",
+    "through", "during", "per",
+})
+#: Set phrases that stand alone although they open on a preposition.
+_CONT_IDIOMS = frozenset({
+    ("of", "course"), ("for", "sure"), ("for", "example"), ("in", "fact"),
+    ("by", "the"), ("at", "all"), ("in", "general"),
+})
+_CONT_MAX_WORDS = 7
+#: A phrase holding a subject pronoun is a clause of its own.
+_SUBJECTS = frozenset({"i", "we", "you", "they", "he", "she"})
+#: Lexical verbs common in calls. With the auxiliaries, a subject pronoun, a
+#: past form or a verb contraction they mark a cue as a clause; a cue with
+#: none of them ("The other sites as well.") is a verbless phrase.
+_VERBS = frozenset({
+    "get", "gets", "got", "go", "goes", "went", "make", "makes", "made", "know",
+    "knows", "knew", "think", "thinks", "thought", "need", "needs", "want",
+    "wants", "see", "sees", "saw", "look", "looks", "sound", "sounds", "work",
+    "works", "take", "takes", "took", "send", "sends", "sent", "say", "says",
+    "said", "come", "comes", "came", "mean", "means", "meant", "give", "gives",
+    "gave", "put", "puts", "let", "lets", "start", "starts", "guess", "believe",
+    "figure", "feel", "feels", "seem", "seems", "tell", "tells", "told", "ask",
+    "asks", "call", "try", "use", "keep", "change", "add", "schedule", "plan",
+    "show", "shows", "find", "run", "runs", "pick", "set", "bring", "check",
+    "understand", "agree", "thank", "thanks", "hope", "please",
+})
+_CONTRACTED_SUBJECTS = frozenset({"it", "that", "there", "what", "here", "he", "she", "who", "where", "how", "let"})
+#: "(I) think there's a max." drops its subject and comments on the sentence before.
+_DROPPED_SUBJECT_VERBS = frozenset({"think", "guess", "believe", "suppose", "figure"})
+_CLAUSE_OPENERS = frozenset({"there's", "that", "that's", "it's", "it", "so", "there", "this"}) | _SUBJECTS
+#: A cut cue ending on an auxiliary is an elliptical answer ("I believe we
+#: do.") unless it is a subordinate clause with no main one ("Just so I can.").
+_SUBORDINATORS = frozenset({"so", "because", "if", "when", "unless", "until", "since"})
+_TRAILING_OPENERS = frozenset({"just", "like", "as", "which", "that", "where", "and", "or"})
+_TAIL_MAX_WORDS = 6
+_HEAD_MAX_WORDS = 4
+#: Back-channel words. A cue of only these from another speaker is an
+#: interjection the speaker talks over ("Next Friday ..." / "Okay." / "At the latest.").
+_BACKCHANNEL = frozenset({
+    "okay", "ok", "yeah", "yes", "yep", "yup", "right", "mhm", "mm", "hmm", "uh",
+    "huh", "um", "sure", "cool", "great", "got", "it", "gotcha", "alright", "nice",
+    "perfect", "oh", "i", "see", "true", "exactly", "correct", "good", "thanks",
+    "thank", "you", "awesome", "wow",
+})
+_INTERJECTION_MAX_WORDS = 3
+#: The earlier cue's length in words stands in for its duration (cues carry
+#: only a start). Evidence on one side allows a short pause after it, on both
+#: sides a long one; nothing joins past the ceiling.
+_PAUSE_ONE_SIDE = 4.0
+_PAUSE_BOTH_SIDES = 10.0
+_PAUSE_CEILING = 15.0
+
 
 def _cue_words(text: str) -> list[str]:
     return _WORD_RE.findall(text)
+
+
+def _lower_words(text: str) -> list[str]:
+    return [w.lower() for w in _cue_words(text)]
 
 
 def _cue_ends_cut(text: str) -> bool:
@@ -180,6 +248,81 @@ def _cue_echoes(text: str, nxt: str) -> bool:
     return last.lower() == first.lower()
 
 
+def _is_backchannel(text: str) -> bool:
+    words = _lower_words(text)
+    return 0 < len(words) <= _INTERJECTION_MAX_WORDS and all(w in _BACKCHANNEL for w in words)
+
+
+def _has_clause(words: list[str]) -> bool:
+    for w in words:
+        if w in _SUBJECTS or w in _CUT_AUXILIARIES or w in _VERBS or w.endswith("n't"):
+            return True
+        if len(w) > 4 and w.endswith("ed"):  # "changed", "finalized"
+            return True
+        if "'" in w:
+            stem, _, suffix = w.partition("'")
+            if suffix in ("re", "ll", "ve", "d", "m") or (suffix == "s" and stem in _CONTRACTED_SUBJECTS):
+                return True
+    return False
+
+
+def _is_verbless(text: str) -> bool:
+    """A phrase with no verb ("The other sites as well.", "Like texts.")."""
+    words = _lower_words(text)
+    return bool(words) and not _has_clause(words) and not _is_backchannel(text)
+
+
+def _continues(text: str) -> bool:
+    """The cue carries on the sentence before it rather than starting one."""
+    words = _lower_words(text)
+    if not words or _is_backchannel(text):
+        return False
+    if (
+        words[0] in _CONT_PREPOSITIONS
+        and len(words) <= _CONT_MAX_WORDS
+        and tuple(words[:2]) not in _CONT_IDIOMS
+        and not any(w in _SUBJECTS for w in words)
+    ):
+        # "In the meantime, review it." fronts a new clause; "With numbers,
+        # just so they know." trails the sentence before.
+        _, comma, after = text.partition(",")
+        rest = _lower_words(after)
+        return not comma or not rest or rest[0] in _SUBORDINATORS or rest[0] in _TRAILING_OPENERS
+    return len(words) > 1 and words[0] in _DROPPED_SUBJECT_VERBS and words[1] in _CLAUSE_OPENERS
+
+
+def _content_stems(text: str) -> set[str]:
+    return {w.rstrip("s") for w in _lower_words(text) if len(w) >= 3 and w not in _ECHO_STOP and "'" not in w}
+
+
+def _restates(text: str, nxt: str) -> bool:
+    """A verbless cue that picks up a content word of the sentence before it
+    elaborates on it ("... a lot of those for the year." / "A lot of site
+    directors."); one that shares none ("Talk soon.", "Next item.") is its own."""
+    return bool(_content_stems(text) & _content_stems(nxt))
+
+
+def _is_fragment(text: str) -> bool:
+    """The cue is not a sentence on its own."""
+    return _cue_ends_cut(text) or _is_verbless(text) or _continues(text)
+
+
+def _is_restart(text: str, nxt: str) -> bool:
+    """The next cue starts the same sentence over ("How are we gonna." / "How are we thinking?")."""
+    a, b = _lower_words(text), _lower_words(nxt)
+    return len(a) >= 3 and len(b) >= 2 and a[:2] == b[:2]
+
+
+def _is_open_tail(text: str) -> bool:
+    """A short cut cue that may close the sentence before it."""
+    words = _lower_words(text)
+    if not _cue_ends_cut(text) or len(words) > _TAIL_MAX_WORDS:
+        return False
+    if words[-1] in _CUT_AUXILIARIES and words[-1] not in ("gonna", "wanna", "gotta"):
+        return any(w in _SUBORDINATORS for w in words[:2])
+    return True
+
+
 def _as_seconds(value: Any) -> float | None:
     try:
         return float(value)
@@ -187,15 +330,35 @@ def _as_seconds(value: Any) -> float | None:
         return None
 
 
-def _same_breath(prev: dict[str, Any], nxt: dict[str, Any]) -> bool:
-    """The next cue starts about when the earlier one, spoken at a normal
-    rate, would finish. Cues carry only a start, so the earlier cue's length
-    in words stands in for its duration. Missing times leave the words to
-    decide."""
+def _within_pause(prev: dict[str, Any], nxt: dict[str, Any], *, both_sides: bool) -> bool:
+    """The next cue starts soon enough after the earlier one to continue it.
+    Missing times leave the words to decide."""
     a, b = _as_seconds(prev.get("timestamp_start")), _as_seconds(nxt.get("timestamp_start"))
     if a is None or b is None:
         return True
-    return 0 <= b - a <= 1.5 + 0.6 * len(_cue_words(str(prev.get("text", ""))))
+    spoken = 1.5 + 0.6 * len(_cue_words(str(prev.get("text", ""))))
+    pause = _PAUSE_BOTH_SIDES if both_sides else _PAUSE_ONE_SIDE
+    return 0 <= b - a <= min(spoken + pause, _PAUSE_CEILING)
+
+
+def _continues_cue(prev: dict[str, Any], seg: dict[str, Any], after: dict[str, Any] | None) -> bool:
+    """``seg`` belongs to the sentence ``prev`` (same speaker) is part of.
+    ``after`` is the speaker's next cue reachable from ``seg``, if any."""
+    p, s = str(prev.get("text", "")), str(seg.get("text", ""))
+    if _is_backchannel(p) or _is_backchannel(s):
+        return False
+    prev_open = _cue_ends_cut(p) and not _is_restart(p, s)
+    if prev_open or _cue_echoes(p, s):
+        return _within_pause(prev, seg, both_sides=_is_fragment(s))
+    if _continues(s) or (_is_verbless(s) and not p.rstrip().endswith("?") and _restates(p, s)):
+        return _within_pause(prev, seg, both_sides=_is_verbless(p))
+    if _is_verbless(p) and len(_cue_words(p)) <= _HEAD_MAX_WORDS and _is_fragment(s):
+        return _within_pause(prev, seg, both_sides=True)
+    if _is_open_tail(s):
+        a = str(after.get("text", "")) if after is not None else ""
+        if after is None or _is_restart(s, a) or not _within_pause(seg, after, both_sides=True):
+            return _within_pause(prev, seg, both_sides=False)
+    return False
 
 
 def join_cut_fragments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -204,34 +367,58 @@ def join_cut_fragments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     The joined segment keeps the first cue's ``utterance_index``, start time
     and ``line_start``; ``line_end`` reaches the last cue, and
     ``joined_utterance_indexes`` lists every cue it holds. Each cue's text is
-    kept verbatim, separated by a space.
+    kept verbatim, separated by a space. An interjection another speaker made
+    between two joined cues stays its own segment, after the joined one, and
+    its index is not in ``joined_utterance_indexes``.
     """
+
+    def speaker_next(i: int) -> dict[str, Any] | None:
+        """The speaker's next cue after ``segments[i]``, past one interjection."""
+        speaker = segments[i].get("speaker")
+        for j in (i + 1, i + 2):
+            if j >= len(segments):
+                return None
+            if segments[j].get("speaker") == speaker:
+                return segments[j]
+            if j == i + 2 or not _is_backchannel(str(segments[j].get("text", ""))):
+                return None
+        return None
+
     out: list[dict[str, Any]] = []
-    tail: dict[str, Any] | None = None  # the last cue folded into out[-1]
-    for seg in segments:
-        cur = out[-1] if out else None
+    tails: list[dict[str, Any]] = []  # the last cue folded into each out[k]
+    for i, seg in enumerate(segments):
         speaker = seg.get("speaker")
-        if (
-            cur is not None
-            and tail is not None
-            and speaker
-            and speaker == cur.get("speaker")
-            and cur.get("section") == seg.get("section")
-            and len(cur.get("joined_utterance_indexes") or [cur["utterance_index"]]) < _JOIN_MAX_CUES
-            and _same_breath(tail, seg)
-            and (_cue_ends_cut(str(tail.get("text", ""))) or _cue_echoes(str(tail.get("text", "")), str(seg.get("text", ""))))
-        ):
-            joined = list(cur.get("joined_utterance_indexes") or [cur["utterance_index"]])
-            joined.append(seg["utterance_index"])
-            cur["joined_utterance_indexes"] = joined
-            cur["text"] = f"{cur['text']} {seg['text']}"
-            cur["line_end"] = seg["line_end"]
-            if seg.get("timestamp_end") is not None:
-                cur["timestamp_end"] = seg["timestamp_end"]
-            tail = seg
-            continue
+        target = None
+        if speaker and out:
+            if out[-1].get("speaker") == speaker:
+                target = len(out) - 1
+            elif (
+                len(out) >= 2
+                and out[-2].get("speaker") == speaker
+                and "joined_utterance_indexes" not in out[-1]
+                and _is_backchannel(str(out[-1].get("text", "")))
+                # after a question the other speaker's word is an answer
+                and not str(tails[-2].get("text", "")).rstrip().endswith("?")
+            ):
+                target = len(out) - 2
+        if target is not None:
+            cur = out[target]
+            if (
+                cur.get("section") == seg.get("section")
+                and len(cur.get("joined_utterance_indexes") or [cur["utterance_index"]]) < _JOIN_MAX_CUES
+                and _continues_cue(tails[target], seg, speaker_next(i))
+            ):
+                joined = list(cur.get("joined_utterance_indexes") or [cur["utterance_index"]])
+                joined.append(seg["utterance_index"])
+                cur["joined_utterance_indexes"] = joined
+                cur["text"] = f"{cur['text']} {seg['text']}"
+                cur["line_end"] = seg["line_end"]
+                if seg.get("timestamp_end") is not None:
+                    cur["timestamp_end"] = seg["timestamp_end"]
+                tails[target] = seg
+                continue
         out.append(dict(seg))
-        tail = seg
+        tails.append(seg)
     return out
 
 
