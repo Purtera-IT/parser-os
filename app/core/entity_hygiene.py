@@ -106,10 +106,16 @@ def _drop_job_titles(keys: list[str]) -> list[str]:
         from app.core.entity_extraction import _names_a_job_not_a_person
     except Exception:
         return keys
+    from app.core.place_names import is_place_name
+
     out = []
     for k in keys:
         if isinstance(k, str) and k.startswith("stakeholder:"):
             if _names_a_job_not_a_person(k[len("stakeholder:"):]):
+                continue
+            # A country / state / region is a rate dimension or a place,
+            # never a party (010246: stakeholder:united_states).
+            if is_place_name(k[len("stakeholder:"):]):
                 continue
         out.append(k)
     return out

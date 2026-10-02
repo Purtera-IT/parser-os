@@ -4171,6 +4171,13 @@ def extract_keys(
     keys = {k for k in keys
             if not (isinstance(k, str) and k.startswith("stakeholder:")
                     and _names_a_job_not_a_person(k[len("stakeholder:"):]))}
+    # A COUNTRY IS NOT A PARTY either: "Owner: United States" on a Gantt row,
+    # "Lead Technician, Hong Kong" on a rate sheet (010246).
+    from app.core.place_names import is_place_name
+
+    keys = {k for k in keys
+            if not (isinstance(k, str) and k.startswith("stakeholder:")
+                    and is_place_name(k[len("stakeholder:"):]))}
     return sorted(keys)
 
 
@@ -4920,8 +4927,13 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
             if len(_toks) >= 2:
                 _covered_slugs.add(_slug(" ".join(_toks[:2])))
 
+    from app.core.place_names import is_place_name as _is_place_name
+
     def _put_stakeholder(slug: str, source_atom: Any, value: dict[str, Any], raw: str, confidence: float) -> None:
         if not slug or slug in {"mock_vendor", "vendor", "customer", "project_manager"}:
+            return
+        # A country, state or region is never a person ("Owner: United States").
+        if _is_place_name(slug) or _is_place_name(str(value.get("name") or "")):
             return
         parts = slug.split("_")
         if value.get("kind") != "team_contact" and len(parts) < 2:
