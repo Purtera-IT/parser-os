@@ -107,6 +107,7 @@ def _shape_fields(rows: list[dict | None]) -> dict[str, str]:
     for what shape cannot decide (a site's NAME looks like ordinary text), and
     never to overrule a value that typed itself.
     """
+    from app.core.address_parse import split_city_state_strict
     from app.parsers.value_shapes import classify_value, street_addresses
 
     flat: list[str] = []
@@ -135,7 +136,63 @@ def _shape_fields(rows: list[dict | None]) -> dict[str, str]:
             out.setdefault("zip", cell.strip())
         elif kind == "state":
             out.setdefault("state", cell.strip())
+        elif not kind and "address" in out:
+            # A form whose street, "City, ST" and ZIP are separate fields
+            # ("15733 US-224 | Findlay, OH | 45840"): the middle field types
+            # itself as a place only by this exact shape, and is read only
+            # once the block already holds a street.
+            m = _CITY_STATE_ZIP_CELL.match(cell.strip())
+            city, state = split_city_state_strict(m.group(1) if m else cell)
+            if city and state:
+                out.setdefault("city", city)
+                out.setdefault("state", state)
+                if m and m.group(2):
+                    out.setdefault("zip", m.group(2))
     return out
+
+
+#: "Findlay, OH" or "Findlay, OH 45840" -- a city/state(/ZIP) field of its own.
+_CITY_STATE_ZIP_CELL = re.compile(r"^(.+?,\s*[A-Za-z][A-Za-z ]+?)(?:\s+(\d{5}(?:-\d{4})?))?$")
+
+
+def full_address(site: dict[str, str]) -> str:
+    """The one-line postal address the block states: street, city, state, ZIP.
+
+    A form often carries the ZIP (or city / state) in a field of its own, so
+    no single cell holds the whole address; this joins the pieces once, in
+    postal order, without repeating a piece the street line already holds.
+    """
+    addr = _norm(site.get("address", ""))
+    city, state, zipc = (_norm(site.get(k, "")) for k in ("city", "state", "zip"))
+    line = addr
+    if city and not re.search(rf"\b{re.escape(city)}\b", line, re.I):
+        line = f"{line}, {city}" if line else city
+    if state and not re.search(rf"\b{re.escape(state)}\b", line, re.I):
+        line = f"{line}, {state}" if line else state
+    if zipc and zipc not in line:
+        line = f"{line} {zipc}" if line else zipc
+    return line.strip(" ,")
+
+
+def _complete_location(site: dict[str, str]) -> None:
+    """Split the street line from any city/state it carries, fill the missing
+    location fields, and record the joined ``full_address``. A field the
+    block stated is never overwritten."""
+    if not site.get("address"):
+        return
+    from app.core.address_parse import enrich_location_fields
+
+    line = full_address(site)
+    loc = enrich_location_fields(street_address=line, city=site.get("city"),
+                                 state=site.get("state"), zip_code=site.get("zip"))
+    street = _norm(loc.get("street_address") or "")
+    # Only ever trim the street line down to its own street part.
+    if street and street != site["address"] and _norm(site["address"]).startswith(street):
+        site["address"] = street
+    for k in ("city", "state", "zip"):
+        if loc.get(k) and not site.get(k):
+            site[k] = loc[k]
+    site["full_address"] = full_address(site)
 
 
 def site_from_property_rows(rows: list[dict | None]) -> dict[str, str] | None:
@@ -157,10 +214,12 @@ def site_from_property_rows(rows: list[dict | None]) -> dict[str, str] | None:
     # finds it where vocabulary cannot.
     if not merged.get("name"):
         structural = site_name_from_block(rows)
-        if structural:
+        # The address cell itself is not the site's name.
+        if structural and _norm(structural) != _norm(merged.get("address", "")):
             merged["name"] = structural
     if not merged.get("name") and not merged.get("address"):
         return None
+    _complete_location(merged)
     return merged
 
 
@@ -253,6 +312,44 @@ def site_key(site: dict[str, str]) -> str:
 def site_display_name(site: dict[str, str]) -> str:
     """A human label for the site, preferring what the document called it."""
     name = _norm(site.get("name", "")).replace("\n", " ")
-    addr = " ".join(x for x in (site.get("address", ""), site.get("city", ""),
-                                site.get("state", ""), site.get("zip", "")) if x)
-    return name or addr or "site"
+    return name or full_address(site) or "site"
+
+
+#: A field label followed by a colon, anywhere in a line: "Site Address: …
+#: Zip: 45840". Longest label first so "site address" wins over "address".
+_LABEL_COLON_RE = re.compile(
+    r"(?<![\w/#])("
+    + "|".join(re.escape(n) for n in sorted({n for ns in _LABELS.values() for n in ns}, key=len, reverse=True)
+               if not n.endswith("?"))
+    + r")\s*:\s*",
+    re.I,
+)
+
+
+def property_cells_from_line(text: str) -> dict[str, str]:
+    """A form line (a paragraph, or one cell) as label, value, label, value… cells.
+
+    Word forms put each field in its own legacy form field / content control /
+    tab stop, so one paragraph reads "Site Address: 15733 US-224, Findlay, OH
+    <tab> Zip: 45840". Splitting on tabs and on each "Label:" turns that into
+    the same positional cells a property-block table row has, so the ZIP in
+    its own field joins the street it belongs to.
+    """
+    cells: list[str] = []
+    for seg in re.split(r"\t+|\s{3,}", str(text or "")):
+        seg = seg.strip()
+        if not seg:
+            continue
+        matches = list(_LABEL_COLON_RE.finditer(seg))
+        if not matches:
+            cells.append(seg)
+            continue
+        if seg[: matches[0].start()].strip():
+            cells.append(seg[: matches[0].start()].strip())
+        for i, m in enumerate(matches):
+            cells.append(m.group(1))
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(seg)
+            val = seg[m.end():end].strip(" ,;|")
+            if val:
+                cells.append(val)
+    return {str(i): c for i, c in enumerate(cells)}
