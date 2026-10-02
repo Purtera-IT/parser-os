@@ -123,7 +123,16 @@
         "scope_facet",
         "option_selected",
         "start_date",
-        "billing_type"
+        "billing_type",
+        "display_size",
+        "equipment_qty",
+        "requirement_kind",
+        "material",
+        "scope_side",
+        "site",
+        "location",
+        "rate",
+        "rate_for"
       ],
       "relations": [],
       "judgments": [
@@ -148,7 +157,9 @@
         "sow_section",
         "derivation",
         "unreliable_part",
-        "points_at_artifact"
+        "points_at_artifact",
+        "placeholder",
+        "derivation_note"
       ],
       "relations": [],
       "judgments": [],
@@ -249,7 +260,8 @@
         "fires_task",
         "blocked_on",
         "urgency",
-        "expansion"
+        "expansion",
+        "lead_time"
       ],
       "relations": [
         "blocked_by",
@@ -296,7 +308,8 @@
       ],
       "reads": [
         "sow_coverage",
-        "train_for"
+        "train_for",
+        "sow_coverage_note"
       ],
       "relations": [],
       "judgments": [],
@@ -329,7 +342,8 @@
       "columns": [],
       "reads": [
         "deal_summary",
-        "opens_block"
+        "opens_block",
+        "list_header"
       ],
       "relations": [
         "governs"
@@ -372,7 +386,11 @@
       "reads": [
         "hours_stated",
         "crew_size",
-        "removes_cost"
+        "removes_cost",
+        "tech_level",
+        "tech_coverage",
+        "labor_hours",
+        "cadence"
       ],
       "relations": [],
       "judgments": [
@@ -392,7 +410,8 @@
       "reads": [
         "stage_std",
         "deal_stage",
-        "sow_available_at_stage"
+        "sow_available_at_stage",
+        "sow_available_note"
       ],
       "relations": [],
       "judgments": [],
@@ -412,7 +431,9 @@
       "reads": [
         "location_tier",
         "address_level",
-        "remote_miles"
+        "remote_miles",
+        "region",
+        "address_note"
       ],
       "relations": [],
       "judgments": [],
@@ -511,7 +532,8 @@
       "reads": [
         "scope_category",
         "delivery_field",
-        "source_of_truth"
+        "source_of_truth",
+        "scope_category_note"
       ],
       "relations": [],
       "judgments": [
@@ -583,7 +605,11 @@
       "reads": [
         "co_company",
         "deal_outcome",
-        "universal_type"
+        "universal_type",
+        "governs_count",
+        "exclude_from_training",
+        "skip",
+        "derived_from_count"
       ],
       "relations": [],
       "judgments": [],

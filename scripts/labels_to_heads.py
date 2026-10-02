@@ -66,6 +66,13 @@ def label_sql(old: dict[str, Any], new: dict[str, Any]) -> str | None:
         sets.append(f"reads_set = {_q(json.dumps(_reads_json(new), ensure_ascii=False, sort_keys=True))}::jsonb")
     if new.get("note") != old.get("note"):
         sets.append(f"note = {_q(new.get('note'))}")
+    for col in ("supplier", "entity_keys"):
+        if new.get(col) != old.get(col) and col not in old:
+            raise ValueError(f"{old.get('label_key')}: the snapshot has no {col} column; export it with every column")
+    if new.get("supplier") != old.get("supplier"):
+        sets.append(f"supplier = {_q(new.get('supplier'))}")
+    if (new.get("entity_keys") or []) != (old.get("entity_keys") or []):
+        sets.append(f"entity_keys = {_q(json.dumps(new.get('entity_keys') or [], ensure_ascii=False))}::jsonb")
     if not sets:
         return None
     old_reads = _reads_json(old)
@@ -75,7 +82,18 @@ def label_sql(old: dict[str, Any], new: dict[str, Any]) -> str | None:
             f" WHERE deal_id = {_q(old.get('deal_id'))} AND label_key = {_q(old.get('label_key'))}"
             f" AND labeler = {_q(old.get('labeler'))}\n"
             f"   AND {guard_reads} AND note IS NOT DISTINCT FROM {_q(old.get('note'))}"
-            f" AND about IS NOT DISTINCT FROM {_q(old.get('about'))};")
+            f" AND about IS NOT DISTINCT FROM {_q(old.get('about'))}{_column_guards(old)};")
+
+
+def _column_guards(old: dict[str, Any]) -> str:
+    """Guards on the columns the snapshot carried. A snapshot without the
+    column cannot vouch for it, and a write to it is refused below."""
+    out = ""
+    if "supplier" in old:
+        out += f" AND supplier IS NOT DISTINCT FROM {_q(old.get('supplier'))}"
+    if "entity_keys" in old:
+        out += f" AND entity_keys = {_q(json.dumps(old.get('entity_keys') or [], ensure_ascii=False))}::jsonb"
+    return out
 
 
 def link_sql(old: dict[str, Any], new: dict[str, Any]) -> str | None:
@@ -101,8 +119,12 @@ def run(labels: list[dict[str, Any]], links: list[dict[str, Any]]) -> tuple[dict
             d["moves"].update(moved)
             if not (row.get("deal_id") and row.get("label_key") and row.get("labeler")):
                 d["moves"]["(no UPDATE: the row lacks deal_id, label_key or labeler)"] += 1
-            elif s := label_sql(row, new):
-                sql.append(s)
+            else:
+                try:
+                    if s := label_sql(row, new):
+                        sql.append(s)
+                except ValueError as e:
+                    d["moves"][f"(no UPDATE: {str(e).split(': ', 1)[-1]})"] += 1
         for c in format_checks(new):
             d["checks"][c["check"]] += 1
             if len(d["check_rows"][c["check"]]) < 25:

@@ -66,12 +66,18 @@ def test_checks():
     assert _checks(parked) == set()
     assert {"reason_missing", "policy_line_missing"} <= _checks(_row(reads_set={"co_action": "reject"}))
     assert "policy_words_in_why" in _checks(_row(note="Matches the Deal Kit billing."))
+    assert "policy_words_in_why" in _checks(_row(note="Same rate as the internal pricing workbook."))
+    assert "policy_words_in_why" not in _checks(_row(note="The customer's pricing workbook lists 4 sites."))
     assert "policy_words_in_why" not in _checks(_row(note='The heading reads "Rejected items".'))
     assert "policy_words_in_why" not in _checks(_row(
         note="[EXCLUDE_FROM_TRAINING: old manual Deal Kit]\nA rate row.\n[purtera] ignore: old kit."))
     assert "value_outside_vocab" in _checks(_row(reads_set={"co_action": "maybe"}))
     assert "unregistered_read" in _checks(_row(reads_set={"made_up": "x"}))
     assert "marker_inline" in _checks(_row(note="Why. [purtera] keep: feeds crew."))
+    ok = "[EXCLUDE_FROM_TRAINING: old manual Deal Kit]\nA rate row.\n[purtera] ignore: old kit."
+    assert "exclude_marker_misplaced" not in _checks(_row(note=ok))
+    assert "exclude_marker_misplaced" in _checks(_row(note=ok + "\nEXCLUDE_FROM_TRAINING: old manual internal pricing workbook"))
+    assert "exclude_marker_misplaced" in _checks(_row(note="A rate row. EXCLUDE_FROM_TRAINING: old kit"))
 
 
 def test_derived_from_stand_in_links_become_the_relation():
@@ -79,6 +85,76 @@ def test_derived_from_stand_in_links_become_the_relation():
     assert new["relation"] == "derived_from" and new["note"] == "total from qty x rate" and moved
     same, moved = transform_link({"id": "u2", "relation": "context", "note": "background"})
     assert same["relation"] == "context" and not moved
+    new, moved = transform_link({"id": "u3", "relation": "supports", "note": "[derived_from] SOW total"})
+    assert new["relation"] == "derived_from" and new["note"] == "SOW total" and moved == ["supports -> derived_from"]
+    same, moved = transform_link({"id": "u4", "relation": "supports", "note": "same rate"})
+    assert same["relation"] == "supports" and not moved
+    same, moved = transform_link({"id": "u5", "relation": "governs", "note": "[derived_from] x"})
+    assert same["relation"] == "governs" and not moved
+
+
+def test_reads_in_real_use_are_registered():
+    """Readings deal threads already write (the four dry runs) have a head and
+    a vocab, so they neither trip unregistered_read nor drop out of training."""
+    reads = {"skip": True, "exclude_from_training": True, "requirement_kind": "access",
+             "list_header": True, "governs_count": "4", "derived_from_count": "2", "tech_level": "L2",
+             "display_size": "75", "equipment_qty": "4", "labor_hours": "6", "material": "cable",
+             "scope_side": "customer", "site": "HQ", "location": "Chicago, IL", "rate": "$95/hr",
+             "rate_for": "lead tech", "region": "Chicago area", "placeholder": True, "cadence": "monthly",
+             "lead_time": "2 weeks", "tech_coverage": "local", "sow_available_note": "x",
+             "scope_category_note": "x", "derivation_note": "x", "sow_coverage_note": "x",
+             "address_note": "x", "needed_by": ["quoting", "sow", "delivery"],
+             "address_level": "street_no_city", "location_tier": ["major_metro", "rural"]}
+    checks = _checks(_row(reads_set=reads))
+    assert "unregistered_read" not in checks and "value_outside_vocab" not in checks
+    for lvl in ("street_only", "name_only", "state_only", "region_only", "street_no_zip"):
+        assert "value_outside_vocab" not in _checks(_row(reads_set={"address_level": lvl}))
+
+
+def test_older_names_move_to_the_registered_reading():
+    new, moved = transform_row(_row(text="2 techs on site for the mount",
+                                    reads_set={"qty": "4", "tech_qty": "2", "visit_frequency": "monthly",
+                                               "loe_hours": "12", "co_action": "keep"}))
+    r = new["reads_set"]
+    assert r["equipment_qty"] == "4" and r["crew_size"] == "2" and r["cadence"] == "monthly"
+    assert r["labor_hours"] == "12" and not {"qty", "tech_qty", "visit_frequency", "loe_hours"} & set(r)
+    # a remote or office role is not field crew: tech_qty stays and is reported
+    for text in ("Site: PC | PS-PROJMGMT-REMOTE", "Project manager, 1 tech hour", "Fee row"):
+        new, moved = transform_row(_row(text=text, reads_set={"tech_qty": "1"}))
+        assert new["reads_set"] == {"tech_qty": "1"} and "crew_size" not in new["reads_set"], text
+        assert "tech_qty: kept, the line is not a field tech role" in moved
+    # an estimate is ours, a flag says whether hours are stated
+    new, _ = transform_row(_row(reads_set={"hours": "8", "hours_stated": "false"}))
+    assert new["reads_set"]["co_hours_estimate"] == "8" and "hours" not in new["reads_set"]
+    new, _ = transform_row(_row(reads_set={"hours": True}))
+    assert new["reads_set"]["hours_stated"] is True
+    # a registered name that already says something else wins; nothing is lost
+    new, moved = transform_row(_row(reads_set={"qty": "4", "equipment_qty": "6"}))
+    assert new["reads_set"]["qty"] == "4" and new["reads_set"]["equipment_qty"] == "6"
+    assert any("kept" in m for m in moved)
+
+
+def test_multi_readings_split_from_any_older_join():
+    def after(v, key="needed_by"):
+        return transform_row(_row(reads_set={key: v}))[0]["reads_set"][key]
+    assert after("project_manager|atlas|portal") == ["project_manager", "atlas", "portal"]
+    assert after("quote|sow|delivery") == ["quoting", "sow", "delivery"]
+    assert after("quote, SOW and dispatch") == ["quoting", "sow", "delivery"]
+    assert after("small_town/rural", "location_tier") == "small_town/rural"
+    assert "value_outside_vocab" in _checks(_row(reads_set={"location_tier": "small_town/rural"}))
+    assert after("major_metro, rural", "location_tier") == ["major_metro", "rural"]
+    mixed = "mixed: 4 major_metro, 2 rural"
+    assert after(mixed, "location_tier") == mixed
+    row = _row(reads_set={"needed_by": ["quoting"]})
+    assert transform_row(row)[1] == []
+
+
+def test_column_readings_move_into_their_column():
+    new, moved = transform_row(_row(supplier=None, entity_keys=["site:a"],
+                                    reads_set={"entity_keys": "site:a, site:b", "co_action": "keep"}))
+    assert new["entity_keys"] == ["site:a", "site:b"] and "entity_keys" not in new["reads_set"]
+    new, _ = transform_row(_row(about="customer", reads_set={"about": "deal"}))
+    assert new["reads_set"]["about"] == "deal" and new["about"] == "customer"
 
 
 def test_sql_is_guarded_on_the_rows_current_values():
@@ -88,6 +164,13 @@ def test_sql_is_guarded_on_the_rows_current_values():
     assert "about = 'deal'" in sql
     assert "reads_set = '" + json.dumps({"about": "deal"}) + "'::jsonb" in sql
     assert "note IS NOT DISTINCT FROM NULL" in sql and "label_type" not in sql and "rejected" not in sql
+
+
+def test_sql_moves_entity_keys_under_a_guard():
+    row = _row(entity_keys=["site:a"], supplier=None, reads_set={"entity_keys": "site:b"})
+    sql = label_sql(row, transform_row(row)[0])
+    assert "entity_keys = '[\"site:a\", \"site:b\"]'::jsonb" in sql
+    assert "AND entity_keys = '[\"site:a\"]'::jsonb" in sql and "supplier IS NOT DISTINCT FROM NULL" in sql
 
 
 def test_report_counts_per_deal():
