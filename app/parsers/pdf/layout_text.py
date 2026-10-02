@@ -324,9 +324,20 @@ def _regions(rows: list[list[_Seg]]) -> list[tuple[list[list[_Seg]], list[tuple[
     regions: list[tuple[list[list[_Seg]], list[tuple[float, float]]]] = []
     cur: list[list[_Seg]] = [rows[0]]
     cur_g = _gutters(cur, min_gap)
+    med = statistics.median(sizes)
     for row in rows[1:]:
         row_g = _gutters([row], min_gap)
         trial_g = _gutters(cur + [row], min_gap)
+        # A wide band of white space ends a column region when the row below
+        # it does not keep the region's gutters: boxes set above a table share
+        # its gutter COUNT by coincidence, and kept together the
+        # table below was read column by column ("CDW# 7506872 5502114",
+        # "Mfg# QM75C WMN6575SE") under the boxes' columns.
+        if cur_g and min(s.y0 for s in row) - max(s.y1 for s in cur[-1]) > 2.5 * med \
+                and not _gutters_kept(cur_g, trial_g):
+            regions.append((cur, cur_g))
+            cur, cur_g = [row], row_g
+            continue
         if cur_g:
             # Same columns: the row sits inside the region's gutters.
             keep = len(trial_g) == len(cur_g)
@@ -343,7 +354,59 @@ def _regions(rows: list[list[_Seg]]) -> list[tuple[list[list[_Seg]], list[tuple[
             regions.append((cur, cur_g))
             cur, cur_g = [row], row_g
     regions.append((cur, cur_g))
-    return regions
+    return _pull_box_heads(regions, min_gap)
+
+
+def _gutters_kept(cur_g: list[tuple[float, float]], trial_g: list[tuple[float, float]]) -> bool:
+    """Every gutter of the region survives, at least half its width, once the
+    row is added."""
+    for a, b in cur_g:
+        w = max(1e-6, b - a)
+        if not any(min(b, d) - max(a, c) >= 0.5 * w for c, d in trial_g):
+            return False
+    return True
+
+
+def _pull_box_heads(
+    regions: list[tuple[list[list[_Seg]], list[tuple[float, float]]]], min_gap: float
+) -> list[tuple[list[list[_Seg]], list[tuple[float, float]]]]:
+    """A box that starts higher than the box beside it begins in the
+    single-column run above their shared rows: a ship-to box ("SHIP TO:",
+    company, street ...) whose last lines sit beside a "Shipping Method" box.
+    Cut off from its head, the column region held only the shared rows, two
+    rows read as a table and fused "NEW YORK, NY 10014-1066 | Shipping
+    Method: DROP SHIP-GROUND" (010003). Two or more trailing rows of the run
+    above, stacked tight on the first column's left edge and leaving a gutter
+    before the second column, move down into the column region."""
+    out = list(regions)
+    for i in range(1, len(out)):
+        rows, gut = out[i]
+        prev_rows, prev_gut = out[i - 1]
+        if not gut or prev_gut or len(prev_rows) < 3:
+            continue
+        first = [s for s in rows[0] if s.x1 <= gut[0][0] + 0.5]
+        if not first:
+            continue
+        x0 = min(s.x0 for s in first)
+        lh = max(1.0, max(s.y1 - s.y0 for s in first))
+        take = 0
+        top = min(s.y0 for s in rows[0])
+        for r in reversed(prev_rows):
+            if top - max(s.y1 for s in r) > 0.9 * lh:
+                break
+            if abs(min(s.x0 for s in r) - x0) > 3.0 or max(s.x1 for s in r) > gut[0][1] - min_gap:
+                break
+            take += 1
+            top = min(s.y0 for s in r)
+            if take >= len(prev_rows) - 1:
+                break
+        if take < 2:
+            continue
+        moved = prev_rows[-take:]
+        out[i - 1] = (prev_rows[:-take], prev_gut)
+        new_rows = moved + rows
+        out[i] = (new_rows, _gutters(new_rows, min_gap) or gut)
+    return [r for r in out if r[0]]
 
 
 def _split_columns(rows: list[list[_Seg]], gutters: list[tuple[float, float]]) -> list[list[_Seg]]:
