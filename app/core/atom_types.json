@@ -1076,6 +1076,13 @@
       "layer": "universal"
     },
     {
+      "key": "billing_type",
+      "label": "How the work is billed",
+      "values": "fixed | t_and_m | milestone | per_site",
+      "desc": "The pricing basis a line states: one fixed price, time and materials (units times a rate, so every total is an estimate), milestone payments, or a price per site (a unit times the site count). Same values as the deal-level billing judgment.",
+      "layer": "universal"
+    },
+    {
       "key": "intake_gap",
       "label": "Should have been asked at quoting",
       "values": "true/false",
@@ -1323,6 +1330,11 @@
       "key": "triggered_by",
       "label": "That event starts it",
       "desc": "From a triggered task to the line saying its event happened: \"we will coordinate a date\" is triggered_by \"TVs were delivered today\"."
+    },
+    {
+      "key": "derived_from",
+      "label": "Worked out from it",
+      "desc": "From a line whose value was worked out, not stated, to the line it was worked out from: a SOW total derived_from the quantity and rate lines, a SOW location list derived_from the site lines in the emails. Pairs with the derivation reading (inferred)."
     }
   ],
   "asks_supplier_doc": "Does 'who supplies or does it?' have an answer for this type? The card showed that question on EVERY type, so three quarters of the time it invited an answer to a question the sentence does not ask -- and a head trained on those learns the axes are independent noise. Declared here rather than guessed from the type's name."

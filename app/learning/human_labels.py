@@ -805,16 +805,10 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
 #: Collapsing the two teaches a head to close a question on any reply at all.
 #: The head builds its prototypes from whatever classes the rows contain, so a
 #: class with too few examples is simply not learned yet, not an error.
-_LINK_TO_EDGE = {
-    "governs": "governs",
-    "supports": "supports",
-    "answers": "answers",
-    "contradicts": "contradicts",
-    "same_as": "same_as",
-    "context": "context",
-    "blocked_by": "blocked_by",
-    "triggered_by": "triggered_by",
-}
+#: Every relation the registry defines trains the edge head under its own
+#: name, so a relation added there (derived_from) reaches training without a
+#: second list to remember.
+_LINK_TO_EDGE = {r["key"]: r["key"] for r in load_registry().get("relations") or []}
 
 
 def _link_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
