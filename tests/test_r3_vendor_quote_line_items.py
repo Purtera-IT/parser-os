@@ -26,6 +26,10 @@ ITEMS = [
 ]
 
 
+TOTALS = [("SUBTOTAL", "$5,694.50"), ("SHIPPING", "$0.00"), ("SALES TAX", "$505.36"),
+          ("GRAND TOTAL", "$6,199.86")]
+
+
 @pytest.fixture(autouse=True)
 def _no_llm(monkeypatch):
     monkeypatch.setenv("SOWSMITH_DISABLE_LLM", "1")
@@ -36,6 +40,11 @@ def _quote(path: Path, right_aligned: bool, ruled: bool) -> None:
     p = doc.new_page(width=612, height=792)
     p.insert_text((140, 30), "Hardware   Software   Services   IT Solutions   Brands   Research Hub", fontsize=8)
     p.insert_text((36, 70), "QUOTE CONFIRMATION", fontsize=18, fontname="hebo")
+    xs = [36, 140, 240, 380, 480]
+    for x, h in zip(xs, ["QUOTE #", "QUOTE DATE", "QUOTE REFERENCE", "CUSTOMER #", "GRAND TOTAL"]):
+        p.insert_text((x, 92), h, fontsize=8, fontname="hebo")
+    for x, v in zip(xs, ["PSNV676", "1/14/2026", "SAMSUNG", "15018865", "$5,694.50"]):
+        p.insert_text((x, 104), v, fontsize=9)
     y = 150
     heads = {"ITEM": 36, "QTY": 330, "CDW#": 380, "UNIT PRICE": 450, "EXT. PRICE": 530}
     if ruled:
@@ -61,6 +70,16 @@ def _quote(path: Path, right_aligned: bool, ruled: bool) -> None:
         y = yy + 28
         if ruled:
             p.draw_line((30, y - 6), (582, y - 6), color=(0.7, 0.7, 0.7))
+    for label, amount in TOTALS:
+        p.insert_text((440, y), label, fontsize=8, fontname="hebo")
+        w = fitz.get_text_length(amount, fontsize=8)
+        p.insert_text((578 - w, y), amount, fontsize=8)
+        y += 12
+    y += 20
+    for i, line in enumerate(["SHIP TO:", "ACME CORPORATION", "40 10TH AVE FL 4", "NEW YORK, NY 10014-1066"]):
+        p.insert_text((36, y + 12 * i), line, fontsize=8, fontname="hebo" if i == 0 else "helv")
+    p.insert_text((36, y + 70), "Please review the delivery schedule with your account manager.", fontsize=8)
+    p.insert_text((36, 770), "Page 1 of 1", fontsize=7)
     doc.save(str(path))
 
 
@@ -84,3 +103,34 @@ def test_each_quote_item_is_one_line_item_with_fields(tmp_path: Path, right_alig
         assert sum(1 for it in ITEMS if it[3] in t) <= 1, t   # never two items in one atom
         if any(it[3] in t for it in ITEMS):
             assert "Research Hub" not in t, t
+
+
+@pytest.mark.parametrize("right_aligned", [False, True])
+def test_quote_fields_totals_and_document_kind(tmp_path: Path, right_aligned: bool) -> None:
+    path = tmp_path / "CDW Quote.pdf"
+    _quote(path, right_aligned, ruled=True)
+    out = OrbitBriefPdfParser().parse_artifact("p", "a", path)
+    atoms = out if isinstance(out, list) else out.atoms
+    texts = [a.raw_text for a in atoms]
+    # (1) the line's quantity comes from the QTY column, never the CDW# or the 55" size
+    tv = next(a for a in atoms if "7506871" in a.raw_text)
+    assert tv.atom_type.value == "vendor_line_item"
+    assert tv.value["quantity"] == 4 and tv.value["quantity_source"] == "qty_column"
+    assert tv.value["mfg_part_number"] == "QM55C" and tv.value["vendor_item_number"] == "7506871"
+    assert tv.value["extended_price"] == "$2,759.96"
+    # (2) every atom of the quote, rejects included, says it came from a BOM
+    assert atoms and all(a.value.get("document_kind") == "vendor_quote_bom" for a in atoms), [
+        (a.raw_text, a.value.get("document_kind")) for a in atoms]
+    assert all(a.source_refs[0].locator.get("document_kind") == "vendor_quote_bom" for a in atoms)
+    # (a) the quote header pairs each header with its value; each total keeps its label
+    head = next(a for a in atoms if "PSNV676" in a.raw_text)
+    cells = head.value.get("cells") or {}
+    assert cells.get("QUOTE #") == "PSNV676" and cells.get("CUSTOMER #") == "15018865", cells
+    assert cells.get("GRAND TOTAL") == "$5,694.50", cells
+    for label, amount in TOTALS:
+        assert any(t == f"{label}: {amount}" for t in texts), (label, texts)
+    # (b) the ship-to box heads nothing
+    later = next(a for a in atoms if a.raw_text.startswith("Please review the delivery"))
+    path_ = later.source_refs[0].locator.get("section_path") or []
+    assert not any("10TH AVE" in s or "SHIP TO" in s or "ACME" in s for s in path_), path_
+    assert any("40 10TH AVE FL 4" in t for t in texts), texts

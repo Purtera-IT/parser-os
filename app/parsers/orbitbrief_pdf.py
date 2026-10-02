@@ -918,6 +918,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _collapse_toc_atoms(atoms)
         atoms = _fold_answers_into_questions(atoms)
         atoms = _fold_photo_requests_into_images(atoms)
+        _tag_vendor_quote_document(atoms)
 
         # Universal hybrid summary+transcript rewrite: when filename/title/
         # content signals a meeting-summary front matter + diarized transcript
@@ -2795,6 +2796,83 @@ def _signature_block_atoms(
         yield atom
 
 
+_QTY_HEADER_RE = re.compile(r"^\s*(?:qty|qty\.|quantity|quan\.?|qnty|units?)\s*$", re.I)
+_DESC_HEADER_RE = re.compile(r"^\s*(?:item|items|description|item\s+description|product|product\s+description)\s*$", re.I)
+_MFG_HEADER_RE = re.compile(r"^\s*(?:mfg\.?|mfr\.?|manufacturer)\s*(?:part\s*)?(?:#|no\.?|number)\s*$", re.I)
+_ITEMNO_HEADER_RE = re.compile(
+    r"^\s*(?:[a-z]{2,6}\s*#|item\s*(?:#|no\.?|number)|sku|part\s*(?:#|no\.?|number))\s*$", re.I)
+_UNIT_PRICE_HEADER_RE = re.compile(r"^\s*(?:unit\s+price|unit\s+cost|price\s+each|each|rate)\s*$", re.I)
+_EXT_PRICE_HEADER_RE = re.compile(r"^\s*(?:ext\.?\s*price|extended(?:\s+price)?|line\s+total|total|amount)\s*$", re.I)
+
+
+def _line_item_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Named fields of a vendor quote / PO / BOM line, read from the column
+    each value sits under: the quantity from the QTY column (never a figure
+    inside the description, a "55\"" display size, or the vendor's item
+    number), the description, the manufacturer part, the vendor item number
+    and the prices. Empty unless the row has a quantity column."""
+    out: dict[str, Any] = {}
+    qty_cell = None
+    for k, v in row.items():
+        key, val = str(k or ""), str(v or "").strip()
+        if not val:
+            continue
+        if _QTY_HEADER_RE.match(key) and qty_cell is None:
+            qty_cell = val
+        elif _DESC_HEADER_RE.match(key):
+            out.setdefault("description", val)
+        elif _MFG_HEADER_RE.match(key):
+            out.setdefault("mfg_part_number", val)
+        elif _UNIT_PRICE_HEADER_RE.match(key):
+            out.setdefault("unit_price", val)
+        elif _EXT_PRICE_HEADER_RE.match(key):
+            out.setdefault("extended_price", val)
+        elif _ITEMNO_HEADER_RE.match(key):
+            out.setdefault("vendor_item_number", val)
+    if qty_cell is None:
+        return {}
+    m = re.fullmatch(r"(\d{1,6}(?:,\d{3})*(?:\.\d+)?)\s*(?:ea|each|pcs?|units?)?", qty_cell, re.I)
+    if not m:
+        return {}
+    n = float(m.group(1).replace(",", ""))
+    out["quantity"] = int(n) if n.is_integer() else n
+    out["quantity_source"] = "qty_column"
+    out["line_item"] = True
+    return out
+
+
+VENDOR_QUOTE_BOM = "vendor_quote_bom"
+_MONEY_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d{2})?")
+
+
+def _tag_vendor_quote_document(atoms: list[EvidenceAtom]) -> None:
+    """Stamp ``document_kind: "vendor_quote_bom"`` on EVERY atom of a vendor
+    quote / PO / BOM -- its line items, its header fields, and its rejects
+    (nav, footers, headings) alike -- so labeling and training see "this is
+    a BOM" on each line, not only on the rows that parsed as items.
+
+    A document is a vendor quote when it carries priced line items read from
+    a quantity column (one is enough), or two or more vendor_line_item rows
+    that carry a price."""
+    items = sum(1 for a in atoms if isinstance(a.value, dict) and a.value.get("line_item")
+                and (a.value.get("unit_price") or a.value.get("extended_price")))
+    priced_rows = sum(1 for a in atoms
+                      if getattr(a.atom_type, "value", a.atom_type) == "vendor_line_item"
+                      and _MONEY_RE.search(a.raw_text or ""))
+    if not (items >= 1 or priced_rows >= 2):
+        return
+    for a in atoms:
+        val = dict(a.value) if isinstance(a.value, dict) else {"text": a.value}
+        val["document_kind"] = VENDOR_QUOTE_BOM
+        a.value = val
+        refs = list(a.source_refs or [])
+        for i, r in enumerate(refs):
+            loc = dict(r.locator or {})
+            loc["document_kind"] = VENDOR_QUOTE_BOM
+            refs[i] = r.model_copy(update={"locator": loc})
+        a.source_refs = refs
+
+
 def _atoms_for_block(
     *,
     block: dict[str, Any],
@@ -3314,6 +3392,8 @@ def _atoms_for_block(
                 "columns": columns,
                 "cells": dict(row),
             }
+            if isinstance(row, dict):
+                value.update(_line_item_fields(row))
             if row_trunc:
                 value["truncated_cols"] = list(row_trunc)
             yield _make_atom(
@@ -5208,18 +5288,16 @@ def _looks_like_section_heading(stripped: str) -> bool:
     # every atom after it and no atom carried it).
     if re.search(r",\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\s*$", stripped):
         return False
-    # Its street line ("40 10TH AVE FL 4") is a value too: as a heading the
-    # ship-to box lost its street and the next line became its section.
-    if re.match(r"^P\.?\s*O\.?\s+BOX\s+\d", stripped):
-        return False
-    if re.match(r"^\d", stripped):
-        try:
-            from app.core.address_parse import looks_like_street_address
+    # Its street line ("40 10TH AVE FL 4"), a PO box, and the box's caption
+    # ("SHIP TO:") are values of an address box too: as headings the box lost
+    # its street and the caption headed every atom after the box.
+    try:
+        from app.core.address_parse import is_address_block_line
 
-            if looks_like_street_address(stripped):
-                return False
-        except Exception:  # pragma: no cover
-            pass
+        if is_address_block_line(stripped):
+            return False
+    except Exception:  # pragma: no cover
+        pass
     # Headings don't end with sentence punctuation.
     if stripped[-1] in ".,;":
         return False
