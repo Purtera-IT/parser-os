@@ -2476,6 +2476,8 @@ def atoms_from_structured_doc(
                 val["intro"] = vlead[-1] if len(vlead) > 1 else vlead[0]
         return atom
 
+    _meeting_doc = bool(re.search(r"\b(?:meeting\s+summary|transcripts?)\b", str(doc_title or ""), re.I)) or any(
+        p.get("title_is_chrome") for p in structured_doc.get("pages", []) or [])
     for page in structured_doc.get("pages", []):
         page_index = int(page.get("page", 0))
         sections = page.get("sections", []) or []
@@ -2492,8 +2494,11 @@ def atoms_from_structured_doc(
             parser_version=parser_version,
         ):
             if (_atom.source_refs[0].locator or {}).get("block_kind") == "heading" and (
-                    page.get("is_drawing") or (doc_title and _atom.raw_text == doc_title)):
-                continue  # a drawing's callout or the document's own title
+                    page.get("is_drawing") or _meeting_doc
+                    or (doc_title and _atom.raw_text == doc_title)):
+                # a drawing's callout, a meeting summary's section label (not
+                # a document section), or the document's own title
+                continue
             _atom = _root_atom(_atom)
             if page.get("is_drawing"):
                 # Read off a drawing sheet: a callout there is a label, not a
