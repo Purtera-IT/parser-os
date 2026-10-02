@@ -1718,7 +1718,14 @@ def merge_signature_rows(atoms: list[Any]) -> int:
             # name and title only. Its email and phone left the compile.
             if _sig_figures(_atom_text(a)) - _merged_figs:
                 return False
-            return not _fold.detail_only_the_loser_states(_TextOnly(text), a)
+            if _fold.detail_only_the_loser_states(_TextOnly(text), a):
+                return False
+            # A contact row naming a second person, a role or "phone not
+            # provided" (010353) keeps them: the merged record holds signers.
+            person = _fold.person_detail_only_the_loser_states(_TextOnly(text), a)
+            if _atom_type_str(a) != "stakeholder":
+                person = {x for x in person if x.startswith("note:")}
+            return not person
 
         for a in rows:
             if a is keep or not _fully_said(a):

@@ -267,6 +267,69 @@ def covers(survivor: Any, other: Any) -> bool:
     return not detail_only_the_loser_states(survivor, other)
 
 
+#: Words a contact record uses as labels, plus function words. They say
+#: nothing about WHO or HOW, so a copy that differs only in them loses nothing.
+_PERSON_LABEL_WORDS: frozenset[str] = frozenset({
+    "name", "names", "title", "role", "phone", "phones", "email", "emails", "mail",
+    "cell", "mobile", "office", "tel", "telephone", "fax", "ext", "number", "num",
+    "contact", "contacts", "info", "information", "address", "direct", "work",
+    "the", "a", "an", "and", "or", "of", "for", "at", "to", "in", "on", "by",
+    "with", "is", "as", "s", "mr", "mrs", "ms", "dr", "stakeholder", "person", "job",
+})
+
+#: The loser's own person fields: how IT names and titles the one person the
+#: fold is about. "Bernie" for "Bernard", a typo'd surname, "Senior Client
+#: Executive" for "Client Executive" are that person said another way, and
+#: the fields are unioned onto the survivor anyway.
+_OWN_FIELDS: tuple[str, ...] = ("name", "role", "title", "company", "organisation", "organization")
+
+#: A note that a detail is ABSENT is itself a detail a reader acts on
+#: ("Danny's phone not provided", 010353): it says not to go looking.
+_ABSENCE_NOTE_RE = re.compile(
+    r"\b(?:not\s+(?:provided|available|given|listed|known)|n/a|tbd|unknown"
+    r"|no\s+(?:phone|email|e-mail|cell|number|contact))\b",
+    re.I,
+)
+
+
+def person_words(text: str) -> frozenset[str]:
+    text = _EMAIL_RE.sub(" ", text or "")
+    text = _PHONE_RE.sub(" ", text)
+    return frozenset(
+        w for w in re.findall(r"[a-z]+", text.lower())
+        if len(w) >= 2 and w not in _PERSON_LABEL_WORDS
+    )
+
+
+def person_detail_only_the_loser_states(winner: Any, loser: Any) -> frozenset[str]:
+    """What a PERSON record ``loser`` says that ``winner`` does not, beyond
+    the ZIP / phone / email / instruction of :func:`detail_only_the_loser_states`.
+
+    A contact row is rarely only one person's name. Deal 010353's SOW
+    "CUSTOMER CONTACTS" row named John Ozuna-Diaz AND Danny, with "Danny's
+    phone not provided"; it keyed on John's name, folded into John's bare
+    record, and Danny, his role and the note left the compile. Lost here: a
+    word of the loser's text (another name, a role, a note) the survivor
+    states nowhere in its words or value, and any absence note the survivor
+    lacks. Labels ("Phone:", "Name:"), function words and the loser's own
+    name / role / title (the one person the fold is about) are not detail.
+    Tagged ``word:danny`` / ``note:not provided``. Ask AFTER merging.
+    """
+    w_text = _atom_text(winner)
+    own: frozenset[str] = frozenset()
+    value = getattr(loser, "value", None)
+    if isinstance(value, dict):
+        own = person_words(" ".join(str(value.get(k) or "") for k in _OWN_FIELDS))
+    lost = {f"word:{w}" for w in person_words(_atom_text(loser)) - person_words(_blob(winner)) - own}
+    have = {" ".join(m.group(0).lower().split()) for m in _ABSENCE_NOTE_RE.finditer(w_text)}
+    lost |= {
+        f"note:{n}"
+        for n in (" ".join(m.group(0).lower().split()) for m in _ABSENCE_NOTE_RE.finditer(_atom_text(loser)))
+        if n not in have
+    }
+    return frozenset(lost)
+
+
 def identity(atom: Any) -> tuple[str, ...]:
     """What distinguishes this atom from another with the SAME words."""
     ident: list[str] = []
