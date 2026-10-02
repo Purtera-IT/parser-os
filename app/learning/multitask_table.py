@@ -191,6 +191,12 @@ class MultitaskTable:
             slot["classes"] = len({r.label for r in self.rows if r.task == task})
         return out
 
+    def per_head(self) -> dict[str, int]:
+        """Rows per head of the C3 design (app/core/label_heads.json)."""
+        from app.core.label_heads import head_of_task
+
+        return dict(Counter(head_of_task(r.task) or "(no head)" for r in self.rows))
+
     def summary(self) -> str:
         lines = [
             f"multitask table: {len(self.rows)} rows across "
@@ -203,6 +209,11 @@ class MultitaskTable:
                 f"  {task:<20} {s['train']:>7} {s['holdout']:>8} "
                 f"{s['classes']:>8} {s['pm']:>8}"
             )
+        by_head = self.per_head()
+        if by_head:
+            lines += ["", "  rows per head (app/core/label_heads.json):"]
+            for key, n in sorted(by_head.items()):
+                lines.append(f"    {key:<24} {n:>7}")
         versions = Counter(r.repr_version for r in self.rows)
         if versions:
             lines += ["", "  representation versions (v0 = bare legacy text):"]
@@ -222,12 +233,23 @@ class MultitaskTable:
             conn.execute(
                 "CREATE TABLE multitask_rows ("
                 "task TEXT, text TEXT, label TEXT, deal_id TEXT, "
-                "split TEXT, teacher TEXT, source_db TEXT, repr_version INT)"
+                "split TEXT, teacher TEXT, source_db TEXT, repr_version INT, "
+                "head TEXT, space TEXT)"
             )
+            # `head` and `space` route a row to its head of the C3 design, so
+            # a trainer can build the spaces from the registry rather than
+            # from a hand-kept list of task names.
+            from app.core.label_heads import head, head_of_task
+
+            def _route(task: str) -> tuple[str, str]:
+                key = head_of_task(task) or ""
+                h = head(key) if key else None
+                return key, (h or {}).get("space") or ""
+
             conn.executemany(
-                "INSERT INTO multitask_rows VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO multitask_rows VALUES (?,?,?,?,?,?,?,?,?,?)",
                 [(r.task, r.text, r.label, r.deal_id, r.split, r.teacher,
-                  r.source_db, r.repr_version)
+                  r.source_db, r.repr_version, *_route(r.task))
                  for r in self.rows],
             )
             conn.commit()

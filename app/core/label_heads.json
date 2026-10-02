@@ -1,0 +1,599 @@
+{
+  "version": "2026-10-02",
+  "doc": "THE map from every label field to the model head it trains. A head lives in one of the spaces of the C3 design (docs/C3_HEADS.md): Content says what a line says, Beliefs keep the current value of each fact, Consequence predicts what the line will turn out to mean, Links place lines against each other, Program computes hours and crew exactly, Context carries stage and geography, Rationale is the WHY every decision passes through, and Conduct is what one company does about it. Every reading and relation in atom_types.json belongs to exactly one head, and the labeling page shows its sections in the order below (tests/test_label_heads.py). layer: universal heads train the base for every company; company heads train only that company's profile; meta is bookkeeping and trains nothing. status: label = trained from labels today; self_supervised = trained from deal timelines with no labeling; planned = the labels are stored now and the head is built in the v3 order.",
+  "spaces": [
+    {
+      "key": "content",
+      "title": "What it says",
+      "question": "What does this line say, in words any field-services company would agree with?",
+      "arch": "z_c, a projection of the deal graph transformer's state for the line. A gradient-reversed company adversary keeps company signal out, so every universal output is identical whatever company code is active."
+    },
+    {
+      "key": "beliefs",
+      "title": "What is current",
+      "question": "Which fact does it state, and is it still the current value?",
+      "arch": "Belief tracker: each line emits (slot, entity, value) claims; a two-layer recurrent transformer over claims in time order keeps the current value of every slot and its evidence. same_as is a quotient over claims, contradicts and superseded fall out as same slot, different value, later time."
+    },
+    {
+      "key": "consequence",
+      "title": "What it will lead to",
+      "question": "What will this line turn out to mean for the work: a task, a question someone must ask, a line in the final SOW?",
+      "arch": "z_q, predicted from the past only (foresight mask) and trained toward an EMA hindsight encoder that reads the whole finished deal (Hindsight-JEPA). v4 makes it a distribution, so the question engine can sample it and price what is still unknown in hours and dollars."
+    },
+    {
+      "key": "links",
+      "title": "How it connects",
+      "question": "Which other lines does it govern, support, or come from?",
+      "arch": "Relation geometry chosen per relation: governs as box embeddings (a parent's box contains its children's), the rest as a bilinear scorer under a causal mask (the source must come first, except SOW alignment). A consistency pass removes governs cycles."
+    },
+    {
+      "key": "program",
+      "title": "The numbers",
+      "question": "Does the line state hours, crew or a cost, and what would they compute to?",
+      "arch": "Typed program head: a pointer decoder emits a small program over belief slots (mul, add, ceil, max, min, lookup(const)), executed rather than generated, so the arithmetic is exact. Program shapes are universal; the constants come from the active Conduct atoms. v4 grounds the programs in what the job actually took."
+    },
+    {
+      "key": "context",
+      "title": "When and where",
+      "question": "Where was the deal when this entered it, and what labor market is the site in?",
+      "arch": "Context slots (stage, geo). Each is filled by the teacher from privileged context, predicted by the student, plugged in live, or left null, 40/40/20 at train time, so the model uses context when it has it and never depends on it."
+    },
+    {
+      "key": "rationale",
+      "title": "Why",
+      "question": "What told you, and why is it what you said?",
+      "arch": "Rationale latent r_i: every universal decision head reads r_i plus a small penalized residual. r_i is pulled toward the encoded human WHY (InfoNCE, verdict words masked), and the rationale writer decodes from r_i, so the reason it writes is the one its decision used. Nearest human rationales are cited as precedent."
+    },
+    {
+      "key": "conduct",
+      "title": "What Purtera does",
+      "question": "What does our company do with this line, and by which of our rules?",
+      "arch": "Policy genome: a dictionary of low-rank policy atoms over [r_i; beliefs_i]; a company is a sparse code over them, fitted from about 30 corrections. Company constants (the 55 inch two-tech threshold) are learned scalars inside an atom. Precedent memory applies a correction to the very next case and overrules the old call; nightly consolidation folds precedents into the atoms."
+    }
+  ],
+  "heads": [
+    {
+      "key": "content.type",
+      "space": "content",
+      "layer": "universal",
+      "status": "label",
+      "label": "What it is",
+      "question": "Which type is this line, or which kind of noise?",
+      "output": "one class over the registry types plus _keep; coarse and facet are derived",
+      "columns": [
+        "label_type"
+      ],
+      "reads": [
+        "small_talk",
+        "noise_class"
+      ],
+      "relations": [],
+      "judgments": [
+        "facet",
+        "type"
+      ],
+      "tasks": [
+        "atom_type",
+        "atom_type_coarse",
+        "facet",
+        "rejected"
+      ]
+    },
+    {
+      "key": "content.frame",
+      "space": "content",
+      "layer": "universal",
+      "status": "label",
+      "label": "Whose fact, and what it wants",
+      "question": "Whose fact is it, what does it ask of us, who supplies it, and does it bring someone in?",
+      "output": "about, wants and supplier classes; presence of each reading",
+      "columns": [
+        "about",
+        "wants",
+        "supplier"
+      ],
+      "reads": [
+        "introduces_party",
+        "situational"
+      ],
+      "relations": [],
+      "judgments": [
+        "bom_owner"
+      ],
+      "tasks": [
+        "about",
+        "wants",
+        "supplier"
+      ]
+    },
+    {
+      "key": "content.claims",
+      "space": "content",
+      "layer": "universal",
+      "status": "label",
+      "label": "The facts it states",
+      "question": "Which entity is it about, and which value does it give: size, quantity, date, billing basis, option?",
+      "output": "(slot, entity, value, confidence) claims that feed the belief tracker; entity keys",
+      "columns": [
+        "entity_keys"
+      ],
+      "reads": [
+        "job_scale",
+        "bom_role",
+        "scope_facet",
+        "option_selected",
+        "start_date",
+        "billing_type"
+      ],
+      "relations": [],
+      "judgments": [
+        "norm",
+        "commercial",
+        "terminology"
+      ],
+      "tasks": []
+    },
+    {
+      "key": "content.document",
+      "space": "content",
+      "layer": "universal",
+      "status": "label",
+      "label": "Its place in the document",
+      "question": "What kind of document is it in, which section, and is it the deal's own words or template?",
+      "output": "document-role classes per line",
+      "columns": [],
+      "reads": [
+        "doc_kind",
+        "sow_fill",
+        "sow_section",
+        "derivation",
+        "unreliable_part",
+        "points_at_artifact"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": []
+    },
+    {
+      "key": "content.deal",
+      "space": "content",
+      "layer": "universal",
+      "status": "label",
+      "label": "The deal as a whole",
+      "question": "What is this deal mainly, and what did the parser get wrong across it?",
+      "output": "deal-level service route; the deal-level WHY",
+      "columns": [],
+      "reads": [],
+      "relations": [],
+      "judgments": [
+        "billing_type",
+        "hardware_scope",
+        "materials_scope",
+        "expenses_scope",
+        "travel_scope",
+        "router"
+      ],
+      "tasks": [
+        "service_routing",
+        "rationale:deal"
+      ]
+    },
+    {
+      "key": "structure.formation",
+      "space": "content",
+      "layer": "universal",
+      "status": "label",
+      "label": "Which atoms exist",
+      "question": "Should this text be an atom at all, and did the parser form it right?",
+      "output": "admission keep or drop; rule and suppression calls; document and sheet roles",
+      "columns": [],
+      "reads": [],
+      "relations": [],
+      "judgments": [
+        "rule",
+        "suppression",
+        "document_job",
+        "sheet",
+        "image",
+        "admission"
+      ],
+      "tasks": [
+        "admission",
+        "document_job",
+        "document_job_reason"
+      ]
+    },
+    {
+      "key": "beliefs.tracker",
+      "space": "beliefs",
+      "layer": "universal",
+      "status": "label",
+      "label": "Current or replaced",
+      "question": "Is this the same fact as another line, a different value for it, or a value later replaced?",
+      "output": "same_as clusters, contradicts and superseded edges consistent with the tracked belief state; site identity",
+      "columns": [],
+      "reads": [
+        "superseded"
+      ],
+      "relations": [
+        "same_as",
+        "contradicts"
+      ],
+      "judgments": [
+        "conflict",
+        "site",
+        "site_role",
+        "geo_mention",
+        "facility",
+        "roster"
+      ],
+      "tasks": [
+        "physical_site",
+        "physical_site_reason"
+      ]
+    },
+    {
+      "key": "consequence.work",
+      "space": "consequence",
+      "layer": "universal",
+      "status": "label",
+      "label": "The work it causes",
+      "question": "Does it promise, start or block a task, whose task is it, and how urgent is it?",
+      "output": "commitment, trigger and blocking readings; task owner role; blocked_by and triggered_by edges",
+      "columns": [],
+      "reads": [
+        "commitment",
+        "task_owner_role",
+        "triggered_task",
+        "trigger_event",
+        "fires_task",
+        "blocked_on",
+        "urgency",
+        "expansion"
+      ],
+      "relations": [
+        "blocked_by",
+        "triggered_by"
+      ],
+      "judgments": [],
+      "tasks": []
+    },
+    {
+      "key": "consequence.questions",
+      "space": "consequence",
+      "layer": "universal",
+      "status": "label",
+      "label": "The question it raises",
+      "question": "Is it a question, is it answered, and what document or conversation is still missing?",
+      "output": "open versus answered; answers edges; absence of a document or call; question validity. Seeds the absence head and the value-of-information question engine.",
+      "columns": [],
+      "reads": [
+        "needs_artifact",
+        "chase"
+      ],
+      "relations": [
+        "answers"
+      ],
+      "judgments": [
+        "gap",
+        "question_answered"
+      ],
+      "tasks": [
+        "gap_valid",
+        "gap_valid_reason"
+      ]
+    },
+    {
+      "key": "consequence.outcome",
+      "space": "consequence",
+      "layer": "universal",
+      "status": "label",
+      "label": "Where it ends up",
+      "question": "Does the final SOW carry it, which parser learns from it, and how much does it matter?",
+      "output": "SOW coverage class; pre-sale or post-sale consumer; weight",
+      "columns": [
+        "weight_tier"
+      ],
+      "reads": [
+        "sow_coverage",
+        "train_for"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": [
+        "weight_tier"
+      ]
+    },
+    {
+      "key": "consequence.hindsight",
+      "space": "consequence",
+      "layer": "universal",
+      "status": "self_supervised",
+      "label": "Hindsight targets",
+      "question": "None: learned from finished deal timelines with no labeling.",
+      "output": "the hindsight latent per line and per deal: final SOW lines, quote v1 to v2 changes, final hours and price, questions asked later, change orders",
+      "columns": [],
+      "reads": [],
+      "relations": [],
+      "judgments": [],
+      "tasks": []
+    },
+    {
+      "key": "links.hierarchy",
+      "space": "links",
+      "layer": "universal",
+      "status": "label",
+      "label": "What it governs",
+      "question": "Does it open a block or sum up the deal, and which lines sit under it?",
+      "output": "governs edges as box containment; deal_summary and opens_block readings",
+      "columns": [],
+      "reads": [
+        "deal_summary",
+        "opens_block"
+      ],
+      "relations": [
+        "governs"
+      ],
+      "judgments": [
+        "task_tier"
+      ],
+      "tasks": []
+    },
+    {
+      "key": "links.support",
+      "space": "links",
+      "layer": "universal",
+      "status": "label",
+      "label": "What backs it, and where it came from",
+      "question": "Which line backs it up, gives it context, or is it derived from?",
+      "output": "supports, context and derived_from edges under a causal mask. Today one shared edge classifier serves every relation; v3 splits it by geometry.",
+      "columns": [],
+      "reads": [],
+      "relations": [
+        "supports",
+        "context",
+        "derived_from"
+      ],
+      "judgments": [],
+      "tasks": [
+        "edge_relation",
+        "rationale:edge"
+      ]
+    },
+    {
+      "key": "program.estimate",
+      "space": "program",
+      "layer": "universal",
+      "status": "planned",
+      "label": "Hours, crew and cost",
+      "question": "Does the text state the hours or the crew, and does it take a cost off the quote?",
+      "output": "an executable program over belief slots, e.g. hours = sites x visits x hours_per_visit. Weakly supervised by the arithmetic in WHY notes, then by actual outcomes.",
+      "columns": [],
+      "reads": [
+        "hours_stated",
+        "crew_size",
+        "removes_cost"
+      ],
+      "relations": [],
+      "judgments": [
+        "hours"
+      ],
+      "tasks": []
+    },
+    {
+      "key": "context.stage",
+      "space": "context",
+      "layer": "universal",
+      "status": "label",
+      "label": "Deal stage",
+      "question": "Where was the deal when this source entered it, and did a SOW exist yet?",
+      "output": "stage slot; never a required input",
+      "columns": [],
+      "reads": [
+        "stage_std",
+        "deal_stage",
+        "sow_available_at_stage"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": [
+        "question:deal_stage"
+      ]
+    },
+    {
+      "key": "context.geo",
+      "space": "context",
+      "layer": "universal",
+      "status": "label",
+      "label": "Labor market",
+      "question": "What labor market is the site in, how precise is its address, and how far is it?",
+      "output": "geo slot",
+      "columns": [],
+      "reads": [
+        "location_tier",
+        "address_level",
+        "remote_miles"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": []
+    },
+    {
+      "key": "rationale.evidence",
+      "space": "rationale",
+      "layer": "universal",
+      "status": "label",
+      "label": "What told you",
+      "question": "Which part of the context decided it, and where exactly?",
+      "output": "the context field that decided it; a pointer to the exact span",
+      "columns": [
+        "hints",
+        "hint_refs"
+      ],
+      "reads": [],
+      "relations": [],
+      "judgments": [],
+      "tasks": [
+        "decided_from",
+        "decided_by",
+        "rationale:evidence"
+      ]
+    },
+    {
+      "key": "rationale.why",
+      "space": "rationale",
+      "layer": "universal",
+      "status": "label",
+      "label": "Why",
+      "question": "What is it, the actual number, site, person or step, what does it change, and what does it depend on or feed?",
+      "output": "the rationale latent r_i and the WHY text decoded from it",
+      "columns": [
+        "note"
+      ],
+      "note_part": "universal",
+      "reads": [],
+      "relations": [],
+      "judgments": [],
+      "tasks": [
+        "rationale:atom"
+      ]
+    },
+    {
+      "key": "conduct.action",
+      "space": "conduct",
+      "layer": "company",
+      "status": "label",
+      "label": "Keep, reject or ignore",
+      "question": "Does our company use this line, drop it on purpose, or neither, and by which rule?",
+      "output": "keep, reject or ignore; a reason code; the company's policy line",
+      "columns": [
+        "note",
+        "rejected"
+      ],
+      "note_part": "company",
+      "reads": [
+        "co_action",
+        "co_reason"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": [
+        "policy:{company}",
+        "rationale:policy:{company}"
+      ]
+    },
+    {
+      "key": "conduct.constants",
+      "space": "conduct",
+      "layer": "company",
+      "status": "label",
+      "label": "Our crew and hours rules",
+      "question": "Which of our rules sets the crew, and what do we estimate the hours at?",
+      "output": "the learned constants inside a policy atom, e.g. the display size above which we send two techs",
+      "columns": [],
+      "reads": [
+        "co_crew_rule",
+        "co_hours_estimate"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": []
+    },
+    {
+      "key": "conduct.routing",
+      "space": "conduct",
+      "layer": "company",
+      "status": "label",
+      "label": "Where it goes in our systems",
+      "question": "Which of our SOW groups, delivery fields or systems does it feed?",
+      "output": "our SOW group; our delivery field; our source of truth",
+      "columns": [],
+      "reads": [
+        "scope_category",
+        "delivery_field",
+        "source_of_truth"
+      ],
+      "relations": [],
+      "judgments": [
+        "tier"
+      ],
+      "tasks": [
+        "consumer"
+      ]
+    },
+    {
+      "key": "conduct.intake",
+      "space": "conduct",
+      "layer": "company",
+      "status": "label",
+      "label": "Our intake standard",
+      "question": "Should we have asked this at quoting, and who on our side needs the answer?",
+      "output": "intake gap; the consumers that need the answer. Reads the universal absence head.",
+      "columns": [],
+      "reads": [
+        "intake_gap",
+        "needed_by"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": [
+        "question:intake_gap",
+        "question:needed_by"
+      ]
+    },
+    {
+      "key": "conduct.stage",
+      "space": "conduct",
+      "layer": "company",
+      "status": "label",
+      "label": "Our CRM stage",
+      "question": "What did our CRM call the stage when this came in?",
+      "output": "the CRM stage, verbatim; mapped onto stage_std",
+      "columns": [],
+      "reads": [
+        "co_stage_raw"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": []
+    },
+    {
+      "key": "conduct.precedent",
+      "space": "conduct",
+      "layer": "company",
+      "status": "planned",
+      "label": "Precedent memory",
+      "question": "None: every saved label is a precedent, and a later save that changes it overrules it.",
+      "output": "cited precedents per decision; overruled precedents kept with a link",
+      "columns": [],
+      "reads": [],
+      "relations": [],
+      "judgments": [],
+      "tasks": []
+    },
+    {
+      "key": "meta.bookkeeping",
+      "space": null,
+      "layer": "meta",
+      "status": "label",
+      "label": "Bookkeeping",
+      "question": "None: stored on the row, never a task or an input.",
+      "output": "whose policy the row carries; how the deal ended; backfill scratch",
+      "columns": [],
+      "reads": [
+        "co_company",
+        "deal_outcome",
+        "universal_type"
+      ],
+      "relations": [],
+      "judgments": [],
+      "tasks": []
+    }
+  ],
+  "legacy": {
+    "doc": "Tasks that train in a profile other than their head's layer, kept on purpose until the trainer moves them. Each says why.",
+    "base_tasks_in_company_heads": {
+      "consumer": "Older rows say whether Deal Kit or the brief uses the line. It is Purtera's layer by the portable spec, and it still trains in the base until the training thread moves it."
+    }
+  }
+}
