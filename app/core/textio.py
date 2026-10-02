@@ -118,3 +118,47 @@ def read_text(path: str | pathlib.Path, *, max_bytes: int | None = None) -> str:
     except OSError:
         return ""
     return decode_bytes(data)
+
+
+_ENTITY_RE = None
+
+
+def decode_html_entities(text: str, *, max_rounds: int = 4) -> str:
+    """``text`` with its HTML character references decoded, repeatedly.
+
+    HubSpot stores note and email bodies HTML-escaped, and some exports escape
+    an already-escaped body again: live 000132's note read "server &amp;amp;
+    virtualization", which a single ``html.unescape`` leaves as "&amp;". The
+    viewer shows the text as the author typed it ("server & virtualization"),
+    so every atom text and every char offset must be computed on that decoded
+    text, never on the encoding -- otherwise each highlight after the entity
+    is off by its extra characters.
+
+    Only terminated references (``&amp;``, ``&#38;``, ``&#x26;``) are decoded:
+    ``html.unescape`` also expands legacy names with no ``;``, which turns a
+    pasted URL's "&region=us" into "(R)ion=us". Decoding stops once a round
+    changes nothing. A reference to a line break (``&#10;``) is left as
+    written: decoding it would add lines, and line numbers are read off the
+    file as stored.
+    """
+    import html as _html
+    import re as _re
+
+    global _ENTITY_RE
+    if _ENTITY_RE is None:
+        _ENTITY_RE = _re.compile(r"&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});")
+    def _decode_one(m: "_re.Match[str]") -> str:
+        out = _html.unescape(m.group(0))
+        return m.group(0) if ("\n" in out or "\r" in out or "\u2028" in out or "\u2029" in out
+                              or "\x0b" in out or "\x0c" in out or "\x85" in out
+                              or "\x1c" in out or "\x1d" in out or "\x1e" in out) else out
+
+    s = str(text or "")
+    for _ in range(max_rounds):
+        if "&" not in s:
+            break
+        decoded = _ENTITY_RE.sub(_decode_one, s)
+        if decoded == s:
+            break
+        s = decoded
+    return s

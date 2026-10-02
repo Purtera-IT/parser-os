@@ -6,7 +6,7 @@ copy now, imported by both.
 """
 from __future__ import annotations
 
-from app.core.textio import read_text
+from app.core.textio import decode_html_entities, read_text
 
 import re
 from email import policy
@@ -638,6 +638,11 @@ def _extract_email_text(path: Path) -> str:
                 content = raw.decode("utf-8", errors="ignore")
     else:
         content = read_text(path)
+    # HubSpot hands email bodies over HTML-escaped, sometimes twice ("server
+    # &amp;amp; virtualization", live 000132): decode to the text the author
+    # wrote -- after BeautifulSoup's own single decode for markup, before it
+    # for plain text -- so every line split and char offset downstream is
+    # computed on what the viewer shows.
     if "<html" in content.lower() or "<table" in content.lower():
         soup = BeautifulSoup(content, "html.parser")
         # Inline markup first: a table cell's contents must be whole before the
@@ -645,8 +650,8 @@ def _extract_email_text(path: Path) -> str:
         _unwrap_inline_in_place(soup)
         _flatten_tables_in_place(soup)
         return split_notes_entries(strip_meeting_invite(rejoin_split_heading(
-            rejoin_label_and_value(soup.get_text(separator="\n", strip=True)))))
+            rejoin_label_and_value(decode_html_entities(soup.get_text(separator="\n", strip=True))))))
     return split_notes_entries(strip_meeting_invite(rejoin_split_heading(
-        rejoin_label_and_value(content))))
+        rejoin_label_and_value(decode_html_entities(content)))))
 
 

@@ -12,9 +12,8 @@ typed atoms with ``artifact_id`` provenance for the Files UI.
 
 from __future__ import annotations
 
-from app.core.textio import read_text
+from app.core.textio import decode_html_entities, read_text
 
-import html as _html
 import re
 from pathlib import Path
 from typing import Any
@@ -203,6 +202,15 @@ def _place_unlined_atoms(atoms: list[EvidenceAtom], raw_lines: list[str], body_a
         loc.update({"line_start": line, "line_end": line})
         refs[0] = refs[0].model_copy(update={"locator": loc})
         atom.source_refs = refs
+
+
+def _raw_span(line: str, words: str) -> tuple[int, int] | None:
+    """Where ``words`` (whitespace-collapsed) sits on ``line`` as written."""
+    toks = str(words or "").split()
+    if not toks:
+        return None
+    m = re.search(r"\s+".join(re.escape(t) for t in toks), str(line or ""))
+    return (m.start(), m.end()) if m else None
 
 
 def _is_placeholder_note_title(text: str) -> bool:
@@ -482,13 +490,21 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
     keeping the first line as the title.
     """
     # HubSpot exports notes with HTML entities ("5 6 7 &amp; 8 FLR", live
-    # 010297); the text is what the author typed, not its encoding.
-    raw = _html.unescape(raw or "")
+    # 010297), sometimes escaped twice ("server &amp;amp; virtualization",
+    # live 000132); the text is what the author typed, not its encoding.
+    # Decoded before any line split, so ``raw_lines`` -- and every char
+    # offset read off them -- are the text the viewer shows.
+    raw = decode_html_entities(raw or "")
     lines = [ln.rstrip() for ln in (raw or "").splitlines()]
     if not _HS_NOTE_HEADER_RE.search(raw or ""):
         non_empty = [ln.strip() for ln in lines if ln.strip()]
         title = non_empty[0] if non_empty else ""
         body = " ".join(non_empty[1:]).strip() if len(non_empty) > 1 else title
+        # The body starts on the second non-empty line when there is one. At
+        # 0, a lead clause the title truncates ("Maintenance and support ...
+        # server & virtualization..." over the full " - " list, live 000132)
+        # was located on the TITLE line, so its highlight showed the title.
+        nonblank_at = [i for i, ln in enumerate(lines) if ln.strip()]
         return {
             "title": title,
             "note_id": "",
@@ -497,7 +513,7 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
             "author_email": "",
             "body": body,
             "raw_lines": lines,
-            "body_line_index": 0,
+            "body_line_index": nonblank_at[1] if len(nonblank_at) > 1 else 0,
         }
     title = ""
     note_id = ""
@@ -1213,6 +1229,12 @@ class HubspotNoteParser(BaseParser):
                 while len(acc) < len(words) and end + 1 < len(raw_lines) and raw_lines[end + 1].strip():
                     end += 1
                     acc = f"{acc} {' '.join(raw_lines[end].split())}"
+                # The column on the line as written (the decoded raw line, not
+                # its whitespace-collapsed copy), so ``line[char_start:char_end]``
+                # IS the atom's text and the viewer's highlight lands on it.
+                span = _raw_span(raw_lines[i], words if whole is not None else probe)
+                if span is not None:
+                    col = span[0]
                 locator = dict(source_ref.locator or {})
                 # Where on the line it starts, too. A bullet list flattened
                 # onto one line (" - "-separated, live 000132) is ten atoms on
@@ -1222,6 +1244,8 @@ class HubspotNoteParser(BaseParser):
                 # physical server"). The column is the source order.
                 locator.update({"line_start": i + 1, "line_end": end + 1, "region": "body",
                                 "char_start": col})
+                if whole is not None and span is not None:
+                    locator["char_end"] = span[1]
                 return source_ref.model_copy(update={
                     "id": stable_id("src", artifact_id, "hubspot_note", str(i + 1), probe),
                     "locator": locator,
