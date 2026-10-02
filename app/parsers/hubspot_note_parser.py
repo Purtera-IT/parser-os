@@ -959,7 +959,7 @@ class HubspotNoteParser(BaseParser):
             # greeting, the context and the ask together. Each sentence is its
             # own evidence, the way email and transcript lines already are;
             # the paragraph travels on each as context.
-            from app.core.sentences import split_inline_dash_list, split_sentences
+            from app.core.sentences import split_inline_dash_list, split_sentences, split_trigger_clause
 
             # The author's own line breaks come first: "Hi Trent," on its own
             # line is a greeting, not the start of the request beneath it
@@ -973,7 +973,8 @@ class HubspotNoteParser(BaseParser):
                 if dash_items:
                     sentences.extend(p for p in dash_items if p.strip())
                     continue
-                sentences.extend(s.strip() for s in split_sentences(line) if s.strip())
+                for _s in split_sentences(line):
+                    sentences.extend(p for p in split_trigger_clause(_s.strip()) if p)
             # A note file repeats its title as the body's first line; a body
             # that IS the title ("Need Troy and Wilmington sites removed.",
             # live 000132) is one statement, not two.

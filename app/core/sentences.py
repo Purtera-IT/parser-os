@@ -204,6 +204,39 @@ _HOLIDAY_CONTEXT_RE = re.compile(
 )
 
 
+#: ", once they are delivered we will ..." -- a trigger clause that carries
+#: its own main clause, spliced onto a sentence with a comma.
+_TRIGGER_SPLICE_RE = re.compile(
+    r",\s+(?=(?:and\s+)?(?:once|as\s+soon\s+as|when|after)\s+"
+    r"[^,.;!?]*?\b(?:we|i|they|you)(?:\s+(?:will|can|would|should|shall)|'ll)\b)",
+    re.I,
+)
+_HEAD_CLAUSE_RE = re.compile(
+    r"^(?:we|i|they|you|he|she|it|the\s+\w+)(?:'re|'m|'ve|\s+(?:are|am|is|were|was|have|has|had|"
+    r"will|would|can|still|just|currently)\b)",
+    re.I,
+)
+
+
+def split_trigger_clause(sentence: str) -> list[str]:
+    """``[head, trigger]`` for a comma splice whose second half is a trigger
+    with its own main clause, else ``[sentence]``.
+
+    "We are waiting for the TVs to arrive, once they are delivered we will
+    schedule the install." is a dependency AND the commitment it gates -- two
+    statements (010003). "We will install once the TVs arrive" has no comma
+    and no second subject, and stays whole.
+    """
+    t = str(sentence or "").strip()
+    m = _TRIGGER_SPLICE_RE.search(t)
+    if not m:
+        return [t] if t else []
+    head, tail = t[: m.start()].strip(), t[m.end():].strip()
+    if len(head.split()) < 4 or len(tail.split()) < 4 or not _HEAD_CLAUSE_RE.match(head):
+        return [t]
+    return [head, tail[:1].upper() + tail[1:]]
+
+
 #: A ", so <subject>" clause boundary inside one sentence.
 _SO_CLAUSE_RE = re.compile(r",\s+so\s+(?=(?:i|we|you|they|it|he|she)\b)", re.I)
 

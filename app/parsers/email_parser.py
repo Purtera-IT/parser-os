@@ -1582,7 +1582,7 @@ def _expand_lines_to_sentences(
     line number is the ORIGINAL one for every piece: splitting changes what a
     single atom covers, never where it came from.
     """
-    from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences
+    from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences, split_trigger_clause
 
     out: list[tuple[int, int, str]] = []
     for line_idx, line in enumerate(lines):
@@ -1613,6 +1613,15 @@ def _expand_lines_to_sentences(
         # one period and two sentences, and counted as one line it was typed
         # as the question and the work in it was never a task.
         if not stripped or "|" in stripped or len(_SENTENCE_END_RE.findall(stripped)) < 2:
+            # One sentence -- unless it is a dependency spliced onto the
+            # commitment it gates ("..., once they are delivered we will
+            # schedule the install.").
+            _parts = split_trigger_clause(stripped.lstrip("> ")) if stripped and "|" not in stripped else []
+            if len(_parts) > 1:
+                prefix = line[: len(line) - len(line.lstrip("> "))]
+                for seq, piece in enumerate(_parts):
+                    out.append((line_num, seq, prefix + piece))
+                continue
             out.append((line_num, 0, line))
             continue
         # The quote marker is the line's, not the first sentence's: split the
@@ -1643,8 +1652,11 @@ def _expand_lines_to_sentences(
         # nothing downstream can order them: the envelope's reading-order sort
         # falls back to the atom id, and live 010288 showed one paragraph's
         # three sentences back to front.
-        for seq, piece in enumerate(pieces):
-            out.append((line_num, seq, prefix + piece))
+        seq = 0
+        for piece in pieces:
+            for part in split_trigger_clause(piece) or [piece]:
+                out.append((line_num, seq, prefix + part))
+                seq += 1
     return out
 
 
@@ -1894,6 +1906,36 @@ def _names_automated_sender(line: str) -> bool:
         return True
     m = _HEADER_FROM_RE.match(line or "")
     return bool(m and is_automated_sender(m.group(1)))
+
+
+def _has_content_before(lines: list[Any], idx: int) -> bool:
+    """Is there a line of the message's own content above ``lines[idx]``?
+
+    Greetings, header-shaped lines, separators, names and contact chrome do
+    not count: a sign-off with nothing but those above it is an opener.
+    """
+    for raw in list(lines)[: max(0, idx)]:
+        t = _BULLET_PREFIX_RE.sub("", str(raw or "").lstrip("> ").strip()).strip()
+        if not t or not re.search(r"[A-Za-z]{2}", t):
+            continue
+        if _is_greeting_line(t) or _PSEUDO_HEADER_RE.match(t) or _SIGNOFF_RE.match(t):
+            continue
+        if BLOCK_SPLIT_RE.match(t) or _is_identity_only_line(t):
+            continue
+        return True
+    return False
+
+
+def _has_sentence_after(lines: list[Any], idx: int) -> bool:
+    """Does a full sentence (five words or more, ending . ! or ?) follow
+    ``lines[idx]`` in the message? A signature card never has one."""
+    for raw in list(lines)[idx + 1:]:
+        t = _BULLET_PREFIX_RE.sub("", str(raw or "").lstrip("> ").strip()).strip()
+        if BLOCK_SPLIT_RE.match(t):
+            return False
+        if len(t.split()) >= 5 and re.search(r"[.!?]$", t) and not _is_identity_only_line(t):
+            return True
+    return False
 
 
 def _without_automated_senders(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
@@ -3532,7 +3574,15 @@ class EmailParser(BaseParser):
             # next. Site extraction runs above this and is untouched, so an
             # address in a signature is still recovered.
             if _SIGNOFF_RE.match(cleaned):
-                in_signature = True
+                # "Thank you!" as the FIRST thing a message says opens it; it
+                # signs nothing off. Latching there turned the whole message
+                # into signature chrome (010003: "We are waiting for the TVs
+                # to arrive. Once they are delivered we will schedule the
+                # install." under a "Thank you!" opener was chatter).
+                _blk = block.get("lines") or []
+                _at = line_num - int(block.get("line_start") or 0)
+                if _has_content_before(_blk, _at) or not _has_sentence_after(_blk, _at):
+                    in_signature = True
                 _reject("signoff")
                 continue
             # 1b) A quoted message's own header block ("To: …", "Sent: …",

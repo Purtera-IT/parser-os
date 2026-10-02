@@ -149,3 +149,66 @@ def test_pasted_adobe_sign_notice_in_a_note_is_chatter(tmp_path: Path) -> None:
     for a in robot:
         assert a.atom_type == AtomType.deal_metadata and "chatter" in a.review_flags, a.raw_text
     assert [a for a in atoms if a.raw_text.startswith("Sarah Halpern has signed")]
+
+
+# ── 7: the TV-delivery dependency is split and never chatter ──
+
+_TV = "We are waiting for the TVs to arrive, once they are delivered we will schedule the install."
+_TV_PARTS = ["We are waiting for the TVs to arrive", "Once they are delivered we will schedule the install."]
+
+
+def test_trigger_clause_splits_only_a_spliced_main_clause() -> None:
+    from app.core.sentences import split_trigger_clause
+
+    assert split_trigger_clause(_TV) == _TV_PARTS
+    for whole in ("We will install once the TVs arrive.", "Install the displays, once they arrive.",
+                  "Please call me, once you arrive I will open the door."):
+        assert split_trigger_clause(whole) == [whole]
+
+
+@pytest.mark.parametrize("opener", ["Hi Sarah,\n\n", "Thank you!\n\n", "Hi Sarah,\n\nThanks!\n\n"])
+def test_email_dependency_is_split_and_not_chatter(tmp_path: Path, opener: str) -> None:
+    from app.parsers.email_parser import EmailParser
+
+    p = tmp_path / "tv.eml"
+    p.write_text("From: Patrick Kelly <patrick.kelly@purtera-it.com>\nTo: Sarah <sarah@acme.com>\n"
+                 "Subject: TVs\nDate: Mon, 06 Jul 2026 10:00:00 -0400\n"
+                 "Content-Type: text/plain; charset=utf-8\n\n"
+                 f"{opener}{_TV}\n\nThanks,\nPatrick Kelly\n770.769.7311\n", encoding="utf-8")
+    atoms = EmailParser().parse_artifact_full(project_id="p", artifact_id="a", path=p).atoms
+    by = {a.raw_text: a for a in atoms}
+    for part in _TV_PARTS:
+        assert part in by, [a.raw_text for a in atoms]
+        assert "chatter" not in by[part].review_flags and by[part].atom_type != AtomType.deal_metadata
+    # The signature under a real sign-off is still chrome.
+    assert "chatter" in by["770.769.7311"].review_flags
+
+
+def test_reply_that_is_only_a_signature_stays_chrome(tmp_path: Path) -> None:
+    from app.parsers.email_parser import EmailParser
+
+    p = tmp_path / "sig.eml"
+    p.write_text("From: Patrick Kelly <patrick.kelly@purtera-it.com>\nTo: Sarah <sarah@acme.com>\n"
+                 "Subject: TVs\nDate: Mon, 06 Jul 2026 10:00:00 -0400\n"
+                 "Content-Type: text/plain; charset=utf-8\n\n"
+                 "Thanks,\nPatrick Kelly\nSenior Account Manager\nCDW | 200 N Milwaukee Ave\n", encoding="utf-8")
+    atoms = EmailParser().parse_artifact_full(project_id="p", artifact_id="a", path=p).atoms
+    row = [a for a in atoms if a.raw_text == "CDW | 200 N Milwaukee Ave"]
+    assert row and "chatter" in row[0].review_flags
+
+
+def test_note_and_call_dependency_is_not_small_talk(tmp_path: Path) -> None:
+    from app.core.compiler import compile_project
+    from app.core.hybrid_summary_transcript import classify_transcript_turn_role
+
+    assert classify_transcript_turn_role("We are waiting for the TVs to arrive") == "deal"
+    assert classify_transcript_turn_role("We're waiting for Bob to join") != "deal"
+    (tmp_path / "010003-hs-note-1.txt").write_text(
+        "HubSpot Note: TV status\nHubSpot Note ID: 1\nDate: 2026-07-20T18:58:14.007Z\n"
+        f"Author: Patrick Kelly\n\n{_TV}\n", encoding="utf-8")
+    r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
+    by = {a.raw_text: a for a in r.atoms}
+    for part in _TV_PARTS:
+        assert part in by, list(by)
+        assert "chatter" not in by[part].review_flags
+        assert by[part].atom_type != AtomType.deal_metadata, (part, by[part].atom_type)
