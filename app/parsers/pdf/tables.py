@@ -21,6 +21,7 @@ from app.parsers.pdf._shared import _looks_like_page_footer
 from app.parsers.pdf._shared import _make_atom
 from app.parsers.pdf._shared import _table_rows_repaired
 from app.parsers.pdf._shared import _grid_is_self_labelled
+from app.parsers.pdf._shared import _key_value_rows
 from app.parsers.pdf._shared import _drop_title_band
 from app.parsers.pdf.page_kind import _page_is_a_drawing, table_cuts_words
 from pathlib import Path
@@ -128,13 +129,17 @@ def _fitz_generic_table_fallback(
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
+                # A LABEL | VALUE grid has no header row: one row per field.
+                kv = _key_value_rows(page, table, extracted)
+                if kv:
+                    extracted = [[t] for t in kv]
                 extracted = _drop_title_band(extracted)
-                if not extracted or (len(extracted) < 2 and not _grid_is_self_labelled(extracted)):
+                if not extracted or (len(extracted) < 2 and not kv and not _grid_is_self_labelled(extracted)):
                     continue
                 header = [(c or "").strip() for c in extracted[0]]
                 body = extracted[1:]
                 # A grid whose cells label themselves has no header row.
-                self_labelled = _grid_is_self_labelled(extracted)
+                self_labelled = bool(kv) or _grid_is_self_labelled(extracted)
                 if self_labelled:
                     header, body = [""] * len(extracted[0]), extracted
                 # Build columns list (use col_N for blank headers)
@@ -212,6 +217,7 @@ def _fitz_generic_table_fallback(
                                 "columns": columns,
                                 "cells": cells,
                                 "fallback": "fitz_generic_table",
+                                **({"key_value": True} if kv else {}),
                             },
                         )
                     )

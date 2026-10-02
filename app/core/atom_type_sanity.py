@@ -1524,6 +1524,12 @@ def _is_table_record_row(atom: Any) -> bool:
     v = getattr(atom, "value", None)
     if not isinstance(v, dict) or v.get("kind") != "table_row":
         return False
+    # A field of a LABEL | VALUE grid ("Customer Name: CHECKOUT LLC", "Drafted
+    # By: <name>") is one record too, unless its label is itself a signature
+    # label ("By:", "Title:") -- then the grid is a signature table.
+    if v.get("key_value"):
+        label = _atom_text(atom).split(":", 1)[0].strip().lower()
+        return label not in {"by", "name", "title", "date", "signature"}
     cols = [str(c or "").strip() for c in (v.get("columns") or [])]
     if len(cols) < 2 or any(not c or c.startswith("col_") for c in cols):
         return False
