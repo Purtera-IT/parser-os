@@ -2678,7 +2678,14 @@ def _atoms_for_sections(
                     pending = (None, parts[-1])
                     continue
             if btext and _pdf_is_framing_lead_in(btext):
-                pending = (block, btext)   # short lead-in: attach to the next block
+                # A lead-in that also states a figure ("Services Fees hereunder
+                # are FIXED FEES, ... will be $1,622.00.", 010003) is content: it
+                # keeps its own atom and still frames the next block, as in docx.
+                if re.search(r"\d", btext):
+                    yield from _emit(block)
+                    pending = (None, btext)
+                else:
+                    pending = (block, btext)   # short lead-in: attach to the next block
                 continue
             yield from _emit(block)
         if pending is not None and pending[0] is not None:
