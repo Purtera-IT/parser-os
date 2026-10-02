@@ -539,6 +539,14 @@ class DocxParser(BaseParser):
             # signed PDF produce matching atoms (see clause_split).
             has_placeholder = bool(_PLACEHOLDER_PROMPT_RE.search(text)) or any(
                 p in text for p in _placeholders)
+            if not (is_heading or has_placeholder):
+                city_list = self._city_list_paragraph_atoms(
+                    project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                    text=text, paragraph_index=idx, section_path=para_section.get(idx, []),
+                )
+                if city_list:
+                    atoms.extend(city_list)
+                    continue
             clauses = [] if (is_heading or has_placeholder) else split_clauses(text)
             units = clauses or [text]
             for s_idx, unit in enumerate(units):
@@ -2648,6 +2656,69 @@ class DocxParser(BaseParser):
         if ledger is not None and atoms:
             ledger.mark_represented(span_id)
         return atoms
+
+    def _city_list_paragraph_atoms(
+        self, *, project_id, artifact_id, filename, text, paragraph_index, section_path,
+    ) -> list[EvidenceAtom]:
+        """A "Supported Locations: Delphos, OH, Hudson, WI, ..." paragraph.
+
+        Live 000132 (v1 SOW): the line read as one prose atom, which the
+        substance gate then dropped as unreadable (place names are not
+        dictionary words), so the cities came back only as sites minted from
+        mentions and no atom carried "Supported Locations". The lead is kept
+        as its own list_lead_in atom (the context, like a "Locations" heading)
+        and each place is its own physical_site atom pointing back at it.
+        Empty when the paragraph is anything else.
+        """
+        from app.core.city_site_list import city_site_value, split_city_list_paragraph
+
+        split = split_city_list_paragraph(text)
+        if split is None:
+            return []
+        lead, sites = split
+        ledger = getattr(self, "_ledger", None)
+        if ledger is not None:
+            span_id = self._span_id(artifact_id, paragraph_index, None, None, None, None, None)
+            ledger.register_span(span_id, text)
+            ledger.mark_represented(span_id)
+        lead_atom = self._structure_atom(
+            project_id=project_id, artifact_id=artifact_id, filename=filename, text=lead,
+            kind="list_lead_in", paragraph_index=paragraph_index, table_index=None, row=None,
+            cell=None, tracked_change=None, tracked_index=None, section_path=section_path,
+        )
+        out: list[EvidenceAtom] = [lead_atom]
+        for site in sites:
+            sid = stable_id("atm", project_id, artifact_id, "docx_city_list", paragraph_index, site.slug)
+            out.append(EvidenceAtom(
+                id=sid,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                atom_type=AtomType.physical_site,
+                raw_text=site.text,
+                normalized_text=normalize_text(site.text),
+                value=city_site_value(site, source="docx_city_list", list_lead_atom_id=lead_atom.id),
+                entity_keys=[site.entity_key],
+                source_refs=[SourceRef(
+                    id=stable_id("src", artifact_id, paragraph_index, "city_list", site.line_index),
+                    artifact_id=artifact_id,
+                    artifact_type=ArtifactType.docx,
+                    filename=filename,
+                    locator={
+                        "paragraph_index": paragraph_index,
+                        "section_path": list(section_path or []),
+                        "lead_in": [lead],
+                        "list_index": site.line_index,
+                    },
+                    extraction_method="docx_text_and_ooxml",
+                    parser_version=self.parser_version,
+                )],
+                authority_class=AuthorityClass.contractual_scope,
+                confidence=0.8,
+                review_status=ReviewStatus.needs_review,
+                review_flags=["city_site_list"],
+                parser_version=self.parser_version,
+            ))
+        return out
 
     def _structure_atom(
         self, *, project_id, artifact_id, filename, text, kind, paragraph_index,
