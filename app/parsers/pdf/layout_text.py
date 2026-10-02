@@ -49,7 +49,7 @@ _ENUMERATOR = re.compile(r"^(?:(?:step\s+)?\(?\d{1,2}[.):]?|[•▪●◦‣■�
 class _Seg:
     """A run of spans on one text line with no wide horizontal gap inside."""
 
-    __slots__ = ("x0", "y0", "x1", "y1", "text", "size", "bold", "color", "link", "fill")
+    __slots__ = ("x0", "y0", "x1", "y1", "text", "size", "bold", "color", "link", "fill", "boxes")
 
     def __init__(self, x0, y0, x1, y1, text, size, bold, color):
         self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
@@ -59,6 +59,8 @@ class _Seg:
         self.color = color
         self.link = False
         self.fill = -1
+        #: Stroked frames drawn around this segment: ``((area, index), ...)``.
+        self.boxes: tuple[tuple[float, int], ...] = ()
 
     @property
     def cy(self) -> float:
@@ -243,6 +245,44 @@ def _inside(cx: float, cy: float, r: Any) -> bool:
         return r.x0 - 1 <= cx <= r.x1 + 1 and r.y0 - 1 <= cy <= r.y1 + 1
     except Exception:
         return False
+
+
+def _mark_boxes(page: Any, segs: list[_Seg]) -> None:
+    """Record the stroked frames around each segment (a table's border, a
+    box's outline), so two framed tables set side by side are never read as
+    one grid."""
+    try:
+        pr = page.rect
+        page_area = float(pr.width * pr.height) or 1.0
+        rects = []
+        for d in page.get_drawings() or []:
+            r = d.get("rect")
+            if r is None or d.get("color") is None or "s" not in str(d.get("type") or ""):
+                continue
+            area = float(r.width * r.height)
+            if area <= 0 or area > 0.6 * page_area or r.width < 20 or r.height < 8:
+                continue
+            rects.append((area, r))
+    except Exception:
+        return
+    for sg in segs:
+        sg.boxes = tuple((a, i) for i, (a, r) in enumerate(rects) if _inside(sg.x0 + 1, sg.cy, r)
+                         and _inside(sg.x1 - 1, sg.cy, r))
+
+
+def _split_by_frames(run: list[list[_Seg]]) -> list[list[_Seg]]:
+    """The run's segments grouped by the largest frame that holds some but
+    not all of them (left to right); one group when nothing frames them
+    apart."""
+    segs = [sg for r in run for sg in r]
+    everywhere = set.intersection(*(set(sg.boxes) for sg in segs)) if segs else set()
+    keyed: dict[int, list[_Seg]] = {}
+    for sg in segs:
+        own = [b for b in sg.boxes if b not in everywhere]
+        keyed.setdefault(max(own)[1] if own else -1, []).append(sg)
+    if len(keyed) < 2 or -1 in keyed:
+        return [segs]
+    return sorted(keyed.values(), key=lambda g: (min(sg.x0 for sg in g), min(sg.y0 for sg in g)))
 
 
 def _mark_links_and_fills(page: Any, segs: list[_Seg]) -> None:
@@ -548,8 +588,123 @@ def _leaf_lines(segs: list[_Seg]) -> list[str]:
     return out
 
 
+_SELF_LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9 .#/&()'-]{0,30}?:(?:\s+\S|\s*$)")
+
+
+def _labels_itself(cell: str) -> bool:
+    m = _SELF_LABEL.match(cell)
+    return bool(m) and len(cell.split(":", 1)[0].split()) <= 4
+
+
+def _self_labelled_records(rows: list[list[_Seg]], gutters: list[tuple[float, float]]) -> list[str]:
+    """A contact / form grid whose cells carry their own labels ("FULL NAME:
+    Chase Smith", "JOB TITLE: Director of Operations", "EMAIL ADDRESS: ..."),
+    one record per row, read as one line per record with its cells joined by
+    " | ". A cell whose value wrapped onto the line below (a row with no
+    label of its own) folds into the cell above it in the same column. Read
+    column by column instead, every field was its own line and a wrapped
+    value ("EMAIL ADDRESS:" / "john@...") read as a heading. ``[]`` when the
+    region is not such a grid."""
+    cuts = [(a + b) / 2.0 for a, b in gutters]
+    if not cuts:
+        return []
+    records: list[list[str]] = []
+    for r in rows:
+        cells = [""] * (len(cuts) + 1)
+        for sg in sorted(r, key=lambda x: x.x0):
+            i = sum(1 for c in cuts if (sg.x0 + sg.x1) / 2.0 > c)
+            cells[i] = f"{cells[i]} {sg.text}".strip()
+        filled = [c for c in cells if c]
+        if any(_labels_itself(c) for c in filled):
+            records.append(cells)
+        elif records:
+            for i, c in enumerate(cells):
+                if c:
+                    records[-1][i] = f"{records[-1][i]} {c}".strip()
+        else:
+            return []
+    full = [[c for c in rec if c] for rec in records]
+    if not full or any(len(f) < 2 for f in full):
+        return []
+    cells_all = [c for f in full for c in f]
+    if sum(1 for c in cells_all if _labels_itself(c)) < 0.8 * len(cells_all):
+        return []
+    # One label twice on a line ("Name: Jane Doe" | "Name: John Smith") is two
+    # boxes side by side -- the two parties of a signature block -- whose
+    # columns are read one box at a time, not a record per line.
+    for f in full:
+        labels = [c.split(":", 1)[0].strip().lower() for c in f if _labels_itself(c)]
+        if len(labels) != len(set(labels)):
+            return []
+    return [" | ".join(f) for f in full]
+
+
+def _record_runs(rows: list[list[_Seg]]) -> list[tuple[bool, list[list[_Seg]]]]:
+    """Split ``rows`` into ``(is_record_grid, rows)`` runs: a run of rows of
+    two or more self-labelled cells (plus the lines their values wrapped onto)
+    is a record grid; everything else is read as before."""
+    sizes = [sg.size for r in rows for sg in r if sg.size] or [10.0]
+    min_gap = max(10.0, 1.6 * statistics.median(sizes))
+    lh = statistics.median([max(1.0, sg.y1 - sg.y0) for r in rows for sg in r]) if rows else 10.0
+    out: list[tuple[bool, list[list[_Seg]]]] = []
+    buf: list[list[_Seg]] = []
+    i = 0
+    while i < len(rows):
+        if len(rows[i]) >= 2 and any(_labels_itself(sg.text.strip()) for sg in rows[i]):
+            j, wraps = i + 1, 0
+            while j < len(rows):
+                gap = min(sg.y0 for sg in rows[j]) - max(sg.y1 for sg in rows[j - 1])
+                if gap > 1.6 * lh:
+                    break
+                labelled = any(_labels_itself(sg.text.strip()) for sg in rows[j])
+                if labelled and len(rows[j]) >= 2:
+                    wraps = 0
+                elif not labelled and wraps < 2:
+                    wraps += 1
+                else:
+                    break
+                j += 1
+            run = rows[i:j]
+            while run and not any(_labels_itself(sg.text.strip()) for sg in run[-1]) and wraps > 0 \
+                    and len(run) > 1 and len(run[-1]) == 1 and len(run[-2]) >= 2 \
+                    and _TERMINAL.search(run[-1][0].text):
+                run, wraps = run[:-1], wraps - 1  # a closing sentence, not a wrap
+                j -= 1
+            gutters = _gutters(run, min_gap) if len(run) >= 2 else []
+            if gutters and _self_labelled_records(run, gutters):
+                if buf:
+                    out.append((False, buf))
+                    buf = []
+                out.append((True, run))
+                i = j
+                continue
+        buf.append(rows[i])
+        i += 1
+    if buf:
+        out.append((False, buf))
+    return out
+
+
 def _read(segs: list[_Seg], depth: int = 0) -> list[str]:
-    rows = _rows(segs)
+    out: list[str] = []
+    for is_grid, run in _record_runs(_rows(segs)):
+        if out and out[-1] != "":
+            out.append("")
+        if is_grid:
+            sizes = [sg.size for r in run for sg in r if sg.size] or [10.0]
+            min_gap = max(10.0, 1.6 * statistics.median(sizes))
+            for group in _split_by_frames(run):
+                rows = _rows(group)
+                recs = _self_labelled_records(rows, _gutters(rows, min_gap)) if len(rows) >= 2 else []
+                if out and out[-1] != "":
+                    out.append("")
+                out.extend(recs or _read_rows(rows, depth))
+            continue
+        out.extend(_read_rows(run, depth))
+    return out
+
+
+def _read_rows(rows: list[list[_Seg]], depth: int = 0) -> list[str]:
     out: list[str] = []
     for region_rows, gutters in _regions(rows):
         if out and out[-1] != "":
@@ -594,6 +749,7 @@ def layout_page_text(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> 
         if not segs:
             return None
         _mark_links_and_fills(page, segs)
+        _mark_boxes(page, segs)
         lines = _read(segs)
         # Collapse runs of blank lines.
         cleaned: list[str] = []

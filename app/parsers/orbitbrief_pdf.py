@@ -87,6 +87,8 @@ from app.parsers.pdf._shared import (  # noqa: E402
     _photo_request_lexical,
     _photo_request_rule,
     _table_rows_repaired,
+    _grid_is_self_labelled,
+    _drop_title_band,
 )
 
 # Moved to app.parsers.pdf.schematic_pre_pass. Re-exported so every existing import keeps working;
@@ -3459,7 +3461,13 @@ def _atoms_for_block(
 
         truncated_cells = block.get("truncated_cells") or []
         for row_index, row in enumerate(rows):
-            row_text = _row_to_text(row)
+            # A self-labelled grid's cells read as written ("FULL NAME: Chase
+            # Smith | JOB TITLE: ..."), never under a placeholder column name.
+            row_text = (
+                " | ".join(" ".join(str(v).split()) for v in row.values() if str(v or "").strip())
+                if block.get("self_labelled") and isinstance(row, dict)
+                else _row_to_text(row)
+            )
             if not row_text:
                 continue
             row_trunc = (
@@ -3639,7 +3647,9 @@ def _row_to_text(row: dict[str, Any]) -> str:
         s = str(val).strip()
         if not s:
             continue
-        parts.append(f"{col}: {s}")
+        # A header that carries its own colon ("QUOTED BY:") is not given a
+        # second one ("QUOTED BY:: Octavian Mitroi").
+        parts.append(f"{col} {s}" if str(col).rstrip().endswith(":") else f"{col}: {s}")
     return " | ".join(parts)
 
 
@@ -4309,16 +4319,21 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
-                if not extracted or len(extracted) < 2:
+                extracted = _drop_title_band(extracted)
+                if not extracted or (len(extracted) < 2 and not _grid_is_self_labelled(extracted)):
                     continue
                 header = [(c or "").strip() for c in extracted[0]]
                 ncols = len(header) if header else len(extracted[0])
+                # A grid whose cells label themselves has no header row.
+                self_labelled = _grid_is_self_labelled(extracted)
+                if self_labelled:
+                    header = []
                 columns = [
                     header[i] if i < len(header) and header[i] else f"col_{i}"
                     for i in range(ncols)
                 ]
                 rows: list[dict[str, str]] = []
-                for raw_row in extracted[1:]:
+                for raw_row in (extracted if self_labelled else extracted[1:]):
                     if not raw_row:
                         continue
                     cells: dict[str, str] = {}
@@ -4332,6 +4347,8 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                 if not rows:
                     continue
                 block: dict[str, Any] = {"kind": "table", "columns": columns, "rows": rows}
+                if self_labelled:
+                    block["self_labelled"] = True
                 trunc_by_row = _detect_truncated_cells(columns, rows)
                 if any(trunc_by_row):
                     block["truncated_cells"] = trunc_by_row
@@ -4368,6 +4385,8 @@ def _merge_table_extractions(
             return False
 
     def _degenerate(block: dict[str, Any]) -> bool:
+        if block.get("self_labelled"):
+            return False
         cols = block.get("columns") or []
         return sum(1 for c in cols if str(c).startswith("col_")) >= 2
 
@@ -5389,6 +5408,14 @@ def _strip_title_block(sections: list[dict[str, Any]], title: str) -> None:
                 return
 
 
+_CONTACT_FIELD_LABEL_RE = re.compile(
+    r"(?:(?:(?:FULL|FIRST|LAST|CONTACT|COMPANY|CUSTOMER)\s+)?NAME|(?:JOB\s+)?TITLE|"
+    r"(?:E-?MAIL|MAILING)(?:\s+ADDRESS)?|(?:(?:CELL|MOBILE|OFFICE|WORK)\s+)?PHONE(?:\s+(?:NUMBER|NO\.?|#))?|"
+    r"MOBILE|CELL|FAX|DATE|QUOTED\s+BY|PREPARED\s+(?:BY|FOR)|SUBMITTED\s+(?:BY|TO)|SIGNATURE)"
+    r"\s*:",
+)
+
+
 def _looks_like_section_heading(stripped: str) -> bool:
     """True when an all-caps line is a real section heading, not a sentence tail
     or an identifier code.
@@ -5417,6 +5444,11 @@ def _looks_like_section_heading(stripped: str) -> bool:
             return False
     except Exception:  # pragma: no cover
         pass
+    # A contact / form field's label ("EMAIL ADDRESS:", "JOB TITLE:", "FULL
+    # NAME:", "PHONE:") whose value wrapped onto the next line is the field,
+    # not a section: as a heading it headed every atom after it (010353).
+    if _CONTACT_FIELD_LABEL_RE.fullmatch(stripped):
+        return False
     # Headings don't end with sentence punctuation.
     if stripped[-1] in ".,;":
         return False

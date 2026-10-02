@@ -20,6 +20,8 @@ from app.parsers.pdf._shared import _looks_like_form_field
 from app.parsers.pdf._shared import _looks_like_page_footer
 from app.parsers.pdf._shared import _make_atom
 from app.parsers.pdf._shared import _table_rows_repaired
+from app.parsers.pdf._shared import _grid_is_self_labelled
+from app.parsers.pdf._shared import _drop_title_band
 from app.parsers.pdf.page_kind import _page_is_a_drawing, table_cuts_words
 from pathlib import Path
 from typing import Any
@@ -126,10 +128,15 @@ def _fitz_generic_table_fallback(
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
-                if not extracted or len(extracted) < 2:
+                extracted = _drop_title_band(extracted)
+                if not extracted or (len(extracted) < 2 and not _grid_is_self_labelled(extracted)):
                     continue
                 header = [(c or "").strip() for c in extracted[0]]
                 body = extracted[1:]
+                # A grid whose cells label themselves has no header row.
+                self_labelled = _grid_is_self_labelled(extracted)
+                if self_labelled:
+                    header, body = [""] * len(extracted[0]), extracted
                 # Build columns list (use col_N for blank headers)
                 columns = [
                     header[i] if i < len(header) and header[i] else f"col_{i}"
@@ -179,7 +186,7 @@ def _fitz_generic_table_fallback(
                         val = " ".join(str(c or "").split()).strip()
                         if val:
                             cells[col_name] = val
-                            cell_strs.append(f"{col_name}: {val}")
+                            cell_strs.append(val if self_labelled else f"{col_name}: {val}")
                     if not cells:
                         continue
                     row_text = " | ".join(cell_strs)
@@ -266,6 +273,10 @@ def _box_runs_on_above(lines: list[dict[str, Any]], top: int, rail: float, line_
         run += 1
         cur = k
     return run >= 2
+
+
+#: A cell of nothing but field labels: "FULL NAME:", "FULL NAME: JOB TITLE:".
+_BARE_LABELS_RE = re.compile(r"(?:[A-Za-z][A-Za-z0-9 .#/&()'-]{0,30}?:\s*)+")
 
 
 def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[str, Any]], list[Any]]:
@@ -500,6 +511,17 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
                     bboxes.append(None)
             continue
 
+        # 4c. Records whose fields are set label-over-value ("FULL NAME:" /
+        #     "Chase Smith", "JOB TITLE:" / "Director of Operations" ...), one
+        #     record per band: a row of bare labels over each row of values.
+        #     Paired as two columns, each side fused its labels and its values
+        #     ("FULL NAME: JOB TITLE: | EMAIL ADDRESS: PHONE:"). Left to the
+        #     layout reader, which pairs each label with the value under it.
+        label_rows = [r for r in rows_lr if any(c for c in r)
+                      and all(_BARE_LABELS_RE.fullmatch((c or "").strip()) for c in r if c)]
+        if len(label_rows) >= max(2, 0.4 * len(rows_lr)) or any(
+                (c or "").count(":") >= 2 for r in label_rows for c in r):
+            continue
         # 5. header detection: a first row whose cells are short, all-alpha
         #    labels (no digits) names the columns; otherwise generic col_N.
         def _is_label(s: str) -> bool:
