@@ -71,6 +71,33 @@ _SCOPE_SIGNAL_RE = re.compile(
     r"reader|enterprise|rom|good\s+2\s+go)\b",
     re.I,
 )
+#: Titles the CRM (or a hurried PM) gives a note that says nothing: on its own
+#: such a note is empty, not content.
+_PLACEHOLDER_NOTE_TITLES = frozenset({
+    "note", "notes", "new note", "call", "call notes", "meeting", "meeting notes",
+    "email", "update", "fyi", "test", "untitled", "n/a", "na", "-",
+})
+
+
+def _is_placeholder_note_title(text: str) -> bool:
+    return " ".join(str(text or "").lower().split()).strip(" .:!-") in _PLACEHOLDER_NOTE_TITLES
+
+
+def _is_upload_caption(text: str) -> bool:
+    """A label for an attached file ("SOW", "psow from current partner"), not
+    a statement: short, no figures, no sentence punctuation, no ask. "PO!!"
+    and "Need Troy and Wilmington sites removed." are statements."""
+    t = " ".join(str(text or "").split())
+    return bool(
+        t
+        and len(t.split()) <= 8
+        and not re.search(r"\d|\$", t)
+        and not re.search(r"[.!?]", t)
+        and not _INSTRUCTION_RE.search(t)
+        and not re.search(r"\b(?:need|needs|remove|removed|add|added|cancel|confirm|send)\b", t, re.I)
+    )
+
+
 _INSTRUCTION_RE = re.compile(
     r"\b(please|need to|must|should|customer would like|get full list|"
     r"good\s+2\s+go|approved|hold off|go ahead)\b",
@@ -881,25 +908,39 @@ class HubspotNoteParser(BaseParser):
                     sentences.extend(p for p in dash_items if p.strip())
                     continue
                 sentences.extend(s.strip() for s in split_sentences(line) if s.strip())
+            # A note file repeats its title as the body's first line; a body
+            # that IS the title ("Need Troy and Wilmington sites removed.",
+            # live 000132) is one statement, not two.
+            sentences = list(dict.fromkeys(sentences))
             if len(sentences) > 1:
                 for sentence in sentences:
                     _mint_prose_one(sentence, paragraph=" ".join(str(prose or "").split()))
                 return
+            if len(sentences) == 1:
+                _mint_prose_one(" ".join(sentences[0].split()), paragraph=None)
+                return
             _mint_prose_one(" ".join(str(prose or "").split()), paragraph=None)
 
         def _mint_prose_one(prose: str, paragraph: str | None) -> None:
-            if (
+            is_title = bool(
                 prose and title
                 and " ".join(prose.lower().split()) == " ".join(title.lower().split())
-                and len(prose.split()) <= 8
-                and not re.search(r"\d|\$", prose)
-            ):
+            )
+            if is_title and _is_placeholder_note_title(prose):
+                # "Note", "Call" -- the CRM's default title with nothing under
+                # it. Genuinely empty; the header atom already records the note.
+                return
+            atom_types: list[AtomType] = []
+            if is_title and _is_upload_caption(prose):
                 # The note's prose IS its title: a caption on an upload ("SOW",
                 # "psow from current partner"), not scope. Live 010300: three such
-                # notes each became a scope_item.
+                # notes each became a scope_item. It is still the note's content,
+                # so it is minted -- this branch used to set the type and then
+                # mint nothing, which left every title-only note ("PO!!", "Need
+                # Troy and Wilmington sites removed." on 000132) with no atom.
                 atom_types = [AtomType.deal_metadata]
             elif prose:
-                atom_types: list[AtomType] = [AtomType.scope_item]
+                atom_types = [AtomType.scope_item]
                 if _INSTRUCTION_RE.search(prose):
                     atom_types.append(AtomType.customer_instruction)
                 if _ROM_RE.search(prose):
@@ -913,6 +954,7 @@ class HubspotNoteParser(BaseParser):
                 # What a sentence is gets learned downstream (typed classifier,
                 # taught corrections), not matched here.
 
+            if prose and atom_types:
                 deduped: list[AtomType] = []
                 for at in atom_types:
                     if at not in deduped:
@@ -958,6 +1000,8 @@ class HubspotNoteParser(BaseParser):
                         )
                     )
 
+                if AtomType.scope_item not in deduped:
+                    return
                 train_rows.append(
                     TrainingRow(
                         relation=HUBSPOT_NOTE_RELATION,
