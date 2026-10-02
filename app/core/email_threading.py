@@ -515,9 +515,13 @@ def _minute_stamp(raw: str) -> str:
     except Exception:
         dt = None
     if dt is None:
-        for fmt in ("%A, %B %d, %Y %I:%M %p", "%A, %B %d, %Y %H:%M", "%B %d, %Y %I:%M %p", "%m/%d/%Y %I:%M %p"):
+        # Gmail's "Mon, Jul 10, 2026 at 9:04 AM" (quote attribution).
+        _plain = re.sub(r"\s+at\s+", " ", raw).replace(" , ", ", ")
+        for fmt in ("%A, %B %d, %Y %I:%M %p", "%A, %B %d, %Y %H:%M", "%B %d, %Y %I:%M %p", "%m/%d/%Y %I:%M %p",
+                    "%a, %b %d, %Y %I:%M %p", "%a, %b %d, %Y, %I:%M %p", "%a, %b %d, %Y %H:%M",
+                    "%b %d, %Y %I:%M %p", "%m/%d/%y %I:%M %p", "%m/%d/%y, %I:%M %p", "%a, %d %b %Y %H:%M"):
             try:
-                dt = datetime.strptime(raw, fmt)
+                dt = datetime.strptime(_plain, fmt)
                 break
             except ValueError:
                 continue
@@ -667,7 +671,7 @@ def _message_identity(atom: EvidenceAtom) -> tuple[str, str, set[str]] | None:
 #: Admission-reject reasons that mark a line as signature chrome (see
 #: ``EmailParser._admission_reject_atom``): the same words in every message
 #: their author signs.
-_SIGNATURE_CHROME_REASONS = frozenset({"signature", "identity_only", "link_only"})
+_SIGNATURE_CHROME_REASONS = frozenset({"signature", "identity_only", "link_only", "quote_attribution"})
 
 
 def _chrome_scope(atom: EvidenceAtom) -> str:

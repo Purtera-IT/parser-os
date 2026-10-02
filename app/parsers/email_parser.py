@@ -813,6 +813,32 @@ def _is_brand_chrome_ocr(text: str) -> bool:
 
 
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)
+
+#: Gmail / Apple Mail's quote attribution: "On Mon, Jul 10, 2026 at 9:04 AM
+#: Patrick Kelly <patrick@x.com> wrote:". The date runs up to the name; the
+#: name is capitalised words with no digits, and never the AM/PM of the time
+#: (live 010003: "AM Patrick Kelly" was minted as a stakeholder).
+_QUOTE_ATTRIBUTION_RE = re.compile(
+    r"^On\s+(?P<date>.+?)[,\s]+(?!(?:AM|PM|am|pm|at)\b)"
+    r"(?P<name>[A-Z][^<>,@\d()\[\]]*?)\s*"
+    r"(?:[<(\[]\s*(?:mailto:)?(?P<addr>[^<>()\[\]\s]+@[^<>()\[\]\s]+?)\s*[>)\]])?\s*wrote:\s*$"
+)
+
+
+def parse_quote_attribution(line: str) -> dict[str, str] | None:
+    """``{"name", "email", "sent_at", "sender"}`` from a Gmail-style "On <date>,
+    <name> <addr> wrote:" line (any ``>`` quote prefix ignored), or ``None``."""
+    t = " ".join(str(line or "").lstrip("> ").split())
+    m = _QUOTE_ATTRIBUTION_RE.match(t)
+    if not m:
+        return None
+    name = m.group("name").strip().strip('"').strip()
+    addr = (m.group("addr") or "").strip().lower()
+    if not name or len(name.split()) > 5:
+        return None
+    sent_at = re.sub(r"\s+at\s+", " ", m.group("date").strip().rstrip(","))
+    return {"name": name, "email": addr, "sent_at": sent_at,
+            "sender": f"{name} <{addr}>" if addr else name}
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\s?-\s?\d{1,2}(?::\d{2})?\s?(?:am|pm)\b", re.I)
 
 EXCLUSION_PATTERNS = [
@@ -2325,6 +2351,13 @@ class EmailParser(BaseParser):
         }
         out: list[EvidenceAtom] = []
         seen: set[str] = set()
+        # A quote attribution ("On ... 9:04 AM Patrick Kelly <x> wrote:") is
+        # chrome: its author is credited on the quoted message, never minted
+        # as a stakeholder from the line (live 010003: "AM Sarah Halpern").
+        text = "\n".join(
+            ln for ln in str(text or "").splitlines()
+            if not (BLOCK_SPLIT_RE.match(ln.lstrip("> ").strip()) and " wrote:" in ln.lower())
+        )
         for m in self._NAMED_ADDRESS_RE.finditer(text or ""):
             name = re.sub(r"\s+", " ", m.group(1)).strip().strip('"')
             addr = m.group(2).strip().lower().rstrip(".,;")
@@ -2839,7 +2872,13 @@ class EmailParser(BaseParser):
         current: list[tuple[int, str]] = []
         for idx, line in enumerate(lines, start=1):
             stripped = line.strip()
-            is_new_message_boundary = bool(BLOCK_SPLIT_RE.match(stripped))
+            # A Gmail reply nests each older message one ">" deeper, and its
+            # "> > On ... wrote:" opens that message just as the bare line does
+            # (live 010003: the whole nested history was one block, so every
+            # quoted "Hi Sarah," belonged to the newest quote and none collapsed).
+            is_new_message_boundary = bool(
+                BLOCK_SPLIT_RE.match(stripped) or BLOCK_SPLIT_RE.match(stripped.lstrip("> ").strip())
+            )
             is_from_after_body = (
                 stripped.lower().startswith("from:")
                 and current
@@ -2896,6 +2935,15 @@ class EmailParser(BaseParser):
         stripped_lines = [line.strip() for _, line in lines]
         sender = self._find_header_value(stripped_lines, "from")
         sent_at = self._find_header_value(stripped_lines, "sent") or self._find_header_value(stripped_lines, "date")
+        if not sender and existing:
+            # A Gmail quote has no From:/Sent: -- its attribution line names
+            # the author and the time.
+            for _l in stripped_lines[:2]:
+                _attr = parse_quote_attribution(_l)
+                if _attr:
+                    sender = _attr["sender"]
+                    sent_at = sent_at or _attr["sent_at"]
+                    break
         # Deliberately NOT folded into `sender`. _authority_for_block reads that
         # field, and giving the first block a real sender flips the top-level
         # message of every .eml we wrote from customer_current_authored to
@@ -3308,6 +3356,12 @@ class EmailParser(BaseParser):
                     cleaned=_cleaned, source_ref=_ref, authority=authority,
                     line_num=_line, sentence_index=_sent, reason=reason,
                 ))
+            # "On <date> <name> <addr> wrote:" is quote chrome: the message
+            # it opens is credited to that author (``_build_block``), and the
+            # line itself is a chatter atom, never scope and never a person.
+            if BLOCK_SPLIT_RE.match(cleaned) and " wrote:" in cleaned.lower():
+                _reject("quote_attribution")
+                continue
             # Shape, not position: a line that is ONLY a name, an email, a
             # phone, or a punctuation fragment around one carries no scope
             # wherever it sits. Live 010215 (R3): the leading-lines-only rule

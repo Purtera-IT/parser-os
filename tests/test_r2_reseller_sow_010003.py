@@ -525,3 +525,76 @@ def test_gantt_workbook_milestone_and_po_rows_after_compile(tmp_path: Path) -> N
     assert by.get("Milestone - Install complete") == AtomType.milestone_phase, by
     assert by.get("PO # 4500123") == AtomType.deal_metadata, by
     assert by.get("Install displays") not in (AtomType.commercial_total, None), by
+
+
+# ── 9 (Gmail): nested ">" quotes, greetings and "On ... wrote:" attribution ──
+
+_PEOPLE = {"p": ("Patrick Kelly", "patrick.kelly@purtera-it.com"), "s": ("Sarah Halpern", "sarah@acme.com")}
+
+
+def _gmail_message(k: int) -> tuple[str, str]:
+    """Message k of the thread: (author key, body). 0 is the root."""
+    if k == 0:
+        return "p", "Hi Sarah,\n\nThe TVs ship next week.\n\nThanks,\n" + _SIG_P
+    if k % 2:
+        return "s", "Hi Patrick,\n\nPlease confirm the mount count.\n\n" + _SIG_S
+    return "p", "Hi Sarah,\n\nConfirmed, 12 mounts.\n\n" + _SIG_P
+
+
+def _write_gmail_chain(d: Path, *, first_file: int = 5, last: int = 8) -> None:
+    chain = ""
+    for k in range(last + 1):
+        who, body = _gmail_message(k)
+        if chain:
+            pw, _ = _gmail_message(k - 1)
+            name, addr = _PEOPLE[pw]
+            quoted = "\n".join(("> " + ln).rstrip() for ln in chain.splitlines())
+            chain = f"{body}\nOn Mon, Jul {k + 5}, 2026 at 9:0{k - 1} AM {name} <{addr}> wrote:\n{quoted}\n"
+        else:
+            chain = body
+        if k >= first_file:
+            name, addr = _PEOPLE[who]
+            (d / f"m{k}.eml").write_text(
+                f"From: {name} <{addr}>\nTo: x <x@acme.com>\nSubject: RE: TVs\n"
+                f"Date: Mon, {k + 6} Jul 2026 09:0{k}:00 -0400\nMessage-ID: <m{k}@x>\n"
+                "Content-Type: text/plain; charset=utf-8\n\n" + chain, encoding="utf-8")
+
+
+def test_gmail_nested_quote_greetings_are_one_atom_per_message(tmp_path: Path) -> None:
+    from app.core.compiler import compile_project
+
+    _write_gmail_chain(tmp_path)
+    r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
+    # Nine messages: Patrick wrote five ("Hi Sarah,"), Sarah four ("Hi Patrick,").
+    for line, n in (("Hi Sarah,", 5), ("Hi Patrick,", 4)):
+        hits = [a for a in r.atoms if a.raw_text == line]
+        assert len(hits) == n, (line, len(hits))
+        assert all("chatter" in a.review_flags for a in hits)
+    # The four messages the deal holds keep their own (unquoted) greeting.
+    assert len([a for a in r.atoms if a.raw_text.startswith("Hi ") and not (a.value or {}).get("quoted")]) == 4
+    assert [a for a in r.suppressed_atoms if a.raw_text == "Hi Sarah,"]  # recorded, not lost
+
+
+def test_gmail_attribution_line_is_chrome_never_a_stakeholder(tmp_path: Path) -> None:
+    from app.core.compiler import compile_project
+    from app.parsers.email_parser import EmailParser
+
+    _write_gmail_chain(tmp_path, first_file=4, last=4)
+    atoms = EmailParser().parse_artifact_full(project_id="p", artifact_id="a", path=tmp_path / "m4.eml").atoms
+    people = [a for a in atoms if a.atom_type == AtomType.stakeholder]
+    assert people and all(not a.raw_text.startswith(("AM ", "PM ")) for a in people), [a.raw_text for a in people]
+    assert all(" wrote:" not in a.raw_text for a in people)
+    attr = [a for a in atoms if a.raw_text.endswith(" wrote:")]
+    assert len(attr) == 4, [a.raw_text for a in atoms]
+    for a in attr:
+        assert a.atom_type == AtomType.deal_metadata and "chatter" in a.review_flags, a.raw_text
+        # credited to the author it names, as is the quoted message it opens
+        assert a.value["author"].split(" <")[0] in a.raw_text, (a.value["author"], a.raw_text)
+    sarah_ask = [a for a in atoms if a.raw_text == "Please confirm the mount count."]
+    assert sarah_ask and all("sarah@acme.com" in str(a.value.get("author")) for a in sarah_ask)
+    r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
+    for a in r.atoms:
+        assert not (a.atom_type == AtomType.stakeholder and a.raw_text.startswith(("AM ", "PM "))), a.raw_text
+        if " wrote:" in a.raw_text:
+            assert a.atom_type == AtomType.deal_metadata and "chatter" in a.review_flags, a.raw_text
+    assert not [p for p in r.packets if " wrote:" in str(getattr(p, "reason", "") or "")]

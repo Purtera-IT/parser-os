@@ -247,6 +247,12 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
         _kind = str((_v or {}).get("kind") or "") if isinstance(_v, dict) else ""
         if _kind.endswith(("_marker", "_header")):
             atom.review_status = ReviewStatus.auto_accepted
+            # The abstain flag means "needs_review"; leaving it on an
+            # auto-accepted record fails compile validation (a Gmail quote's
+            # "On ... wrote:" header, 010003).
+            _fl = getattr(atom, "review_flags", None)
+            if isinstance(_fl, list) and "calibration_abstain" in _fl:
+                atom.review_flags = [f for f in _fl if f != "calibration_abstain"]
             n += 1
             stats["provenance"] += 1
             continue
