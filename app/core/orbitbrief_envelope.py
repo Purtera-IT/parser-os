@@ -587,7 +587,10 @@ def build_orbitbrief_envelope(
             this_deal_keys=_this_keys,
         )
         _sup_here = _suppressed_by_artifact.get(fp.artifact_id)
-        if _sup_here:
+        # Said where it changes what the document reads as: a document the
+        # compile emptied, or one document_job_scope set aside. A partial fold
+        # elsewhere is already itemised under envelope.suppressed.
+        if _sup_here and (not artifact_atoms or _sup_here["by_stage"].get("document_job_scope")):
             _scope_summary = {
                 **_scope_summary,
                 "atoms_suppressed": _sup_here["atoms"],
