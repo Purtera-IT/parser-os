@@ -1935,6 +1935,31 @@ _ANY_ADDR_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _HEADER_FROM_RE = re.compile(r"^\s*(?:from|sender|reply-to)\s*:\s*(.+)$", re.I)
 
 
+#: A company's legal footer: copyright band, rights notice, trust/privacy
+#: links, confidentiality and unsubscribe text. Live 010003: CDW's footer
+#: ("Copyright 2026 CDW LLC. All rights reserved. 200 N. Milwaukee Avenue")
+#: became two scope_items and a job site, and its year fed the clause-conflict
+#: check ("Documents disagree on one clause: 2026 vs (no figure)").
+_LEGAL_FOOTER_RE = re.compile(
+    r"(?:\(c\)|\u00a9|\bcopyright\b)\s*(?:19|20)\d{2}"
+    r"|\ball rights reserved\b|\btrust center\b"
+    r"|\b(?:unsubscribe|confidentiality notice|intended solely for|privileged and confidential"
+    r"|if you are not the intended recipient|this e-?mail (?:and any attachments|is intended))\b",
+    re.IGNORECASE,
+)
+_SHORT_FOOTER_LINK_RE = re.compile(r"\b(?:privacy (?:policy|notice|statement)|terms of (?:use|service)|cookie policy)\b", re.I)
+
+
+def _is_legal_footer_line(line: str) -> bool:
+    """True for a line of a company's legal footer (see ``_LEGAL_FOOTER_RE``)."""
+    t = (line or "").strip()
+    if not t or len(t) > 400:
+        return False
+    if _LEGAL_FOOTER_RE.search(t):
+        return True
+    return len(t.split()) <= 12 and bool(_SHORT_FOOTER_LINK_RE.search(t))
+
+
 def _names_automated_sender(line: str) -> bool:
     """Does this body line carry an automated sender: a robot's address
     anywhere in it, or a header-shaped ``From: Adobe Sign`` line?"""
@@ -3479,6 +3504,7 @@ class EmailParser(BaseParser):
         # ``pending_lead_in`` holds framing prose ("By the end of the meeting
         # customer clarified:") until the next Include/Exclude list consumes it.
         in_signature = False
+        in_footer = False
         # A top-posted Outlook signature -- name line, then address line --
         # opens some authored messages. The sign-off latch below only catches
         # the TRAILING block, so "Nick Robateau" / "Nick.Robateau@CDW.com"
@@ -3553,6 +3579,14 @@ class EmailParser(BaseParser):
             if BLOCK_SPLIT_RE.match(cleaned) and " wrote:" in cleaned.lower():
                 _reject("quote_attribution")
                 continue
+            # A legal footer, and every line after it in the same message
+            # (its address, phone and links), is the company's boilerplate:
+            # a reject with its reason, never scope, a site or a clause.
+            if _is_legal_footer_line(cleaned) or (in_footer and len(cleaned.split()) <= 20):
+                in_footer = True
+                _reject("footer")
+                continue
+            in_footer = False
             # Shape, not position: a line that is ONLY a name, an email, a
             # phone, or a punctuation fragment around one carries no scope
             # wherever it sits. Live 010215 (R3): the leading-lines-only rule
