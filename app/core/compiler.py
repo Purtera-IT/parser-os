@@ -3246,6 +3246,24 @@ def compile_project(
     # The cross-document copies come back the same way: after every head, so
     # nothing counted, priced or packetized them; before coverage, so each
     # document's line counts as read by its own copy.
+    #
+    # Not every fold runs through _hold_copies (type-specific passes, site
+    # merges, list-split pieces, a quoted note line), but every fold that
+    # credits a line to another document leaves that document's ref on the
+    # survivor. One sweep over the final atoms -- after the held copies point
+    # at a canonical atom still in the result -- gives each such document its
+    # own copy, so no line of a document is shown only as another's atom.
+    try:
+        from app.core.cross_doc_copies import ensure_own_copies, resolve_canonical
+
+        if held_copies:
+            resolve_canonical(held_copies, atoms)
+        _swept = ensure_own_copies(atoms, held_copies)
+        if _swept:
+            held_copies.extend(_swept)
+            warnings.append(f"INFO: own_copy_sweep gave {len(_swept)} document line(s) their own copy")
+    except Exception as exc:  # never fail a compile over a copy
+        warnings.append(f"WARNING: own_copy_sweep failed: {type(exc).__name__}: {exc}")
     if held_copies:
         try:
             for _atom in held_copies:

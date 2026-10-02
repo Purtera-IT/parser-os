@@ -268,9 +268,8 @@ def split_copies(before: list[Any], after: list[Any], *, stage: str) -> list[Any
     ``value["duplicate_of"]``; the canonical atom lists the documents that
     also carry the line in ``value["also_in_documents"]``.
 
-    Not copies, and left to the suppression ledger: an in-document fold, a
-    quoted echo of an earlier message (the thread already shows that
-    message), held chatter, and anything whose survivor cannot be found.
+    Not copies, and left to the suppression ledger: an in-document fold,
+    held chatter, and anything whose survivor cannot be found.
     """
     after_ids = {id(a) for a in after}
     dropped = [a for a in before if id(a) not in after_ids]
@@ -286,12 +285,20 @@ def split_copies(before: list[Any], after: list[Any], *, stage: str) -> list[Any
     copies: list[Any] = []
     for d in dropped:
         v = _value(d)
-        if v.get("quoted") or is_cross_doc_copy(d):
+        if is_cross_doc_copy(d):
             continue
         if "admission_regex" in (getattr(d, "review_flags", None) or []):
             continue
         w = _survivor(d, kept_by_ref, kept_by_text)
         if w is None:
+            continue
+        if _is_quoted_mail_echo(d):
+            # An email quoting another message: the line is that message's,
+            # and belongs in ITS section, not shown again as the reply's
+            # (010003). The survivor remembers the reply so neither the sweep
+            # below nor the envelope credits the line to it. A quoted line in
+            # a NOTE is not an echo: the note shows its own copy (000132).
+            _note_quoted_in(w, d)
             continue
         v = dict(v)
         v["duplicate_of"] = {
@@ -313,6 +320,42 @@ def split_copies(before: list[Any], after: list[Any], *, stage: str) -> list[Any
                 wv["also_in_documents"] = docs
         copies.append(d)
     return copies
+
+
+#: ``value`` key on a survivor: documents whose copy of the line was only a
+#: QUOTE of the survivor's message (a reply quoting it). Not their line.
+QUOTED_IN_KEY = "quoted_in_documents"
+
+
+def _is_quoted_mail_echo(atom: Any) -> bool:
+    """A quoted line of an email message (not of a HubSpot note)."""
+    v = _value(atom)
+    if not v.get("quoted"):
+        return False
+    if "hubspot_note_parser" in (getattr(atom, "review_flags", None) or []):
+        return False
+    if v.get("email_thread") or v.get("message_index") is not None or str(v.get("kind") or "").startswith("email_"):
+        return True
+    refs = getattr(atom, "source_refs", None) or []
+    t = getattr(refs[0], "artifact_type", None) if refs else None
+    return str(getattr(t, "value", t) or "") in {"email", "msg", "mbox"}
+
+
+def _note_quoted_in(survivor: Any, echo: Any) -> None:
+    aid = str(getattr(echo, "artifact_id", "") or "")
+    if not aid or aid == str(getattr(survivor, "artifact_id", "") or ""):
+        return
+    if not isinstance(getattr(survivor, "value", None), dict):
+        return
+    docs = list(survivor.value.get(QUOTED_IN_KEY) or [])
+    if aid not in docs:
+        docs.append(aid)
+        survivor.value[QUOTED_IN_KEY] = docs
+
+
+def quoted_in(atom: Any) -> set[str]:
+    """Documents that only QUOTE this atom's line (see :data:`QUOTED_IN_KEY`)."""
+    return {str(x) for x in (_value(atom).get(QUOTED_IN_KEY) or [])}
 
 
 def resolve_canonical(copies: list[Any], final_atoms: list[Any]) -> None:
@@ -356,8 +399,141 @@ def resolve_canonical(copies: list[Any], final_atoms: list[Any]) -> None:
             v["duplicate_of"] = {**ref, "canonical_missing": True}
 
 
+#: Atoms a stage BUILT from several documents (a conflict between two of them,
+#: a signal derived from another atom, the declared-scope question): their refs
+#: name the documents they compare, not lines those documents hold.
+_SYNTHESIZED_FLAGS = frozenset({"cross_document_conflict", "derived_signal", "declared_scope"})
+
+
+def _synthesized(atom: Any) -> bool:
+    if _SYNTHESIZED_FLAGS & set(getattr(atom, "review_flags", None) or []):
+        return True
+    v = _value(atom)
+    return bool(v.get("derived_from") or v.get("backfill")
+                or str(v.get("kind") or "") == "cross_document_conflict")
+
+
+def _type_of(atom: Any) -> str:
+    t = getattr(atom, "atom_type", None)
+    return str(getattr(t, "value", t) or "")
+
+
+def line_key(atom: Any) -> tuple[str, str]:
+    """``(atom type, folded words)``: what :func:`holds_own_line` compares."""
+    return (_type_of(atom), _text_key(atom))
+
+
+def holds_own_line(atom: Any, own_keys: Iterable[tuple[str, str]]) -> bool:
+    """Whether a document whose atoms have ``own_keys`` (see :func:`line_key`)
+    holds ``atom``'s line as an atom of the same type."""
+    t, words = line_key(atom)
+    return any(ot == t and _jaccard_same(words, ow) for ot, ow in own_keys)
+
+
+def _jaccard_same(a: str, b: str) -> bool:
+    """Same line, worded within a token or two. No containment: a list line
+    ("Supported Locations: Delphos, OH, Plymouth, MI") CONTAINS its pieces and
+    is not a copy of any one of them."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    wa, wb = set(a.split()), set(b.split())
+    return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= 0.6
+
+
+def ensure_own_copies(kept: list[Any], copies: list[Any], *, stage: str = "own_copy_sweep") -> list[Any]:
+    """A copy for every document a kept atom cites but does not belong to.
+
+    Every fold that merges a loser's source refs onto a survivor in another
+    document credits that document's line to the survivor. :func:`split_copies`
+    turns the folds it can see into copies; this sweep, run once on the final
+    atoms, catches every other path -- a table row or cell folded by a
+    type-specific pass, a list-split city merged into another document's site,
+    a quoted note bullet folded onto the email it quotes -- so each document
+    shows its own atom for each line it holds (live 000132: 35 v2-SOW lines
+    and 18 v2-Deal-Kit rows were v1's atoms; six note bullets were an email's).
+
+    A document that already holds the atom (its own atom of the same type with
+    the same words, or a copy of this survivor) is left alone. The type
+    matters: a Deal Kit row is a ``raw_table_row`` AND a ``bom_line``, and
+    when only the ``bom_line`` folded onto v1's, v2 still needs its own. Returns the new copies; the
+    survivor lists the documents in ``value["also_in_documents"]``.
+    """
+    held_by_doc: dict[tuple[str, str], list[str]] = {}
+    copy_of: set[tuple[str, str]] = set()
+    for a in list(kept) + list(copies):
+        aid = str(getattr(a, "artifact_id", "") or "")
+        held_by_doc.setdefault((aid, _type_of(a)), []).append(_text_key(a))
+        dup = _value(a).get("duplicate_of")
+        if isinstance(dup, dict) and dup.get("atom_id"):
+            copy_of.add((aid, str(dup["atom_id"])))
+    taken = {str(getattr(a, "id", "") or "") for a in list(kept) + list(copies)}
+    out: list[Any] = []
+    for w in kept:
+        if is_cross_doc_copy(w) or _synthesized(w):
+            continue
+        if "admission_regex" in (getattr(w, "review_flags", None) or []):
+            continue
+        own = str(getattr(w, "artifact_id", "") or "")
+        wid = str(getattr(w, "id", "") or "")
+        words = _text_key(w)
+        wtype = _type_of(w)
+        if not own or not wid or not words:
+            continue
+        by_doc: dict[str, list[Any]] = {}
+        for r in getattr(w, "source_refs", None) or []:
+            aid = str(getattr(r, "artifact_id", "") or "")
+            if aid and aid != own:
+                by_doc.setdefault(aid, []).append(r)
+        quoting = quoted_in(w)
+        for aid, refs in by_doc.items():
+            if aid in quoting or (aid, wid) in copy_of:
+                continue
+            if any(_jaccard_same(words, k) for k in held_by_doc.get((aid, wtype), ())):
+                continue
+            from app.core.ids import stable_id
+
+            cid = stable_id("atm_copy", wid, aid)
+            if cid in taken:
+                continue
+            v = dict(_value(w))
+            v.pop("also_in_documents", None)
+            v["duplicate_of"] = {"atom_id": wid, "artifact_id": own, "stage": stage}
+            flags = [f for f in (getattr(w, "review_flags", None) or []) if f != COPY_FLAG] + [COPY_FLAG]
+            try:
+                c = w.model_copy(deep=True)
+            except AttributeError:  # not a pydantic model (tests' stand-ins)
+                import copy as _copy
+
+                c = _copy.deepcopy(w)
+            c.id = cid
+            if getattr(c, "atom_id", None):
+                c.atom_id = cid
+            c.artifact_id = aid
+            c.source_refs = [r.model_copy(deep=True) if hasattr(r, "model_copy") else r for r in refs]
+            c.receipts = []
+            c.value = v
+            c.review_flags = flags
+            out.append(c)
+            taken.add(cid)
+            copy_of.add((aid, wid))
+            held_by_doc.setdefault((aid, wtype), []).append(words)
+            if isinstance(getattr(w, "value", None), dict):
+                docs = list(w.value.get("also_in_documents") or [])
+                if aid not in docs:
+                    docs.append(aid)
+                    w.value["also_in_documents"] = docs
+    return out
+
+
 __all__ = [
     "COPY_FLAG",
+    "ensure_own_copies",
+    "holds_own_line",
+    "line_key",
+    "quoted_in",
+    "QUOTED_IN_KEY",
     "resolve_canonical",
     "doc_key",
     "document_order",
