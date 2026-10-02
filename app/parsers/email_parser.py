@@ -1609,6 +1609,44 @@ _MIN_SENTENCE_CHARS = 12
 _SENTENCE_END_RE = re.compile(r"[.?!](?=\s|$)")
 
 
+_WRAP_MIN_CHARS = 50
+_WRAP_OPEN_TERMINAL_RE = re.compile(r"[.!?:;]\s*[\"\u201d\u2019')\]]*\s*$")
+
+
+def _unwrap_hard_wrapped(lines: list[str]) -> list[tuple[int, str]]:
+    """``(index of first line, text)`` with hard-wrapped prose lines rejoined.
+
+    A plain-text mail client wraps a paragraph at ~72 columns, so one
+    sentence arrives as two lines: "But we are waiting for tv to arrive at
+    their office (it is with the shipping" / "carrier now). I also need to
+    keep my eye on the delivery status." Read line by line, the first half
+    of the sentence was one atom and "carrier now)." another (010003). A
+    long line that stops without terminal punctuation, followed by a line
+    that opens in lowercase under the same quote marker, is one line wrapped;
+    the sentence splitter then cuts the joined text at its real sentence
+    ends. A short line (a greeting, a signature, a list label) never joins.
+    """
+    out: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        text = line or ""
+        body = text.lstrip("> ")
+        if out and body[:1].islower() and "|" not in body \
+                and not _BULLET_PREFIX_RE.match(body):
+            prev_idx, prev = out[-1]
+            prev_body = prev.lstrip("> ")
+            prefix = text[: len(text) - len(body)].replace(" ", "")
+            prev_prefix_line = (lines[idx - 1] or "")
+            prev_prefix = prev_prefix_line[: len(prev_prefix_line) - len(prev_prefix_line.lstrip("> "))].replace(" ", "")
+            last_physical = prev_prefix_line.lstrip("> ").rstrip()
+            if (prefix == prev_prefix and len(last_physical) >= _WRAP_MIN_CHARS
+                    and "|" not in prev_body
+                    and not _WRAP_OPEN_TERMINAL_RE.search(last_physical)):
+                out[-1] = (prev_idx, prev.rstrip() + " " + body.strip())
+                continue
+        out.append((idx, text))
+    return out
+
+
 def _expand_lines_to_sentences(
     lines: list[str], line_start: int
 ) -> list[tuple[int, int, str]]:
@@ -1623,7 +1661,7 @@ def _expand_lines_to_sentences(
     from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences, split_trigger_clause
 
     out: list[tuple[int, int, str]] = []
-    for line_idx, line in enumerate(lines):
+    for line_idx, line in _unwrap_hard_wrapped(lines):
         line_num = line_start + line_idx
         stripped = (line or "").strip()
         # A bullet list flattened onto one line (live 000132, quoted from a
