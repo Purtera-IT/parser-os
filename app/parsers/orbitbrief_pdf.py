@@ -2566,6 +2566,46 @@ def _mark_blocks_on_a_drawing(sections: list[dict[str, Any]]) -> None:
         _mark_blocks_on_a_drawing(section.get("subsections") or [])
 
 
+def _chatter_atom(
+    text: str,
+    rule: str,
+    base_locator: dict[str, Any],
+    block_id: str,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+) -> EvidenceAtom:
+    """A line the short-line rules reject, kept as an atom flagged chatter.
+
+    Every rejected line must still reach the labeler as an atom, or the
+    admission head never sees the negative. Same flag and value key as
+    ``deal_chatter`` / the email admission rejects: ``review_flags`` carries
+    ``chatter`` and ``value["chatter"]`` is True. Typed ``deal_metadata``
+    (never scope), low confidence, needs review.
+    """
+    from app.core.deal_chatter import CHATTER_FLAG
+    from app.core.schemas import ReviewStatus
+
+    atom = _make_atom(
+        text=text,
+        project_id=project_id,
+        artifact_id=artifact_id,
+        filename=filename,
+        parser_version=parser_version,
+        atom_type=AtomType.deal_metadata,
+        authority_class=_classify_text_block(
+            text=text, section_path=list(base_locator.get("section_path") or []), kind="paragraph"
+        )[1],
+        confidence=0.1,
+        locator={**base_locator, "block_id": block_id},
+        value={"kind": "paragraph", "chatter": True, "rejected_by": rule},
+        review_flags=[CHATTER_FLAG],
+    )
+    atom.review_status = ReviewStatus.needs_review
+    return atom
+
+
 def _atoms_for_block(
     *,
     block: dict[str, Any],
@@ -2624,6 +2664,10 @@ def _atoms_for_block(
         if re.fullmatch(r"[\d.,\s]+", text) and len(re.findall(r"\d+", text)) >= 2:
             return
         if len(text) < 10 and not _is_form_field:
+            # Too short to be a fact, but still a line a labeler must be able
+            # to reject: emitted as a chatter atom, not dropped.
+            yield _chatter_atom(text, "short_line", base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
             return
         # Bare meeting-summary section headers are connective tissue, not facts.
         # Check BEFORE the Title-Case fragment drop — "Action Items" / "Key
@@ -2631,10 +2675,14 @@ def _atoms_for_block(
         # without stamping section_path on the bullets beneath.
         if _is_meeting_section_heading_line(text):
             return
-        # P1.4: skip pure-title-case bullet-fragment labels like "Cost
-        # Proposal", "Project Description", "Addendums".  These come
-        # from proposal-format checklists and carry no scope data.
+        # P1.4: pure-title-case bullet-fragment labels like "Cost Proposal",
+        # "Project Description", a salutation ("MATTHEW BRUNTON,") or a button
+        # ("Convert Quote to Order") carry no scope data. They used to be
+        # dropped here, so the labeler never saw them to reject; they are now
+        # chatter atoms instead.
         if not _is_form_field and _looks_like_fragment(text):
+            yield _chatter_atom(text, "fragment_label", base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
             return
         # Repair glued meeting-summary header + checkbox-``I`` bullet blobs
         # (Action Items / Key Decisions) into per-bullet atoms with section_path.

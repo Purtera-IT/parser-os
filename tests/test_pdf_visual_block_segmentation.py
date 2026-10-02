@@ -353,3 +353,37 @@ def test_wrapped_prose_after_a_colon_is_not_split_per_line():
     )
     parts = split_clauses(text)
     assert not any(p.startswith("Facilities Guide") for p in parts), parts
+
+
+# ── rejected lines are still atoms, flagged chatter ────────────────────────
+
+
+def test_greeting_and_button_become_chatter_atoms(tmp_path):
+    from app.core.deal_chatter import CHATTER_FLAG
+    from app.parsers.orbitbrief_pdf import OrbitBriefPdfParser
+
+    pdf = tmp_path / "quote.pdf"
+    _cdw_quote(pdf)
+    out = OrbitBriefPdfParser().parse(pdf)
+    by_text = {a.raw_text: a for a in getattr(out, "atoms", out)}
+    for line in ("MATTHEW BRUNTON,", BUTTON):
+        assert line in by_text, f"{line!r} dropped instead of kept as a reject: {list(by_text)}"
+        atom = by_text[line]
+        assert CHATTER_FLAG in atom.review_flags
+        assert atom.value.get("chatter") is True
+        assert atom.atom_type.value == "deal_metadata"
+    # real content is not flagged
+    facts = [a for t, a in by_text.items() if "PSNV676" in t]
+    assert facts and all(CHATTER_FLAG not in a.review_flags for a in facts)
+
+
+def test_docx_rejected_body_line_is_a_chatter_atom(tmp_path):
+    from app.core.deal_chatter import CHATTER_FLAG
+
+    p = tmp_path / "letter.docx"
+    _docx(p, ["MATTHEW BRUNTON,", ACCEPTANCE])
+    atoms = _docx_atoms(p)
+    greet = [a for a in atoms if a.raw_text == "MATTHEW BRUNTON,"]
+    assert len(greet) == 1, [a.raw_text for a in atoms]
+    assert CHATTER_FLAG in greet[0].review_flags and greet[0].value.get("chatter") is True
+    assert all(CHATTER_FLAG not in a.review_flags for a in atoms if a.raw_text != "MATTHEW BRUNTON,")

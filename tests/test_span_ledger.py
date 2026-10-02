@@ -87,12 +87,15 @@ def test_docx_parser_records_gate_drops(tmp_path: Path) -> None:
     led = SpanLedger()
     parser = DocxParser()
     parser._ledger = led
-    parser.parse_artifact(project_id="p", artifact_id="art", path=path)
+    out = parser.parse_artifact(project_id="p", artifact_id="art", path=path)
+    rejects = [a for a in getattr(out, "atoms", out) if a.raw_text.strip().lower() == "network design"]
+    assert len(rejects) == 1 and "chatter" in rejects[0].review_flags
 
-    losses = led.gate_losses()
-    # The short label fragment is a GATE loss, attributed to the exact rule.
-    assert any(d.raw_text.strip().lower() == "network design" for d in losses)
-    assert all(d.rule == "_is_substantive_prose" for d in losses)
+    # The short label fragment is rejected by the prose gate but no longer
+    # lost: every rejected body line is kept as a chatter atom so it can be
+    # labeled a reject. So nothing in the body is a GATE loss any more.
+    assert not any(d.raw_text.strip().lower() == "network design" for d in led.gate_losses())
+    assert all(d.rule == "_is_substantive_prose" for d in led.gate_losses())
     # The 5+ word verb-less bullet now fails open — NOT a loss.
     assert not any("firewall configuration" in d.raw_text.lower() for d in led.lost_records())
     # The kept scope line must NOT appear as a loss.

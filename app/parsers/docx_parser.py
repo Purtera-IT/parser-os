@@ -2040,6 +2040,7 @@ class DocxParser(BaseParser):
         # context only.)
         prose_fallback = False
         section_typed = False
+        chatter_reject = False
         if not atom_types:
             # Bullet list items are deliberate, load-bearing content (deliverables,
             # assumptions, checklists) — fail OPEN regardless of length, even when
@@ -2056,6 +2057,18 @@ class DocxParser(BaseParser):
                 else:
                     atom_types = [AtomType.scope_item]
                     prose_fallback = True
+            elif (
+                not heading
+                and table_index is None
+                and tracked_change is None
+                and re.search(r"[A-Za-z0-9]", text or "")
+            ):
+                # A body line the prose gate rejects ("Thanks,", a signer's
+                # name, a button label) still reaches the labeler, as an atom
+                # flagged chatter, so it can be labeled a reject instead of
+                # vanishing. Same flag the PDF path and deal_chatter use.
+                atom_types = [AtomType.deal_metadata]
+                chatter_reject = True
             else:
                 if ledger is not None:
                     from app.core.span_ledger import StageKind
@@ -2142,9 +2155,15 @@ class DocxParser(BaseParser):
             # a brittle single-word lexical cue. The latter only counts for types
             # that came straight from the lexical classifier (section_typed /
             # prose_fallback have their own provenance + confidence).
-            is_weak = weak_label or (
+            if chatter_reject:
+                from app.core.deal_chatter import CHATTER_FLAG
+
+                review_status = ReviewStatus.needs_review
+                review_flags = [CHATTER_FLAG]
+                confidence = 0.1
+            is_weak = not chatter_reject and (weak_label or (
                 not section_typed and not prose_fallback and atom_type in weak_lexical
-            )
+            ))
             if is_weak:
                 # Low-trust guess — provisional: route to review + the PM
                 # labelling queue rather than ship as a confident fact.
@@ -2176,6 +2195,7 @@ class DocxParser(BaseParser):
                         "tracked_change": tracked_change,
                         "prose_fallback": prose_fallback,
                         **({"alt_atom_types": [t.value for t in alt_types]} if alt_types else {}),
+                        **({"chatter": True, "rejected_by": "_is_substantive_prose"} if chatter_reject else {}),
                     },
                     entity_keys=self._extract_entity_keys(text),
                     source_refs=[source_ref],
