@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.suppression_ledger import mark_dropped_not_folded, note_folded_into
 from app.core.training_log import TEACHER_STORE, TrainingRow, log_rows
 
 QUOTE_LABOR_LINE_RELATION = "quote_labor_line"
@@ -270,6 +271,8 @@ def consolidate_quote_line_tasks(atoms: list[Any], *, project_id: str = "") -> t
         text = _task_text(atom)
         decision = decide_quote_line(text, config_install=config_install)
         if not decision.quote_line:
+            # A verdict, not a fold: the line lives on nowhere else.
+            mark_dropped_not_folded(atom, "PMO/admin task, not a quote line")
             changed += 1
             continue
 
@@ -347,6 +350,7 @@ def consolidate_quote_line_tasks(atoms: list[Any], *, project_id: str = "") -> t
         ex_val = dict(_atom_value(existing))
         ex_val["quote_line"] = ev
         existing.value = ex_val
+        note_folded_into(atom, existing)
         changed += 1
 
     out = kept + list(umbrellas.values())

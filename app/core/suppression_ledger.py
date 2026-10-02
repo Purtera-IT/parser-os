@@ -24,9 +24,98 @@ unchanged — this only captures what would otherwise have been thrown away.
 
 from __future__ import annotations
 
+import threading as _threading
 from typing import Any
 
 SUPPRESSION_FLAG_PREFIX = "suppressed:"
+
+#: ``value`` key on an atom a stage drops on purpose rather than folds (a
+#: hallucinated site, a PMO line that is not a quote line): no survivor.
+DROPPED_NOT_FOLDED_KEY = "_dropped_not_folded"
+
+#: ``value`` key on a suppressed atom: the kept atom it was folded into.
+SURVIVOR_KEY = "_survivor"
+
+#: Stages that remove an atom ON PURPOSE -- chrome, a heading, boilerplate, a
+#: gate's verdict. The atom's content lives on nowhere, by design, so its
+#: entry is marked ``kind: "drop"`` with the stage's reason. Every other
+#: stage is a FOLD: the atom's content lives on in another atom, which its
+#: entry must name under :data:`SURVIVOR_KEY`.
+DROP_STAGES = frozenset({
+    "section_heading",            # parser: a heading is its section's path
+    "sheet_router",               # parser: a sheet routed DROP
+    "pricing_rollup_rows_emitted",  # parser: count banner; every row is its own atom
+    "chrome",                     # signature images, e-sign stamps
+    "execution_boilerplate_drop",
+    "document_job_scope",
+    "atom_type_sanity",           # repeated page footers, label-only rows
+    "site_geo_fallback",          # vendor letterhead address
+    "entity_resolution",          # vendor letterhead address (post backfill)
+    "task_admission",
+    "noise_suppression",
+    "drawing_pairs",
+    "substance_gate",
+})
+
+
+def mark_dropped_not_folded(atom: Any, why: str) -> None:
+    """Mark ``atom`` as removed on purpose, with ``why``: it names no survivor."""
+    v = getattr(atom, "value", None)
+    if isinstance(v, dict):
+        v[DROPPED_NOT_FOLDED_KEY] = why
+
+
+def suppression_kind(atom: Any, stage: str = "") -> str:
+    """``"drop"`` or ``"fold"`` for a suppressed atom (see :data:`DROP_STAGES`)."""
+    val = getattr(atom, "value", None)
+    val = val if isinstance(val, dict) else {}
+    if val.get(DROPPED_NOT_FOLDED_KEY):
+        return "drop"
+    if not stage:
+        stage = str((val.get("_suppression") or {}).get("stage") or "")
+    if not stage:
+        stage = next((str(f)[len(SUPPRESSION_FLAG_PREFIX):] for f in (getattr(atom, "review_flags", None) or [])
+                      if str(f).startswith(SUPPRESSION_FLAG_PREFIX)), "")
+    return "drop" if stage in DROP_STAGES else "fold"
+
+
+def _stamp_kind(atom: Any, stage: str = "") -> None:
+    val = getattr(atom, "value", None)
+    if not isinstance(val, dict):
+        return
+    sup = val.get("_suppression")
+    if not isinstance(sup, dict):
+        return
+    kind = suppression_kind(atom, stage or str(sup.get("stage") or ""))
+    sup["kind"] = kind
+    if kind == "drop" and val.get(DROPPED_NOT_FOLDED_KEY) and not sup.get("drop_reason"):
+        sup["drop_reason"] = str(val[DROPPED_NOT_FOLDED_KEY])
+
+
+# Which atom each fold went into: ``id(loser) -> (loser, winner)``, per thread.
+# A stage's suppressed entry must name a survivor that is still standing, and
+# only the fold itself knows which one it was -- by the time the compiler sees
+# the stage's output, a site merged into another site's record shares none of
+# its words (010353: three site atoms suppressed with survivor null). Read and
+# cleared by :func:`take_folds`.
+_FOLDS = _threading.local()
+
+
+def note_folded_into(loser: Any, winner: Any) -> None:
+    """Record that ``loser`` was folded into ``winner`` (see :func:`take_folds`)."""
+    if loser is None or winner is None or loser is winner:
+        return
+    reg = getattr(_FOLDS, "map", None)
+    if reg is None:
+        reg = _FOLDS.map = {}
+    reg[id(loser)] = (loser, winner)
+
+
+def take_folds() -> dict[int, tuple[Any, Any]]:
+    """The folds recorded since the last call, then forget them."""
+    reg = getattr(_FOLDS, "map", None) or {}
+    _FOLDS.map = {}
+    return reg
 
 
 def _atom_id(atom: Any) -> str:
@@ -80,6 +169,7 @@ def capture_suppressed(
         val = getattr(atom, "value", None)
         if isinstance(val, dict):
             val["_suppression"] = {"stage": stage, "reason": reason}
+            _stamp_kind(atom, stage)
         suppressed.append(atom)
     note_suppressed(stage, suppressed)
     return suppressed
@@ -117,6 +207,7 @@ def merge_suppressed(
         if aid and aid in seen:
             continue
         seen.add(aid)
+        _stamp_kind(atom)
         ledger.append(atom)
 
 
@@ -196,6 +287,121 @@ def keep_unsurvived_lines(
     return out, restored
 
 
+def _is_site(atom: Any) -> bool:
+    t = getattr(atom, "atom_type", None)
+    return str(getattr(t, "value", t) or "") == "physical_site"
+
+
+def _named_survivor(atom: Any) -> str:
+    val = getattr(atom, "value", None)
+    val = val if isinstance(val, dict) else {}
+    sv = val.get(SURVIVOR_KEY) or val.get("duplicate_of") or {}
+    return str(sv.get("atom_id") or "") if isinstance(sv, dict) else ""
+
+
+def settle_ledger(atoms: list[Any], suppressed: list[Any]) -> tuple[list[Any], list[Any], dict[str, int]]:
+    """End of compile: every suppressed fold names a survivor that stands.
+
+    A survivor can itself be folded or dropped by a later stage. For each
+    suppressed atom that is a FOLD (see :data:`DROP_STAGES`):
+
+    * its survivor stands -> nothing to do;
+    * its survivor was folded on -> the chain is followed and the entry
+      re-pointed at the atom that stands (``via`` keeps the first name);
+    * the chain ends at an atom a stage DROPPED -> the fold goes with it,
+      recorded as a drop whose reason names that atom and stage (a site goes
+      with it only when the dropped atom is a site too);
+    * it names no survivor -> a standing atom with the same words is named;
+    * otherwise it comes back to the atom list: no atom vanishes without a
+      recorded survivor.
+
+    Returns ``(atoms, suppressed, counts)``.
+    """
+    from app.core.cross_doc_copies import _text_key
+
+    final_ids = {str(getattr(a, "id", "") or ""): a for a in atoms}
+    supp_by_id = {str(getattr(a, "id", "") or ""): a for a in suppressed}
+    by_text: dict[str, list[Any]] = {}
+    for a in atoms:
+        by_text.setdefault(_text_key(a), []).append(a)
+    counts = {"repointed": 0, "named_by_text": 0, "dropped_with_survivor": 0, "restored": 0}
+    restored: list[Any] = []
+    for s in suppressed:
+        if suppression_kind(s) == "drop":
+            continue
+        val = getattr(s, "value", None)
+        if not isinstance(val, dict):
+            restored.append(s)
+            continue
+        sup = val.get("_suppression") if isinstance(val.get("_suppression"), dict) else {}
+        stage = str(sup.get("stage") or "")
+        start = _named_survivor(s)
+        cur, seen, end_drop, standing = start, set(), None, None
+        while cur and cur not in seen and len(seen) < 64:
+            seen.add(cur)
+            if cur in final_ids:
+                standing = final_ids[cur]
+                break
+            nxt = supp_by_id.get(cur)
+            if nxt is None:
+                break
+            if suppression_kind(nxt) == "drop":
+                end_drop = nxt
+                break
+            cur = _named_survivor(nxt)
+        if standing is None and not start:
+            key = _text_key(s)
+            same = by_text.get(key, ()) if key else ()
+            own = str(getattr(s, "artifact_id", "") or "")
+            standing = next((k for k in same if str(getattr(k, "artifact_id", "") or "") == own),
+                            next(iter(same), None))
+            if standing is not None:
+                counts["named_by_text"] += 1
+        if standing is not None:
+            sid = str(getattr(standing, "id", "") or "")
+            if sid != start:
+                rec = {"atom_id": sid, "artifact_id": str(getattr(standing, "artifact_id", "") or ""),
+                       "stage": stage}
+                if start:
+                    rec["via"] = start
+                    counts["repointed"] += 1
+                val[SURVIVOR_KEY] = rec
+            continue
+        if end_drop is not None and (not _is_site(s) or _is_site(end_drop)):
+            dv = getattr(end_drop, "value", None)
+            dsup = (dv.get("_suppression") if isinstance(dv, dict) else None) or {}
+            sup = dict(sup)
+            sup["kind"] = "drop"
+            sup["drop_reason"] = (
+                f"folded into {getattr(end_drop, 'id', '')}, which {dsup.get('stage') or 'a stage'} dropped: "
+                f"{dsup.get('reason') or (dv or {}).get(DROPPED_NOT_FOLDED_KEY) or ''}"
+            ).strip()
+            val["_suppression"] = sup
+            counts["dropped_with_survivor"] += 1
+            continue
+        restored.append(s)
+    if not restored:
+        return atoms, suppressed, counts
+    back = {id(a) for a in restored}
+    for a in restored:
+        flags = [f for f in (getattr(a, "review_flags", None) or []) if not str(f).startswith(SUPPRESSION_FLAG_PREFIX)]
+        try:
+            a.review_flags = flags
+        except Exception:  # pragma: no cover
+            pass
+        val = getattr(a, "value", None)
+        if isinstance(val, dict):
+            sup = val.pop("_suppression", None) or {}
+            val.pop(SURVIVOR_KEY, None)
+            val["_restored"] = {
+                "stage": str(sup.get("stage") or ""),
+                "reason": "folded into no atom that stands at the end of the compile",
+            }
+    counts["restored"] = len(restored)
+    return list(atoms) + restored, [a for a in suppressed if id(a) not in back], counts
+
+
 __all__ = [
+    "settle_ledger",
     "capture_suppressed", "merge_suppressed", "keep_unsurvived_lines", "SUPPRESSION_FLAG_PREFIX",
 ]

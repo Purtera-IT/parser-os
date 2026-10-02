@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import json as _json
 import re
-import threading as _threading
 
 from app.core import fold_invariants as _fold
 from typing import Any
@@ -337,30 +336,9 @@ def _append_unique(target: list[Any], incoming: list[Any]) -> None:
             seen.add(key)
 
 
-# Which atom each fold went into: ``id(loser) -> (loser, winner)``, per thread.
-# A stage's suppressed entry must name a survivor that is still standing, and
-# only the fold itself knows which one it was -- by the time the compiler sees
-# the stage's output, a site merged into another site's record shares none of
-# its words (010353: three site atoms suppressed with survivor null). Read and
-# cleared by :func:`take_folds`.
-_FOLDS = _threading.local()
-
-
-def note_folded_into(loser: Any, winner: Any) -> None:
-    """Record that ``loser`` was folded into ``winner`` (see :func:`take_folds`)."""
-    if loser is None or winner is None or loser is winner:
-        return
-    reg = getattr(_FOLDS, "map", None)
-    if reg is None:
-        reg = _FOLDS.map = {}
-    reg[id(loser)] = (loser, winner)
-
-
-def take_folds() -> dict[int, tuple[Any, Any]]:
-    """The folds recorded since the last call, then forget them."""
-    reg = getattr(_FOLDS, "map", None) or {}
-    _FOLDS.map = {}
-    return reg
+# The fold registry lives in the suppression ledger, so every stage that
+# folds (not only this module's) can name its survivor.
+from app.core.suppression_ledger import note_folded_into, take_folds  # noqa: E402,F401
 
 
 def _merge_atom_metadata(winner: Any, loser: Any) -> None:
@@ -1328,15 +1306,7 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     return out
 
 
-#: ``value`` key on an atom a stage drops on purpose rather than folds (a
-#: hallucinated site, a legacy generic site entity): it has no survivor to name.
-DROPPED_NOT_FOLDED_KEY = "_dropped_not_folded"
-
-
-def mark_dropped_not_folded(atom: Any, why: str) -> None:
-    v = getattr(atom, "value", None)
-    if isinstance(v, dict):
-        v[DROPPED_NOT_FOLDED_KEY] = why
+from app.core.suppression_ledger import DROPPED_NOT_FOLDED_KEY, mark_dropped_not_folded  # noqa: E402,F401
 
 
 def _drop_generic_site_entity_atoms(atoms: list[Any]) -> list[Any]:
