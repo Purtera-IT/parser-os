@@ -94,6 +94,147 @@ SCOPE_IMPACTING_TYPES = {
 
 
 
+# ---------------------------------------------------------------------------
+# Re-joining sentences the diariser cut in two.
+#
+# Fireflies stores a turn as several cues and punctuates each one, so a single
+# spoken sentence can arrive as "I need to see the." followed, half a second
+# later and from the same speaker, by "I guess the locations, because it should
+# be doable." One atom per cue then gives the brief a dangling half sentence
+# ("Do you do per.", "And we'll do.") and a second atom that has lost its
+# subject. The cut is visible in the words: nobody ends a sentence on "the",
+# "per", "my" or "gonna". So consecutive cues from the SAME speaker are joined
+# when the earlier one stops on such a word (or, for a short cue, when the next
+# cue opens by repeating its last content word: "We'll do about three." /
+# "Three to four a day."), and the next cue starts soon enough to be the same
+# breath. Two complete sentences ("Is that doable?" / "Is that too tight?") are
+# never joined, nor are two different speakers.
+# ---------------------------------------------------------------------------
+
+#: Words a sentence does not end on. A cue that stops on one was cut.
+_CUT_ARTICLES = frozenset({"a", "an", "the"})
+_CUT_DETERMINERS = frozenset({"my", "our", "your", "their", "his", "her", "its", "every", "each"})
+_CUT_PREPOSITIONS = frozenset({"of", "per", "into", "onto", "between", "among", "toward", "towards", "via", "versus", "than"})
+_CUT_CONJUNCTIONS = frozenset({"and", "or", "but", "because", "if", "nor"})
+_CUT_PRONOUNS = frozenset({"i", "we", "they", "he", "she"})
+#: Auxiliaries end a cut ("And we'll do.") but also a short answer ("Yes, we
+#: do."), so they count only when the cue does not open as an answer.
+_CUT_AUXILIARIES = frozenset({
+    "do", "does", "did", "can", "could", "will", "would", "should", "shall",
+    "must", "might", "may", "be", "am", "is", "are", "was", "were",
+    "have", "has", "had", "gonna", "wanna", "gotta",
+})
+_ANSWER_OPENERS = frozenset({
+    "yes", "yeah", "yep", "yup", "no", "nope", "nah", "sure", "ok", "okay",
+    "right", "absolutely", "definitely", "correct", "exactly", "of",
+})
+#: Function words a speaker repeats when restarting ("So that's." / "That's
+#: kind of what." / "What I figured ..."); echoing one is a restart, not a cut.
+_ECHO_STOP = frozenset({
+    "that", "this", "what", "which", "who", "so", "well", "yeah", "yes", "no",
+    "okay", "ok", "right", "it", "now", "then", "there", "here", "just", "like",
+    "you", "me", "us", "them", "um", "uh",
+}) | _CUT_ARTICLES | _CUT_DETERMINERS | _CUT_PREPOSITIONS | _CUT_CONJUNCTIONS | _CUT_PRONOUNS | _CUT_AUXILIARIES
+_ECHO_MAX_WORDS = 8
+_JOIN_MAX_CUES = 6
+_WORD_RE = re.compile(r"[A-Za-z0-9']+")
+
+
+def _cue_words(text: str) -> list[str]:
+    return _WORD_RE.findall(text)
+
+
+def _cue_ends_cut(text: str) -> bool:
+    """True when ``text`` stops on a word no sentence ends on."""
+    stripped = text.rstrip()
+    if not stripped or stripped[-1] in "?!":
+        return False
+    words = _cue_words(stripped)
+    if not words:
+        return False
+    last = words[-1].lower()
+    if last in _CUT_ARTICLES or last in _CUT_DETERMINERS or last in _CUT_PREPOSITIONS:
+        return True
+    if last in _CUT_CONJUNCTIONS or last in _CUT_PRONOUNS:
+        return True
+    if last in _CUT_AUXILIARIES:
+        return words[0].lower() not in _ANSWER_OPENERS
+    return False
+
+
+def _cue_echoes(text: str, nxt: str) -> bool:
+    """A short cue whose last content word opens the next cue: the diariser
+    cut on that word and repeated it ("... about three." / "Three to four")."""
+    stripped = text.rstrip()
+    if not stripped or stripped[-1] in "?!":
+        return False
+    words, nwords = _cue_words(stripped), _cue_words(nxt)
+    if not words or not nwords or len(words) > _ECHO_MAX_WORDS:
+        return False
+    last, first = words[-1], nwords[0]
+    if "'" in last or last.lower() in _ECHO_STOP:
+        return False
+    # A capitalised word mid-cue is a name; a sentence may well open on it.
+    if len(words) > 1 and last[:1].isupper():
+        return False
+    return last.lower() == first.lower()
+
+
+def _as_seconds(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _same_breath(prev: dict[str, Any], nxt: dict[str, Any]) -> bool:
+    """The next cue starts about when the earlier one, spoken at a normal
+    rate, would finish. Cues carry only a start, so the earlier cue's length
+    in words stands in for its duration. Missing times leave the words to
+    decide."""
+    a, b = _as_seconds(prev.get("timestamp_start")), _as_seconds(nxt.get("timestamp_start"))
+    if a is None or b is None:
+        return True
+    return 0 <= b - a <= 1.5 + 0.6 * len(_cue_words(str(prev.get("text", ""))))
+
+
+def join_cut_fragments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join consecutive same-speaker cues that are one cut sentence.
+
+    The joined segment keeps the first cue's ``utterance_index``, start time
+    and ``line_start``; ``line_end`` reaches the last cue, and
+    ``joined_utterance_indexes`` lists every cue it holds. Each cue's text is
+    kept verbatim, separated by a space.
+    """
+    out: list[dict[str, Any]] = []
+    tail: dict[str, Any] | None = None  # the last cue folded into out[-1]
+    for seg in segments:
+        cur = out[-1] if out else None
+        speaker = seg.get("speaker")
+        if (
+            cur is not None
+            and tail is not None
+            and speaker
+            and speaker == cur.get("speaker")
+            and cur.get("section") == seg.get("section")
+            and len(cur.get("joined_utterance_indexes") or [cur["utterance_index"]]) < _JOIN_MAX_CUES
+            and _same_breath(tail, seg)
+            and (_cue_ends_cut(str(tail.get("text", ""))) or _cue_echoes(str(tail.get("text", "")), str(seg.get("text", ""))))
+        ):
+            joined = list(cur.get("joined_utterance_indexes") or [cur["utterance_index"]])
+            joined.append(seg["utterance_index"])
+            cur["joined_utterance_indexes"] = joined
+            cur["text"] = f"{cur['text']} {seg['text']}"
+            cur["line_end"] = seg["line_end"]
+            if seg.get("timestamp_end") is not None:
+                cur["timestamp_end"] = seg["timestamp_end"]
+            tail = seg
+            continue
+        out.append(dict(seg))
+        tail = seg
+    return out
+
+
 _ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 
@@ -658,7 +799,7 @@ class TranscriptParser(BaseParser):
                     "text": text,
                 }
             )
-        return segments
+        return join_cut_fragments(segments)
 
     def _segments_from_text(self, raw_text: str) -> list[dict[str, Any]]:
         text = normalize_transcript_text(raw_text)
@@ -772,6 +913,8 @@ class TranscriptParser(BaseParser):
             "section": section,
             "utterance_index": segment["utterance_index"],
         }
+        if segment.get("joined_utterance_indexes"):
+            locator["joined_utterance_indexes"] = list(segment["joined_utterance_indexes"])
         if section:
             locator["section_path"] = [str(section)]
         return SourceRef(

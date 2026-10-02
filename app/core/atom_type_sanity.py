@@ -1382,6 +1382,15 @@ def _atom_page(atom: Any) -> Any:
     return loc.get("page") if isinstance(loc, dict) else None
 
 
+def _is_spoken_turn(atom: Any) -> bool:
+    """A transcript utterance (it has an ``utterance_index``), not page text."""
+    for ref in getattr(atom, "source_refs", None) or []:
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and loc.get("utterance_index") is not None:
+            return True
+    return False
+
+
 def _set_text(atom: Any, text: str) -> None:
     try:
         atom.raw_text = text
@@ -1464,7 +1473,14 @@ def strip_document_chrome(atoms: list[Any]) -> int:
     survivors = []
     for a in atoms:
         text = _atom_text(a)
-        t2 = _TRAILING_ENUMERATOR_RE.sub("", text) if len(text.split()) >= 3 else text
+        # Column bleed is a page-layout artifact. Speech has no columns, and a
+        # cue that stops on "a." / "I." is a cut sentence whose last word must
+        # stay (live 010087: "... I mean, that's not a." lost its " a.").
+        t2 = (
+            _TRAILING_ENUMERATOR_RE.sub("", text)
+            if len(text.split()) >= 3 and not _is_spoken_turn(a)
+            else text
+        )
         if t2 != text and len(t2) >= 8:
             _set_text(a, t2)
             changed += 1
