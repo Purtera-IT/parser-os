@@ -1165,11 +1165,11 @@ def compile_project(
                     # The ledger call has never once run.
                     capture_suppressed(
                         before_paste, atoms, stage="pasted_note_dedup",
-                        reason="note pasted into the deal folded onto the email it was copied from",
+                        reason="copy of a note/email text folded onto its original (quoted copy, later copy, or note pasted from mail)",
                     ),
                 )
                 warnings.append(
-                    f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
+                    f"INFO: pasted_note_dedup folded {len(_pasted)} copies onto their originals"
                 )
         except Exception as exc:
             warnings.append(f"WARNING: pasted_note_dedup failed: {type(exc).__name__}: {exc}")
