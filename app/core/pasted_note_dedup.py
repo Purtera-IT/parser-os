@@ -56,8 +56,10 @@ def _key(atom: Any) -> str:
     """Text, folded. Type is deliberately NOT in the key: the same sentence
     typed ``scope_item`` in the mail and ``deal_metadata`` in the note is one
     sentence."""
+    from app.core.cross_doc_copies import strip_list_marker
+
     t = getattr(atom, "normalized_text", "") or getattr(atom, "raw_text", "") or ""
-    return re.sub(r"[^a-z0-9]+", " ", str(t).lower()).strip()
+    return re.sub(r"[^a-z0-9]+", " ", strip_list_marker(t).lower()).strip()
 
 
 def _link_key(atom: Any) -> str:
