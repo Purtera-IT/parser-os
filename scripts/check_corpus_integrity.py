@@ -10,7 +10,7 @@ from app.learning.corpus_integrity import (
     IntegrityReport, check_admitted, check_fields, check_rows,
 )
 from app.learning.human_labels import rows_for_deal
-from app.learning.multitask_table import DEFAULT_TASKS
+from app.learning.multitask_table import tasks_for
 
 DEAL = "c2a3bdce-53bb-4da6-a840-a5260841685a"
 HUMAN = "developer@purtera-it.com"
@@ -47,7 +47,8 @@ rep.dropped_rows += check_rows(
     expect={"labels": "atom_type", "links": "edge_relation",
             "judgments": "gap_valid", "deal_answers": "rationale:deal"},
 )
-rep.unaccounted = check_admitted(rels, DEFAULT_TASKS)
+# A Purtera deal: its policy layer is a task for the Purtera profile.
+rep.unaccounted = check_admitted(rels, tasks_for("purtera"))
 
 print(rep)
 print()

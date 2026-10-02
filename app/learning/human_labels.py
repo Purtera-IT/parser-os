@@ -17,13 +17,14 @@ eval set must never leak into training.
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
 from app.core.atom_type_registry import KEEP, coarse_of, facet_of, load_registry
-from app.learning.label_context import context_note, context_text
+from app.learning.label_context import context_note, context_text, dropout_copy
 from app.learning.label_features import features_for
 from app.learning.span_ranker import best_locatable, pointer_kind
 
@@ -223,7 +224,9 @@ def train_for(row: dict[str, Any]) -> set[str] | None:
 
 
 def _marked_excluded(row: dict[str, Any]) -> bool:
-    note = str(row.get("note") or "").lstrip().upper()
+    # "[EXCLUDE_FROM_TRAINING: old manual Deal Kit]" is the bracketed form the
+    # note grammar writes (portable-labels.md b); the bare prefix is older.
+    note = str(row.get("note") or "").lstrip().lstrip("[").upper()
     if note.startswith(EXCLUDE_NOTE_PREFIX):
         return True
     if str(row.get("weight_tier") or "").strip().lower() == "exclude":
@@ -234,6 +237,47 @@ def _marked_excluded(row: dict[str, Any]) -> bool:
     if isinstance(reads, dict) and str(reads.get("exclude_from_training")).strip().lower() in ("true", "1", "yes"):
         return True
     return False
+
+
+#: The company whose policy a row carries when it does not say
+#: (`reads_set.co_company`). Every row labeled so far is Purtera's.
+DEFAULT_COMPANY = "purtera"
+
+
+def company_of(row: dict[str, Any]) -> str:
+    reads = row.get("reads_set")
+    co = str(reads.get("co_company") or "").strip().lower() if isinstance(reads, dict) else ""
+    return co or DEFAULT_COMPANY
+
+
+def split_note(note: str, company: str = DEFAULT_COMPANY) -> tuple[str, str]:
+    """(the universal WHY, the company's policy) from one note.
+
+    The note grammar (portable-labels.md b) is an optional
+    ``[EXCLUDE_FROM_TRAINING: ...]`` first line, the universal WHY, then a
+    line starting ``[<company>]`` with the company's rule. The WHY may argue
+    only from what the line, its context and trade knowledge show, so it
+    trains the base; the policy part trains only that company's profile.
+    The exclusion marker is bookkeeping, not an argument, and is stripped.
+    """
+    text = str(note or "").strip()
+    head = text.lstrip()
+    if head.lstrip("[").upper().startswith(EXCLUDE_NOTE_PREFIX):
+        end = head.find("]") if head.startswith("[") else -1
+        if end >= 0:
+            text = head[end + 1:]
+        else:
+            # The bare prefix carries its reason on the rest of the line.
+            text = head.split("\n", 1)[1] if "\n" in head else ""
+    marker = f"[{company}]"
+    universal, policy = [], []
+    into = universal
+    for line in text.splitlines():
+        if into is universal and line.lstrip().lower().startswith(marker):
+            into = policy
+            line = line.lstrip()[len(marker):]
+        into.append(line)
+    return "\n".join(universal).strip(), "\n".join(policy).strip()
 
 
 def is_excluded_from_training(row: dict[str, Any], parser: str = QUOTE_PARSER) -> bool:
@@ -306,8 +350,44 @@ def _without_excluded(doc: dict[str, Any], report: IngestReport,
     return out
 
 
+#: Rows a context-dropout copy is made of: the classifier heads. A span,
+#: retrieval or rationale prompt must keep the context its target points at.
+_DROPOUT_KINDS = frozenset({"type", "facet", "judgment"})
+
+
+def _dropout_rows(rows: list[dict[str, Any]], lb: dict[str, Any], seed: int,
+                  deal_id: str) -> list[dict[str, Any]]:
+    """Augmentation copies of ``rows`` with some context left out.
+
+    Added beside the originals, never in their place, and only on the train
+    split: a hold-out copy would score the model on strings no labeler saw.
+    """
+    out = []
+    for r in rows:
+        if r.get("split") != "train" or r.get("label_kind") not in _DROPOUT_KINDS:
+            continue
+        rel = str(r["relation"])
+        rng = random.Random(f"{seed}:{deal_id}:{lb.get('label_key')}:{rel}:{r.get('label')}")
+        got = dropout_copy(rel, lb, rng)
+        if got is None:
+            continue
+        text, dropped = got
+        prov = json.loads(r.get("provenance") or "{}")
+        prov.update({"augmentation": "context_dropout", "dropped": dropped})
+        out.append({**r, "raw_text": text, "masked_text": text,
+                    "provenance": json.dumps(prov, ensure_ascii=False)})
+    return out
+
+
 def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
-                  parser: str = QUOTE_PARSER) -> list[dict[str, Any]]:
+                  parser: str = QUOTE_PARSER, *,
+                  dropout_seed: int | None = None) -> list[dict[str, Any]]:
+    """Every training row one deal's labels make.
+
+    ``dropout_seed`` turns on context-dropout augmentation (off by default):
+    extra copies of the classifier rows with parts of their context left
+    out, at ``label_context.DROPOUT_RATES``. Deterministic per seed.
+    """
     from app.core.training_log import assign_split
 
     report = report if report is not None else IngestReport()
@@ -384,6 +464,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
             "created_at": lb.get("labeled_at") or "", "split": split,
             "provenance": json.dumps(prov, ensure_ascii=False),
         }
+        n_before = len(out)
         out.append({**base, "relation": "atom_type", "label": fine, "label_kind": "type"})
         if coarse:
             out.append({**base, "relation": "atom_type_coarse", "label": coarse, "label_kind": "type"})
@@ -391,7 +472,10 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
             out.append({**base, "relation": "facet", "label": facet, "label_kind": "facet"})
         else:
             report.skip("no facet (proposed type not in registry yet)")
-        out.extend(_axis_rows(lb, base, prov, report))
+        made = out[n_before:] + _axis_rows(lb, base, prov, report)
+        out = out[:n_before] + made
+        if dropout_seed is not None:
+            out.extend(_dropout_rows(made, lb, dropout_seed, deal_id))
     out.extend(_judgment_rows(doc, deal_id, split, report))
     out.extend(_question_rows(doc, labels, deal_id, split, report))
     out.extend(_link_rows(doc, deal_id, split, report))
@@ -414,6 +498,9 @@ _TIER_WEIGHT = {"load_bearing": 3.0, "ordinary": 1.0, "slight": 0.3}
 #: Label types that say "this line should never have been an atom". The
 #: admission head reads them as `drop`; the type head still learns the class.
 ADMISSION_DROP_TYPES = frozenset({KEEP, "small_talk"})
+
+#: What a company can do with a line (`reads_set.co_action`).
+POLICY_ACTIONS = frozenset({"keep", "reject", "ignore"})
 
 #: Values of the `rejected` column that are a flag, not a type name.
 _REJECT_FLAGS = frozenset({"true", "t", "1", "yes", "false", "f", "0", "no"})
@@ -570,18 +657,24 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
             rows.append(_axis_row("decided_from", hint, lb, base, prov, "axis", {}))
 
     # The argument itself, as a target. The prompt is what the labeler was
-    # looking at; the label is what they concluded and why.
-    note = str(lb.get("note") or "").strip()
-    if len(note) >= 40:
-        chose = " | ".join(x for x in (
-            f"type={lb.get('label_type')}",
-            f"about={lb.get('about')}" if lb.get("about") else "",
-            f"wants={lb.get('wants')}" if lb.get("wants") else "",
-            f"supplier={lb.get('supplier')}" if lb.get("supplier") else "",
-        ) if x)
-        rows.append(_rationale_row(
-            "atom", f"{context_text('atom_type', lb)}\nCHOSE: {chose}",
-            note, base, prov, _row_weight(lb)))
+    # looking at; the label is what they concluded and why. The note is two
+    # arguments when it has a `[purtera]` line: the universal WHY trains the
+    # base (`rationale:atom`), the company's rule trains only its profile
+    # (`rationale:policy:purtera`). CHOSE stays the universal answer only.
+    company = company_of(lb)
+    why, policy_why = split_note(str(lb.get("note") or ""), company)
+    chose = " | ".join(x for x in (
+        f"type={lb.get('label_type')}",
+        f"about={lb.get('about')}" if lb.get("about") else "",
+        f"wants={lb.get('wants')}" if lb.get("wants") else "",
+        f"supplier={lb.get('supplier')}" if lb.get("supplier") else "",
+    ) if x)
+    prompt = f"{context_text('atom_type', lb)}\nCHOSE: {chose}"
+    if len(why) >= 40:
+        rows.append(_rationale_row("atom", prompt, why, base, prov, _row_weight(lb)))
+    if len(policy_why) >= 24:
+        rows.append(_rationale_row(f"policy:{company}", prompt, policy_why, base, prov,
+                                   _row_weight(lb)))
 
     # ADMISSION: should this text have been an atom at all?
     #
@@ -622,6 +715,20 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     elif origin == "labeler":
         rows.append(_axis_row("admission", "keep", lb, base, prov, "judgment",
                               {"parser_missed": True, "origin": "labeler"}))
+
+    # POLICY: what the company does with a real fact. Once a policy reject
+    # keeps its universal type (portable-labels.md b), admission no longer
+    # sees it as `drop`, so the company's filter is taught here instead --
+    # keep, reject or ignore, as the labeler wrote it. Admission above is
+    # unchanged: only noise (`_keep`, `small_talk`) is a universal drop.
+    reads_for_policy = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
+    action = str(reads_for_policy.get("co_action") or "").strip().lower()
+    if action in POLICY_ACTIONS:
+        reason = str(reads_for_policy.get("co_reason") or "").strip()
+        rows.append(_axis_row(f"policy:{company}", action, lb, base, prov, "judgment",
+                              {"co_reason": reason} if reason else {}))
+    elif action:
+        report.skip("co_action outside keep | reject | ignore")
 
     # `rejected` is two things in one column: the labeling page and
     # write_labels.py store the FLAG "true" on a reject, while older rows hold
@@ -1056,7 +1163,7 @@ def _site_count(v: Any) -> int | None:
 
 
 def write_db(docs: Iterable[dict[str, Any]], target: Path,
-             parser: str = QUOTE_PARSER) -> IngestReport:
+             parser: str = QUOTE_PARSER, *, dropout_seed: int | None = None) -> IngestReport:
     """Replace ``target``'s tables with ``parser``'s rows for ``docs``. Re-ingest is a rebuild."""
     report = IngestReport()
     conn = sqlite3.connect(target)
@@ -1077,7 +1184,7 @@ def write_db(docs: Iterable[dict[str, Any]], target: Path,
         )
         for doc in docs:
             report.deals += 1
-            rows = rows_for_deal(doc, report, parser)
+            rows = rows_for_deal(doc, report, parser, dropout_seed=dropout_seed)
             conn.executemany(insert, [tuple(r.get(c) for c in _COLUMNS) for r in rows])
             for ans in (doc.get("deal_answers") or []) if parser == QUOTE_PARSER else []:
                 if not isinstance(ans, dict):
