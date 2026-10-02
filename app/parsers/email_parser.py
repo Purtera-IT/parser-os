@@ -1024,6 +1024,12 @@ _PROVIDED_BY_RE = re.compile(
 _WE_WORDS = {"us", "we", "our team", "ourselves", "our side"}
 
 
+#: The stage name on every line a body regex refused before it became an atom
+#: (greeting, sign-off, signature). See ``_admission_reject_atom``.
+ADMISSION_REGEX_STAGE = "admission_regex"
+ADMISSION_REJECT_FLAG = f"suppressed:{ADMISSION_REGEX_STAGE}"
+
+
 # A sign-off phrase that opens the trailing signature block. Everything after
 # it in an AUTHORED message is name/title/contact chrome — the sender identity
 # is already captured as structured email-header metadata, so it is not scope.
@@ -1923,12 +1929,18 @@ class EmailParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> list[EvidenceAtom]:
-        return self.parse_artifact_full(
-            project_id=project_id,
-            artifact_id=artifact_id,
-            path=path,
-            domain_pack=domain_pack,
-        ).atoms
+        # The list API is the kept atoms. Lines the admission regex refused
+        # travel only on `parse_artifact_full`, which is what the compiler
+        # calls and diverts into `suppressed_atoms`.
+        return [
+            a for a in self.parse_artifact_full(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                path=path,
+                domain_pack=domain_pack,
+            ).atoms
+            if ADMISSION_REJECT_FLAG not in (a.review_flags or [])
+        ]
 
     def parse_artifact_full(
         self,
@@ -1979,6 +1991,11 @@ class EmailParser(BaseParser):
             text, envelope_sender=envelope_sender, envelope_sent_at=envelope_sent_at,
         )
         atoms: list[EvidenceAtom] = []
+        # Lines the body regexes cut before they could become atoms: greetings,
+        # sign-offs, the signature under a sign-off. Kept apart from `atoms`
+        # and appended only at the very end, so nothing below (addressee
+        # stamping, CID anchoring, the structured doc) ever sees them.
+        admission_rejects: list[EvidenceAtom] = []
         for block in blocks:
             authority = self._authority_for_block(block)
             atoms.extend(
@@ -1988,6 +2005,7 @@ class EmailParser(BaseParser):
                     filename=path.name,
                     block=block,
                     authority=authority,
+                    admission_rejects=admission_rejects,
                 )
             )
         # Header atom — the From/To/Cc/Subject/Date line is deal/routing
@@ -2097,6 +2115,10 @@ class EmailParser(BaseParser):
                 _stamp_email_addressee(atoms, greeting, message_index=block.get("message_index"))
         structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        # Pre-suppressed: the compiler diverts every `suppressed:<stage>` atom
+        # into CompileResult.suppressed_atoms before any later stage runs, so
+        # the kept atom list is exactly what it was without them.
+        atoms.extend(admission_rejects)
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
@@ -2958,6 +2980,53 @@ class EmailParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+    def _admission_reject_atom(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        block: dict[str, Any],
+        cleaned: str,
+        source_ref: SourceRef,
+        authority: AuthorityClass,
+        line_num: int,
+        sentence_index: int,
+        reason: str,
+    ) -> EvidenceAtom:
+        """A line the admission regexes cut, kept as a rejected atom.
+
+        "Hi Trent,", "Thank you,", the name under it: correctly not deal
+        content, and until now gone before they were atoms -- so the labeling
+        page could not show one and the admission head never saw a negative.
+        Stamped ``suppressed:admission_regex``, which the compiler diverts to
+        ``suppressed_atoms`` (the same route as the xlsx ``dropped_sheet``
+        marker): visible and labelable, never kept, never typed.
+        """
+        return EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, block["message_index"],
+                         "admission_reject", line_num, sentence_index, cleaned),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.deal_metadata,
+            raw_text=cleaned,
+            normalized_text=normalize_text(cleaned),
+            value={
+                "kind": "admission_reject",
+                "reason": reason,
+                "message_index": block["message_index"],
+                "quoted": block["quoted"],
+                "chatter": True,
+                "_suppression": {"stage": ADMISSION_REGEX_STAGE, "reason": reason},
+            },
+            entity_keys=[],
+            source_refs=[source_ref],
+            authority_class=authority,
+            confidence=0.0,
+            review_status=ReviewStatus.needs_review,
+            review_flags=[ADMISSION_REJECT_FLAG, "chatter"],
+            parser_version=self.parser_version,
+        )
+
     def _extract_atoms_from_block(
         self,
         project_id: str,
@@ -2965,6 +3034,7 @@ class EmailParser(BaseParser):
         filename: str,
         block: dict[str, Any],
         authority: AuthorityClass,
+        admission_rejects: list[EvidenceAtom] | None = None,
     ) -> list[EvidenceAtom]:
         atoms: list[EvidenceAtom] = []
         # A quoted message is verbatim text with a verified receipt like any
@@ -3078,6 +3148,22 @@ class EmailParser(BaseParser):
             cleaned = _BULLET_PREFIX_RE.sub("", raw_cleaned).strip()
             if not cleaned:
                 continue
+
+            # A line a regex below refuses is recorded, not just skipped: see
+            # `_admission_reject_atom`. Defaults bind this iteration's values.
+            def _reject(reason: str, _cleaned: str = cleaned, _line: int = line_num,
+                        _sent: int = sentence_index) -> None:
+                if admission_rejects is None:
+                    return
+                _ref = self._build_source_ref(
+                    artifact_id=artifact_id, filename=filename, block=block,
+                    line_num=_line, sentence_index=_sent,
+                )
+                admission_rejects.append(self._admission_reject_atom(
+                    project_id=project_id, artifact_id=artifact_id, block=block,
+                    cleaned=_cleaned, source_ref=_ref, authority=authority,
+                    line_num=_line, sentence_index=_sent, reason=reason,
+                ))
             # Shape, not position: a line that is ONLY a name, an email, a
             # phone, or a punctuation fragment around one carries no scope
             # wherever it sits. Live 010215 (R3): the leading-lines-only rule
@@ -3159,10 +3245,15 @@ class EmailParser(BaseParser):
                     location_lines = []
                 continue
             if _is_identity_only_line(cleaned, allow_name=not is_bullet):
+                # "Hi Trent," is name-shaped and lands here before the greeting
+                # rule below; "Stephanie Hechsel" under "Thank you," too.
+                _reject("greeting" if _is_greeting_line(cleaned)
+                        else "signature" if in_signature else "identity_only")
                 continue
             # Inside a signature cluster every line is contact chrome (title,
             # org, phone label); the person was already read from it above.
             if (line_num - int(block.get("line_start") or 0)) in _signature_rows:
+                _reject("signature")
                 continue
             # A line that is only a link -- a bare URL, "word<https://…>",
             # "url=…", a mailto -- is mail chrome. Live 010300: nine
@@ -3260,6 +3351,7 @@ class EmailParser(BaseParser):
                 section_path=section_path or None,
                 lead_in=lead_for_line or None,
             )
+
             lowered = normalize_text(cleaned)
             entity_keys = self._extract_entity_keys(cleaned)
             # Site atoms are attempted on EVERY line (an address can appear in a
@@ -3314,6 +3406,7 @@ class EmailParser(BaseParser):
                 # privileges."). The sign-off was right about those lines and
                 # wrong only about the table.
                 if not _is_data_table_row(cleaned):
+                    _reject("signature")
                     continue
             # Quoted messages sign off too, and this was gated to the authored
             # one only -- so every quoted signature was atomised in full. A
@@ -3329,6 +3422,7 @@ class EmailParser(BaseParser):
             # address in a signature is still recovered.
             if _SIGNOFF_RE.match(cleaned):
                 in_signature = True
+                _reject("signoff")
                 continue
             # 1b) A quoted message's own header block ("To: …", "Sent: …",
             #     "Cc: …"). The sender and date are already captured
@@ -3349,6 +3443,7 @@ class EmailParser(BaseParser):
             #    (and the email header) so Atom Quality can show "To: Eddie"
             #    without a standalone reviewable ``Eddie,`` card.
             if _is_greeting_line(cleaned):
+                _reject("greeting")
                 continue
             # 2b) Framing lead-in above Include/Exclude — connective tissue,
             #     not a standalone atom. Hold until the list header arrives.

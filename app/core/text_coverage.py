@@ -153,7 +153,11 @@ def coverage_for_artifact(
             state = "chrome"
         else:
             state = "unread"
-        if any(n in d or d in n for d in dropped):
+        # A dropped atom SHORTER than the line marks it only when it is long
+        # enough to mean something: the admission regex now records "Thanks,"
+        # and "Hi Trent," as dropped, and a bare "thanks" inside a real unread
+        # sentence ("thanks -- we need 40 drops") must stay `unread`.
+        if any(n in d or (d in n and (len(d) >= _MIN_CHARS or d == n)) for d in dropped):
             state = "suppressed"
         lines.append({"line": i, "text": line[:400], "state": state})
     total = n_claimed + len(lines)
