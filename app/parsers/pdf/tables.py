@@ -400,10 +400,22 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
         # A right cell that wraps under the last anchor -- the "NEW YORK, NY
         # 10014" line of a site's address (010003) -- is part of that row:
         # follow right-only lines set tight under the span.
+        # The same for the last row's wrapped DESCRIPTION: a left-only line
+        # set tight under it and indented to an inner column of the left cell
+        # (a product line's second line), never a paragraph at the margin.
         span_end = bot_li
+        _margin = min(lines[li]["x0"] for li in range(top_li, bot_li + 1))
+
+        def _wraps_last_row(ln: dict[str, Any]) -> bool:
+            ws = ln["words"]
+            if not ws:
+                return False
+            if all(t[0] >= X - 1.0 for t in ws):
+                return True
+            return all(t[2] <= X + 1.0 for t in ws) and ln["x0"] >= _margin + 20.0
+
         while (span_end + 1 < len(lines) and span_end + 1 - bot_li <= 3
-               and lines[span_end + 1]["words"]
-               and all(t[0] >= X - 1.0 for t in lines[span_end + 1]["words"])
+               and _wraps_last_row(lines[span_end + 1])
                and lines[span_end + 1]["y0"] - lines[span_end]["y1"] <= 0.9 * line_h):
             span_end += 1
         for li in range(top_li, span_end + 1):
@@ -419,7 +431,7 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
                 rows_lr[-1][1] = (rows_lr[-1][1] + ", " + rtxt).strip(", ")
                 region_lis.append(li)
                 continue
-            if li > bot_li:
+            if li > bot_li and right:
                 break
             if right:
                 rows_lr.append([ltxt, rtxt])
@@ -505,7 +517,18 @@ def _extract_column_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[s
             out_rows = [{"col_0": f"{r[0]}: {r[1]}".strip(" :")}
                         for r in form_rows if (r[0] or r[1])]
         else:
-            if _is_label(rows_lr[0][0]) and _is_label(rows_lr[0][1]):
+            # A BOM's header pair can name several columns per side ("CDW#
+            # Mfg# Description" | "Qty Unit Price Ext Price"): an all-label
+            # first row over rows that carry figures is still the header, not
+            # a data row of its own (010003).
+            def _is_wide_label(s: str) -> bool:
+                return bool(s) and not any(c.isdigit() for c in s) and len(s.split()) <= 6
+
+            _figured = sum(1 for r in rows_lr[1:] if any(c.isdigit() for c in (r[1] or "")))
+            _wide_header = (len(rows_lr) >= 2 and _is_wide_label(rows_lr[0][0])
+                            and _is_wide_label(rows_lr[0][1])
+                            and _figured >= max(1, len(rows_lr) - 1))
+            if (_is_label(rows_lr[0][0]) and _is_label(rows_lr[0][1])) or _wide_header:
                 columns = [rows_lr[0][0], rows_lr[0][1]]
                 data = rows_lr[1:]
             else:
