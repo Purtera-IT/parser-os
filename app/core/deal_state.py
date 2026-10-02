@@ -94,6 +94,32 @@ def _from_a_sheet(atom: Any) -> bool:
     return False
 
 
+#: Rows a sheet PRICES, read off the parser's own typing: a rate-card or
+#: catalog row, a service line, a priced line. A survey there is a service
+#: on offer at a rate ("Site Survey | Per site survey required for each
+#: location | 250"), never the deal waiting on one.
+_PRICED_ROW_TYPES = {"service_line", "pricing_assumption", "commercial_total",
+                     "vendor_line_item", "rate_term", "pricing_term"}
+_PRICED_ROW_KINDS = {"rate_card_row", "catalog_row"}
+_RATE_SHEET_NAME = re.compile(r"\b(?:rates?|pric(?:e|es|ing)|rate ?card|catalog)\b", re.I)
+
+
+def _priced_sheet_row(atom: Any) -> bool:
+    at = getattr(atom, "atom_type", None)
+    at = str(getattr(at, "value", at) or "")
+    if at in _PRICED_ROW_TYPES:
+        return True
+    val = getattr(atom, "value", None) or {}
+    if isinstance(val, dict) and (val.get("kind") in _PRICED_ROW_KINDS or val.get("sheet_role")
+                                  or val.get("money_keys")):
+        return True
+    for ref in getattr(atom, "source_refs", None) or []:
+        loc = getattr(ref, "locator", None) or {}
+        if isinstance(loc, dict) and _RATE_SHEET_NAME.search(str(loc.get("sheet") or "")):
+            return True
+    return False
+
+
 def _sheet_cell_asks_for_a_survey(text: str) -> bool:
     """A spreadsheet row asks for a survey only when ONE of its cells does,
     in a sentence.
@@ -215,8 +241,10 @@ def read_deal_state(atoms: list[Any]) -> DealState:
             continue
         if _ROM.search(t):
             rom.append(atom)
-        asks = (_sheet_cell_asks_for_a_survey(t) if _from_a_sheet(atom)
-                else _asks_for_a_survey(t))
+        if _from_a_sheet(atom):
+            asks = not _priced_sheet_row(atom) and _sheet_cell_asks_for_a_survey(t)
+        else:
+            asks = _asks_for_a_survey(t)
         if asks and not _reports_a_completed_survey(t):
             wants_survey.append(atom)
         if _reports_a_completed_survey(t):

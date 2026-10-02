@@ -78,3 +78,48 @@ def test_compile_deal_kit_with_survey_rate_rows_derives_no_state(tmp_path: Path)
     r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
     states = [a.raw_text for a in r.atoms if a.atom_type.value == "deal_state"]
     assert not [s for s in states if "survey" in s.lower() and "await" in s.lower()], states
+
+
+# ── 000132: a priced survey line on a Deal Kit v2 sell-rates sheet ──────────
+
+
+class _Typed(_A):
+    def __init__(self, text, sheet, atom_type="service_line", value=None):
+        super().__init__(text, sheet)
+        self.atom_type = atom_type
+        self.value = value or {}
+
+
+def test_priced_survey_row_with_a_requirement_sentence_does_not_stage_the_deal():
+    # A rate row whose description is a sentence ("required for each
+    # location") passed the per-cell test and staged "awaiting site survey"
+    # with "next step: site survey" -- both lines from the same evidence.
+    rows = [
+        _Typed("Sell Rates | Service: Site Survey | Description: Per site survey required for each "
+               "location before deployment | Sell Rate: 250", "Sell Rates",
+               value={"kind": "rate_card_row", "money_keys": ["money:250"]}),
+        _A("Site Survey | Notes: Survey needed before deployment at each new location | 96", "SELL RATES"),
+    ]
+    st = read_deal_state(rows)
+    assert st.get("stage") is None and st.get("next_step") is None, st.lines
+
+
+def test_compile_deal_kit_v2_sell_rates_with_survey_terms_derives_no_state(tmp_path: Path):
+    from app.core.compiler import compile_project
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Deal Kit"
+    ws.append(["Customer", "Acme Foods"])
+    ws.append(["OPPTY #", "000132"])
+    ws2 = wb.create_sheet("Sell Rates")
+    ws2.append(["Service", "Description", "Sell Rate", "Unit"])
+    ws2.append(["Site Survey", "Per site survey required for each location before deployment", 250, "per site"])
+    ws2.append(["L1 Technician", "Onsite technician, 2 hour minimum", 65, "per hour"])
+    ws2.append(["L2 Technician", "Network technician, 2 hour minimum", 85, "per hour"])
+    wb.save(tmp_path / "Deal Kit v2.xlsx")
+    r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
+    states = [a.raw_text for a in r.atoms if a.atom_type.value == "deal_state"]
+    assert not [s for s in states if "survey" in s.lower()], states
+    # The priced survey line itself is still an atom.
+    assert any("Site Survey" in a.raw_text and "250" in a.raw_text for a in r.atoms)
