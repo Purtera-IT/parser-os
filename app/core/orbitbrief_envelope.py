@@ -349,6 +349,8 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
                                  str(getattr(atom, "atom_type", "") or "")),
             "text": (getattr(atom, "raw_text", "") or getattr(atom, "text", "") or "")[:2000],
             "stage": stage,
+            "reason": str(((getattr(atom, "value", None) or {}).get("_suppression") or {}).get("reason") or "")
+            if isinstance(getattr(atom, "value", None), dict) else "",
             # Who made it, and a key that survives a reparse. Without the key a
             # label is tied to this compile: `label_key` is
             # sha256(deal | filename | page | text), three quarters location
@@ -482,6 +484,31 @@ def build_orbitbrief_envelope(
     for _d in (_scope.PO_RE.finditer(str(_crm_ctx.get("deal_name") or "")) if _crm_ctx else []):
         _this_keys.append(_d.group(1))
 
+    # What the compile SET ASIDE from each document, by stage and reason. A
+    # document whose atoms were all dropped otherwise reports atoms_admitted 0
+    # with reasons [] -- indistinguishable from an empty file (live 010353:
+    # the SOW and Deal Kit, 284 atoms, set aside by document_job_scope).
+    _suppressed_by_artifact: dict[str, dict[str, Any]] = {}
+    for _sa in list(getattr(compile_result, "suppressed_atoms", None) or []):
+        _sv = _sa.value if isinstance(getattr(_sa, "value", None), dict) else {}
+        _sup = _sv.get("_suppression") if isinstance(_sv.get("_suppression"), dict) else {}
+        _sstage = str(_sup.get("stage") or "")
+        if not _sstage:
+            for _flag in (getattr(_sa, "review_flags", None) or []):
+                if str(_flag).startswith("suppressed:"):
+                    _sstage = str(_flag).split(":", 1)[1]
+                    break
+        _sline = f"set aside by {_sstage or 'an unnamed stage'}: {_sup.get('reason') or 'no reason recorded'}"
+        _sids = {str(getattr(_sa, "artifact_id", "") or "")}
+        for _ref in (getattr(_sa, "source_refs", None) or []):
+            _sids.add(str(getattr(_ref, "artifact_id", "") or ""))
+        for _sid in _sids - {""}:
+            _slot = _suppressed_by_artifact.setdefault(_sid, {"atoms": 0, "by_stage": {}, "reasons": []})
+            _slot["atoms"] += 1
+            _slot["by_stage"][_sstage or "unknown"] = _slot["by_stage"].get(_sstage or "unknown", 0) + 1
+            if _sline not in _slot["reasons"]:
+                _slot["reasons"].append(_sline)
+
     documents: list[dict[str, Any]] = []
     artifact_iter = manifest.artifact_fingerprints if manifest is not None else []
     for fp in artifact_iter:
@@ -559,6 +586,17 @@ def build_orbitbrief_envelope(
             scope=_scope_info["scope"],
             this_deal_keys=_this_keys,
         )
+        _sup_here = _suppressed_by_artifact.get(fp.artifact_id)
+        # Said where it changes what the document reads as: a document the
+        # compile emptied, or one document_job_scope set aside. A partial fold
+        # elsewhere is already itemised under envelope.suppressed.
+        if _sup_here and (not artifact_atoms or _sup_here["by_stage"].get("document_job_scope")):
+            _scope_summary = {
+                **_scope_summary,
+                "atoms_suppressed": _sup_here["atoms"],
+                "suppressed_by_stage": dict(_sup_here["by_stage"]),
+                "reasons": list(_scope_summary.get("reasons") or []) + _sup_here["reasons"][:4],
+            }
         # A document that states its own date outranks the time we uploaded
         # it. Live 010300: two PSOWs dated March 2025 carried authored_at
         # 2026-09-03 (HubSpot file time), so a cut would have called them
