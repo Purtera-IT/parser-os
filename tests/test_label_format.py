@@ -66,6 +66,8 @@ def test_checks():
     assert _checks(parked) == set()
     assert {"reason_missing", "policy_line_missing"} <= _checks(_row(reads_set={"co_action": "reject"}))
     assert "policy_words_in_why" in _checks(_row(note="Matches the Deal Kit billing."))
+    assert "policy_words_in_why" in _checks(_row(note="Same rate as the internal pricing workbook."))
+    assert "policy_words_in_why" not in _checks(_row(note="The customer's pricing workbook lists 4 sites."))
     assert "policy_words_in_why" not in _checks(_row(note='The heading reads "Rejected items".'))
     assert "policy_words_in_why" not in _checks(_row(
         note="[EXCLUDE_FROM_TRAINING: old manual Deal Kit]\nA rate row.\n[purtera] ignore: old kit."))

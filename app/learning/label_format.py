@@ -45,7 +45,9 @@ VALUE_ALIASES: dict[str, dict[str, str]] = {
 #: Words that make a universal WHY company-specific (portable-labels.md,
 #: note-split cleanup rules). Checked outside quoted source text only, since a
 #: quote stays verbatim.
-POLICY_WORDS = re.compile(r"\b(reject(?:s|ed)?|deal kit|atlas|hubspot|gantt)\b", re.I)
+#: Our own pricing workbook is the Deal Kit, so it belongs on the company line;
+#: a customer's pricing workbook is a universal source and stays allowed.
+POLICY_WORDS = re.compile(r"\b(reject(?:s|ed)?|deal kit|atlas|hubspot|gantt|(?:internal|our) pricing workbook)\b", re.I)
 _QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|'[^'\n]{3,}'")
 
 
