@@ -2012,7 +2012,23 @@ def retype_rate_terms_off_change_orders(atoms: list[Any]) -> int:
 _MILESTONE_NAME_RE = re.compile(r"^\s*(?:key\s+|project\s+)?milestone\b|\bmilestone\s*[:\-\u2013\u2014]", re.I)
 _TOTAL_ROW_RE = re.compile(r"^\s*(?:grand\s+|sub\s*-?\s*)?totals?\s*:?\s*$", re.I)
 _PO_REFERENCE_RE = re.compile(
-    r"^\s*(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{3,}\s*$",
+    r"^\s*(?:(?:customer|client|cust\.?)\s+)?(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*"
+    r"[A-Z0-9][A-Z0-9-]{3,}\s*$",
+    re.I,
+)
+#: A PO label cell whose number sits in the next cell: "Customer PO |
+#: 4500123456", "PO Number | PO-88213 | 18207.48" (010003 Deal Kit).
+_PO_LABEL_RE = re.compile(
+    r"^\s*(?:(?:customer|client|cust\.?)\s+)?(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*:?\s*$",
+    re.I,
+)
+_PO_ID_CELL_RE = re.compile(r"^\s*(?:(?:p\.?\s?o\.?)\s*#?\s*)?[A-Z0-9][A-Z0-9-]{3,}\s*$", re.I)
+#: A labour column of a Gantt / Deal Kit row: "Hours: 24", "Est. Hrs: 8".
+_HOURS_CELL_RE = re.compile(r"^\s*(?:(?:labor|labour|est\.?|estimated|total|tech)\s+)?(?:hours?|hrs?)\s*:\s*\d", re.I)
+#: A technician level: "Tech Level: L2", "L2 Tech", "Level 2", "Tier 3".
+_TECH_LEVEL_CELL_RE = re.compile(
+    r"^\s*(?:(?:tech(?:nician)?|skill|resource|labor|labour)\s+level\s*:|"
+    r"(?:l[0-4]|level\s*[0-4]|tier\s*[0-4])\b(?:\s+(?:tech(?:nician)?|engineer|eng|fe))?\s*$)",
     re.I,
 )
 _ROW_TYPES = frozenset({"task", "commercial_total", "vendor_line_item", "scope_item", "raw_table_row",
@@ -2034,7 +2050,7 @@ _SCHEDULE_LABEL_RE = re.compile(r"^\s*(?:start|end|finish|due|begin|duration|day
 #: $18,207.48", "Purchase Order No. 88213: 18207.48". The amount is the PO's
 #: value, not the deal total.
 _PO_LINE_RE = re.compile(
-    r"^\s*(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{3,}"
+    r"^\s*(?:(?:customer|client|cust\.?)\s+)?(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{3,}"
     r"\s*(?:[:\-\u2013\u2014|]\s*)?(?:\$?\s?[\d,]+(?:\.\d{2})?)?\s*$",
     re.I,
 )
@@ -2050,6 +2066,26 @@ def _is_schedule_row(cells: list[str], first: str) -> bool:
     if len(dated) >= 2:
         return True
     return bool(dated) and any(_SCHEDULE_LABEL_RE.match(c) for c in dated)
+
+
+def _is_labor_row(cells: list[str], first: str, atom_type: str) -> bool:
+    """A Gantt / Deal Kit labour row: a named task with its hours and / or
+    the technician level that works it ("Task: Install displays | Hours: 24
+    | Tech Level: L2 | Cost: 4200"). Its cost column is the price of the
+    task, not a total (010003)."""
+    if not re.search(r"[A-Za-z]{3}", first or "") or _TECH_LEVEL_CELL_RE.match(first or ""):
+        return False
+    rest = cells[1:]
+    if any(_HOURS_CELL_RE.match(c) for c in rest):
+        return True
+    # Unlabelled: a technician level beside a bare count of hours. Only a row
+    # typed as a total is judged so -- a rate card row ("Install | L2 | 95")
+    # is a pricing_assumption and stays one.
+    return (
+        atom_type == "commercial_total"
+        and any(_TECH_LEVEL_CELL_RE.match(c) for c in rest)
+        and any(re.fullmatch(r"\d{1,4}(?:\.\d+)?", c) for c in rest)
+    )
 
 
 def retype_schedule_reference_rows(atoms: list[Any]) -> int:
@@ -2098,6 +2134,9 @@ def retype_schedule_reference_rows(atoms: list[Any]) -> int:
             new_type, flag = _AT.milestone_phase, "milestone_row_retyped"
         elif _PO_REFERENCE_RE.match(first) or _PO_REFERENCE_RE.match(raw_first) or (
             at in _MONEY_ROW_TYPES and _PO_LINE_RE.match(raw_first)
+        ) or (
+            # "Customer PO | 4500123456": the label, then the number.
+            _PO_LABEL_RE.match(raw_first) and len(cells_txt) > 1 and _PO_ID_CELL_RE.match(cells_txt[1])
         ):
             new_type, flag = _AT.deal_metadata, "po_reference_row"
         elif (
@@ -2116,6 +2155,12 @@ def retype_schedule_reference_rows(atoms: list[Any]) -> int:
             # sheet that also carries deal economics typed every row
             # commercial_total (010003). Only the Total row is a total.
             new_type, flag = _AT.task, "schedule_row_retyped"
+        elif (
+            at in _MONEY_ROW_TYPES
+            and not _TOTAL_ROW_RE.match(first)
+            and _is_labor_row(cells_txt, first, at)
+        ):
+            new_type, flag = _AT.task, "labor_row_retyped"
         if new_type is None:
             continue
         try:
