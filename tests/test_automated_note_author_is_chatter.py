@@ -91,3 +91,42 @@ def test_a_person_s_note_is_untouched(tmp_path):
 ])
 def test_author_detection(name, email, expected):
     assert _is_automated_note_author(name, email) is expected
+
+
+def test_a_person_s_multi_line_note_is_not_collapsed(tmp_path):
+    """Only an automated note collapses into one atom; a person's note still
+    reads one atom per line/sentence."""
+    p = tmp_path / "deal-hs-note-2.txt"
+    p.write_text(
+        "HubSpot Note: Note\nHubSpot Note ID: 2\nAuthor: Dana Whitfield\n"
+        "Author-Email: dana@purtera-it.com\n\n"
+        "Spoke with the site lead today.\n"
+        "They need the camera removed by Friday.\n"
+        "Parking is on the north lot.\n"
+    )
+    atoms = HubspotNoteParser().parse_artifact("p", "a1", p)
+    assert not any("automated_sender" in a.review_flags for a in atoms)
+    assert not any((a.value or {}).get("kind") == "automated_note" for a in atoms)
+    body = [a.raw_text for a in atoms if (a.value or {}).get("kind") == "hubspot_note_body"]
+    assert body == [
+        "Spoke with the site lead today.",
+        "They need the camera removed by Friday.",
+        "Parking is on the north lot.",
+    ]
+
+
+def test_a_person_s_form_under_an_unresolved_owner_is_not_collapsed(tmp_path):
+    """An unresolved owner ("HubSpot user") plus a field-shaped body is not
+    enough: a person typing a form has that shape too. The announcing line
+    must name a system event."""
+    p = tmp_path / "deal-hs-note-3.txt"
+    p.write_text(
+        "HubSpot Note: Note\nHubSpot Note ID: 3\nAuthor: HubSpot user\n\n"
+        "Site survey scheduled\n"
+        "Address: 12 Main St, Camden, TN 38320\n"
+        "Contact: Bob Jones\n"
+        "Date: 2026-10-05\n"
+    )
+    atoms = HubspotNoteParser().parse_artifact("p", "a1", p)
+    assert not any("automated_sender" in a.review_flags for a in atoms)
+    assert "Contact: Bob Jones" in {a.raw_text for a in atoms}

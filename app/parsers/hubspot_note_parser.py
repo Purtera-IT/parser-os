@@ -148,11 +148,31 @@ def _is_automated_note_author(author: str, author_email: str) -> bool:
     return bool(_SYSTEM_AUTHOR_RE.match(name)) or is_automated_sender("", name=name)
 
 
+#: The announcing line of a system notification names an event that happened
+#: to a record ("intake received", "form submitted", "deal created"). A person
+#: titling a form ("Site survey details", "Walkthrough") names a topic.
+_NOTIFICATION_EVENT_RE = re.compile(
+    r"\b(?:received|submitted|created|generated|imported|synced|logged|"
+    r"auto[- ]?(?:created|generated|logged)|new\s+(?:submission|intake|form|lead|request))\b",
+    re.I,
+)
+
+#: A person writing to colleagues says "I", "we", "you"; a system does not.
+_PERSONAL_PRONOUN_RE = re.compile(r"\b(?:I|I'm|I've|we|we're|our|us|my|me|you|your)\b")
+
+
 def _is_notification_shaped(parsed: dict[str, Any]) -> bool:
-    """One short announcing line, then nothing but ``Label: value`` fields --
-    the shape a system writes, never a person's recap."""
+    """One short announcing line naming a system event, then nothing but
+    ``Label: value`` fields -- the shape a system writes, never a person's
+    recap. A person's own form under an unresolved owner ("Site survey
+    scheduled" / "Address: ..." / "Contact: ...") has the field shape too, so
+    the announcing line must read as an event and nobody may speak in it."""
     lines = [str(ln).strip() for ln in (parsed.get("body_lines") or []) if str(ln).strip()]
     if len(lines) < 3 or len(lines[0].split()) > 12 or _FIELD_LINE_RE.match(lines[0]):
+        return False
+    if not _NOTIFICATION_EVENT_RE.search(lines[0]):
+        return False
+    if any(_PERSONAL_PRONOUN_RE.search(ln) for ln in lines):
         return False
     return all(_FIELD_LINE_RE.match(ln) for ln in lines[1:])
 
@@ -203,6 +223,117 @@ def _place_unlined_atoms(atoms: list[EvidenceAtom], raw_lines: list[str], body_a
         loc.update({"line_start": line, "line_end": line})
         refs[0] = refs[0].model_copy(update={"locator": loc})
         atom.source_refs = refs
+
+
+_PASTED_FROM_RE = re.compile(r"^\s*From\s*:\s*(?P<v>\S.*)$", re.I)
+_PASTED_HDR_RE = re.compile(r"^\s*(?:Sent|Date|To|Cc|Subject)\s*:", re.I)
+_SIGNOFF_LINE_RE = re.compile(
+    r"^\s*(?:thanks?|thank\s+you|thx|many\s+thanks|(?:kind(?:est)?|best|warm(?:est)?)\s+regards?|"
+    r"regards?|cheers|sincerely|best|all\s+the\s+best|respectfully)\s*[,.!-]*\s*$",
+    re.I,
+)
+_BARE_NAME_RE = re.compile(r"^[A-Z][a-z'\-]+(?:\s+[A-Z][a-z'\-]+){0,2}$")
+
+
+def _pasted_email_sender(parsed: dict[str, Any]) -> tuple[dict[str, str], int] | None:
+    """``({name, email}, first body line of the paste)`` when the note body is
+    someone else's email pasted in, else None.
+
+    Live 010087: Trent's note opened "Hi Trent," -- Stephanie's email to him,
+    pasted -- and every line of it was credited to Trent. Two shapes:
+
+    * a pasted header block: a ``From:`` line followed by ``Sent:`` / ``To:`` /
+      ``Subject:``; the sender is the ``From:`` value and the paste runs from
+      that line;
+    * a body that opens by greeting the note's own author by name and closes
+      with a signature (or a sign-off and a name) naming someone else; the
+      whole body is the paste.
+    """
+    from email.utils import parseaddr
+
+    lines = [str(ln).strip() for ln in (parsed.get("body_lines") or []) if str(ln).strip()]
+    if not lines:
+        return None
+    author = _name_key(str(parsed.get("author") or ""))
+    for i, ln in enumerate(lines):
+        m = _PASTED_FROM_RE.match(ln)
+        if not m or not any(_PASTED_HDR_RE.match(x) for x in lines[i + 1:i + 5]):
+            continue
+        nm, addr = parseaddr(m.group("v"))
+        nm = " ".join((nm or "").split()) or (m.group("v").split("<")[0].strip(' "') if not addr else "")
+        if not nm and not addr:
+            continue
+        if (author and _name_key(nm) == author) or (
+            addr and addr.lower() == str(parsed.get("author_email") or "").lower()
+        ):
+            continue
+        return {"name": nm, "email": addr if "@" in addr else ""}, i
+    first_name = author.split()[0] if author and author not in _UNRESOLVED_AUTHORS else ""
+    from app.core.greetings import LEADING_GREETING_RE
+
+    g = LEADING_GREETING_RE.match(lines[0])
+    if not first_name or not g or first_name not in _name_key(lines[0][: g.end()]).split():
+        return None
+    sender: dict[str, str] = {}
+    try:
+        from app.parsers.signature_block import people_from_signature_lines
+
+        for rec in people_from_signature_lines(lines[1:]):
+            if _name_key(rec.get("name", "")) not in (author, first_name):
+                sender = {"name": str(rec.get("name") or ""), "email": str(rec.get("email") or "")}
+    except Exception:  # pragma: no cover - signature reading is best effort
+        sender = {}
+    if not sender:
+        for k in range(len(lines) - 2, 0, -1):
+            if _SIGNOFF_LINE_RE.match(lines[k]):
+                cand = re.sub(r"^[-~\s]+", "", lines[k + 1]).strip(" .,")
+                if _BARE_NAME_RE.match(cand) and _name_key(cand) not in (author, first_name):
+                    sender = {"name": cand, "email": ""}
+                break
+    return (sender, 0) if sender.get("name") or sender.get("email") else None
+
+
+def _credit_pasted_email(atoms: list[EvidenceAtom], parsed: dict[str, Any]) -> None:
+    """Credit the atoms of a pasted email to its sender, not the note author.
+
+    The note author stays on each atom as ``note_author``: they posted it, the
+    sender said it. An internal author's trust boost does not carry over to
+    an outside sender's words."""
+    found = _pasted_email_sender(parsed)
+    if not found:
+        return
+    sender, first = found
+    raw_lines = [str(ln) for ln in (parsed.get("raw_lines") or [])]
+    body_at = int(parsed.get("body_line_index") or 0)
+    body = [str(ln).strip() for ln in (parsed.get("body_lines") or []) if str(ln).strip()]
+    start_line = 0  # 1-based line of the paste in the file; 0 = whole body
+    if first > 0:
+        target = body[first]
+        start_line = next((i + 1 for i in range(body_at, len(raw_lines))
+                           if raw_lines[i].strip() == target), 0) or 10 ** 9
+    affiliation = classify_author_affiliation(sender.get("name"), author_email=sender.get("email") or None)
+    for atom in atoms:
+        val = atom.value if isinstance(atom.value, dict) else None
+        if val is None or val.get("kind") in ("hubspot_note_meta", "automated_note"):
+            continue
+        if start_line:
+            refs = list(getattr(atom, "source_refs", None) or [])
+            loc = dict(getattr(refs[0], "locator", None) or {}) if refs else {}
+            ln = loc.get("line_start")
+            if ln is None or int(ln) < start_line:
+                continue
+        val = dict(val)
+        val.setdefault("note_author", str(parsed.get("author") or ""))
+        val.setdefault("note_author_email", str(parsed.get("author_email") or ""))
+        val["author"] = sender.get("name") or sender.get("email") or ""
+        val["author_email"] = sender.get("email") or ""
+        val["author_affiliation"] = affiliation
+        val["pasted_email"] = True
+        atom.value = val
+        if affiliation != "internal" and "internal_author" in (atom.review_flags or []):
+            atom.review_flags = [f for f in atom.review_flags
+                                 if f not in ("internal_author", "trusted_internal_source")]
+            atom.confidence = min(atom.confidence, 0.84)
 
 
 def _is_placeholder_note_title(text: str) -> bool:
@@ -464,6 +595,52 @@ def is_hubspot_note_path(path: Path, sample_text: str | None = None) -> bool:
     return bool(_HS_NOTE_HEADER_RE.search(text))
 
 
+def _name_key(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z' -]", " ", str(text or "").lower()).split())
+
+
+def _is_author_line(line: str, author: str, author_email: str) -> bool:
+    """Is this line nothing but the note author's name ("Megan Blevins",
+    "- Megan", "Megan Blevins," as a sign-off)?
+
+    Live 010353: Megan Blevins' Oct 1 note opened with her bare name and it
+    became a stakeholder atom. Matched against the note's own author metadata
+    (the ``Author:`` name, else the ``Author-Email`` local part), never
+    guessed from capitalisation alone, so "Camden Site" or a customer's name
+    in a body stays content."""
+    t = str(line or "").strip()
+    t = re.sub(r"^[-~\u2013\u2014\s]+", "", t).strip(" .,;:!")
+    if not t or len(t.split()) > 4 or re.search(r"[\d@:/]", t):
+        return False
+    key = _name_key(t)
+    names: list[str] = []
+    a = _name_key(author)
+    if a and a not in _UNRESOLVED_AUTHORS:
+        names.append(a)
+    local = str(author_email or "").split("@", 1)[0]
+    if "@" in str(author_email or "") and re.search(r"[._-]", local):
+        names.append(_name_key(re.sub(r"[._-]+", " ", local)))
+    for n in names:
+        parts = n.split()
+        if key == n or (len(parts) >= 2 and key == parts[0]):
+            return True
+    return False
+
+
+def _strip_author_lines(body_lines: list[str], author: str, author_email: str) -> tuple[list[str], str]:
+    """``(body lines without the author's name line, that line)``. Only the
+    first or last line, and never the only line."""
+    lines = list(body_lines)
+    found = ""
+    for idx in (0, -1):
+        if len(lines) < 2:
+            break
+        if _is_author_line(lines[idx], author, author_email):
+            found = found or lines[idx].strip()
+            lines.pop(idx)
+    return lines, found
+
+
 def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
     """Split HubSpot export headers from the note body.
 
@@ -547,6 +724,7 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
         if in_body and stripped:
             body_line_index = min(body_line_index, line_index)
             body_lines.append(stripped)
+    body_lines, author_line = _strip_author_lines(body_lines, author, author_email)
     body = " ".join(body_lines).strip()
     if not body and title:
         body = title
@@ -556,6 +734,9 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
         "date_raw": date_raw,
         "author": author,
         "author_email": author_email,
+        # The author's own name typed as the body's first or last line: it
+        # says who wrote the note -- metadata of the note, not a statement.
+        "author_line": author_line,
         "body": body,
         # The flattened ``body`` above is what every prose consumer wants, but
         # joining on spaces destroys a pasted TABLE: a roster's rows and columns
@@ -685,6 +866,8 @@ class HubspotNoteParser(BaseParser):
             )
         _place_unlined_atoms(atoms, [str(x) for x in (parsed.get("raw_lines") or [])],
                              int(parsed.get("body_line_index") or 0))
+        if not _note_is_automated(parsed):
+            _credit_pasted_email(atoms, parsed)
         structured_doc = self._build_structured_doc(filename=path.name, parsed=parsed)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
@@ -1558,11 +1741,16 @@ class HubspotNoteParser(BaseParser):
             title=str(parsed.get("title") or filename),
             metadata=meta,
             sections=[
-                make_section(
-                    heading="HubSpot Note",
-                    level=2,
-                    blocks=[make_paragraph(body)],
-                )
+                {
+                    **make_section(
+                        heading="HubSpot Note",
+                        level=2,
+                        blocks=[make_paragraph(body)],
+                    ),
+                    # Who wrote it is the section's header, not a block of it.
+                    **({"author": author} if author else {}),
+                    **({"author_line": parsed["author_line"]} if parsed.get("author_line") else {}),
+                }
             ],
         )
         return make_structured_document(
