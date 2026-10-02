@@ -988,6 +988,24 @@
       "label": "How urgent it is",
       "values": "how soon, and what drives it",
       "desc": "A deadline, rush or priority signal: \"need this installed before the store opens on the 15th\", \"ASAP, customer is escalating\". Say how soon and why, in the line's own words. A date that is only a schedule fact with no pressure behind it is not urgency."
+    },
+    {
+      "key": "triggered_task",
+      "label": "A task that starts when something happens",
+      "values": "what event starts it",
+      "desc": "A PM, PC, SA or tech will act once an event lands: \"as soon as we receive confirmation that the TVs have arrived on site, we will coordinate a date\". Name the event in the line's own words (\"TVs confirmed on site\"). Link the event's atom with triggered_by when it arrives, the dependency with blocked_by, and the task with context. A seller saying they will reply or send something is not a task for us."
+    },
+    {
+      "key": "task_owner_role",
+      "label": "Whose task it is",
+      "values": "project_manager | project_coordinator | solutions_architect | technician",
+      "desc": "The role that owns the triggered task. Put the person in entity_keys. Only PM, PC, SA or tech work counts: sellers do not get tasks from this."
+    },
+    {
+      "key": "crew_size",
+      "label": "How many people go",
+      "values": "a number",
+      "desc": "The number of techs or crew sent or planned for the job: \"Tanner chose to send 2 techs out\" is 2. A count of devices or sites is job_scale, not crew size."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
@@ -1016,6 +1034,16 @@
     {
       "key": "context",
       "label": "Background for it"
+    },
+    {
+      "key": "blocked_by",
+      "label": "Cannot happen until that one does",
+      "desc": "From a task or commitment to the dependency it waits on: \"we will coordinate a date\" is blocked_by \"TVs are with the shipping carrier\"."
+    },
+    {
+      "key": "triggered_by",
+      "label": "That event starts it",
+      "desc": "From a triggered task to the line saying its event happened: \"we will coordinate a date\" is triggered_by \"TVs were delivered today\"."
     }
   ],
   "asks_supplier_doc": "Does 'who supplies or does it?' have an answer for this type? The card showed that question on EVERY type, so three quarters of the time it invited an answer to a question the sentence does not ask -- and a head trained on those learns the axes are independent noise. Declared here rather than guessed from the type's name."

@@ -548,6 +548,8 @@ _LINK_TO_EDGE = {
     "contradicts": "contradicts",
     "same_as": "same_as",
     "context": "context",
+    "blocked_by": "blocked_by",
+    "triggered_by": "triggered_by",
 }
 
 
