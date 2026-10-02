@@ -1001,6 +1001,12 @@ class HubspotNoteParser(BaseParser):
 
         raw_lines = [str(ln) for ln in (parsed.get("raw_lines") or [])]
         body_line_index = int(parsed.get("body_line_index") or 0)
+        from app.core.city_site_list import find_city_site_lists
+
+        _city_sites = {
+            " ".join(cs.text.split()).lower(): cs
+            for cs in find_city_site_lists([str(ln) for ln in (parsed.get("body_lines") or [])])
+        }
         # The statements of this note in order, so an "Update on that" line can
         # name the one it revises.
         statements: list[list[EvidenceAtom]] = []
@@ -1013,9 +1019,16 @@ class HubspotNoteParser(BaseParser):
             if not words or not raw_lines:
                 return source_ref
             probe = words[: min(len(words), 40)]
-            for i in range(body_line_index, len(raw_lines)):
-                joined = " ".join(raw_lines[i].split())
-                col = joined.find(probe)
+            # The line that holds the WHOLE text wins over the first line that
+            # merely starts the same way: a note repeats its title, truncated
+            # ("Maintenance and support of their technical IT infrastructure
+            # covering network…"), as the body's first line, and the 40-char
+            # probe found that title for the full sentence two lines below.
+            normed = [" ".join(raw_lines[i].split()) for i in range(len(raw_lines))]
+            whole = next((i for i in range(body_line_index, len(raw_lines)) if words in normed[i]), None)
+            for i in ([whole] if whole is not None else range(body_line_index, len(raw_lines))):
+                joined = normed[i]
+                col = joined.find(words if whole is not None else probe)
                 if col < 0:
                     continue
                 # A sentence the author wrapped runs onto following lines.
@@ -1025,7 +1038,14 @@ class HubspotNoteParser(BaseParser):
                     end += 1
                     acc = f"{acc} {' '.join(raw_lines[end].split())}"
                 locator = dict(source_ref.locator or {})
-                locator.update({"line_start": i + 1, "line_end": end + 1, "region": "body"})
+                # Where on the line it starts, too. A bullet list flattened
+                # onto one line (" - "-separated, live 000132) is ten atoms on
+                # ONE line; with only the line number they tie, and every
+                # reader broke the tie by atom id -- a hash -- so the list
+                # read in random order ("Troubleshooting" above "Support for
+                # physical server"). The column is the source order.
+                locator.update({"line_start": i + 1, "line_end": end + 1, "region": "body",
+                                "char_start": col})
                 return source_ref.model_copy(update={
                     "id": stable_id("src", artifact_id, "hubspot_note", str(i + 1), probe),
                     "locator": locator,
@@ -1058,6 +1078,24 @@ class HubspotNoteParser(BaseParser):
             if is_title and _is_placeholder_note_title(prose):
                 # "Note", "Call" -- the CRM's default title with nothing under
                 # it. Genuinely empty; the header atom already records the note.
+                return
+            city_site = None if is_title else _city_sites.get(" ".join(str(prose or "").split()).lower())
+            if city_site is not None:
+                # A line of a "City, ST" list is a job site (live 000132's
+                # "Locations" list), not a sentence of scope.
+                from app.core.city_site_list import city_site_value
+
+                atoms.append(self._mint_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=filename,
+                    atom_type=AtomType.physical_site, text=city_site.text,
+                    value=city_site_value(
+                        city_site, hubspot_note_id=note_id, title=title, source="hubspot_note",
+                        author=author, author_email=author_email, author_affiliation=affiliation,
+                    ),
+                    source_ref=prose_ref, confidence=0.8, entity_keys=[city_site.entity_key],
+                    review_flags=["hubspot_note_physical_site", "city_site_list"],
+                    author_affiliation=affiliation,
+                ))
                 return
             atom_types: list[AtomType] = []
             chatter_reason: str | None = None

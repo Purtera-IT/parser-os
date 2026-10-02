@@ -2018,6 +2018,38 @@ def _quoted_header_source_lines(lines: list[str], sender: str, sent_at: str, sta
     return out
 
 
+def _city_list_lines_are_sites(atoms: list[EvidenceAtom], blocks: list[dict[str, Any]] | None) -> None:
+    """A run of "City, ST" lines in a message is a list of job sites.
+
+    Live 000132: the forward's "Locations" list (Delphos, OH ... Wilmington,
+    DE) became six scope lines, because every site reader here wants a street.
+    Each line keeps its atom, its id and its place in the message; only its
+    type and value say what it is. See ``app.core.city_site_list``.
+    """
+    from app.core.city_site_list import city_site_value, find_city_site_lists
+
+    for block in blocks or []:
+        sites = find_city_site_lists([str(x) for x in (block.get("lines") or [])])
+        if not sites:
+            continue
+        by_text = {" ".join(cs.text.split()).lower(): cs for cs in sites}
+        mi = block.get("message_index")
+        for atom in atoms:
+            v = atom.value if isinstance(atom.value, dict) else None
+            if v is None or v.get("kind") != "email_body_line" or v.get("message_index") != mi:
+                continue
+            cs = by_text.get(" ".join(str(atom.raw_text or "").split()).lower())
+            if cs is None:
+                continue
+            atom.atom_type = AtomType.physical_site
+            # The line's own fields win (kind stays email_body_line, so every
+            # email-side reader -- quoted-history dedup, threading, the paste
+            # fold -- still sees a mail line); the site fields are added.
+            atom.value = {**city_site_value(cs), **v}
+            atom.entity_keys = list(dict.fromkeys([*(atom.entity_keys or []), cs.entity_key]))
+            atom.review_flags = list(dict.fromkeys([*(atom.review_flags or []), "city_site_list"]))
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v2"
@@ -2292,6 +2324,7 @@ class EmailParser(BaseParser):
         # is flagged chatter (still an atom, still rejectable on the labeling
         # page). The body's facts ("SOW 010215 is signed") are untouched.
         atoms = _without_automated_senders(atoms)
+        _city_list_lines_are_sites(atoms, blocks)
         # Kept chatter atoms: the compiler holds every `admission_regex` atom
         # out of the stages between parse and packetize and puts it back for
         # coverage and the result, so no head ever reads one.
