@@ -1,4 +1,4 @@
-"""A numbered list item stays one list atom under its real section (CDW SOW, 010003).
+"""A numbered list item stays one list item under its real section (CDW SOW, 010003).
 
 The signed SOW's assumptions list carries on from the previous page. Item 7
 ("7. After a Change Order that requires an amended PO is executed, ...") read
@@ -61,14 +61,21 @@ def _path(a) -> list[str]:
     return list((a.source_refs[0].locator or {}).get("section_path") or [])
 
 
-def test_numbered_item_is_one_atom_under_its_section(tmp_path):
+def test_numbered_item_is_one_list_item_under_its_section(tmp_path):
     pdf = tmp_path / "Signed SOW.pdf"
     _sow(pdf)
     atoms = list(getattr(OrbitBriefPdfParser().parse(pdf), "atoms", []))
     item = [a for a in atoms if "Site Survey that confirms" in a.raw_text]
     assert len(item) == 1, [a.raw_text for a in atoms]
     assert item[0].raw_text.startswith("Before a Site Survey")
-    assert "Vendor may bill for it" in item[0].raw_text
+    # The item's second sentence is its own atom (one sentence per atom, as in
+    # the .docx), still the same list item under the same section.
+    tail = [a for a in atoms if a.raw_text == "If hardware was ordered earlier Vendor may bill for it."]
+    assert len(tail) == 1, [a.raw_text for a in atoms]
+    loc0, loc1 = item[0].source_refs[0].locator, tail[0].source_refs[0].locator
+    assert loc0["block_kind"] == loc1["block_kind"] == "bullet_list"
+    assert loc0["bullet_path"] == loc1["bullet_path"]
+    assert _path(tail[0])[-1] == "SITE ASSUMPTIONS"
     for a in atoms:
         p = _path(a)
         assert "Before a Site" not in p and "SOW 554210" not in p, (a.raw_text, p)
