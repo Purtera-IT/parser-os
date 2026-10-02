@@ -702,10 +702,18 @@ def retag_conversational_to_meta(atoms: list[Any]) -> tuple[list[Any], int]:
         role = classify_transcript_turn_role(text)
         if role == "deal":
             continue
+        has_speaker = bool(_SPEAKER_TS_RE.search(text))
+        # An item of a document's list is structure, not a spoken turn: a
+        # short duty under "Provider is responsible for the following"
+        # ("Complete billing tasks", page 2 of a signed SOW PDF) read as
+        # filler by its word count, while the same line in the draft .docx
+        # stayed scope (010003). The same clause types the same way whatever
+        # page or format it comes from.
+        if not has_speaker and _is_document_list_item(atom):
+            continue
         # Only retag when this looks like a transcript turn (speaker stamp,
         # page≥1 hybrid body, or explicit conversational role).
         page = _atom_page(atom)
-        has_speaker = bool(_SPEAKER_TS_RE.search(text))
         if role in {"greeting", "intro", "logistics", "filler", "acknowledgment"} and (
             has_speaker or (page is not None and page >= 1) or role != "filler"
         ):
@@ -717,6 +725,17 @@ def retag_conversational_to_meta(atoms: list[Any]) -> tuple[list[Any], int]:
     # Stamp reply-to adjacency across transcript turns (universal).
     stamp_conversation_reply_adjacency(atoms)
     return atoms, retagged
+
+
+def _is_document_list_item(atom: Any) -> bool:
+    """A bullet / numbered / lettered item of a document's list."""
+    val = getattr(atom, "value", None)
+    val = val if isinstance(val, dict) else {}
+    if str(val.get("kind") or "") in {"bullet", "list_item"} or val.get("list_item") or val.get("depth") is not None:
+        return True
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else None
+    return isinstance(loc, dict) and str(loc.get("block_kind") or "") in {"bullet_list", "list_item"}
 
 
 def _apply_conversation_meta(atom: Any, AtomType: Any, *, role: str, text: str) -> None:

@@ -2874,9 +2874,55 @@ VENDOR_QUOTE_BOM = "vendor_quote_bom"
 _MONEY_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d{2})?")
 
 
+#: What a statement of work says about itself: its name, and the duty
+#: sections a quote never has.
+_SOW_FILENAME_RE = re.compile(r"(?:^|[^a-z])(?:sow|statement[\s_-]+of[\s_-]+work)(?:[^a-z]|$)", re.I)
+_SOW_SECTION_RE = re.compile(
+    r"\b(?:statement\s+of\s+work|scope\s+of\s+work|(?:provider|customer|vendor|partner|contractor|seller|buyer)"
+    r"\s+responsibilities|project\s+description|out\s+of\s+scope)\b",
+    re.I,
+)
+
+
+def _reads_as_statement_of_work(atoms: list[EvidenceAtom]) -> bool:
+    """A reseller's SOW shares its quote's template and prices a line or two
+    (010003: CDW's "SOW_198950 ... is ready for signature.pdf"), but it is a
+    statement of work: named so, or sectioned into project description and
+    each party's responsibilities. Its list items are duties, not BOM lines."""
+    for a in atoms:
+        for r in (a.source_refs or [])[:1]:
+            if _SOW_FILENAME_RE.search(str(getattr(r, "filename", "") or "")):
+                return True
+    sections = {
+        str(h) for a in atoms for r in (a.source_refs or [])[:1]
+        for h in ((getattr(r, "locator", None) or {}).get("section_path") or [])
+    }
+    return sum(1 for h in sections if _SOW_SECTION_RE.search(h)) >= 2
+
+
+_PO_FILENAME_RE = re.compile(r"(?:^|[^a-z])(?:p\.?o|purchase[\s_-]*order)(?:[^a-z]|$)", re.I)
+_PO_TITLE_RE = re.compile(r"^\s*purchase\s+order\b", re.I)
+_QUOTE_RE = re.compile(r"\bquot(?:e|ation)\b", re.I)
+
+
+def _reads_as_purchase_order(atoms: list[EvidenceAtom]) -> bool:
+    """The customer's purchase order prices its lines from a QTY column too,
+    but it is an order to us, not a vendor's quote (010003: CDW's PO to
+    PurTera). Named or titled "Purchase Order", and nowhere called a quote."""
+    names = {str(getattr(r, "filename", "") or "") for a in atoms for r in (a.source_refs or [])[:1]}
+    heads = {
+        str(h) for a in atoms for r in (a.source_refs or [])[:1]
+        for h in ((getattr(r, "locator", None) or {}).get("section_path") or [])
+    }
+    if any(_QUOTE_RE.search(x) for x in names | heads):
+        return False
+    return any(_PO_FILENAME_RE.search(n) for n in names) or any(
+        _PO_TITLE_RE.match(x) for x in heads | {a.raw_text or "" for a in atoms})
+
+
 def _tag_vendor_quote_document(atoms: list[EvidenceAtom]) -> None:
     """Stamp ``document_kind: "vendor_quote_bom"`` on EVERY atom of a vendor
-    quote / PO / BOM -- its line items, its header fields, and its rejects
+    quote / BOM (never a SOW or a purchase order that prices lines too) -- its line items, its header fields, and its rejects
     (nav, footers, headings) alike -- so labeling and training see "this is
     a BOM" on each line, not only on the rows that parsed as items.
 
@@ -2889,6 +2935,8 @@ def _tag_vendor_quote_document(atoms: list[EvidenceAtom]) -> None:
                       if getattr(a.atom_type, "value", a.atom_type) == "vendor_line_item"
                       and _MONEY_RE.search(a.raw_text or ""))
     if not (items >= 1 or priced_rows >= 2):
+        return
+    if _reads_as_statement_of_work(atoms) or _reads_as_purchase_order(atoms):
         return
     for a in atoms:
         val = dict(a.value) if isinstance(a.value, dict) else {"text": a.value}
