@@ -32,6 +32,8 @@ from typing import Any
 from app.core.atom_type_sanity import number_is_naming_label
 from app.core.automated_senders import is_automated_address
 from app.core.phones import find_phones
+from app.core.deal_chatter import CHATTER_FLAG as _CHATTER_FLAG
+from app.core.device_alias_context import device_match_is_spurious, is_legal_boilerplate
 from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
 from app.domain.schemas import DomainPack
@@ -1398,7 +1400,13 @@ def _is_negated_match(text_lower: str, span_start: int) -> bool:
     return last_neg > last_override
 
 
-def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack | None = None) -> set[str]:
+def _emit_devices(
+    text_lower: str,
+    alias_index: dict[str, str],
+    pack: DomainPack | None = None,
+    *,
+    text: str | None = None,
+) -> set[str]:
     """Emit ``device:<canonical>`` keys for every alias in
     ``alias_index`` that word-matches ``text_lower``.
 
@@ -1410,6 +1418,17 @@ def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack
     hallucination from text like "but not via thumb drive".
     """
     keys: set[str] = set()
+    # Original-case text lets a unit rule tell "10 PCs" (computers) from
+    # "10 pcs" (pieces); only usable when lowering kept the offsets.
+    original = text if (text is not None and len(text) == len(text_lower)) else None
+
+    def _spurious(match: "re.Match[str]", alias: str, canonical: str) -> bool:
+        orig = original[match.start():match.end()] if original is not None else None
+        return device_match_is_spurious(
+            text_lower, match.start(), match.start() + len(alias), match.end(),
+            alias, canonical, original=orig,
+        )
+
     if pack is not None:
         pattern, _ = _device_union_for_pack(pack, alias_index)
         for match in pattern.finditer(text_lower):
@@ -1417,17 +1436,23 @@ def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack
                 continue
             alias = match.group(1)
             canonical = alias_index.get(alias)
-            if canonical:
-                keys.add(f"device:{_slugify(canonical)}")
+            if not canonical:
+                continue
+            # "electrical cabinet", "tower crane", "ship via UPS": the word
+            # is in the device vocabulary but this use of it is not a device.
+            if _spurious(match, alias, canonical):
+                continue
+            keys.add(f"device:{_slugify(canonical)}")
         return keys
     for alias_norm, canonical in alias_index.items():
         pattern = _compiled_device_pattern(alias_norm)
-        match = pattern.search(text_lower)
-        if match is None:
-            continue
-        if _is_negated_match(text_lower, match.start()):
-            continue
-        keys.add(f"device:{_slugify(canonical)}")
+        for match in pattern.finditer(text_lower):
+            if _is_negated_match(text_lower, match.start()):
+                continue
+            if _spurious(match, alias_norm, canonical):
+                continue
+            keys.add(f"device:{_slugify(canonical)}")
+            break
     return keys
 
 
@@ -4018,7 +4043,9 @@ def extract_keys(
     typed_idx = _typed_alias_index(pack)
 
     keys: set[str] = set()
-    keys |= _emit_devices(text_lower, device_idx, pack=pack)
+    # Contract boilerplate names equipment only to disclaim it.
+    if not is_legal_boilerplate(text):
+        keys |= _emit_devices(text_lower, device_idx, pack=pack, text=text)
     keys |= _emit_typed(text_lower, typed_idx)
     vendor_keys = _emit_vendors(text_lower)
     keys |= vendor_keys
@@ -5383,11 +5410,18 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         section_ctx = _section_path_context(atom)
         scan_text = f"{text} {section_ctx}".strip() if section_ctx else text
 
+        # A line already flagged chatter (a short-line / admission reject, an
+        # automated-sender header) is kept only so it can be labeled; it
+        # names no equipment on the job, so it carries no device key.
+        is_chatter_atom = _CHATTER_FLAG in (getattr(atom, "review_flags", None) or [])
+
         if not existing:
             new_keys = extract_keys(
                 scan_text, pack=pack, value=value,
                 authoritative_sites=authoritative_sites,
             )
+            if is_chatter_atom:
+                new_keys = [k for k in new_keys if not str(k).startswith("device:")]
             if new_keys:
                 new_keys = filter_entity_keys_for_atom(atom, new_keys)
                 if new_keys:
@@ -5407,6 +5441,8 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         # regex-emitted keys).
         cleaned = filter_entity_keys_for_atom(atom, existing)
         cleaned = _gate_site_keys(cleaned)
+        if is_chatter_atom:
+            cleaned = [k for k in cleaned if not str(k).startswith("device:")]
         # Augment with textual-pattern keys the parser doesn't emit
         # per-row (sites, dates, money, stakeholders).
         textual_keys = extract_keys(

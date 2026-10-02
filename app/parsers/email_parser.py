@@ -2937,9 +2937,16 @@ class EmailParser(BaseParser):
             keys.append(normalize_entity_key("site", "Main Campus"))
         if "camera" in lowered:
             keys.append(normalize_entity_key("device", "IP Camera"))
+        from app.core.device_alias_context import is_legal_boilerplate, iter_valid_alias_matches
+
+        if is_legal_boilerplate(text):
+            return keys
         for canonical, aliases in pack.device_aliases.items():
             for alias in aliases:
-                if re.search(rf"\b{re.escape(normalize_text(alias))}\b", lowered):
+                alias_norm = normalize_text(alias)
+                pattern = re.compile(rf"\b{re.escape(alias_norm)}\b")
+                # "electrical cabinet" / "ship via UPS" are not devices.
+                if next(iter_valid_alias_matches(pattern, lowered, alias_norm, canonical), None) is not None:
                     keys.append(f"device:{canonical}")
                     break
         return keys
