@@ -1573,12 +1573,28 @@ def _expand_lines_to_sentences(
     line number is the ORIGINAL one for every piece: splitting changes what a
     single atom covers, never where it came from.
     """
-    from app.core.sentences import split_sentences
+    from app.core.sentences import split_inline_dash_list, split_sentences
 
     out: list[tuple[int, int, str]] = []
     for line_idx, line in enumerate(lines):
         line_num = line_start + line_idx
         stripped = (line or "").strip()
+        # A bullet list flattened onto one line (live 000132, quoted from a
+        # HubSpot note): the lead-in, then one "- item" per " - " segment, so
+        # each item is typed as the bullet it was.
+        if stripped and "|" not in stripped:
+            prefix = line[: len(line) - len(line.lstrip("> "))]
+            dash_items = split_inline_dash_list(stripped.lstrip("> "))
+            if dash_items:
+                lead, items = dash_items[0], dash_items[1:]
+                seq = 0
+                if lead:
+                    out.append((line_num, seq, prefix + lead))
+                    seq += 1
+                for item in items:
+                    out.append((line_num, seq, prefix + "- " + item))
+                    seq += 1
+                continue
         # Table rows, header lines and quoted-only markers are not prose; and a
         # line with fewer than two sentence endings holds one sentence. A
         # sentence ends with a period, a question mark or an exclamation mark:

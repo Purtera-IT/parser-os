@@ -96,3 +96,47 @@ def split_sentences(text: str) -> list[str]:
 def count_sentences(text: str) -> int:
     """Sentence count, used as the denominator in coverage ratios."""
     return len(split_sentences(text))
+
+
+#: An inline list separator: a hyphen or en dash with a space on each side.
+#: "4-8 hours" and "on-call" have no spaces, so they never match.
+_INLINE_DASH_SEP = re.compile(r"\s+[-–]\s+")
+
+#: A list item opens with a capital, a digit or a bracket ("24/7 on-call").
+_ITEM_START = re.compile(r"^[A-Z0-9(\"']")
+
+
+def split_inline_dash_list(text: str, *, min_items: int = 3, max_item_words: int = 20) -> list[str]:
+    """A paragraph written as an inline " - " list, as ``[lead_in, item, ...]``.
+
+    Live 000132: a HubSpot note pasted a bullet list flattened onto one line --
+    "Maintenance and support of ... virtualization - Support for physical
+    network components (LAN, WLAN) - ... - 24/7 on-call availability" -- and
+    the whole scope became one atom. Returns ``[]`` (do not split) unless
+    there are at least ``min_items`` " - " separators and every segment after
+    the lead-in reads as a list item: it opens with a capital or a digit, is
+    short, and holds no sentence break. Prose with a single dash ("the router
+    - if it arrives - goes in rack 2") or a range ("4-8 hours") is untouched.
+    The lead-in may be empty when the text itself starts with "- ".
+    """
+    s = " ".join(str(text or "").split())
+    if not s:
+        return []
+    lead_dash = bool(re.match(r"^[-–]\s+", s))
+    if lead_dash:
+        s = re.sub(r"^[-–]\s+", "", s)
+    parts = [p.strip() for p in _INLINE_DASH_SEP.split(s)]
+    if lead_dash:
+        lead, items = "", parts
+    else:
+        lead, items = parts[0], parts[1:]
+    if len(items) < min_items or any(not p for p in items):
+        return []
+    for item in items:
+        if not _ITEM_START.match(item):
+            return []
+        if len(item.split()) > max_item_words:
+            return []
+        if re.search(r"[.!?]\s+[A-Z]", item):
+            return []
+    return [lead, *items]

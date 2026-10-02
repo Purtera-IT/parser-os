@@ -866,13 +866,20 @@ class HubspotNoteParser(BaseParser):
             # greeting, the context and the ask together. Each sentence is its
             # own evidence, the way email and transcript lines already are;
             # the paragraph travels on each as context.
-            from app.core.sentences import split_sentences
+            from app.core.sentences import split_inline_dash_list, split_sentences
 
             # The author's own line breaks come first: "Hi Trent," on its own
             # line is a greeting, not the start of the request beneath it
             # (010095), and no sentence segmenter splits after a comma.
             sentences: list[str] = []
             for line in str(prose or "").splitlines() or [str(prose or "")]:
+                # A bullet list flattened onto one line ("Support for ... -
+                # Support for ... - 24/7 on-call availability", live 000132)
+                # is one item per " - " segment, not one atom.
+                dash_items = split_inline_dash_list(line)
+                if dash_items:
+                    sentences.extend(p for p in dash_items if p.strip())
+                    continue
                 sentences.extend(s.strip() for s in split_sentences(line) if s.strip())
             if len(sentences) > 1:
                 for sentence in sentences:
