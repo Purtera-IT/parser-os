@@ -195,3 +195,42 @@ def test_a_logo_image_is_signature_chatter_with_no_borrowed_heading():
     assert logo.value.get("chatter") and "lead_in" not in logo.value
     assert "lead_in" not in logo.source_refs[0].locator
     assert not table.value.get("chatter") and table.value["lead_in"] == ["Equipment list"]
+
+
+OUTLOOK_REPLY = """From: Trent Torrence <t@purtera-it.com>
+To: Stephanie Hechsel <stephanie.hechsel@amtivo.com>
+Subject: RE: Equipment list
+Date: Wed, 8 Jul 2026 10:00:00 -0400
+Message-ID: <o2@purtera-it.com>
+Content-Type: text/plain; charset=utf-8
+
+Thanks, we will review the list and come back with pricing.
+
+T
+
+________________________________
+{F}From:{F} Stephanie Hechsel <stephanie.hechsel@amtivo.com>
+{F}Sent:{F} Tuesday, July 7, 2026 3:12 PM
+{F}To:{F} Trent Torrence <t@purtera-it.com>
+
+Please find the equipment list below.
+- 4 switches
+- 2 firewalls
+"""
+
+
+def test_an_outlook_quoted_header_splits_at_any_quote_depth_or_in_bold(tmp_path: Path):
+    """010087: Stephanie's quoted 7/7 mail stayed inside Trent's 7/8 reply,
+    credited to "T", when its From:/Sent: rows were quoted or bolded."""
+    for name, text in {
+        "plain": OUTLOOK_REPLY.replace("{F}", ""),
+        "bold": OUTLOOK_REPLY.replace("{F}", "*"),
+        "quoted": OUTLOOK_REPLY.replace("{F}", "").replace("\n________", "\n> ________")
+            .replace("\nFrom: Steph", "\n> From: Steph").replace("\nSent:", "\n> Sent:").replace("\nTo: Trent", "\n> To: Trent")
+            .replace("\nPlease", "\n> Please").replace("\n- ", "\n> - "),
+    }.items():
+        atoms = _parse(tmp_path, text, f"{name}.eml")
+        sw = next(a for a in atoms if a.raw_text.endswith("4 switches"))
+        loc = sw.source_refs[0].locator
+        assert loc["message_index"] == 1, name
+        assert "Stephanie Hechsel" in loc["sender"] and "July 7, 2026" in loc["sent_at"], name

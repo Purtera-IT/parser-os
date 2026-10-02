@@ -814,6 +814,18 @@ def _is_brand_chrome_ocr(text: str) -> bool:
 
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)
 
+
+def _header_norm(line: str) -> str:
+    """A body line as a header row reads it: quote marks and markdown bold
+    around the label removed ("> From: X", "*From:* X", "**Sent:** Y").
+
+    Live 010087: Stephanie's quoted message under Trent's reply was never
+    split off -- its "From:" row did not start the line -- so all 33 atoms
+    were one block credited to "T".
+    """
+    s = re.sub(r"^(?:>\s?)+", "", str(line or "").strip()).strip()
+    return re.sub(r"^\*{1,2}([A-Za-z][A-Za-z-]*:)\*{1,2}\s*", r"\1 ", s).strip()
+
 #: Gmail / Apple Mail's quote attribution: "On Mon, Jul 10, 2026 at 9:04 AM
 #: Patrick Kelly <patrick@x.com> wrote:". The date runs up to the name; the
 #: name is capitalised words with no digits, and never the AM/PM of the time
@@ -3035,9 +3047,12 @@ class EmailParser(BaseParser):
                 BLOCK_SPLIT_RE.match(stripped) or BLOCK_SPLIT_RE.match(stripped.lstrip("> ").strip())
             )
             is_from_after_body = (
-                stripped.lower().startswith("from:")
+                _header_norm(stripped).lower().startswith("from:")
                 and current
-                and any(not l.strip().lower().startswith(("from:", "sent:", "date:", "subject:")) for _, l in current)
+                and any(
+                    _header_norm(l) and not _header_norm(l).lower().startswith(("from:", "sent:", "date:", "subject:"))
+                    for _, l in current
+                )
             )
             if current and (is_new_message_boundary or is_from_after_body):
                 blocks.append(
@@ -3088,8 +3103,9 @@ class EmailParser(BaseParser):
         to whoever sent the last reply.
         """
         stripped_lines = [line.strip() for _, line in lines]
-        sender = self._find_header_value(stripped_lines, "from")
-        sent_at = self._find_header_value(stripped_lines, "sent") or self._find_header_value(stripped_lines, "date")
+        header_lines = [_header_norm(x) for x in stripped_lines]
+        sender = self._find_header_value(header_lines, "from")
+        sent_at = self._find_header_value(header_lines, "sent") or self._find_header_value(header_lines, "date")
         if not sender and existing:
             # A Gmail quote has no From:/Sent: -- its attribution line names
             # the author and the time.
