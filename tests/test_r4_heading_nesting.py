@@ -10,7 +10,9 @@
 (b) The SOW drafts (docx) emitted "INTRODUCTION" and every other heading as a
     standalone atom. A heading is the section_path of the lines under it; a
     bare one waits in the suppressed sidecar, one that says more than its
-    title ("Fees: $24,500") stays a line.
+    title ("Fees: $24,500") stays a line. Since r7 (000132) a heading that
+    leads child lines is kept as a ``block_kind: heading`` atom again, so a
+    label can govern its group; the document title stays in the sidecar.
 """
 
 from __future__ import annotations
@@ -89,9 +91,14 @@ def test_signed_sow_headings_are_siblings_not_children_of_executive_summary(tmp_
             # ... and no other section heading sits above it
             others = {x.lower() for x, _ in SECTIONS if x != h}
             assert not any(step.lower().split(". ")[-1] in others for step in path), (p, path)
-    # A heading is the path, never its own atom.
-    heads = {style(i, h) for i, (h, _) in enumerate(SECTIONS, 1)}
-    assert not [a.raw_text for a in atoms if a.raw_text in heads]
+    # A heading is the path of the lines under it; one that leads lines is
+    # also its own heading atom (r7), whose path ends at itself -- never a
+    # paragraph, and never under another section.
+    for a in atoms:
+        if a.raw_text.lower().split(". ")[-1] in {h.lower() for h, _ in SECTIONS}:
+            loc = a.source_refs[0].locator
+            assert loc.get("block_kind") == "heading", (a.raw_text, loc.get("block_kind"))
+            assert [s.lower() for s in _path(a)] == [a.raw_text.lower()], (a.raw_text, _path(a))
 
 
 def test_a_bold_caption_over_its_short_value_is_not_a_heading():
@@ -142,10 +149,15 @@ def test_docx_bare_headings_are_section_paths_not_atoms(tmp_path):
     _draft(deal / "SOW draft.docx")
     r = compile_project(deal, project_id="p", allow_errors=True, use_cache=False)
     texts = {a.raw_text: a for a in r.atoms}
-    for h in ("Statement of Work", "INTRODUCTION", "3. Customer Responsibilities"):
-        assert h not in texts, h
-        held = [a for a in r.suppressed_atoms if a.raw_text == h]
-        assert held and "suppressed:section_heading" in held[0].review_flags, h
+    # The document title waits in the suppressed sidecar; a heading that
+    # leads lines is its own heading atom (r7), its path ending at itself.
+    assert "Statement of Work" not in texts
+    held = [a for a in r.suppressed_atoms if a.raw_text == "Statement of Work"]
+    assert held and "suppressed:section_heading" in held[0].review_flags
+    for h in ("INTRODUCTION", "3. Customer Responsibilities"):
+        assert h in texts, h
+        assert texts[h].source_refs[0].locator.get("block_kind") == "heading", h
+        assert _path(texts[h])[-1] == h, _path(texts[h])
     intro = texts["The Customer operates restaurants across the region and requires new access points."]
     assert _path(intro)[-1] == "INTRODUCTION"
     cust = texts["Customer will provide site access during business hours."]

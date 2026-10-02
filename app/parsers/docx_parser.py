@@ -477,6 +477,7 @@ class DocxParser(BaseParser):
     _para_lead_in = PerThreadState()
     _table_lead_in = PerThreadState()
     _structure_kind = PerThreadState()
+    _led_headings = PerThreadState()
     _placeholder_texts = PerThreadState()
 
     parser_name = "docx"
@@ -2561,12 +2562,64 @@ class DocxParser(BaseParser):
                     if not any(e[4] for e in stack)
                     else []
                 )
+        self._led_headings = self._headings_with_children(
+            children, document, structure_kind, heading_paras, heading_own,
+            para_section, table_section)
         self._structure_idxs = structure_idxs
         self._structure_kind = structure_kind
         self._para_lead_in = para_lead_in
         self._table_lead_in = table_lead_in
         self._heading_own_path = heading_own
         return para_section, table_section, heading_paras, para_order, table_order
+
+    @staticmethod
+    def _headings_with_children(
+        children, document, structure_kind, heading_paras, heading_own,
+        para_section, table_section,
+    ) -> set[int]:
+        """Body paragraph indices of section headings that lead child lines:
+        a non-empty line or a table sits in their section before the section
+        closes. The document title (level 0) is the page title, not a group
+        lead, and is never counted."""
+        order: list[tuple[str, int, str]] = []
+        pidx = tidx = -1
+        for kind, child in children:
+            if kind == "p":
+                pidx += 1
+                try:
+                    text = (_DocxParagraph(child, document).text or "").strip()
+                except Exception:  # noqa: BLE001
+                    text = ""
+                order.append(("p", pidx, text))
+            elif kind == "tbl":
+                tidx += 1
+                order.append(("t", tidx, "x"))
+        led: set[int] = set()
+        for pos, (kind, idx, _t) in enumerate(order):
+            if kind != "p" or structure_kind.get(idx) != "section_heading":
+                continue
+            if (heading_paras.get(idx) or (0,))[0] <= 0:
+                continue
+            own = heading_own.get(idx) or []
+            if not own:
+                continue
+            for kind2, idx2, text2 in order[pos + 1:]:
+                if not text2:
+                    continue
+                if kind2 == "t":
+                    path = table_section.get(idx2) or []
+                elif structure_kind.get(idx2) == "section_heading":
+                    path = heading_own.get(idx2) or []
+                else:
+                    path = para_section.get(idx2) or []
+                if path[: len(own)] != own:
+                    break
+                if path == own and structure_kind.get(idx2) == "section_heading":
+                    break  # a sibling heading with the same title
+                if kind2 == "t" or structure_kind.get(idx2) != "section_heading":
+                    led.add(idx)
+                    break
+        return led
 
     # Section-heading -> atom type. The document's OWN heading is the authority:
     # an unmatched bullet under a "Deliverables" heading IS a deliverable, under
@@ -2929,12 +2982,19 @@ class DocxParser(BaseParser):
         flags = [CHATTER_FLAG, kind]
         value = {"text": text, "kind": kind, "structure": True,
                  "chatter": True, "rejected_by": kind}
-        # A bare heading ("INTRODUCTION") is its section's header -- the
-        # section_path of every line under it -- not a line of its own: it is
-        # pre-suppressed, so the compiler keeps it in the suppressed sidecar
-        # (auditable, never unread) instead of the atom list. One that says
-        # more than its title ("Fees: $24,500") stays a reject-able atom.
-        if kind == "section_heading" and not heading_carries_content(text):
+        # A heading that leads child lines ("SCOPE OF WORK", "A. IT
+        # Infrastructure Support" over its bullets) is an atom of its own, so
+        # a label can govern its group; its section_path is its children's,
+        # ending at itself. A bare heading with nothing under it, and the
+        # document title, stay pre-suppressed: the compiler keeps them in the
+        # suppressed sidecar (auditable, never unread) instead of the atom
+        # list. One that says more than its title ("Fees: $24,500") stays a
+        # reject-able atom either way.
+        leads = (
+            kind == "section_heading" and table_index is None and tracked_change is None
+            and paragraph_index in (getattr(self, "_led_headings", None) or set())
+        )
+        if kind == "section_heading" and not leads and not heading_carries_content(text):
             flags.append("suppressed:section_heading")
             value["_suppression"] = {
                 "stage": "section_heading",
@@ -2948,6 +3008,8 @@ class DocxParser(BaseParser):
             "tracked_change": tracked_change,
             "section_path": list(section_path) if section_path else [],
         }
+        if leads:
+            locator["block_kind"] = "heading"
         return EvidenceAtom(
             id=stable_id("atm", project_id, artifact_id, kind, text, paragraph_index,
                          table_index, row, cell, tracked_change, tracked_index),

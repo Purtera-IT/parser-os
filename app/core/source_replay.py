@@ -789,6 +789,16 @@ def _verify_pdf_block(atom: EvidenceAtom, source_ref: SourceRef, path: Path) -> 
             "unsupported",
             "Structured PDF doc not present (run orbitbrief_pdf parser first)",
         )
+    if locator.get("block_kind") == "heading":
+        # A heading atom points at its SECTION (the heading leads it), not
+        # at a content block.
+        section = _find_section(structured, block_id)
+        if section is None:
+            return _receipt(atom, source_ref, "unsupported", f"heading section {block_id} not in structured doc")
+        snippet = str(section.get("heading") or "")
+        if snippet and _snippet_matches_atom(atom, snippet):
+            return _receipt(atom, source_ref, "verified", "PDF section heading verified", snippet)
+        return _receipt(atom, source_ref, "failed", "PDF section found but heading did not match atom", snippet)
     block = _find_block(structured, block_id)
     if block is None:
         return _receipt(atom, source_ref, "failed", f"block_id {block_id} not found in structured doc")
@@ -818,6 +828,23 @@ def _load_structured_doc(pdf_path: Path) -> dict[str, Any] | None:
 def _find_block(structured: dict[str, Any], block_id: str) -> dict[str, Any] | None:
     for page in structured.get("pages", []) or []:
         match = _walk_sections_for_block(page.get("sections", []) or [], block_id)
+        if match is not None:
+            return match
+    return None
+
+
+def _find_section(structured: dict[str, Any], section_id: str) -> dict[str, Any] | None:
+    def walk(sections: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for section in sections:
+            if section.get("id") == section_id:
+                return section
+            nested = walk(section.get("subsections", []) or [])
+            if nested is not None:
+                return nested
+        return None
+
+    for page in structured.get("pages", []) or []:
+        match = walk(page.get("sections", []) or [])
         if match is not None:
             return match
     return None

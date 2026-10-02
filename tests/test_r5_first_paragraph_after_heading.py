@@ -60,8 +60,12 @@ def test_first_paragraph_after_heading_is_an_atom(tmp_path):
     assert "field notes per visit" in first[0].raw_text
     assert (first[0].source_refs[0].locator or {}).get("section_path")[-1] == "BILLING TERMS"
     assert any(t.startswith("Paying a bill") for t in texts), texts
-    # The heading stays structure, never its own atom.
-    assert "BILLING TERMS" not in texts
+    # The heading is structure: never a paragraph atom. It leads lines, so
+    # it is kept once as their heading atom (r7), its path ending at itself.
+    heads = [a for a in atoms if a.raw_text == "BILLING TERMS"]
+    assert len(heads) == 1, texts
+    assert heads[0].source_refs[0].locator.get("block_kind") == "heading"
+    assert heads[0].source_refs[0].locator.get("section_path")[-1] == "BILLING TERMS"
 
 
 def test_meeting_word_inside_a_sentence_is_not_a_trailing_header():
