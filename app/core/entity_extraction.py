@@ -33,6 +33,7 @@ from app.core.atom_type_sanity import number_is_naming_label
 from app.core.automated_senders import is_automated_address
 from app.core.phones import find_phones
 from app.core.deal_chatter import CHATTER_FLAG as _CHATTER_FLAG
+from app.core.deal_chatter import is_rejected_line as _is_rejected_line
 from app.core.device_alias_context import device_match_is_spurious, is_legal_boilerplate
 from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
@@ -5391,6 +5392,14 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 if _emit_one_site_key_from_value(atom):
                     atoms_enriched += 1
                     total_keys_added += 1
+            continue
+
+        # A heading / list lead-in / lookup list kept only so it can be
+        # labeled says nothing about the job: "2.1 Site Survey" is not a
+        # quantity of 1, "COST RATES | T&M" names no vendor.
+        if _is_rejected_line(atom):
+            if getattr(atom, "entity_keys", None):
+                atom.entity_keys = []
             continue
 
         # Structured site reference on task / site note atoms (no regex guessing).
