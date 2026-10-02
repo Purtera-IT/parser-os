@@ -4897,6 +4897,10 @@ def _looks_like_scope_subheading(stripped: str, lines: list[str], idx: int) -> b
 _SENTENCE_OPENERS = frozenset({
     "no", "not", "all", "any", "each", "every", "both", "neither", "either",
     "this", "these", "those", "such", "the", "a", "an", "if", "unless", "when",
+    # Subordinators: "7. After a Change Order that requires an amended PO is
+    # executed, ..." is a list item, never heading "After a Change" (010003).
+    "after", "before", "once", "upon", "until", "while", "whenever", "where",
+    "since", "because", "although", "though", "during", "prior",
 })
 
 
@@ -5455,6 +5459,10 @@ def _looks_like_section_heading(stripped: str) -> bool:
     # Reject single-token identifier codes (part/MSA/PO numbers) like
     # "MOCK-MSA-2026-OPTBOT-001": one token, with digits and hyphens.
     if " " not in stripped and "-" in stripped and any(c.isdigit() for c in stripped):
+        return False
+    # A bare document number ("SOW 198950", "PO# 4500123") is the page's header
+    # id, not a section: as a heading it took over the list below it (010003).
+    if re.fullmatch(r"(?:SOW|PO|QUOTE|ORDER|INVOICE|CONTRACT|RFP|RFQ)\s*(?:#|NO\.?)?\s*[A-Z-]*\d[\w-]*", stripped):
         return False
     # A clock time ('09:30 AM') passes str.isupper() (digits are uncased, 'AM' is
     # upper) but is a form VALUE, not a heading. A real heading names something —
