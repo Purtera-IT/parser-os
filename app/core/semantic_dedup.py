@@ -1838,6 +1838,32 @@ def _adds_a_sentence(fuller: str, contained: str) -> bool:
     return any(w.islower() for w in words)
 
 
+def _not_at_the_cost_of_the_address(winner: Any, members: list[Any]) -> Any:
+    """Never trade a contact's email address for a type.
+
+    A contact row read twice -- "Jane Roe | Project Manager" typed by one
+    reader and "Jane Roe | Project Manager | jane@acme.com" by another --
+    shares the cut text key, and the bare copy could outrank the row with
+    the address. When a member states every address the winner does and
+    more, and its words contain the winner's, that member is the fuller
+    record of the same line and wins instead (the #268 rule for
+    _fold_bare_name_variants, applied here).
+    """
+    have = _fold.emails_stated(winner)
+    w_text = _norm_for_containment(winner)
+    best = winner
+    for m in members:
+        if m is winner:
+            continue
+        em = _fold.emails_stated(m)
+        if not (em - have) or not (have <= em):
+            continue
+        if w_text and w_text in _norm_for_containment(m):
+            if best is winner or len(em) > len(_fold.emails_stated(best)):
+                best = m
+    return best
+
+
 def _norm_for_containment(atom: Any) -> str:
     raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
     return re.sub(r"\s+", " ", str(raw).lower()).strip()
@@ -2095,6 +2121,11 @@ def _resolve_cross_type_group(members: list[Any], pool: list[Any] | None = None)
                 not in _norm_for_containment(member)):
             kept.add(id(member))
             continue
+        # Nor an email address: the contact row that HAS the address is
+        # the one to keep (010246 lost its contacts' addresses here).
+        if _fold.emails_only_the_loser_states(winner, member):
+            kept.add(id(member))
+            continue
         _merge_atom_metadata(winner, member)
     kept.add(id(winner))
     return winner, kept
@@ -2259,9 +2290,11 @@ def _suppress_table_row_blob_doubles(atoms: list[Any]) -> list[Any]:
             #
             # and the deal's account number and its contract effective and
             # expiry dates left the compile with nothing else stating them.
+            # Same for an email address: the contact row that has it is not
+            # a double of a richer atom that does not (010246).
             if winner is not None and not (
                 _figures_stated(a) - _figures_stated(winner)
-            ):
+            ) and not _fold.emails_only_the_loser_states(winner, a):
                 _merge_atom_metadata(winner, a)
                 continue
         out.append(a)

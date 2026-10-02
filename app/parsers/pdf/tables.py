@@ -20,7 +20,7 @@ from app.parsers.pdf._shared import _looks_like_form_field
 from app.parsers.pdf._shared import _looks_like_page_footer
 from app.parsers.pdf._shared import _make_atom
 from app.parsers.pdf._shared import _table_rows_repaired
-from app.parsers.pdf.page_kind import _page_is_a_drawing
+from app.parsers.pdf.page_kind import _page_is_a_drawing, table_cuts_words
 from pathlib import Path
 from typing import Any
 import re
@@ -120,6 +120,8 @@ def _fitz_generic_table_fallback(
             if not tables:
                 continue
             for table_index, table in enumerate(tables):
+                if table_cuts_words(page, table):
+                    continue
                 try:
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
