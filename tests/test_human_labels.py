@@ -364,3 +364,48 @@ def test_answers_trains_both_ways_whichever_card_drew_it():
         (f"{a} || {q}", "answers"),
         (f"{q} || {a}", "answered_by"),
     ]
+
+
+def _reads_rows(reads_set, report=None):
+    rows = rows_for_deal({"deal_id": "d1", "labels": [_label(reads_set=reads_set)]}, report=report)
+    return sorted((r["relation"], r["label"]) for r in rows if r["relation"].startswith("reads:"))
+
+
+def test_a_multi_reading_trains_one_class_per_item_in_either_shape():
+    want = [("reads:train_for", "delivery_parser"), ("reads:train_for", "quote_parser")]
+    assert _reads_rows({"train_for": ["quote_parser", "delivery_parser"]}) == want
+    assert _reads_rows({"train_for": "quote_parser,delivery_parser"}) == want
+
+
+def test_registered_thread_keys_train_as_classes():
+    assert _reads_rows({"sow_coverage": "missing_from_sow", "superseded": True,
+                        "hours_stated": False, "location_tier": "rural"}) == [
+        ("reads:hours_stated", "false"), ("reads:location_tier", "rural"),
+        ("reads:sow_coverage", "missing_from_sow"), ("reads:superseded", "true")]
+
+
+def test_the_renamed_sow_section_value_still_trains():
+    assert _reads_rows({"sow_section": "purtera_responsibilities"}) == [
+        ("reads:sow_section", "provider_responsibilities")]
+
+
+def test_meta_and_staging_readings_are_stored_never_trained():
+    report = IngestReport()
+    assert _reads_rows({"co_company": "purtera", "deal_outcome": "won",
+                        "universal_type": "commitment"}, report) == []
+    assert report.skipped["reading deal_outcome is stored, never trained"] == 1
+    from app.learning.multitask_table import DEFAULT_TASKS
+
+    for key in ("co_company", "deal_outcome", "universal_type"):
+        assert f"reads:{key}" not in DEFAULT_TASKS
+
+
+def test_values_deal_threads_already_write_are_accepted():
+    # labeling/portable-labels.md: noise classes and co_reason codes the
+    # threads write. A value outside the registry would be skipped at ingest.
+    assert _reads_rows({"noise_class": "speech_filler"}) == [("reads:noise_class", "speech_filler")]
+    for code in ("seller_status_update", "partner_internal_process", "parser_derived",
+                 "internal_housekeeping"):
+        assert _reads_rows({"co_reason": code}) == [("reads:co_reason", code)]
+    for cls in ("page_chrome", "template_instruction", "cross_reference"):
+        assert _reads_rows({"noise_class": cls}) == [("reads:noise_class", cls)]
