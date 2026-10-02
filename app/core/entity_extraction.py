@@ -32,6 +32,8 @@ from typing import Any
 from app.core.atom_type_sanity import number_is_naming_label
 from app.core.automated_senders import is_automated_address
 from app.core.phones import find_phones
+from app.core.deal_chatter import CHATTER_FLAG as _CHATTER_FLAG
+from app.core.device_alias_context import device_match_is_spurious, is_legal_boilerplate
 from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
 from app.domain.schemas import DomainPack
@@ -1163,8 +1165,8 @@ _UNIVERSAL_DEVICE_BASELINE: dict[str, tuple[str, ...]] = {
 }
 
 
-_DEVICE_INDEX_CACHE: dict[int, dict[str, str]] = {}
-_TYPED_INDEX_CACHE: dict[int, dict[str, dict[str, str]]] = {}
+_DEVICE_INDEX_CACHE: dict[int, tuple[DomainPack, dict[str, str]]] = {}
+_TYPED_INDEX_CACHE: dict[int, tuple[DomainPack, dict[str, dict[str, str]]]] = {}
 
 
 def _device_alias_index(pack: DomainPack) -> dict[str, str]:
@@ -1188,11 +1190,12 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     devices still surface. The routed pack still wins on conflicts.
 
     Cached by ``id(pack)`` so subsequent calls inside a compile
-    hit the cache instead of rebuilding the index per atom.
+    hit the cache instead of rebuilding the index per atom. The entry
+    holds the pack too, so a recycled id never returns another pack's index.
     """
     cached = _DEVICE_INDEX_CACHE.get(id(pack))
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] is pack:
+        return cached[1]
     index: dict[str, str] = {}
 
     def _add(form: str, canonical: str) -> None:
@@ -1219,7 +1222,7 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
         _add(canonical.replace("_", " "), canonical)
         for alias in aliases:
             _add(alias, canonical)
-    _DEVICE_INDEX_CACHE[id(pack)] = index
+    _DEVICE_INDEX_CACHE[id(pack)] = (pack, index)
     return index
 
 
@@ -1251,8 +1254,8 @@ def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
     Cached by ``id(pack)``.
     """
     cached = _TYPED_INDEX_CACHE.get(id(pack))
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] is pack:
+        return cached[1]
     out: dict[str, dict[str, str]] = {}
     for entity in pack.entity_types or []:
         slot = out.setdefault(entity.name, {})
@@ -1264,7 +1267,7 @@ def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
             example_norm = normalize_text(example)
             if example_norm:
                 slot.setdefault(example_norm, example)
-    _TYPED_INDEX_CACHE[id(pack)] = out
+    _TYPED_INDEX_CACHE[id(pack)] = (pack, out)
     return out
 
 
@@ -1321,25 +1324,27 @@ def _compiled_device_pattern(alias_lower: str) -> "re.Pattern[str]":
 # Pre-built per-pack matcher: a single union regex over all device
 # aliases. Reduces _emit_devices from O(aliases) regex compiles per
 # atom to O(1) — one search, one canonical lookup per match.
-_DEVICE_UNION_CACHE: dict[int, tuple["re.Pattern[str]", dict[str, str]]] = {}
+# Keyed by id(pack), so each entry also holds the pack itself: that keeps the
+# pack alive, and an id can't be recycled by a later pack (which would hand
+# it this pack's regex).
+_DEVICE_UNION_CACHE: dict[int, tuple[DomainPack, "re.Pattern[str]", dict[str, str]]] = {}
 
 
 def _device_union_for_pack(pack: DomainPack, alias_index: dict[str, str]) -> tuple["re.Pattern[str]", dict[str, str]]:
     key = id(pack)
     cached = _DEVICE_UNION_CACHE.get(key)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] is pack:
+        return cached[1], cached[2]
     if not alias_index:
         pattern = re.compile(r"(?!.*)")  # never matches
-        _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
-        return _DEVICE_UNION_CACHE[key]
-    # Sort longest-first so longer aliases win when nested
-    # ("access point" before "point").
-    aliases_sorted = sorted(alias_index.keys(), key=lambda a: (-len(a), a))
-    body = "|".join(re.escape(a) for a in aliases_sorted)
-    pattern = re.compile(r"(?<![a-z0-9])(" + body + r")" + _PLURAL_SUFFIX + r"(?![a-z0-9])")
-    _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
-    return _DEVICE_UNION_CACHE[key]
+    else:
+        # Sort longest-first so longer aliases win when nested
+        # ("access point" before "point").
+        aliases_sorted = sorted(alias_index.keys(), key=lambda a: (-len(a), a))
+        body = "|".join(re.escape(a) for a in aliases_sorted)
+        pattern = re.compile(r"(?<![a-z0-9])(" + body + r")" + _PLURAL_SUFFIX + r"(?![a-z0-9])")
+    _DEVICE_UNION_CACHE[key] = (pack, pattern, alias_index)
+    return pattern, alias_index
 
 
 # ─── v57 P2: negation guard for device alias matching ───
@@ -1398,7 +1403,13 @@ def _is_negated_match(text_lower: str, span_start: int) -> bool:
     return last_neg > last_override
 
 
-def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack | None = None) -> set[str]:
+def _emit_devices(
+    text_lower: str,
+    alias_index: dict[str, str],
+    pack: DomainPack | None = None,
+    *,
+    text: str | None = None,
+) -> set[str]:
     """Emit ``device:<canonical>`` keys for every alias in
     ``alias_index`` that word-matches ``text_lower``.
 
@@ -1410,6 +1421,17 @@ def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack
     hallucination from text like "but not via thumb drive".
     """
     keys: set[str] = set()
+    # Original-case text lets a unit rule tell "10 PCs" (computers) from
+    # "10 pcs" (pieces); only usable when lowering kept the offsets.
+    original = text if (text is not None and len(text) == len(text_lower)) else None
+
+    def _spurious(match: "re.Match[str]", alias: str, canonical: str) -> bool:
+        orig = original[match.start():match.end()] if original is not None else None
+        return device_match_is_spurious(
+            text_lower, match.start(), match.start() + len(alias), match.end(),
+            alias, canonical, original=orig,
+        )
+
     if pack is not None:
         pattern, _ = _device_union_for_pack(pack, alias_index)
         for match in pattern.finditer(text_lower):
@@ -1417,17 +1439,23 @@ def _emit_devices(text_lower: str, alias_index: dict[str, str], pack: DomainPack
                 continue
             alias = match.group(1)
             canonical = alias_index.get(alias)
-            if canonical:
-                keys.add(f"device:{_slugify(canonical)}")
+            if not canonical:
+                continue
+            # "electrical cabinet", "tower crane", "ship via UPS": the word
+            # is in the device vocabulary but this use of it is not a device.
+            if _spurious(match, alias, canonical):
+                continue
+            keys.add(f"device:{_slugify(canonical)}")
         return keys
     for alias_norm, canonical in alias_index.items():
         pattern = _compiled_device_pattern(alias_norm)
-        match = pattern.search(text_lower)
-        if match is None:
-            continue
-        if _is_negated_match(text_lower, match.start()):
-            continue
-        keys.add(f"device:{_slugify(canonical)}")
+        for match in pattern.finditer(text_lower):
+            if _is_negated_match(text_lower, match.start()):
+                continue
+            if _spurious(match, alias_norm, canonical):
+                continue
+            keys.add(f"device:{_slugify(canonical)}")
+            break
     return keys
 
 
@@ -4018,7 +4046,9 @@ def extract_keys(
     typed_idx = _typed_alias_index(pack)
 
     keys: set[str] = set()
-    keys |= _emit_devices(text_lower, device_idx, pack=pack)
+    # Contract boilerplate names equipment only to disclaim it.
+    if not is_legal_boilerplate(text):
+        keys |= _emit_devices(text_lower, device_idx, pack=pack, text=text)
     keys |= _emit_typed(text_lower, typed_idx)
     vendor_keys = _emit_vendors(text_lower)
     keys |= vendor_keys
@@ -5383,11 +5413,18 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         section_ctx = _section_path_context(atom)
         scan_text = f"{text} {section_ctx}".strip() if section_ctx else text
 
+        # A line already flagged chatter (a short-line / admission reject, an
+        # automated-sender header) is kept only so it can be labeled; it
+        # names no equipment on the job, so it carries no device key.
+        is_chatter_atom = _CHATTER_FLAG in (getattr(atom, "review_flags", None) or [])
+
         if not existing:
             new_keys = extract_keys(
                 scan_text, pack=pack, value=value,
                 authoritative_sites=authoritative_sites,
             )
+            if is_chatter_atom:
+                new_keys = [k for k in new_keys if not str(k).startswith("device:")]
             if new_keys:
                 new_keys = filter_entity_keys_for_atom(atom, new_keys)
                 if new_keys:
@@ -5407,6 +5444,8 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         # regex-emitted keys).
         cleaned = filter_entity_keys_for_atom(atom, existing)
         cleaned = _gate_site_keys(cleaned)
+        if is_chatter_atom:
+            cleaned = [k for k in cleaned if not str(k).startswith("device:")]
         # Augment with textual-pattern keys the parser doesn't emit
         # per-row (sites, dates, money, stakeholders).
         textual_keys = extract_keys(
@@ -5717,6 +5756,22 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         "scolaris", "infinite_campus", "skyward", "tyler",
     }
 
+    # A "City, ST" entry the document itself lists as a site (the
+    # authoritative catalog: a Site List section, an address-anchored roster)
+    # is a site. The positive-signal gate below kept such a phrase only by the
+    # accident of the site-code shape -- two tokens of <=6 characters -- so
+    # "Troy, OH" and "Lima, OH" survived and "Delphos, OH" and "Wilmington,
+    # OH" from the same table were dropped (live 000132). Only catalog
+    # entries of exactly that shape are exempt; the denylist still applies.
+    from app.core.address_parse import US_STATES as _US_STATES
+
+    def _catalog_city_state(slug: str) -> bool:
+        if slug not in _SITE_INJECTION_KEYS:
+            return False
+        toks = slug.split("_")
+        return (2 <= len(toks) <= 4 and toks[-1].upper() in _US_STATES
+                and all(t.isalpha() and len(t) >= 2 for t in toks[:-1]))
+
     for atom in atom_list:
         current = atom.entity_keys or []
         if not current:
@@ -5728,6 +5783,17 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 # Universal store-learned role gate first; denylist second.
                 if k in _site_role_drops:
                     dropped_any = True
+                    continue
+                if _is_obvious_non_site is not None and _catalog_city_state(k[len("site:"):]):
+                    _phrase_cs = k[len("site:"):].replace("_", " ")
+                    try:
+                        from app.core.site_llm_verify import _OBVIOUS_NON_SITES as _ONS
+                    except Exception:
+                        _ONS = frozenset()
+                    if _phrase_cs in _ONS:
+                        dropped_any = True
+                        continue
+                    kept.append(k)
                     continue
                 if _is_obvious_non_site is not None:
                     phrase = k[len("site:"):].replace("_", " ")

@@ -49,6 +49,15 @@ _ANSWER_BEARING_PREFIXES: tuple[str, ...] = (
 )
 
 ANSWERED_FLAG = "answered_in_corpus"
+
+#: A question asking for a count or an amount.
+_QUANTITY_ASK_RE = re.compile(
+    r"\b(?:how\s+many|how\s+much|number\s+of|what\s+(?:quantity|qty|count)|"
+    r"per\s+(?:school|site|room|floor|building|location|classroom|campus|store|office))\b",
+    re.I,
+)
+#: Keys that carry a count or an amount, so can answer a quantity ask.
+_COUNT_KEY_PREFIXES: tuple[str, ...] = ("quantity:", "money:")
 NOISE_FLAG = "not_pm_actionable_question"
 
 # Questions the system generated from the evidence, rather than lifted from a
@@ -117,10 +126,11 @@ def is_unhelpful_pm_question(atom: Any) -> bool:
         return False
     if _is_generated_question(atom):
         return False
-    val = getattr(atom, "value", None) or {}
-    if isinstance(val, dict):
-        if val.get("answered") is True:
-            return True
+    # An ANSWERED question is not noise. It used to be counted as noise here,
+    # so every question the key-overlap resolver marked answered left the atom
+    # stream -- and that resolver marks "How many devices per school?"
+    # answered the moment any device atom exists (010087). The answered flag
+    # already keeps it off the PM's blocker list; the question itself stays.
     text = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
     if not text:
         return False
@@ -141,7 +151,11 @@ def is_unhelpful_pm_question(atom: Any) -> bool:
 
 
 def filter_unhelpful_open_questions(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
-    """Remove non-actionable literal questions from the active atom stream."""
+    """Take non-actionable literal questions out of the active atom stream.
+
+    ``dropped`` is not deleted: each is flagged ``not_pm_actionable_question``
+    and the compiler holds it out of the heads and puts it back into the
+    result as an atom, so a labeler still sees (and can overrule) it."""
     from app.core.schemas import ReviewStatus
 
     kept: list[Any] = []
@@ -153,6 +167,13 @@ def filter_unhelpful_open_questions(atoms: list[Any]) -> tuple[list[Any], list[A
         _v = getattr(atom, "value", None)
         if isinstance(_v, dict) and _v.get("answered") and _v.get("answer"):
             kept.append(atom)
+            continue
+        if _atom_type_str(atom) == "open_question" and not _is_generated_question(atom) and is_answered_question(atom):
+            # Answered: not a blocker, so out of the heads as before -- but it
+            # is a question somebody asked, so it is held, not deleted.
+            if getattr(atom, "review_status", None) == ReviewStatus.needs_review:
+                atom.review_status = ReviewStatus.auto_accepted
+            dropped.append(atom)
             continue
         if is_unhelpful_pm_question(atom):
             val = getattr(atom, "value", None)
@@ -196,6 +217,13 @@ def resolve_open_questions(atoms: list[Any]) -> int:
         q_keys = _answer_bearing_keys(getattr(atom, "entity_keys", None))
         if not q_keys or q_keys.isdisjoint(answered_keys):
             continue
+        # A question asking HOW MANY is answered by a count, not by the thing
+        # being counted existing somewhere: "How many devices per school?"
+        # shares device:* with every device line in the deal and none of them
+        # says how many go to a school.
+        if _QUANTITY_ASK_RE.search(str(getattr(atom, "raw_text", "") or "")):
+            if not {k for k in q_keys & answered_keys if k.startswith(_COUNT_KEY_PREFIXES)}:
+                continue
         # Mark answered.
         if isinstance(getattr(atom, "value", None), dict):
             atom.value["answered"] = True

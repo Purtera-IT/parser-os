@@ -163,6 +163,8 @@ class MsgParser(BaseParser):
                 authority_class=AuthorityClass.machine_extractor,
                 value_extra={"kind": "email_header", "subject": subject, "from": sender, "date": date},
             ))
+            from app.parsers.synthetic_text import mark_synthetic
+            mark_synthetic(atoms[-1])  # composed "From: | Subject: | Date:" -- not in the file
             from app.core.sentences import split_sentences
 
             for para_idx, para in enumerate(re.split(r"\n\s*\n", body)):

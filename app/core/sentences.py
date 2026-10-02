@@ -186,6 +186,57 @@ _BANTER_MARKER_RE = re.compile(
 )
 
 
+#: A holiday's name is not a figure. "Hope you had a great 4th of July!" read
+#: as work because the "4" in "4th" is a digit, and the pleasantry came out of
+#: the email as deal_metadata context instead of chatter. Only the holiday
+#: phrase is removed before the work-cue test; any other digit still counts.
+_HOLIDAY_RE = re.compile(
+    r"\b(?:(?:the\s+)?(?:4th|fourth)(?:\s+of\s+july)?|july\s+(?:4th|4|fourth)|"
+    r"new\s+year'?s?(?:\s+(?:day|eve))?|christmas|xmas|thanksgiving|easter|hanukkah|"
+    r"memorial\s+day|labou?r\s+day|independence\s+day|veterans\s+day|"
+    r"president'?s'?\s+day|mlk\s+day|juneteenth|halloween)\b",
+    re.I,
+)
+_HOLIDAY_CONTEXT_RE = re.compile(
+    r"\b(?:hope|happy|enjoy|have\s+a|had\s+a|great|good|nice|wonderful|merry|"
+    r"weekend|holiday|break)\b",
+    re.I,
+)
+
+
+#: ", once they are delivered we will ..." -- a trigger clause that carries
+#: its own main clause, spliced onto a sentence with a comma.
+_TRIGGER_SPLICE_RE = re.compile(
+    r",\s+(?=(?:and\s+)?(?:once|as\s+soon\s+as|when|after)\s+"
+    r"[^,.;!?]*?\b(?:we|i|they|you)(?:\s+(?:will|can|would|should|shall)|'ll)\b)",
+    re.I,
+)
+_HEAD_CLAUSE_RE = re.compile(
+    r"^(?:we|i|they|you|he|she|it|the\s+\w+)(?:'re|'m|'ve|\s+(?:are|am|is|were|was|have|has|had|"
+    r"will|would|can|still|just|currently)\b)",
+    re.I,
+)
+
+
+def split_trigger_clause(sentence: str) -> list[str]:
+    """``[head, trigger]`` for a comma splice whose second half is a trigger
+    with its own main clause, else ``[sentence]``.
+
+    "We are waiting for the TVs to arrive, once they are delivered we will
+    schedule the install." is a dependency AND the commitment it gates -- two
+    statements (010003). "We will install once the TVs arrive" has no comma
+    and no second subject, and stays whole.
+    """
+    t = str(sentence or "").strip()
+    m = _TRIGGER_SPLICE_RE.search(t)
+    if not m:
+        return [t] if t else []
+    head, tail = t[: m.start()].strip(), t[m.end():].strip()
+    if len(head.split()) < 4 or len(tail.split()) < 4 or not _HEAD_CLAUSE_RE.match(head):
+        return [t]
+    return [head, tail[:1].upper() + tail[1:]]
+
+
 #: A ", so <subject>" clause boundary inside one sentence.
 _SO_CLAUSE_RE = re.compile(r",\s+so\s+(?=(?:i|we|you|they|it|he|she)\b)", re.I)
 
@@ -211,7 +262,10 @@ def sentence_kind(text: str) -> str:
         if not rest or not re.search(r"[A-Za-z0-9]", rest):
             return "banter"
         t = rest
-    if not _WORK_CUE_RE.search(t) and not _PROMISE_RE.search(t):
+    # The holiday is dropped only inside a pleasantry ("Hope you had a great
+    # 4th of July!"); "install before the 4th of July" keeps its date.
+    cue_text = _HOLIDAY_RE.sub(" ", t) if _HOLIDAY_CONTEXT_RE.search(t) else t
+    if not _WORK_CUE_RE.search(cue_text) and not _PROMISE_RE.search(t):
         if _BANTER_MARKER_RE.search(t) or (t.endswith("!") and len(t.split()) <= 8):
             return "banter"
     try:

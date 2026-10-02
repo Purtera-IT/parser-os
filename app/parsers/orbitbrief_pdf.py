@@ -110,6 +110,19 @@ from app.parsers.pdf.site_roster import (  # noqa: E402
 # Moved to app.parsers.pdf.tables. Re-exported so every existing import keeps working;
 # this module stays the single public entry point for PDF parsing.
 from app.parsers.pdf.page_kind import _page_is_a_drawing
+from app.parsers.sow_sections import (  # noqa: E402
+    DOC_STAMP_RULE,
+    is_doc_stamp,
+    is_esign_furniture,
+    is_esign_marker,
+    is_exclusion_heading,
+    is_signature_heading,
+    is_signature_label_line,
+    is_signature_line,
+    is_sow_section_label,
+    split_doc_stamp,
+    under_exclusion_heading,
+)
 from app.parsers.pdf.tables import (  # noqa: E402
     _FCHK_NUM_RE,
     _MEAS_ID_RE,
@@ -897,6 +910,7 @@ class OrbitBriefPdfParser(BaseParser):
 
         atoms = _repair_clipped_site_ids(atoms)
         atoms = _weak_label_prose_line_items(atoms)
+        atoms = _flag_doc_stamps(atoms)
         atoms = _drop_repeated_header_bands(atoms)
         atoms = _strip_placeholder_table_labels(atoms)
         atoms = _drop_table_header_as_data_rows(atoms)
@@ -1387,6 +1401,98 @@ def _drop_table_header_as_data_rows(atoms: list[EvidenceAtom]) -> list[EvidenceA
     return out
 
 
+def _flag_doc_stamps(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """An atom that is only an e-signature page stamp ("Docusign Envelope ID:
+    3F2A...") is furniture: kept, typed deal_metadata, flagged chatter with
+    ``rejected_by: doc_stamp`` -- whichever page builder produced it."""
+    from app.core.deal_chatter import CHATTER_FLAG
+    from app.core.schemas import ReviewStatus
+
+    for a in atoms:
+        if not is_doc_stamp(getattr(a, "raw_text", "") or ""):
+            continue
+        val = dict(a.value) if isinstance(getattr(a, "value", None), dict) else {}
+        val["chatter"] = True
+        val["rejected_by"] = DOC_STAMP_RULE
+        a.value = val
+        a.atom_type = AtomType.deal_metadata
+        flags = list(getattr(a, "review_flags", None) or [])
+        if CHATTER_FLAG not in flags:
+            flags.append(CHATTER_FLAG)
+        a.review_flags = flags
+        a.review_status = ReviewStatus.needs_review
+        a.confidence = min(float(getattr(a, "confidence", 0.1) or 0.1), 0.1)
+    return atoms
+
+
+def _extract_doc_stamps(page_text: str) -> tuple[str, list[str]]:
+    """Lift e-signature page stamps out of the page text.
+
+    The stamp is the first line of every page of a signed document, so the
+    title detector took it for the page's title (every atom's section_path
+    root) and the layout glued it onto the next line ("Docusign Envelope ID:
+    ... Signatures"). Returns the text without the stamps, and the stamps."""
+    stamps: list[str] = []
+    out: list[str] = []
+    for ln in (page_text or "").splitlines():
+        sp = split_doc_stamp(ln)
+        if sp is None:
+            out.append(ln)
+            continue
+        stamps.append(sp[0])
+        if sp[1]:
+            out.append(sp[1])
+    if not stamps:
+        return page_text, []
+    return "\n".join(out) + ("\n" if page_text.endswith("\n") else ""), stamps
+
+
+def _mark_signature_blocks(sections: list[dict[str, Any]]) -> None:
+    """Tag the paragraph blocks that make up a signature block.
+
+    A block is part of the signature block when its section's heading is a
+    signature heading ("Signatures", "Accepted and Agreed"), or when it carries
+    an e-signature badge line ("DocuSigned by:") and every line of it has the
+    shape of a signature entry. A company name printed in capitals over the
+    badge ("AMTIVO") becomes that section's heading, so a section reached from
+    a signature section keeps the tag while its blocks stay signature-shaped.
+    Prose clauses in the same section are never tagged: every line must be a
+    name / title / date / label / badge line.
+    """
+    in_sig = False
+    for sec in sections:
+        heading = (sec.get("heading") or "").strip()
+        own_heading = bool(heading) and is_signature_heading(heading)
+        if own_heading:
+            in_sig = True
+        elif heading and (is_exclusion_heading(heading) or is_sow_section_label(heading)):
+            in_sig = False
+        blocks = sec.get("blocks") or []
+        para_lines = [
+            ln for b in blocks if b.get("kind") == "paragraph"
+            for ln in (b.get("lines") or [b.get("text") or ""])
+        ]
+        sec_has_badge = any(is_esign_marker(ln) for ln in para_lines)
+        # A section merely FOLLOWING a signature section (a company name over
+        # its badge) is part of the block only with a labelled row of its own;
+        # "EXHIBIT A" after the signatures is not.
+        if in_sig and not own_heading and not any(is_signature_label_line(ln) for ln in para_lines):
+            in_sig = False
+        tagged_any = False
+        for b in blocks:
+            if b.get("kind") != "paragraph":
+                continue
+            lines = [str(x).strip() for x in (b.get("lines") or [b.get("text") or ""]) if str(x).strip()]
+            if not lines or not all(is_signature_line(x) for x in lines):
+                continue
+            if in_sig or sec_has_badge:
+                b["signature_block"] = True
+                tagged_any = True
+        if sec_has_badge and tagged_any:
+            in_sig = True
+        _mark_signature_blocks(sec.get("subsections") or [])
+
+
 def _drop_repeated_header_bands(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     """Drop a running header/footer band that repeats verbatim across pages.
 
@@ -1824,6 +1930,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         )
         if laid_out is not None:
             prose_text = laid_out
+        prose_text, _doc_stamps = _extract_doc_stamps(prose_text)
 
         # Diarized transcript pages (meeting summary + full transcript exports)
         # must not go through form Q&A regroup / form_field tagging — speaker
@@ -1881,6 +1988,15 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             page_title = _detect_text_title(prose_text)
         if page_title:
             _strip_title_block(sections, page_title)
+        _mark_signature_blocks(sections)
+        if _doc_stamps:
+            # The stamp stays an atom (a labeled reject trains the admission
+            # head), flagged chatter at emission.
+            sections.insert(0, {
+                "heading": "", "level": 2, "subsections": [],
+                "blocks": [{"kind": "paragraph", "text": st, "lines": [st], "doc_stamp": True}
+                           for st in dict.fromkeys(_doc_stamps)],
+            })
         _stamp_section_and_block_ids(sections, page_index)
         metadata = [
             "[text-rich page — heavyweight layout pipeline skipped; "
@@ -2566,6 +2682,10 @@ def _mark_blocks_on_a_drawing(sections: list[dict[str, Any]]) -> None:
         _mark_blocks_on_a_drawing(section.get("subsections") or [])
 
 
+#: ``rejected_by`` of a page footer / header band kept as a chatter atom.
+PAGE_FOOTER_RULE = "page_footer"
+
+
 def _chatter_atom(
     text: str,
     rule: str,
@@ -2606,6 +2726,64 @@ def _chatter_atom(
     return atom
 
 
+_SIG_PERSON_RE = re.compile(r"^(?:(?:printed\s+|print\s+)?name|by|signer|signed)\s*:\s*(.+)$", re.I)
+_SIG_ROLE_RE = re.compile(r"^title\s*:\s*(.+)$", re.I)
+_PERSON_SHAPE_RE = re.compile(r"^[A-Z][a-zA-Z'.-]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'.-]+){1,2}$")
+
+
+def _signature_line_value(line: str) -> dict[str, Any]:
+    """What a signature-block line says: the signer's name, their title, or
+    neither (a date, a company)."""
+    v: dict[str, Any] = {"kind": "signature_block_line"}
+    m = _SIG_PERSON_RE.match(line)
+    name = (m.group(1).strip() if m else line.strip())
+    if _PERSON_SHAPE_RE.match(name):
+        v["name"] = name
+    r = _SIG_ROLE_RE.match(line)
+    if r:
+        v["role"] = r.group(1).strip()
+    return v
+
+
+def _signature_block_atoms(
+    block: dict[str, Any],
+    base_locator: dict[str, Any],
+    block_id: str,
+    project_id: str,
+    artifact_id: str,
+    filename: str,
+    parser_version: str,
+) -> Iterator[EvidenceAtom]:
+    """One atom per line of a signature block: the badge chrome ("DocuSigned
+    by:", the signature hash) as chatter, every other line (party, signer,
+    title, date) as ``signatory`` -- never scope."""
+    from app.core.schemas import ReviewStatus
+
+    lines = [str(x).strip() for x in (block.get("lines") or [block.get("text") or ""]) if str(x).strip()]
+    for i, ln in enumerate(lines):
+        if not re.search(r"[A-Za-z0-9]", ln):
+            continue
+        if is_esign_furniture(ln):
+            yield _chatter_atom(ln, "esign_badge", {**base_locator, "line_index": i}, f"{block_id}:l{i}",
+                                project_id, artifact_id, filename, parser_version)
+            continue
+        atom = _make_atom(
+            text=ln,
+            project_id=project_id,
+            artifact_id=artifact_id,
+            filename=filename,
+            parser_version=parser_version,
+            atom_type=AtomType.signatory,
+            authority_class=AuthorityClass.contractual_scope,
+            confidence=0.6,
+            locator={**base_locator, "block_id": f"{block_id}:l{i}", "line_index": i},
+            value=_signature_line_value(ln),
+            review_flags=["signature_block"],
+        )
+        atom.review_status = ReviewStatus.needs_review
+        yield atom
+
+
 def _atoms_for_block(
     *,
     block: dict[str, Any],
@@ -2634,6 +2812,15 @@ def _atoms_for_block(
         text = (block.get("text") or "").strip()
         if not text:
             return
+        if block.get("doc_stamp"):
+            yield _chatter_atom(text, DOC_STAMP_RULE, base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
+            return
+        if block.get("signature_block"):
+            yield from _signature_block_atoms(
+                block, base_locator, block_id, project_id, artifact_id, filename, parser_version
+            )
+            return
         # P1.2: skip vendor-info form-field templates entirely — they
         # carry no scope content and pollute downstream anchors.
         if _looks_like_form_field(text):
@@ -2642,6 +2829,11 @@ def _atoms_for_block(
         # 25-107 Wireless Equipment ... Page 17 of 25").  These appear
         # once per page and bloat the atom set N-fold for an N-page PDF.
         if _looks_like_page_footer(text):
+            # Kept as boilerplate chatter, never a fact: every line of the
+            # source is an atom or a recorded suppression, and a footer
+            # read as a clause fed a cross-document "conflict" (010003).
+            yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
             return
         # P1.3 (band-prefix variant): when PDF extraction folded the
         # header/footer band into the *start* of a real paragraph,
@@ -2663,7 +2855,11 @@ def _atoms_for_block(
         # fact. A single number can be a real answer, so require >=2.
         if re.fullmatch(r"[\d.,\s]+", text) and len(re.findall(r"\d+", text)) >= 2:
             return
-        if len(text) < 10 and not _is_form_field:
+        # A line under an exclusions heading is a thing we will NOT do, however
+        # short ("Chromebook imaging") -- never chatter. It types from the
+        # heading below.
+        _excluded = under_exclusion_heading(section_path)
+        if len(text) < 10 and not _is_form_field and not _excluded:
             # Too short to be a fact, but still a line a labeler must be able
             # to reject: emitted as a chatter atom, not dropped.
             yield _chatter_atom(text, "short_line", base_locator, block_id, project_id,
@@ -2680,7 +2876,7 @@ def _atoms_for_block(
         # ("Convert Quote to Order") carry no scope data. They used to be
         # dropped here, so the labeler never saw them to reject; they are now
         # chatter atoms instead.
-        if not _is_form_field and _looks_like_fragment(text):
+        if not _is_form_field and not _excluded and _looks_like_fragment(text):
             yield _chatter_atom(text, "fragment_label", base_locator, block_id, project_id,
                                 artifact_id, filename, parser_version)
             return
@@ -3015,7 +3211,7 @@ def _atoms_for_block(
                         for k, v in [
                             ("site_id", site_row.site_id),
                             ("facility", site_row.facility_name),
-                            ("address", site_row.street_address),
+                            ("address", _site_row_address_text(site_row)),
                             ("mdf_idf", site_row.mdf_idf),
                             ("access", site_row.access_window),
                             ("escort", site_row.escort_owner),
@@ -3133,7 +3329,11 @@ def _atoms_for_block(
             return
         # P1.3 / P1.2 / P1.4: notes also catch page-footer text and
         # form-field templates on some layouts; same filters as paragraph.
-        if _looks_like_form_field(text) or _looks_like_page_footer(text) or _looks_like_fragment(text):
+        if _looks_like_page_footer(text):
+            yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
+            return
+        if _looks_like_form_field(text) or _looks_like_fragment(text):
             return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="note")
         yield _make_atom(
@@ -3180,6 +3380,10 @@ def _atoms_for_bullet(
     # three of the four items a signed SOW says we may install per site (live
     # 010300) and a ten-character floor silently dropped them. A list item
     # needs letters or digits, not a minimum width.
+    if text and len(re.sub(r"[^0-9A-Za-z]", "", text)) >= 3 and _looks_like_page_footer(text):
+        yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator,
+                            str(base_locator.get("block_id") or ""), project_id,
+                            artifact_id, filename, parser_version)
     if (
         text
         and len(re.sub(r"[^0-9A-Za-z]", "", text)) >= 3
@@ -3537,6 +3741,12 @@ def _classify_text_block(
             section_atom = atom_type
             section_auth = auth
             break
+    # A "Note: ..." printed below an exclusions list is the page's footnote
+    # ("Note: CDW PO's are not transferrable.", 010003), not one more thing
+    # excluded: it is typed by its own words.
+    if section_atom == AtomType.exclusion and re.match(r"^\s*(?:note|nb|n\.b\.)\s*[:\-]", text or "", re.I):
+        section_atom = None
+        section_auth = None
 
     # Week 5: when the chunk is a coalesced Q+A pair (Q4. ... A4. ...),
     # the *answer* body carries the customer's substantive position, so
@@ -3994,6 +4204,21 @@ def _merge_table_extractions(
     blocks = [b for b, _ in keep_ruled] + [b for b, _ in keep_cols]
     bboxes = [x for _, x in keep_ruled] + [x for _, x in keep_cols]
     return blocks, bboxes
+
+
+def _site_row_address_text(site_row: Any) -> str | None:
+    """The row's address as the source wrote it: street, then the city /
+    state / ZIP line when the row resolved one ("40 10th Ave Fl 4, NEW YORK,
+    NY 10014"). The atom's text is its evidence; the city line read off the
+    page must be in it, not only in the value (010003)."""
+    street = str(getattr(site_row, "street_address", None) or "").strip()
+    city = str(getattr(site_row, "city", None) or "").strip()
+    state = str(getattr(site_row, "state", None) or "").strip()
+    zip_ = str(getattr(site_row, "zip", None) or "").strip()
+    tail = ", ".join(x for x in (city, " ".join(x for x in (state, zip_) if x)) if x)
+    if street and tail and tail.lower() not in street.lower():
+        return f"{street}, {tail}"
+    return street or None
 
 
 def _drop_side_by_side_box_tables(
@@ -4948,6 +5173,11 @@ def _looks_like_section_heading(stripped: str) -> bool:
         return True
     if not (stripped.isupper() and len(stripped) >= 3):
         return False
+    # "NEW YORK, NY 10014" is the city line of an address, written in caps the
+    # way a mailing label is, not a heading (010003: it became the section of
+    # every atom after it and no atom carried it).
+    if re.search(r",\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\s*$", stripped):
+        return False
     # Headings don't end with sentence punctuation.
     if stripped[-1] in ".,;":
         return False
@@ -5291,7 +5521,16 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             for x in paragraph_lines
             if x.strip() and not _looks_like_page_footer(x.strip())
         ]
+        # ...but it is still a line of the page: its own block, which the
+        # atom emitter keeps as boilerplate chatter.
+        footers = [
+            x.strip()
+            for x in paragraph_lines
+            if x.strip() and _looks_like_page_footer(x.strip())
+        ]
         paragraph_lines = []
+        for f in footers:
+            current_blocks.append({"kind": "paragraph", "text": f, "lines": [f], "page_footer": True})
         if not kept:
             return
         # An unambiguous record-list (signature roster, "Name: decision."
@@ -5415,6 +5654,25 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             skip_through = j - 1
             paragraph_lines.extend(req)
             flush_paragraph()
+            continue
+
+        # The exclusions list of a SOW is negative scope, and the heading the
+        # author wrote ("Out of Scope", "Exclusions", "Services Not
+        # Included") is what says so. In Title Case it is not all-caps, so it
+        # used to read as a paragraph line and its bullets stayed under the
+        # PREVIOUS heading, typed as scope. A signature heading likewise roots
+        # the signature block. And once inside an exclusions section, the
+        # SOW's next standard section label ("Fees", "Assumptions",
+        # "Signatures") ends it, so the fee table is not read as exclusions.
+        _sl = line.strip()
+        if not pending_bullet and not _is_form_pg and (
+            is_exclusion_heading(_sl)
+            or (len(_sl) <= 40 and is_signature_heading(_sl))
+            or (current_heading and is_exclusion_heading(current_heading)
+                and is_sow_section_label(_sl))
+        ):
+            flush_section()
+            current_heading = _sl.rstrip(":").strip()
             continue
 
         # Dotted-decimal SOW/RFP section heading ("1.0 SCOPE", "2.1 GENERAL
@@ -5574,10 +5832,35 @@ def _is_wrapped_tail(
         return False
     if _numbered_heading(cur) or _looks_like_section_heading(cur):
         return False
+    # A line cut mid-phrase: the next line opens in lower case, or its first
+    # word completes the term the previous line ended on. "After a Change" /
+    # "Order that requires additional work is signed..." (010003) is one
+    # sentence that a layout break set apart, and "After a Change" read as a
+    # heading.
+    if _completes_cut_phrase(prev, cur):
+        return True
     full = max((len((l or "").rstrip()) for l in lines), default=0)
     if full < 40:
         return False
     return len(prev) >= fill * full
+
+
+#: Two-word terms a line break can cut in half ("Change" / "Order").
+_CUT_TERMS = frozenset({
+    ("change", "order"), ("change", "orders"), ("change", "request"), ("purchase", "order"),
+    ("purchase", "orders"), ("work", "order"), ("sales", "order"), ("service", "order"),
+    ("statement", "of"), ("bill", "of"), ("scope", "of"), ("notice", "to"), ("certificate", "of"),
+})
+
+
+def _completes_cut_phrase(prev: str, cur: str) -> bool:
+    prev_words = re.findall(r"[A-Za-z]+", prev or "")
+    cur_words = re.findall(r"[A-Za-z]+", cur or "")
+    if not prev_words or not cur_words:
+        return False
+    if (cur or "").lstrip()[:1].islower():
+        return True
+    return (prev_words[-1].lower(), cur_words[0].lower()) in _CUT_TERMS
 
 
 def _stamp_section_and_block_ids(sections: list[dict[str, Any]], page_index: int) -> None:

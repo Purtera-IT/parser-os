@@ -432,6 +432,12 @@ def split_transcript_segments(text: str) -> list[dict[str, Any]]:
 
 
 def extract_meeting_entities(text: str) -> list[str]:
+    from app.core.device_alias_context import (
+        device_match_is_spurious,
+        is_legal_boilerplate,
+        iter_valid_alias_matches,
+    )
+
     lowered = normalize_text(text)
     entity_keys: set[str] = set()
     pack = get_active_domain_pack()
@@ -449,13 +455,22 @@ def extract_meeting_entities(text: str) -> list[str]:
 
     if re.search(r"\bip\s*cameras?\b", lowered):
         entity_keys.add(normalize_entity_key("device", "IP Camera"))
-    if re.search(r"\baccess point\b|\baps?\b", lowered):
+    if re.search(r"\baccess points?\b", lowered) or any(
+        not device_match_is_spurious(lowered, m.start(), m.start() + 2, m.end(), m.group(0), "access_point")
+        for m in re.finditer(r"\baps?\b", lowered)
+    ):
+        # "AP department" / "send invoices to AP" is accounts payable.
         entity_keys.add(normalize_entity_key("device", "access point"))
-    for canonical, aliases in pack.device_aliases.items():
-        for alias in aliases:
-            if re.search(rf"\b{re.escape(normalize_text(alias))}\b", lowered):
-                entity_keys.add(f"device:{canonical}")
-                break
+    if not is_legal_boilerplate(text):
+        for canonical, aliases in pack.device_aliases.items():
+            for alias in aliases:
+                alias_norm = normalize_text(alias)
+                pattern = re.compile(rf"\b{re.escape(alias_norm)}\b")
+                # "Speaker 1:", "will monitor the site", "the electrical
+                # cabinet" are not devices.
+                if next(iter_valid_alias_matches(pattern, lowered, alias_norm, canonical), None) is not None:
+                    entity_keys.add(f"device:{canonical}")
+                    break
 
     return sorted(entity_keys)
 

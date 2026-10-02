@@ -38,6 +38,19 @@ _SHORT_WORDS = frozenset({
 })
 
 
+#: Abbreviations a priced or scheduled line is written in. Not in an English
+#: wordlist, and short and consonant-heavy, which is exactly what debris looks
+#: like: live signed SOW "Engineer (est 3 hrs per site) ... 99 ... $9,504" was
+#: dropped as OCR debris on "est" and "hrs" alone.
+_ABBREVIATIONS = frozenset({
+    "est", "hrs", "hr", "qty", "qtys", "ea", "pcs", "pc", "approx", "mins", "min", "secs",
+    "yrs", "yr", "mos", "mo", "wks", "wk", "lbs", "lb", "sq", "ft", "lf", "sf", "incl",
+    "excl", "misc", "dept", "mgmt", "svc", "svcs", "ext", "pkg", "pkgs", "assy", "avg",
+    "tbd", "eng", "techs", "admin", "config", "configs", "mfr", "mfg", "pmt", "amt", "nte",
+    "tax", "ttl", "subtot", "w/o", "thru", "hrly", "mo.", "yr.", "pp", "pg",
+})
+
+
 @lru_cache(maxsize=1)
 def _words() -> frozenset[str]:
     try:
@@ -56,6 +69,8 @@ def _shape_ok(tok: str) -> bool:
 
 def _is_word(tok: str, _compound: bool = True) -> bool:
     core = tok.strip("'’-").lower()
+    if core in _ABBREVIATIONS:
+        return True
     words = _words()
     if len(core) < 3:
         return core in words if words else True
@@ -90,7 +105,8 @@ def _is_word(tok: str, _compound: bool = True) -> bool:
     return _shape_ok(core)
 
 
-_ABBREV_PLURAL_RE = re.compile(r"[A-Z]{2,6}s")
+#: "IPs", and the apostrophe plural/possessive "PO's", "SOW's" (010003).
+_ABBREV_PLURAL_RE = re.compile(r"[A-Z]{2,6}['\u2019]?s")
 #: A capital inside a word ("SonicWall", "ServiceNow") is the shape of a product name.
 _CAMEL_RE = re.compile(r"[A-Z][a-z]+(?:[A-Z][a-z]*)+")
 
@@ -155,6 +171,9 @@ _ADDRESS_SHAPE_RE = re.compile(
 )
 
 
+_PRICED_RE = re.compile(r"[$€£]\s?\d")
+
+
 def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) -> bool:
     """True when the lowercase words of the text are mostly not words.
 
@@ -167,6 +186,11 @@ def is_unreadable(text: str, *, threshold: float = 0.55, min_tokens: int = 4) ->
     # shape of an address in any language that uses one; the words are not
     # expected to be in a dictionary.
     if _ADDRESS_SHAPE_RE.search(text or ""):
+        return False
+    # A priced row ("Engineer (est 3 hrs per site) | 99 | $9,504") is a money
+    # figure with a label; the label is written in shorthand. It is debris
+    # only when its words are mostly not words at all.
+    if _PRICED_RE.search(text or "") and readability(text) >= 0.3:
         return False
     toks = _judged(text)
     # One very long lowercase non-word ("tonmnuinunvionetenatucnnihnapusstsnse")

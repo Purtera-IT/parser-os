@@ -162,8 +162,10 @@ def _scope_summary(atoms: list[Any], documents: list[dict], deal_name: str = "")
     # the work. On 010162 (490 of 960 atoms) the sample led with "How you doing,
     # buddy?" and "Amen." while the call's own recap note sat beside it. Keep
     # utterances only when the deal has too little other scope to describe it.
-    spoken = [a for a in scope_atoms if _atype(a) == "raw_utterance"]
-    written = [a for a in scope_atoms if _atype(a) != "raw_utterance"]
+    from app.core.utterance_typing import is_untyped_speech
+
+    spoken = [a for a in scope_atoms if is_untyped_speech(a)]
+    written = [a for a in scope_atoms if not is_untyped_speech(a)]
     if spoken and len(written) >= _CAP // 2:
         scope_atoms = written
     bodies = [t for a in scope_atoms if (t := _text(a))]

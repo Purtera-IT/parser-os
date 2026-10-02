@@ -907,6 +907,154 @@ def _first_nonblank_header_row(rows: list[list[Any]]) -> int | None:
     return fallback
 
 
+def _commercial_blocks(
+    rows: list[list[Any]],
+    headers: list[str],
+    header_rows: set[int],
+    data_floor: int,
+) -> tuple[dict[int, list[tuple[int, int, int, list[str] | None, bool]]], set[tuple[int, int]]]:
+    """Which header each row of a commercial / rate sheet is read under.
+
+    A rate sheet is rarely ONE table. Under (or beside) the per-country matrix
+    -- ``Country | Request | L1 Hourly ...`` -- sits a separate service-rate
+    block with its own header row (``Service | Sell | Cost``) and rows like
+    ``L2 EUC 2 hour minimum | 96 | 63.5``. Binding every row to the sheet's one
+    header band read that block as countries: "Country: PC | Request: 50".
+
+    Returns ``(plan, reheader)``:
+
+    * ``plan[row_idx]`` -- the row's column groups as ``(group, lo, hi,
+      headers, under_main)``; ``under_main`` is True while the row is read
+      under the sheet's own header band. Groups are split at a spacer column (blank in the header row
+      and in every row from the data floor down), so a block beside the matrix
+      is its own table. ``headers`` is ``None`` for a block that has no header
+      row of its own: it reads as plain ``a | b | c`` rather than inheriting the
+      table above.
+    * ``reheader`` -- ``(row_idx, group)`` cells that ARE a block's header row.
+
+    A new block starts at a header row (labels only, no money, with the next
+    row's cells all under its labels) or after a blank-row gap when the rows
+    that follow are not shaped like the table above (they fill fewer than
+    half of its named columns).
+    """
+    width = max((len(r) for r in rows), default=0)
+
+    def _txt(r: list[Any], c: int) -> str:
+        return "" if c >= len(r) or r[c] is None else str(r[c]).strip()
+
+    def _isnum(s: str) -> bool:
+        t = s.replace(",", "").replace("$", "").replace("%", "").strip()
+        return bool(t) and t.lstrip("-").replace(".", "", 1).isdigit()
+
+    # Spacer columns: blank in the header row and in every row below the floor.
+    body = [r for i, r in enumerate(rows) if i >= data_floor and i not in header_rows]
+    hdr_cells = [headers[c] if c < len(headers) else "" for c in range(width)]
+    spacer = [
+        not hdr_cells[c] and all(not _txt(r, c) for r in body)
+        for c in range(width)
+    ]
+    groups: list[tuple[int, int]] = []
+    start = None
+    for c in range(width):
+        if not spacer[c] and start is None:
+            start = c
+        elif spacer[c] and start is not None:
+            groups.append((start, c)); start = None
+    if start is not None:
+        groups.append((start, width))
+
+    # A spacer column inside ONE table ("Item | Desc | <blank> | Qty | Price")
+    # must not cut its rows in two: split only when every group reads as a
+    # table of its own -- its rows carry both a label and a number.
+    def _self_contained(lo: int, hi: int) -> bool:
+        seen = whole = 0
+        for r in body:
+            cs = [_txt(r, c) for c in range(lo, hi)]
+            ne = [x for x in cs if x]
+            if not ne:
+                continue
+            seen += 1
+            if any(_isnum(x) for x in ne) and any(not _isnum(x) for x in ne):
+                whole += 1
+        return seen > 0 and whole * 5 >= seen * 4
+
+    if len(groups) > 6 or (len(groups) > 1 and not all(_self_contained(a, b) for a, b in groups)):
+        groups = [(0, width)]
+    if not groups:
+        groups = [(0, width)]
+
+    plan: dict[int, list[tuple[int, int, int, list[str] | None, bool]]] = {}
+    reheader: set[tuple[int, int]] = set()
+    for gi, (lo, hi) in enumerate(groups):
+        def _cells(i: int) -> list[str]:
+            return [_txt(rows[i], c) if lo <= c < hi else "" for c in range(width)]
+
+        main = [hdr_cells[c] if lo <= c < hi else "" for c in range(width)]
+        active: list[str] | None = main
+
+        def _fits(hdr: list[str] | None, cells: list[str]) -> bool:
+            if not hdr:
+                return False
+            named = {c for c, h in enumerate(hdr) if h}
+            filled = {c for c, x in enumerate(cells) if x}
+            return bool(filled) and filled <= named and len(filled) >= max(2, (len(named) + 1) // 2)
+
+        def _is_header(i: int, cells: list[str]) -> bool:
+            ne = [x for x in cells if x]
+            if len(ne) < 2 or len(set(ne)) < 2:
+                return False
+            if any(_isnum(x) or len(x) > 40 for x in ne):
+                return False
+            cols = {c for c, x in enumerate(cells) if x}
+            for j in range(i + 1, min(i + 4, len(rows))):
+                nxt = _cells(j)
+                if not any(nxt):
+                    continue
+                nf = {c for c, x in enumerate(nxt) if x}
+                return any(_isnum(x) for x in nxt) and nf <= cols
+            return False
+
+        block_rows: list[list[str]] = []
+
+        def _names_numbers(cells: list[str]) -> bool:
+            # A word where the block so far keeps numbers names that column.
+            for c, x in enumerate(cells):
+                if not x:
+                    continue
+                vals = [r[c] for r in block_rows if r[c]]
+                if len(vals) >= 2 and sum(1 for v in vals if _isnum(v)) * 2 > len(vals):
+                    return True
+            return False
+
+        gap = False
+        seen = False
+        for i in range(len(rows)):
+            if i in header_rows or i < data_floor:
+                continue
+            cells = _cells(i)
+            if not any(cells):
+                if seen:
+                    gap = True
+                continue
+            if active is not None and [x for x in cells if x] == [h for h in active if h]:
+                reheader.add((i, gi)); gap = False; seen = False; block_rows = []
+                continue
+            if _is_header(i, cells) and (not _fits(active, cells) or _names_numbers(cells)):
+                active = cells
+                reheader.add((i, gi)); gap = False; seen = False; block_rows = []
+                continue
+            if gap:
+                if _fits(main, cells):
+                    active = main
+                elif not _fits(active, cells):
+                    active = None
+                gap = False
+            seen = True
+            block_rows.append(cells)
+            plan.setdefault(i, []).append((gi, lo, hi, active, active is main))
+    return plan, reheader
+
+
 def _commercial_header_band(
     rows: list[list[Any]], money_cols: list[int]
 ) -> tuple[list[str], set[int], int]:
@@ -967,6 +1115,18 @@ def _commercial_header_band(
     # Walk up from the data block, collecting contiguous header rows (>=2
     # multi-char labels), skipping lone category/banner cells, stopping at a
     # blank or a numeric/marker row.
+    #
+    # A row holding a number (other than a year) is a VALUE row, never a header:
+    # a Gantt "Financials" block whose first resources have their totals still
+    # uncomputed ("Niagara Tech #1 | Field Tech | Onsite | 40 | 55") is not
+    # dense enough to join the data run, and three of them were walked up into
+    # the "header band" -- every priced row below then read "Niagara Tech #1
+    # Niagara Tech #2 PC: PPE Tech 1 | ...", four rows in one atom, and the
+    # three resources never became atoms. Such rows extend the data block up
+    # instead, and the walk goes on looking for the real header above them.
+    def _has_value(cs: list[str]) -> bool:
+        return any(_isnum(c) and not re.fullmatch(r"(19|20)\d{2}", c) for c in cs)
+
     band: list[int] = []
     i = data_start - 1
     while i >= 0 and len(band) < 3:
@@ -976,6 +1136,10 @@ def _commercial_header_band(
             break
         if len(ne) == 1:
             i -= 1; continue
+        if _has_value(ne):
+            if band:
+                break
+            data_start = i; i -= 1; continue
         if sum(1 for c in ne if len(c) >= 3 and not _isnum(c)) >= 2:
             band.append(i); i -= 1; continue
         break
@@ -2685,6 +2849,20 @@ class XlsxParser(BaseParser):
                     parser_version=self.parser_version,
                 )
             )
+            # The site's service-type tick boxes are facts of their own: one
+            # atom per cell, beside (never inside) the site's name/address.
+            from app.parsers.checkbox_cells import checkbox_atom
+
+            for _col, _val in (getattr(site_row, "checkbox_fields", None) or ()):
+                out.append(checkbox_atom(
+                    project_id=project_id, artifact_id=artifact_id,
+                    artifact_type=artifact_type, filename=filename, text=_val,
+                    column=_col, subject=site_row.facility_name or canon_id,
+                    locator={"sheet": sheet_name, "row": row_index,
+                             "section_path": [sheet_name] if sheet_name else []},
+                    extraction_method="xlsx_checkbox_cell_v1",
+                    parser_version=self.parser_version, entity_keys=entity_keys,
+                ))
         return out
 
     @staticmethod
@@ -3290,15 +3468,35 @@ class XlsxParser(BaseParser):
         # far-right columns (e.g. a travel calc next to the main pricing table)
         # has that column empty, so it falls back to its plain form instead of
         # being mis-mapped onto the main table's headers.
-        _first_hdr_col = next((i for i, h in enumerate(_headers) if h), None)
+        # (computed per row below, from the block the row belongs to)
         # Per-country rate matrix: the column whose header says Country (or,
         # on a content-classified country table, the label column).
-        _country_col = next(
+        _sheet_country_col = next(
             (i for i, h in enumerate(_headers) if h and re.match(r"^country\b", h.strip(), re.I)),
             None,
         )
-        if _country_col is None and getattr(classification, "reason", "") == "country_rate_card_table":
-            _country_col = 0
+        if _sheet_country_col is None and getattr(classification, "reason", "") == "country_rate_card_table":
+            _sheet_country_col = 0
+        # The sheet is not one table: a service-rate block under or beside the
+        # country matrix has its own header (or none), and must not be read
+        # under the matrix's columns.
+        _plan, _reheader = _commercial_blocks(rows, _headers, _header_rows, _data_floor)
+        _multi = len({p[0] for parts in _plan.values() for p in parts}) > 1
+        # Side-by-side blocks price in different columns: a matrix beside a
+        # "Service | Sell | Cost" block has no money-named column of its own,
+        # and would lose every row to the money gate once it is read apart.
+        _group_money: dict[int, set[int]] = {}
+        if _multi:
+            for parts in _plan.values():
+                for (g, lo, hi, _h, _m) in parts:
+                    if g in _group_money:
+                        continue
+                    gm = {c for c in money_cols if lo <= c < hi}
+                    if not gm and role is SheetRole.RATE_CARD:
+                        masked = [[(r[c] if lo <= c < hi and c < len(r) else None)
+                                   for c in range(max(len(r), hi))] for r in rows]
+                        gm = set(_rate_card_value_columns(masked))
+                    _group_money[g] = gm
         # Rate-card rows are service lines (role + rate + unit); catalog rows
         # keep the parser's pricing type. ``rate_card`` is label-only (v2) in
         # the type registry, so the prod enum cannot carry it yet.
@@ -3333,143 +3531,192 @@ class XlsxParser(BaseParser):
             return False
 
         current_section: str | None = None
-        for row_idx, row in enumerate(rows):
-            cells = [("" if c is None else str(c).strip()) for c in row]
-            if not any(cells):
+        # Rows that carry no price and are not structure (header band, a
+        # block's own header, a category divider) used to be skipped without
+        # a trace: a SELL RATES title, an "After Hours | billed at 150% of the
+        # standard rate" line, a Notes block. They are collected here and
+        # kept as atoms below (see _commercial_unpriced_atoms).
+        _unpriced: list[tuple[int, list[str], bool]] = []
+        _structure_rows: set[int] = set(_header_rows)
+        for row_idx, _raw in enumerate(rows):
+            _full = [("" if c is None else str(c).strip()) for c in _raw]
+            if not any(_full):
+                continue
+            if row_idx < _data_floor and row_idx not in _header_rows:
+                _unpriced.append((row_idx, _full, True))
                 continue
             if row_idx in _header_rows or row_idx < _data_floor:
                 # Header band rows AND everything above the data block (dropdown
                 # source lists, base-rate scratch rows) are structure, not priced
                 # lines — never emit them as atoms.
                 continue
-            values = _row_money_values(row, money_cols)
-            if not values and _is_category_divider(cells, row_idx):
-                # Becomes the running section breadcrumb for the rows beneath it
-                # (e.g. Materials > CAT6…); not emitted as a priced atom itself.
-                current_section = max((c for c in cells if c), key=len).strip(" .…")[:60]
-                continue
-            _aligned = (
-                _headers
-                and _first_hdr_col is not None
-                and _first_hdr_col < len(cells)
-                and cells[_first_hdr_col]
-            )
-            if not values:
-                # Header / label rows with no dollar figure carry no pricing
-                # signal — skip so the commercial view stays clean. But on a
-                # per-line financial-summary sheet (not a collapsed catalog), a
-                # row OUTSIDE the main header span — a side calc block beside the
-                # table (e.g. a travel breakdown's "Team | 4") — is a real
-                # label->value fact with no money of its own; keep it so it
-                # isn't silently dropped. Catalogs stay strict (money only) so
-                # their rollup counts don't drift.
-                if collapse_to_summary or _aligned or not _is_side_label_value(cells):
-                    continue
-            all_values.extend(values)
-            money_keys = sorted({f"money:{int(round(v))}" for v in values})
-            if _aligned:
-                _bound = [
-                    f"{_headers[ci]}: {cells[ci]}"
-                    for ci in range(len(_headers))
-                    if ci < len(cells) and _headers[ci] and cells[ci]
-                ]
-                row_text = (" | ".join(_bound) or " | ".join(c for c in cells if c))[:4000]
-            else:
-                row_text = " | ".join(c for c in cells if c)[:4000]
-            # A label-less row whose numbers SUM the rows above is a totals row —
-            # give the orphan a "Total" label (arithmetic-proven, universal).
-            if _unlabeled_sum_row(rows, row_idx):
-                row_text = f"Total | {row_text}"
-            label = " ".join(
-                c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
-            ).strip()[:300]
-
-            row_value: dict[str, Any] = {
-                "label": label,
-                "money_keys": money_keys,
-                "sheet_role": role.value,
-                "sheet_name": sheet_name,
-                "cells": [c for c in cells if c],
-            }
-            this_type = atom_type
-            if collapse_to_summary:
-                # Fold into the rollup (full matrix for drill-down / the
-                # pricing_rollup packet) AND emit the row as its own atom: a
-                # rate a person cannot see cannot be labelled. The rollup
-                # alone hid ~850 rate rows on one deal behind a count line.
-                folded_rows.append(
-                    {
-                        "row": row_idx + 1,
-                        "label": label,
-                        "text": row_text,
-                        "money_keys": money_keys,
-                        "cells": [c for c in cells if c],
-                    }
+            for _gi, _lo, _hi, _hdrs, _under_main in _plan.get(row_idx, [(0, 0, len(_raw), _headers, True)]):
+                if (row_idx, _gi) in _reheader:
+                    _structure_rows.add(row_idx)
+                    continue  # this block's own header row: structure, bound into its rows
+                if _multi:
+                    row = [(_raw[c] if _lo <= c < _hi else None) for c in range(len(_raw))]
+                    cells = [(_full[c] if _lo <= c < _hi else "") for c in range(len(_full))]
+                    if not any(cells):
+                        continue
+                else:
+                    row, cells = _raw, _full
+                _hdrs = _hdrs or []
+                _first_hdr_col = next((i for i, h in enumerate(_hdrs) if h), None)
+                _country_col = (
+                    _sheet_country_col
+                    if _under_main and _sheet_country_col is not None
+                    and (not _multi or _lo <= _sheet_country_col < _hi)
+                    else None
                 )
-                if row_atoms_emitted >= self._COMMERCIAL_ROW_ATOM_CAP:
+                values = _row_money_values(row, _group_money.get(_gi) or money_cols)
+                if not values and _is_category_divider(cells, row_idx):
+                    # Becomes the running section breadcrumb for the rows beneath it
+                    # (e.g. Materials > CAT6…); not emitted as a priced atom itself.
+                    current_section = max((c for c in cells if c), key=len).strip(" .…")[:60]
+                    _structure_rows.add(row_idx)
                     continue
-                row_atoms_emitted += 1
-                this_type = row_atom_type
-                row_value.update(
-                    _rate_row_fields(
-                        _headers, cells, row, set(money_cols), country_col=_country_col,
+                _aligned = (
+                    _hdrs
+                    and _first_hdr_col is not None
+                    and _first_hdr_col < len(cells)
+                    and cells[_first_hdr_col]
+                )
+                if not values:
+                    # Header / label rows with no dollar figure carry no pricing
+                    # signal — skip so the commercial view stays clean. But on a
+                    # per-line financial-summary sheet (not a collapsed catalog), a
+                    # row OUTSIDE the main header span — a side calc block beside the
+                    # table (e.g. a travel breakdown's "Team | 4") — is a real
+                    # label->value fact with no money of its own; keep it so it
+                    # isn't silently dropped. Catalogs stay strict (money only) so
+                    # their rollup counts don't drift.
+                    if collapse_to_summary or _aligned or not _is_side_label_value(cells):
+                        _unpriced.append((row_idx, cells, False))
+                        continue
+                all_values.extend(values)
+                money_keys = sorted({f"money:{int(round(v))}" for v in values})
+                if _aligned:
+                    _bound = [
+                        f"{_hdrs[ci]}: {cells[ci]}"
+                        for ci in range(len(_hdrs))
+                        if ci < len(cells) and _hdrs[ci] and cells[ci]
+                    ]
+                    row_text = (" | ".join(_bound) or " | ".join(c for c in cells if c))[:4000]
+                else:
+                    row_text = " | ".join(c for c in cells if c)[:4000]
+                # A label-less row whose numbers SUM the rows above is a totals row —
+                # give the orphan a "Total" label (arithmetic-proven, universal).
+                if _unlabeled_sum_row(rows, row_idx):
+                    row_text = f"Total | {row_text}"
+                label = " ".join(
+                    c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
+                ).strip()[:300]
+
+                row_value: dict[str, Any] = {
+                    "label": label,
+                    "money_keys": money_keys,
+                    "sheet_role": role.value,
+                    "sheet_name": sheet_name,
+                    "cells": [c for c in cells if c],
+                }
+                this_type = atom_type
+                if collapse_to_summary:
+                    # Fold into the rollup (full matrix for drill-down / the
+                    # pricing_rollup packet) AND emit the row as its own atom: a
+                    # rate a person cannot see cannot be labelled. The rollup
+                    # alone hid ~850 rate rows on one deal behind a count line.
+                    folded_rows.append(
+                        {
+                            "row": row_idx + 1,
+                            "label": label,
+                            "text": row_text,
+                            "money_keys": money_keys,
+                            "cells": [c for c in cells if c],
+                        }
                     )
-                )
-                row_value["kind"] = (
-                    "rate_card_row" if role is SheetRole.RATE_CARD else "catalog_row"
-                )
-                # The sheet name leads the text: COST and SELL sheets often
-                # carry identical rows, and are different facts.
-                if sheet_name:
-                    row_text = f"{sheet_name} | {row_text}"[:4000]
+                    if row_atoms_emitted >= self._COMMERCIAL_ROW_ATOM_CAP:
+                        continue
+                    row_atoms_emitted += 1
+                    this_type = row_atom_type
+                    row_value.update(
+                        _rate_row_fields(
+                            _hdrs, cells, row, set(_group_money.get(_gi) or money_cols), country_col=_country_col,
+                        )
+                    )
+                    row_value["kind"] = (
+                        "rate_card_row" if role is SheetRole.RATE_CARD else "catalog_row"
+                    )
+                    # The sheet name leads the text: COST and SELL sheets often
+                    # carry identical rows, and are different facts.
+                    if sheet_name:
+                        row_text = f"{sheet_name} | {row_text}"[:4000]
 
-            atom_id = stable_id(
-                "atm", artifact_id, this_type.value, sheet_name, row_idx
-            )
-            src = SourceRef(
-                id=stable_id("src", atom_id),
-                artifact_id=artifact_id,
-                artifact_type=artifact_type,
-                filename=filename,
-                locator={
-                    "sheet": sheet_name,
-                    "row": row_idx + 1,
-                    "section_path": (
-                        [sheet_name] + ([current_section] if current_section else [])
-                        if sheet_name else []
-                    ),
-                    "extraction": "commercial_sheet_routing",
-                },
-                extraction_method="commercial_sheet_routing",
-                parser_version=self.parser_version,
-            )
-            atoms.append(
-                EvidenceAtom(
-                    id=atom_id,
-                    project_id=project_id,
+                atom_id = stable_id(
+                    "atm", artifact_id, this_type.value, sheet_name, row_idx,
+                    *((f"g{_gi}",) if _gi else ()),
+                )
+                src = SourceRef(
+                    id=stable_id("src", atom_id),
                     artifact_id=artifact_id,
-                    atom_type=this_type,
-                    raw_text=row_text,
-                    normalized_text=row_text.lower(),
-                    value=row_value,
-                    entity_keys=money_keys,
-                    source_refs=[src],
-                    receipts=[],
-                    authority_class=AuthorityClass.vendor_quote,
-                    confidence=0.7,
-                    confidence_raw=0.7,
-                    calibrated_confidence=0.7,
-                    review_status=ReviewStatus.needs_review,
-                    review_flags=[],
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    locator={
+                        "sheet": sheet_name,
+                        "row": row_idx + 1,
+                        "section_path": (
+                            [sheet_name] + ([current_section] if current_section else [])
+                            if sheet_name else []
+                        ),
+                        "extraction": "commercial_sheet_routing",
+                    },
+                    extraction_method="commercial_sheet_routing",
                     parser_version=self.parser_version,
                 )
-            )
+                atoms.append(
+                    EvidenceAtom(
+                        id=atom_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=this_type,
+                        raw_text=row_text,
+                        normalized_text=row_text.lower(),
+                        value=row_value,
+                        entity_keys=money_keys,
+                        source_refs=[src],
+                        receipts=[],
+                        authority_class=AuthorityClass.vendor_quote,
+                        confidence=0.7,
+                        confidence_raw=0.7,
+                        calibrated_confidence=0.7,
+                        review_status=ReviewStatus.needs_review,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    )
+                )
 
         # ``line_count`` reflects every money-bearing row found, whether it
         # became its own atom (financial summary) or was folded (rate card).
         line_count = len(atoms) if not collapse_to_summary else len(folded_rows)
+        # A label/value info box on a priced sheet ("Customer | OxBlue" /
+        # "OPPTY # | 010246") carries no money, so the money gate above skips
+        # every row of it, and on a Deal Kit tab with nothing else it left the
+        # sheet with no atoms at all. Its pairs are emitted as key: value atoms.
+        _emitted_rows = {
+            (a.source_refs[0].locator or {}).get("row") for a in atoms if a.source_refs
+        } | {fr.get("row") for fr in folded_rows}
+        box_atoms = self._commercial_label_box_atoms(
+            project_id, artifact_id, artifact_type, filename, sheet_name, rows, _emitted_rows,
+        )
+        _box_rows = {(a.source_refs[0].locator or {}).get("row") for a in box_atoms if a.source_refs}
+        box_atoms = box_atoms + self._commercial_unpriced_atoms(
+            project_id, artifact_id, artifact_type, filename, sheet_name, role,
+            [u for u in _unpriced
+             if u[0] not in _structure_rows and (u[0] + 1) not in _emitted_rows
+             and (u[0] + 1) not in _box_rows],
+        )
         if line_count == 0:
-            return []
+            return box_atoms
 
         # Roll-up banner: only for COLLAPSED sheets (rate cards / catalogs),
         # where it IS the sheet's single atom — it carries the full row matrix
@@ -3480,7 +3727,7 @@ class XlsxParser(BaseParser):
         # build_deal_financials) — the very "Gantt Financials: 12 pricing
         # lines, $-1,908-$26,450" atom the PM flagged as confusing. Drop it.
         if not collapse_to_summary:
-            return atoms
+            return atoms + box_atoms
         summary = self._commercial_summary_atom(
             project_id=project_id,
             artifact_id=artifact_id,
@@ -3493,8 +3740,157 @@ class XlsxParser(BaseParser):
             values=all_values,
             folded_rows=folded_rows,
         )
+        atoms = atoms + box_atoms
         # Summary first (full matrix in value.rows), then one atom per row.
+        # When EVERY folded row also became its own atom, the "N pricing lines"
+        # banner says nothing the rows do not, and sat beside them as a second,
+        # unlabelable copy of the sheet ("SELL RATES: 117 pricing lines" next
+        # to the 117 rate rows). It is kept for the audit trail but stamped
+        # suppressed, so the compiler diverts it to the suppressed sidecar with
+        # its reason. Past the row-atom cap it is the only home of the rest of
+        # the rows, and stays live.
+        if folded_rows and row_atoms_emitted >= len(folded_rows):
+            summary.review_flags = list(summary.review_flags or []) + [
+                "suppressed:pricing_rollup_rows_emitted"
+            ]
+            summary.value = {
+                **(summary.value or {}),
+                "_suppression": {
+                    "stage": "pricing_rollup_rows_emitted",
+                    "reason": "every priced row of this sheet is its own atom; "
+                              "the count/range banner is redundant",
+                },
+            }
         return [summary, *atoms]
+
+    def _commercial_unpriced_atoms(
+        self, project_id, artifact_id, artifact_type, filename, sheet_name, role, unpriced,
+    ) -> list[EvidenceAtom]:
+        """Atoms for the rows of a priced sheet that carry no price.
+
+        A row ABOVE the data block (a sheet title, a dropdown source list, a
+        scratch row) is scaffolding: kept as a chatter atom a labeler can
+        reject (rejected_by commercial_sheet_scaffolding). A row inside it
+        with no money is a term or note of the sheet ("After Hours | billed at
+        150% of the standard rate", "Travel billed at cost"): kept as a
+        pricing_assumption flagged unpriced_sheet_row, for review. Neither is
+        folded into the rollup, so its counts do not move.
+        """
+        from app.core.deal_chatter import CHATTER_FLAG
+
+        out: list[EvidenceAtom] = []
+        seen: set[int] = set()
+        for row_idx, cells, above in unpriced:
+            if row_idx in seen:
+                continue
+            seen.add(row_idx)
+            parts = [c for c in cells if c]
+            if not parts:
+                continue
+            # A tick-box cell is its own fact, never glued onto the row's
+            # name ("Delphos, OH | ☐ Assessment ☒ Installation").
+            from app.parsers.checkbox_cells import checkbox_atom, is_checkbox_cell
+
+            boxes = [c for c in parts if is_checkbox_cell(c)]
+            if boxes and len(boxes) < len(parts):
+                parts = [c for c in parts if c not in boxes]
+                for b in dict.fromkeys(boxes):
+                    out.append(checkbox_atom(
+                        project_id=project_id, artifact_id=artifact_id,
+                        artifact_type=artifact_type, filename=filename, text=b,
+                        column="", subject=parts[0],
+                        locator={"sheet": sheet_name, "row": row_idx + 1,
+                                 "section_path": [sheet_name] if sheet_name else []},
+                        extraction_method="xlsx_checkbox_cell_v1",
+                        parser_version=self.parser_version, site_row=False,
+                    ))
+            text = " | ".join(dict.fromkeys(parts))[:4000]
+            aid = stable_id("atm", artifact_id, "commercial_unpriced", sheet_name, row_idx)
+            value: dict[str, Any] = {
+                "kind": "commercial_sheet_scaffolding" if above else "unpriced_sheet_row",
+                "sheet_name": sheet_name, "sheet_role": getattr(role, "value", str(role)),
+                "cells": parts,
+            }
+            if above:
+                value.update({"chatter": True, "rejected_by": "commercial_sheet_scaffolding"})
+            out.append(EvidenceAtom(
+                id=aid, project_id=project_id, artifact_id=artifact_id,
+                atom_type=AtomType.deal_metadata if above else AtomType.pricing_assumption,
+                raw_text=text, normalized_text=text.lower(), value=value, entity_keys=[],
+                source_refs=[SourceRef(
+                    id=stable_id("src", aid), artifact_id=artifact_id,
+                    artifact_type=artifact_type, filename=filename,
+                    locator={"sheet": sheet_name, "row": row_idx + 1,
+                             "section_path": [sheet_name] if sheet_name else [],
+                             "extraction": "commercial_unpriced_row_v1"},
+                    extraction_method="commercial_unpriced_row_v1",
+                    parser_version=self.parser_version)],
+                receipts=[], authority_class=AuthorityClass.vendor_quote,
+                confidence=0.1 if above else 0.6, confidence_raw=0.1 if above else 0.6,
+                calibrated_confidence=0.1 if above else 0.6,
+                review_status=ReviewStatus.needs_review,
+                review_flags=[CHATTER_FLAG] if above else ["unpriced_sheet_row"],
+                parser_version=self.parser_version,
+            ))
+        return out
+
+    def _commercial_label_box_atoms(
+        self, project_id, artifact_id, artifact_type, filename, sheet_name, rows, emitted_rows,
+    ) -> list[EvidenceAtom]:
+        """key: value atoms for the label/value info boxes of a priced sheet,
+        skipping any worksheet row already emitted as a priced line."""
+        from app.parsers.xlsx_blocks import sheet_blocks
+        try:
+            blocks = sheet_blocks(rows)
+        except Exception as exc:
+            self._note_block_failure(
+                f"{sheet_name}: {type(exc).__name__}: {str(exc)[:200]}"
+            )
+            return []
+        out: list[EvidenceAtom] = []
+        for bi, b in enumerate(blocks):
+            if b.get("kind") != "keyval" or not b.get("label_box"):
+                continue
+            title = b.get("title")
+            sp = [sheet_name] + ([title] if title else []) if sheet_name else []
+            pair_rows = b.get("pair_rows") or []
+            for pj, (k, v) in enumerate(b.get("pairs") or []):
+                k, v = str(k).strip(), str(v).strip()
+                srow = pair_rows[pj] if pj < len(pair_rows) else None
+                if not k or srow in emitted_rows:
+                    continue
+                label = k.rstrip().rstrip(":").rstrip()
+                text = (f"{label}: {v}" if v else k)[:4000]
+                field = _DEAL_HEADER_LABELS.get(label.lower())
+                value: dict[str, Any] = {"kind": "key_value", "label": label, "value": v,
+                                         "sheet_name": sheet_name, "box_label": title}
+                ekeys: list[str] = []
+                if field and v:
+                    value.update({"kind": "deal_header", "fields": {field: v}, "field": field})
+                    if field == "opportunity_id":
+                        ekeys.append(f"deal:{v}")
+                    elif field == "customer":
+                        slug = re.sub(r"[^a-z0-9]+", "_", v.lower()).strip("_")
+                        if slug:
+                            ekeys.append(f"customer:{slug}")
+                aid = stable_id("atm", artifact_id, "commercial_box", sheet_name, bi, pj)
+                out.append(EvidenceAtom(
+                    id=aid, project_id=project_id, artifact_id=artifact_id,
+                    atom_type=AtomType.deal_metadata, raw_text=text,
+                    normalized_text=text.lower(), value=value, entity_keys=ekeys,
+                    source_refs=[SourceRef(
+                        id=stable_id("src", aid), artifact_id=artifact_id,
+                        artifact_type=artifact_type, filename=filename,
+                        locator={"sheet": sheet_name, "row": srow or 0, "section_path": sp,
+                                 "extraction": "commercial_label_box_v1"},
+                        extraction_method="commercial_label_box_v1",
+                        parser_version=self.parser_version)],
+                    receipts=[], authority_class=AuthorityClass.vendor_quote,
+                    confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
+                    review_status=ReviewStatus.needs_review, review_flags=[],
+                    parser_version=self.parser_version,
+                ))
+        return out
 
     def _commercial_summary_atom(
         self,
@@ -4763,7 +5159,11 @@ class XlsxParser(BaseParser):
         # single-table sheet stays on the tuned legacy model so its quantity /
         # money / wide-column extraction is preserved.
         substantive = [b for b in blocks if b.get("kind") in ("table", "keyval")]
-        if len(substantive) < 2:
+        # ...or a sheet that is one label/value info box ("Customer | OxBlue" /
+        # "OPPTY # | 010246"): the legacy model takes its first pair as the
+        # column header, binds the rest to it, and never emits that pair.
+        lone_box = all(b.get("label_box") for b in substantive) and bool(substantive)
+        if len(substantive) < 2 and not lone_box:
             return []
 
         atoms: list[EvidenceAtom] = []
@@ -4913,7 +5313,9 @@ class XlsxParser(BaseParser):
                 box_fill = b.get("fill")  # the highlight color the rows share
                 for pi, (k, v, sheet_row) in enumerate(pairs):
                     seq += 1
-                    line = (f"{k}: {v}" if v else k).strip()
+                    # A label that carries its own colon ("Customer:") is not
+                    # given a second one.
+                    line = (f"{k.rstrip().rstrip(':').rstrip()}: {v}" if v else k).strip()
                     if not line:
                         continue
                     # A numeric LABEL ('70: 0.3684') is not a field — it's two

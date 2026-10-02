@@ -1144,8 +1144,8 @@ def demote_transcript_smalltalk(atoms: list[Any], lexicon: set[str] | None = Non
     action_item). Grounding, not a word list: a turn is about the deal when
     it carries a scope verb, a deal entity, a figure, or a content word the
     deal's own documents use ("dentistry", "hours", "quote"). Anything
-    else goes back to ``raw_utterance``: the words are kept, the claim is
-    withdrawn. With no documents to ground against, only short turns are
+    else becomes ``deal_metadata`` with a small_talk read: the words are
+    kept, the claim is withdrawn. With no documents to ground against, only short turns are
     demoted. Retag in place; ``dropped`` is always empty."""
     from app.core.schemas import AtomType
 
@@ -1167,6 +1167,20 @@ def demote_transcript_smalltalk(atoms: list[Any], lexicon: set[str] | None = Non
         # "after hours") is a claim about quantity or schedule on its own.
         if _has_deal_substance(text, entity_keys) or re.search(r"\d", text) or _CALENDAR_RE.search(text):
             continue
+        # A turn about a site, a quantity, a schedule or the crew is about the
+        # job even when the documents never use its words: "Can we swap to a
+        # nearby ready site?" and "There is no stack coordinator" (010087)
+        # were both demoted as small talk.
+        from app.core.utterance_typing import asks_or_states_deal_fact
+
+        if asks_or_states_deal_fact(text):
+            continue
+        # A dependency or trigger ("We are waiting for the TVs to arrive") is
+        # what the schedule hangs on, never small talk (010003).
+        from app.core.deal_chatter import states_dependency
+
+        if states_dependency(text, goods_only=True):
+            continue
         tokens = [t for t in _content_tokens(text) if t]
         if lexicon:
             # Two shared content words, one of them specific (six letters or
@@ -1179,14 +1193,29 @@ def demote_transcript_smalltalk(atoms: list[Any], lexicon: set[str] | None = Non
                 continue
         elif len(tokens) > 8 and not _CONVERSATIONAL_LEAD_RE.search(text):
             continue
-        atom.atom_type = AtomType.raw_utterance
+        # Small talk, typed as what it is: deal_metadata carrying the same
+        # small_talk prediction relationship talk gets (a guess a labeler
+        # confirms or drops). It used to go back to raw_utterance, a type the
+        # labeler does not have, so a demoted turn reached the page untyped.
+        # The demoted flag keeps it context-only everywhere an untyped turn
+        # was (``app.core.utterance_typing.is_untyped_speech``).
+        atom.atom_type = AtomType.deal_metadata
         flags = list(getattr(atom, "review_flags", None) or [])
-        if "transcript_smalltalk_demoted" not in flags:
-            flags.append("transcript_smalltalk_demoted")
+        for _f in ("transcript_smalltalk_demoted", "chatter"):
+            if _f not in flags:
+                flags.append(_f)
         try:
             atom.review_flags = flags
         except Exception:
             pass
+        _val = getattr(atom, "value", None)
+        if isinstance(_val, dict):
+            _rd = list(_val.get("reads") or [])
+            if not any(isinstance(r, dict) and r.get("key") == "small_talk" for r in _rd):
+                _rd.append({"key": "small_talk", "value": True,
+                            "why": "transcript turn shares nothing with the deal's documents",
+                            "confidence": 0.5, "source": "rule"})
+                _val["reads"] = _rd
     return atoms, []
 
 

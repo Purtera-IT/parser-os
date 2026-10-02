@@ -35,6 +35,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
+from app.parsers.checkbox_cells import is_checkbox_cell
+
 
 # Header keywords, matched case-insensitively against the column header.
 #
@@ -350,6 +352,10 @@ class SiteRosterRow:
     extra_fields: tuple[tuple[str, str], ...] = ()
     raw_cells: tuple[tuple[str, str], ...] = ()
     confidence: float = 0.8
+    #: Checkbox cells ("Service Type | ☐ Assessment ☒ Installation"): a
+    #: separate fact about the site, never part of its name or text. The
+    #: emitters mint one atom per cell (see app.parsers.checkbox_cells).
+    checkbox_fields: tuple[tuple[str, str], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -372,6 +378,7 @@ class SiteRosterRow:
             "occupancy": self.occupancy,
             "notes": self.notes,
             "extras": dict(self.extra_fields),
+            "checkbox_fields": dict(self.checkbox_fields),
             "raw_cells": dict(self.raw_cells),
             "confidence": self.confidence,
         }
@@ -775,11 +782,17 @@ def extract_site_roster(
 
         cells: dict[str, str] = {}
         raw_cells: list[tuple[str, str]] = []
+        checkbox_cells: list[tuple[str, str]] = []
         for i, col in enumerate(columns):
             val = _cell_value(row, columns, i)
             if not val:
                 continue
             raw_cells.append((str(col), val))
+            if is_checkbox_cell(val):
+                # A service-type tick box is the site's own fact, not its
+                # name, address or any canonical field.
+                checkbox_cells.append((str(col), val))
+                continue
             field_name = field_map.get(i)
             if field_name:
                 # First non-empty value wins (don't clobber)
@@ -861,6 +874,8 @@ def extract_site_roster(
         known_fields = {f[0] for f in _FIELD_HEADER_PATTERNS}
         extras: list[tuple[str, str]] = []
         for col_name, val in raw_cells:
+            if (col_name, val) in checkbox_cells:
+                continue
             # Skip cells that were already absorbed into canonical fields
             i = list(columns).index(col_name) if col_name in columns else -1
             if i >= 0 and i in field_map:
@@ -945,6 +960,7 @@ def extract_site_roster(
                 extra_fields=tuple(extras),
                 raw_cells=tuple(raw_cells),
                 confidence=confidence,
+                checkbox_fields=tuple(checkbox_cells),
             )
         )
 

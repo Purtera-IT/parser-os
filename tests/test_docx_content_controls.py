@@ -95,7 +95,16 @@ def test_content_controls_are_read_everywhere(tmp_path) -> None:
 
 
 def test_placeholder_text_is_not_content(tmp_path) -> None:
+    # A control still showing its placeholder is an unfilled field: never
+    # content (scope, chatter), but kept as the open question it is.
     path = tmp_path / "SOW.docx"
     _build(path)
-    blob = "\n".join(_texts(path))
-    assert "Click or tap here" not in blob
+    out = DocxParser().parse_artifact("p", "a", path)
+    atoms = out if isinstance(out, list) else out.atoms
+    hits = [a for a in atoms if "Click or tap here" in a.raw_text]
+    assert hits, [a.raw_text for a in atoms]
+    for a in hits:
+        assert a.atom_type.value == "open_question", (a.atom_type, a.raw_text)
+        assert "unfilled_placeholder" in a.review_flags
+        assert a.value["placeholder"] is True
+        assert a.value["field_label"] == "Customer contact"

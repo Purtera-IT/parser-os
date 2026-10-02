@@ -1274,6 +1274,19 @@ _NEGATION_RE = re.compile(
 )
 
 
+def _under_exclusion_heading(atom: Any) -> bool:
+    """The atom's own document section is an exclusions section."""
+    try:
+        from app.parsers.sow_sections import under_exclusion_heading
+    except Exception:
+        return False
+    for ref in list(getattr(atom, "source_refs", None) or [])[:1]:
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and under_exclusion_heading(loc.get("section_path") or []):
+            return True
+    return False
+
+
 def demote_exclusions_without_negation(atoms: list[Any]) -> int:
     """An ``exclusion`` with nothing negated in it is not an exclusion.
 
@@ -1295,6 +1308,12 @@ def demote_exclusions_without_negation(atoms: list[Any]) -> int:
         val = getattr(atom, "value", None)
         if isinstance(val, dict) and val.get("list_section") == "exclude":
             continue  # an item under an "Excluded:" header is negated by its header
+        if _under_exclusion_heading(atom):
+            # "Long-term warehousing of customer equipment" under an "OUT OF
+            # SCOPE" heading carries no negation of its own: the heading is
+            # the negation (signed SOWs 010087 / 010246 lost their whole
+            # exclusions list to scope_item here).
+            continue
         try:
             from app.core.schemas import AtomType as _AT
             atom.atom_type = _AT.scope_item
@@ -1879,6 +1898,124 @@ def retype_product_codes(atoms: list[Any]) -> int:
     return changed
 
 
+#: A rate stated: a multiplier on a rate, a premium, "billed at" a price.
+_RATE_STATEMENT_RE = re.compile(
+    r"\b\d{2,3}(?:\.\d+)?\s*%\s+of\s+(?:the\s+)?(?:\w+\s+){0,2}(?:rates?|price|fees?|pricing)\b"
+    r"|\b(?:billed|charged|invoiced|priced|calculated)\s+at\b"
+    r"|\btime[- ]and[- ]a[- ]half\b|\bdouble[- ]time\b|\b\d(?:\.\d+)?\s*[x\u00d7]\s+(?:the\s+)?(?:\w+\s+)?rate\b",
+    re.I)
+
+#: What makes a rate a change-order rule: the clause is about changes.
+_CHANGE_ORDER_WORDS_RE = re.compile(
+    r"\bchange[- ]?(?:orders?|requests?)\b|\bCOs?\b|\bscope changes?\b|\bout[- ]of[- ]scope\b"
+    r"|\badditional (?:work|services|scope)\b|\bnot (?:included|covered) (?:in|by) (?:this|the) (?:SOW|scope)\b",
+    re.I)
+
+
+def retype_rate_terms_off_change_orders(atoms: list[Any]) -> int:
+    """A rate is a pricing term, not a change-order rule, unless the clause
+    is about changes.
+
+    "After-hours work is billed at 150% of the standard rate." was typed
+    ``change_order_rule`` -- the type's own description lists "after-hours
+    rate" -- and so sat in the change-order packet instead of beside the
+    deal's other rates. A ``change_order_rule`` atom that states a rate or
+    multiplier and says nothing about change orders / out-of-scope work is
+    retyped ``pricing_assumption`` (the live commercial type that carries a
+    deal's rate terms; ``rate_card`` is label-only), with the old type kept
+    as an alternative. A clause that does name change orders ("Change orders
+    are billed at 150% ...") is left alone.
+    """
+    from app.core.schemas import AtomType
+
+    changed = 0
+    for a in atoms:
+        if _atom_type_str(a) != "change_order_rule":
+            continue
+        text = _atom_text(a)
+        if not _RATE_STATEMENT_RE.search(text) or _CHANGE_ORDER_WORDS_RE.search(text):
+            continue
+        a.atom_type = AtomType.pricing_assumption
+        v = getattr(a, "value", None)
+        if isinstance(v, dict):
+            alts = list(v.get("alt_atom_types") or [])
+            if "change_order_rule" not in alts:
+                v["alt_atom_types"] = alts + ["change_order_rule"]
+            v.setdefault("term_kind", "rate_term")
+        flags = list(getattr(a, "review_flags", None) or [])
+        if "rate_term_not_change_order" not in flags:
+            a.review_flags = flags + ["rate_term_not_change_order"]
+        changed += 1
+    return changed
+
+
+_MILESTONE_NAME_RE = re.compile(r"^\s*(?:key\s+|project\s+)?milestone\b|\bmilestone\s*[:\-\u2013\u2014]", re.I)
+_TOTAL_ROW_RE = re.compile(r"^\s*(?:grand\s+|sub\s*-?\s*)?totals?\s*:?\s*$", re.I)
+_PO_REFERENCE_RE = re.compile(
+    r"^\s*(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{3,}\s*$",
+    re.I,
+)
+_ROW_TYPES = frozenset({"task", "commercial_total", "vendor_line_item", "scope_item", "raw_table_row"})
+
+
+def retype_schedule_reference_rows(atoms: list[Any]) -> int:
+    """A table row's FIRST cell says what the row is.
+
+    A Gantt / schedule row named "Milestone - Install complete" is a
+    milestone, not a task or a priced line; a row that is only "PO #
+    4500123" (and its amount) is the deal's purchase-order reference, not a
+    commercial total or a task (010003: Gantt rows and the PO line typed
+    commercial_total, a SOW milestone row vendor_line_item). Only table rows
+    are judged (a ``_row`` / ``cells`` value or a pipe-joined row), never prose.
+    """
+    from app.core.schemas import AtomType as _AT
+
+    n = 0
+    for atom in atoms:
+        at = _atom_type_str(atom)
+        if at not in _ROW_TYPES:
+            continue
+        val = getattr(atom, "value", None)
+        val = val if isinstance(val, dict) else {}
+        text = _atom_text(atom)
+        is_row = bool(val.get("_row") or val.get("cells") or val.get("_columns")) or " | " in text
+        if not is_row:
+            continue
+        cells_txt = [c.strip() for c in text.split(" | ")]
+        # A leading row number / WBS id ("4", "1.2") is not the row's name.
+        while len(cells_txt) > 1 and re.fullmatch(r"\d+(?:\.\d+)*\.?", cells_txt[0] or "0"):
+            cells_txt = cells_txt[1:]
+        first = str(val.get("name") or "").strip() or cells_txt[0]
+        raw_first = first
+        first = re.sub(r"^[^:|]{1,30}:\s*", "", first) if " | " in text and ":" in first.split(" ")[0] else first
+        new_type = None
+        flag = ""
+        if (_MILESTONE_NAME_RE.search(first) or _MILESTONE_NAME_RE.search(raw_first)) and at != "milestone_phase":
+            new_type, flag = _AT.milestone_phase, "milestone_row_retyped"
+        elif _PO_REFERENCE_RE.match(first):
+            new_type, flag = _AT.deal_metadata, "po_reference_row"
+        elif (
+            _TOTAL_ROW_RE.match(first)
+            and at != "commercial_total"
+            and any(re.search(r"\d", c) for c in cells_txt[1:])
+        ):
+            new_type, flag = _AT.commercial_total, "total_row_retyped"
+        if new_type is None:
+            continue
+        try:
+            atom.atom_type = new_type
+        except Exception:  # pragma: no cover
+            continue
+        if isinstance(getattr(atom, "value", None), dict):
+            atom.value["retyped_from"] = at
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if flag not in flags:
+            flags.append(flag)
+        atom.review_flags = flags
+        n += 1
+    return n
+
+
 def apply_type_sanity(
     atoms: list[Any],
     *,
@@ -1902,6 +2039,7 @@ def apply_type_sanity(
     demoted += merge_signature_rows(atoms)
     demoted += demote_signatory_chrome(atoms)
     demoted += retype_product_codes(atoms)
+    demoted += retype_rate_terms_off_change_orders(atoms)
     demoted += enrich_vendor_line_items(atoms)
     demoted += demote_exclusions_without_negation(atoms)
     demoted += demote_manifest_metadata_bom_lines(atoms)
@@ -1924,6 +2062,7 @@ def apply_type_sanity(
 
 __all__ = [
     "apply_type_sanity",
+    "retype_rate_terms_off_change_orders",
     "cap_authority_to_source",
     "classify_document_contract_evidence",
     "demote_unearned_contract_authority",

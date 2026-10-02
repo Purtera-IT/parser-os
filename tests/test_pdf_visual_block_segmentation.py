@@ -296,7 +296,8 @@ def test_docx_paragraph_splits_like_the_signed_pdf(tmp_path):
 
     p = tmp_path / "sow_draft.docx"
     _docx(p, [ACCEPTANCE])
-    texts = [a.raw_text for a in _docx_atoms(p)]
+    # The heading is kept as a structure (chatter) atom; the body splits.
+    texts = [a.raw_text for a in _docx_atoms(p) if not (a.value or {}).get("structure")]
     assert texts == split_clauses(ACCEPTANCE), texts
 
 
@@ -386,4 +387,5 @@ def test_docx_rejected_body_line_is_a_chatter_atom(tmp_path):
     greet = [a for a in atoms if a.raw_text == "MATTHEW BRUNTON,"]
     assert len(greet) == 1, [a.raw_text for a in atoms]
     assert CHATTER_FLAG in greet[0].review_flags and greet[0].value.get("chatter") is True
-    assert all(CHATTER_FLAG not in a.review_flags for a in atoms if a.raw_text != "MATTHEW BRUNTON,")
+    assert all(CHATTER_FLAG not in a.review_flags for a in atoms
+               if a.raw_text != "MATTHEW BRUNTON," and not (a.value or {}).get("structure"))
