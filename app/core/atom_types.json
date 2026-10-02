@@ -982,6 +982,12 @@
       "label": "Takes a cost off our quote",
       "values": "which cost, and why it goes",
       "desc": "Somebody else covers something we would otherwise price: \"the customer provides the wall mounts and parking\" removes the wall-mount and parking costs. Name WHICH cost goes, in the line's own words, not just that one does. Link the line to the quote, Gantt or BOM row it removes; if that row still charges for it, that is a Conflict."
+    },
+    {
+      "key": "urgency",
+      "label": "How urgent it is",
+      "values": "how soon, and what drives it",
+      "desc": "A deadline, rush or priority signal: \"need this installed before the store opens on the 15th\", \"ASAP, customer is escalating\". Say how soon and why, in the line's own words. A date that is only a schedule fact with no pressure behind it is not urgency."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
