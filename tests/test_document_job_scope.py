@@ -275,7 +275,7 @@ def test_the_judge_asks_for_judgments_only_and_reads_documents_in_written_order(
              "a.eml": {"subject": "POS Installation 8/2", "attachment_ids": [], "external_id": "", "authored_at": "2026-08-06T15:49:00Z", "source": "email"}}
     judge_documents(later + opener, deal_name="010198 - Square POS Install Bridgewave", index=index)
     assert seen["exclude_created_by"] == ("teacher",)
-    assert seen["context"].startswith("DEAL: 010198 - Square POS Install Bridgewave\n- We will be setting just 1 Square register")
+    assert seen["context"].startswith("DEAL: Square POS Install Bridgewave\n- We will be setting just 1 Square register")
     assert seen["text"] == "DOCUMENT: POS Installation 8/2"
 
 
@@ -324,4 +324,4 @@ def test_a_document_lesson_is_keyed_on_the_document_not_the_deal(no_llm):
     assert [a.source_artifact_id for a in dropped] == ["art_kiosk", "art_kiosk"]
     assert all(a.source_artifact_id == "art_sdwan" for a in kept)
     assert all(t.startswith("DOCUMENT: ") and not t.startswith("DOCUMENT: RE:") for t, _ in seen)
-    assert all(c.startswith(f"DEAL: {DEAL}\n") for _, c in seen), "the model still reads the deal, from the context"
+    assert all(c.startswith("DEAL: CDW- Sodexo SD-WAN Program\n") for _, c in seen), "the model still reads the deal, from the context"

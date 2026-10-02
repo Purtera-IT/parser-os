@@ -907,6 +907,208 @@ def _first_nonblank_header_row(rows: list[list[Any]]) -> int | None:
     return fallback
 
 
+def _lookup_list_cells(
+    rows: list[list[Any]], validation_cells: set[tuple[int, int]] | None = None,
+) -> set[tuple[int, int]]:
+    """Cells of a sheet that are dropdown / lookup SOURCE LISTS, not facts.
+
+    A Deal Kit rate sheet keeps the option lists its dropdowns read from on
+    the sheet itself: "COST RATES / SELL RATES", "T&M / Fixed Fee", fifty SKUs,
+    "L0 .. L4", side by side. Read across, every row of them is nonsense
+    ("COST RATES | T&M | PS-TRAVEL-EXPENSES | L0") and fifty of them came back
+    as content atoms. Two signals, either is enough:
+
+    * the workbook says so -- a list data validation whose source range is
+      these cells (``validation_cells``, read from the sheet markup);
+    * the shape says so -- two or more side-by-side columns, each an unbroken
+      run of short, distinct, non-numeric labels starting on the same row,
+      whose lengths differ (each list is as long as its options, so the block
+      ends ragged, with a tail of rows only the longest list reaches). A table
+      of records is filled across; a block of option lists is not.
+
+    Returns 0-based ``(row, col)`` pairs.
+    """
+    out: set[tuple[int, int]] = set(validation_cells or ())
+    width = max((len(r) for r in rows), default=0)
+
+    def _txt(r: int, c: int) -> str:
+        row = rows[r]
+        v = row[c] if c < len(row) else None
+        if v is None or isinstance(v, bool):
+            return ""
+        return str(v).strip()
+
+    def _is_label(x: str) -> bool:
+        if not x or len(x) > 40:
+            return False
+        t = x.replace(",", "").replace("$", "").replace("%", "").strip()
+        return not t.lstrip("-").replace(".", "", 1).isdigit()
+
+    # Unbroken vertical runs of short distinct labels, per column.
+    runs: dict[int, list[tuple[int, int]]] = {}
+    for c in range(width):
+        r = 0
+        while r < len(rows):
+            if not _is_label(_txt(r, c)):
+                r += 1
+                continue
+            start = r
+            seen: set[str] = set()
+            while r < len(rows) and _is_label(_txt(r, c)) and _txt(r, c).lower() not in seen:
+                seen.add(_txt(r, c).lower())
+                r += 1
+            if r - start >= 2:
+                runs.setdefault(c, []).append((start, r))
+            if r == start:
+                r += 1
+    # Side-by-side runs that start on the same row form a block.
+    by_start: dict[int, list[tuple[int, int, int]]] = {}
+    for c, rs in runs.items():
+        for a, b in rs:
+            by_start.setdefault(a, []).append((c, a, b))
+    for start, cols in by_start.items():
+        cols.sort()
+        # adjacent columns only (a gap column ends the block)
+        blocks: list[list[tuple[int, int, int]]] = [[cols[0]]]
+        for col in cols[1:]:
+            if col[0] == blocks[-1][-1][0] + 1:
+                blocks[-1].append(col)
+            else:
+                blocks.append([col])
+        for blk in blocks:
+            if len(blk) < 2:
+                continue
+            lens = sorted(b - a for _c, a, b in blk)
+            if lens[-1] < 4 or lens[-1] - lens[0] < 2:
+                continue  # every column as long as the others: a table
+            lo_c, hi_c = blk[0][0], blk[-1][0]
+            end = max(b for _c, _a, b in blk)
+            # The rows the block spans hold nothing else in its columns'
+            # neighbourhood that is a number -- an option list is not priced.
+            if any(not _is_label(_txt(r, c)) and _txt(r, c)
+                   for r in range(start, end) for c in range(lo_c, hi_c + 1)):
+                continue
+            # Rows only the longer lists reach: at least two of them.
+            tail = sum(1 for r in range(start, end)
+                       if sum(1 for c in range(lo_c, hi_c + 1) if _txt(r, c)) < len(blk))
+            if tail < 2:
+                continue
+            for c, a, b in blk:
+                for r in range(a, b):
+                    out.add((r, c))
+    return out
+
+
+def _validation_list_sources(path: Path, wanted: set[str] | None = None) -> dict[str, set[tuple[int, int]]]:
+    """Map sheet title -> 0-based cells that a LIST data validation reads its
+    options from, anywhere in the workbook.
+
+    Read from the sheet markup (openpyxl's read-only load drops validations,
+    and the cross-sheet kind lives in an ``x14`` extension it never reads).
+    A source given as a defined name is resolved through the workbook.
+    """
+    out: dict[str, set[tuple[int, int]]] = {}
+    try:
+        import re as _re
+        import zipfile
+        from xml.etree import ElementTree as _ET
+
+        from openpyxl.utils.cell import range_boundaries
+
+        NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        RID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        PR = "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+        with zipfile.ZipFile(path) as zf:
+            book = _ET.fromstring(zf.read("xl/workbook.xml"))
+            rels = {
+                r.get("Id"): (r.get("Target") or "")
+                for r in _ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+                if r.tag == PR
+            }
+            names = {
+                (dn.get("name") or "").lower(): (dn.text or "").strip()
+                for dn in book.iter(f"{NS}definedName")
+            }
+            members = set(zf.namelist())
+
+            def _add(ref: str, home: str) -> None:
+                ref = ref.strip().lstrip("=")
+                if ref.lower() in names:
+                    ref = names[ref.lower()]
+                for part in ref.split(","):
+                    part = part.strip()
+                    sheet = home
+                    if "!" in part:
+                        sheet, part = part.rsplit("!", 1)
+                        sheet = sheet.strip("'").replace("''", "'")
+                    part = part.replace("$", "")
+                    if not _re.fullmatch(r"[A-Z]+\d+(?::[A-Z]+\d+)?", part):
+                        continue
+                    if ":" not in part:
+                        part = f"{part}:{part}"
+                    c1, r1, c2, r2 = range_boundaries(part)
+                    if (r2 - r1 + 1) * (c2 - c1 + 1) > 5000:
+                        continue
+                    cells = out.setdefault(sheet, set())
+                    for rr in range(r1 - 1, r2):
+                        for cc in range(c1 - 1, c2):
+                            cells.add((rr, cc))
+
+            for sh in book.iter(f"{NS}sheet"):
+                title = sh.get("name") or ""
+                if wanted is not None and title not in wanted:
+                    continue
+                target = rels.get(sh.get(RID) or "") or ""
+                member = target[1:] if target.startswith("/") else f"xl/{target}"
+                if member not in members:
+                    continue
+                tail = b""
+                with zf.open(member) as fh:
+                    while True:
+                        chunk = fh.read(1 << 20)
+                        if not chunk:
+                            break
+                        buf = tail + chunk
+                        k = buf.find(b"</sheetData>")
+                        tail = buf[k:] if k >= 0 else (buf[-4096:] if b"<dataValidation" not in buf else buf)
+                if b"ataValidation" not in tail:
+                    continue
+                txt = tail.decode("utf-8", "ignore")
+                for m in _re.finditer(r"<(?:\w+:)?dataValidation\b([^>]*)>(.*?)</(?:\w+:)?dataValidation>", txt, _re.S):
+                    if not _re.search(r'\btype="list"', m.group(1)):
+                        continue
+                    f1 = _re.search(r"<(?:\w+:)?formula1>\s*(?:<xm:f>)?(.*?)(?:</xm:f>)?\s*</(?:\w+:)?formula1>", m.group(2), _re.S)
+                    if not f1:
+                        continue
+                    ref = f1.group(1).strip()
+                    if ref.startswith('"'):
+                        continue  # an inline list: no cells on the sheet
+                    _add(ref, title)
+    except Exception:
+        return out
+    return out
+
+
+def _numbers_under_headers(cells: list[Any], headers: list[str]) -> bool:
+    """A row of two or more bare numbers, every one under a named column.
+
+    The base-rate row of a rate sheet ("98 | 88 | 82 | 125") has no label of
+    its own: its numbers ARE the columns' rates. Read alone it says nothing;
+    read under the header band it says "L1 Hourly: 98".
+    """
+    filled = [(c, str(v).strip()) for c, v in enumerate(cells)
+              if v is not None and str(v).strip()]
+    if len(filled) < 2:
+        return False
+    for c, x in filled:
+        t = x.replace(",", "").replace("$", "").strip()
+        if not t.lstrip("-").replace(".", "", 1).isdigit():
+            return False
+        if c >= len(headers) or not str(headers[c] or "").strip():
+            return False
+    return True
+
+
 def _commercial_blocks(
     rows: list[list[Any]],
     headers: list[str],
@@ -1043,8 +1245,8 @@ def _commercial_blocks(
                 active = cells
                 reheader.add((i, gi)); gap = False; seen = False; block_rows = []
                 continue
-            if gap:
-                if _fits(main, cells):
+            if gap or active is None:
+                if _fits(main, cells) or _numbers_under_headers(cells, main):
                     active = main
                 elif not _fits(active, cells):
                     active = None
@@ -2481,6 +2683,8 @@ class XlsxParser(BaseParser):
         hidden = self._hidden_dims(path, _mined) if _mined else {}
         styles_by_sheet = self._sheet_styles(path, _mined) if _mined else {}
         merges_by_sheet = self._vertical_merges(path, _mined) if _mined else {}
+        # Cells a dropdown reads its options from (see _lookup_list_cells).
+        list_sources = _validation_list_sources(path, _mined) if _mined else {}
 
         for sheet_title, rows in _grids:
             hc, hr = hidden.get(sheet_title, (set(), set()))
@@ -2494,7 +2698,10 @@ class XlsxParser(BaseParser):
                 hidden_cols=hc,
                 styles=styles_by_sheet.get(sheet_title),
                 merges=merges_by_sheet.get(sheet_title),
+                list_sources=list_sources.get(sheet_title),
             )
+            if list_sources.get(sheet_title):
+                sheet_atoms = self._mark_lookup_rows(sheet_atoms, rows, list_sources[sheet_title])
             # Single chokepoint (path-independent: block / legacy / commercial all
             # funnel here): mark atoms sourced from author-HIDDEN rows so a reviewer
             # can tell a collapsed/0-hour row from the live estimate. Captured, not
@@ -3463,6 +3670,19 @@ class XlsxParser(BaseParser):
         # header / above-data scaffolding so they are never emitted as priced
         # lines. ``_header_rows`` = the band; ``_data_floor`` = first emittable row.
         _headers, _header_rows, _data_floor = _commercial_header_band(rows, money_cols)
+        # The money columns were judged from the sheet's first twenty rows.
+        # On a rate sheet whose dropdown lists fill the top of the sheet the
+        # matrix's own header sits far below that, so judge them again from
+        # the header band down when the first judgment prices no data row.
+        if _header_rows and not any(
+            _row_money_values(r, money_cols) for r in rows[_data_floor:]
+        ):
+            _below = rows[min(_header_rows):]
+            _again = _money_columns(_below)
+            if role is SheetRole.RATE_CARD and not _again:
+                _again = _rate_card_value_columns(_below)
+            if _again:
+                money_cols = set(_again)
         # index of the first labelled column — a row only header-binds if it has
         # a value there (i.e. it belongs to THIS table). A side block living in
         # far-right columns (e.g. a travel calc next to the main pricing table)
@@ -3543,9 +3763,15 @@ class XlsxParser(BaseParser):
             if not any(_full):
                 continue
             if row_idx < _data_floor and row_idx not in _header_rows:
-                _unpriced.append((row_idx, _full, True))
-                continue
-            if row_idx in _header_rows or row_idx < _data_floor:
+                if not _numbers_under_headers(_full, _headers):
+                    _unpriced.append((row_idx, _full, True))
+                    continue
+                # A row of bare numbers above the matrix, each under one of
+                # its named columns ("98 | 88 | 82 | 125" -- the base rates
+                # the matrix multiplies), is a rate row: read it under the
+                # header band like the rows below, never as scaffolding.
+                _plan.setdefault(row_idx, [(0, 0, len(_raw), _headers, True)])
+            if row_idx in _header_rows or (row_idx < _data_floor and row_idx not in _plan):
                 # Header band rows AND everything above the data block (dropdown
                 # source lists, base-rate scratch rows) are structure, not priced
                 # lines — never emit them as atoms.
@@ -3581,7 +3807,7 @@ class XlsxParser(BaseParser):
                     and _first_hdr_col is not None
                     and _first_hdr_col < len(cells)
                     and cells[_first_hdr_col]
-                )
+                ) or bool(_hdrs and _numbers_under_headers(cells, _hdrs))
                 if not values:
                     # Header / label rows with no dollar figure carry no pricing
                     # signal — skip so the commercial view stays clean. But on a
@@ -3762,6 +3988,80 @@ class XlsxParser(BaseParser):
                 },
             }
         return [summary, *atoms]
+
+    def _lookup_list_atoms(
+        self, project_id, artifact_id, artifact_type, filename, sheet_name, rows, lookup,
+    ) -> list[EvidenceAtom]:
+        """One reject-able atom per worksheet row of a dropdown / lookup list
+        block: deal_metadata, chatter, rejected_by ``lookup_list``. The line is
+        in the source, so it is an atom; it is an option list, so it is not a
+        fact and feeds nothing (see app.core.deal_chatter.is_rejected_line)."""
+        from app.core.deal_chatter import CHATTER_FLAG
+
+        out: list[EvidenceAtom] = []
+        for ri in sorted({r for r, _c in lookup}):
+            if ri >= len(rows):
+                continue
+            row = rows[ri]
+            parts = [str(row[c]).strip() for c in range(len(row))
+                     if (ri, c) in lookup and row[c] is not None and str(row[c]).strip()]
+            if not parts:
+                continue
+            text = " | ".join(parts)[:4000]
+            aid = stable_id("atm", artifact_id, "lookup_list", sheet_name, ri)
+            out.append(EvidenceAtom(
+                id=aid, project_id=project_id, artifact_id=artifact_id,
+                atom_type=AtomType.deal_metadata,
+                raw_text=text, normalized_text=text.lower(),
+                value={"kind": "lookup_list", "sheet_name": sheet_name, "cells": parts,
+                       "chatter": True, "rejected_by": "lookup_list"},
+                entity_keys=[],
+                source_refs=[SourceRef(
+                    id=stable_id("src", aid), artifact_id=artifact_id,
+                    artifact_type=artifact_type, filename=filename,
+                    locator={"sheet": sheet_name, "row": ri + 1,
+                             "section_path": [sheet_name] if sheet_name else [],
+                             "extraction": "xlsx_lookup_list_v1"},
+                    extraction_method="xlsx_lookup_list_v1",
+                    parser_version=self.parser_version)],
+                receipts=[], authority_class=AuthorityClass.vendor_quote,
+                confidence=0.1, confidence_raw=0.1, calibrated_confidence=0.1,
+                review_status=ReviewStatus.needs_review,
+                review_flags=[CHATTER_FLAG, "lookup_list"],
+                parser_version=self.parser_version,
+            ))
+        return out
+
+    @staticmethod
+    def _mark_lookup_rows(
+        atoms: list[EvidenceAtom], rows: list[list[Any]], lookup: set[tuple[int, int]],
+    ) -> list[EvidenceAtom]:
+        """An atom read off a row whose every filled cell is a dropdown's
+        source list becomes a lookup_list reject, whichever path emitted it."""
+        from app.core.deal_chatter import CHATTER_FLAG
+        from app.core.schemas import AtomType as _AT
+
+        full_rows: set[int] = set()
+        for ri, row in enumerate(rows):
+            filled = [ci for ci, v in enumerate(row) if v is not None and str(v).strip()]
+            if filled and all((ri, ci) in lookup for ci in filled):
+                full_rows.add(ri + 1)
+        if not full_rows:
+            return atoms
+        for a in atoms:
+            v = a.value if isinstance(a.value, dict) else {}
+            if v.get("rejected_by") == "lookup_list":
+                continue
+            loc = (a.source_refs[0].locator or {}) if a.source_refs else {}
+            if loc.get("row") not in full_rows or v.get("is_summary"):
+                continue
+            v = dict(v)
+            v.update({"kind": "lookup_list", "chatter": True, "rejected_by": "lookup_list"})
+            a.value = v
+            a.atom_type = _AT.deal_metadata
+            a.entity_keys = []
+            a.review_flags = list(dict.fromkeys(list(a.review_flags or []) + [CHATTER_FLAG, "lookup_list"]))
+        return atoms
 
     def _commercial_unpriced_atoms(
         self, project_id, artifact_id, artifact_type, filename, sheet_name, role, unpriced,
@@ -4208,6 +4508,7 @@ class XlsxParser(BaseParser):
         hidden_cols: set[int] | None = None,
         styles: list[list[tuple[str | None, bool]]] | None = None,
         merges: list[tuple[int, int, int]] | None = None,
+        list_sources: set[tuple[int, int]] | None = None,
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
@@ -4257,6 +4558,19 @@ class XlsxParser(BaseParser):
                     sheet_name=sheet_name,
                     rows=comm_rows,
                 )
+            # Dropdown / lookup source lists are lifted out before the sheet
+            # is read as a table (they would join the header band or ride
+            # along on every priced row), and kept as reject-able lines.
+            lookup = _lookup_list_cells(comm_rows, list_sources)
+            lookup_atoms: list[EvidenceAtom] = []
+            if lookup:
+                lookup_atoms = self._lookup_list_atoms(
+                    project_id, artifact_id, artifact_type, filename, sheet_name, comm_rows, lookup,
+                )
+                comm_rows = [
+                    [None if (ri, ci) in lookup else v for ci, v in enumerate(row)]
+                    for ri, row in enumerate(comm_rows)
+                ]
             return self._emit_commercial_sheet_rows(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -4265,7 +4579,7 @@ class XlsxParser(BaseParser):
                 sheet_name=sheet_name,
                 rows=comm_rows,
                 classification=classification,
-            )
+            ) + lookup_atoms
 
         # A machine export is read, not transcribed. This sits after the
         # role router (a DROP sheet still drops, a rate card still prices)

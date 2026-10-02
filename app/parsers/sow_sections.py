@@ -88,7 +88,10 @@ _SOW_SECTION_LABEL_RE = re.compile(
     r"payment(?:\s+(?:terms|schedule))?|invoic(?:e|ing)|billing|"
     r"(?:project\s+)?assumptions?(?:\s+(?:and|&)\s+dependencies)?|dependencies|"
     r"(?:project\s+)?deliverables?|acceptance(?:\s+criteria)?|"
-    r"(?:customer|client|seller|provider|partner|vendor)\s+responsibilities|responsibilities|"
+    # Any party's responsibilities ("PurTera Responsibilities", "Customer
+    # Responsibilities") ends an exclusions section: 010087 typed the PMO
+    # duties under "PURTERA RESPONSIBILITIES" as exclusions.
+    r"(?:[a-z][\w.&'-]*\s+){0,2}responsibilities|"
     r"(?:in\s+)?scope(?:\s+of\s+(?:work|services))?|scope\s+(?:summary|overview)|"
     r"(?:project\s+)?(?:schedule|timeline|milestones?)|"
     r"change\s+(?:orders?|management|requests?)|"

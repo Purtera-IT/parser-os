@@ -1906,6 +1906,12 @@ def retype_product_codes(atoms: list[Any]) -> int:
         v = getattr(a, "value", None)
         if isinstance(v, dict) and v.get("kind") in ("quoted_message_header", "image_marker", "binary_region_marker", "signature_chrome"):
             continue
+        # A SKU in a dropdown's option list, a heading: kept as a reject,
+        # never a device on the job.
+        from app.core.deal_chatter import is_rejected_line
+
+        if is_rejected_line(a):
+            continue
         try:
             from app.core.schemas import AtomType
 

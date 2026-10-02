@@ -125,6 +125,118 @@ def _declared_site_count(
     return n, atom, bool(confirmed)
 
 
+#: A later line that takes sites OUT: "Need Troy and Wilmington sites
+#: removed." (000132), "drop the Hudson location", "Tupelo is no longer in
+#: scope".
+_REMOVAL_RE = re.compile(
+    r"\b(?:remov(?:e|ed|ing|al)|drop(?:s|ped|ping)?|cancel(?:s|l?ed|ling)?|descop(?:e|ed|ing)|"
+    r"take\s+(?:off|out)|taken\s+(?:off|out)|no\s+longer\s+(?:need(?:ed)?|required|in\s+scope|part)|"
+    r"out\s+of\s+scope|not\s+(?:be\s+)?in\s+scope)\b",
+    re.IGNORECASE,
+)
+
+#: "Delphos, OH" / "Wilmington, DE": a place named in the deal's own lines.
+_CITY_STATE_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*([A-Z]{2})\b")
+
+_NAME_STOP = frozenset({
+    "site", "sites", "location", "locations", "office", "offices", "the", "of", "and",
+    "store", "school", "building", "campus", "branch", "hq", "main",
+})
+
+
+def _site_name_words(site_key: str, aliases: Sequence[str] = ()) -> set[str]:
+    """The distinctive words of a listed site's name: ``site:troy_oh`` -> troy."""
+    words: set[str] = set()
+    for raw in [site_key.split(":", 1)[-1], *aliases]:
+        toks = [t for t in re.split(r"[^a-z0-9]+", str(raw).lower()) if t]
+        # A trailing two-letter state is the state, not the name.
+        if len(toks) >= 2 and len(toks[-1]) == 2 and toks[-1].isalpha():
+            toks = toks[:-1]
+        toks = [t for t in toks if t not in _NAME_STOP and not t.isdigit() and len(t) >= 3]
+        if toks:
+            words.add(" ".join(toks))
+    return words
+
+
+def _removed_sites(
+    atoms: Sequence[EvidenceAtom],
+    listed: Sequence[dict],
+    *,
+    after: EvidenceAtom | None = None,
+) -> tuple[set[str], set[str], list[EvidenceAtom]]:
+    """Which sites a line took back out of the deal.
+
+    Returns ``(removed place names, removed listed site keys, the removing
+    atoms)``. A place counts when a removal line names it -- a listed site by
+    its name, or a "City, ST" the deal's own lines name (a declared site the
+    parse never listed is still one fewer to find). Only a document no
+    earlier than the declaration can take a site back out of it.
+    """
+    places: dict[str, str] = {}
+    for a in atoms:
+        for m in _CITY_STATE_RE.finditer(a.raw_text or ""):
+            places.setdefault(m.group(1).lower(), m.group(1))
+    site_names: dict[str, set[str]] = {}
+    for row in listed or []:
+        key = str(row.get("site") or "")
+        if key:
+            site_names[key] = _site_name_words(key, row.get("aliases") or ())
+            for n in site_names[key]:
+                places.setdefault(n, n)
+
+    order = None
+    if after is not None:
+        try:
+            from app.core.cross_doc_copies import doc_key, document_order
+
+            order = document_order(atoms)
+            floor = doc_key(after, order)
+        except Exception:  # pragma: no cover - ordering is a refinement
+            order = None
+
+    names: set[str] = set()
+    keys: set[str] = set()
+    sources: list[EvidenceAtom] = []
+    if not places:
+        return names, keys, sources
+    # The removal has to be ABOUT the place: "Need Troy and Wilmington sites
+    # removed", "drop Tupelo", "Hudson is no longer in scope" -- not "remove
+    # the old APs at the Hudson office".
+    place = "(?:" + "|".join(re.escape(p) for p in sorted(places, key=len, reverse=True)) + ")"
+    one = place + r"(?:\s*,\s*[a-z]{2})?"
+    many = one + r"(?:\s*(?:,|and|&)\s*" + one + r")*"
+    verb_first = re.compile(
+        r"\b(?:remov\w*|drop\w*|cancel\w*|descop\w*|tak\w+\s+(?:off|out))\s+(?:the\s+)?(" + many + r")\b",
+        re.IGNORECASE,
+    )
+    place_first = re.compile(
+        r"\b(" + many + r")\s+(?:(?:sites?|locations?|offices?|stores?|schools?|branch(?:es)?)\s+)?"
+        r"(?:(?:is|are|was|were|has\s+been|have\s+been|to\s+be|needs?\s+to\s+be|should\s+be|will\s+be)\s+)?"
+        r"(?:removed|dropped|cancel\w*|descoped|taken\s+(?:off|out)|no\s+longer|out\s+of\s+scope)\b",
+        re.IGNORECASE,
+    )
+    place_re = re.compile(r"\b" + place + r"\b", re.IGNORECASE)
+    for a in atoms:
+        flags = a.review_flags or []
+        if a is after or "cross_doc_copy" in flags or "declared_scope" in flags:
+            continue
+        text = a.raw_text or ""
+        if not _REMOVAL_RE.search(text):
+            continue
+        if order is not None and doc_key(a, order) < floor:
+            continue
+        hit: set[str] = set()
+        for rx in (verb_first, place_first):
+            for m in rx.finditer(text):
+                hit |= {p.group(0).lower() for p in place_re.finditer(m.group(1))}
+        if not hit:
+            continue
+        names |= hit
+        keys |= {k for k, ws in site_names.items() if ws & hit}
+        sources.append(a)
+    return names, keys, sources
+
+
 def _found_site_count(atoms: Sequence[EvidenceAtom]) -> int:
     """How many sites the deal's site list shows.
 
@@ -147,6 +259,15 @@ def _found_site_count(atoms: Sequence[EvidenceAtom]) -> int:
     except Exception:  # pragma: no cover - the cross-check must not fail a compile
         pass
     return _physical_site_key_count(atoms)
+
+
+def _listed_sites(atoms: Sequence[EvidenceAtom]) -> list[dict]:
+    try:
+        from app.core.orbitbrief_core import build_site_readiness
+
+        return list((build_site_readiness(atoms=list(atoms), edges=[]) or {}).get("sites") or [])
+    except Exception:  # pragma: no cover
+        return []
 
 
 def _physical_site_key_count(atoms: Sequence[EvidenceAtom]) -> int:
@@ -195,14 +316,28 @@ def declared_scope_questions(
     if declared is not None:
         n, src, confirmed = declared
         found = _found_site_count(atoms)
-        if found < n:
+        # Sites a later line took back out (000132: "Need Troy and Wilmington
+        # sites removed.") leave the declaration AND the found list: the gap
+        # read "declare 6 locations; 5 identified" against four live sites.
+        removed_names, removed_keys, removers = _removed_sites(
+            atoms, _listed_sites(atoms), after=src,
+        )
+        removed = min(len(removed_names), n)
+        live_declared = n - removed
+        found = max(0, found - len(removed_keys))
+        if found < live_declared:
             qualifier = (
                 "" if confirmed
                 else " The only source is a quoted email in a forwarded"
                      " thread - confirm the count with the customer."
             )
+            declared_txt = (
+                f"{n} locations; {removed} later removed"
+                f" ({', '.join(sorted(n_.title() for n_ in removed_names))}), {live_declared} remain;"
+                if removed else f"{n} locations;"
+            )
             text = (
-                f"Customer documents declare {n} locations; {found}"
+                f"Customer documents declare {declared_txt} {found}"
                 f" identified in the parsed files. Request the site list"
                 f" (names and addresses) before SOW work.{qualifier}"
                 f' Declared in: "{(src.raw_text or "").strip()[:160]}"'
@@ -212,6 +347,10 @@ def declared_scope_questions(
                 structured={
                     "kind": "site_count_gap",
                     "declared_count": n,
+                    "removed_count": removed,
+                    "removed_sites": sorted(removed_names),
+                    "removing_atom_ids": [a.id for a in removers],
+                    "live_declared_count": live_declared,
                     "found_count": found,
                     "declaration_confirmed": confirmed,
                     "declaring_atom_id": src.id,

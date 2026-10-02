@@ -1287,12 +1287,40 @@ def compile_project(
     # email_threading is directly above and is purely additive (no atom is
     # removed, retyped or re-id'd), so the atoms here are exactly what the
     # parsers produced, with thread membership stamped on.
+    #
+    # Which document is earliest decides who OWNS a line two documents share,
+    # in this stage and every dedup stage after it; a fold across documents
+    # leaves the later document its own copy, held out of every stage (like
+    # the chatter above) and put back for the result. See cross_doc_copies.
+    held_copies: list = []
+    _doc_order: dict = {}
+    try:
+        from app.core.cross_doc_copies import document_order as _document_order
+        from app.core.orbitbrief_envelope import _load_manifest_provenance as _load_prov
+
+        _doc_order = _document_order(list(atoms) + list(held_chatter), provenance=_load_prov(project_dir))
+    except Exception as exc:
+        warnings.append(f"WARNING: document_order failed: {type(exc).__name__}: {exc}")
+
+    def _hold_copies(before: list, after: list, stage_name: str) -> list:
+        """Mark this stage's cross-document folds as copies and hold them."""
+        try:
+            from app.core.cross_doc_copies import split_copies
+
+            got = split_copies(before, after, stage=stage_name)
+        except Exception as exc:  # never fail a compile over a copy
+            warnings.append(f"WARNING: cross_doc_copies failed after {stage_name}: {type(exc).__name__}: {exc}")
+            return []
+        held_copies.extend(got)
+        return got
+
     with telemetry.stage("pasted_note_dedup", input_count=len(atoms)) as stage:
         try:
             from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
 
             before_paste = list(atoms)
-            atoms, _pasted = collapse_pasted_note_duplicates(atoms)
+            atoms, _pasted = collapse_pasted_note_duplicates(atoms, doc_order=_doc_order)
+            _paste_copies = _hold_copies(before_paste, atoms, "pasted_note_dedup")
             # Gate on the LIST, not on the helper's report. The two disagreed
             # on live 010237: three atoms left and `_pasted` was empty, so
             # nothing reached the ledger. What was removed is the only thing
@@ -1305,7 +1333,7 @@ def compile_project(
                     # Exception` below and was logged as the stage failing.
                     # The ledger call has never once run.
                     capture_suppressed(
-                        before_paste, atoms, stage="pasted_note_dedup",
+                        before_paste, atoms + _paste_copies, stage="pasted_note_dedup",
                         reason="copy of a note/email text folded onto its original (quoted copy, later copy, or note pasted from mail)",
                     ),
                 )
@@ -1534,6 +1562,21 @@ def compile_project(
             with telemetry.stage("pdf_image_vision", input_count=len(atoms)) as stage:
                 image_atoms = pdf_image_vision.process_image_markers(atoms)
                 if image_atoms:
+                    # A picture of text the page's text layer already reads
+                    # is a copy (often with its step number swapped): kept
+                    # as a suppression naming the text atom, not emitted.
+                    _vis_kept, _vis_copies = pdf_image_vision.split_text_layer_copies(image_atoms, atoms)
+                    if _vis_copies:
+                        merge_suppressed(
+                            suppressed_atoms,
+                            capture_suppressed(
+                                image_atoms, _vis_kept,
+                                stage="vision_copy_of_text_layer",
+                                reason="the page's text layer already reads this line; "
+                                       "the vision transcription is a copy",
+                            ),
+                        )
+                    image_atoms = _vis_kept
                     atoms.extend(image_atoms)
                 telemetry.end_stage(stage, output_count=len(image_atoms))
     except Exception as _piv_exc:
@@ -1822,13 +1865,14 @@ def compile_project(
         _before_pcd = list(atoms)
         try:
             from app.core.semantic_dedup import cross_type_dedup_atoms
-            atoms = cross_type_dedup_atoms(atoms)
+            atoms = cross_type_dedup_atoms(atoms, doc_order=_doc_order)
+            _pcd_copies = _hold_copies(_before_pcd, atoms, "pre_classify_dedup")
             _dropped_pcd = len(_before_pcd) - len(atoms)
             if _dropped_pcd > 0:
                 merge_suppressed(
                     suppressed_atoms,
                     capture_suppressed(
-                        _before_pcd, atoms,
+                        _before_pcd, atoms + _pcd_copies,
                         stage="pre_classify_dedup",
                         reason="same-text cross-type shadow collapsed before classification",
                     ),
@@ -1863,14 +1907,27 @@ def compile_project(
                 # judgement that let it in.
                 _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
                 if _dropped_djs:
-                    merge_suppressed(
-                        suppressed_atoms,
-                        capture_suppressed(
-                            _before_djs, atoms,
-                            stage="document_job_scope",
-                            reason="document describes another job for this customer, not the work this deal is named for",
-                        ),
-                    )
+                    # Each set-aside conversation carries ITS reason (who said
+                    # other_job, how sure, about which title) onto every atom it
+                    # drops -- a drop with no recorded reason cannot be audited.
+                    _djs_kept_ids = {id(_a) for _a in atoms}
+                    _djs_reason_by_id: dict[str, str] = {}
+                    for _v in _djs_verdicts:
+                        if _v.get("verdict") == "other_job":
+                            for _aid in _v.get("atom_ids") or []:
+                                _djs_reason_by_id.setdefault(_aid, _v.get("reason") or "")
+                    _djs_default = "document describes another job for this customer, not the work this deal is named for"
+                    _djs_groups: dict[str, list] = {}
+                    for _a in _before_djs:
+                        if id(_a) in _djs_kept_ids:
+                            continue
+                        _aid = str(getattr(_a, "id", "") or "")
+                        _djs_groups.setdefault(_djs_reason_by_id.get(_aid) or _djs_default, []).append(_a)
+                    for _reason, _group in _djs_groups.items():
+                        merge_suppressed(
+                            suppressed_atoms,
+                            capture_suppressed(_group, [], stage="document_job_scope", reason=_reason),
+                        )
                     _djs_dropped = len(_dropped_djs)
                 warnings.extend(_djs_notes)
         except Exception as exc:
@@ -2241,14 +2298,14 @@ def compile_project(
                     warnings.append(f"INFO: {_party_early} signature-page address(es) kept as party_address before dedup")
             except Exception as exc:
                 warnings.append(f"WARNING: party_address_veto failed: {type(exc).__name__}: {exc}")
-            atoms = semantic_dedup_atoms(atoms)
+            atoms = semantic_dedup_atoms(atoms, doc_order=_doc_order)
             # Cross-type pass: the same sentence emitted as raw_table_row +
             # scope_item + service_line + task collapses to the single most-
             # specific type. semantic_dedup keys with atom_type so it can't
             # catch these; without this, one table row inflates scope_truth
             # and the scorecards four-fold.
             before_xt = len(atoms)
-            atoms = cross_type_dedup_atoms(atoms)
+            atoms = cross_type_dedup_atoms(atoms, doc_order=_doc_order)
             dropped_xt = before_xt - len(atoms)
             if dropped_xt > 0:
                 warnings.append(
@@ -2258,13 +2315,14 @@ def compile_project(
             warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
         dropped_sem = before_sem - len(atoms)
         _sem_notes: list[str] = []
+        _sem_copies = _hold_copies(before_sem_atoms, atoms, "semantic_dedup")
         # Measured from the snapshot, so a turn only the speech collapse
         # dropped still gets its suppression entry.
         if len(before_sem_atoms) > len(atoms):
             merge_suppressed(
                 suppressed_atoms,
                 capture_suppressed(
-                    before_sem_atoms, atoms,
+                    before_sem_atoms, atoms + _sem_copies,
                     stage="semantic_dedup",
                     reason="semantic/cross-type duplicate collapsed into a canonical atom",
                 ),
@@ -2335,7 +2393,8 @@ def compile_project(
 
             before_sh = len(atoms)
             _before_sh_atoms = list(atoms)
-            atoms = dedupe_stakeholder_atoms(atoms)
+            atoms = dedupe_stakeholder_atoms(atoms, doc_order=_doc_order)
+            _sh_copies = _hold_copies(_before_sh_atoms, atoms, "stakeholder_dedup")
             dropped_sh = before_sh - len(atoms)
             if dropped_sh > 0:
                 warnings.append(
@@ -2351,7 +2410,7 @@ def compile_project(
                 merge_suppressed(
                     suppressed_atoms,
                     capture_suppressed(
-                        _before_sh_atoms, atoms, stage="stakeholder_dedup",
+                        _before_sh_atoms, atoms + _sh_copies, stage="stakeholder_dedup",
                         reason="duplicate stakeholder identity folded into another record",
                     ),
                 )
@@ -3140,6 +3199,34 @@ def compile_project(
                 _seen_ids.add(_atom.id)
                 _back.append(_atom)
         atoms = atoms + _back
+
+    # The cross-document copies come back the same way: after every head, so
+    # nothing counted, priced or packetized them; before coverage, so each
+    # document's line counts as read by its own copy.
+    if held_copies:
+        try:
+            for _atom in held_copies:
+                if getattr(_atom, "source_refs", None) and not getattr(_atom, "receipts", None):
+                    _atom.receipts = replay_atom_receipts(_atom, artifact_paths)
+        except Exception as exc:  # never fail a compile over a copy's receipt
+            warnings.append(f"WARNING: copy receipts failed: {type(exc).__name__}: {exc}")
+        try:
+            from app.core.cross_doc_copies import resolve_canonical
+
+            resolve_canonical(held_copies, atoms)
+        except Exception as exc:
+            warnings.append(f"WARNING: copy canonical resolution failed: {type(exc).__name__}: {exc}")
+        _seen_ids = {a.id for a in atoms}
+        _back_copies: list = []
+        for _atom in held_copies:
+            if _atom.id not in _seen_ids:
+                _seen_ids.add(_atom.id)
+                _back_copies.append(_atom)
+        atoms = atoms + _back_copies
+        warnings.append(
+            f"INFO: cross_doc_copies kept {len(_back_copies)} later-document copy(ies) "
+            f"of lines an earlier document owns"
+        )
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.

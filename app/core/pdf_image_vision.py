@@ -1309,6 +1309,67 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     return out
 
 
+def _content_words(text: str) -> list[str]:
+    """The words of a line, without step labels, numbers or bullets."""
+    t = _STEP_PREFIX_RE.sub("", text or "")
+    return [w for w in re.findall(r"[a-z][a-z0-9'-]*", t.lower()) if len(w) >= 2]
+
+
+def split_text_layer_copies(
+    new_atoms: list[EvidenceAtom], atoms: list[Any], *, min_cover: float = 0.85,
+) -> tuple[list[EvidenceAtom], list[EvidenceAtom]]:
+    """Split vision atoms into (kept, copies of text the page already has).
+
+    A step guide is often BOTH text and a picture of it: the vision pass
+    transcribes the picture and the step arrives twice, the copy with its
+    number swapped ("Step 3:" against the text layer's "5 Loosen the
+    turnbuckles..."), deal 010246. When the text layer of the same PDF page
+    already carries an atom containing the vision line's words (at least
+    ``min_cover`` of them, numbers and step labels ignored), the vision line
+    is a copy. Copies are returned for the caller to record as suppressions
+    (stage ``vision_copy_of_text_layer``), naming the atom that covers them.
+    """
+    by_page: dict[tuple[str, int], list[tuple[Any, set[str]]]] = {}
+    for a in atoms:
+        v = getattr(a, "value", None)
+        if isinstance(v, dict) and (v.get("via") == "pdf_image_vision" or v.get("kind") == "image_marker"):
+            continue
+        for ref in (getattr(a, "source_refs", None) or [])[:1]:
+            loc = getattr(ref, "locator", None) or {}
+            if not isinstance(loc, dict) or loc.get("page") is None:
+                continue
+            if str(getattr(ref, "extraction_method", "") or "").startswith("pdf_image_vision"):
+                continue
+            try:
+                page = int(loc.get("page"))
+            except (TypeError, ValueError):
+                continue
+            words = set(_content_words(getattr(a, "raw_text", "") or ""))
+            if words:
+                by_page.setdefault((str(getattr(a, "artifact_id", "")), page), []).append((a, words))
+    kept: list[EvidenceAtom] = []
+    copies: list[EvidenceAtom] = []
+    for a in new_atoms:
+        words = _content_words(a.raw_text)
+        loc = (a.source_refs[0].locator or {}) if a.source_refs else {}
+        page = loc.get("page")
+        cover = None
+        if len(set(words)) >= 4 and page is not None:
+            want = set(words)
+            for t, tw in by_page.get((str(a.artifact_id), int(page)), []):
+                if len(want & tw) >= min_cover * len(want):
+                    cover = t
+                    break
+        if cover is None:
+            kept.append(a)
+            continue
+        if isinstance(a.value, dict):
+            a.value["covered_by_text_atom"] = str(getattr(cover, "id", ""))
+            a.value["covered_by_text"] = (getattr(cover, "raw_text", "") or "")[:200]
+        copies.append(a)
+    return kept, copies
+
+
 _STEP_PREFIX_RE = re.compile(r"^\s*step\s+\S+\s*:\s*", re.I)
 
 

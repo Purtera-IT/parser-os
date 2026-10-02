@@ -46,3 +46,43 @@ def _page_is_a_drawing(page: Any) -> bool:
     return paths >= _DRAWING_MIN_PATHS and paths >= _DRAWING_PATHS_PER_CHAR * max(chars, 1)
 
 
+
+
+def table_cuts_words(page: Any, table: Any) -> bool:
+    """Does this found "table" draw its cell walls through words?
+
+    A real table's rules run between its words. A page whose ruled lines are
+    a diagram's boxes or arrows -- an install guide's figure beside its steps,
+    a floor plan too small for :func:`_page_is_a_drawing` -- yields a grid
+    whose walls cross the text, and the extraction shreds words mid-word
+    ("RECEPT | ION", "Loos | en the turnbuckles", 010246 page 5). The text
+    layer knows where each word is: when two or more words (and at least one
+    in twenty inside the table) straddle a cell's vertical edge, the grid is
+    not a table and its region is left to the layout reader.
+    """
+    try:
+        cells = [c for c in (getattr(table, "cells", None) or []) if c]
+        if not cells:
+            return False
+        edges = sorted({round(float(c[0]), 1) for c in cells} | {round(float(c[2]), 1) for c in cells})
+        tb = getattr(table, "bbox", None)
+        if not tb:
+            return False
+        tx0, ty0, tx1, ty1 = (float(v) for v in tb)
+        inner = [e for e in edges if tx0 + 1.0 < e < tx1 - 1.0]
+        if not inner:
+            return False
+        words = [w for w in (page.get_text("words") or [])
+                 if tx0 - 1 <= (w[0] + w[2]) / 2.0 <= tx1 + 1 and ty0 - 1 <= (w[1] + w[3]) / 2.0 <= ty1 + 1]
+        if not words:
+            return False
+        cut = 0
+        for w in words:
+            x0, x1 = float(w[0]), float(w[2])
+            if len(str(w[4]).strip()) < 2:
+                continue
+            if any(x0 + 1.5 < e < x1 - 1.5 for e in inner):
+                cut += 1
+        return cut >= 2 and cut * 20 >= len(words)
+    except Exception:
+        return False

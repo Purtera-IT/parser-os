@@ -132,19 +132,34 @@ def _attach_enumerators(segs: list[_Seg]) -> list[_Seg]:
     """
     used: set[int] = set()
     by_id = list(segs)
+    rail = _numbered_rail(by_id)
     for i, s in enumerate(by_id):
         if i in used or not _ENUMERATOR.match(s.text.strip()):
             continue
         h = max(1.0, s.y1 - s.y0)
+        # A marker on a numbered RAIL (1, 2, 3 ... stacked at one x) may sit
+        # well left of its text: a step guide set with a wide number column
+        # was read as a four-column table, both columns of steps interleaved
+        # row by row ("Flip the two breakers | Connect the cellular").
+        reach = (12.0 if i in rail else 3.0) * max(s.size, 6.0)
         best = None
         for j, t in enumerate(by_id):
             if j == i or j in used:
                 continue
             gap = t.x0 - s.x1
-            if gap < -0.5 or gap > 3.0 * max(s.size, t.size, 6.0):
+            if gap < -0.5 or gap > max(reach, 3.0 * max(s.size, t.size, 6.0)):
                 continue
             ov = min(s.y1, t.y1) - max(s.y0, t.y0)
             if ov < 0.3 * min(h, max(1.0, t.y1 - t.y0)):
+                continue
+            # A marker set vertically centred on a step that wraps over three
+            # or four lines sits beside a MIDDLE line: "1" beside "marked
+            # PUMP to the off position", with "Flip the two breakers" a line
+            # above. Gluing it there cut the step in two, mid-sentence. Walk
+            # up to the first line of the block the marker heads.
+            j = _block_top(by_id, j, s)
+            t = by_id[j]
+            if j in used or j == i:
                 continue
             words = t.text.split()
             if len(words) < 3 or not words[0][:1].isupper() or _ENUMERATOR.match(t.text.strip()):
@@ -160,6 +175,67 @@ def _attach_enumerators(segs: list[_Seg]) -> list[_Seg]:
         t.y1 = max(t.y1, s.y1)
         used.add(i)
     return [s for i, s in enumerate(by_id) if i not in used]
+
+
+def _numbered_rail(segs: list[_Seg]) -> set[int]:
+    """Indices of bare step numbers stacked at one x that count up by one
+    (1, 2, 3 ...; at least three of them). A column of figures in a table
+    does not count 1, 2, 3 down a column with prose beside each."""
+    nums: list[tuple[int, int]] = []
+    for i, s in enumerate(segs):
+        m = re.fullmatch(r"(?:step\s+)?\(?(\d{1,2})[.):]?", s.text.strip(), re.I)
+        if m:
+            nums.append((i, int(m.group(1))))
+    out: set[int] = set()
+    groups: list[list[tuple[int, int]]] = []
+    for i, n in sorted(nums, key=lambda p: (round(segs[p[0]].x0 / 4.0), segs[p[0]].y0)):
+        if groups and abs(segs[groups[-1][-1][0]].x0 - segs[i].x0) <= 4.0:
+            groups[-1].append((i, n))
+        else:
+            groups.append([(i, n)])
+    for g in groups:
+        g.sort(key=lambda p: segs[p[0]].y0)
+        run = [g[0]]
+        for p in g[1:]:
+            if p[1] == run[-1][1] + 1:
+                run.append(p)
+            else:
+                if len(run) >= 3:
+                    out.update(i for i, _ in run)
+                run = [p]
+        if len(run) >= 3:
+            out.update(i for i, _ in run)
+    return out
+
+
+def _block_top(segs: list[_Seg], j: int, marker: _Seg) -> int:
+    """Index of the first line of the left-aligned text block whose line
+    ``segs[j]`` is, walking up only while the line above starts at the same
+    x, sits one line pitch above, does not end a sentence, and still lies
+    beside the marker (its centre no higher than one marker-height above
+    the marker's top)."""
+    cur = j
+    for _ in range(6):
+        t = segs[cur]
+        lh = max(1.0, t.y1 - t.y0)
+        above = None
+        for k, u in enumerate(segs):
+            if k == cur or abs(u.x0 - t.x0) > 2.0:
+                continue
+            gap = t.y0 - u.y1
+            if gap < -0.3 * lh or gap > 0.8 * lh:
+                continue
+            if u.cy >= t.cy:
+                continue
+            if above is None or u.y1 > segs[above].y1:
+                above = k
+        if above is None:
+            break
+        u = segs[above]
+        if _TERMINAL.search(u.text) or u.cy < marker.y0 - (marker.y1 - marker.y0):
+            break
+        cur = above
+    return cur
 
 
 def _inside(cx: float, cy: float, r: Any) -> bool:

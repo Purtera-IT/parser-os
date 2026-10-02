@@ -166,6 +166,45 @@ def _note_is_automated(parsed: dict[str, Any]) -> bool:
     return unresolved and _is_notification_shaped(parsed)
 
 
+def _place_unlined_atoms(atoms: list[EvidenceAtom], raw_lines: list[str], body_at: int) -> None:
+    """Give every atom of a note the line it was read from.
+
+    Only body prose was located; the header atom, field values, signature
+    people and address sites carried the bare note locator, so they tied at
+    line 0 and read in whatever order the passes emitted them -- live 010087,
+    a pasted email's signature above the note's own header. The header sits
+    at line 0, above the body; any other atom on the first body line holding
+    its whole text. Never moves an atom
+    that already has a line.
+    """
+    normed = [" ".join(str(ln).split()).lower() for ln in raw_lines]
+    for atom in atoms:
+        refs = list(getattr(atom, "source_refs", None) or [])
+        if not refs:
+            continue
+        loc = dict(getattr(refs[0], "locator", None) or {})
+        if loc.get("line_start") is not None:
+            continue
+        v = atom.value if isinstance(atom.value, dict) else {}
+        line = None
+        if v.get("kind") == "hubspot_note_meta":
+            # Composed text: line 0 places it above the body without claiming
+            # a line it would fail to replay against (``source_lines`` holds
+            # the real header lines).
+            line = 0
+        else:
+            # Only where the line holds the atom's whole text, so the source
+            # replay still verifies it; composed atoms keep no line.
+            probe = " ".join(str(atom.raw_text or "").split()).lower()
+            if probe:
+                line = next((i + 1 for i in range(body_at, len(normed)) if probe in normed[i]), None)
+        if line is None:
+            continue
+        loc.update({"line_start": line, "line_end": line})
+        refs[0] = refs[0].model_copy(update={"locator": loc})
+        atom.source_refs = refs
+
+
 def _is_placeholder_note_title(text: str) -> bool:
     return " ".join(str(text or "").lower().split()).strip(" .:!-") in _PLACEHOLDER_NOTE_TITLES
 
@@ -644,6 +683,8 @@ class HubspotNoteParser(BaseParser):
                 atoms, project_id=project_id, artifact_id=artifact_id,
                 filename=path.name, parsed=parsed,
             )
+        _place_unlined_atoms(atoms, [str(x) for x in (parsed.get("raw_lines") or [])],
+                             int(parsed.get("body_line_index") or 0))
         structured_doc = self._build_structured_doc(filename=path.name, parsed=parsed)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
