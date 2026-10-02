@@ -87,7 +87,9 @@ def _rejoin_split_table(band, groups):
     number. Side-by-side tables (a Level of Effort table beside a Key Unit
     Metrics box) each carry both, or fill different rows, and stay apart.
     """
-    if len(groups) < 2:
+    # A lone row is not a table: "TOTAL | | | 1250" stays the loose cells it
+    # always was.
+    if len(groups) < 2 or sum(1 for r in band if _filled(r)) < 3:
         return groups
 
     def _cells(r, a, b):
