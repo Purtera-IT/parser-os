@@ -105,7 +105,8 @@ def _is_word(tok: str, _compound: bool = True) -> bool:
     return _shape_ok(core)
 
 
-_ABBREV_PLURAL_RE = re.compile(r"[A-Z]{2,6}s")
+#: "IPs", and the apostrophe plural/possessive "PO's", "SOW's" (010003).
+_ABBREV_PLURAL_RE = re.compile(r"[A-Z]{2,6}['\u2019]?s")
 #: A capital inside a word ("SonicWall", "ServiceNow") is the shape of a product name.
 _CAMEL_RE = re.compile(r"[A-Z][a-z]+(?:[A-Z][a-z]*)+")
 

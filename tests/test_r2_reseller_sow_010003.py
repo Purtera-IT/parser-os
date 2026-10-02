@@ -339,3 +339,189 @@ def test_pdf_footer_band_is_a_chatter_atom(tmp_path: Path) -> None:
     assert band, [a.raw_text for a in atoms]
     for a in band + [a for a in atoms if a.raw_text.startswith("Page ")]:
         assert a.atom_type == AtomType.deal_metadata and "chatter" in a.review_flags, a.raw_text
+
+
+# ── 12: a BOM table row is one atom, cells never apart ──
+
+_BOM_ROWS = [["7506872", "QM75C", ["Samsung QM75C QMC Series - 75\" LED-backlit", "LCD display - 4K - for digital signage"],
+              "12", "$1,077.30", "$12,927.60"],
+             ["5502114", "WMN6575SE", ["Samsung Slim Fit Wall Mount WMN6575SE -", "mounting kit - for LCD display"],
+              "12", "$89.99", "$1,079.88"]]
+
+
+@pytest.mark.parametrize("ruled", [True, False])
+def test_bom_rows_are_one_atom_each(tmp_path: Path, ruled: bool) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf = tmp_path / "bom.pdf"
+    doc = fitz.open()
+    p = doc.new_page(width=612, height=792)
+    p.insert_text((36, 60), "Product Details", fontsize=12, fontname="hebo")
+    cols = [36, 96, 170, 400, 445, 520, 590]
+    y = 90
+    for x, c in zip(cols, ["CDW#", "Mfg#", "Description", "Qty", "Unit Price", "Ext Price"]):
+        p.insert_text((x + 2, y), c, fontsize=8, fontname="hebo")
+    y += 16
+    for r in _BOM_ROWS:
+        for x, c in zip(cols, r):
+            for k, line in enumerate(c if isinstance(c, list) else [c]):
+                p.insert_text((x + 2, y + 10 * k), line, fontsize=8)
+        y += 30
+    if ruled:
+        for yy in (80, 96, 126, 156):
+            p.draw_line((36, yy), (590, yy))
+        for x in cols:
+            p.draw_line((x, 80), (x, 156))
+    doc.save(str(pdf))
+    doc.close()
+    atoms = _pdf_atoms(pdf)
+    texts = [a.raw_text for a in atoms]
+    for r in _BOM_ROWS:
+        hits = [t for t in texts if r[0] in t]
+        assert len(hits) == 1, (r[0], texts)
+        row = hits[0]
+        for cell in (r[4], r[5], r[2][1]):
+            assert cell in row, (cell, row)
+        assert "CDW#" in row, row  # key: value, the header names the cells
+    for t in texts:
+        assert t.strip() not in {"7506872", "$1,077.30", "CDW#", "mounting kit - for LCD display"}, t
+        assert not t.startswith("CDW# Mfg# Description | Qty"), t
+
+
+# ── 1 / 4: SOW exclusions under a lead-in, PMO steps, the PO footnote ──
+
+_EXCLUDED = [
+    "Electrical work, including installation of new outlets or circuits",
+    "Drywall cutting, patching or painting",
+    "Furniture movement or removal of existing equipment",
+]
+_PMO = [
+    "Conduct a remote kickoff meeting with Customer",
+    "Develop schedule for installation activities and share with Customer",
+    "Complete billing tasks",
+]
+
+
+def _sow_deal(d: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    d.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    p = doc.new_page(width=612, height=792)
+    y = 60
+
+    def h(t):
+        nonlocal y
+        p.insert_text((36, y), t, fontsize=12, fontname="hebo")
+        y += 20
+
+    def line(t, x=36):
+        nonlocal y
+        p.insert_text((x, y), t, fontsize=10)
+        y += 13
+
+    def bullets(items):
+        nonlocal y
+        for b in items:
+            p.insert_text((50, y), "•", fontsize=10)
+            line(b, x=62)
+        y += 8
+
+    h("Statement of Work")
+    line('This Statement of Work ("SOW") is made between CDW Direct, LLC and Customer.')
+    y += 8
+    h("Project Management")
+    line("CDW will provide project management for the duration of the project. The CDW PM will:")
+    bullets(_PMO)
+    h("Invoicing Procedures")
+    line("Services are billed on a time and materials basis. Consultant timesheets are submitted every")
+    line("Monday for the prior week and Customer will be invoiced monthly.")
+    y += 8
+    h("Customer Responsibilities")
+    line("The following are not included in this SOW:")
+    bullets(_EXCLUDED)
+    p.insert_text((36, 740), "Note: CDW PO's are not transferrable.", fontsize=7, fontname="heit")
+    doc.save(str(d / "CDW_SOW.pdf"))
+    doc.close()
+
+
+def test_sow_lead_in_exclusions_pmo_steps_and_po_note_survive_compile(tmp_path: Path) -> None:
+    from app.core.compiler import compile_project
+
+    _sow_deal(tmp_path / "deal")
+    r = compile_project(tmp_path / "deal", project_id="p", allow_errors=True, use_cache=False)
+    kept = {" ".join(a.raw_text.split()): a for a in r.atoms}
+    recorded = {" ".join(a.raw_text.split()) for a in r.suppressed_atoms}
+    for t in _EXCLUDED:
+        assert t in kept and kept[t].atom_type == AtomType.exclusion, (t, sorted(kept))
+    for t in _PMO:  # an atom, or at least a recorded suppression
+        assert t in kept or t in recorded, (t, sorted(kept), sorted(recorded))
+    assert any("timesheets are submitted every Monday" in t for t in kept), sorted(kept)
+    note = kept.get("Note: CDW PO's are not transferrable.")
+    assert note is not None, sorted(kept)
+    assert note.atom_type != AtomType.exclusion
+
+
+def test_lead_in_sentence_opens_an_exclusions_list() -> None:
+    from app.parsers.sow_sections import is_exclusion_heading
+
+    for t in ("The following are not included in this SOW:",
+              "The following items are excluded from the scope of work",
+              "Not included in this quote:", "Out of Scope"):
+        assert is_exclusion_heading(t), t
+    for t in ("Inclusions and Exclusions", "Electrical work is not included in this SOW unless quoted separately.",
+              "The following are included in this SOW:", "The following is out of scope."):
+        assert not is_exclusion_heading(t), t
+
+
+def test_apostrophe_abbreviation_plural_is_readable_text() -> None:
+    from app.core.text_quality import is_unreadable
+
+    assert not is_unreadable("Note: CDW PO's are not transferrable.")
+
+
+# ── 6: schedule rows -- milestone, PO reference, total ──
+
+def test_schedule_rows_are_typed_by_their_name_cell() -> None:
+    from app.core.atom_type_sanity import retype_schedule_reference_rows
+
+    rows = [
+        ("m1", AtomType.vendor_line_item, "Milestone - Install complete | 2026-08-21 | 2026-08-21 | 0"),
+        ("m2", AtomType.task, "4 | Milestone: Installation Complete | 0 days | 2026-08-21 | 3"),
+        ("po", AtomType.commercial_total, "PO # 4500123 | $18,207.48"),
+        ("tt", AtomType.task, "Total | 9 | $4,450.00"),
+        ("t1", AtomType.task, "2 | TV Delivery to NYC Office | 3 days | 2026-08-10 | 1"),
+        ("t2", AtomType.task, "Install displays | 2026-08-17 | 2026-08-21 | 5 | $4,200.00"),
+        # prose is never judged as a row
+        ("pr", AtomType.scope_item, "Milestone payments are invoiced when each phase is accepted."),
+    ]
+    atoms = [_mk(i, t, x, []) for i, t, x in rows]
+    assert retype_schedule_reference_rows(atoms) == 4
+    got = {a.id: a.atom_type for a in atoms}
+    assert got == {
+        "m1": AtomType.milestone_phase, "m2": AtomType.milestone_phase,
+        "po": AtomType.deal_metadata, "tt": AtomType.commercial_total,
+        "t1": AtomType.task, "t2": AtomType.task, "pr": AtomType.scope_item,
+    }
+
+
+def test_gantt_workbook_milestone_and_po_rows_after_compile(tmp_path: Path) -> None:
+    import datetime as dt
+
+    openpyxl = pytest.importorskip("openpyxl")
+    from app.core.compiler import compile_project
+
+    d = tmp_path / "deal"
+    d.mkdir()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Gantt"
+    ws.append(["Task", "Start Date", "End Date", "Days", "Cost", "Status"])
+    ws.append(["Project kickoff", dt.date(2026, 8, 3), dt.date(2026, 8, 3), 1, 250, "Complete"])
+    ws.append(["Install displays", dt.date(2026, 8, 17), dt.date(2026, 8, 21), 5, 4200, "Not Started"])
+    ws.append(["Milestone - Install complete", dt.date(2026, 8, 21), dt.date(2026, 8, 21), 0, None, None])
+    ws.append(["PO # 4500123", None, None, None, 18207.48, None])
+    wb.save(d / "Gantt.xlsx")
+    r = compile_project(d, project_id="p", allow_errors=True, use_cache=False)
+    by = {a.raw_text.split(" | ")[0]: a.atom_type for a in r.atoms}
+    assert by.get("Milestone - Install complete") == AtomType.milestone_phase, by
+    assert by.get("PO # 4500123") == AtomType.deal_metadata, by
+    assert by.get("Install displays") not in (AtomType.commercial_total, None), by

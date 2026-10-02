@@ -39,11 +39,28 @@ EXCLUSION_HEADING_RE = re.compile(
 )
 
 
+#: The lead-in sentence that opens an exclusions list in place of a heading:
+#: "The following are not included in this SOW:", "The following items are
+#: excluded from the scope of work", "Not included in this quote:" (010003).
+EXCLUSION_LEADIN_RE = re.compile(
+    r"^\s*(?:the\s+following(?:\s+(?:items|services|tasks|activities|work|are\s+items))?\s+"
+    r"(?:are|is|will\s+be)\s+|)"
+    r"(?:not\s+included|excluded|out\s+of\s+scope|not\s+in\s+scope|not\s+part\s+of)"
+    r"(?:\s+(?:in|from|of|under)\s+(?:this|the)\s+(?:sow|statement\s+of\s+work|scope(?:\s+of\s+work)?|"
+    r"project|quote|proposal|agreement|engagement|services?))?\s*:?\s*$",
+    re.I,
+)
+
+
 def is_exclusion_heading(text: str) -> bool:
-    """True when ``text`` is (only) the label of an exclusions section.
+    """True when ``text`` is (only) the label of an exclusions section, or
+    the lead-in sentence that opens one ("The following are not included in
+    this SOW:").
 
     "Inclusions and Exclusions" names both halves, so it is not."""
     t = " ".join(str(text or "").split())
+    if t and len(t) <= 90 and EXCLUSION_LEADIN_RE.match(t):
+        return True
     if not t or len(t) > 60:
         return False
     if re.search(r"\binclu(?:sions?|ded)\b", t, re.I) and not re.search(r"\bnot\s+included\b", t, re.I):

@@ -1898,6 +1898,73 @@ def retype_product_codes(atoms: list[Any]) -> int:
     return changed
 
 
+_MILESTONE_NAME_RE = re.compile(r"^\s*(?:key\s+|project\s+)?milestone\b|\bmilestone\s*[:\-\u2013\u2014]", re.I)
+_TOTAL_ROW_RE = re.compile(r"^\s*(?:grand\s+|sub\s*-?\s*)?totals?\s*:?\s*$", re.I)
+_PO_REFERENCE_RE = re.compile(
+    r"^\s*(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{3,}\s*$",
+    re.I,
+)
+_ROW_TYPES = frozenset({"task", "commercial_total", "vendor_line_item", "scope_item", "raw_table_row"})
+
+
+def retype_schedule_reference_rows(atoms: list[Any]) -> int:
+    """A table row's FIRST cell says what the row is.
+
+    A Gantt / schedule row named "Milestone - Install complete" is a
+    milestone, not a task or a priced line; a row that is only "PO #
+    4500123" (and its amount) is the deal's purchase-order reference, not a
+    commercial total or a task (010003: Gantt rows and the PO line typed
+    commercial_total, a SOW milestone row vendor_line_item). Only table rows
+    are judged (a ``_row`` / ``cells`` value or a pipe-joined row), never prose.
+    """
+    from app.core.schemas import AtomType as _AT
+
+    n = 0
+    for atom in atoms:
+        at = _atom_type_str(atom)
+        if at not in _ROW_TYPES:
+            continue
+        val = getattr(atom, "value", None)
+        val = val if isinstance(val, dict) else {}
+        text = _atom_text(atom)
+        is_row = bool(val.get("_row") or val.get("cells") or val.get("_columns")) or " | " in text
+        if not is_row:
+            continue
+        cells_txt = [c.strip() for c in text.split(" | ")]
+        # A leading row number / WBS id ("4", "1.2") is not the row's name.
+        while len(cells_txt) > 1 and re.fullmatch(r"\d+(?:\.\d+)*\.?", cells_txt[0] or "0"):
+            cells_txt = cells_txt[1:]
+        first = str(val.get("name") or "").strip() or cells_txt[0]
+        raw_first = first
+        first = re.sub(r"^[^:|]{1,30}:\s*", "", first) if " | " in text and ":" in first.split(" ")[0] else first
+        new_type = None
+        flag = ""
+        if (_MILESTONE_NAME_RE.search(first) or _MILESTONE_NAME_RE.search(raw_first)) and at != "milestone_phase":
+            new_type, flag = _AT.milestone_phase, "milestone_row_retyped"
+        elif _PO_REFERENCE_RE.match(first):
+            new_type, flag = _AT.deal_metadata, "po_reference_row"
+        elif (
+            _TOTAL_ROW_RE.match(first)
+            and at != "commercial_total"
+            and any(re.search(r"\d", c) for c in cells_txt[1:])
+        ):
+            new_type, flag = _AT.commercial_total, "total_row_retyped"
+        if new_type is None:
+            continue
+        try:
+            atom.atom_type = new_type
+        except Exception:  # pragma: no cover
+            continue
+        if isinstance(getattr(atom, "value", None), dict):
+            atom.value["retyped_from"] = at
+        flags = list(getattr(atom, "review_flags", None) or [])
+        if flag not in flags:
+            flags.append(flag)
+        atom.review_flags = flags
+        n += 1
+    return n
+
+
 def apply_type_sanity(
     atoms: list[Any],
     *,

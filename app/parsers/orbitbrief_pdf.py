@@ -3741,6 +3741,12 @@ def _classify_text_block(
             section_atom = atom_type
             section_auth = auth
             break
+    # A "Note: ..." printed below an exclusions list is the page's footnote
+    # ("Note: CDW PO's are not transferrable.", 010003), not one more thing
+    # excluded: it is typed by its own words.
+    if section_atom == AtomType.exclusion and re.match(r"^\s*(?:note|nb|n\.b\.)\s*[:\-]", text or "", re.I):
+        section_atom = None
+        section_auth = None
 
     # Week 5: when the chunk is a coalesced Q+A pair (Q4. ... A4. ...),
     # the *answer* body carries the customer's substantive position, so
