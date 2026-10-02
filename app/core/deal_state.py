@@ -75,6 +75,45 @@ def _asks_for_a_survey(text: str) -> bool:
         return False
     return bool(_SURVEY_REQUEST.search(text))
 
+
+_SHEET_TYPES = {"xlsx", "csv", "ods", "xls", "xlsm"}
+
+#: A cell short of a sentence: a rate, a checkbox, a service name.
+_CELL_SENTENCE_WORDS = 5
+
+
+def _from_a_sheet(atom: Any) -> bool:
+    for ref in getattr(atom, "source_refs", None) or []:
+        at = getattr(ref, "artifact_type", None)
+        at = getattr(at, "value", at)
+        if str(at or "").lower() in _SHEET_TYPES:
+            return True
+        loc = getattr(ref, "locator", None) or {}
+        if isinstance(loc, dict) and loc.get("sheet"):
+            return True
+    return False
+
+
+def _sheet_cell_asks_for_a_survey(text: str) -> bool:
+    """A spreadsheet row asks for a survey only when ONE of its cells does,
+    in a sentence.
+
+    A row is cells joined under their column names, and the words that made
+    a mailbox sentence a request land there by accident. A SELL RATES row
+    reads "Country: Canada | Request: 55 | Site Survey 2 hr. min: 96" -- the
+    matrix's "Request" column beside a priced survey line -- and a Deal Kit
+    lists "Site Survey" as a service with a "Required" box. Neither says a
+    survey is pending; both staged the deal "awaiting site survey". So each
+    cell is read on its own, its column name set aside, and only a cell that
+    is a sentence ("Customer wants a site survey before we quote") counts.
+    """
+    for seg in re.split(r"\s*\|\s*", text):
+        head, sep, val = seg.partition(":")
+        cell = val.strip() if sep and len(head.split()) <= 6 else seg.strip()
+        if len(cell.split()) >= _CELL_SENTENCE_WORDS and _asks_for_a_survey(cell):
+            return True
+    return False
+
 #: The survey having happened. Deliberately narrow: a survey is done when
 #: somebody says it is, not when one was merely scheduled.
 _SURVEY_DONE = re.compile(
@@ -176,7 +215,9 @@ def read_deal_state(atoms: list[Any]) -> DealState:
             continue
         if _ROM.search(t):
             rom.append(atom)
-        if _asks_for_a_survey(t) and not _reports_a_completed_survey(t):
+        asks = (_sheet_cell_asks_for_a_survey(t) if _from_a_sheet(atom)
+                else _asks_for_a_survey(t))
+        if asks and not _reports_a_completed_survey(t):
             wants_survey.append(atom)
         if _reports_a_completed_survey(t):
             survey_done.append(atom)

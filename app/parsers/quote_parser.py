@@ -1414,6 +1414,18 @@ class QuoteParser(BaseParser):
                             _fv = _formula_vals.get((sheet.title, _ci + 1, _ri))
                             if _fv is not None:
                                 _row[_ci] = int(_fv) if float(_fv).is_integer() else _fv
+            def _above(sub, _title=sheet.title):
+                if fallback_parser is None:
+                    return []
+                return fallback_parser._parse_sheet_rows(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=path.name,
+                    artifact_type=ArtifactType.xlsx,
+                    sheet_name=_title,
+                    rows=sub,
+                )
+
             sheet_atoms = self._parse_sheet(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -1421,6 +1433,7 @@ class QuoteParser(BaseParser):
                 sheet_name=sheet.title,
                 artifact_type=ArtifactType.xlsx,
                 rows=rows,
+                above_header=_above,
             )
             if sheet_atoms:
                 atoms.extend(sheet_atoms)
@@ -1485,6 +1498,7 @@ class QuoteParser(BaseParser):
         sheet_name: str,
         artifact_type: ArtifactType,
         rows: list[list[Any]],
+        above_header: Any = None,
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
@@ -1506,6 +1520,21 @@ class QuoteParser(BaseParser):
         data_start = header_idx + (2 if header_mode == "pair" else 1)
         meta = _scan_quote_metadata(rows[:data_start])
         atoms: list[EvidenceAtom] = []
+        # A TABLE above the quote header is not quote metadata. A SELL RATES
+        # sheet keeps its per-country rate matrix on top and a "Service |
+        # Sell | Cost" block under it; the quote header latched onto the
+        # block, and every country row above it was silently gone. Hand those
+        # rows to the generic spreadsheet reader (``above_header``), which
+        # reads them under their own header. Loose metadata lines (two cells
+        # or fewer) stay with the metadata scan.
+        if above_header is not None and header_idx > 0:
+            _above = [list(r) for r in rows[:header_idx]]
+            _wide = sum(1 for r in _above if sum(1 for c in r if str(c if c is not None else "").strip()) >= 3)
+            if _wide >= 2:
+                try:
+                    atoms.extend(above_header(_above) or [])
+                except Exception:  # pragma: no cover - never lose the quote rows
+                    pass
         if meta:
             atoms.append(
                 self._constraint_atom(

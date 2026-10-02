@@ -281,6 +281,16 @@ _EXEC_FIELD_LABELS: frozenset[str] = frozenset({
     "signed", "approved by", "company", "for", "its",
 })
 
+# A value that is a real date: digits in a date shape, or a month name with a
+# day or year. Underscores / blanks never match.
+_REAL_DATE_RE = re.compile(
+    r"\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b"
+    r"|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b"
+    r"|\b(?:19|20)\d{2}\b",
+    re.I,
+)
+
 # Splits on table-cell pipes only — a value that wrapped onto the next
 # line ("Services By:\nPurTera") must stay attached to its label.
 _SEGMENT_SPLIT_RE = re.compile(r"\|+")
@@ -297,6 +307,12 @@ def _segment_is_exec_field(segment: str) -> bool:
     # Label-only ("Signature:") or a short proper-noun value ("PurTera").
     # A long value means real content rode in on a form label — keep it.
     val = value.strip()
+    # A date that carries an actual date is a fact, not a blank on a form:
+    # the Deal Kit's own "Date: 2025-03-14" cell was dropped here as a
+    # signature-block line. The signature page's empty "Date: ____" (or a
+    # "Date:" with no value) still goes.
+    if label_norm == "date" and _REAL_DATE_RE.search(val):
+        return False
     return len(val.split()) <= 3
 
 

@@ -75,3 +75,15 @@ def test_drop_filters_only_boilerplate() -> None:
     assert "Provide access to all 23 dwellings." in texts
     assert any("Technician #1" in t for t in texts)
     assert len(out) == 2
+
+
+def test_a_date_cell_with_a_real_date_is_kept():
+    # The Deal Kit's own date cell is a fact, not a signature-page blank.
+    for text in ("Date: 2025-03-14 00:00:00", "Date: 3/14/2025", "Date: March 14, 2025",
+                 "Date: 2025-03-14"):
+        assert not is_execution_boilerplate(_Atom(text)), text
+
+
+def test_signature_page_dates_without_a_value_still_drop():
+    for text in ("Date:", "Date: ______", "Signature: | Date:", "Name: \nDate:"):
+        assert is_execution_boilerplate(_Atom(text)), text
