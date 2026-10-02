@@ -192,7 +192,11 @@ class JsonParser(BaseParser):
         warnings: list[str] = []
 
         try:
-            raw = path.read_text(encoding="utf-8-sig", errors="replace")
+            # newline="": keep CRLF as written, so offsets on the locator count
+            # the same characters the viewer renders (universal-newline mode
+            # dropped one per line and every span drifted).
+            with open(path, encoding="utf-8-sig", errors="replace", newline="") as fh:
+                raw = fh.read()
         except Exception as exc:  # unreadable file — never crash the compile
             return ParserOutput(
                 atoms=[], warnings=[f"json_parser: unreadable file: {exc!r}"],
@@ -211,6 +215,14 @@ class JsonParser(BaseParser):
             parser_version=self.parser_version,
             max_atoms=_max_atoms(), max_depth=_max_depth(), max_nodes=_max_nodes(),
         )
+        # Where each value sits in the file the viewer shows. The atom's text
+        # is a flattened key path ("equipment.items[1].quantity: 1") that never
+        # appears in the file, so the source pane cannot find it by text, and
+        # with no position on the locator the labeling walk fell back to
+        # envelope (hash-tie) order. Spans are measured against ``raw`` -- the
+        # file as read, BOM stripped, which is what a browser decodes.
+        ctx.spans = _value_spans(raw, jsonl=is_jsonl)
+        ctx.line_starts = _line_starts(raw)
         # JSONL: each line is an independent record -> index them at the root.
         if is_jsonl and isinstance(data, list):
             for i, rec in enumerate(data):
@@ -328,15 +340,32 @@ class JsonParser(BaseParser):
             ctx.truncated = True
             return
 
+        pointer = _pointer(path)
+        identity = {
+            "kind": "json_value",
+            "key_path": label,
+            "json_pointer": pointer,
+        }
+        locator = dict(identity)
+        span = (ctx.spans or {}).get(pointer)
+        if span is not None:
+            member_start, value_start, value_end = span
+            locator.update({
+                "line_start": _line_of(ctx.line_starts, member_start),
+                "line_end": _line_of(ctx.line_starts, max(value_start, value_end - 1)),
+                # Offsets into the file text (code points, BOM stripped):
+                # char_start..char_end is the value itself (a string's quotes
+                # included); member_char_start is where its key begins.
+                "char_start": value_start,
+                "char_end": value_end,
+                "member_char_start": member_start,
+            })
         atom = _make_json_atom(
             project_id=ctx.project_id, artifact_id=ctx.artifact_id,
             filename=ctx.filename, parser_version=ctx.parser_version,
             text=text,
-            locator={
-                "kind": "json_value",
-                "key_path": label,
-                "json_pointer": _pointer(path),
-            },
+            locator=locator,
+            id_locator=identity,
             value_extra={
                 "key_path": label,
                 "json_pointer": _pointer(path),
@@ -387,6 +416,7 @@ class _WalkCtx:
     __slots__ = (
         "project_id", "artifact_id", "filename", "parser_version",
         "max_atoms", "max_depth", "max_nodes", "atoms", "nodes", "truncated",
+        "spans", "line_starts",
     )
 
     def __init__(
@@ -403,6 +433,8 @@ class _WalkCtx:
         self.atoms: list[EvidenceAtom] = []
         self.nodes = 0
         self.truncated = False
+        self.spans: dict[str, tuple[int, int, int]] = {}
+        self.line_starts: list[int] = [0]
 
 
 def _dotted(path: list[str]) -> str:
@@ -427,6 +459,161 @@ def _pointer(path: list[str]) -> str:
     return "/" + "/".join(out) if out else ""
 
 
+# ── source positions ─────────────────────────────────────────────────
+
+_WS = " \t\r\n"
+_NUM_RE = None  # compiled lazily
+_STR_RE = None
+
+
+def _line_starts(text: str) -> list[int]:
+    starts = [0]
+    find = text.find
+    i = find("\n")
+    while i != -1:
+        starts.append(i + 1)
+        i = find("\n", i + 1)
+    return starts
+
+
+def _line_of(starts: list[int], offset: int) -> int:
+    """1-based line number holding ``offset``."""
+    import bisect
+    return bisect.bisect_right(starts, max(0, offset))
+
+
+class _SpanError(Exception):
+    pass
+
+
+def _value_spans(text: str, *, jsonl: bool) -> dict[str, tuple[int, int, int]]:
+    """``json_pointer -> (member_start, value_start, value_end)`` for every value.
+
+    A position-tracking scan of the same text ``json.loads`` read, keyed by the
+    pointer ``_walk`` builds, so a leaf finds its own occurrence even when the
+    same ``"quantity": 1`` appears in every item. JSONL records are keyed
+    ``/line<n>`` exactly as the walk names them. Never raises: a text the scan
+    cannot follow yields whatever it mapped before giving up (possibly nothing),
+    and the atom simply carries no position.
+    """
+    import re
+    global _NUM_RE, _STR_RE
+    if _NUM_RE is None:
+        _NUM_RE = re.compile(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][-+]?\d+)?")
+        _STR_RE = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"', re.S)
+    out: dict[str, tuple[int, int, int]] = {}
+    n = len(text)
+
+    def skip(i: int) -> int:
+        while i < n and text[i] in _WS:
+            i += 1
+        return i
+
+    def string_end(i: int) -> int:  # text[i] == '"'; returns index past closing quote
+        m = _STR_RE.match(text, i)
+        if not m:
+            raise _SpanError("unterminated string")
+        return m.end()
+
+    def value(i: int, ptr: str, member_start: int, depth: int) -> int:
+        if depth > 500:
+            raise _SpanError("too deep")
+        i = skip(i)
+        if i >= n:
+            raise _SpanError("eof")
+        c = text[i]
+        start = i
+        if c == "{":
+            i = skip(i + 1)
+            if i < n and text[i] == "}":
+                end = i + 1
+            else:
+                while True:
+                    i = skip(i)
+                    if i >= n or text[i] != '"':
+                        raise _SpanError("key expected")
+                    kstart = i
+                    kend = string_end(i)
+                    key = json.loads(text[kstart:kend])
+                    i = skip(kend)
+                    if i >= n or text[i] != ":":
+                        raise _SpanError("colon expected")
+                    seg = str(key).replace("~", "~0").replace("/", "~1")
+                    i = value(i + 1, f"{ptr}/{seg}", kstart, depth + 1)
+                    i = skip(i)
+                    if i < n and text[i] == ",":
+                        i += 1
+                        continue
+                    if i < n and text[i] == "}":
+                        end = i + 1
+                        break
+                    raise _SpanError("bad object")
+        elif c == "[":
+            i = skip(i + 1)
+            if i < n and text[i] == "]":
+                end = i + 1
+            else:
+                k = 0
+                while True:
+                    i = skip(i)
+                    i = value(i, f"{ptr}/{k}", i, depth + 1)
+                    k += 1
+                    i = skip(i)
+                    if i < n and text[i] == ",":
+                        i += 1
+                        continue
+                    if i < n and text[i] == "]":
+                        end = i + 1
+                        break
+                    raise _SpanError("bad array")
+        elif c == '"':
+            end = string_end(i)
+        elif text.startswith("true", i):
+            end = i + 4
+        elif text.startswith("false", i):
+            end = i + 5
+        elif text.startswith("null", i):
+            end = i + 4
+        else:
+            m = _NUM_RE.match(text, i)
+            if not m or m.end() == i:
+                # NaN / Infinity / -Infinity: json.loads accepts them.
+                for lit in ("NaN", "Infinity", "-Infinity"):
+                    if text.startswith(lit, i):
+                        end = i + len(lit)
+                        break
+                else:
+                    raise _SpanError("bad value")
+            else:
+                end = m.end()
+        # Later duplicates win, as they do in json.loads.
+        out[ptr] = (member_start, start, end)
+        return end
+
+    try:
+        if jsonl:
+            k = 0
+            pos = 0
+            for line in text.splitlines(keepends=True):
+                body = line.strip()
+                if body:
+                    try:
+                        json.loads(body)
+                    except Exception:
+                        pos += len(line)
+                        continue
+                    k += 1
+                    value(pos, f"/line{k}", skip(pos), 0)
+                pos += len(line)
+        else:
+            value(0, "", skip(0), 0)
+    except (_SpanError, RecursionError, ValueError):
+        pass
+    except Exception:
+        pass
+    return out
+
+
 # Same lightweight classifier the universal parsers use, so JSON atoms land in
 # the same packet buckets (e.g. "lift_required: yes" -> constraint).
 def _classify_json(text: str) -> AtomType:
@@ -444,6 +631,7 @@ def _make_json_atom(
     locator: dict[str, Any],
     value_extra: dict[str, Any],
     confidence: float = 0.85,
+    id_locator: dict[str, Any] | None = None,
 ) -> EvidenceAtom | None:
     text = (text or "").strip()
     if not text:
@@ -452,8 +640,11 @@ def _make_json_atom(
         atom_type = _classify_json(text)
     except Exception:
         atom_type = AtomType.scope_item
+    # Ids hash the identity of the value (its pointer), not its position, so
+    # adding line/char offsets did not re-key atoms already labeled or held.
+    ident = str(id_locator if id_locator is not None else locator)
     src = SourceRef(
-        id=stable_id("src", artifact_id, str(locator), text[:80]),
+        id=stable_id("src", artifact_id, ident, text[:80]),
         artifact_id=artifact_id,
         artifact_type=ArtifactType.json,
         filename=filename,
@@ -462,7 +653,7 @@ def _make_json_atom(
         parser_version=parser_version,
     )
     return EvidenceAtom(
-        id=stable_id("atm", project_id, artifact_id, text[:120], str(locator)),
+        id=stable_id("atm", project_id, artifact_id, text[:120], ident),
         project_id=project_id,
         artifact_id=artifact_id,
         atom_type=atom_type,
