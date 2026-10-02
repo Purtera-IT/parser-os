@@ -108,12 +108,61 @@ def _is_a_person(labeler: Any) -> bool:
     return not any(m in v for m in NOT_A_PERSON)
 
 
+#: The reading that marks THE line a deal is about -- "4 TVs install in
+#: CheckOut New York office." -- the one a router reads service, quantity, site
+#: and deal type from. There is one per deal, which is what makes it learnable
+#: from a single tick: once a person has picked it, every other line they
+#: labeled on that deal is a line they decided was NOT it.
+DEAL_SUMMARY = "deal_summary"
+
+
+def _marks_summary(lb: dict[str, Any]) -> bool:
+    reads = lb.get("reads_set")
+    if not isinstance(reads, dict) or DEAL_SUMMARY not in reads:
+        return False
+    v = reads[DEAL_SUMMARY]
+    return v is True or str(v or "").strip().lower() == "true"
+
+
+def _with_one_deal_summary(labels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """At most one `deal_summary` per deal per labeler, and the rest as negatives.
+
+    The page saves each card on its own, so a labeler who changes their mind
+    leaves two lines marked. The latest mark wins (``labeled_at``, then file
+    order) and an earlier one becomes `false`: it was considered and moved off.
+    Every other label by a labeler who marked a summary on this deal gets
+    `false` too. Without that a one-per-deal reading has one class and no head
+    can learn it; with it, each deal is one positive against all of its lines.
+    A labeler who marked nothing on the deal teaches nothing either way.
+    """
+    latest: dict[str, tuple[str, int]] = {}
+    for i, lb in enumerate(labels):
+        if _is_a_person(lb.get("labeler")) and _marks_summary(lb):
+            who = str(lb.get("labeler") or "")
+            at = (str(lb.get("labeled_at") or ""), i)
+            if who not in latest or at >= latest[who]:
+                latest[who] = at
+    if not latest:
+        return labels
+    out = []
+    for i, lb in enumerate(labels):
+        who = str(lb.get("labeler") or "")
+        if who not in latest or not _is_a_person(lb.get("labeler")):
+            out.append(lb)
+            continue
+        reads = dict(lb.get("reads_set") or {}) if isinstance(lb.get("reads_set"), dict) else {}
+        reads[DEAL_SUMMARY] = True if latest[who][1] == i else "false"
+        out.append({**lb, "reads_set": reads})
+    return out
+
+
 def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> list[dict[str, Any]]:
     from app.core.training_log import assign_split
 
     report = report if report is not None else IngestReport()
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
+    labels = _with_one_deal_summary(labels)
     if not deal_id or not (labels or doc.get("judgments") or doc.get("links")):
         report.skip("deal file without deal_id or labels")
         return []
@@ -192,6 +241,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
             report.skip("no facet (proposed type not in registry yet)")
         out.extend(_axis_rows(lb, base, prov, report))
     out.extend(_judgment_rows(doc, deal_id, split, report))
+    out.extend(_question_rows(doc, labels, deal_id, split, report))
     out.extend(_link_rows(doc, deal_id, split, report))
     out.extend(deal_rationale_rows(doc, deal_id, split))
     report.rows += len(out)
@@ -206,6 +256,14 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
 #: load_bearing -- get it wrong and the quote, the scope or the site is wrong.
 #: slight       -- true, and nothing downstream turns on it.
 _TIER_WEIGHT = {"load_bearing": 3.0, "ordinary": 1.0, "slight": 0.3}
+
+
+#: Label types that say "this line should never have been an atom". The
+#: admission head reads them as `drop`; the type head still learns the class.
+ADMISSION_DROP_TYPES = frozenset({KEEP, "small_talk"})
+
+#: Values of the `rejected` column that are a flag, not a type name.
+_REJECT_FLAGS = frozenset({"true", "t", "1", "yes", "false", "f", "0", "no"})
 
 
 def _row_weight(lb: dict[str, Any]) -> float:
@@ -393,16 +451,32 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     # names -- the label TYPE `_keep` means "not a fact worth typing", and the
     # admission verdict `keep` means "this is work this deal quotes". A `_keep`
     # label is therefore admission `drop`.
+    #
+    # `small_talk` is the same verdict with a name: "Hi Trent,", "Hope you had
+    # a great 4th of July!", "Thank you,". The atom-types registry says it
+    # "carries no fact about the work", so it is an admission `drop` -- and,
+    # unlike `_keep`, even when the labeler highlighted it by hand. Greetings
+    # and sign-offs are cut by a regex before they become atoms, so the only
+    # way a person can show the admission head one is to highlight it and say
+    # "small talk"; reading that as "the parser missed a fact" would teach the
+    # exact opposite.
     origin = str(lb.get("origin") or "").strip().lower()
     label_type = str(lb.get("label_type") or "").strip()
-    if origin == "labeler":
+    if label_type in ADMISSION_DROP_TYPES and (label_type != KEEP or origin != "labeler"):
+        rows.append(_axis_row("admission", "drop", lb, base, prov, "judgment",
+                              {"parser_admitted_a_non_fact": origin != "labeler",
+                               "rejected_as": label_type, "origin": origin or "parser"}))
+    elif origin == "labeler":
         rows.append(_axis_row("admission", "keep", lb, base, prov, "judgment",
                               {"parser_missed": True, "origin": "labeler"}))
-    elif label_type == KEEP:
-        rows.append(_axis_row("admission", "drop", lb, base, prov, "judgment",
-                              {"parser_admitted_a_non_fact": True}))
 
+    # `rejected` is two things in one column: the labeling page and
+    # write_labels.py store the FLAG "true" on a reject, while older rows hold
+    # the type the labeler ruled out. Only the second is a contrastive pair; a
+    # flag here minted `rejected="true"` rows -- a class called "true".
     rejected = str(lb.get("rejected") or "").strip()
+    if rejected.lower() in _REJECT_FLAGS:
+        rejected = ""
     if rejected and rejected != str(lb.get("label_type") or "").strip():
         rows.append(_axis_row("rejected", rejected, lb, base, prov, "judgment",
                               {"chosen": lb.get("label_type"),
@@ -475,6 +549,8 @@ _LINK_TO_EDGE = {
     "contradicts": "contradicts",
     "same_as": "same_as",
     "context": "context",
+    "blocked_by": "blocked_by",
+    "triggered_by": "triggered_by",
 }
 
 
@@ -492,6 +568,11 @@ def _link_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestRepo
         label = _LINK_TO_EDGE.get(str(k.get("relation") or ""))
         a = " ".join(str(k.get("from_text") or "").split())
         b = " ".join(str(k.get("to_text") or "").split())
+        if label == "answers":
+            # Always "answer || question", whichever card drew it, so the
+            # reverse row below is the same pair the other way round and the
+            # two never contradict each other across cards.
+            a, b = _answers_pair(k)
         if not label or len(a) < 3 or len(b) < 3:
             report.skip("link without an edge relation or text")
             continue
@@ -531,6 +612,147 @@ def _link_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestRepo
             "created_at": k.get("created_at") or "", "split": split,
             "provenance": json.dumps(prov, ensure_ascii=False),
         })
+        if label == "answers":
+            # The same edge read from the question. A head shown only
+            # "answer || question" learns to recognise an answer; shown the
+            # pair both ways it also learns, from the question, what closed it.
+            back = f"{b} || {a}"
+            rows.append({
+                "relation": "edge_relation", "label": ANSWERED_BY, "raw_text": back, "masked_text": back,
+                "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,
+                "scope": "deal", "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+                "created_at": k.get("created_at") or "", "split": split,
+                "provenance": json.dumps({**prov, "reverse_of": "answers"}, ensure_ascii=False),
+            })
+    return rows
+
+
+#: The reverse of `answers`: question || answer. Not a relation a labeler
+#: draws -- every `answers` link emits it.
+ANSWERED_BY = "answered_by"
+
+
+def _answers_pair(k: dict[str, Any]) -> tuple[str, str]:
+    """(answer, question) for an `answers` link, whichever card drew it.
+
+    The Questions card IS the question, so its link runs question (from) ->
+    answering atom (to). On an atom card the labeler is on the answer and
+    points at the question it answers: answer (from) -> question (to).
+    Platform-infra ``atom-labeling-routes.answersPair`` reads them the same way.
+    """
+    a = " ".join(str(k.get("from_text") or "").split())
+    b = " ".join(str(k.get("to_text") or "").split())
+    if str(k.get("from_head") or "") == "gap":
+        return b, a
+    return a, b
+
+
+#: What the Questions card records beside valid / invalid, as heads of their
+#: own. Labelers first put these on the question's ATOM card as readings
+#: (reads_set), because the card had nowhere to put them; the Questions card
+#: now stores them on the gap judgment (`fields`). The judgment wins, and the
+#: atom reading is the fallback for a question the card never answered.
+QUESTION_FIELDS: tuple[str, ...] = ("intake_gap", "needed_by", "deal_stage")
+_QUESTION_FIELD_VALUES: dict[str, set[str]] = {
+    "intake_gap": {"true", "false"},
+    "needed_by": {"project_manager", "atlas", "portal"},
+    "deal_stage": {"quoting", "planning", "delivery", "closeout"},
+}
+
+
+def _question_values(field_name: str, raw: Any) -> list[str] | None:
+    """The class labels one stored answer makes. None when it is outside the set.
+
+    `needed_by` is multi-label: one row per consumer, the way every multi-label
+    task in the table is written (several labels on one text, one teacher).
+    A reading may have been saved as a list or as "a | b"; both are read.
+    """
+    allowed = CLOSED_READS.get(field_name) or _QUESTION_FIELD_VALUES[field_name]
+    if field_name == "intake_gap":
+        v = "true" if raw is True else "false" if raw is False else str(raw or "").strip().lower()
+        return [v] if v in allowed else None
+    if field_name == "needed_by":
+        parts = raw if isinstance(raw, list) else str(raw or "").replace(",", "|").split("|")
+        vals = [str(p).strip().lower() for p in parts if str(p).strip()]
+        if not vals or any(v not in allowed for v in vals):
+            return None
+        return sorted(set(vals), key=vals.index)
+    v = str(raw or "").strip().lower()
+    return [v] if v in allowed else None
+
+
+def _question_rows(doc: dict[str, Any], labels: list[dict[str, Any]], deal_id: str,
+                   split: str, report: IngestReport) -> list[dict[str, Any]]:
+    """`question:intake_gap`, `question:needed_by`, `question:deal_stage`.
+
+    From the Questions card's judgment first. An atom whose question the card
+    answered for a field gives no fallback row for that field -- matched on the
+    question's source atom, or on its words when the atom id moved with a
+    re-parse -- so one question never trains on two answers.
+    """
+    rows: list[dict[str, Any]] = []
+    covered: dict[str, set[str]] = {f: set() for f in QUESTION_FIELDS}
+
+    def row(field_name: str, value: str, text: str, created: Any, prov: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "relation": f"question:{field_name}", "label": value, "raw_text": text, "masked_text": text,
+            "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,
+            "scope": "deal", "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+            "created_at": created or "", "split": split,
+            "provenance": json.dumps(prov, ensure_ascii=False),
+        }
+
+    for j in doc.get("judgments") or []:
+        if not isinstance(j, dict) or str(j.get("head") or "") != "gap":
+            continue
+        fields = j.get("fields")
+        if not isinstance(fields, dict) or not fields or not _is_a_person(j.get("labeler")):
+            continue
+        text = " ".join(str(j.get("text") or "").split())
+        if len(text) < 3:
+            continue
+        target = j.get("target") if isinstance(j.get("target"), dict) else {}
+        source = target.get("source") if isinstance(target.get("source"), dict) else {}
+        keys = {f"text:{_norm(text)}"} | ({f"atom:{source['atomId']}"} if source.get("atomId") else set())
+        prov = {
+            "source": "purpulse_atom_labeler", "kind": "questions_tab",
+            "head": "gap", "target_key": j.get("target_key"), "verdict": j.get("verdict"),
+            "labeler": j.get("labeler") or "", "purpose": j.get("purpose") or "train",
+        }
+        for f in QUESTION_FIELDS:
+            if f not in fields:
+                continue
+            vals = _question_values(f, fields[f])
+            if vals is None:
+                report.skip(f"question {f} outside its values")
+                continue
+            covered[f] |= keys
+            rows.extend(row(f, v, text, j.get("judged_at"), prov) for v in vals)
+
+    for lb in labels:
+        reads = lb.get("reads_set")
+        if not isinstance(reads, dict) or not _is_a_person(lb.get("labeler")):
+            continue
+        text = " ".join(str(lb.get("text") or "").split())
+        if len(text) < 3:
+            continue
+        keys = {f"text:{_norm(text)}"} | ({f"atom:{lb['atom_id']}"} if lb.get("atom_id") else set())
+        prov = {
+            "source": "purpulse_atom_labeler", "kind": "atom_reads_fallback",
+            "label_key": lb.get("label_key"), "atom_id": lb.get("atom_id"),
+            "labeler": lb.get("labeler") or "", "purpose": lb.get("purpose") or "train",
+        }
+        for f in QUESTION_FIELDS:
+            if f not in reads:
+                continue
+            if keys & covered[f]:
+                report.skip(f"question {f}: the Questions card answered it")
+                continue
+            vals = _question_values(f, reads[f])
+            if vals is None:
+                report.skip(f"question {f} outside its values")
+                continue
+            rows.extend(row(f, v, text, lb.get("labeled_at"), prov) for v in vals)
     return rows
 
 

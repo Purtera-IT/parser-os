@@ -124,10 +124,13 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
     assert not [a for a in atoms if a.atom_type == AtomType.scope_item]
     pricing = [a for a in atoms if a.atom_type == AtomType.pricing_assumption]
     assert pricing
-    # Master catalogs fold to ONE summary atom — per-row emission was the #010063
-    # flood (300+ pricing_assumption atoms). Full matrix lives in value.rows.
-    assert len(atoms) == 1
-    summary = atoms[0]
+    # Master catalogs keep ONE summary atom (full matrix in value.rows, read by
+    # the pricing_rollup packet) AND emit each priced row as its own atom so a
+    # person can label it (the rollup alone hid every row).
+    summaries = [a for a in atoms if a.value.get("is_summary")]
+    assert len(summaries) == 1
+    assert len(atoms) == 3
+    summary = summaries[0]
     assert summary.atom_type == AtomType.pricing_assumption
     assert summary.value.get("is_summary") is True
     assert "pricing_rollup" in (summary.review_flags or [])
@@ -142,7 +145,7 @@ def test_catalog_emits_pricing_assumptions(tmp_path) -> None:
 
 
 def test_rate_card_emits_summary_only(tmp_path) -> None:
-    """Per-country rate card → ONE rollup atom, not one atom per country row."""
+    """Per-country rate card → one summary atom plus one atom per country row."""
     path = tmp_path / "Deal_Kit.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -154,9 +157,9 @@ def test_rate_card_emits_summary_only(tmp_path) -> None:
     wb.save(path)
 
     atoms = _atoms(path)
-    assert len(atoms) == 1
-    (summary,) = atoms
-    assert summary.value.get("is_summary") is True
+    (summary,) = [a for a in atoms if a.value.get("is_summary")]
+    rows = [a for a in atoms if not a.value.get("is_summary")]
+    assert {a.value.get("country") for a in rows} == {"Indonesia", "United Arab Emirates", "Hong Kong"}
     assert summary.value.get("line_count") == 3
     assert len(summary.value.get("rows") or []) == 3
     assert not [a for a in atoms if a.atom_type == AtomType.scope_item]

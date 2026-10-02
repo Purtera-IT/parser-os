@@ -970,6 +970,78 @@
       "label": "Matters here, generalises nowhere",
       "values": "what it is doing on this deal",
       "desc": "Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing."
+    },
+    {
+      "key": "deal_summary",
+      "label": "The deal's scope in one line",
+      "values": "true/false",
+      "desc": "THE line a router should read the whole deal from: service, quantity, site and deal type in one sentence -- \"4 TVs install in CheckOut New York office.\" At most one per deal: if you mark a second line, training keeps only your latest mark. Every other line you labeled on that deal teaches \"not the summary\". Not every scope line -- a work_scope_item says one thing the job includes; this says what the job IS."
+    },
+    {
+      "key": "removes_cost",
+      "label": "Takes a cost off our quote",
+      "values": "which cost, and why it goes",
+      "desc": "Somebody else covers something we would otherwise price: \"the customer provides the wall mounts and parking\" removes the wall-mount and parking costs. Name WHICH cost goes, in the line's own words, not just that one does. Link the line to the quote, Gantt or BOM row it removes; if that row still charges for it, that is a Conflict."
+    },
+    {
+      "key": "urgency",
+      "label": "How urgent it is",
+      "values": "how soon, and what drives it",
+      "desc": "A deadline, rush or priority signal: \"need this installed before the store opens on the 15th\", \"ASAP, customer is escalating\". Say how soon and why, in the line's own words. A date that is only a schedule fact with no pressure behind it is not urgency."
+    },
+    {
+      "key": "triggered_task",
+      "label": "A task that starts when something happens",
+      "values": "what event starts it",
+      "desc": "A PM, PC, SA or tech will act once an event lands: \"as soon as we receive confirmation that the TVs have arrived on site, we will coordinate a date\". Name the event in the line's own words (\"TVs confirmed on site\"). Link the event's atom with triggered_by when it arrives, the dependency with blocked_by, and the task with context. A seller saying they will reply or send something is not a task for us."
+    },
+    {
+      "key": "task_owner_role",
+      "label": "Whose task it is",
+      "values": "project_manager | project_coordinator | solutions_architect | technician",
+      "desc": "The role that owns the triggered task. Put the person in entity_keys. Only PM, PC, SA or tech work counts: sellers do not get tasks from this."
+    },
+    {
+      "key": "crew_size",
+      "label": "How many people go",
+      "values": "a number",
+      "desc": "The number of techs or crew sent or planned for the job: \"Tanner chose to send 2 techs out\" is 2. A count of devices or sites is job_scale, not crew size."
+    },
+    {
+      "key": "trigger_event",
+      "label": "An event that starts a task",
+      "values": "true/false",
+      "desc": "The line only reports that something happened, and that happening starts a waiting task: \"TVs were delivered today\". It is not scope and adds no work of its own, so planning and runbooks skip it. Link the task's atom to it with triggered_by."
+    },
+    {
+      "key": "fires_task",
+      "label": "Which task it starts",
+      "values": "which task it fires",
+      "desc": "The task this event starts, in short words: \"PM schedules the install date with the customer\". Pairs with trigger_event."
+    },
+    {
+      "key": "deal_stage",
+      "label": "Where the deal was when this was said",
+      "values": "quoting | planning | delivery | closeout",
+      "desc": "quoting: before the SOW is signed or the PO is received. planning: after the PO, before the first on-site visit. delivery: visits underway. closeout: after the last visit (completion reports, invoicing). Set it from the source's date against the deal's milestones. The same question or promise means different things at different stages."
+    },
+    {
+      "key": "start_date",
+      "label": "When the work starts",
+      "values": "the confirmed or proposed start date/time",
+      "desc": "The line sets or proposes when on-site work begins: \"see you Friday at 9am\". Copy the date and time as said. Label the confirmed start once, on the line that confirms it; an earlier proposal that changed is superseded by it."
+    },
+    {
+      "key": "intake_gap",
+      "label": "Should have been asked at quoting",
+      "values": "true/false",
+      "desc": "A planning or delivery question about a site or customer fact that intake should have collected before the quote: \"is there power at the TV location?\" asked after the PO. Orbit learns to ask it earlier."
+    },
+    {
+      "key": "needed_by",
+      "label": "Who needs the answer",
+      "values": "project_manager | atlas | portal",
+      "desc": "The downstream consumer that needs this fact: the PM running the job, Atlas planning, or the customer portal."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
@@ -998,6 +1070,16 @@
     {
       "key": "context",
       "label": "Background for it"
+    },
+    {
+      "key": "blocked_by",
+      "label": "Cannot happen until that one does",
+      "desc": "From a task or commitment to the dependency it waits on: \"we will coordinate a date\" is blocked_by \"TVs are with the shipping carrier\"."
+    },
+    {
+      "key": "triggered_by",
+      "label": "That event starts it",
+      "desc": "From a triggered task to the line saying its event happened: \"we will coordinate a date\" is triggered_by \"TVs were delivered today\"."
     }
   ],
   "asks_supplier_doc": "Does 'who supplies or does it?' have an answer for this type? The card showed that question on EVERY type, so three quarters of the time it invited an answer to a question the sentence does not ask -- and a head trained on those learns the axes are independent noise. Declared here rather than guessed from the type's name."

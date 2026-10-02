@@ -529,6 +529,23 @@ def classify_transcript_turn_role(text: str) -> TurnRole:
     # Greeting wins over soft-social when both fire — e.g. "We'll touch on
     # this after the call… How are you?" is still a greeting turn for audit.
     if _GREETING_RE.search(probe):
+        # "Hello, we already have wall mounts, and I believe parking is not
+        # free" (010003) is a greeting and then two facts. Judge what follows
+        # the greeting on its own; only a line that is ALL greeting is one.
+        from app.core.greetings import strip_leading_greeting
+
+        rest = strip_leading_greeting(probe)
+        if rest and rest != probe.strip():
+            if classify_transcript_turn_role(rest) == "deal":
+                return "deal"
+            social = _ACK_ONLY_RE.match(rest) or any(
+                r.search(rest)
+                for r in (_GREETING_RE, _SOFT_SOCIAL_RE, _INTRO_RE, _LOGISTICS_RE, _SIGNOFF_RE)
+            )
+            # Social after the greeting ("Hi Bob, how are you?") keeps the
+            # whole line a greeting. A short remainder that is merely terse
+            # ("Hello, parking is not free") is what any short line is.
+            return "greeting" if social else "filler"
         return "greeting"
     if _SOFT_SOCIAL_RE.search(probe):
         return "filler"

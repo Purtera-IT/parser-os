@@ -76,6 +76,22 @@ _PROMISE_RE = re.compile(
 )
 
 
+#: A wait or a dependency is a fact about the job's timeline, never small
+#: talk: "we are waiting for the tv to arrive (it is with the shipping carrier
+#: now)" says delivery gates the install (010003), whatever chatty clause
+#: rides along with it.
+_DEPENDENCY_RE = re.compile(
+    r"\b(?:"
+    r"waiting (?:for|on)|wait(?:ing)? until|pending|on hold|in transit|back-?order\w*|"
+    r"(?:shipping )?carrier|tracking (?:number|status)|delivery|deliver(?:ed|s)?|"
+    r"arriv(?:e|es|ed|al)|ship(?:s|ped|ping|ment)?|once (?:we|they|it|the)\b|"
+    r"until (?:we|they|it|the)\b|depends on|dependent on|blocked (?:on|by)|"
+    r"need(?:s|ed)? (?:the |a |an |)po\b|purchase order"
+    r")\b",
+    re.I,
+)
+
+
 def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
     """Is this line relationship talk rather than a statement about the work?
 
@@ -86,12 +102,25 @@ def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
     t = " ".join(str(text or "").split())
     if not t:
         return False
+    # A greeting is judged as a greeting and the rest of the line on its own:
+    # "Hello, we already have wall mounts, and I believe parking is not free"
+    # (010003) was hidden behind "Show small talk" for its first word. A line
+    # that is nothing BUT a greeting is small talk.
+    from app.core.greetings import starts_with_greeting, strip_leading_greeting
+
+    if starts_with_greeting(t):
+        rest = strip_leading_greeting(t)
+        if not rest or not re.search(r"[A-Za-z0-9]", rest):
+            return True
+        t = rest
     for k in entity_keys or []:
         if str(k).startswith(("device:", "vendor:", "quantity:", "site:", "req")):
             return False
     if _SUBSTANCE_RE.search(t):
         return False
     if _PROMISE_RE.search(t):
+        return False
+    if _DEPENDENCY_RE.search(t):
         return False
     return bool(_PIPELINE_RE.search(t) or _HANDOFF_RE.search(t) or _SOCIAL_RE.match(t))
 

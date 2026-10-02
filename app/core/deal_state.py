@@ -48,9 +48,32 @@ from typing import Any
 _ROM = re.compile(r"\bROM\b|budgetary (?:number|estimate|numbers|pricing)|ballpark"
                   r"|rough order of magnitude", re.I)
 
-#: The deal asking for the survey that would replace it.
-_WANTS_SURVEY = re.compile(
-    r"site survey|walk ?through|walk the site|site visit|site walk", re.I)
+#: The deal asking for the survey that would replace it. A SURVEY, asked for.
+#: "Walk-through" and "site visit" alone are job steps, not a pending survey:
+#: live 000132 read "On-site visit once per week", "one coordinated site
+#: visit" and "complete an onsite walk-through before beginning the removal"
+#: as the deal waiting on a survey, and staged it "awaiting site survey".
+_SURVEY_WORD = re.compile(r"\bsurvey(?:s|ed|ing)?\b", re.I)
+
+#: Someone asking for it, planning it or waiting on it.
+_SURVEY_REQUEST = re.compile(
+    r"\b(?:wants?|wanted|would like|ask(?:s|ed|ing)?|request(?:s|ed|ing)?"
+    r"|needs?|needed|requires?|required|schedul\w*|set up|book|arrange"
+    r"|perform|conduct|do an?|can you|could you|please|availability"
+    r"|dial in|generate|firm quote|true quote|before we can|await\w*"
+    r"|wait(?:ing)? (?:on|for)|pending|once|until|after)\b", re.I)
+
+#: A recurring visit is a service term, never a pending survey.
+_RECURRING = re.compile(r"\b(?:once|twice|\d+\s*(?:x|times)) (?:a|per|every)\b|\bper (?:week|month)\b"
+                        r"|\b(?:weekly|monthly)\b", re.I)
+
+
+def _asks_for_a_survey(text: str) -> bool:
+    """Is a survey being asked for (or waited on) here, rather than merely
+    named as a step of the work?"""
+    if not _SURVEY_WORD.search(text) or _RECURRING.search(text):
+        return False
+    return bool(_SURVEY_REQUEST.search(text))
 
 #: The survey having happened. Deliberately narrow: a survey is done when
 #: somebody says it is, not when one was merely scheduled.
@@ -111,6 +134,9 @@ class StateLine:
     why: str
     assumption: str = ""
     evidence: list[str] = field(default_factory=list)
+    #: The atoms the evidence came from, so the derived line is pinned to the
+    #: artifact that said it rather than to whichever atom happened to be first.
+    evidence_atoms: list[Any] = field(default_factory=list, repr=False)
 
 
 @dataclass
@@ -150,7 +176,7 @@ def read_deal_state(atoms: list[Any]) -> DealState:
             continue
         if _ROM.search(t):
             rom.append(atom)
-        if _WANTS_SURVEY.search(t):
+        if _asks_for_a_survey(t) and not _reports_a_completed_survey(t):
             wants_survey.append(atom)
         if _reports_a_completed_survey(t):
             survey_done.append(atom)
@@ -179,7 +205,8 @@ def read_deal_state(atoms: list[Any]) -> DealState:
                   "checked it against the site.")),
             assumption="a price called budgetary or a ROM is a rough number, "
                        "and a survey is complete only when somebody says so",
-            evidence=[_text(a)[:120] for a in rom[:3]]))
+            evidence=[_text(a)[:120] for a in rom[:3]],
+            evidence_atoms=list(rom[:3])))
 
         if not surveyed and (wants_survey or wants_firm):
             state.lines.append(StateLine(
@@ -191,7 +218,8 @@ def read_deal_state(atoms: list[Any]) -> DealState:
                      "a firm quote that the survey is supposed to produce."),
                 assumption="a deal kit should not be generated from an "
                            "unsurveyed budgetary number",
-                evidence=[_text(a)[:120] for a in (wants_firm or wants_survey)[:3]]))
+                evidence=[_text(a)[:120] for a in (wants_firm or wants_survey)[:3]],
+                evidence_atoms=list((wants_firm or wants_survey)[:3])))
 
     # ---- what happens next -------------------------------------------------
     if wants_survey and not survey_done:
@@ -202,11 +230,14 @@ def read_deal_state(atoms: list[Any]) -> DealState:
                 "turns the ROM into a firm number.",
             assumption="a survey asked for and not reported complete is "
                        "outstanding",
-            evidence=[_text(a)[:120] for a in wants_survey[:3]]))
+            evidence=[_text(a)[:120] for a in wants_survey[:3]],
+            evidence_atoms=list(wants_survey[:3])))
         state.lines.append(StateLine(
             key="stage",
             value="awaiting site survey",
             why="Derived from the step outstanding.",
-            assumption="the outstanding step is the stage"))
+            assumption="the outstanding step is the stage",
+            evidence=[_text(a)[:120] for a in wants_survey[:3]],
+            evidence_atoms=list(wants_survey[:3])))
 
     return state

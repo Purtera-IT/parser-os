@@ -28,6 +28,8 @@ import re
 from collections import Counter
 from typing import Any
 
+from app.core.automated_senders import is_automated_address
+
 VERSION = "deal_roster_v1"
 
 #: "Trent Torrence | Executive Vice President of Sales | t@x.com | 404.771.3490"
@@ -145,6 +147,9 @@ def build_deal_roster(*, atoms: list[Any], documents: list[dict[str, Any]],
     for doc in documents or []:
         email = str(doc.get("sender_email") or "").strip().lower()
         if not _EMAIL_RE.fullmatch(email or ""):
+            continue
+        # An e-signature service or a no-reply mailbox is not a person.
+        if is_automated_address(email):
             continue
         row = slot(email)
         row["messages_sent"] += 1

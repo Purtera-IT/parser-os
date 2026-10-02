@@ -38,6 +38,9 @@ from app.parsers.structured_projection import (
     stamp_section_and_block_ids,
 )
 from app.domain.schemas import DomainPack
+from app.core.admission_chatter import ADMISSION_REGEX_FLAG
+from app.core.admission_chatter import mark_admission_chatter as _mark_admission_chatter
+from app.core.sentences import sentence_kind as _sentence_kind
 
 STRUCTURED_SCHEMA_EMAIL = "orbitbrief.email.structured.v1"
 
@@ -1024,6 +1027,12 @@ _PROVIDED_BY_RE = re.compile(
 _WE_WORDS = {"us", "we", "our team", "ourselves", "our side"}
 
 
+#: The flag on every line a body regex refused before it became an atom
+#: (greeting, sign-off, signature). See ``_admission_reject_atom``.
+ADMISSION_REGEX_STAGE = ADMISSION_REGEX_FLAG
+ADMISSION_REJECT_FLAG = ADMISSION_REGEX_FLAG
+
+
 # A sign-off phrase that opens the trailing signature block. Everything after
 # it in an AUTHORED message is name/title/contact chrome — the sender identity
 # is already captured as structured email-header metadata, so it is not scope.
@@ -1573,12 +1582,28 @@ def _expand_lines_to_sentences(
     line number is the ORIGINAL one for every piece: splitting changes what a
     single atom covers, never where it came from.
     """
-    from app.core.sentences import split_sentences
+    from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences
 
     out: list[tuple[int, int, str]] = []
     for line_idx, line in enumerate(lines):
         line_num = line_start + line_idx
         stripped = (line or "").strip()
+        # A bullet list flattened onto one line (live 000132, quoted from a
+        # HubSpot note): the lead-in, then one "- item" per " - " segment, so
+        # each item is typed as the bullet it was.
+        if stripped and "|" not in stripped:
+            prefix = line[: len(line) - len(line.lstrip("> "))]
+            dash_items = split_inline_dash_list(stripped.lstrip("> "))
+            if dash_items:
+                lead, items = dash_items[0], dash_items[1:]
+                seq = 0
+                if lead:
+                    out.append((line_num, seq, prefix + lead))
+                    seq += 1
+                for item in items:
+                    out.append((line_num, seq, prefix + "- " + item))
+                    seq += 1
+                continue
         # Table rows, header lines and quoted-only markers are not prose; and a
         # line with fewer than two sentence endings holds one sentence. A
         # sentence ends with a period, a question mark or an exclamation mark:
@@ -1599,7 +1624,20 @@ def _expand_lines_to_sentences(
             out.append((line_num, 0, line))
             continue
         if len(pieces) < 2 or any(len(p) < _MIN_SENTENCE_CHARS for p in pieces):
-            out.append((line_num, 0, line))
+            # Too short to split sentence by sentence ("Woohoo! Let's go
+            # Sarah!"), but a cheer, a dependency and a housekeeping note in
+            # one paragraph are still three things: split into runs of the
+            # same KIND, so the banter is its own (chatter) atom and the fact
+            # its own. A paragraph of one kind stays whole.
+            try:
+                runs = split_by_kind(stripped.lstrip("> "), min_work_chars=_MIN_SENTENCE_CHARS)
+            except Exception:  # pragma: no cover - never fail a parse over this
+                runs = []
+            if runs:
+                for seq, piece in enumerate(runs):
+                    out.append((line_num, seq, prefix + piece))
+            else:
+                out.append((line_num, 0, line))
             continue
         # Every piece shares the line it came from, so without its own index
         # nothing downstream can order them: the envelope's reading-order sort
@@ -1842,6 +1880,43 @@ def _stakeholder_keys(slug: str) -> list[str]:
     return [f"stakeholder:{slug}"]
 
 
+
+def _without_automated_senders(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Drop person atoms for automated senders; flag their header lines chatter.
+
+    See :mod:`app.core.automated_senders`. A stakeholder whose address (or
+    display name) is a machine's is never emitted. An ``email_header`` or
+    ``quoted_message_header`` atom from one is kept and flagged ``chatter``
+    with ``value["automated_sender"]`` so a labeler can reject it.
+    """
+    from app.core.automated_senders import is_automated_address, is_automated_sender
+    from app.core.deal_chatter import CHATTER_FLAG
+
+    out: list[EvidenceAtom] = []
+    for atom in atoms:
+        val = atom.value if isinstance(atom.value, dict) else {}
+        at = getattr(atom.atom_type, "value", atom.atom_type)
+        if at == "stakeholder":
+            email_v = str(val.get("email") or "")
+            name_v = str(val.get("name") or "")
+            if (email_v and is_automated_address(email_v)) or is_automated_sender("", name=name_v):
+                continue
+        kind = str(val.get("kind") or "")
+        if kind in ("email_header", "quoted_message_header"):
+            sender = str(val.get("from") or val.get("sender") or "")
+            if sender and is_automated_sender(sender):
+                val = dict(val)
+                val[CHATTER_FLAG] = True
+                val["automated_sender"] = sender
+                atom.value = val
+                flags = list(atom.review_flags or [])
+                for f in (CHATTER_FLAG, "automated_sender"):
+                    if f not in flags:
+                        flags.append(f)
+                atom.review_flags = flags
+        out.append(atom)
+    return out
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v2"
@@ -1923,12 +1998,18 @@ class EmailParser(BaseParser):
         path: Path,
         domain_pack: DomainPack | None = None,
     ) -> list[EvidenceAtom]:
-        return self.parse_artifact_full(
-            project_id=project_id,
-            artifact_id=artifact_id,
-            path=path,
-            domain_pack=domain_pack,
-        ).atoms
+        # The list API is the content atoms. Lines the admission regex refused
+        # travel only on `parse_artifact_full`, which is what the compiler
+        # calls: it keeps them as chatter atoms, held out of every head.
+        return [
+            a for a in self.parse_artifact_full(
+                project_id=project_id,
+                artifact_id=artifact_id,
+                path=path,
+                domain_pack=domain_pack,
+            ).atoms
+            if ADMISSION_REJECT_FLAG not in (a.review_flags or [])
+        ]
 
     def parse_artifact_full(
         self,
@@ -1979,6 +2060,11 @@ class EmailParser(BaseParser):
             text, envelope_sender=envelope_sender, envelope_sent_at=envelope_sent_at,
         )
         atoms: list[EvidenceAtom] = []
+        # Lines the body regexes cut before they could become atoms: greetings,
+        # sign-offs, the signature under a sign-off. Kept apart from `atoms`
+        # and appended only at the very end, so nothing below (addressee
+        # stamping, CID anchoring, the structured doc) ever sees them.
+        admission_rejects: list[EvidenceAtom] = []
         for block in blocks:
             authority = self._authority_for_block(block)
             atoms.extend(
@@ -1988,6 +2074,7 @@ class EmailParser(BaseParser):
                     filename=path.name,
                     block=block,
                     authority=authority,
+                    admission_rejects=admission_rejects,
                 )
             )
         # Header atom — the From/To/Cc/Subject/Date line is deal/routing
@@ -2097,6 +2184,17 @@ class EmailParser(BaseParser):
                 _stamp_email_addressee(atoms, greeting, message_index=block.get("message_index"))
         structured_doc = self._build_structured_doc(filename=path.name, blocks=blocks)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
+        # A machine is not a person on the deal. "From: Adobe Sign
+        # <echosign@echosign.com>" minted a stakeholder, an entity and a roster
+        # row; a DocuSign notice did the same for "Carl Painter via DocuSign".
+        # No person atom is kept for an automated sender, and its header line
+        # is flagged chatter (still an atom, still rejectable on the labeling
+        # page). The body's facts ("SOW 010215 is signed") are untouched.
+        atoms = _without_automated_senders(atoms)
+        # Kept chatter atoms: the compiler holds every `admission_regex` atom
+        # out of the stages between parse and packetize and puts it back for
+        # coverage and the result, so no head ever reads one.
+        atoms.extend(admission_rejects)
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
@@ -2958,6 +3056,51 @@ class EmailParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+    def _admission_reject_atom(
+        self,
+        *,
+        project_id: str,
+        artifact_id: str,
+        block: dict[str, Any],
+        cleaned: str,
+        source_ref: SourceRef,
+        authority: AuthorityClass,
+        line_num: int,
+        sentence_index: int,
+        reason: str,
+    ) -> EvidenceAtom:
+        """A line the admission regexes cut, kept as a chatter atom.
+
+        "Hi Trent,", "Thank you,", the name under it: probably not deal
+        content, and until now gone before they were atoms -- so the labeling
+        page could not show one and the admission head never saw a negative.
+        Kept, flagged ``chatter`` + ``admission_regex`` (the same chatter flag
+        and ``small_talk`` read relationship talk gets), with the reason in
+        ``value["admission_regex"]``. The compiler holds it out of every head.
+        """
+        return _mark_admission_chatter(EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, block["message_index"],
+                         "admission_reject", line_num, sentence_index, cleaned),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.deal_metadata,
+            raw_text=cleaned,
+            normalized_text=normalize_text(cleaned),
+            value={
+                "kind": "admission_reject",
+                "reason": reason,
+                "message_index": block["message_index"],
+                "quoted": block["quoted"],
+            },
+            entity_keys=[],
+            source_refs=[source_ref],
+            authority_class=authority,
+            confidence=0.0,
+            review_status=ReviewStatus.needs_review,
+            review_flags=[],
+            parser_version=self.parser_version,
+        ), reason)
+
     def _extract_atoms_from_block(
         self,
         project_id: str,
@@ -2965,6 +3108,7 @@ class EmailParser(BaseParser):
         filename: str,
         block: dict[str, Any],
         authority: AuthorityClass,
+        admission_rejects: list[EvidenceAtom] | None = None,
     ) -> list[EvidenceAtom]:
         atoms: list[EvidenceAtom] = []
         # A quoted message is verbatim text with a verified receipt like any
@@ -3078,6 +3222,22 @@ class EmailParser(BaseParser):
             cleaned = _BULLET_PREFIX_RE.sub("", raw_cleaned).strip()
             if not cleaned:
                 continue
+
+            # A line a regex below refuses is recorded, not just skipped: see
+            # `_admission_reject_atom`. Defaults bind this iteration's values.
+            def _reject(reason: str, _cleaned: str = cleaned, _line: int = line_num,
+                        _sent: int = sentence_index) -> None:
+                if admission_rejects is None:
+                    return
+                _ref = self._build_source_ref(
+                    artifact_id=artifact_id, filename=filename, block=block,
+                    line_num=_line, sentence_index=_sent,
+                )
+                admission_rejects.append(self._admission_reject_atom(
+                    project_id=project_id, artifact_id=artifact_id, block=block,
+                    cleaned=_cleaned, source_ref=_ref, authority=authority,
+                    line_num=_line, sentence_index=_sent, reason=reason,
+                ))
             # Shape, not position: a line that is ONLY a name, an email, a
             # phone, or a punctuation fragment around one carries no scope
             # wherever it sits. Live 010215 (R3): the leading-lines-only rule
@@ -3159,16 +3319,22 @@ class EmailParser(BaseParser):
                     location_lines = []
                 continue
             if _is_identity_only_line(cleaned, allow_name=not is_bullet):
+                # "Hi Trent," is name-shaped and lands here before the greeting
+                # rule below; "Stephanie Hechsel" under "Thank you," too.
+                _reject("greeting" if _is_greeting_line(cleaned)
+                        else "signature" if in_signature else "identity_only")
                 continue
             # Inside a signature cluster every line is contact chrome (title,
             # org, phone label); the person was already read from it above.
             if (line_num - int(block.get("line_start") or 0)) in _signature_rows:
+                _reject("signature")
                 continue
             # A line that is only a link -- a bare URL, "word<https://…>",
             # "url=…", a mailto -- is mail chrome. Live 010300: nine
             # scope_items and one open_question were safelinks/urldefense
             # wrappers around "PurTera-IT.com".
             if _is_link_only_line(cleaned):
+                _reject("link_only")
                 continue
             # A Title-Case line with no digits and no sentence end ("This
             # Message Is From an External Sender") is a banner or heading,
@@ -3260,6 +3426,7 @@ class EmailParser(BaseParser):
                 section_path=section_path or None,
                 lead_in=lead_for_line or None,
             )
+
             lowered = normalize_text(cleaned)
             entity_keys = self._extract_entity_keys(cleaned)
             # Site atoms are attempted on EVERY line (an address can appear in a
@@ -3314,6 +3481,7 @@ class EmailParser(BaseParser):
                 # privileges."). The sign-off was right about those lines and
                 # wrong only about the table.
                 if not _is_data_table_row(cleaned):
+                    _reject("signature")
                     continue
             # Quoted messages sign off too, and this was gated to the authored
             # one only -- so every quoted signature was atomised in full. A
@@ -3329,6 +3497,7 @@ class EmailParser(BaseParser):
             # address in a signature is still recovered.
             if _SIGNOFF_RE.match(cleaned):
                 in_signature = True
+                _reject("signoff")
                 continue
             # 1b) A quoted message's own header block ("To: …", "Sent: …",
             #     "Cc: …"). The sender and date are already captured
@@ -3349,6 +3518,14 @@ class EmailParser(BaseParser):
             #    (and the email header) so Atom Quality can show "To: Eddie"
             #    without a standalone reviewable ``Eddie,`` card.
             if _is_greeting_line(cleaned):
+                _reject("greeting")
+                continue
+            # 2a) Banter: a cheer or a pleasantry with no claim in it ("Woohoo!
+            #     Let's go Sarah!", "Hope you are well!"). Not a fact, not a
+            #     request, so it is not typed -- but it is kept, as a chatter
+            #     atom, so the admission head sees the negative.
+            if not is_bullet and "|" not in cleaned and _sentence_kind(cleaned) == "banter":
+                _reject("banter")
                 continue
             # 2b) Framing lead-in above Include/Exclude — connective tissue,
             #     not a standalone atom. Hold until the list header arrives.

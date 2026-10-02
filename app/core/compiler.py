@@ -168,6 +168,59 @@ _NON_ARTIFACT_PATTERNS = (
 )
 
 
+#: Spreadsheets are what the table rollup exists for (a 9 MB rate card is
+#: tens of thousands of rows); everything else -- a PDF or a Word table --
+#: is a document a person reads line by line.
+_SPREADSHEET_TYPES = frozenset({"xlsx", "xls", "xlsm", "csv", "tsv"})
+
+
+def _is_spreadsheet_atom(atom: Any) -> bool:
+    for ref in list(getattr(atom, "source_refs", None) or [])[:1]:
+        at = getattr(ref, "artifact_type", None)
+        at = str(getattr(at, "value", at) or "").lower()
+        fn = str(getattr(ref, "filename", "") or "").lower()
+        if at in _SPREADSHEET_TYPES or fn.rsplit(".", 1)[-1] in _SPREADSHEET_TYPES:
+            return True
+    return False
+
+
+def _keep_unsurvived_document_rows(before: list[Any], after: list[Any], warnings: list[str]) -> list[Any]:
+    """table_rollup must not hide a document's lines behind a count.
+
+    A rolled-up summary reads "N table rows (rolled up)"; no kept atom carries
+    the rows' words. On a PDF/Word document every such row goes back, and a
+    summary none of whose rows stay folded is removed (nothing was folded).
+    Spreadsheets keep the rollup: that is what it is for.
+    """
+    from app.core.suppression_ledger import keep_unsurvived_lines
+
+    after, restored = keep_unsurvived_lines(
+        before, after, stage="table_rollup", eligible=lambda a: not _is_spreadsheet_atom(a),
+    )
+    if not restored:
+        return after
+    after_ids = {id(a) for a in after}
+    still_folded = {
+        str(getattr(a, "artifact_id", "") or "")
+        for a in before
+        if id(a) not in after_ids
+    }
+    before_ids = {id(a) for a in before}
+    out = []
+    for a in after:
+        v = getattr(a, "value", None)
+        if (
+            id(a) not in before_ids
+            and isinstance(v, dict)
+            and v.get("_source") == "table_rollup_backstop"
+            and str(getattr(a, "artifact_id", "") or "") not in still_folded
+        ):
+            continue
+        out.append(a)
+    warnings.append(f"INFO: table_rollup kept {len(restored)} document rows no survivor contains")
+    return out
+
+
 def _deal_state_atom(template: Any, line: Any) -> Any:
     """One line of where-the-deal-stands, as an atom.
 
@@ -470,6 +523,26 @@ def _iter_artifacts(project_dir: Path) -> list[Path]:
         if _matches_ignore_pattern(rel, ignore_patterns):
             continue
         results.append(path)
+    # A HubSpot note that only says "Note" and carried files is a pointer, not
+    # a document: its author and date travel on the files it carried instead
+    # (see app/core/note_attachments.py). Dropped here so the compile, the
+    # census and the envelope all agree it is not an artifact.
+    try:
+        from app.core.note_attachments import note_attachment_links
+
+        folded = {
+            f.lstrip("/\\").replace("\\", "/") for f in note_attachment_links(project_dir).folded
+        }
+    except Exception:  # pragma: no cover - never fail discovery over links
+        folded = set()
+    if folded:
+        def _rel(p: Path) -> str:
+            try:
+                return str(p.relative_to(project_dir)).replace("\\", "/")
+            except ValueError:
+                return p.name
+
+        results = [p for p in results if _rel(p) not in folded]
     return sorted(results, key=lambda p: str(p).lower())
 
 
@@ -597,6 +670,7 @@ def _maybe_wire_feedback_store() -> None:
 #: A real deal document lands in the hundreds; the largest legitimate scope
 #: workbook measured across the corpus is far under this. 94,047 from a single
 #: customer report is what this exists to catch.
+from app.core.admission_chatter import ADMISSION_REGEX_FLAG as _ADMISSION_REJECT_FLAG  # noqa: E402
 _MAX_ATOMS_PER_ARTIFACT = int(os.environ.get("SOWSMITH_MAX_ATOMS_PER_ARTIFACT", "12000"))
 
 
@@ -978,6 +1052,14 @@ def compile_project(
                     # loudly is honest, and the routing row says exactly what
                     # happened so a real oversized scope file is visible rather
                     # than mysterious.
+                    # Lines the admission regexes refused (a greeting, a
+                    # sign-off) ride along as chatter atoms and are held aside
+                    # below. They were never counted before they were emitted,
+                    # so they are not counted now: no routing number moves.
+                    kept_parsed = sum(
+                        1 for _a in parsed_atoms
+                        if _ADMISSION_REJECT_FLAG not in (getattr(_a, "review_flags", None) or [])
+                    )
                     if _MAX_ATOMS_PER_ARTIFACT and len(parsed_atoms) > _MAX_ATOMS_PER_ARTIFACT:
                         warning = (
                             f"WARNING: {relative_name} produced {len(parsed_atoms):,} atoms "
@@ -1002,7 +1084,7 @@ def compile_project(
                     candidates.extend(parsed_candidates)
                     parse_warnings.extend(per_artifact_warnings)
                     atoms.extend(parsed_atoms)
-                    parser_atom_counts[parser_key] += len(parsed_atoms)
+                    parser_atom_counts[parser_key] += kept_parsed
                     if parser_routing:
                         # Successful parse — record concrete outcome.
                         # Use ``ok`` when the parser produced ≥1 atom;
@@ -1012,10 +1094,10 @@ def compile_project(
                         # so reviewers know whether a 0-atom file means
                         # "parser is healthy, just no content" vs "parser
                         # silently failed."
-                        status = "ok" if len(parsed_atoms) > 0 else "ok_empty"
+                        status = "ok" if kept_parsed > 0 else "ok_empty"
                         parser_routing[-1]["outcome"] = {
                             "status": status,
-                            "atom_count": len(parsed_atoms),
+                            "atom_count": kept_parsed,
                             "warning_count": len(per_artifact_warnings),
                             "cache_hit": cache_hit,
                         }
@@ -1028,7 +1110,7 @@ def compile_project(
                         # warning so the reviewer knows an input contributed
                         # nothing, instead of the file vanishing without a
                         # trace. Universal: keys off atom_count, not file type.
-                        if len(parsed_atoms) == 0:
+                        if kept_parsed == 0:
                             parse_warnings.append(
                                 f"WARNING: artifact '{relative_name}' parsed cleanly "
                                 f"with {parser_name} but yielded 0 atoms — no content "
@@ -1102,6 +1184,19 @@ def compile_project(
             f"atom(s) (e.g. whole-sheet drops) to the suppressed sidecar"
         )
 
+    # Lines a parser's admission regex refused (a greeting, a sign-off, the
+    # name under it) are KEPT atoms flagged chatter, so the labeling page can
+    # show them and the admission head gets its negatives. They are held out
+    # of every stage from here to packetizing -- threading, dedup, the
+    # substance gate, typing, entity resolution, signals, packets -- and put
+    # back only for text coverage and the result. So no head ever reads one,
+    # and every other atom, entity, edge and packet is exactly what it would be
+    # without them.
+    held_chatter = [a for a in atoms if _ADMISSION_REJECT_FLAG in (getattr(a, "review_flags", None) or [])]
+    if held_chatter:
+        _held_ids = {id(a) for a in held_chatter}
+        atoms = [a for a in atoms if id(a) not in _held_ids]
+
     # Email threading: each .eml is a separate artifact, so a short reply
     # ("yes, go ahead with 36") parses as an atom with no idea what it answers.
     # Reconstruct the conversation across files (RFC In-Reply-To/References,
@@ -1128,6 +1223,28 @@ def compile_project(
                 f"WARNING: email_threading failed: {type(exc).__name__}: {exc}"
             )
         telemetry.end_stage(stage, output_count=len(atoms))
+
+    # The held chatter atoms read where their message reads: each copies the
+    # thread stamp of a kept atom from the same file and message, so the
+    # envelope's reading order puts "Hi Trent," above the body it opens.
+    # Copying is one-way -- nothing here touches a kept atom.
+    if held_chatter:
+        try:
+            _stamp_by_msg: dict[tuple[str, Any], dict] = {}
+            for _a in atoms:
+                _v = _a.value if isinstance(getattr(_a, "value", None), dict) else {}
+                _et = _v.get("email_thread")
+                if isinstance(_et, dict):
+                    _stamp_by_msg.setdefault((str(_a.artifact_id), _v.get("message_index")), _et)
+            for _a in held_chatter:
+                _v = _a.value if isinstance(getattr(_a, "value", None), dict) else None
+                if _v is None or "email_thread" in _v:
+                    continue
+                _et = _stamp_by_msg.get((str(_a.artifact_id), _v.get("message_index")))
+                if _et is not None:
+                    _v["email_thread"] = dict(_et)
+        except Exception:  # pragma: no cover - ordering sugar, never fatal
+            pass
 
     # A HubSpot note that is a pasted email is the same message, not a second
     # source -- and the fold has to happen HERE, before the first pass that
@@ -1165,11 +1282,11 @@ def compile_project(
                     # The ledger call has never once run.
                     capture_suppressed(
                         before_paste, atoms, stage="pasted_note_dedup",
-                        reason="note pasted into the deal folded onto the email it was copied from",
+                        reason="copy of a note/email text folded onto its original (quoted copy, later copy, or note pasted from mail)",
                     ),
                 )
                 warnings.append(
-                    f"INFO: pasted_note_dedup folded {len(_pasted)} note copies onto their email originals"
+                    f"INFO: pasted_note_dedup folded {len(_pasted)} copies onto their originals"
                 )
         except Exception as exc:
             warnings.append(f"WARNING: pasted_note_dedup failed: {type(exc).__name__}: {exc}")
@@ -1568,6 +1685,14 @@ def compile_project(
         try:
             from app.core.entity_resolution import collapse_duplicate_atoms
             atoms = collapse_duplicate_atoms(atoms)
+            # A "near duplicate" whose words no survivor carries is a
+            # different line (numbered steps 6-15 on a two-column PDF page).
+            from app.core.suppression_ledger import keep_unsurvived_lines
+            atoms, _kept_back = keep_unsurvived_lines(before_atoms, atoms, stage="duplicate_atom_collapse")
+            if _kept_back:
+                warnings.append(
+                    f"INFO: duplicate_atom_collapse kept {len(_kept_back)} lines no survivor contains"
+                )
         except Exception as exc:
             warnings.append(f"WARNING: duplicate_atom_collapse failed: {type(exc).__name__}: {exc}")
         dropped = before - len(atoms)
@@ -1625,11 +1750,13 @@ def compile_project(
         try:
             from app.core.table_rollup import roll_up_table_rows
             atoms, tr_stats = roll_up_table_rows(atoms)
+            atoms = _keep_unsurvived_document_rows(before_tr_atoms, atoms, warnings)
         except Exception as exc:
             tr_stats = {}
             warnings.append(f"WARNING: table_rollup failed: {type(exc).__name__}: {exc}")
         folded_tr = before_tr - len(atoms)
-        if folded_tr > 0:
+        _tr_kept_ids = {id(a) for a in atoms}
+        if any(id(a) not in _tr_kept_ids for a in before_tr_atoms):
             merge_suppressed(
                 suppressed_atoms,
                 capture_suppressed(
@@ -2053,13 +2180,28 @@ def compile_project(
         # commitment. Speech only — two similar lines in a document are two facts.
         from app.core.semantic_dedup import collapse_repeated_speech
 
+        # Snapshot BEFORE the speech collapse: its drops used to happen ahead
+        # of the ledger snapshot below, so a collapsed utterance left no atom
+        # AND no suppression entry -- nothing a labeller could find.
+        before_sem_atoms = list(atoms)
         _before_speech = len(atoms)
-        atoms = collapse_repeated_speech(atoms)
+        # Only CLAIMS collapse. An untyped utterance (raw_utterance) asserts
+        # nothing, so a repeat of it cannot double-count anything; folding it
+        # into a longer line by word overlap took real turns off the page
+        # ("the only region that won't have a stack coordinator" vanished
+        # into an earlier, longer turn that shared its words).
+        _untyped = {
+            id(a) for a in atoms
+            if str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", ""))) == "raw_utterance"
+        }
+        _speech_kept = {
+            id(a) for a in collapse_repeated_speech([a for a in atoms if id(a) not in _untyped])
+        }
+        atoms = [a for a in atoms if id(a) in _untyped or id(a) in _speech_kept]
         if len(atoms) != _before_speech:
             warnings.append(
                 f"INFO: collapsed {_before_speech - len(atoms)} repeated spoken claim(s)"
             )
-        before_sem_atoms = list(atoms)
         before_sem = len(atoms)
         try:
             from app.core.semantic_dedup import (
@@ -2095,7 +2237,9 @@ def compile_project(
             warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
         dropped_sem = before_sem - len(atoms)
         _sem_notes: list[str] = []
-        if dropped_sem > 0:
+        # Measured from the snapshot, so a turn only the speech collapse
+        # dropped still gets its suppression entry.
+        if len(before_sem_atoms) > len(atoms):
             merge_suppressed(
                 suppressed_atoms,
                 capture_suppressed(
@@ -2212,6 +2356,31 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: note_provenance_backfill failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=note_prov_n)
+
+    # A note with real text that carried files says so on its own header atom,
+    # so a reader of the note sees what was attached to it. (A "Note"-only
+    # note never got this far -- _iter_artifacts dropped it.)
+    try:
+        from app.core.note_attachments import note_attachment_links
+
+        _carried = note_attachment_links(project_dir).notes
+        if _carried:
+            _rel_by_id: dict[str, str] = {}
+            for _aid, _p in artifact_paths.items():
+                try:
+                    _rel_by_id[_aid] = str(Path(_p).relative_to(project_dir)).replace("\\", "/")
+                except ValueError:
+                    _rel_by_id[_aid] = Path(_p).name
+            for _atom in atoms:
+                _v = _atom.value if isinstance(getattr(_atom, "value", None), dict) else None
+                if not _v or _v.get("kind") != "hubspot_note_meta":
+                    continue
+                _link = _carried.get(_rel_by_id.get(str(_atom.artifact_id or ""), ""))
+                if _link:
+                    _v["attachments"] = [a["filename"] for a in _link["attachments"]]
+                    _v["attachment_ids"] = list(_link["attachment_ids"])
+    except Exception as exc:
+        warnings.append(f"WARNING: note_attachment_links failed: {type(exc).__name__}: {exc}")
 
     # HubSpot notes / short email bullets often carry quote-level work units
     # before a SOW exists, but the type classifier may leave them as scope_item
@@ -2512,8 +2681,12 @@ def compile_project(
 
             state = read_deal_state(atoms)
             if state.lines:
-                template = atoms[0] if atoms else None
+                fallback = atoms[0] if atoms else None
                 for line in state.lines:
+                    # Pin the line to the artifact its evidence came from; the
+                    # first atom of the deal is only a last resort (000132's
+                    # survey line landed on an unrelated note).
+                    template = next(iter(getattr(line, "evidence_atoms", None) or []), None) or fallback
                     if template is None:
                         break
                     atoms.append(_deal_state_atom(template, line))
@@ -2905,6 +3078,23 @@ def compile_project(
             ]
             packet.risk = score_packet_risk(packet, packet_atoms, edges)
         telemetry.end_stage(stage, output_count=len(packets))
+
+    # The held chatter atoms come back now: after every head has run, before
+    # coverage, so their lines count as claimed by an atom.
+    if held_chatter:
+        try:
+            for _atom in held_chatter:
+                if getattr(_atom, "source_refs", None) and not getattr(_atom, "receipts", None):
+                    _atom.receipts = replay_atom_receipts(_atom, artifact_paths)
+        except Exception as exc:  # never fail a compile over a chatter receipt
+            warnings.append(f"WARNING: chatter receipts failed: {type(exc).__name__}: {exc}")
+        _seen_ids = {a.id for a in atoms}
+        _back: list = []
+        for _atom in held_chatter:
+            if _atom.id not in _seen_ids:
+                _seen_ids.add(_atom.id)
+                _back.append(_atom)
+        atoms = atoms + _back
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.

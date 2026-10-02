@@ -1001,7 +1001,11 @@ def replay_source_ref(atom: EvidenceAtom, source_ref: SourceRef, artifact_paths:
     if path is None or not path.exists():
         return _receipt(atom, source_ref, "unsupported", "Original artifact file is not available for replay")
 
-    suffix = path.suffix.lower()
+    # Dispatch on what the file IS: a Docusign PDF named ".docx" was parsed as
+    # a PDF and then replayed through python-docx, failing every receipt.
+    from app.core.filetype import content_suffix
+
+    suffix = content_suffix(path)
     try:
         # A spreadsheet locator is one with a row, on a spreadsheet file.
         #

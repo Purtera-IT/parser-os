@@ -60,6 +60,12 @@ def party(raw: str) -> dict[str, Any] | None:
     addr = address_of(raw)
     if not addr:
         return None
+    # A machine (echosign@, dse@docusign.net, noreply@) said nothing and is
+    # nobody's party; see app.core.automated_senders.
+    from app.core.automated_senders import is_automated_sender
+
+    if is_automated_sender(raw):
+        return None
     domain = domain_of(addr)
     ours = domain in OUR_DOMAINS
     return {

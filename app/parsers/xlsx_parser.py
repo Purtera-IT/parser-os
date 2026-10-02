@@ -386,6 +386,95 @@ def _row_money_values(row: list[Any], money_cols: set[int]) -> list[float]:
     return vals
 
 
+_RATE_UNIT_RE = re.compile(
+    r"^(?:per\s+[a-z][a-z \-]{0,20}|/\s*(?:hr|hour|day|week|month|site|device|unit)"
+    r"|hourly|daily|weekly|monthly|each|ea|flat(?:\s+fee)?|lump\s+sum)$",
+    re.I,
+)
+_RATE_ROLE_HEADER_RE = re.compile(
+    r"\b(?:role|title|position|skill|level|labou?r|resource|service|description|name|item)\b",
+    re.I,
+)
+_RATE_UNIT_HEADER_RE = re.compile(r"\b(?:unit|uom|per|billing\s+type|basis)\b", re.I)
+_RATE_MINIMUM_RE = re.compile(r"(\d+(?:\.\d+)?)\s*-?\s*(?:hr|hour)s?\.?\s*min", re.I)
+
+
+def _rate_row_fields(
+    headers: list[str],
+    cells: list[str],
+    row: list[Any],
+    money_cols: set[int],
+    *,
+    country_col: int | None,
+) -> dict[str, Any]:
+    """Structured fields of ONE rate-card / catalog row: who (role), what it
+    costs (rate + unit), and where (country) when the sheet is per-country.
+
+    Two universal shapes (no customer names, no sheet-name keywords):
+      * a per-country matrix -- one row per country, each money column a
+        ``<role> <N> hr. min`` rate -- yields ``rates=[{role, minimum, rate}]``;
+      * a role list -- ``Code | Role | Unit | Rate`` -- yields one
+        ``role`` / ``unit`` / ``rate``.
+    """
+    def _h(ci: int) -> str:
+        return headers[ci] if ci < len(headers) and headers[ci] else ""
+
+    fields: dict[str, Any] = {}
+    if country_col is not None and country_col < len(cells) and cells[country_col]:
+        fields["country"] = cells[country_col]
+
+    rates: list[dict[str, Any]] = []
+    for ci in sorted(money_cols):
+        if ci == country_col or ci >= len(row) or not _is_money_number(row[ci]):
+            continue
+        entry: dict[str, Any] = {"rate": float(row[ci])}
+        hdr = _h(ci)
+        if hdr:
+            entry["column"] = hdr
+            m = _RATE_MINIMUM_RE.search(hdr)
+            if m:
+                entry["minimum_hours"] = float(m.group(1))
+                role = hdr[: m.start()].strip(" -,.")
+                if role:
+                    entry["role"] = role
+        rates.append(entry)
+
+    unit = ""
+    for ci, c in enumerate(cells):
+        if not c or ci == country_col:
+            continue
+        if _RATE_UNIT_RE.match(c) or (_RATE_UNIT_HEADER_RE.search(_h(ci)) and len(c) <= 30
+                                      and not _is_bare_numeric(c)):
+            unit = c
+            break
+    if unit:
+        fields["unit"] = unit
+
+    if "country" not in fields:
+        role = ""
+        for ci, c in enumerate(cells):
+            if c and ci not in money_cols and c != unit and _RATE_ROLE_HEADER_RE.search(_h(ci)) \
+                    and not _is_bare_numeric(c):
+                role = c
+                break
+        if not role:
+            labels = [
+                c for ci, c in enumerate(cells)
+                if c and ci not in money_cols and c != unit and not _is_bare_numeric(c)
+            ]
+            role = max(labels, key=len) if labels else ""
+        if role:
+            fields["role"] = role[:200]
+
+    if len(rates) == 1:
+        fields["rate"] = rates[0]["rate"]
+        if "role" not in fields and rates[0].get("role"):
+            fields["role"] = rates[0]["role"]
+    if rates:
+        fields["rates"] = rates
+    return fields
+
+
 def _is_side_label_value(cells: list[str]) -> bool:
     """A short ``label -> number`` fact sitting in a side calc block beside the
     main priced table (e.g. a travel breakdown's "Team | 4", "Weeks per tech |
@@ -2094,6 +2183,102 @@ class XlsxParser(BaseParser):
             for row in rows
         ]
 
+    @staticmethod
+    def _vertical_merges(
+        path: Path, wanted: set[str] | None = None
+    ) -> dict[str, list[tuple[int, int, int]]]:
+        """Map sheet title -> [(first_row, last_row, col)] (0-based) for each
+        merged range that spans more than one ROW.
+
+        A read-only workbook does not expose merged ranges, so a cell merged
+        down a Gantt's phase column ("Install" over four task rows) reads as
+        a value on the first row and nothing on the other three -- those
+        tasks lost their phase. The ranges sit in ``<mergeCells>`` after
+        ``<sheetData>``, so they are read from the sheet markup directly,
+        streamed, and only for sheets whose rows become atoms.
+        """
+        out: dict[str, list[tuple[int, int, int]]] = {}
+        if wanted is not None and not wanted:
+            return out
+        try:
+            import re as _re
+            import zipfile
+            from xml.etree import ElementTree as _ET
+
+            from openpyxl.utils.cell import range_boundaries
+
+            NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+            RID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            PR = "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+            with zipfile.ZipFile(path) as zf:
+                book = _ET.fromstring(zf.read("xl/workbook.xml"))
+                rels = {
+                    r.get("Id"): (r.get("Target") or "")
+                    for r in _ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+                    if r.tag == PR
+                }
+                members = set(zf.namelist())
+                for sh in book.iter(f"{NS}sheet"):
+                    title = sh.get("name") or ""
+                    if wanted is not None and title not in wanted:
+                        continue
+                    target = rels.get(sh.get(RID) or "") or ""
+                    member = target[1:] if target.startswith("/") else f"xl/{target}"
+                    if member not in members:
+                        continue
+                    found: list[tuple[int, int, int]] = []
+                    tail = b""
+                    with zf.open(member) as fh:
+                        while True:
+                            chunk = fh.read(1 << 20)
+                            if not chunk:
+                                break
+                            buf = tail + chunk
+                            # a <mergeCell .../> can straddle a chunk boundary
+                            cut = buf.rfind(b"<")
+                            scan, tail = (buf[:cut], buf[cut:]) if cut > 0 else (buf, b"")
+                            for m in _re.finditer(rb'<mergeCell\b[^>]*\bref="([A-Z]+\d+:[A-Z]+\d+)"', scan):
+                                c1, r1, _c2, r2 = range_boundaries(m.group(1).decode())
+                                if r2 > r1:
+                                    found.append((r1 - 1, r2 - 1, c1 - 1))
+                        for m in _re.finditer(rb'<mergeCell\b[^>]*\bref="([A-Z]+\d+:[A-Z]+\d+)"', tail):
+                            c1, r1, _c2, r2 = range_boundaries(m.group(1).decode())
+                            if r2 > r1:
+                                found.append((r1 - 1, r2 - 1, c1 - 1))
+                    if found:
+                        out[title] = found
+        except Exception:
+            return out
+        return out
+
+    @staticmethod
+    def _fill_vertical_merges(
+        rows: list[list[Any]], merges: list[tuple[int, int, int]] | None
+    ) -> list[list[Any]]:
+        """Repeat a vertically merged cell's value on every row it spans.
+
+        The merged cell IS each of those rows' value -- the phase a task sits
+        in -- so every row atom carries it as its own context instead of only
+        the first. Only the merge's first column is filled: a merge across
+        columns is one value, not one per column. Returns a copy.
+        """
+        if not merges:
+            return rows
+        out = [list(r) if r is not None else [] for r in rows]
+        for r1, r2, c in merges:
+            if not (0 <= r1 < len(out)) or c >= len(out[r1]):
+                continue
+            val = out[r1][c]
+            if val is None or not str(val).strip():
+                continue
+            for ri in range(r1 + 1, min(r2, len(out) - 1) + 1):
+                row = out[ri]
+                if len(row) <= c:
+                    row.extend([None] * (c + 1 - len(row)))
+                if row[c] is None or not str(row[c]).strip():
+                    row[c] = val
+        return out
+
     def _parse_xlsx(
         self, project_id: str, artifact_id: str, path: Path
     ) -> tuple[list[EvidenceAtom], list[dict[str, Any]], str | None]:
@@ -2131,6 +2316,7 @@ class XlsxParser(BaseParser):
         _mined = {t for t, r in _grids if not self._reads_as_a_table(t, r)}
         hidden = self._hidden_dims(path, _mined) if _mined else {}
         styles_by_sheet = self._sheet_styles(path, _mined) if _mined else {}
+        merges_by_sheet = self._vertical_merges(path, _mined) if _mined else {}
 
         for sheet_title, rows in _grids:
             hc, hr = hidden.get(sheet_title, (set(), set()))
@@ -2143,6 +2329,7 @@ class XlsxParser(BaseParser):
                 rows=rows,
                 hidden_cols=hc,
                 styles=styles_by_sheet.get(sheet_title),
+                merges=merges_by_sheet.get(sheet_title),
             )
             # Single chokepoint (path-independent: block / legacy / commercial all
             # funnel here): mark atoms sourced from author-HIDDEN rows so a reviewer
@@ -2552,6 +2739,12 @@ class XlsxParser(BaseParser):
     # This cap bounds envelope size for pathological sheets while staying
     # far above any realistic rate table.
     _COMMERCIAL_FOLD_CAP = 5000
+    # Rate cards / catalogs ALSO emit one atom per priced row (beside the
+    # rollup summary) so a person can label each rate. Bounded per sheet so a
+    # 30,000-line price book cannot flood the envelope; rows past the cap stay
+    # in the summary's ``value.rows`` only. A Deal Kit's rate sheets are a few
+    # hundred rows -- far below this.
+    _COMMERCIAL_ROW_ATOM_CAP = int(os.environ.get("SOWSMITH_COMMERCIAL_ROW_ATOM_CAP", "2000") or 2000)
 
     def _emit_financial_summary_rows(
         self,
@@ -3098,6 +3291,21 @@ class XlsxParser(BaseParser):
         # has that column empty, so it falls back to its plain form instead of
         # being mis-mapped onto the main table's headers.
         _first_hdr_col = next((i for i, h in enumerate(_headers) if h), None)
+        # Per-country rate matrix: the column whose header says Country (or,
+        # on a content-classified country table, the label column).
+        _country_col = next(
+            (i for i, h in enumerate(_headers) if h and re.match(r"^country\b", h.strip(), re.I)),
+            None,
+        )
+        if _country_col is None and getattr(classification, "reason", "") == "country_rate_card_table":
+            _country_col = 0
+        # Rate-card rows are service lines (role + rate + unit); catalog rows
+        # keep the parser's pricing type. ``rate_card`` is label-only (v2) in
+        # the type registry, so the prod enum cannot carry it yet.
+        row_atom_type = (
+            AtomType.service_line if role is SheetRole.RATE_CARD else atom_type
+        )
+        row_atoms_emitted = 0
 
         # Which rows carry money — used to tell a CATEGORY-DIVIDER row (a label
         # that HEADS a run of priced data rows, e.g. a "CAT6…" banner over the
@@ -3176,9 +3384,19 @@ class XlsxParser(BaseParser):
                 c for c in cells if c and not c.replace(",", "").replace(".", "").lstrip("-").isdigit()
             ).strip()[:300]
 
+            row_value: dict[str, Any] = {
+                "label": label,
+                "money_keys": money_keys,
+                "sheet_role": role.value,
+                "sheet_name": sheet_name,
+                "cells": [c for c in cells if c],
+            }
+            this_type = atom_type
             if collapse_to_summary:
-                # Fold into the rollup — summary-only emission for rate cards /
-                # catalogs. No per-row atoms (the flood that broke #010063).
+                # Fold into the rollup (full matrix for drill-down / the
+                # pricing_rollup packet) AND emit the row as its own atom: a
+                # rate a person cannot see cannot be labelled. The rollup
+                # alone hid ~850 rate rows on one deal behind a count line.
                 folded_rows.append(
                     {
                         "row": row_idx + 1,
@@ -3188,10 +3406,25 @@ class XlsxParser(BaseParser):
                         "cells": [c for c in cells if c],
                     }
                 )
-                continue
+                if row_atoms_emitted >= self._COMMERCIAL_ROW_ATOM_CAP:
+                    continue
+                row_atoms_emitted += 1
+                this_type = row_atom_type
+                row_value.update(
+                    _rate_row_fields(
+                        _headers, cells, row, set(money_cols), country_col=_country_col,
+                    )
+                )
+                row_value["kind"] = (
+                    "rate_card_row" if role is SheetRole.RATE_CARD else "catalog_row"
+                )
+                # The sheet name leads the text: COST and SELL sheets often
+                # carry identical rows, and are different facts.
+                if sheet_name:
+                    row_text = f"{sheet_name} | {row_text}"[:4000]
 
             atom_id = stable_id(
-                "atm", artifact_id, atom_type.value, sheet_name, row_idx
+                "atm", artifact_id, this_type.value, sheet_name, row_idx
             )
             src = SourceRef(
                 id=stable_id("src", atom_id),
@@ -3215,16 +3448,10 @@ class XlsxParser(BaseParser):
                     id=atom_id,
                     project_id=project_id,
                     artifact_id=artifact_id,
-                    atom_type=atom_type,
+                    atom_type=this_type,
                     raw_text=row_text,
                     normalized_text=row_text.lower(),
-                    value={
-                        "label": label,
-                        "money_keys": money_keys,
-                        "sheet_role": role.value,
-                        "sheet_name": sheet_name,
-                        "cells": [c for c in cells if c],
-                    },
+                    value=row_value,
                     entity_keys=money_keys,
                     source_refs=[src],
                     receipts=[],
@@ -3266,8 +3493,8 @@ class XlsxParser(BaseParser):
             values=all_values,
             folded_rows=folded_rows,
         )
-        # Summary-only: one atom per reference sheet, full matrix in value.rows.
-        return [summary]
+        # Summary first (full matrix in value.rows), then one atom per row.
+        return [summary, *atoms]
 
     def _commercial_summary_atom(
         self,
@@ -3584,6 +3811,7 @@ class XlsxParser(BaseParser):
         rows: list[list[Any]],
         hidden_cols: set[int] | None = None,
         styles: list[list[tuple[str | None, bool]]] | None = None,
+        merges: list[tuple[int, int, int]] | None = None,
     ) -> list[EvidenceAtom]:
         if not rows:
             return []
@@ -3662,6 +3890,12 @@ class XlsxParser(BaseParser):
                 )
                 if reading:
                     return reading
+
+        # Every row below is mined as its own atom, so a cell merged down
+        # several rows (a Gantt's phase over its tasks) must be on each of
+        # them. Applied only here: the role router and the commercial /
+        # financial emitters above read the grid as the sheet stores it.
+        rows = self._fill_vertical_merges(rows, merges)
 
         # RF1 — explicit fast-path for known structured-row CSVs.
         # Files named asset_inventory / site_list / risk_register /
@@ -4590,9 +4824,15 @@ class XlsxParser(BaseParser):
             if b["kind"] == "table":
                 header = b["header"]
                 row_indices = b.get("row_indices") or []
+                row_sections = b.get("row_sections") or []
                 for _ri, row_cells in enumerate(b["rows"]):
                     seq += 1
                     sheet_row = row_indices[_ri] if _ri < len(row_indices) else None
+                    # The phase/section row this one sits under (a Gantt's
+                    # "Install"): context that leads the row and extends its
+                    # path, never a separate row glued onto it.
+                    section = row_sections[_ri] if _ri < len(row_sections) else None
+                    rsp = sp + [section] if section else sp
                     # Summary / total rows ("Subtotal", "Recommended fixed fee
                     # hours", "Safer bid hours", "Grand Total") are NOT task rows —
                     # don't force the first column's header ("Task Category") onto
@@ -4615,16 +4855,21 @@ class XlsxParser(BaseParser):
                             pairs.append(f"col{j+1}: {row_cells[j]}")
                     if not pairs:
                         continue
+                    if section:
+                        pairs = [section] + pairs
                     body = " | ".join(pairs)[:4000]
                     # raw_table_row -> schema classifier types it + binds headers
                     rtr_id = stable_id("atm", artifact_id, "xlsx_block_rtr", sheet_name, bi, seq)
+                    _rtr_value = {"_columns": list(header), "_row": list(row_cells), "_table_idx": bi,
+                                  "_row_idx": seq, "_filename": filename, "_sheet": sheet_name,
+                                  "section_path": rsp, "_artifact_type": "xlsx"}
+                    if section:
+                        _rtr_value["section"] = section
                     atoms.append(EvidenceAtom(
                         id=rtr_id, project_id=project_id, artifact_id=artifact_id,
                         atom_type=AtomType.raw_table_row, raw_text=body, normalized_text=body.lower(),
-                        value={"_columns": list(header), "_row": list(row_cells), "_table_idx": bi,
-                               "_row_idx": seq, "_filename": filename, "_sheet": sheet_name,
-                               "section_path": sp, "_artifact_type": "xlsx"},
-                        entity_keys=[], source_refs=[_src(rtr_id, sp, "xlsx_block_raw_table_row", sheet_row)], receipts=[],
+                        value=_rtr_value,
+                        entity_keys=[], source_refs=[_src(rtr_id, rsp, "xlsx_block_raw_table_row", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.80, confidence_raw=0.80, calibrated_confidence=0.80,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],
@@ -4632,12 +4877,15 @@ class XlsxParser(BaseParser):
                     ))
                     # generic fallback (survives only if the classifier can't type the row)
                     si_id = stable_id("atm", artifact_id, "xlsx_block_row", sheet_name, bi, seq)
+                    _si_value = {"kind": "table_row", "columns": list(header),
+                                 "cells": {header[j]: row_cells[j] for j in range(min(len(header), len(row_cells))) if row_cells[j] != ""}}
+                    if section:
+                        _si_value["section"] = section
                     atoms.append(EvidenceAtom(
                         id=si_id, project_id=project_id, artifact_id=artifact_id,
                         atom_type=AtomType.scope_item, raw_text=body, normalized_text=body.lower(),
-                        value={"kind": "table_row", "columns": list(header),
-                               "cells": {header[j]: row_cells[j] for j in range(min(len(header), len(row_cells))) if row_cells[j] != ""}},
-                        entity_keys=[], source_refs=[_src(si_id, sp, "xlsx_block_row_v1", sheet_row)], receipts=[],
+                        value=_si_value,
+                        entity_keys=[], source_refs=[_src(si_id, rsp, "xlsx_block_row_v1", sheet_row)], receipts=[],
                         authority_class=AuthorityClass.contractual_scope,
                         confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
                         review_status=ReviewStatus.auto_accepted, review_flags=[],

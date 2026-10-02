@@ -25,6 +25,7 @@ from app.core.schemas import (
     ParserCapability,
     ParserMatch,
 )
+from app.parsers.clause_split import split_clauses
 from app.parsers.base import BaseParser, PerThreadState
 from app.parsers.segmenters import segment_docx
 from app.parsers.structured_projection import (
@@ -107,6 +108,48 @@ def _iter_block_items(parent):
                 yield from _iter_block_items(content)
 
 
+def _unwrap_content_controls(document) -> int:
+    """Lift the content of every ``w:sdt`` content control in the body into its
+    parent, in place, so python-docx's own views see it. Returns the count.
+
+    ``_iter_block_items`` already descends through BLOCK-level controls under
+    ``w:body``, but a content control can sit anywhere: inside a paragraph
+    (inline, around runs), inside a table cell (around the cell's paragraphs),
+    around a table row, or around a cell within a row. python-docx's
+    ``Paragraph.text`` reads only ``w:r`` / ``w:hyperlink``, ``Table.rows`` only
+    direct ``w:tr``, ``_Row.cells`` only direct ``w:tc`` and ``_Cell.text`` only
+    direct ``w:p`` -- so a SOW whose fields are content controls read as
+    "The contractor shall deliver  to the site." with the controlled words
+    gone, and controlled rows / cells vanished from its tables.
+
+    Replacing each control with its ``w:sdtContent`` children is lossless for
+    the text (properties carry no content) and keeps document order. A control
+    still showing its placeholder ("Click or tap here to enter text.") holds no
+    content anyone wrote, so it is lifted out empty. The document is
+    in-memory only; the file on disk is never touched.
+    """
+    from docx.oxml.ns import qn
+
+    SDT, SDTC, SDTPR, PLC = qn("w:sdt"), qn("w:sdtContent"), qn("w:sdtPr"), qn("w:showingPlcHdr")
+    body = document.element.body
+    # Reverse document order: an inner control is lifted before the outer
+    # one that contains it, so every control still has a parent when reached.
+    controls = list(body.iter(SDT))
+    for sdt in reversed(controls):
+        parent = sdt.getparent()
+        if parent is None:
+            continue
+        content = sdt.find(SDTC)
+        pr = sdt.find(SDTPR)
+        placeholder = pr is not None and pr.find(PLC) is not None
+        children = [] if content is None or placeholder else list(content)
+        idx = parent.index(sdt)
+        for offset, child in enumerate(children):
+            parent.insert(idx + offset, child)
+        parent.remove(sdt)
+    return len(controls)
+
+
 def _all_paragraphs(document):
     """All body paragraphs in reading order, including those inside content
     controls (drop-in replacement for ``document.paragraphs``)."""
@@ -133,6 +176,43 @@ STRONG_CONSTRAINT_PATTERNS = [
 WEAK_CONSTRAINT_PATTERNS = [r"\baccess\b"]
 CONSTRAINT_PATTERNS = STRONG_CONSTRAINT_PATTERNS + WEAK_CONSTRAINT_PATTERNS
 ASSUMPTION_PATTERNS = [r"\bassum(?:e|ption|ing)\b"]
+
+
+# Most specific first: which of several lexical matches names the atom.
+_LEXICAL_TYPE_PRIORITY = [
+    AtomType.exclusion,
+    AtomType.constraint,
+    AtomType.assumption,
+    AtomType.open_question,
+    AtomType.scope_item,
+]
+
+# Atom types the plain-text emitter produces; the same sentence reached by two
+# paths (body paragraph and a table cell, or a content control read twice)
+# is emitted once.
+_DEDUPE_TYPES = {
+    AtomType.scope_item, AtomType.exclusion, AtomType.constraint,
+    AtomType.assumption, AtomType.open_question, AtomType.deliverable,
+    AtomType.acceptance_criterion,
+}
+
+
+def _dedupe_repeated_text(atoms: list[Any]) -> list[Any]:
+    """Drop a later atom whose normalized text an earlier plain-text atom of the
+    same document already carries. Tracked-change atoms and structured atoms
+    (rows, sites, BOM lines, markers) are never touched."""
+    seen: set[str] = set()
+    out: list[Any] = []
+    for a in atoms:
+        norm = getattr(a, "normalized_text", "") or ""
+        val = getattr(a, "value", None) or {}
+        tracked = isinstance(val, dict) and val.get("tracked_change")
+        if getattr(a, "atom_type", None) in _DEDUPE_TYPES and norm and not tracked:
+            if norm in seen:
+                continue
+            seen.add(norm)
+        out.append(a)
+    return out
 
 
 def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, Any]:
@@ -273,6 +353,9 @@ class DocxParser(BaseParser):
                 path = rewritten
 
         document = Document(path)
+        # Content controls inside paragraphs, cells and rows are invisible to
+        # python-docx's views; lift their content in place before reading.
+        _unwrap_content_controls(document)
         atoms: list[EvidenceAtom] = []
         # Universal reading-order section map: every paragraph/table learns the
         # heading chain it lives under, so site/section attribution has real
@@ -305,23 +388,29 @@ class DocxParser(BaseParser):
             # vs content, so the heading-drop decision can never diverge from the
             # section-path computation.
             is_heading = idx in getattr(self, "_structure_idxs", set())
-            atoms.extend(
-                self._emit_atoms_for_text(
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    filename=path.name,
-                    text=text,
-                    paragraph_index=idx,
-                    table_index=None,
-                    row=None,
-                    cell=None,
-                    tracked_change=None,
-                    heading=is_heading,
-                    is_list_item=is_list_item,
-                    section_path=para_section.get(idx, []),
-                    lead_in=getattr(self, "_para_lead_in", {}).get(idx, []),
+            # One atom per clause: the PDF path's split, so a draft SOW and its
+            # signed PDF produce matching atoms (see clause_split).
+            clauses = [] if is_heading else split_clauses(text)
+            units = clauses or [text]
+            for s_idx, unit in enumerate(units):
+                atoms.extend(
+                    self._emit_atoms_for_text(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        text=unit,
+                        paragraph_index=idx,
+                        table_index=None,
+                        row=None,
+                        cell=None,
+                        tracked_change=None,
+                        heading=is_heading,
+                        is_list_item=is_list_item,
+                        section_path=para_section.get(idx, []),
+                        lead_in=getattr(self, "_para_lead_in", {}).get(idx, []),
+                        sentence_index=s_idx if clauses else None,
+                    )
                 )
-            )
 
         # Build all-document text once for ``kind=physical_site`` declarations.
         # Exclude table-cell paragraphs so the surrounding-text heuristic stays
@@ -818,6 +907,7 @@ class DocxParser(BaseParser):
                 return (table_order[ti], 1)
             return (10**9, 2)
         atoms.sort(key=_body_key)
+        atoms = _dedupe_repeated_text(atoms)
 
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
@@ -1887,6 +1977,7 @@ class DocxParser(BaseParser):
         is_list_item: bool = False,
         section_path: list[str] | None = None,
         lead_in: list[str] | None = None,
+        sentence_index: int | None = None,
     ) -> list[EvidenceAtom]:
         # Span-provenance ledger (passive side-channel; only active when a
         # ledger is attached). Register this raw unit so the lost-content
@@ -1895,6 +1986,8 @@ class DocxParser(BaseParser):
         span_id = self._span_id(
             artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index
         )
+        if sentence_index is not None:
+            span_id = f"{span_id}#s{sentence_index}"
         if ledger is not None:
             ledger.register_span(span_id, text)
 
@@ -1947,6 +2040,7 @@ class DocxParser(BaseParser):
         # context only.)
         prose_fallback = False
         section_typed = False
+        chatter_reject = False
         if not atom_types:
             # Bullet list items are deliberate, load-bearing content (deliverables,
             # assumptions, checklists) — fail OPEN regardless of length, even when
@@ -1963,6 +2057,18 @@ class DocxParser(BaseParser):
                 else:
                     atom_types = [AtomType.scope_item]
                     prose_fallback = True
+            elif (
+                not heading
+                and table_index is None
+                and tracked_change is None
+                and re.search(r"[A-Za-z0-9]", text or "")
+            ):
+                # A body line the prose gate rejects ("Thanks,", a signer's
+                # name, a button label) still reaches the labeler, as an atom
+                # flagged chatter, so it can be labeled a reject instead of
+                # vanishing. Same flag the PDF path and deal_chatter use.
+                atom_types = [AtomType.deal_metadata]
+                chatter_reject = True
             else:
                 if ledger is not None:
                     from app.core.span_ledger import StageKind
@@ -1987,8 +2093,13 @@ class DocxParser(BaseParser):
         }
         if lead_in:
             locator["lead_in"] = list(lead_in)
+        if sentence_index is not None:
+            locator["sentence_index"] = sentence_index
         source_ref = SourceRef(
-            id=stable_id("src", artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index),
+            id=stable_id(
+                "src", artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index,
+                *(() if sentence_index is None else (sentence_index,)),
+            ),
             artifact_id=artifact_id,
             artifact_type=ArtifactType.docx,
             filename=filename,
@@ -1997,6 +2108,23 @@ class DocxParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+        # ONE atom per text. The lexical classifier can match several types on
+        # one sentence ("install" -> scope_item, "out of scope" -> exclusion,
+        # "access" -> constraint); emitting one atom per type gave the labeler
+        # three copies of the same sentence under one label_key. Keep the most
+        # specific type and carry the others on the atom.
+        alt_types: list[AtomType] = []
+        if len(atom_types) > 1:
+            ranked = sorted(
+                atom_types,
+                key=lambda t: _LEXICAL_TYPE_PRIORITY.index(t)
+                if t in _LEXICAL_TYPE_PRIORITY else len(_LEXICAL_TYPE_PRIORITY),
+            )
+            # A brittle single-word cue never outranks a real match.
+            strong = [t for t in ranked if t not in weak_lexical]
+            primary = (strong or ranked)[0]
+            alt_types = [t for t in atom_types if t != primary]
+            atom_types = [primary]
         atoms: list[EvidenceAtom] = []
         for atom_type in atom_types:
             authority_class = AuthorityClass.contractual_scope if heading else AuthorityClass.meeting_note
@@ -2027,9 +2155,15 @@ class DocxParser(BaseParser):
             # a brittle single-word lexical cue. The latter only counts for types
             # that came straight from the lexical classifier (section_typed /
             # prose_fallback have their own provenance + confidence).
-            is_weak = weak_label or (
+            if chatter_reject:
+                from app.core.deal_chatter import CHATTER_FLAG
+
+                review_status = ReviewStatus.needs_review
+                review_flags = [CHATTER_FLAG]
+                confidence = 0.1
+            is_weak = not chatter_reject and (weak_label or (
                 not section_typed and not prose_fallback and atom_type in weak_lexical
-            )
+            ))
             if is_weak:
                 # Low-trust guess — provisional: route to review + the PM
                 # labelling queue rather than ship as a confident fact.
@@ -2056,7 +2190,13 @@ class DocxParser(BaseParser):
                     atom_type=atom_type,
                     raw_text=text,
                     normalized_text=normalize_text(text),
-                    value={"text": text, "tracked_change": tracked_change, "prose_fallback": prose_fallback},
+                    value={
+                        "text": text,
+                        "tracked_change": tracked_change,
+                        "prose_fallback": prose_fallback,
+                        **({"alt_atom_types": [t.value for t in alt_types]} if alt_types else {}),
+                        **({"chatter": True, "rejected_by": "_is_substantive_prose"} if chatter_reject else {}),
+                    },
                     entity_keys=self._extract_entity_keys(text),
                     source_refs=[source_ref],
                     authority_class=authority_class,
