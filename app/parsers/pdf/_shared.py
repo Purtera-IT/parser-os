@@ -234,6 +234,108 @@ def _restore_clipped_prefixes(page: Any, cell_rows: list[Any], rows: list[list[A
             if changed:
                 rows[ri][ci] = "\n".join(out_lines)
 
+def _text_of(cell: Any) -> str:
+    return " ".join(str(cell or "").split())
+
+
+def _normalize_banded_grid(table: Any, rows: list[list[Any]]) -> list[list[Any]]:
+    """Read a grid drawn from FILLED cell bands as the table it shows.
+
+    A Word table exported to PDF (010087's fee table) has no ruling lines:
+    each cell is a filled band, and each band carries an inset text band with
+    the cell margin. ``find_tables`` takes every band edge as a wall, so one
+    column comes back as three -- a margin sliver, the text, a margin sliver
+    -- and a two-line header ("STATED RATE" over "(USD)") as two rows. Read
+    that way the header names one column in three, "DESCRIPTION" sits over a
+    sliver while the row's description sits in the next column, and the
+    phantom ``col_N`` columns get the whole table thrown out.
+
+    Two repairs, each a no-op on an ordinary grid:
+
+    * a header cell that runs down into the next row (DESCRIPTION spans both
+      header lines) makes that row part of the header: its text is appended
+      to the column names above it, provided it carries no figures;
+    * neighbouring grid columns that no row ever fills as two separate cells
+      are one column, read only when the grid has a column that is empty in
+      every row (the margin sliver). Each cell's text goes to the merged
+      column its cell box overlaps most, so a value in a cell merged across
+      the margin lands under its header, not under the sliver's.
+    """
+    try:
+        geo = [list(getattr(r, "cells", []) or []) for r in (getattr(table, "rows", []) or [])]
+    except Exception:
+        return rows
+    if len(geo) != len(rows) or not rows:
+        return rows
+    ncols = len(rows[0])
+    if ncols < 2 or any(len(r) != ncols for r in rows) or any(len(g) != ncols for g in geo):
+        return rows
+    rows = [list(r) for r in rows]
+    geo = [list(g) for g in geo]
+
+    # ── a two-line header ──────────────────────────────────────────────
+    if len(rows) >= 3:
+        nxt = [g for g in geo[1] if g is not None]
+        top = min((float(g[1]) for g in nxt), default=None)
+        spans_down = top is not None and any(
+            g is not None and _text_of(rows[0][j]) and float(g[3]) > top + 1.0
+            for j, g in enumerate(geo[0])
+        )
+        second = [_text_of(c) for c in rows[1] if _text_of(c)]
+        if (spans_down and len(second) >= 2
+                and not any(re.search(r"\d", c) for c in second)
+                and all(_text_of(rows[0][j]) for j, c in enumerate(rows[1]) if _text_of(c))):
+            rows[0] = [
+                (" ".join(t for t in (_text_of(a), _text_of(b)) if t)
+                 if (a is not None or _text_of(b)) else None)
+                for a, b in zip(rows[0], rows[1])
+            ]
+            del rows[1], geo[1]
+
+    # ── margin slivers ─────────────────────────────────────────────────
+    if not any(all(not _text_of(r[j]) for r in rows) for j in range(ncols)):
+        return rows
+    groups: list[list[int]] = [[0]]
+    for j in range(1, ncols):
+        clash = any(
+            _text_of(r[j]) and any(_text_of(r[k]) for k in groups[-1])
+            for r in rows
+        )
+        if clash:
+            groups.append([j])
+        else:
+            groups[-1].append(j)
+    if len(groups) == ncols:
+        return rows
+    xs: dict[int, tuple[float, float]] = {}
+    for g in geo:
+        for j, c in enumerate(g):
+            if c is None:
+                continue
+            nxt_j = next((k for k in range(j + 1, ncols) if g[k] is not None), ncols)
+            if nxt_j == j + 1 and j not in xs:
+                xs[j] = (float(c[0]), float(c[2]))
+    if len(xs) != ncols:
+        return rows
+    spans = [(xs[g[0]][0], xs[g[-1]][1]) for g in groups]
+    out: list[list[Any]] = []
+    for r, g in zip(rows, geo):
+        merged: list[Any] = [None] * len(groups)
+        for j, c in enumerate(g):
+            if c is None:
+                continue
+            x0, x1 = float(c[0]), float(c[2])
+            gi = max(range(len(groups)),
+                     key=lambda i: min(x1, spans[i][1]) - max(x0, spans[i][0]))
+            t = _text_of(r[j])
+            if merged[gi] is None or not merged[gi]:
+                merged[gi] = t
+            elif t:
+                merged[gi] = f"{merged[gi]} {t}"
+        out.append(merged)
+    return out
+
+
 #: A cell that labels its own value: "FULL NAME: Chase Smith", "DATE: Sep 17".
 _SELF_LABELLED_CELL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 .#/&()'-]{0,30}?:\s+\S")
 
