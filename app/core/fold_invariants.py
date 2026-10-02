@@ -141,6 +141,132 @@ def emails_only_the_loser_states(winner: Any, loser: Any) -> frozenset[str]:
     return emails_stated(loser) - emails_stated(winner)
 
 
+#: Verbs that make a line an INSTRUCTION -- something a person is told to do.
+#: A person record never carries one; a SOW step that names a person does
+#: ("Call Client Support Manager John Ozuna-Diaz ... upon arrival", Ox 010353),
+#: and keying both on the name folded the step into the record and lost it.
+#: A closed list rather than a suffix rule, for the reason
+#: `semantic_dedup._STATEMENT_VERBS` gives: "Mobis" ends in -s and is a company.
+ACTION_VERBS: frozenset[str] = frozenset({
+    # Only words that are verbs first. "Phone", "Email", "Text", "Page",
+    # "Report" and "Request" head table columns ("Phone Number | 404-...")
+    # far more often than they open an instruction.
+    "call", "contact", "notify", "inform", "ask", "meet", "check", "arrive",
+    "escort", "wait", "bring", "send", "submit", "schedule", "confirm",
+    "coordinate", "provide", "install", "remove", "deliver", "ensure",
+    "verify", "obtain", "reach", "dial",
+})
+
+_WORD_RE = re.compile(r"[a-z][a-z'-]*")
+
+#: A verb is an instruction only where an instruction's verb stands: opening
+#: the line or a clause, or after a modal / "please" / "then". "Phone: 555..."
+#: and "Contact: Megan" are labels (a colon follows); "Phone" mid-row is a noun.
+_ACTION_RE = re.compile(
+    r"(?:^|[.;!?\n\u2022*>]\s*|(?:^|\s)[-\u2013\u2014]\s+|\d[.)]\s+"
+    r"|\b(?:please|then|and|to|must|should|shall|will|first)\s+)"
+    r"(?P<verb>" + "|".join(sorted(ACTION_VERBS, key=len, reverse=True)) + r")\b(?!\s*:)(?=\s+[A-Za-z])",
+    re.I,
+)
+
+
+def _words(text: str) -> frozenset[str]:
+    return frozenset(_WORD_RE.findall((text or "").lower()))
+
+
+def _atom_text(atom: Any) -> str:
+    return str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
+
+
+def actions_stated(atom: Any) -> frozenset[str]:
+    """Instruction verbs the atom's words state. Text only: a structured
+    value's keys ("email", "phone") are field names, not instructions."""
+    return frozenset(m.group("verb").lower() for m in _ACTION_RE.finditer(_atom_text(atom).strip()))
+
+
+def actions_only_the_loser_states(winner: Any, loser: Any) -> frozenset[str]:
+    """Instruction verbs that leave the compile if ``loser`` is folded away."""
+    # Lost only when the survivor's words do not carry the verb at all.
+    return actions_stated(loser) - _words(_atom_text(winner))
+
+
+#: A ZIP is five digits after a state: "OH 45840", "Ohio 45840-1234". A bare
+#: five-digit number is not one -- street numbers ("15733 US-224") are too,
+#: and so is "Suite 12345".
+def _zip_re() -> "re.Pattern[str]":
+    from app.core.address_parse import US_STATE_NAMES, US_STATES
+
+    states = sorted({*US_STATES, *(n.title() for n in US_STATE_NAMES)}, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(re.escape(x) for x in states) + r")\.?,?\s+(\d{5})(?:-\d{4})?(?!\d)")
+
+
+_ZIP_RE = _zip_re()
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
+
+
+def _blob(atom: Any) -> str:
+    blob = _atom_text(atom)
+    value = getattr(atom, "value", None)
+    if isinstance(value, dict):
+        try:
+            blob = blob + " " + _json.dumps(value, default=str)
+        except Exception:
+            blob = blob + " " + str(value)
+    return blob
+
+
+def zips_stated(atom: Any) -> frozenset[str]:
+    """ZIP codes the atom states, in its words or its value (`zip`, `postal_code`)."""
+    found = {m.group(1) for m in _ZIP_RE.finditer(_atom_text(atom))}
+    value = getattr(atom, "value", None)
+    if isinstance(value, dict):
+        for k in ("zip", "zip_code", "postal_code", "postcode"):
+            m = re.match(r"\s*(\d{5})", str(value.get(k) or ""))
+            if m:
+                found.add(m.group(1))
+        for v in value.values():
+            if isinstance(v, str):
+                found |= {m.group(1) for m in _ZIP_RE.finditer(v)}
+    # A ZIP the atom states anywhere -- a value's `address` string included --
+    # is carried; only the five digits matter.
+    return frozenset(found)
+
+
+def phones_stated(atom: Any) -> frozenset[str]:
+    """Phone numbers the atom states, as their last ten digits."""
+    return frozenset(re.sub(r"\D", "", m.group(0))[-10:] for m in _PHONE_RE.finditer(_blob(atom)))
+
+
+def detail_only_the_loser_states(winner: Any, loser: Any) -> frozenset[str]:
+    """What leaves the compile if ``loser`` is folded into ``winner``.
+
+    The general form of :func:`emails_only_the_loser_states`: a fold may not
+    drop the only copy that carries a ZIP, a phone number, an email address,
+    or an instruction the survivor lacks (Ox 010353: the one address with its
+    ZIP, Megan's contact row with her email and phone, and "Call Client
+    Support Manager John Ozuna-Diaz ... upon arrival" folded into John's
+    person record -- each the only copy, each gone). Each lost item comes back
+    tagged -- ``zip:45840``, ``phone:5552013344``, ``email:megan@acme.com``,
+    ``action:call`` -- so a stage can log exactly what it would have deleted.
+
+    These are the details a reader acts on, which is why they are named
+    rather than read off every figure: a clipped site id "ATL-WEST-0" states
+    a figure its canonical "ATL-WEST-02" does not, and folding it loses
+    nothing. Ask AFTER merging the loser's value into the winner: a ZIP or an
+    address the merge carried across is no longer lost.
+    """
+    lost = {f"zip:{z}" for z in zips_stated(loser) - zips_stated(winner)}
+    lost |= {f"phone:{p}" for p in phones_stated(loser) - phones_stated(winner)}
+    lost |= {f"email:{e}" for e in emails_only_the_loser_states(winner, loser)}
+    lost |= {f"action:{v}" for v in actions_only_the_loser_states(winner, loser)}
+    return frozenset(lost)
+
+
+def covers(survivor: Any, other: Any) -> bool:
+    """Does ``survivor`` state every ZIP, phone, email and instruction ``other`` does?"""
+    return not detail_only_the_loser_states(survivor, other)
+
+
 def identity(atom: Any) -> tuple[str, ...]:
     """What distinguishes this atom from another with the SAME words."""
     ident: list[str] = []
@@ -191,6 +317,9 @@ def refuse_fold(winner: Any, loser: Any) -> str | None:
     gone = emails_only_the_loser_states(winner, loser)
     if gone:
         return "states email addresses the survivor does not: " + ", ".join(sorted(gone)[:6])
+    acts = actions_only_the_loser_states(winner, loser)
+    if acts:
+        return "states an instruction the survivor does not: " + ", ".join(sorted(acts)[:6])
     if identities_differ(winner, loser):
         return f"different identity: {identity(loser)} vs {identity(winner)}"
     return None
