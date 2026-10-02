@@ -63,7 +63,9 @@ INSTRUCTION = (
     "removed, moved, serviced or priced -- never by the customer, vendor, "
     "people or dates, which one customer's jobs share. A document about the "
     "deal's work, its pricing, sites, schedule or contract is this_deal even if "
-    "it also mentions other things. Answer other_job only when the document's "
+    "it also mentions other things. Request, ticket and order numbers are "
+    "filing, not work: files are often named after an earlier request for the "
+    "same job, so a different number is never a reason for other_job. Answer other_job only when the document's "
     "work is clearly a different job from the one the DEAL line names; if you "
     "cannot tell, answer this_deal."
 )
@@ -121,6 +123,74 @@ def is_drawing(filenames: list[str]) -> bool:
         or (n.lower().endswith(".pdf") and bool(_SHEET_NUMBER_RE.search(Path(n).stem.upper())))
         for n in names
     )
+
+
+#: A request, ticket or programme number: "010329", "OX-0036", "#70598001".
+#: Ox deals reuse earlier OX numbers and request ids, and the files on a deal
+#: keep the number of whichever request first produced them.
+_REF_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])#?(?:[A-Za-z]{1,4}[-_ ]?)?\d{3,}(?![A-Za-z0-9])")
+_REF_SEPARATORS_RE = re.compile(r"(?:\s*[-_#:|]\s*){2,}")
+
+
+def strip_refs(text: Any) -> str:
+    """A title or deal name without its reference numbers.
+
+    Live 010353 "VC Links" (compile b40e9bb3, 2026-10-02): the deal's own SOW
+    and Deal Kit arrived as "010329-OX-0036-VC Links.pdf" and "010328-OX-0035-
+    VC Links.xlsx" -- an Ox deal reuses earlier request numbers -- and the judge
+    set aside all 284 of their atoms as another job, on a number. The work is
+    named by the words; a number in front of them is filing, not scope.
+    """
+    s = _REF_TOKEN_RE.sub(" ", str(text or ""))
+    s = _REF_SEPARATORS_RE.sub(" - ", s)
+    s = " ".join(s.split()).strip(" -_#:|")
+    return s or " ".join(str(text or "").split())
+
+
+def _words(text: Any) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
+
+
+#: CRM fields that name where the job is, when the manifest carries them.
+_CRM_SITE_KEYS = ("site_address", "address", "street_address", "deal_address", "site")
+
+
+def deal_anchors(deal_name: str, crm: dict[str, Any] | None = None) -> list[str]:
+    """Phrases that, written in a document's own text, tie it to this deal: the
+    deal name without its numbers (the project name) and any site address the
+    CRM gives. Too short to identify anything (one short word) is no anchor."""
+    out: list[str] = []
+    for raw in [strip_refs(deal_name)] + [str((crm or {}).get(k) or "") for k in _CRM_SITE_KEYS]:
+        w = _words(raw)
+        if w and (len(w.split()) >= 2 or len(w) >= 8) and w not in out:
+            out.append(w)
+    return out
+
+
+def content_match(docs: list[list[Any]], anchors: list[str]) -> str:
+    """The anchor a conversation's own text names, or ''. Read from the atoms'
+    text, never the filename -- a filename is what misled the judge."""
+    if not anchors:
+        return ""
+    body = " " + " ".join(_words(getattr(a, "raw_text", "") or "") for d in docs for a in d) + " "
+    for anchor in anchors:
+        if f" {anchor} " in body:
+            return anchor
+    return ""
+
+
+def crm_from_manifest(project_dir: Path | str | None) -> dict[str, Any]:
+    if not project_dir:
+        return {}
+    path = Path(project_dir) / ".parser_manifest.json"
+    if not path.is_file():
+        return {}
+    try:
+        ctx = json.loads(path.read_text(encoding="utf-8")).get("context") or {}
+        crm = ctx.get("crm") if isinstance(ctx, dict) else None
+        return dict(crm) if isinstance(crm, dict) else {}
+    except (OSError, ValueError, AttributeError):
+        return {}
 
 
 def enabled() -> bool:
@@ -428,6 +498,7 @@ def judge_documents(
     project_id: str = "",
     project_dir: Path | str | None = None,
     index: dict[str, dict[str, Any]] | None = None,
+    crm: dict[str, Any] | None = None,
 ) -> tuple[list[Any], list[Any], list[dict[str, Any]]]:
     """Partition ``atoms`` into (kept, dropped) and describe each verdict.
 
@@ -456,6 +527,8 @@ def judge_documents(
     bundles = bundle_documents(by_doc, index)
     model, timeout, floor = judge_model(), judge_timeout(), min_confidence()
     idx = index if index is not None else manifest_index(project_dir)
+    anchors = deal_anchors(deal_name, crm if crm is not None else crm_from_manifest(project_dir))
+    deal_line = strip_refs(deal_name)
 
     # SAY HOW FAR THROUGH THIS IS. The unit is the DOCUMENT BUNDLE, because
     # that is what costs: one judge call per bundle, however many atoms it
@@ -484,8 +557,12 @@ def judge_documents(
         # atoms). The DEAL line the model reads moves into the context; the
         # subject loses its reply markers so one lesson covers the thread.
         subject = re.sub(_SUBJECT_PREFIX_RE.pattern, "", str(b["title"]).strip(), flags=re.I).strip() or str(b["title"]).strip()
+        # The DEAL line goes to the judge without its reference numbers (see
+        # strip_refs), so a foreign request number on a file has nothing to be
+        # compared against. The DOCUMENT text keeps its own: it is what taught
+        # lessons are keyed on.
         text = f"DOCUMENT: {subject}"
-        context = f"DEAL: {deal_name.strip()}\n" + "\n".join(f"- {l}" for l in bundle_lines(docs, common))
+        context = f"DEAL: {deal_line}\n" + "\n".join(f"- {l}" for l in bundle_lines(docs, common))
         try:
             # Judgments only: a person's or a Deal Kit's verdict decides; the
             # model's own cached verdicts never do, since one wrong other_job
@@ -505,7 +582,22 @@ def judge_documents(
         drawing_spared = bool(other and source != "store" and is_drawing(filenames))
         if drawing_spared:
             other = False
+        # A conversation whose own text names this deal -- its project name or
+        # site address -- is this deal's, whatever the model or a lesson taught
+        # on a look-alike title says (010353: both files say "VC Links, 15733
+        # US-224 Findlay").
+        matched = content_match(docs, anchors) if other else ""
+        content_spared = bool(matched)
+        if content_spared:
+            other = False
         n_atoms = sum(len(d_) for d_ in docs)
+        reason = ""
+        if other:
+            reason = (
+                f"{source} verdict other_job {conf:.2f}: '{subject[:80]}' read as a different job "
+                f"from the deal '{deal_line[:80]}'"
+                + (f" (correction {getattr(d, 'correction_id', None)})" if getattr(d, "correction_id", None) else "")
+            )
         verdicts.append({
             "bundle": b["title"], "filename": filenames[0], "filenames": filenames,
             "links": {fn: b["links"][k] for fn, k in zip(filenames, b["docs"])},
@@ -513,6 +605,9 @@ def judge_documents(
             "confidence": round(conf, 3), "source": source, "atoms": n_atoms,
             "correction_id": getattr(d, "correction_id", None),
             "drawing_spared": drawing_spared,
+            "content_spared": content_spared, "content_match": matched,
+            "reason": reason,
+            "atom_ids": [str(getattr(a, "id", "") or "") for d_ in docs for a in d_] if other else [],
         })
         if other:
             for doc_atoms in docs:
@@ -539,7 +634,10 @@ def verdict_note(v: dict[str, Any]) -> str:
     what = f"{v['bundle'][:80]} ({v['atoms']} atoms, {len(v.get('filenames') or [v['filename']])} document(s))"
     how = f"{v['model_verdict'] or 'undecided'} {v['confidence']:.2f} {v['source']}"
     if v["verdict"] == "other_job":
-        return f"INFO: document_job_scope set aside {what}; {how}"
+        return f"INFO: document_job_scope set aside {what}; {how}; {v.get('reason') or 'no reason recorded'}"
+    if v.get("content_spared"):
+        return (f"INFO: document_job_scope kept {what}; {how} "
+                f"— the document's own text names this deal ('{v.get('content_match')}')")
     if v.get("drawing_spared"):
         return (f"INFO: document_job_scope kept {what}; {how} "
                 f"— a drawing is titled by the building, not the job, so a "
@@ -549,4 +647,4 @@ def verdict_note(v: dict[str, Any]) -> str:
 
 __all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "common_lines",
            "thread_key", "manifest_index", "bundle_documents", "bundle_lines", "bundle_text", "document_text",
-           "judge_documents", "verdict_note", "judge_model", "judge_timeout", "min_confidence"]
+           "judge_documents", "verdict_note", "strip_refs", "deal_anchors", "content_match", "judge_model", "judge_timeout", "min_confidence"]
