@@ -2152,6 +2152,7 @@ class DocxParser(BaseParser):
                     and k + 1 < len(children)
                     and not _next_is_bullet(k)
                     and self._is_label_heading(text)
+                    and not self._in_address_box(children, k, document, text)
                 ):
                     # A Title Case label ending in a colon on its own line
                     # ("Invoicing Procedures:") heads the paragraphs and table
@@ -2167,6 +2168,7 @@ class DocxParser(BaseParser):
                     and not text.endswith(":")
                     and _next_is_bullet(k)
                     and self._is_label_heading(text + ":", min_words=1)
+                    and not self._in_address_box(children, k, document, text)
                 ):
                     # A Title Case line with no closing punctuation directly
                     # over a bullet list ("Out of Scope", "PurTera
