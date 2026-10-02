@@ -97,3 +97,38 @@ def test_a_role_that_was_never_resolved_is_a_value_not_a_blank():
     keys = [s["key"] for s in REG["suppliers"]]
     assert "unresolved" in keys
     assert keys[:4] == ["us", "partner", "customer", "third_party"], "the existing order is stable"
+
+
+#: Who a reading is true for (labeling/portable-labels.md, sections a and b).
+READ_LAYERS = {"universal", "company", "meta", "staging"}
+
+
+def test_every_reading_says_which_layer_it_belongs_to():
+    keys = [r["key"] for r in REG["reads"]]
+    assert len(keys) == len(set(keys)), "duplicate reading in atom_types.json"
+    for r in REG["reads"]:
+        assert r.get("layer") in READ_LAYERS, f"{r['key']}: layer {r.get('layer')!r} not one of {READ_LAYERS}"
+        assert r["label"].strip() and r["desc"].strip(), f"{r['key']}: a labeler needs a definition"
+
+
+def test_company_keys_and_bookkeeping_are_not_universal():
+    layer = {r["key"]: r["layer"] for r in REG["reads"]}
+    for k, v in layer.items():
+        if k.startswith("co_"):
+            assert v in {"company", "meta"}, f"{k} is a company key and cannot be {v}"
+    assert layer["intake_gap"] == layer["needed_by"] == "company"
+    assert layer["deal_outcome"] == layer["co_company"] == "meta"
+    assert layer["universal_type"] == "staging"
+
+
+def test_universal_values_name_no_company():
+    for r in REG["reads"]:
+        if r["layer"] == "universal" and "|" in r["values"]:
+            assert "purtera" not in r["values"].lower(), r["key"]
+    task = next(t for t in REG["types"] if t["name"] == "task")
+    assert "Deal Kit" not in task["desc"]
+
+
+def test_task_owner_role_can_say_who_else_owns_it():
+    role = next(r for r in REG["reads"] if r["key"] == "task_owner_role")
+    assert {"seller", "customer", "partner", "other"} <= {v.strip() for v in role["values"].split("|")}

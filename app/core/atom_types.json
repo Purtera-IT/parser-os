@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-26",
+  "version": "2026-10-02",
   "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
   "keep": {
     "name": "_keep",
@@ -259,7 +259,7 @@
       "name": "task",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "Billable work we will perform for the customer on this job -- the labor a Deal Kit prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devices at the site', 'looking for a partner to install their new display', 'please quote a technician onsite for 2-3 hours to get the register and printer running'), as a statement of what will be set up or installed on the job ('we will be setting 1 register and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the site survey'), or as a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to check something, a question about the site, a call summary of what was agreed, a description of the site as it is, or a quantity or date alone is not a task: _keep.",
+      "desc": "Billable work we will perform for the customer on this job -- the labor the quote prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devices at the site', 'looking for a partner to install their new display', 'please quote a technician onsite for 2-3 hours to get the register and printer running'), as a statement of what will be set up or installed on the job ('we will be setting 1 register and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the site survey'), or as a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to check something, a question about the site, a call summary of what was agreed, a description of the site as it is, or a quantity or date alone is not a task: _keep.",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -919,151 +919,372 @@
       "desc": "Nobody else can answer it; it is our call to make."
     }
   ],
-  "reads_doc": "What an atom TELLS US. Each key is a learned head: a rule fills it today as a prediction (source=rule, low confidence) purely so a labeler has something to confirm or drop, and the confirmations train the head that replaces the rule. A keyword list cannot make these calls -- it hid a promise naming a deal's decision maker because the words looked like banter. See _LABELING_DOCTRINE.md.",
+  "reads_doc": "What an atom TELLS US. Each key is a learned head: a rule fills it today as a prediction (source=rule, low confidence) purely so a labeler has something to confirm or drop, and the confirmations train the head that replaces the rule. A keyword list cannot make these calls -- it hid a promise naming a deal's decision maker because the words looked like banter. See _LABELING_DOCTRINE.md. `layer` says who a reading is true for. universal: any field-services company reading the same line would give the same answer; the base model trains it. company: the answer depends on our business model, roles, pricing, product names or CRM; only that company's profile trains it, and its keys start co_ when new. meta: stored on the row for bookkeeping (whose policy, how the deal ended) and never a task or a model input. staging: a temporary key a backfill uses, never a task. A labeling page shows universal and company chips only. `multi: true` means the value is a list, one class per item.",
   "reads": [
     {
       "key": "small_talk",
       "label": "Just relationship talk",
       "values": "true/false",
-      "desc": "Thanks, greetings, banter. NOT small talk if it also says anything about the work, promises something, or names a person or a document."
+      "desc": "Thanks, greetings, banter. NOT small talk if it also says anything about the work, promises something, or names a person or a document.",
+      "layer": "universal"
     },
     {
       "key": "job_scale",
       "label": "How big the sender thinks it is",
       "values": "small | large",
-      "desc": "Sizing in the customer's own words, before any site visit. Deal Kit plans crew and site time from it."
+      "desc": "Sizing in the customer's own words, before any site visit. Deal Kit plans crew and site time from it.",
+      "layer": "universal"
     },
     {
       "key": "expansion",
       "label": "Room to grow on this account",
       "values": "what would repeat",
-      "desc": "This job could repeat across more of the customer's sites. Say WHAT repeats (\"more clubs, same one-door scope\"), not just that it might. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly."
+      "desc": "This job could repeat across more of the customer's sites. Say WHAT repeats (\"more clubs, same one-door scope\"), not just that it might. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly.",
+      "layer": "universal"
     },
     {
       "key": "commitment",
       "label": "Somebody undertook to do something",
       "values": "what was promised",
-      "desc": "A promise with an owner. A promise conditional on OUR answer is a task on us before it is one on them."
+      "desc": "A promise with an owner. A promise conditional on OUR answer is a task on us before it is one on them.",
+      "layer": "universal"
     },
     {
       "key": "introduces_party",
       "label": "Brings in someone not in this thread",
       "values": "the role, and the name when we have one",
-      "desc": "A decision maker, landlord, installer or facilities manager being brought into the deal. Write the role alone when nobody named them (\"club owner\") -- that absence IS the finding, because we cannot contact a role."
+      "desc": "A decision maker, landlord, installer or facilities manager being brought into the deal. Write the role alone when nobody named them (\"club owner\") -- that absence IS the finding, because we cannot contact a role.",
+      "layer": "universal"
     },
     {
       "key": "chase",
       "label": "Points at something we do not hold",
       "values": "conversation | attachment",
-      "desc": "A call or a file the deal does not contain. If we have history with them, ask them rather than hunting the thread."
+      "desc": "A call or a file the deal does not contain. If we have history with them, ask them rather than hunting the thread.",
+      "layer": "universal"
     },
     {
       "key": "needs_artifact",
       "label": "A document to go and get",
       "values": "the kind of document",
-      "desc": "A drawing, floorplan or spec the sender names and the deal does not hold."
+      "desc": "A drawing, floorplan or spec the sender names and the deal does not hold.",
+      "layer": "universal"
     },
     {
       "key": "points_at_artifact",
       "label": "Names a document",
       "values": "the kind of document",
-      "desc": "The line refers to a drawing or file, whether or not we hold it."
+      "desc": "The line refers to a drawing or file, whether or not we hold it.",
+      "layer": "universal"
     },
     {
       "key": "blocked_on",
       "label": "It cannot happen until somebody answers",
       "values": "us | customer | partner",
-      "desc": "The line is conditional: \"if you all would be able to…, I will…\". Whoever must answer owns the deal's next move, and a promise waiting on US is a task on us before it is one on them. This is the critical path, and it is invisible if the conditional is flattened into the type."
+      "desc": "The line is conditional: \"if you all would be able to…, I will…\". Whoever must answer owns the deal's next move, and a promise waiting on US is a task on us before it is one on them. This is the critical path, and it is invisible if the conditional is flattened into the type.",
+      "layer": "universal"
     },
     {
       "key": "opens_block",
       "label": "It announces what follows",
       "values": "what the block is",
-      "desc": "\"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading."
+      "desc": "\"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading.",
+      "layer": "universal"
     },
     {
       "key": "unreliable_part",
       "label": "Which part of it must not be trusted",
       "values": "the part, in the document's own words",
-      "desc": "Name the section, legend or column that is wrong -- \"Installer Supplied Components\" -- not just that something is. This is the reading that has to be carried down into the analysis of the document: a caveat nobody can act on is a caveat nobody applies."
+      "desc": "Name the section, legend or column that is wrong -- \"Installer Supplied Components\" -- not just that something is. This is the reading that has to be carried down into the analysis of the document: a caveat nobody can act on is a caveat nobody applies.",
+      "layer": "universal"
     },
     {
       "key": "situational",
       "label": "Matters here, generalises nowhere",
       "values": "what it is doing on this deal",
-      "desc": "Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing."
+      "desc": "Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing.",
+      "layer": "universal"
     },
     {
       "key": "deal_summary",
       "label": "The deal's scope in one line",
       "values": "true/false",
-      "desc": "THE line a router should read the whole deal from: service, quantity, site and deal type in one sentence -- \"4 TVs install in CheckOut New York office.\" At most one per deal: if you mark a second line, training keeps only your latest mark. Every other line you labeled on that deal teaches \"not the summary\". Not every scope line -- a work_scope_item says one thing the job includes; this says what the job IS."
+      "desc": "THE line a router should read the whole deal from: service, quantity, site and deal type in one sentence -- \"4 TVs install in CheckOut New York office.\" At most one per deal: if you mark a second line, training keeps only your latest mark. Every other line you labeled on that deal teaches \"not the summary\". Not every scope line -- a work_scope_item says one thing the job includes; this says what the job IS.",
+      "layer": "universal"
     },
     {
       "key": "removes_cost",
       "label": "Takes a cost off our quote",
       "values": "which cost, and why it goes",
-      "desc": "Somebody else covers something we would otherwise price: \"the customer provides the wall mounts and parking\" removes the wall-mount and parking costs. Name WHICH cost goes, in the line's own words, not just that one does. Link the line to the quote, Gantt or BOM row it removes; if that row still charges for it, that is a Conflict."
+      "desc": "Somebody else covers something we would otherwise price: \"the customer provides the wall mounts and parking\" removes the wall-mount and parking costs. Name WHICH cost goes, in the line's own words, not just that one does. Link the line to the quote, Gantt or BOM row it removes; if that row still charges for it, that is a Conflict.",
+      "layer": "universal"
     },
     {
       "key": "urgency",
       "label": "How urgent it is",
       "values": "how soon, and what drives it",
-      "desc": "A deadline, rush or priority signal: \"need this installed before the store opens on the 15th\", \"ASAP, customer is escalating\". Say how soon and why, in the line's own words. A date that is only a schedule fact with no pressure behind it is not urgency."
+      "desc": "A deadline, rush or priority signal: \"need this installed before the store opens on the 15th\", \"ASAP, customer is escalating\". Say how soon and why, in the line's own words. A date that is only a schedule fact with no pressure behind it is not urgency.",
+      "layer": "universal"
     },
     {
       "key": "triggered_task",
       "label": "A task that starts when something happens",
       "values": "what event starts it",
-      "desc": "A PM, PC, SA or tech will act once an event lands: \"as soon as we receive confirmation that the TVs have arrived on site, we will coordinate a date\". Name the event in the line's own words (\"TVs confirmed on site\"). Link the event's atom with triggered_by when it arrives, the dependency with blocked_by, and the task with context. A seller saying they will reply or send something is not a task for us."
+      "desc": "A PM, PC, SA or tech will act once an event lands: \"as soon as we receive confirmation that the TVs have arrived on site, we will coordinate a date\". Name the event in the line's own words (\"TVs confirmed on site\"). Link the event's atom with triggered_by when it arrives, the dependency with blocked_by, and the task with context. A seller saying they will reply or send something is not a task for us.",
+      "layer": "universal"
     },
     {
       "key": "task_owner_role",
       "label": "Whose task it is",
-      "values": "project_manager | project_coordinator | solutions_architect | technician",
-      "desc": "The role that owns the triggered task. Put the person in entity_keys. Only PM, PC, SA or tech work counts: sellers do not get tasks from this."
+      "values": "project_manager | project_coordinator | solutions_architect | technician | seller | customer | partner | other",
+      "desc": "The role that owns the triggered task. Put the person in entity_keys. Only PM, PC, SA or tech work counts: sellers do not get tasks from this. seller, customer, partner and other say who owns it when it is none of the delivery roles; which owners a company plans work for is that company's policy.",
+      "layer": "universal"
     },
     {
       "key": "crew_size",
       "label": "How many people go",
       "values": "a number",
-      "desc": "The number of techs or crew sent or planned for the job: \"Tanner chose to send 2 techs out\" is 2. A count of devices or sites is job_scale, not crew size."
+      "desc": "The number of techs or crew sent or planned for the job: \"Tanner chose to send 2 techs out\" is 2. A count of devices or sites is job_scale, not crew size.",
+      "layer": "universal"
     },
     {
       "key": "trigger_event",
       "label": "An event that starts a task",
       "values": "true/false",
-      "desc": "The line only reports that something happened, and that happening starts a waiting task: \"TVs were delivered today\". It is not scope and adds no work of its own, so planning and runbooks skip it. Link the task's atom to it with triggered_by."
+      "desc": "The line only reports that something happened, and that happening starts a waiting task: \"TVs were delivered today\". It is not scope and adds no work of its own, so planning and runbooks skip it. Link the task's atom to it with triggered_by.",
+      "layer": "universal"
     },
     {
       "key": "fires_task",
       "label": "Which task it starts",
       "values": "which task it fires",
-      "desc": "The task this event starts, in short words: \"PM schedules the install date with the customer\". Pairs with trigger_event."
+      "desc": "The task this event starts, in short words: \"PM schedules the install date with the customer\". Pairs with trigger_event.",
+      "layer": "universal"
     },
     {
       "key": "deal_stage",
       "label": "Where the deal was when this was said",
       "values": "quoting | planning | delivery | closeout",
-      "desc": "quoting: before the SOW is signed or the PO is received. planning: after the PO, before the first on-site visit. delivery: visits underway. closeout: after the last visit (completion reports, invoicing). Set it from the source's date against the deal's milestones. The same question or promise means different things at different stages."
+      "desc": "quoting: before the SOW is signed or the PO is received. planning: after the PO, before the first on-site visit. delivery: visits underway. closeout: after the last visit (completion reports, invoicing). Set it from the source's date against the deal's milestones. The same question or promise means different things at different stages.",
+      "layer": "universal"
     },
     {
       "key": "start_date",
       "label": "When the work starts",
       "values": "the confirmed or proposed start date/time",
-      "desc": "The line sets or proposes when on-site work begins: \"see you Friday at 9am\". Copy the date and time as said. Label the confirmed start once, on the line that confirms it; an earlier proposal that changed is superseded by it."
+      "desc": "The line sets or proposes when on-site work begins: \"see you Friday at 9am\". Copy the date and time as said. Label the confirmed start once, on the line that confirms it; an earlier proposal that changed is superseded by it.",
+      "layer": "universal"
     },
     {
       "key": "intake_gap",
       "label": "Should have been asked at quoting",
       "values": "true/false",
-      "desc": "A planning or delivery question about a site or customer fact that intake should have collected before the quote: \"is there power at the TV location?\" asked after the PO. Orbit learns to ask it earlier."
+      "desc": "A planning or delivery question about a site or customer fact that intake should have collected before the quote: \"is there power at the TV location?\" asked after the PO. Orbit learns to ask it earlier.",
+      "layer": "company"
     },
     {
       "key": "needed_by",
       "label": "Who needs the answer",
       "values": "project_manager | atlas | portal",
-      "desc": "The downstream consumer that needs this fact: the PM running the job, Atlas planning, or the customer portal."
+      "desc": "The downstream consumer that needs this fact: the PM running the job, Atlas planning, or the customer portal.",
+      "layer": "company"
+    },
+    {
+      "key": "train_for",
+      "label": "Which parser learns from it",
+      "values": "quote_parser | delivery_parser",
+      "desc": "The consumer this line trains: quote_parser reads a deal before the quote, delivery_parser reads what governs the work after it is sold. A list; a line can feed both.",
+      "layer": "universal",
+      "multi": true
+    },
+    {
+      "key": "sow_fill",
+      "label": "Filled in or still the template",
+      "values": "filled | template",
+      "desc": "On a SOW line: the deal's own words (filled) or the template's placeholder text left as is (template).",
+      "layer": "universal"
+    },
+    {
+      "key": "sow_coverage",
+      "label": "How the SOW covers it",
+      "values": "in_sow | missing_from_sow | differs | sow_not_available | sow_only",
+      "desc": "in_sow: the SOW says the same. missing_from_sow: the fact is real and the SOW omits it. differs: the SOW says something else. sow_not_available: there is no SOW to check. sow_only: the line exists only in the SOW.",
+      "layer": "universal"
+    },
+    {
+      "key": "sow_section",
+      "label": "Which SOW section it belongs in",
+      "values": "scope_of_work | deliverables | out_of_scope | assumptions | customer_responsibilities | provider_responsibilities | timeline | fees | contacts | other",
+      "desc": "The standard SOW section this line lands in. provider_responsibilities is the service provider's side; no company name belongs in the value.",
+      "layer": "universal"
+    },
+    {
+      "key": "derivation",
+      "label": "How the value was arrived at",
+      "values": "stated | inferred | template | not_derivable",
+      "desc": "stated: the text says it. inferred: it follows from the text and trade knowledge. template: it came from a template default. not_derivable: nothing on the page supports it.",
+      "layer": "universal"
+    },
+    {
+      "key": "sow_available_at_stage",
+      "label": "A SOW existed when this was written",
+      "values": "true/false",
+      "desc": "Whether the deal held a SOW at the time of this line, so coverage is judged against what existed then.",
+      "layer": "universal"
+    },
+    {
+      "key": "location_tier",
+      "label": "What labor market the site is in",
+      "values": "major_metro | mid_metro | small_town | rural",
+      "desc": "Geography only: whether a metro tech pool is within reach of the site. How a company prices a tier is its own policy and is not labeled here.",
+      "layer": "universal"
+    },
+    {
+      "key": "address_level",
+      "label": "How precise the address is",
+      "values": "full | city_only",
+      "desc": "full: a street address. city_only: only a city or region is known.",
+      "layer": "universal"
+    },
+    {
+      "key": "remote_miles",
+      "label": "How far from the nearest metro",
+      "values": "the distance, as written or measured",
+      "desc": "The travel distance that makes a site remote, e.g. \"85 miles from Denver\".",
+      "layer": "universal"
+    },
+    {
+      "key": "doc_kind",
+      "label": "What kind of document it comes from",
+      "values": "the kind of document",
+      "desc": "The document's own kind (quote, BOM, SOW, floor plan, email), beyond the file type.",
+      "layer": "universal"
+    },
+    {
+      "key": "bom_role",
+      "label": "What the cell is in a BOM row",
+      "values": "the column's role",
+      "desc": "The role of this value in its bill-of-materials row: part number, description, quantity, unit_price, ext_price, and so on.",
+      "layer": "universal"
+    },
+    {
+      "key": "stage_std",
+      "label": "Canonical deal stage when written",
+      "values": "pre_deal | intake | scoping | quoted | contracting | planning | delivery | closeout | unknown",
+      "desc": "The stage of the deal when the line was written, in a vocabulary any company can map its own stages to. A learning target, never an input.",
+      "layer": "universal"
+    },
+    {
+      "key": "scope_facet",
+      "label": "What kind of scope line",
+      "values": "summary | work_step | schedule | tooling | materials | staffing | testing | documentation | responsibility | exclusion | other",
+      "desc": "The universal kind of scope line. A company's own SOW group name goes in scope_category.",
+      "layer": "universal"
+    },
+    {
+      "key": "noise_class",
+      "label": "What kind of noise",
+      "values": "greeting_thanks | banter_reassurance | signoff_wrapper | legal_footer | automated_wrapper | table_scaffolding | section_heading | attachment_pointer | speech_filler | page_chrome | template_instruction | cross_reference",
+      "desc": "Only on _keep and small_talk rows: which kind of line carries no fact for anyone.",
+      "layer": "universal"
+    },
+    {
+      "key": "superseded",
+      "label": "A real fact later replaced",
+      "values": "true/false",
+      "desc": "The fact was true when written and a later line replaced it. Pair it with a contradicts link to the replacement.",
+      "layer": "universal"
+    },
+    {
+      "key": "hours_stated",
+      "label": "The text states labor hours",
+      "values": "true/false",
+      "desc": "Whether the line itself gives the labor hours. An estimate made by a company rule is not stated.",
+      "layer": "universal"
+    },
+    {
+      "key": "option_selected",
+      "label": "The option is ticked",
+      "values": "true/false",
+      "desc": "On a checkbox or option line: whether it was selected. Ticked or not, the line is a fact.",
+      "layer": "universal"
+    },
+    {
+      "key": "co_action",
+      "label": "What we do with it",
+      "values": "keep | reject | ignore",
+      "desc": "keep: we use the line. reject: a real fact we drop on purpose; it trains our filter. ignore: we neither use it nor teach dropping it. Noise rows get none.",
+      "layer": "company"
+    },
+    {
+      "key": "co_reason",
+      "label": "Why we reject or ignore it",
+      "values": "seller_promise | hw_price_not_ours | bom_total_not_ours | quote_reference | vendor_terms | contact_from_crm | handoff_announcement | customer_internal_process | date_only_logistics | superseded | old_manual_deal_kit | out_of_service_line | seller_status_update | partner_internal_process | parser_derived | internal_housekeeping | other",
+      "desc": "Required when co_action is reject or ignore. The [purtera] part of the note states the rule for this line.",
+      "layer": "company"
+    },
+    {
+      "key": "co_stage_raw",
+      "label": "Our CRM stage, verbatim",
+      "values": "the CRM stage label",
+      "desc": "The stage exactly as our CRM names it; stage_std is the mapped, universal one.",
+      "layer": "company"
+    },
+    {
+      "key": "co_crew_rule",
+      "label": "Our crew rule that sets the crew",
+      "values": "the rule",
+      "desc": "When one of our crew rules, not the text, sets the crew, e.g. display_over_55in_2_techs.",
+      "layer": "company"
+    },
+    {
+      "key": "co_hours_estimate",
+      "label": "Our labor-hours estimate",
+      "values": "the hours",
+      "desc": "Our estimate where the text states no hours (hours_stated=false).",
+      "layer": "company"
+    },
+    {
+      "key": "scope_category",
+      "label": "Our SOW group",
+      "values": "the group name",
+      "desc": "The group our own SOW files this line under. The universal kind is scope_facet.",
+      "layer": "company"
+    },
+    {
+      "key": "delivery_field",
+      "label": "Which of our delivery fields it fills",
+      "values": "the field",
+      "desc": "The field in our delivery tools this line fills.",
+      "layer": "company"
+    },
+    {
+      "key": "source_of_truth",
+      "label": "Where we hold the truth for it",
+      "values": "the system",
+      "desc": "The system we treat as authoritative for this fact, when it is not the document.",
+      "layer": "company"
+    },
+    {
+      "key": "co_company",
+      "label": "Whose policy this row carries",
+      "values": "the company",
+      "desc": "Bookkeeping: the company whose co_ keys are on this row. Never a task or an input.",
+      "layer": "meta"
+    },
+    {
+      "key": "deal_outcome",
+      "label": "How the deal ended",
+      "values": "open | won | lost | unknown",
+      "desc": "The deal's eventual outcome. Leakage: it is the future, so it is never a parser task or input.",
+      "layer": "meta"
+    },
+    {
+      "key": "universal_type",
+      "label": "The universal type during backfill",
+      "values": "a registry type",
+      "desc": "Temporary: holds the universal type while a backfill flips policy rejects to it. Never a task.",
+      "layer": "staging"
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",

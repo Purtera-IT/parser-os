@@ -53,7 +53,10 @@ def _reads_tasks() -> tuple[str, ...]:
     """
     from app.core.atom_type_registry import load_registry
 
-    return tuple(sorted(f"reads:{r.get('key')}" for r in load_registry().get("reads") or []))
+    # `meta` and `staging` readings are stored on a row and never trained:
+    # whose policy it is, how the deal ended (leakage), a backfill's scratch key.
+    return tuple(sorted(f"reads:{r.get('key')}" for r in load_registry().get("reads") or []
+                        if r.get("layer") not in ("meta", "staging")))
 
 
 DEFAULT_TASKS = (

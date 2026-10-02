@@ -75,6 +75,39 @@ def _closed_read_values() -> dict[str, set[str]]:
 
 
 CLOSED_READS = _closed_read_values()
+
+#: Readings whose value is a list -- one class row per item. Platform-infra
+#: stores a list sent from the page as a comma string, so both shapes arrive.
+MULTI_READS = frozenset(
+    str(r.get("key")) for r in load_registry().get("reads") or [] if r.get("multi"))
+
+#: Layers that are stored on a row and never trained: `meta` is bookkeeping
+#: (whose policy the row carries) or leakage (`deal_outcome` is the future),
+#: and `staging` is a key a backfill holds temporarily. Every other layer is a
+#: task for some profile -- see multitask_table.tasks_for.
+UNTRAINED_LAYERS = frozenset({"meta", "staging"})
+UNTRAINED_READS = frozenset(
+    str(r.get("key")) for r in load_registry().get("reads") or []
+    if r.get("layer") in UNTRAINED_LAYERS)
+
+#: A value renamed in the registry, read under its new name. `sow_section`
+#: said `purtera_responsibilities` before the universal layer forbade a company
+#: name in a universal value.
+READ_VALUE_ALIASES = {("sow_section", "purtera_responsibilities"): "provider_responsibilities"}
+
+
+def _read_values(key: str, value: Any) -> list[str]:
+    """A reading's value(s), normalised the way the closed classes are written."""
+    if isinstance(value, bool):
+        return [str(value).lower()]
+    if key in MULTI_READS:
+        items = value.split(",") if isinstance(value, str) else value
+        if not isinstance(items, (list, tuple, set)):
+            items = [items]
+        vals = [str(x).strip().lower() for x in items if str(x).strip()]
+    else:
+        vals = [str(value or "").strip().lower()]
+    return [READ_VALUE_ALIASES.get((key, v), v) for v in vals]
 PRESENT = "present"
 #: A reading the parser proposed and a human took off. The only negative we
 #: can state without assuming: a chip nobody ticked may simply not have been
@@ -621,15 +654,18 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
                               {"parser_proposed": True, "removed_by_human": True}))
     for key, value in reads.items():
         key = str(key)
+        if key in UNTRAINED_READS:
+            report.skip(f"reading {key} is stored, never trained")
+            continue
         relation = f"reads:{key}"
         closed = CLOSED_READS.get(key)
         if closed is not None:
-            v = "true" if value is True else str(value or "").strip().lower()
-            if v not in closed:
-                report.skip(f"reading {key} outside its values")
-                continue
-            rows.append(_axis_row(relation, v, lb, base, prov, "judgment",
-                                  {"parser_proposed": key in shown}))
+            for v in _read_values(key, value):
+                if v not in closed:
+                    report.skip(f"reading {key} outside its values")
+                    continue
+                rows.append(_axis_row(relation, v, lb, base, prov, "judgment",
+                                      {"parser_proposed": key in shown}))
         else:
             # A phrase is not a class, so the PRESENT row teaches only that the
             # atom carries one -- "is there expansion?", which is the weaker
