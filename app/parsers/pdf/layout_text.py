@@ -75,8 +75,53 @@ def _dominant(spans: list[dict[str, Any]], key) -> Any:
     return max(weights.items(), key=lambda kv: kv[1])[0] if weights else None
 
 
+_MONO_FONT = re.compile(r"mono|courier|\bcour", re.I)
+#: The sub-bullet glyph a monospace "o" marker is read as.
+_SUB_BULLET = "\u25e6"
+
+
+def _mark_letter_o_bullets(data: dict[str, Any]) -> None:
+    """Read a Word "o" sub-bullet marker as the bullet glyph it is.
+
+    Word sets the second-level list marker as a letter "o" in Courier New
+    (LiberationMono once re-exported), alone at the list indent with the
+    item text in the body face a tab to its right. The text layer then reads
+    "o Business Hours: ..." and the splitter took the letter for prose, so
+    every sub-item of the list glued into one paragraph (010353's premium
+    rate tiers). A lone "o" set in a monospace face, with text in another
+    face starting just to its right on the same line, is a list marker.
+    """
+    spans = [
+        s
+        for blk in data.get("blocks", []) or []
+        for ln in blk.get("lines", []) or []
+        for s in ln.get("spans") or []
+        if (s.get("text") or "").strip()
+    ]
+    for o in spans:
+        if o["text"].strip() != "o" or not _MONO_FONT.search(str(o.get("font") or "")):
+            continue
+        ox0, oy0, ox1, oy1 = (float(v) for v in o["bbox"])
+        size = max(float(o.get("size") or 10), 6.0)
+        h = max(1.0, oy1 - oy0)
+        for t in spans:
+            if t is o or str(t.get("font") or "") == str(o.get("font") or ""):
+                continue
+            tx0, ty0, _tx1, ty1 = (float(v) for v in t["bbox"])
+            gap = tx0 - ox1
+            if gap < 0.5 or gap > 3.0 * size:
+                continue
+            if min(oy1, ty1) - max(oy0, ty0) < 0.3 * min(h, max(1.0, ty1 - ty0)):
+                continue
+            if not t["text"].strip()[:1].isalnum():
+                continue
+            o["text"] = o["text"].replace("o", _SUB_BULLET, 1)
+            break
+
+
 def _segments(page: Any, exclude: Iterable[Any]) -> list[_Seg]:
     data = page.get_text("dict") or {}
+    _mark_letter_o_bullets(data)
     excl = list(exclude or [])
     out: list[_Seg] = []
     for blk in data.get("blocks", []) or []:
