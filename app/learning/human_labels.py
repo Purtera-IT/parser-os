@@ -17,6 +17,7 @@ eval set must never leak into training.
 from __future__ import annotations
 
 import json
+import re
 import random
 import sqlite3
 from dataclasses import dataclass, field
@@ -77,8 +78,8 @@ def _closed_read_values() -> dict[str, set[str]]:
 
 CLOSED_READS = _closed_read_values()
 
-#: Readings whose value is a list -- one class row per item. Platform-infra
-#: stores a list sent from the page as a comma string, so both shapes arrive.
+#: Readings whose value is a list -- one class row per item. Older rows hold a
+#: comma or pipe string, so every shape arrives.
 MULTI_READS = frozenset(
     str(r.get("key")) for r in load_registry().get("reads") or [] if r.get("multi"))
 
@@ -102,7 +103,7 @@ def _read_values(key: str, value: Any) -> list[str]:
     if isinstance(value, bool):
         return [str(value).lower()]
     if key in MULTI_READS:
-        items = value.split(",") if isinstance(value, str) else value
+        items = re.split(r"[,|]", value) if isinstance(value, str) else value
         if not isinstance(items, (list, tuple, set)):
             items = [items]
         vals = [str(x).strip().lower() for x in items if str(x).strip()]

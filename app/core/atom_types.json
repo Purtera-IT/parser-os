@@ -946,7 +946,7 @@
       "key": "equipment_qty",
       "label": "How many units",
       "values": "a number",
-      "desc": "The count of displays, devices or units the line states. A count of sites is job_scale; a count of people is tech_qty or crew_size.",
+      "desc": "The count of displays, devices or units the line states. A count of sites is job_scale; a count of people is crew_size.",
       "layer": "universal"
     },
     {
@@ -954,6 +954,48 @@
       "label": "What kind of requirement",
       "values": "the kind of requirement",
       "desc": "What the line requires, in a word or two (access, hardware, labor, permit, schedule...). Open set for now.",
+      "layer": "universal"
+    },
+    {
+      "key": "material",
+      "label": "Material named",
+      "values": "the material",
+      "desc": "A material or consumable the line names (cable, mounts, conduit), in its own words.",
+      "layer": "universal"
+    },
+    {
+      "key": "scope_side",
+      "label": "Whose side of the scope",
+      "values": "provider | customer | third_party | shared",
+      "desc": "Who the line puts the work or item on: the provider doing the job, the customer, a third party, or both.",
+      "layer": "universal"
+    },
+    {
+      "key": "site",
+      "label": "Which site",
+      "values": "the site name",
+      "desc": "The site the line is about, by the name the text uses.",
+      "layer": "universal"
+    },
+    {
+      "key": "location",
+      "label": "Where it is",
+      "values": "the place as written",
+      "desc": "The address or place the line gives, verbatim.",
+      "layer": "universal"
+    },
+    {
+      "key": "rate",
+      "label": "A rate the line states",
+      "values": "the rate as written",
+      "desc": "A price per unit of work the text gives (\"$95/hr\", \"$920 per day\"). Whether it is our rate or theirs is policy, not this reading.",
+      "layer": "universal"
+    },
+    {
+      "key": "rate_for",
+      "label": "What the rate is for",
+      "values": "the work it prices",
+      "desc": "The work or role the stated rate applies to (\"lead tech\", \"after-hours\").",
       "layer": "universal"
     },
     {
@@ -1027,6 +1069,13 @@
       "layer": "meta"
     },
     {
+      "key": "derived_from_count",
+      "label": "How many lines it was derived from",
+      "values": "a number",
+      "desc": "Bookkeeping for the derived_from links.",
+      "layer": "meta"
+    },
+    {
       "key": "unreliable_part",
       "label": "Which part of it must not be trusted",
       "values": "the part, in the document's own words",
@@ -1083,13 +1132,6 @@
       "layer": "universal"
     },
     {
-      "key": "tech_qty",
-      "label": "How many techs the line asks for",
-      "values": "a number",
-      "desc": "The number of techs the text asks for or plans for this item. Same meaning as crew_size at item level; kept as its own reading because labels use it.",
-      "layer": "universal"
-    },
-    {
       "key": "tech_level",
       "label": "Tech skill level",
       "values": "the level the text asks for",
@@ -1097,10 +1139,38 @@
       "layer": "universal"
     },
     {
-      "key": "tech_hours",
-      "label": "Tech hours the line states",
+      "key": "tech_coverage",
+      "label": "Which techs cover it",
+      "values": "the coverage as written",
+      "desc": "Which techs, pool or area covers the work (\"local tech\", \"travel from Dallas\").",
+      "layer": "universal"
+    },
+    {
+      "key": "labor_hours",
+      "label": "Labor hours the line states",
       "values": "a number",
-      "desc": "The labor hours the line gives for the techs. hours_stated says whether there are any; this is the number.",
+      "desc": "The labor hours the text gives. hours_stated says whether there are any; this is the number. Our own estimate is co_hours_estimate.",
+      "layer": "universal"
+    },
+    {
+      "key": "cadence",
+      "label": "How often",
+      "values": "the frequency as written",
+      "desc": "How often the work recurs (\"monthly\", \"2 visits per quarter\").",
+      "layer": "universal"
+    },
+    {
+      "key": "lead_time",
+      "label": "Lead time",
+      "values": "the lead time as written",
+      "desc": "How long before the work something must happen or arrive (\"2 weeks notice\", \"6-8 week lead on displays\").",
+      "layer": "universal"
+    },
+    {
+      "key": "placeholder",
+      "label": "A template placeholder",
+      "values": "true/false",
+      "desc": "The line is an unfilled template slot (\"[Customer Name]\", \"TBD\") rather than a fact.",
       "layer": "universal"
     },
     {
@@ -1148,9 +1218,10 @@
     {
       "key": "needed_by",
       "label": "Who needs the answer",
-      "values": "project_manager | atlas | portal | quoting",
-      "desc": "The downstream consumer that needs this fact: the PM running the job, Atlas planning, the customer portal, or quoting (a site fact that feeds the quote, the SOW and the Deal Kit).",
-      "layer": "company"
+      "values": "project_manager | atlas | portal | quoting | sow | delivery",
+      "desc": "Who downstream needs this fact: the PM running the job, Atlas planning, the customer portal, quoting (the quote and the Deal Kit), the SOW, or delivery (dispatch and the techs on site). A list; a fact can feed several.",
+      "layer": "company",
+      "multi": true
     },
     {
       "key": "train_for",
@@ -1175,6 +1246,13 @@
       "layer": "universal"
     },
     {
+      "key": "sow_coverage_note",
+      "label": "Why the SOW covers it that way",
+      "values": "free text",
+      "desc": "The reasoning behind sow_coverage on this line, in a sentence.",
+      "layer": "universal"
+    },
+    {
       "key": "sow_section",
       "label": "Which SOW section it belongs in",
       "values": "scope_of_work | deliverables | out_of_scope | assumptions | customer_responsibilities | provider_responsibilities | timeline | fees | contacts | other",
@@ -1189,6 +1267,13 @@
       "layer": "universal"
     },
     {
+      "key": "derivation_note",
+      "label": "Why the value was arrived at that way",
+      "values": "free text",
+      "desc": "The reasoning behind derivation on this line, in a sentence.",
+      "layer": "universal"
+    },
+    {
       "key": "sow_available_at_stage",
       "label": "A SOW existed when this was written",
       "values": "true/false",
@@ -1196,17 +1281,39 @@
       "layer": "universal"
     },
     {
+      "key": "sow_available_note",
+      "label": "Why a SOW did or did not exist then",
+      "values": "free text",
+      "desc": "The reasoning behind sow_available_at_stage on this line, in a sentence.",
+      "layer": "universal"
+    },
+    {
       "key": "location_tier",
       "label": "What labor market the site is in",
       "values": "major_metro | mid_metro | small_town | rural",
-      "desc": "Geography only: whether a metro tech pool is within reach of the site. How a company prices a tier is its own policy and is not labeled here.",
+      "desc": "Geography only: whether a metro tech pool is within reach of the site. How a company prices a tier is its own policy and is not labeled here. A list: two tiers when the text cannot tell them apart (small_town and rural), or one per site on a line that covers several.",
+      "layer": "universal",
+      "multi": true
+    },
+    {
+      "key": "region",
+      "label": "Region",
+      "values": "the region as written",
+      "desc": "The metro area, region or state the line places the work in.",
       "layer": "universal"
     },
     {
       "key": "address_level",
       "label": "How precise the address is",
-      "values": "full | street_no_city | street_only | city_only | state_only | name_only",
-      "desc": "full: a street address with city. street_no_city: a street and number but no city. street_only: a street name with no number or city. city_only: only a city or region. state_only: only a state. name_only: only a site or building name.",
+      "values": "full | street_no_zip | street_no_city | street_only | city_only | region_only | state_only | name_only",
+      "desc": "full: a street address with city and zip. street_no_zip: street and city, no zip. street_no_city: a street and number but no city. street_only: a street name with no number or city. city_only: only a city. region_only: only a metro area or region (\"Chicago area\"). state_only: only a state. name_only: only a site or building name.",
+      "layer": "universal"
+    },
+    {
+      "key": "address_note",
+      "label": "What the address is missing",
+      "values": "free text",
+      "desc": "The reasoning behind address_level on this line, in a sentence.",
       "layer": "universal"
     },
     {
@@ -1312,6 +1419,13 @@
       "label": "Our SOW group",
       "values": "the group name",
       "desc": "The group our own SOW files this line under. The universal kind is scope_facet.",
+      "layer": "company"
+    },
+    {
+      "key": "scope_category_note",
+      "label": "Why this SOW group",
+      "values": "free text",
+      "desc": "The reasoning behind scope_category on this line, in a sentence.",
       "layer": "company"
     },
     {

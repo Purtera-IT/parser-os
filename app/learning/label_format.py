@@ -8,8 +8,11 @@ design adds is the map from each field to the head it trains
 
 * the note is the universal WHY, then one line starting ``[<company>]`` with
   the company's rule (``human_labels.split_note``);
-* a multi reading (``train_for``) is a list, not a comma string;
-* ``about`` is a column, never a reading;
+* a multi reading (``train_for``, ``needed_by``, ``location_tier``) is a
+  list, not a comma, pipe or prose string;
+* ``about``, ``supplier`` and ``entity_keys`` are columns, never readings;
+* a reading written under an older name moves to its registered name
+  (``KEY_ALIASES``, ``HOURS_ALIASES``);
 * a closed reading holds one of its registered values.
 
 ``transform_row`` makes exactly those moves and nothing else: every value it
@@ -40,7 +43,33 @@ VALUE_ALIASES: dict[str, dict[str, str]] = {
         "time_and_materials": "t_and_m", "time_materials": "t_and_m", "tm": "t_and_m", "t&m": "t_and_m",
         "fixed_price": "fixed", "fixed_fee": "fixed", "per site": "per_site",
     },
+    # The first needed_by vocabulary named documents, not consumers.
+    "needed_by": {"quote": "quoting", "quotes": "quoting", "dispatch": "delivery"},
+    "scope_side": {"ours": "provider", "us": "provider", "vendor": "provider", "theirs": "customer",
+                   "client": "customer", "both": "shared", "third party": "third_party"},
 }
+
+#: Readings written under an older name before the registry had one. Each
+#: moves to the registered name only when that name is empty or already says
+#: the same; otherwise the old key stays and the dry run reports it.
+KEY_ALIASES: dict[str, str] = {
+    "qty": "equipment_qty",
+    "tech_qty": "crew_size",
+    "visit_frequency": "cadence",
+}
+
+#: Labor-hours readings under older names. A true/false value says whether the
+#: text states hours (hours_stated); a number is the stated hours
+#: (labor_hours), or our estimate (co_hours_estimate) when the row says the
+#: text states none or the value calls itself an estimate.
+HOURS_ALIASES = ("hours", "loe_hours", "tech_hours")
+
+#: Readings that duplicate a column. They move into it when it is empty or
+#: equal; a reading that differs stays where it is.
+COLUMN_READS = ("about", "supplier", "entity_keys")
+
+#: How older labels joined several values of one reading.
+_MULTI_SPLIT = re.compile(r"\s*(?:,|\||/|;|\band\b)\s*", re.I)
 
 #: Words that make a universal WHY company-specific (portable-labels.md,
 #: note-split cleanup rules). Checked outside quoted source text only, since a
@@ -140,23 +169,90 @@ def format_checks(row: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
+def _split_multi(key: str, v: Any) -> list[str] | None:
+    """A multi reading's items, or None when splitting would lose something:
+    an item outside a closed set ("mixed: 4 major_metro ...") keeps the
+    whole value as it was, for a person to rewrite."""
+    items = v if isinstance(v, list) else _MULTI_SPLIT.split(str(v))
+    aliases = VALUE_ALIASES.get(key, {})
+    out: list[str] = []
+    for x in items:
+        x = str(x).strip()
+        if not x:
+            continue
+        x = aliases.get(x.lower(), x.lower() if closed_values(key) else x)
+        if x not in out:
+            out.append(x)
+    allowed = closed_values(key)
+    if not out or (allowed and any(x not in allowed for x in out)):
+        return None
+    return out
+
+
+def _move_read(reads: dict[str, Any], src: str, dst: str, moved: list[str]) -> None:
+    val = reads[src]
+    if dst in reads and str(reads[dst]) != str(val):
+        moved.append(f"{src}: kept, {dst} already says {reads[dst]!r}")
+        return
+    reads.pop(src)
+    reads.setdefault(dst, val)
+    moved.append(f"{src} -> {dst}")
+
+
+def _is_flag(v: Any) -> bool:
+    return isinstance(v, bool) or str(v).strip().lower() in {"true", "false"}
+
+
 def transform_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """(the row in the head format, what moved). Lossless and idempotent."""
     new = deepcopy(row)
     reads = deepcopy(_reads(row))
     moved: list[str] = []
-    about_keys = {a["key"] for a in load_registry().get("about") or []}
+    reg = load_registry()
+    column_keys = {"about": {a["key"] for a in reg.get("about") or []},
+                   "supplier": {a["key"] for a in reg.get("suppliers") or []}}
 
-    if "about" in reads:
-        val = str(reads.get("about") or "").strip()
-        col = str(row.get("about") or "").strip()
-        if val in about_keys and (not col or col == val):
-            reads.pop("about")
-            if not col:
-                new["about"] = val
-                moved.append("about: reading -> column")
+    for col in COLUMN_READS:
+        if col not in reads:
+            continue
+        if col == "entity_keys":
+            v = reads["entity_keys"]
+            items = v if isinstance(v, list) else [x for x in re.split(r"\s*,\s*", str(v)) if x]
+            have = row.get("entity_keys")
+            have = have if isinstance(have, list) else []
+            reads.pop("entity_keys")
+            union = have + [str(x) for x in items if str(x) not in have]
+            if union != have:
+                new["entity_keys"] = union
+                moved.append("entity_keys: reading -> column")
             else:
-                moved.append("about: duplicate reading dropped (column already says it)")
+                moved.append("entity_keys: duplicate reading dropped (column already has them)")
+            continue
+        val = str(reads.get(col) or "").strip()
+        have = str(row.get(col) or "").strip()
+        if val in column_keys[col] and (not have or have == val):
+            reads.pop(col)
+            if not have:
+                new[col] = val
+                moved.append(f"{col}: reading -> column")
+            else:
+                moved.append(f"{col}: duplicate reading dropped (column already says it)")
+
+    for src, dst in KEY_ALIASES.items():
+        if src in reads:
+            _move_read(reads, src, dst, moved)
+
+    for src in HOURS_ALIASES:
+        if src not in reads:
+            continue
+        v = reads[src]
+        if _is_flag(v):
+            dst = "hours_stated"
+        elif str(reads.get("hours_stated")).strip().lower() == "false" or "estimat" in str(v).lower():
+            dst = "co_hours_estimate"
+        else:
+            dst = "labor_hours"
+        _move_read(reads, src, dst, moved)
 
     for key, aliases in VALUE_ALIASES.items():
         v = reads.get(key)
@@ -166,9 +262,12 @@ def transform_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
     for key, d in _read_defs().items():
         v = reads.get(key)
-        if d.get("multi") and isinstance(v, str) and v.strip():
-            reads[key] = [x.strip() for x in v.split(",") if x.strip()]
-            moved.append(f"{key}: comma string -> list")
+        if not d.get("multi") or v is None or v is True or v == "":
+            continue
+        items = _split_multi(key, v)
+        if items is not None and items != v:
+            reads[key] = items
+            moved.append(f"{key}: {v!r} -> list")
 
     note = row.get("note")
     if isinstance(note, str):
