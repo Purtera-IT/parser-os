@@ -1961,7 +1961,41 @@ _PO_REFERENCE_RE = re.compile(
     r"^\s*(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{3,}\s*$",
     re.I,
 )
-_ROW_TYPES = frozenset({"task", "commercial_total", "vendor_line_item", "scope_item", "raw_table_row"})
+_ROW_TYPES = frozenset({"task", "commercial_total", "vendor_line_item", "scope_item", "raw_table_row",
+                        "pricing_assumption"})
+#: The money types a schedule row is mistaken for when its sheet also carries
+#: deal economics ("Gantt Financials": every row became commercial_total).
+_MONEY_ROW_TYPES = frozenset({"commercial_total", "pricing_assumption"})
+#: A calendar date in a cell: "2026-08-17", "2026-08-17 00:00:00", "8/17/2026",
+#: "08-17-26", "Aug 17, 2026", "17 Aug 2026".
+_DATE_CELL_RE = re.compile(
+    r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:,?\s+\d{4})?|"
+    r"\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?(?:\s+\d{4})?)\b",
+    re.I,
+)
+#: A schedule column label riding on a cell ("Start Date: 2026-08-17").
+_SCHEDULE_LABEL_RE = re.compile(r"^\s*(?:start|end|finish|due|begin|duration|days?|baseline)\b[^:]{0,20}:", re.I)
+#: A PO reference line outside a table: "PO #4500123456", "PO # 4500123 -
+#: $18,207.48", "Purchase Order No. 88213: 18207.48". The amount is the PO's
+#: value, not the deal total.
+_PO_LINE_RE = re.compile(
+    r"^\s*(?:p\.?\s?o\.?|purchase\s+order)\s*(?:#|no\.?|number)?\s*[:#]?\s*[A-Z0-9][A-Z0-9-]{3,}"
+    r"\s*(?:[:\-\u2013\u2014|]\s*)?(?:\$?\s?[\d,]+(?:\.\d{2})?)?\s*$",
+    re.I,
+)
+
+
+def _is_schedule_row(cells: list[str], first: str) -> bool:
+    """A Gantt / schedule row: a named task with its dates. Two dates, or one
+    date under a schedule column label ("Start Date: ...")."""
+    if not re.search(r"[A-Za-z]{3}", first or "") or _DATE_CELL_RE.search(first or ""):
+        return False
+    rest = cells[1:]
+    dated = [c for c in rest if _DATE_CELL_RE.search(c)]
+    if len(dated) >= 2:
+        return True
+    return bool(dated) and any(_SCHEDULE_LABEL_RE.match(c) for c in dated)
 
 
 def retype_schedule_reference_rows(atoms: list[Any]) -> int:
@@ -1986,6 +2020,16 @@ def retype_schedule_reference_rows(atoms: list[Any]) -> int:
         text = _atom_text(atom)
         is_row = bool(val.get("_row") or val.get("cells") or val.get("_columns")) or " | " in text
         if not is_row:
+            # A PO reference line is the deal's purchase-order number, never
+            # its total, wherever it sits ("PO #4500123456 - $18,207.48").
+            if at in _MONEY_ROW_TYPES and _PO_LINE_RE.match(text):
+                atom.atom_type = _AT.deal_metadata
+                if isinstance(getattr(atom, "value", None), dict):
+                    atom.value["retyped_from"] = at
+                flags = list(getattr(atom, "review_flags", None) or [])
+                if "po_reference_row" not in flags:
+                    atom.review_flags = flags + ["po_reference_row"]
+                n += 1
             continue
         cells_txt = [c.strip() for c in text.split(" | ")]
         # A leading row number / WBS id ("4", "1.2") is not the row's name.
@@ -1998,7 +2042,9 @@ def retype_schedule_reference_rows(atoms: list[Any]) -> int:
         flag = ""
         if (_MILESTONE_NAME_RE.search(first) or _MILESTONE_NAME_RE.search(raw_first)) and at != "milestone_phase":
             new_type, flag = _AT.milestone_phase, "milestone_row_retyped"
-        elif _PO_REFERENCE_RE.match(first):
+        elif _PO_REFERENCE_RE.match(first) or _PO_REFERENCE_RE.match(raw_first) or (
+            at in _MONEY_ROW_TYPES and _PO_LINE_RE.match(raw_first)
+        ):
             new_type, flag = _AT.deal_metadata, "po_reference_row"
         elif (
             _TOTAL_ROW_RE.match(first)
@@ -2006,6 +2052,16 @@ def retype_schedule_reference_rows(atoms: list[Any]) -> int:
             and any(re.search(r"\d", c) for c in cells_txt[1:])
         ):
             new_type, flag = _AT.commercial_total, "total_row_retyped"
+        elif (
+            at in _MONEY_ROW_TYPES
+            and not _TOTAL_ROW_RE.match(first)
+            and _is_schedule_row(cells_txt, first)
+        ):
+            # A Gantt row ("Install displays | 2026-08-17 | 2026-08-21 | 5 |
+            # 4200") is a schedule item, whatever cost column rides along: a
+            # sheet that also carries deal economics typed every row
+            # commercial_total (010003). Only the Total row is a total.
+            new_type, flag = _AT.task, "schedule_row_retyped"
         if new_type is None:
             continue
         try:
