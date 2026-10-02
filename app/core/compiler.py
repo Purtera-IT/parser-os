@@ -3182,6 +3182,17 @@ def compile_project(
                 _back.append(_atom)
         atoms = atoms + _back
 
+    # Relationship talk is typed as what it is now that every stage has run:
+    # small_talk, the labeler's reject type, not deal_metadata (010087).
+    try:
+        from app.core.deal_chatter import retype_small_talk
+
+        _st = retype_small_talk(atoms)
+        if _st:
+            warnings.append(f"INFO: {_st} small-talk line(s) typed small_talk")
+    except Exception as exc:
+        warnings.append(f"WARNING: small_talk typing failed: {type(exc).__name__}: {exc}")
+
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.
     try:

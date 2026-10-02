@@ -789,7 +789,7 @@
       "facet": "META",
       "desc": "Relationship talk that carries no fact about the work: thanks, greetings, banter, \"sending this to my team\". If the line ALSO says something about the job (its size, a document we need, a promise), it is not small talk.",
       "label_space": "extractor",
-      "status": "v2",
+      "status": "live",
       "value_light": true,
       "train_rows": 0,
       "asks_supplier": false
