@@ -26,8 +26,13 @@ from __future__ import annotations
 import re
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])[\"”’)]*\s+(?=[A-Z(“\"])")
+# "Ms." is the honorific only as written, title case: upper-case "MS." is
+# Mississippi. Matched case-insensitively, live 000132's "... and Tupelo, MS.
+# Customer requires ..." never split while the same paragraph ending "...
+# Wilmington, DE. Customer requires ..." did, so one SOW paragraph was two
+# atoms in one version and one atom in the next.
 ABBREV_TAIL_RE = re.compile(
-    r"\b(?:e\.g|i\.e|etc|vs|No|St|Ave|Rd|Dr|Mr|Mrs|Ms|Inc|Ltd|Corp|a\.m|p\.m|approx|Sec|Fig|U\.S)\.$",
+    r"\b(?:e\.g|i\.e|etc|vs|No|St|Ave|Rd|Dr|Mr|Mrs|(?-i:Ms)|Inc|Ltd|Corp|a\.m|p\.m|approx|Sec|Fig|U\.S)\.$",
     re.I,
 )
 # A sentence that refers back to the previous one rather than stating a fact

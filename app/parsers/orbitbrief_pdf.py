@@ -3649,24 +3649,51 @@ def _atoms_for_bullet(
         if effective_lead:
             value["lead_in"] = list(effective_lead)
             value["intro"] = effective_lead[0]
-        yield _make_atom(
-            text=text,
-            project_id=project_id,
-            artifact_id=artifact_id,
-            filename=filename,
-            parser_version=parser_version,
-            atom_type=atom_type,
-            authority_class=authority,
-            confidence=DEFAULT_BLOCK_CONFIDENCE,
-            locator={
-                **base_locator,
-                "bullet_path": list(path_indices),
-                "bullet_depth": depth,
-                "lead_in": effective_lead,
-                "section_path": section_path,
-            },
-            value=value,
-        )
+        bullet_locator = {
+            **base_locator,
+            "bullet_path": list(path_indices),
+            "bullet_depth": depth,
+            "lead_in": effective_lead,
+            "section_path": section_path,
+        }
+        # A list item that states several facts is one atom per sentence, by
+        # the same clause split a paragraph gets here and a Word list item gets
+        # in the DOCX parser. Live 010003's assumptions item 7 ("After a Change
+        # Order ... is received. If work has been completed Provider has the
+        # right to invoice ...") was two atoms in the .docx draft and one in
+        # the signed PDF. Each sentence keeps the item's bullet_path, depth and
+        # section, in order, with its sentence_index.
+        from app.parsers.clause_split import split_clauses
+
+        sentences = split_clauses(text)
+        if sentences:
+            for s_idx, sent in enumerate(sentences):
+                s_type, s_auth = _classify_text_block(text=sent, section_path=section_path, kind="bullet")
+                yield _make_atom(
+                    text=sent,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    filename=filename,
+                    parser_version=parser_version,
+                    atom_type=s_type,
+                    authority_class=s_auth,
+                    confidence=DEFAULT_BLOCK_CONFIDENCE,
+                    locator={**bullet_locator, "sentence_index": s_idx, "sentence_count": len(sentences)},
+                    value={**value, "sentence_split": True},
+                )
+        else:
+            yield _make_atom(
+                text=text,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=filename,
+                parser_version=parser_version,
+                atom_type=atom_type,
+                authority_class=authority,
+                confidence=DEFAULT_BLOCK_CONFIDENCE,
+                locator=bullet_locator,
+                value=value,
+            )
     for child_index, child in enumerate(item.get("children", []) or []):
         yield from _atoms_for_bullet(
             item=child,
