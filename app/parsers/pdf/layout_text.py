@@ -786,6 +786,34 @@ def _read_rows(rows: list[list[_Seg]], depth: int = 0) -> list[str]:
     return out
 
 
+def _footer_band(segs: list[_Seg], page_height: float) -> list[list[_Seg]]:
+    """The page-footer band's rows: the footer line ("Proprietary and
+    Confidential | Page 2 | CDW Technologies LLC") in the bottom of the page,
+    plus every line set no larger than it directly beneath it. A footer can be
+    several lines: CDW prints the SOW number ("SOW 198950") in 8pt under the
+    page line, and read alone it became a body atom (010003)."""
+    from app.parsers.pdf._shared import _looks_like_page_footer
+
+    if page_height <= 0:
+        return []
+    rows = _rows(segs)
+    for i in range(len(rows) - 1, -1, -1):
+        row = rows[i]
+        if min(s.y0 for s in row) < 0.8 * page_height:
+            break
+        if not _looks_like_page_footer(" | ".join(s.text for s in row)):
+            continue
+        size = max(s.size for s in row) or 10.0
+        band = [row]
+        for nxt in rows[i + 1:]:
+            gap = min(s.y0 for s in nxt) - max(s.y1 for s in band[-1])
+            if max(s.size for s in nxt) > size + 0.5 or gap > 2.0 * size:
+                break
+            band.append(nxt)
+        return band if len(band) > 1 else []
+    return []
+
+
 def layout_page_text(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> str | None:
     """The page's text in column-aware reading order with a blank line between
     visual blocks, or ``None`` when the page has no usable text layer."""
@@ -795,7 +823,14 @@ def layout_page_text(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> 
             return None
         _mark_links_and_fills(page, segs)
         _mark_boxes(page, segs)
-        lines = _read(segs)
+        # A multi-line footer band reads as ONE footer line, last on the page.
+        band = _footer_band(segs, float(getattr(page.rect, "height", 0) or 0))
+        if band:
+            ids = {id(s) for r in band for s in r}
+            segs = [s for s in segs if id(s) not in ids]
+        lines = _read(segs) if segs else []
+        if band:
+            lines += ["", " | ".join(s.text for r in band for s in r)]
         # Collapse runs of blank lines.
         cleaned: list[str] = []
         for ln in lines:
