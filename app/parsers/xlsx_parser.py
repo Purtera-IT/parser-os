@@ -962,6 +962,24 @@ def _commercial_blocks(
             groups.append((start, c)); start = None
     if start is not None:
         groups.append((start, width))
+
+    # A spacer column inside ONE table ("Item | Desc | <blank> | Qty | Price")
+    # must not cut its rows in two: split only when every group reads as a
+    # table of its own -- its rows carry both a label and a number.
+    def _self_contained(lo: int, hi: int) -> bool:
+        seen = whole = 0
+        for r in body:
+            cs = [_txt(r, c) for c in range(lo, hi)]
+            ne = [x for x in cs if x]
+            if not ne:
+                continue
+            seen += 1
+            if any(_isnum(x) for x in ne) and any(not _isnum(x) for x in ne):
+                whole += 1
+        return seen > 0 and whole * 5 >= seen * 4
+
+    if len(groups) > 6 or (len(groups) > 1 and not all(_self_contained(a, b) for a, b in groups)):
+        groups = [(0, width)]
     if not groups:
         groups = [(0, width)]
 
@@ -972,7 +990,6 @@ def _commercial_blocks(
             return [_txt(rows[i], c) if lo <= c < hi else "" for c in range(width)]
 
         main = [hdr_cells[c] if lo <= c < hi else "" for c in range(width)]
-        main_cols = {c for c, h in enumerate(main) if h}
         active: list[str] | None = main
 
         def _fits(hdr: list[str] | None, cells: list[str]) -> bool:

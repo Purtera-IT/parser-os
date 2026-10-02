@@ -135,3 +135,21 @@ def test_compile_keeps_rows_and_diverts_the_banner(tmp_path):
     assert any("pricing line" in (a.raw_text or "") for a in r.suppressed_atoms)
     for country, _ in COUNTRIES:
         assert any(f"Country: {country} |" in t for t in live), (country, live)
+
+
+def test_spacer_column_inside_one_table_does_not_split_its_rows():
+    from app.core.schemas import ArtifactType
+    from app.parsers.sheet_classifier import SheetClassification, SheetRole
+
+    rows = [["Item", "Description", None, "Qty", "Unit Price", "Extended Price"]]
+    rows += [[f"P-{i}", f"Part number {i}", None, 2 + i, 10.0 + i, (2 + i) * (10.0 + i)] for i in range(6)]
+    atoms = XlsxParser()._emit_commercial_sheet_rows(
+        project_id="p", artifact_id="a", artifact_type=ArtifactType.xlsx, filename="x.xlsx",
+        sheet_name="Price List", rows=rows,
+        classification=SheetClassification(role=SheetRole.CATALOG, suppress=True, reason="t", confidence=1.0),
+    )
+    rows_out = [a for a in atoms if not (a.value or {}).get("is_summary")]
+    for i in range(6):
+        hits = [a.raw_text for a in rows_out if f"P-{i}" in a.raw_text]
+        assert len(hits) == 1, hits
+        assert f"Unit Price: {10.0 + i:g}" in hits[0] or f"Unit Price: {10.0 + i}" in hits[0], hits
