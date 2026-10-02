@@ -126,3 +126,52 @@ def test_an_unread_inline_image_says_so(tmp_path):
     states = {x["text"][:20]: x["state"] for x in row["unclaimed"]}
     assert states.get("[A screenshot of a p") == "image"
     assert row["image_count"] == 1
+
+
+# 000132: HubSpot note line 9 ("Maintenance and support...") is one long line
+# the parser cut into eleven clause atoms. No atom holds the line, and the
+# clauses are not all inside it either -- the first keeps its label, the last
+# runs on into the next line, the splitter dropped the "and"s between them.
+_LONG = ("Maintenance and support: 24x7 monitoring of the server and virtualization stack, "
+         "quarterly firmware updates for all switches, monthly patching of Windows hosts, "
+         "backup verification and restore tests, onsite response within 4 hours for Sev1, "
+         "remote helpdesk for end users, license renewals and true-ups, annual network health review, "
+         "documentation updates, vendor escalation management and asset inventory tracking.")
+_NEXT = "Billing is annual in advance starting at go-live."
+
+
+def _note(tmp_path: Path) -> Path:
+    p = tmp_path / "000132-hs-note-9-scope.txt"
+    p.write_text("Scope call with the customer today.\n\n" + _LONG + "\n" + _NEXT + "\n", encoding="utf-8")
+    return p
+
+
+def test_a_long_line_split_into_clause_atoms_is_claimed(tmp_path):
+    clauses = [
+        "Maintenance and support: 24x7 monitoring of the server and virtualization stack",
+        "Maintenance and support: quarterly firmware updates for all switches",
+        "monthly patching of Windows hosts",
+        "backup verification and restore tests",
+        "onsite response within 4 hours for Sev1",
+        "remote helpdesk for end users",
+        "license renewals and true-ups",
+        "annual network health review",
+        "documentation updates",
+        "vendor escalation management",
+        "asset inventory tracking. Billing is annual in advance",
+    ]
+    kept = [_atom("Scope call with the customer today.", artifact="art_n")]
+    kept += [_atom(c, artifact="art_n") for c in clauses]
+    kept += [_atom(_NEXT, artifact="art_n")]
+    cov = coverage_for_artifact(_note(tmp_path), "art_n", kept)
+    assert not [x for x in cov["unclaimed"] if x["state"] == "unread"], cov["unclaimed"]
+    assert cov["lines_claimed"] == cov["lines_total"] == 3
+
+
+def test_one_small_piece_does_not_claim_a_long_line(tmp_path):
+    kept = [_atom("Scope call with the customer today.", artifact="art_n"),
+            _atom("annual network health review", artifact="art_n"),
+            _atom(_NEXT, artifact="art_n")]
+    cov = coverage_for_artifact(_note(tmp_path), "art_n", kept)
+    unread = [x["text"] for x in cov["unclaimed"] if x["state"] == "unread"]
+    assert len(unread) == 1 and unread[0].startswith("Maintenance and support:")
