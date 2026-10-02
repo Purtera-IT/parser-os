@@ -171,13 +171,28 @@ def _clean_leading_alias(part: str | None) -> str | None:
     return alias
 
 
+#: A clause break between a house number and the city: a street never runs
+#: across one. "installation of 1 × Camera system(s); ... at VC Links located
+#: at 15733 US-224, Findlay, OH" -- the street is "15733 US-224", not the
+#: equipment list from the first "1" on (Ox 010353 dispatch brief).
+_CLAUSE_BREAK_RE = re.compile(r"[;×—–:]|\b(?:at|located)\b", re.IGNORECASE)
+
+
 def _split_leading_alias_and_street(part: str | None) -> tuple[str | None, str | None]:
     s = _clean(part)
     if not s:
         return None, None
-    m = re.search(r"\b\d{1,6}\b", s)
+    nums = list(re.finditer(r"\b\d{1,6}\b", s))
+    # The street starts at the first house number with no clause break
+    # between it and the city; with none such, at the first number.
+    m = next((n for n in nums if not _CLAUSE_BREAK_RE.search(s[n.start():])), nums[0] if nums else None)
     if m and m.start() > 0:
-        alias = _clean_leading_alias(s[: m.start()])
+        lead = s[: m.start()]
+        if m is not nums[0]:
+            # Only the words after the last break can name the place.
+            lead = re.sub(r"\s*\b(?:located\s+)?at\s*$", "", lead, flags=re.IGNORECASE)
+            lead = _CLAUSE_BREAK_RE.split(lead)[-1]
+        alias = _clean_leading_alias(lead) if re.search(r"[A-Za-z]", lead) else None
         return s[m.start():].strip(" ,"), alias
     return s, None
 
