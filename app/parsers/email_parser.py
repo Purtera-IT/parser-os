@@ -904,7 +904,7 @@ CONSTRAINT_PATTERNS = [
 
 # A leading list-bullet glyph / ordinal. Stripped so the atom is the ITEM
 # ("Okta integration"), not the marker ("*   Okta integration").
-_BULLET_PREFIX_RE = re.compile(r"^\s*(?:(?:[*•·▪◦‣o]|[-–—]|\(?\d{1,2}[.)])\s+|[-–—•*](?=[A-Za-z]))")
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:(?:[*•·▪◦‣o]|[-–—]|\(?\d{1,2}[.)]|\(?[A-Za-z]\))\s+|[-–—•*](?=[A-Za-z]))")
 # (the second arm: "-Relay", "-Mag Lock Cable" -- dash typed straight onto the
 # word, no space. Live 010289: those items were not bullets, so the name-shape
 # filter dropped "-Mag Lock Cable" from the club's supply list.)

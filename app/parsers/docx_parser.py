@@ -14,6 +14,7 @@ from docx.table import Table as _DocxTable
 from app.core.ids import stable_id
 from app.core.normalizers import normalize_entity_key, normalize_text
 from app.core.segments import ArtifactSegment
+from app.core.sentences import strip_list_marker
 from app.core.schemas import (
     ArtifactType,
     AtomType,
@@ -553,6 +554,20 @@ class DocxParser(BaseParser):
             # vs content, so the heading-drop decision can never diverge from the
             # section-path computation.
             is_heading = idx in getattr(self, "_structure_idxs", set())
+            # A bullet GLYPH typed into the text ("- 24/7 on-call availability",
+            # "\uf0b7 Troubleshooting") is the item after the glyph, as it is in
+            # a note, an email and a Word-bulleted list; the glyph is list
+            # metadata. A typed ordinal ("f. Complete billing tasks", "(g)")
+            # stays: in a SOW it is the clause's reference (test_r3_lettered_
+            # list_items). A heading keeps everything ("1. Scope").
+            list_marker = ""
+            if not is_heading:
+                list_marker, _item = strip_list_marker(text)
+                if list_marker and list_marker[-1:] not in ".)" and _item.strip():
+                    text = _item.strip()
+                    is_list_item = True
+                else:
+                    list_marker = ""
             # One atom per clause: the PDF path's split, so a draft SOW and its
             # signed PDF produce matching atoms (see clause_split).
             has_placeholder = bool(_PLACEHOLDER_PROMPT_RE.search(text)) or any(
@@ -568,6 +583,7 @@ class DocxParser(BaseParser):
             clauses = [] if (is_heading or has_placeholder) else split_clauses(text)
             units = clauses or [text]
             for s_idx, unit in enumerate(units):
+                _first = len(atoms)
                 atoms.extend(
                     self._emit_atoms_for_text(
                         project_id=project_id,
@@ -590,6 +606,10 @@ class DocxParser(BaseParser):
                         sentence_index=s_idx if clauses else None,
                     )
                 )
+                if list_marker:
+                    for _a in atoms[_first:]:
+                        if isinstance(_a.value, dict):
+                            _a.value.setdefault("list_marker", list_marker)
 
         # Build all-document text once for ``kind=physical_site`` declarations.
         # Exclude table-cell paragraphs so the surrounding-text heuristic stays
