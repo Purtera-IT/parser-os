@@ -61,3 +61,17 @@ def test_a_footer_never_feeds_the_clause_conflict_check():
     c = _atom("d1", "Provider requires a minimum of two (2) weeks notice before any scheduled site visit")
     d = _atom("d2", "Provider requires a minimum of five (5) weeks notice before any scheduled site visit")
     assert len(find_cross_document_conflicts([c, d], project_id="p")) == 1
+
+
+def test_a_forward_marker_is_mail_chrome(tmp_path: Path):
+    """010003: "---------- Forwarded message ---------" was a scope_item."""
+    text = MAIL.split("\n\n", 1)[0] + "\n\nVictor, signed SOW below.\n\n---------- Forwarded message ---------\n" \
+        "From: Adobe Sign <echosign@echosign.com>\nDate: Tue, Jul 7, 2026 at 1:20 PM\nSubject: Signed\n\n" \
+        "Attached is a final copy of SOW#198584 - TV Install.\n"
+    p = tmp_path / "fw.eml"
+    p.write_text(text, encoding="utf-8")
+    atoms = EmailParser().parse_artifact_full(project_id="p", artifact_id="a", path=p).atoms
+    marker = [a for a in atoms if "Forwarded message" in a.raw_text]
+    assert marker and all(a.value.get("reason") == "forward_marker" for a in marker)
+    copy = next(a for a in atoms if a.raw_text.startswith("Attached is a final copy"))
+    assert copy.source_refs[0].locator["message_index"] == 1

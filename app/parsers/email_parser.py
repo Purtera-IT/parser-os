@@ -1950,6 +1950,12 @@ _LEGAL_FOOTER_RE = re.compile(
 _SHORT_FOOTER_LINK_RE = re.compile(r"\b(?:privacy (?:policy|notice|statement)|terms of (?:use|service)|cookie policy)\b", re.I)
 
 
+_FORWARD_MARKER_RE = re.compile(
+    r"^[\s*_]*(?:-{2,}\s*(?:forwarded message|original message)\s*-{2,}|begin forwarded message\s*:?)[\s*_]*$",
+    re.IGNORECASE,
+)
+
+
 def _is_legal_footer_line(line: str) -> bool:
     """True for a line of a company's legal footer (see ``_LEGAL_FOOTER_RE``)."""
     t = (line or "").strip()
@@ -3578,6 +3584,12 @@ class EmailParser(BaseParser):
             # line itself is a chatter atom, never scope and never a person.
             if BLOCK_SPLIT_RE.match(cleaned) and " wrote:" in cleaned.lower():
                 _reject("quote_attribution")
+                continue
+            # "---------- Forwarded message ---------" / "Begin forwarded
+            # message:" is mail chrome between two messages, never scope
+            # (live 010003: a scope_item on Patrick's forward).
+            if _FORWARD_MARKER_RE.match(cleaned):
+                _reject("forward_marker")
                 continue
             # A legal footer, and every line after it in the same message
             # (its address, phone and links), is the company's boilerplate:
