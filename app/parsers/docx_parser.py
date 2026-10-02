@@ -372,6 +372,16 @@ def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, A
     }
 
 
+# A list item whose marker is TYPED, not Word numbering: "f. Complete billing
+# tasks", "(iv) Remove old mounts", "3) Label ports". Word wrote no w:numPr,
+# so _paragraph_is_list_item cannot see it -- but the marker is the same
+# structural fact, and a short lettered item (4 words, no digit) must not
+# fall to the prose gate while its 5-word siblings survive (deal 010003's SOW
+# lost "f. Complete billing tasks" exactly so). "e.g. ..." does not match:
+# the marker must be followed by whitespace.
+_TYPED_ENUMERATOR_RE = re.compile(
+    r"^\s*(?:\(?(?:[A-Za-z]|[ivxIVX]{1,4}|\d{1,2})[.)]|[\u2022\u00b7\u25aa\u25cf\u2013\-*])\s+\S")
+
 class DocxParser(BaseParser):
     #: Per-DOCUMENT state on a parser the registry SHARES between threads.
     #: 010237's SLA table took its lead-in from whichever document happened to
@@ -502,7 +512,8 @@ class DocxParser(BaseParser):
             text = paragraph.text.strip()
             if not text:
                 continue
-            is_list_item = self._paragraph_is_list_item(paragraph)
+            is_list_item = self._paragraph_is_list_item(paragraph) or bool(
+                _TYPED_ENUMERATOR_RE.match(text))
             # _build_section_index is the single source of truth for what's
             # structure (style heading / bold sub-heading / short colon list-intro)
             # vs content, so the heading-drop decision can never diverge from the
