@@ -25,6 +25,7 @@ from app.core.schemas import (
     ParserCapability,
     ParserMatch,
 )
+from app.parsers.clause_split import split_clauses
 from app.parsers.base import BaseParser, PerThreadState
 from app.parsers.segmenters import segment_docx
 from app.parsers.structured_projection import (
@@ -175,6 +176,43 @@ STRONG_CONSTRAINT_PATTERNS = [
 WEAK_CONSTRAINT_PATTERNS = [r"\baccess\b"]
 CONSTRAINT_PATTERNS = STRONG_CONSTRAINT_PATTERNS + WEAK_CONSTRAINT_PATTERNS
 ASSUMPTION_PATTERNS = [r"\bassum(?:e|ption|ing)\b"]
+
+
+# Most specific first: which of several lexical matches names the atom.
+_LEXICAL_TYPE_PRIORITY = [
+    AtomType.exclusion,
+    AtomType.constraint,
+    AtomType.assumption,
+    AtomType.open_question,
+    AtomType.scope_item,
+]
+
+# Atom types the plain-text emitter produces; the same sentence reached by two
+# paths (body paragraph and a table cell, or a content control read twice)
+# is emitted once.
+_DEDUPE_TYPES = {
+    AtomType.scope_item, AtomType.exclusion, AtomType.constraint,
+    AtomType.assumption, AtomType.open_question, AtomType.deliverable,
+    AtomType.acceptance_criterion,
+}
+
+
+def _dedupe_repeated_text(atoms: list[Any]) -> list[Any]:
+    """Drop a later atom whose normalized text an earlier plain-text atom of the
+    same document already carries. Tracked-change atoms and structured atoms
+    (rows, sites, BOM lines, markers) are never touched."""
+    seen: set[str] = set()
+    out: list[Any] = []
+    for a in atoms:
+        norm = getattr(a, "normalized_text", "") or ""
+        val = getattr(a, "value", None) or {}
+        tracked = isinstance(val, dict) and val.get("tracked_change")
+        if getattr(a, "atom_type", None) in _DEDUPE_TYPES and norm and not tracked:
+            if norm in seen:
+                continue
+            seen.add(norm)
+        out.append(a)
+    return out
 
 
 def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, Any]:
@@ -350,23 +388,29 @@ class DocxParser(BaseParser):
             # vs content, so the heading-drop decision can never diverge from the
             # section-path computation.
             is_heading = idx in getattr(self, "_structure_idxs", set())
-            atoms.extend(
-                self._emit_atoms_for_text(
-                    project_id=project_id,
-                    artifact_id=artifact_id,
-                    filename=path.name,
-                    text=text,
-                    paragraph_index=idx,
-                    table_index=None,
-                    row=None,
-                    cell=None,
-                    tracked_change=None,
-                    heading=is_heading,
-                    is_list_item=is_list_item,
-                    section_path=para_section.get(idx, []),
-                    lead_in=getattr(self, "_para_lead_in", {}).get(idx, []),
+            # One atom per clause: the PDF path's split, so a draft SOW and its
+            # signed PDF produce matching atoms (see clause_split).
+            clauses = [] if is_heading else split_clauses(text)
+            units = clauses or [text]
+            for s_idx, unit in enumerate(units):
+                atoms.extend(
+                    self._emit_atoms_for_text(
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        filename=path.name,
+                        text=unit,
+                        paragraph_index=idx,
+                        table_index=None,
+                        row=None,
+                        cell=None,
+                        tracked_change=None,
+                        heading=is_heading,
+                        is_list_item=is_list_item,
+                        section_path=para_section.get(idx, []),
+                        lead_in=getattr(self, "_para_lead_in", {}).get(idx, []),
+                        sentence_index=s_idx if clauses else None,
+                    )
                 )
-            )
 
         # Build all-document text once for ``kind=physical_site`` declarations.
         # Exclude table-cell paragraphs so the surrounding-text heuristic stays
@@ -863,6 +907,7 @@ class DocxParser(BaseParser):
                 return (table_order[ti], 1)
             return (10**9, 2)
         atoms.sort(key=_body_key)
+        atoms = _dedupe_repeated_text(atoms)
 
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
@@ -1932,6 +1977,7 @@ class DocxParser(BaseParser):
         is_list_item: bool = False,
         section_path: list[str] | None = None,
         lead_in: list[str] | None = None,
+        sentence_index: int | None = None,
     ) -> list[EvidenceAtom]:
         # Span-provenance ledger (passive side-channel; only active when a
         # ledger is attached). Register this raw unit so the lost-content
@@ -1940,6 +1986,8 @@ class DocxParser(BaseParser):
         span_id = self._span_id(
             artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index
         )
+        if sentence_index is not None:
+            span_id = f"{span_id}#s{sentence_index}"
         if ledger is not None:
             ledger.register_span(span_id, text)
 
@@ -2032,8 +2080,13 @@ class DocxParser(BaseParser):
         }
         if lead_in:
             locator["lead_in"] = list(lead_in)
+        if sentence_index is not None:
+            locator["sentence_index"] = sentence_index
         source_ref = SourceRef(
-            id=stable_id("src", artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index),
+            id=stable_id(
+                "src", artifact_id, paragraph_index, table_index, row, cell, tracked_change, tracked_index,
+                *(() if sentence_index is None else (sentence_index,)),
+            ),
             artifact_id=artifact_id,
             artifact_type=ArtifactType.docx,
             filename=filename,
@@ -2042,6 +2095,23 @@ class DocxParser(BaseParser):
             parser_version=self.parser_version,
         )
 
+        # ONE atom per text. The lexical classifier can match several types on
+        # one sentence ("install" -> scope_item, "out of scope" -> exclusion,
+        # "access" -> constraint); emitting one atom per type gave the labeler
+        # three copies of the same sentence under one label_key. Keep the most
+        # specific type and carry the others on the atom.
+        alt_types: list[AtomType] = []
+        if len(atom_types) > 1:
+            ranked = sorted(
+                atom_types,
+                key=lambda t: _LEXICAL_TYPE_PRIORITY.index(t)
+                if t in _LEXICAL_TYPE_PRIORITY else len(_LEXICAL_TYPE_PRIORITY),
+            )
+            # A brittle single-word cue never outranks a real match.
+            strong = [t for t in ranked if t not in weak_lexical]
+            primary = (strong or ranked)[0]
+            alt_types = [t for t in atom_types if t != primary]
+            atom_types = [primary]
         atoms: list[EvidenceAtom] = []
         for atom_type in atom_types:
             authority_class = AuthorityClass.contractual_scope if heading else AuthorityClass.meeting_note
@@ -2101,7 +2171,12 @@ class DocxParser(BaseParser):
                     atom_type=atom_type,
                     raw_text=text,
                     normalized_text=normalize_text(text),
-                    value={"text": text, "tracked_change": tracked_change, "prose_fallback": prose_fallback},
+                    value={
+                        "text": text,
+                        "tracked_change": tracked_change,
+                        "prose_fallback": prose_fallback,
+                        **({"alt_atom_types": [t.value for t in alt_types]} if alt_types else {}),
+                    },
                     entity_keys=self._extract_entity_keys(text),
                     source_refs=[source_ref],
                     authority_class=authority_class,
