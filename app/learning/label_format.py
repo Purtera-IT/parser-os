@@ -189,12 +189,14 @@ def transform_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
 
 
 def transform_link(link: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """A `context` link written as a stand-in for derived_from becomes one."""
+    """A `context` or `supports` link written as a stand-in for derived_from
+    (note starting "[derived_from]" or "derived_from:") becomes one."""
     note = str(link.get("note") or "")
     m = re.match(r"^\s*(\[derived_from\]|derived_from:)\s*", note, re.I)
-    if link.get("relation") == "context" and m:
+    rel = link.get("relation")
+    if rel in ("context", "supports") and m:
         return {**link, "relation": "derived_from", "note": note[m.end():].strip() or None}, \
-            ["context -> derived_from"]
+            [f"{rel} -> derived_from"]
     return dict(link), []
 
 

@@ -936,6 +936,27 @@
       "layer": "universal"
     },
     {
+      "key": "display_size",
+      "label": "Display size",
+      "values": "a size in inches",
+      "desc": "The screen size the line states: \"75 inch\" is 75. Size sets how many techs a mount takes.",
+      "layer": "universal"
+    },
+    {
+      "key": "equipment_qty",
+      "label": "How many units",
+      "values": "a number",
+      "desc": "The count of displays, devices or units the line states. A count of sites is job_scale; a count of people is tech_qty or crew_size.",
+      "layer": "universal"
+    },
+    {
+      "key": "requirement_kind",
+      "label": "What kind of requirement",
+      "values": "the kind of requirement",
+      "desc": "What the line requires, in a word or two (access, hardware, labor, permit, schedule...). Open set for now.",
+      "layer": "universal"
+    },
+    {
       "key": "expansion",
       "label": "Room to grow on this account",
       "values": "what would repeat",
@@ -990,6 +1011,20 @@
       "values": "what the block is",
       "desc": "\"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading.",
       "layer": "universal"
+    },
+    {
+      "key": "list_header",
+      "label": "It only introduces a list",
+      "values": "true/false",
+      "desc": "The line only announces the list under it (\"The following sites are included:\"). It governs each item.",
+      "layer": "universal"
+    },
+    {
+      "key": "governs_count",
+      "label": "How many lines it governs",
+      "values": "a number",
+      "desc": "How many lines the header or summary governs. Bookkeeping for the governs links.",
+      "layer": "meta"
     },
     {
       "key": "unreliable_part",
@@ -1048,6 +1083,27 @@
       "layer": "universal"
     },
     {
+      "key": "tech_qty",
+      "label": "How many techs the line asks for",
+      "values": "a number",
+      "desc": "The number of techs the text asks for or plans for this item. Same meaning as crew_size at item level; kept as its own reading because labels use it.",
+      "layer": "universal"
+    },
+    {
+      "key": "tech_level",
+      "label": "Tech skill level",
+      "values": "the level the text asks for",
+      "desc": "The skill level or certification the work needs, in the text's own words.",
+      "layer": "universal"
+    },
+    {
+      "key": "tech_hours",
+      "label": "Tech hours the line states",
+      "values": "a number",
+      "desc": "The labor hours the line gives for the techs. hours_stated says whether there are any; this is the number.",
+      "layer": "universal"
+    },
+    {
       "key": "trigger_event",
       "label": "An event that starts a task",
       "values": "true/false",
@@ -1092,8 +1148,8 @@
     {
       "key": "needed_by",
       "label": "Who needs the answer",
-      "values": "project_manager | atlas | portal",
-      "desc": "The downstream consumer that needs this fact: the PM running the job, Atlas planning, or the customer portal.",
+      "values": "project_manager | atlas | portal | quoting",
+      "desc": "The downstream consumer that needs this fact: the PM running the job, Atlas planning, the customer portal, or quoting (a site fact that feeds the quote, the SOW and the Deal Kit).",
       "layer": "company"
     },
     {
@@ -1149,8 +1205,8 @@
     {
       "key": "address_level",
       "label": "How precise the address is",
-      "values": "full | city_only",
-      "desc": "full: a street address. city_only: only a city or region is known.",
+      "values": "full | street_no_city | street_only | city_only | state_only | name_only",
+      "desc": "full: a street address with city. street_no_city: a street and number but no city. street_only: a street name with no number or city. city_only: only a city or region. state_only: only a state. name_only: only a site or building name.",
       "layer": "universal"
     },
     {
@@ -1292,6 +1348,20 @@
       "values": "a registry type",
       "desc": "Temporary: holds the universal type while a backfill flips policy rejects to it. Never a task.",
       "layer": "staging"
+    },
+    {
+      "key": "exclude_from_training",
+      "label": "Kept out of training",
+      "values": "true/false",
+      "desc": "Bookkeeping: the row is an old manual Deal Kit and never trains a head.",
+      "layer": "meta"
+    },
+    {
+      "key": "skip",
+      "label": "Skipped by the labeler",
+      "values": "true/false",
+      "desc": "Bookkeeping: the row is set aside (old manual Deal Kit exclusion). Never a task.",
+      "layer": "meta"
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",

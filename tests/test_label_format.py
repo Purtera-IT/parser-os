@@ -81,6 +81,25 @@ def test_derived_from_stand_in_links_become_the_relation():
     assert new["relation"] == "derived_from" and new["note"] == "total from qty x rate" and moved
     same, moved = transform_link({"id": "u2", "relation": "context", "note": "background"})
     assert same["relation"] == "context" and not moved
+    new, moved = transform_link({"id": "u3", "relation": "supports", "note": "[derived_from] SOW total"})
+    assert new["relation"] == "derived_from" and new["note"] == "SOW total" and moved == ["supports -> derived_from"]
+    same, moved = transform_link({"id": "u4", "relation": "supports", "note": "same rate"})
+    assert same["relation"] == "supports" and not moved
+    same, moved = transform_link({"id": "u5", "relation": "governs", "note": "[derived_from] x"})
+    assert same["relation"] == "governs" and not moved
+
+
+def test_reads_in_real_use_are_registered():
+    """Readings deal threads already write (010003 dry run) have a head and a
+    vocab, so they neither trip unregistered_read nor drop out of training."""
+    reads = {"skip": True, "exclude_from_training": True, "requirement_kind": "access",
+             "list_header": True, "governs_count": "4", "tech_level": "L2", "tech_qty": "2",
+             "display_size": "75", "equipment_qty": "4", "tech_hours": "6",
+             "needed_by": "quoting", "address_level": "street_no_city"}
+    checks = _checks(_row(reads_set=reads))
+    assert "unregistered_read" not in checks and "value_outside_vocab" not in checks
+    for lvl in ("street_only", "name_only", "state_only"):
+        assert "value_outside_vocab" not in _checks(_row(reads_set={"address_level": lvl}))
 
 
 def test_sql_is_guarded_on_the_rows_current_values():

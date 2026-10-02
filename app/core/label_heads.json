@@ -123,7 +123,10 @@
         "scope_facet",
         "option_selected",
         "start_date",
-        "billing_type"
+        "billing_type",
+        "display_size",
+        "equipment_qty",
+        "requirement_kind"
       ],
       "relations": [],
       "judgments": [
@@ -329,7 +332,8 @@
       "columns": [],
       "reads": [
         "deal_summary",
-        "opens_block"
+        "opens_block",
+        "list_header"
       ],
       "relations": [
         "governs"
@@ -372,7 +376,10 @@
       "reads": [
         "hours_stated",
         "crew_size",
-        "removes_cost"
+        "removes_cost",
+        "tech_qty",
+        "tech_level",
+        "tech_hours"
       ],
       "relations": [],
       "judgments": [
@@ -583,7 +590,10 @@
       "reads": [
         "co_company",
         "deal_outcome",
-        "universal_type"
+        "universal_type",
+        "governs_count",
+        "exclude_from_training",
+        "skip"
       ],
       "relations": [],
       "judgments": [],
