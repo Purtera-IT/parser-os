@@ -477,6 +477,16 @@ def build_orbitbrief_envelope(
         fp.artifact_id for fp in (manifest.artifact_fingerprints if manifest is not None else [])
         if fp.artifact_type.value == "email"
     })
+    # Who said each line, on every atom the result holds -- held chatter,
+    # copies and atoms stamped just above included -- and, in a HubSpot note,
+    # the sender of an email pasted into it from its "From:" row on (010087).
+    try:
+        from app.core.deal_parties import stamp_note_parties, stamp_parties
+
+        stamp_parties(_kept)
+        stamp_note_parties(_kept)
+    except Exception:
+        pass
     packets = list(compile_result.packets or [])
     entities = list(compile_result.entities or [])
     edges = list(compile_result.edges or [])
@@ -703,10 +713,14 @@ def build_orbitbrief_envelope(
                 # runs as a compile stage and stamps every atom, but only the
                 # atoms -- so a reader above atom level could not group 33 email
                 # files into the 6 conversations they actually are.
-                "email_thread": _document_thread(
+                "email_thread": (_doc_thread := _document_thread(
                     artifact_atoms, artifact_id=fp.artifact_id,
                     is_message=fp.artifact_type.value == "email",
-                ),
+                )),
+                # A message's author IS its sender. The header carried only
+                # `sender`, so every email read "author: null" next to it.
+                **(_email_author(_doc_thread, prov.get("sender_email"))
+                   if fp.artifact_type.value == "email" else {}),
                 # Who the forwarded chain STARTED with -- claimed ONLY when this
                 # message actually carried something.
                 #
@@ -2228,6 +2242,36 @@ def _originating_sender(
             if index > best_index:
                 best_index, best_sender = index, sender
     return best_sender
+
+
+def _email_author(thread: dict[str, Any] | None, sender_email: Any = None) -> dict[str, Any]:
+    """``{"author", "author_email"}`` for an email document, from its sender.
+
+    The display name wins over the bare address ("Quinton James", not
+    "quinton.james@cdw.com"); with no name the address is the author. A
+    message with no sender at all gets nothing -- never a guessed author.
+    """
+    from email.utils import parseaddr
+
+    raw = str((thread or {}).get("sender") or "").strip() or str(sender_email or "").strip()
+    if not raw or raw.lower() == "unknown":
+        return {}
+    name, addr = parseaddr(raw)
+    name = " ".join(name.strip().strip('"\'').split())
+    addr = addr.strip().lower()
+    if "@" not in addr:
+        addr = ""
+        if not name and "@" not in raw:
+            name = raw
+    if not addr and sender_email and "@" in str(sender_email):
+        addr = str(sender_email).strip().lower()
+    if name and "@" in name:
+        # "quinton.james@cdw.com <quinton.james@cdw.com>": no display name.
+        name = ""
+    author = name or addr
+    if not author:
+        return {}
+    return {"author": author, "author_email": addr or None}
 
 
 def _note_author(artifact_atoms: list[Any], artifact_id: str) -> dict[str, Any]:

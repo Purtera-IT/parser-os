@@ -46,6 +46,22 @@ STRUCTURED_SCHEMA_DOCX = "orbitbrief.docx.structured.v1"
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 WORD_TBL_TAG = f"{{{WORD_NS['w']}}}tbl"
 
+#: An amount of money: "$1,622.00", "USD 450", "1,200 dollars".
+_MONEY_RE = re.compile(r"[$€£]\s?\d|\b(?:usd|cad|eur|gbp)\s?\d|\d\s?(?:usd|dollars)\b", re.I)
+def _states_fact(text: str) -> bool:
+    """A lead-in sentence that carries a figure (an amount, a count, a date)
+    states a fact of its own and is content, not just structure."""
+    return bool(_MONEY_RE.search(text) or re.search(r"\d", text or ""))
+
+
+#: A commercial reference number: "PO #4500123456", "Quote No. Q-1182",
+#: "Invoice: 88213".
+_REFERENCE_NO_RE = re.compile(
+    r"\b(?:p\.?\s?o|purchase\s+order|quote|quotation|invoice|order|contract|ref(?:erence)?|"
+    r"sow|work\s+order|wo)\b\.?\s*(?:#|no\.?|num(?:ber)?\.?)?\s*[:#]?\s*[A-Z]{0,4}-?\d",
+    re.I,
+)
+
 
 def _cells_by_column(header_cells, cell_texts) -> dict:
     """Map a table row's cells onto its column names WITHOUT losing any.
@@ -1747,6 +1763,27 @@ class DocxParser(BaseParser):
     # section heading in most SOWs (010087), not the title.
     _DOC_TITLE_RE = re.compile(r"^\s*(?:(?:draft|final|revised)\s+)?statement\s+of\s+work\b", re.I)
 
+    _LABEL_HEADING_RE = re.compile(
+        r"^(?:[A-Z][A-Za-z'&/\-]*)(?:\s+(?:[A-Z][A-Za-z'&/\-]*|and|or|of|for|the|to|in|on|&))*\s*:$"
+    )
+    _FORM_LABEL_RE = re.compile(
+        r"^(?:(?:printed\s+|print\s+)?name|by|title|date|signature|signed|address|phone|email|e-mail|"
+        r"fax|mobile|cell|company|customer|client|attn|attention|to|from|cc|subject|re)\b", re.I,
+    )
+
+    @classmethod
+    def _is_label_heading(cls, text: str, *, min_words: int = 2) -> bool:
+        """A short Title Case label that ends in a colon ("Invoicing
+        Procedures:", "Project Schedule:"): 2-6 words, no figure, not a form
+        field label ("Name:", "Customer Name:", "Date:")."""
+        t = (text or "").strip()
+        if len(t) > 60 or re.search(r"\d", t) or not cls._LABEL_HEADING_RE.match(t):
+            return False
+        words = re.findall(r"[A-Za-z][A-Za-z'&/\-]*", t)
+        if not (min_words <= len(words) <= 6) or len(re.findall(r"[A-Za-z]", t)) < 4:
+            return False
+        return not cls._FORM_LABEL_RE.match(t) and not re.search(r"\b(?:name|number|no|date|phone|email)\s*:$", t, re.I)
+
     @staticmethod
     def _is_caps_heading(paragraph: Any) -> bool:
         """A short standalone line set in capitals -- typed in caps or formatted
@@ -1854,6 +1891,14 @@ class DocxParser(BaseParser):
             # "Name:") have no digit and are dropped; a lone number with no
             # words ("110") lacks context and is dropped. This is a
             # content-derived signal, not a keyword whitelist.
+            #
+            # A one-word label is enough context when the value is an amount
+            # or a reference number: "Total: $1,622.00" and "PO #4500123456"
+            # (010003) are pricing / commercial facts, not small talk.
+            if has_number and len(words) >= 1 and (
+                _MONEY_RE.search(text) or _REFERENCE_NO_RE.search(text)
+            ):
+                return True
             return has_number and len(words) >= 2
         # 5+ real words -> KEEP. A multi-word line is load-bearing prose: SOW
         # narrative, an exclusion bullet ("Procurement or supply of TVs,
@@ -2099,6 +2144,38 @@ class DocxParser(BaseParser):
                     # opened no section and the PMO duties beneath them stayed in
                     # the OUT OF SCOPE section above and were typed exclusions.
                     lvl = 3
+                label_head = False
+                if (
+                    lvl is None
+                    and text
+                    and not is_list
+                    and k + 1 < len(children)
+                    and not _next_is_bullet(k)
+                    and self._is_label_heading(text)
+                ):
+                    # A Title Case label ending in a colon on its own line
+                    # ("Invoicing Procedures:") heads the paragraphs and table
+                    # beneath it even when no bullet follows: 010003's went to
+                    # the labeler as a chatter line and opened no section, so
+                    # the invoicing terms stayed under the heading before it.
+                    lvl = 3
+                    label_head = True
+                elif (
+                    lvl is None
+                    and text
+                    and not is_list
+                    and not text.endswith(":")
+                    and _next_is_bullet(k)
+                    and self._is_label_heading(text + ":", min_words=1)
+                ):
+                    # A Title Case line with no closing punctuation directly
+                    # over a bullet list ("Out of Scope", "PurTera
+                    # Responsibilities" left on Normal, not bold) is that
+                    # list's heading: unrecognised, the first became an
+                    # exclusion atom of its own and the second a chatter
+                    # line, and the duties beneath both lost their section.
+                    lvl = 3
+                    label_head = True
                 if (
                     lvl is not None
                     and lvl != 0
@@ -2109,7 +2186,7 @@ class DocxParser(BaseParser):
                     # root of the document, never a child of a heading that
                     # happens to precede it (010087: it sat under SOW LOCATION).
                     lvl = 0
-                if lvl is not None and lvl > 0 and caps:
+                if lvl is not None and lvl > 0 and (caps or label_head):
                     # SIBLING RULE: all-caps standalone headings are peers. The
                     # stack popped only on a strictly higher level, so an all-caps
                     # bold line (level 3) after an all-caps Heading 1 nested under
@@ -2144,7 +2221,7 @@ class DocxParser(BaseParser):
                     # bare "Deliverables:" nor a long "The following items are
                     # excluded ...:" becomes a duplicate atom alongside its breadcrumb.
                     # No word-count heuristic: the semantic rule is the judge.
-                    intro_section_only = is_list or self._is_framing_lead_in(text)
+                    intro_section_only = (is_list or self._is_framing_lead_in(text)) and not _states_fact(text)
                     lvl = (stack[-1][0] if stack else 0) + 1
                 # FRAMING LEAD-IN: a non-heading sentence that announces a following
                 # list / sub-section ("...will perform the following services.").
@@ -2185,9 +2262,15 @@ class DocxParser(BaseParser):
                         # section preamble / list lead-in: structure (no atom),
                         # lifted onto descendant list items as lead_in. Empty
                         # breadcrumb label so the sentence never enters the path.
-                        heading_paras[pidx] = (lvl, ancestors)
-                        structure_idxs.add(pidx)
-                        structure_kind[pidx] = "list_lead_in"
+                        # A lead-in that ALSO states a fact ("Services Fees
+                        # hereunder are fixed fees totaling $1,622.00 and will
+                        # be invoiced as follows:", 010003) is content: it
+                        # stays a typed atom, never a chatter line, and still
+                        # frames the list beneath it.
+                        if not _states_fact(text):
+                            heading_paras[pidx] = (lvl, ancestors)
+                            structure_idxs.add(pidx)
+                            structure_kind[pidx] = "list_lead_in"
                         stack.append((lvl, "", False, text, False, (False, False)))
                     else:
                         if not is_intro or intro_section_only:
@@ -2196,7 +2279,7 @@ class DocxParser(BaseParser):
                             structure_idxs.add(pidx)
                             structure_kind[pidx] = "list_lead_in" if is_intro else "section_heading"
                         # else: long intro sentence stays an atom (not structure)
-                        label = text.rstrip(":").strip() if (is_intro or caps) else text
+                        label = text.rstrip(":").strip() if (is_intro or caps or label_head) else text
                         heading_own[pidx] = list(ancestors) + [label]
                         # CONTRADICTION GATE: a real sub-heading meaning the OPPOSITE
                         # of a "vendor will provide" preamble ("Out of Scope",
@@ -2204,7 +2287,7 @@ class DocxParser(BaseParser):
                         # lifted onto its bullets. Semantic + cached; colon list-intros
                         # ("Services include:") never block.
                         blocks = (not is_intro) and self._subsection_blocks_lift(label)
-                        stack.append((lvl, label, is_intro, None, blocks, (caps, explicit)))
+                        stack.append((lvl, label, is_intro, None, blocks, (caps or label_head, explicit)))
                 else:
                     # plain content: if we've left the bullet list, close any open
                     # tight list-intro sub-section(s) so a following paragraph doesn't
