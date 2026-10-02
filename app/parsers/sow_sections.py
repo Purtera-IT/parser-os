@@ -185,29 +185,65 @@ def is_signature_line(line: str) -> bool:
 #: "Docusign Envelope ID: 3F2A9C1E-1B2C-4D5E-9F00-ABCDEF123456" (and the other
 #: platforms' page stamps). Matched at the start of a line; whatever follows
 #: on the same line is the page's own text.
-DOC_STAMP_RE = re.compile(
-    r"^\s*(?:"
+_STAMP_BODY = (
     r"docu\s*sign\s+envelope\s+id\s*[:#]?\s*[0-9A-F]{8}(?:-?[0-9A-F]{4}){3}-?[0-9A-F]{12}|"
-    r"(?:adobe\s+sign|dropbox\s+sign|hellosign|pandadoc|signnow)\s+"
-    r"(?:transaction|document|envelope|signature)\s+(?:id|number|no\.?)\s*[:#]?\s*[A-Za-z0-9_-]{8,}"
-    r")",
-    re.I,
+    r"(?:adobe(?:\s+acrobat)?\s+sign|echosign|dropbox\s+sign|hellosign|pandadoc|signnow)\s+"
+    r"(?:transaction|document|envelope|signature|agreement)\s+(?:id|number|no\.?)\s*[:#]?\s*[A-Za-z0-9_-]{8,}"
 )
+DOC_STAMP_RE = re.compile(r"^\s*(?:" + _STAMP_BODY + r")", re.I)
+#: The same stamp anywhere on a line: the layout can set it after the page's
+#: own text ("Signatures Docusign Envelope ID: ...") or a footer after it.
+_DOC_STAMP_ANY_RE = re.compile(r"(?<![A-Za-z0-9])(?:" + _STAMP_BODY + r")", re.I)
+#: The stamp's label alone, its id wrapped onto the next line.
+_STAMP_LABEL_RE = re.compile(
+    r"^\s*(?:docu\s*sign\s+envelope\s+id|(?:adobe(?:\s+acrobat)?\s+sign|echosign|dropbox\s+sign|"
+    r"hellosign|pandadoc|signnow)\s+(?:transaction|document|envelope|signature|agreement)\s+"
+    r"(?:id|number|no\.?))\s*[:#]?\s*$", re.I)
+_STAMP_ID_RE = re.compile(r"^\s*(?:[0-9A-F]{8}(?:-?[0-9A-F]{4}){3}-?[0-9A-F]{12}|[A-Za-z0-9_-]{12,})\s*$", re.I)
+#: What a page stamp line also carries: a page number.
+_PAGE_FURNITURE_RE = re.compile(r"^\s*(?:page\s*\d+(?:\s*(?:of|/)\s*\d+)?|\d{1,3}(?:\s*(?:of|/)\s*\d{1,3})?)\s*$", re.I)
 
 DOC_STAMP_RULE = "doc_stamp"
 
 
 def split_doc_stamp(line: str) -> tuple[str, str] | None:
-    """``(stamp, rest)`` when ``line`` opens with an e-signature page stamp."""
-    m = DOC_STAMP_RE.match(str(line or ""))
+    """``(stamp, rest)`` when ``line`` carries an e-signature page stamp:
+    at its start, or after / before the page's own text on the same line.
+    ``rest`` is the line without the stamp (and without a page number that
+    only rode along with it)."""
+    line = str(line or "")
+    m = DOC_STAMP_RE.match(line) or _DOC_STAMP_ANY_RE.search(line)
     if not m:
         return None
-    return m.group(0).strip(), str(line)[m.end():].strip()
+    rest = " ".join(x for x in (line[:m.start()].strip(), line[m.end():].strip()) if x)
+    if _PAGE_FURNITURE_RE.match(rest):
+        rest = ""
+    return m.group(0).strip(), rest
+
+
+def join_wrapped_stamps(lines: list[str]) -> list[str]:
+    """Put a stamp whose id wrapped onto the next line back on one line
+    ("Docusign Envelope ID:" / "3F2A9C1E-...")."""
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if _STAMP_LABEL_RE.match(ln or "") and i + 1 < len(lines) and _STAMP_ID_RE.match(lines[i + 1] or ""):
+            out.append(f"{ln.strip()} {lines[i + 1].strip()}")
+            i += 2
+            continue
+        out.append(ln)
+        i += 1
+    return out
 
 
 def is_doc_stamp(text: str) -> bool:
-    """The whole text is an e-signature page stamp."""
-    s = split_doc_stamp(" ".join(str(text or "").split()))
+    """The whole text is an e-signature page stamp (a page number aside)."""
+    t = " ".join(str(text or "").split())
+    s = split_doc_stamp(t)
+    if s is None:
+        joined = join_wrapped_stamps(str(text or "").splitlines())
+        s = split_doc_stamp(" ".join(joined)) if len(joined) == 1 else None
     return bool(s) and not s[1]
 
 
@@ -221,6 +257,7 @@ __all__ = [
     "is_signature_label_line",
     "is_signature_line",
     "is_sow_section_label",
+    "join_wrapped_stamps",
     "split_doc_stamp",
     "under_exclusion_heading",
 ]

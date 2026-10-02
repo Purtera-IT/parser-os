@@ -1441,9 +1441,11 @@ def _extract_doc_stamps(page_text: str) -> tuple[str, list[str]]:
     title detector took it for the page's title (every atom's section_path
     root) and the layout glued it onto the next line ("Docusign Envelope ID:
     ... Signatures"). Returns the text without the stamps, and the stamps."""
+    from app.parsers.sow_sections import join_wrapped_stamps
+
     stamps: list[str] = []
     out: list[str] = []
-    for ln in (page_text or "").splitlines():
+    for ln in join_wrapped_stamps((page_text or "").splitlines()):
         sp = split_doc_stamp(ln)
         if sp is None:
             out.append(ln)
