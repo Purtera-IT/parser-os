@@ -301,26 +301,134 @@ def split_copies(before: list[Any], after: list[Any], *, stage: str) -> list[Any
             # a NOTE is not an echo: the note shows its own copy (000132).
             _note_quoted_in(w, d)
             continue
-        v = dict(v)
-        v["duplicate_of"] = {
-            "atom_id": str(getattr(w, "id", "") or ""),
-            "artifact_id": str(getattr(w, "artifact_id", "") or ""),
-            "stage": stage,
-        }
-        d.value = v
-        flags = list(getattr(d, "review_flags", None) or [])
-        if COPY_FLAG not in flags:
-            flags.append(COPY_FLAG)
-        d.review_flags = flags
-        wv = _value(w)
-        if isinstance(getattr(w, "value", None), dict):
-            docs = list(wv.get("also_in_documents") or [])
-            aid = str(getattr(d, "artifact_id", "") or "")
-            if aid and aid not in docs:
-                docs.append(aid)
-                wv["also_in_documents"] = docs
+        _mark_copy(d, w, stage)
         copies.append(d)
     return copies
+
+
+def _mark_copy(d: Any, w: Any, stage: str) -> None:
+    """Make ``d`` its document's copy of canonical atom ``w``."""
+    v = dict(_value(d))
+    v["duplicate_of"] = {
+        "atom_id": str(getattr(w, "id", "") or ""),
+        "artifact_id": str(getattr(w, "artifact_id", "") or ""),
+        "stage": stage,
+    }
+    d.value = v
+    flags = list(getattr(d, "review_flags", None) or [])
+    if COPY_FLAG not in flags:
+        flags.append(COPY_FLAG)
+    d.review_flags = flags
+    wv = _value(w)
+    if isinstance(getattr(w, "value", None), dict):
+        docs = list(wv.get("also_in_documents") or [])
+        aid = str(getattr(d, "artifact_id", "") or "")
+        if aid and aid not in docs:
+            docs.append(aid)
+            wv["also_in_documents"] = docs
+
+
+#: ``value`` key on a suppressed atom: the kept atom it was folded into.
+SURVIVOR_KEY = "_survivor"
+
+
+def settle_folds(
+    before: list[Any],
+    after: list[Any],
+    copies: list[Any],
+    folds: Mapping[int, tuple[Any, Any]],
+    *,
+    stage: str,
+) -> tuple[list[Any], list[Any], list[Any]]:
+    """Every atom a dedup stage dropped either names a survivor or comes back.
+
+    ``folds`` is ``id(loser) -> (loser, winner)`` as the stage's folds recorded
+    it (``semantic_dedup.take_folds``). For each atom in ``before`` that is in
+    neither ``after`` nor ``copies``:
+
+    * its survivor is the kept atom its fold chain ends at (a winner that was
+      itself folded hands on to ITS winner; a winner kept as a copy hands on
+      to that copy's canonical atom), or else a kept atom with the same words;
+    * survivor in the SAME document (or the atom is a quoted echo of another
+      message): it stays suppressed and records the survivor under
+      :data:`SURVIVOR_KEY`;
+    * survivor in ANOTHER document: it is kept as that document's copy
+      (:data:`COPY_FLAG`), never suppressed -- a document keeps its own line;
+    * no survivor: it was folded into nothing that stands, so it is put back
+      where it was.
+
+    An atom the stage dropped on purpose rather than folded (a hallucinated
+    site; see ``semantic_dedup.mark_dropped_not_folded``) is left alone.
+    Returns ``(after_with_restored, new_copies, restored)``.
+    """
+    from app.core.semantic_dedup import DROPPED_NOT_FOLDED_KEY
+
+    kept_ids = {id(a) for a in after}
+    copy_ids = {id(c) for c in copies}
+    kept_by_atom_id = {str(getattr(a, "id", "") or ""): a for a in after}
+    by_text: dict[str, list[Any]] = {}
+    for a in after:
+        by_text.setdefault(_text_key(a), []).append(a)
+
+    def _standing(atom: Any) -> Any | None:
+        seen: set[int] = set()
+        cur = atom
+        while cur is not None and id(cur) not in seen and len(seen) < 32:
+            seen.add(id(cur))
+            if id(cur) in kept_ids:
+                return cur
+            if id(cur) in copy_ids:
+                dup = _value(cur).get("duplicate_of") or {}
+                return kept_by_atom_id.get(str(dup.get("atom_id") or ""))
+            nxt = folds.get(id(cur))
+            cur = nxt[1] if nxt and nxt[0] is cur else None
+        return None
+
+    new_copies: list[Any] = []
+    restored: list[Any] = []
+    for d in before:
+        if id(d) in kept_ids or id(d) in copy_ids:
+            continue
+        if _value(d).get(DROPPED_NOT_FOLDED_KEY):
+            continue
+        own = str(getattr(d, "artifact_id", "") or "")
+        nxt = folds.get(id(d))
+        w = _standing(nxt[1]) if nxt and nxt[0] is d else None
+        if w is None:
+            same = by_text.get(_text_key(d), ()) if _text_key(d) else ()
+            w = next((k for k in same if str(getattr(k, "artifact_id", "") or "") == own),
+                     next(iter(same), None))
+        if w is None:
+            restored.append(d)
+            continue
+        if str(getattr(w, "artifact_id", "") or "") != own and not _is_quoted_mail_echo(d) \
+                and not is_cross_doc_copy(d):
+            _mark_copy(d, w, stage)
+            new_copies.append(d)
+            continue
+        if isinstance(getattr(d, "value", None), dict):
+            d.value[SURVIVOR_KEY] = {
+                "atom_id": str(getattr(w, "id", "") or ""),
+                "artifact_id": str(getattr(w, "artifact_id", "") or ""),
+                "stage": stage,
+            }
+    if not restored:
+        return list(after), new_copies, []
+    # Put each restored atom back after the nearest kept atom preceding it.
+    restored_ids = {id(a) for a in restored}
+    follow: dict[int, list[Any]] = {}
+    lead: list[Any] = []
+    anchor = None
+    for atom in before:
+        if id(atom) in kept_ids:
+            anchor = atom
+        elif id(atom) in restored_ids:
+            (lead if anchor is None else follow.setdefault(id(anchor), [])).append(atom)
+    out: list[Any] = list(lead)
+    for atom in after:
+        out.append(atom)
+        out.extend(follow.get(id(atom), ()))
+    return out, new_copies, restored
 
 
 #: ``value`` key on a survivor: documents whose copy of the line was only a
@@ -823,5 +931,7 @@ __all__ = [
     "doc_key",
     "document_order",
     "is_cross_doc_copy",
+    "settle_folds",
+    "SURVIVOR_KEY",
     "split_copies",
 ]
