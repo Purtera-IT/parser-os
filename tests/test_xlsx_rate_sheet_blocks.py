@@ -153,3 +153,27 @@ def test_spacer_column_inside_one_table_does_not_split_its_rows():
         hits = [a.raw_text for a in rows_out if f"P-{i}" in a.raw_text]
         assert len(hits) == 1, hits
         assert f"Unit Price: {10.0 + i:g}" in hits[0] or f"Unit Price: {10.0 + i}" in hits[0], hits
+
+
+# ── the quote parser claims the sheet by its service block ──────────────────
+
+
+def test_compile_single_sheet_matrix_plus_service_block_keeps_every_country(tmp_path):
+    # A one-sheet workbook is claimed by the quote parser on its "Service |
+    # Sell | Cost" header; the country matrix above that header was dropped
+    # without a trace.
+    from app.core.compiler import compile_project
+
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "SELL RATES"
+    _matrix(ws)
+    ws.append([])
+    ws.append(["Service", "Sell", "Cost"])
+    for r in SERVICES:
+        ws.append(list(r))
+    wb.save(tmp_path / "rates.xlsx")
+    r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
+    every = [a.raw_text for a in r.atoms] + [a.raw_text for a in r.suppressed_atoms]
+    for country, v in COUNTRIES:
+        assert any(country in t and str(v) in t for t in every), (country, every)
+    for name, *_ in SERVICES:
+        assert any(name in t for t in every), (name, every)
