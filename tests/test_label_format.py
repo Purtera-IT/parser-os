@@ -108,11 +108,17 @@ def test_reads_in_real_use_are_registered():
 
 
 def test_older_names_move_to_the_registered_reading():
-    new, moved = transform_row(_row(reads_set={"qty": "4", "tech_qty": "2", "visit_frequency": "monthly",
+    new, moved = transform_row(_row(text="2 techs on site for the mount",
+                                    reads_set={"qty": "4", "tech_qty": "2", "visit_frequency": "monthly",
                                                "loe_hours": "12", "co_action": "keep"}))
     r = new["reads_set"]
     assert r["equipment_qty"] == "4" and r["crew_size"] == "2" and r["cadence"] == "monthly"
     assert r["labor_hours"] == "12" and not {"qty", "tech_qty", "visit_frequency", "loe_hours"} & set(r)
+    # a remote or office role is not field crew: tech_qty stays and is reported
+    for text in ("Site: PC | PS-PROJMGMT-REMOTE", "Project manager, 1 tech hour", "Fee row"):
+        new, moved = transform_row(_row(text=text, reads_set={"tech_qty": "1"}))
+        assert new["reads_set"] == {"tech_qty": "1"} and "crew_size" not in new["reads_set"], text
+        assert "tech_qty: kept, the line is not a field tech role" in moved
     # an estimate is ours, a flag says whether hours are stated
     new, _ = transform_row(_row(reads_set={"hours": "8", "hours_stated": "false"}))
     assert new["reads_set"]["co_hours_estimate"] == "8" and "hours" not in new["reads_set"]

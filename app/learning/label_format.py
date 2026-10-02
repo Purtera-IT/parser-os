@@ -58,6 +58,18 @@ KEY_ALIASES: dict[str, str] = {
     "visit_frequency": "cadence",
 }
 
+#: tech_qty is crew only on a field tech's line. Old fee rows put it on
+#: remote and office roles too ("PS-PROJMGMT-REMOTE"), and a coordinator is
+#: not field crew, so those keep tech_qty and the dry run reports them.
+_FIELD_TECH = re.compile(r"\b(techs?|technicians?|installers?|field|on-?site|crew)\b", re.I)
+_NOT_FIELD = re.compile(r"\b(PC|PM|SA|remote|projmgmt|project\s+(manage\w*|coordinat\w*)|"
+                        r"coordinators?|architects?|engineering|design)\b|PROJMGMT", re.I)
+
+
+def _is_field_tech_line(row: dict[str, Any]) -> bool:
+    text = str(row.get("text") or "")
+    return bool(_FIELD_TECH.search(text)) and not _NOT_FIELD.search(text)
+
 #: Labor-hours readings under older names. A true/false value says whether the
 #: text states hours (hours_stated); a number is the stated hours
 #: (labor_hours), or our estimate (co_hours_estimate) when the row says the
@@ -239,8 +251,12 @@ def transform_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
                 moved.append(f"{col}: duplicate reading dropped (column already says it)")
 
     for src, dst in KEY_ALIASES.items():
-        if src in reads:
-            _move_read(reads, src, dst, moved)
+        if src not in reads:
+            continue
+        if src == "tech_qty" and not _is_field_tech_line(row):
+            moved.append("tech_qty: kept, the line is not a field tech role")
+            continue
+        _move_read(reads, src, dst, moved)
 
     for src in HOURS_ALIASES:
         if src not in reads:
