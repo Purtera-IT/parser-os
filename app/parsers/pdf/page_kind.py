@@ -64,14 +64,21 @@ def table_cuts_words(page: Any, table: Any) -> bool:
         cells = [c for c in (getattr(table, "cells", None) or []) if c]
         if not cells:
             return False
-        edges = sorted({round(float(c[0]), 1) for c in cells} | {round(float(c[2]), 1) for c in cells})
         tb = getattr(table, "bbox", None)
         if not tb:
             return False
         tx0, ty0, tx1, ty1 = (float(v) for v in tb)
-        inner = [e for e in edges if tx0 + 1.0 < e < tx1 - 1.0]
-        if not inner:
+        cells = [tuple(float(v) for v in c) for c in cells]
+        if not any(tx0 + 1.0 < e < tx1 - 1.0 for c in cells for e in (c[0], c[2])):
             return False
+
+        def _walls_at(y: float) -> list[float]:
+            # Only the walls of the cells on the word's own line can cut it: a
+            # merged cell ("ESTIMATED TOTAL FEES" across four columns) spans the
+            # walls of the rows above it, and those walls do not run through it
+            # (010087's fee table was thrown out as a figure on that alone).
+            return [e for c in cells if c[1] - 0.5 <= y <= c[3] + 0.5
+                    for e in (c[0], c[2]) if tx0 + 1.0 < e < tx1 - 1.0]
         words = [w for w in (page.get_text("words") or [])
                  if tx0 - 1 <= (w[0] + w[2]) / 2.0 <= tx1 + 1 and ty0 - 1 <= (w[1] + w[3]) / 2.0 <= ty1 + 1]
         if not words:
@@ -81,7 +88,7 @@ def table_cuts_words(page: Any, table: Any) -> bool:
             x0, x1 = float(w[0]), float(w[2])
             if len(str(w[4]).strip()) < 2:
                 continue
-            if any(x0 + 1.5 < e < x1 - 1.5 for e in inner):
+            if any(x0 + 1.5 < e < x1 - 1.5 for e in _walls_at((float(w[1]) + float(w[3])) / 2.0)):
                 cut += 1
         return cut >= 2 and cut * 20 >= len(words)
     except Exception:
