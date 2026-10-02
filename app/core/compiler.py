@@ -523,6 +523,26 @@ def _iter_artifacts(project_dir: Path) -> list[Path]:
         if _matches_ignore_pattern(rel, ignore_patterns):
             continue
         results.append(path)
+    # A HubSpot note that only says "Note" and carried files is a pointer, not
+    # a document: its author and date travel on the files it carried instead
+    # (see app/core/note_attachments.py). Dropped here so the compile, the
+    # census and the envelope all agree it is not an artifact.
+    try:
+        from app.core.note_attachments import note_attachment_links
+
+        folded = {
+            f.lstrip("/\\").replace("\\", "/") for f in note_attachment_links(project_dir).folded
+        }
+    except Exception:  # pragma: no cover - never fail discovery over links
+        folded = set()
+    if folded:
+        def _rel(p: Path) -> str:
+            try:
+                return str(p.relative_to(project_dir)).replace("\\", "/")
+            except ValueError:
+                return p.name
+
+        results = [p for p in results if _rel(p) not in folded]
     return sorted(results, key=lambda p: str(p).lower())
 
 
@@ -2301,6 +2321,31 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: note_provenance_backfill failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=note_prov_n)
+
+    # A note with real text that carried files says so on its own header atom,
+    # so a reader of the note sees what was attached to it. (A "Note"-only
+    # note never got this far -- _iter_artifacts dropped it.)
+    try:
+        from app.core.note_attachments import note_attachment_links
+
+        _carried = note_attachment_links(project_dir).notes
+        if _carried:
+            _rel_by_id: dict[str, str] = {}
+            for _aid, _p in artifact_paths.items():
+                try:
+                    _rel_by_id[_aid] = str(Path(_p).relative_to(project_dir)).replace("\\", "/")
+                except ValueError:
+                    _rel_by_id[_aid] = Path(_p).name
+            for _atom in atoms:
+                _v = _atom.value if isinstance(getattr(_atom, "value", None), dict) else None
+                if not _v or _v.get("kind") != "hubspot_note_meta":
+                    continue
+                _link = _carried.get(_rel_by_id.get(str(_atom.artifact_id or ""), ""))
+                if _link:
+                    _v["attachments"] = [a["filename"] for a in _link["attachments"]]
+                    _v["attachment_ids"] = list(_link["attachment_ids"])
+    except Exception as exc:
+        warnings.append(f"WARNING: note_attachment_links failed: {type(exc).__name__}: {exc}")
 
     # HubSpot notes / short email bullets often carry quote-level work units
     # before a SOW exists, but the type classifier may leave them as scope_item

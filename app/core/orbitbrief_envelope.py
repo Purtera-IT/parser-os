@@ -455,6 +455,12 @@ def build_orbitbrief_envelope(
     # transitions. Together these decide where a document sits in the deal's life
     # and therefore who may read it -- see document_lifecycle/deal_stage.py.
     provenance = _load_manifest_provenance(project_dir)
+    # Which HubSpot note carried which file. A "Note"-only note is not a
+    # document (the compiler never read it); who attached the file and when
+    # travels on the file as ``hubspot_note``. See app/core/note_attachments.py.
+    from app.core.note_attachments import note_attachment_links
+
+    _note_links = note_attachment_links(project_dir)
     _crm_ctx = _load_manifest_crm(project_dir) or {}
     stage_timeline = _crm_ctx.get("stage_timeline") if isinstance(_crm_ctx, dict) else None
 
@@ -608,6 +614,17 @@ def build_orbitbrief_envelope(
                     else None
                 ),
                 "attachment_ids": prov.get("attachment_ids") or [],
+                # The HubSpot note this file was attached to (author, date,
+                # note id, and how the link was made), and for a note with real
+                # text, the files it carried.
+                **(
+                    {"hubspot_note": _note_links.attachments[fp.filename]}
+                    if fp.filename in _note_links.attachments else {}
+                ),
+                **(
+                    {"note_attachments": _note_links.notes[fp.filename]}
+                    if fp.filename in _note_links.notes else {}
+                ),
                 # A Deal Kit that belongs to another deal is how that deal's
                 # pricing walks into this quote. Reported on the document so a
                 # PM sees it where the file is, not in a separate report.
