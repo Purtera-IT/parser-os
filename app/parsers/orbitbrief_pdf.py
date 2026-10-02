@@ -89,6 +89,7 @@ from app.parsers.pdf._shared import (  # noqa: E402
     _table_rows_repaired,
     _grid_is_self_labelled,
     _drop_title_band,
+    _normalize_banded_grid,
 )
 
 # Moved to app.parsers.pdf.schematic_pre_pass. Re-exported so every existing import keeps working;
@@ -4331,6 +4332,7 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
+                extracted = _normalize_banded_grid(table, extracted)
                 extracted = _drop_title_band(extracted)
                 if not extracted or (len(extracted) < 2 and not _grid_is_self_labelled(extracted)):
                     continue
