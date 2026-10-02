@@ -65,7 +65,84 @@ def _table_rows_repaired(page: Any, table: Any) -> list[list[Any]]:
             if sorted(a.replace(" ", "")) == sorted(b.replace(" ", "")):
                 rows[ri][ci] = b
     _restore_clipped_prefixes(page, cell_rows, rows)
+    _split_spanning_cells(page, cell_rows, rows)
     return rows
+
+
+def _split_spanning_cells(page: Any, cell_rows: list[Any], rows: list[list[Any]]) -> None:
+    """Give a body cell drawn across several columns back to the columns its
+    words sit under.
+
+    A PO's line grid rules its header cells but draws each item row with
+    only horizontal rules, so the grid reads the row as ONE cell across the
+    full width. Keyed by position, that cell's text -- category, amount and
+    description -- all went to the first column: "Start Date: COGS-
+    Subcontractor costs $1,622.00 PR0000033245-..." on a row with no dates
+    at all (010003). Each word is assigned to the header cell it overlaps by
+    x, and the columns no word sits under stay empty.
+
+    Only when the words say so: every word must sit inside one header column
+    (none straddles a wall) and they must fill two or more columns. A note or
+    title set across the grid crosses the walls and is left whole.
+    """
+    if len(cell_rows) < 2 or len(rows) != len(cell_rows):
+        return
+    # The header is the first row that draws every column: a title band
+    # merged across the grid ("Service Order Lines") can sit above it.
+    hi = next((i for i, r in enumerate(cell_rows[:-1])
+               if (getattr(r, "cells", None) or [])
+               and all(c is not None for c in r.cells)), None)
+    if hi is None:
+        return
+    heads = list(cell_rows[hi].cells)
+    ncols = len(heads)
+    if ncols < 2 or len(rows[hi]) != ncols:
+        return
+    spans = [(float(h[0]), float(h[2])) for h in heads]
+    try:
+        words = page.get_text("words") or []
+    except Exception:
+        return
+    for ri in range(hi + 1, len(cell_rows)):
+        geo = list(getattr(cell_rows[ri], "cells", []) or [])
+        if len(geo) != ncols or len(rows[ri]) != ncols:
+            continue
+        for ci, cell in enumerate(geo):
+            if cell is None or not str(rows[ri][ci] or "").strip():
+                continue
+            last = ci
+            while last + 1 < ncols and geo[last + 1] is None:
+                last += 1
+            if last == ci:
+                continue
+            x0, y0, x1, y1 = (float(v) for v in cell)
+            inside = [w for w in words
+                      if x0 - 1 <= (w[0] + w[2]) / 2.0 <= x1 + 1
+                      and y0 - 1 <= (w[1] + w[3]) / 2.0 <= y1 + 1]
+            if not inside:
+                continue
+            placed: dict[int, list[Any]] = {}
+            ok = True
+            for w in inside:
+                home = [k for k in range(ci, last + 1)
+                        if spans[k][0] - 1.0 <= float(w[0]) and float(w[2]) <= spans[k][1] + 1.0]
+                if not home:
+                    ok = False
+                    break
+                placed.setdefault(home[0], []).append(w)
+            if not ok or len(placed) < 2:
+                continue
+            for k in range(ci, last + 1):
+                ws = sorted(placed.get(k, []), key=lambda w: (round(float(w[3])), float(w[0])))
+                lines: list[str] = []
+                prev = None
+                for w in ws:
+                    if prev is not None and abs(float(w[3]) - prev) <= 2.0:
+                        lines[-1] = f"{lines[-1]} {w[4]}"
+                    else:
+                        lines.append(str(w[4]))
+                    prev = float(w[3])
+                rows[ri][k] = "\n".join(lines)
 
 
 def _restore_clipped_prefixes(page: Any, cell_rows: list[Any], rows: list[list[Any]]) -> None:
