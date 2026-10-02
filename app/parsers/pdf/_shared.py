@@ -64,9 +64,86 @@ def _table_rows_repaired(page: Any, table: Any) -> list[list[Any]]:
                 continue
             if sorted(a.replace(" ", "")) == sorted(b.replace(" ", "")):
                 rows[ri][ci] = b
+    _rejoin_words_split_at_walls(page, cell_rows, rows)
     _restore_clipped_prefixes(page, cell_rows, rows)
     _split_spanning_cells(page, cell_rows, rows)
     return rows
+
+
+def _rejoin_words_split_at_walls(page: Any, cell_rows: list[Any], rows: list[list[Any]]) -> None:
+    """Put a word the grid cut in two back into ONE cell.
+
+    ``extract()`` assigns each glyph to the cell holding most of its box, so a
+    word whose first letter sits on a cell wall is torn in two. A Word table
+    exported to PDF shades each cell with an outer band and an inset padding
+    band, every band edge becomes a wall, and the text starts exactly on the
+    inset's edge: 010087's signed SOW read its revision row as "v.1 | O |
+    ctavian Mitroi" -- the "O" in the margin sliver, a phantom column holding
+    it -- and the row stopped matching anything, its own document included.
+
+    A repair needs the page to say so: a word of the text layer lying across
+    (or on) the wall between two neighbouring cells of the row, whose two
+    halves are the last token of the left cell's line and the first token of
+    the right cell's. The whole word goes to the cell holding most of its
+    width; the other cell loses only that fragment.
+    """
+    try:
+        words = page.get_text("words") or []
+    except Exception:
+        return
+    for ri, row in enumerate(cell_rows):
+        if ri >= len(rows):
+            break
+        geo = [(ci, c) for ci, c in enumerate(getattr(row, "cells", []) or [])
+               if c is not None and ci < len(rows[ri])]
+        geo.sort(key=lambda t: float(t[1][0]))
+        for (li, lc), (rj, rc) in zip(geo, geo[1:]):
+            wall = float(rc[0])
+            if abs(float(lc[2]) - wall) > 1.5:
+                continue
+            left = str(rows[ri][li] or "")
+            right = str(rows[ri][rj] or "")
+            if not left.strip() or not right.strip():
+                continue
+            y0 = max(float(lc[1]), float(rc[1]))
+            y1 = min(float(lc[3]), float(rc[3]))
+            for w in words:
+                text = str(w[4])
+                wx0, wx1 = float(w[0]), float(w[2])
+                if len(text) < 2 or not (y0 - 1 <= (float(w[1]) + float(w[3])) / 2.0 <= y1 + 1):
+                    continue
+                if not (wx0 <= wall + 2.0 and wx1 >= wall - 2.0):
+                    continue
+                l_lines, r_lines = left.split("\n"), right.split("\n")
+                hit = None
+                for a, ll in enumerate(l_lines):
+                    lt = ll.split()
+                    if not lt or not text.startswith(lt[-1]) or lt[-1] == text:
+                        continue
+                    rest = text[len(lt[-1]):]
+                    for b, rl in enumerate(r_lines):
+                        rt = rl.split()
+                        if rt and rt[0] == rest:
+                            hit = (a, b)
+                            break
+                    if hit:
+                        break
+                if not hit:
+                    continue
+                a, b = hit
+                lt, rt = l_lines[a].split(), r_lines[b].split()
+                left_w = max(0.0, min(wx1, wall) - wx0)
+                right_w = max(0.0, wx1 - max(wx0, wall))
+                if right_w >= left_w:
+                    lt, rt = lt[:-1], [text] + rt[1:]
+                else:
+                    lt, rt = lt[:-1] + [text], rt[1:]
+                l_lines[a], r_lines[b] = " ".join(lt), " ".join(rt)
+                left = "\n".join(x for x in l_lines if x.strip())
+                right = "\n".join(x for x in r_lines if x.strip())
+                rows[ri][li], rows[ri][rj] = left, right
+                if not left.strip() or not right.strip():
+                    break
 
 
 def _split_spanning_cells(page: Any, cell_rows: list[Any], rows: list[list[Any]]) -> None:
@@ -344,6 +421,47 @@ def _cell_is_bold(spans: list[tuple[Any, bool]], cell: Any) -> bool:
     return bool(inside) and all(inside)
 
 
+def _label_column_is_shaded(page: Any, geo: list[list[Any]]) -> bool:
+    """Every column-0 cell sits on a filled (non-white) rectangle, no column-1
+    cell does, and each label is set in another face or a smaller size than
+    its value: a PO header's grey label cells ("Purchase Order Number",
+    Times 8.3) beside their values (Helvetica 10) (010003)."""
+    try:
+        fills = [
+            d["rect"] for d in page.get_drawings() or []
+            if d.get("fill") is not None and d.get("rect") is not None
+            and not all(float(c) >= 0.95 for c in d["fill"])
+        ]
+        spans = [
+            (tuple(float(v) for v in sp.get("bbox")), str(sp.get("font") or ""), float(sp.get("size") or 0))
+            for blk in (page.get_text("dict") or {}).get("blocks", []) or []
+            for ln in blk.get("lines", []) or []
+            for sp in ln.get("spans", []) or []
+            if str(sp.get("text") or "").strip()
+        ]
+    except Exception:
+        return False
+
+    def _filled(cell: Any) -> bool:
+        x0, y0, x1, y1 = (float(v) for v in cell)
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        return any(r.x0 - 1 <= cx <= r.x1 + 1 and r.y0 - 1 <= cy <= r.y1 + 1 for r in fills)
+
+    def _face(cell: Any) -> tuple[str, float] | None:
+        x0, y0, x1, y1 = (float(v) for v in cell)
+        inside = [(f, z) for (bx0, by0, bx1, by1), f, z in spans
+                  if x0 - 1 <= (bx0 + bx1) / 2.0 <= x1 + 1 and y0 - 1 <= (by0 + by1) / 2.0 <= y1 + 1]
+        return inside[0] if inside else None
+
+    for g in geo:
+        if not _filled(g[0]) or _filled(g[1]):
+            return False
+        lab, val = _face(g[0]), _face(g[1])
+        if lab and val and lab[0] == val[0] and lab[1] >= val[1] - 0.5:
+            return False
+    return True
+
+
 def _key_value_rows(page: Any, table: Any, rows: list[list[Any]]) -> list[str] | None:
     """Read a two- or three-column LABEL | VALUE grid as the field pairs it holds.
 
@@ -393,8 +511,15 @@ def _key_value_rows(page: Any, table: Any, rows: list[list[Any]]) -> list[str] |
     def _short(t: str) -> bool:
         return len(t) <= 40 and len(t.split()) <= 5 and not t.endswith((".", "!", "?"))
 
+    shaded: bool | None = None
     for i, t in enumerate(labels):
-        if not (_short(t) and (t.endswith(":") or _cell_is_bold(spans, geo[i][0]))):
+        if not _short(t):
+            return None
+        if t.endswith(":") or _cell_is_bold(spans, geo[i][0]):
+            continue
+        if shaded is None:
+            shaded = _label_column_is_shaded(page, geo)
+        if not shaded:
             return None
     for i, v in enumerate(values):
         if v and (v.endswith(":") or _cell_is_bold(spans, geo[i][1])):

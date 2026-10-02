@@ -1359,6 +1359,23 @@ def compile_project(
         held_copies.extend(got)
         return got
 
+    def _settle_folds(before: list, after: list, copies: list, stage_name: str) -> tuple[list, list]:
+        """Each atom this stage dropped names a survivor that stands, becomes
+        its document's copy of one in another document, or comes back
+        (``cross_doc_copies.settle_folds``). Returns ``(atoms, copies)``."""
+        try:
+            from app.core.cross_doc_copies import settle_folds
+            from app.core.semantic_dedup import take_folds
+
+            after, more, restored = settle_folds(before, after, copies, take_folds(), stage=stage_name)
+        except Exception as exc:  # never fail a compile over the guard
+            warnings.append(f"WARNING: settle_folds failed after {stage_name}: {type(exc).__name__}: {exc}")
+            return after, copies
+        held_copies.extend(more)
+        if restored:
+            warnings.append(f"INFO: {stage_name} kept {len(restored)} atom(s) it had folded into nothing that stands")
+        return after, list(copies) + more
+
     with telemetry.stage("pasted_note_dedup", input_count=len(atoms)) as stage:
         try:
             from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
@@ -1919,9 +1936,11 @@ def compile_project(
     with telemetry.stage("pre_classify_dedup", input_count=len(atoms)) as stage:
         _before_pcd = list(atoms)
         try:
-            from app.core.semantic_dedup import cross_type_dedup_atoms
+            from app.core.semantic_dedup import cross_type_dedup_atoms, take_folds
+            take_folds()
             atoms = cross_type_dedup_atoms(atoms, doc_order=_doc_order)
             _pcd_copies = _hold_copies(_before_pcd, atoms, "pre_classify_dedup")
+            atoms, _pcd_copies = _settle_folds(_before_pcd, atoms, _pcd_copies, "pre_classify_dedup")
             _dropped_pcd = len(_before_pcd) - len(atoms)
             if _dropped_pcd > 0:
                 merge_suppressed(
@@ -2328,6 +2347,9 @@ def compile_project(
         # of the ledger snapshot below, so a collapsed utterance left no atom
         # AND no suppression entry -- nothing a labeller could find.
         before_sem_atoms = list(atoms)
+        from app.core.semantic_dedup import take_folds as _take_folds
+
+        _take_folds()
         _before_speech = len(atoms)
         # Only CLAIMS collapse. An untyped utterance (raw_utterance) asserts
         # nothing, so a repeat of it cannot double-count anything; folding it
@@ -2378,9 +2400,10 @@ def compile_project(
                 )
         except Exception as exc:
             warnings.append(f"WARNING: semantic_dedup failed: {type(exc).__name__}: {exc}")
-        dropped_sem = before_sem - len(atoms)
         _sem_notes: list[str] = []
         _sem_copies = _hold_copies(before_sem_atoms, atoms, "semantic_dedup")
+        atoms, _sem_copies = _settle_folds(before_sem_atoms, atoms, _sem_copies, "semantic_dedup")
+        dropped_sem = before_sem - len(atoms)
         # Measured from the snapshot, so a turn only the speech collapse
         # dropped still gets its suppression entry.
         if len(before_sem_atoms) > len(atoms):
@@ -2454,12 +2477,14 @@ def compile_project(
     # _merge_atom_metadata's existing entity_keys union does that accumulation.
     with telemetry.stage("stakeholder_dedup", input_count=len(atoms)) as stage:
         try:
-            from app.core.semantic_dedup import dedupe_stakeholder_atoms
+            from app.core.semantic_dedup import dedupe_stakeholder_atoms, take_folds
 
             before_sh = len(atoms)
             _before_sh_atoms = list(atoms)
+            take_folds()
             atoms = dedupe_stakeholder_atoms(atoms, doc_order=_doc_order)
             _sh_copies = _hold_copies(_before_sh_atoms, atoms, "stakeholder_dedup")
+            atoms, _sh_copies = _settle_folds(_before_sh_atoms, atoms, _sh_copies, "stakeholder_dedup")
             dropped_sh = before_sh - len(atoms)
             if dropped_sh > 0:
                 warnings.append(

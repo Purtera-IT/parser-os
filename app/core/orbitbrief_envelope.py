@@ -427,8 +427,19 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
 
     _deal_id = str(getattr(compile_result, "project_id", "") or "")
     survivors: dict[str, Any] = {}
+    kept_by_id: dict[str, Any] = {}
     for atom in kept:
         survivors.setdefault(norm(atom), atom)
+        kept_by_id.setdefault(str(getattr(atom, "id", "") or ""), atom)
+
+    def _recorded_survivor(atom) -> Any:
+        # The fold records the atom it went into (cross_doc_copies.SURVIVOR_KEY):
+        # a site merged into another site's record shares none of its words.
+        v = getattr(atom, "value", None)
+        rec = v.get("_survivor") if isinstance(v, dict) else None
+        if isinstance(rec, dict):
+            return kept_by_id.get(str(rec.get("atom_id") or ""))
+        return None
 
     out: list[dict] = []
     for atom in _suppressed_capped(dropped)[0]:
@@ -437,7 +448,7 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
             if str(flag).startswith("suppressed:"):
                 stage = str(flag).split(":", 1)[1]
                 break
-        survivor = survivors.get(norm(atom))
+        survivor = _recorded_survivor(atom) or survivors.get(norm(atom))
         _fname, _page = _where(atom)
         try:
             _lkey = _label_key(

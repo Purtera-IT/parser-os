@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import json as _json
 import re
+import threading as _threading
 
 from app.core import fold_invariants as _fold
 from typing import Any
@@ -336,8 +337,35 @@ def _append_unique(target: list[Any], incoming: list[Any]) -> None:
             seen.add(key)
 
 
+# Which atom each fold went into: ``id(loser) -> (loser, winner)``, per thread.
+# A stage's suppressed entry must name a survivor that is still standing, and
+# only the fold itself knows which one it was -- by the time the compiler sees
+# the stage's output, a site merged into another site's record shares none of
+# its words (010353: three site atoms suppressed with survivor null). Read and
+# cleared by :func:`take_folds`.
+_FOLDS = _threading.local()
+
+
+def note_folded_into(loser: Any, winner: Any) -> None:
+    """Record that ``loser`` was folded into ``winner`` (see :func:`take_folds`)."""
+    if loser is None or winner is None or loser is winner:
+        return
+    reg = getattr(_FOLDS, "map", None)
+    if reg is None:
+        reg = _FOLDS.map = {}
+    reg[id(loser)] = (loser, winner)
+
+
+def take_folds() -> dict[int, tuple[Any, Any]]:
+    """The folds recorded since the last call, then forget them."""
+    reg = getattr(_FOLDS, "map", None) or {}
+    _FOLDS.map = {}
+    return reg
+
+
 def _merge_atom_metadata(winner: Any, loser: Any) -> None:
     """Carry evidence/provenance from a collapsed duplicate into winner."""
+    note_folded_into(loser, winner)
     try:
         _append_unique(winner.source_refs, getattr(loser, "source_refs", []) or [])
     except Exception:
@@ -945,10 +973,19 @@ def _states_more_than_the_site(atom: Any, winner: Any) -> bool:
 
 def _covered_by_a_site(atom: Any, sites: list[Any]) -> bool:
     """Does some site in ``sites`` state every ZIP, phone, email and
-    instruction ``atom`` does, so dropping ``atom`` loses nothing?"""
+    instruction ``atom`` does, so dropping ``atom`` loses nothing?
+
+    The covering site is recorded as the dropped atom's survivor."""
+    others = [s for s in sites if s is not atom]
     if not _fold.detail_only_the_loser_states(_NO_DETAIL, atom):
+        if others:
+            note_folded_into(atom, max(others, key=lambda s: _physical_site_quality(s, _physical_site_id(s))))
         return True
-    return any(s is not atom and _fold.covers(s, atom) for s in sites)
+    for s in others:
+        if _fold.covers(s, atom):
+            note_folded_into(atom, s)
+            return True
+    return False
 
 
 class _NoDetail:
@@ -988,6 +1025,9 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     # Atoms that don't smell hallucinated continue through the existing
     # canonical_for resolution + winner-merge logic unchanged.
     before_hallucination = len(physical)
+    for a in physical:
+        if _is_hallucinated_physical_site_value(getattr(a, "value", None)):
+            mark_dropped_not_folded(a, "hallucinated_site")
     physical = [a for a in physical if not _is_hallucinated_physical_site_value(getattr(a, "value", None))]
     if before_hallucination != len(physical):
         # Update the atoms list too so the new list reflects the drop.
@@ -1288,6 +1328,17 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     return out
 
 
+#: ``value`` key on an atom a stage drops on purpose rather than folds (a
+#: hallucinated site, a legacy generic site entity): it has no survivor to name.
+DROPPED_NOT_FOLDED_KEY = "_dropped_not_folded"
+
+
+def mark_dropped_not_folded(atom: Any, why: str) -> None:
+    v = getattr(atom, "value", None)
+    if isinstance(v, dict):
+        v[DROPPED_NOT_FOLDED_KEY] = why
+
+
 def _drop_generic_site_entity_atoms(atoms: list[Any]) -> list[Any]:
     """Remove legacy generic entity atoms that restate roster sites.
 
@@ -1303,6 +1354,7 @@ def _drop_generic_site_entity_atoms(atoms: list[Any]) -> list[Any]:
     for atom in atoms:
         val = getattr(atom, "value", None) or {}
         if isinstance(val, dict) and str(val.get("entity_type") or "").lower() == "site":
+            mark_dropped_not_folded(atom, "generic_site_entity")
             continue
         out.append(atom)
     return out
@@ -2484,8 +2536,10 @@ def collapse_repeated_speech(atoms: list[Any], *, threshold: float = 0.8) -> lis
             ):
                 survivors[survivors.index(twin)] = atom
                 dropped.append(twin)
+                note_folded_into(twin, atom)
             else:
                 dropped.append(atom)
+                note_folded_into(atom, twin)
         kept.extend(survivors)
 
     if dropped:
@@ -2637,6 +2691,42 @@ def _fold_or_keep(winner: Any, loser: Any) -> bool:
     return False
 
 
+def _is_table_row(atom: Any) -> bool:
+    """A row read off a table: its value names cells, or its locator a row."""
+    v = getattr(atom, "value", None)
+    if isinstance(v, dict) and (v.get("kind") == "table_row" or (isinstance(v.get("cells"), dict) and v["cells"])):
+        return True
+    for ref in getattr(atom, "source_refs", None) or []:
+        loc = getattr(ref, "locator", None) or {}
+        if not isinstance(loc, dict):
+            continue
+        if (loc.get("row") is not None or loc.get("row_index") is not None) and (
+            loc.get("table_index") is not None or loc.get("sheet") is not None
+            or loc.get("block_kind") == "table"
+        ):
+            return True
+    return False
+
+
+def _row_not_restated_by(winner: Any, loser: Any) -> bool:
+    """A table row whose words the slot's winner does not state.
+
+    The key is a type's identity field, and for a row that field can be a
+    column label every row shares: on live 010087 a signed SOW's two revision
+    rows ("v.1 | <name> | 07/09 | First" and "v.2 | <name> | 07/16 | Second")
+    keyed alike and one of them was suppressed with no survivor -- no kept
+    atom held its words, so the document showed one revision of two. A row is
+    folded only onto an atom with the same words; then the survivor (or, from
+    another document, a copy -- see ``cross_doc_copies``) still shows it.
+    """
+    if not _is_table_row(loser):
+        return False
+    from app.core.cross_doc_copies import _text_key
+
+    words = _text_key(loser)
+    return bool(words) and words != _text_key(winner)
+
+
 def _checkbox_state(atom: Any) -> frozenset[tuple[bool, str]] | None:
     """The (ticked, label) pairs a checkbox line states, or None for a line
     that is not one. Read from the value a parser recorded, else the text."""
@@ -2770,6 +2860,11 @@ def semantic_dedup_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | None
             # "☐ Staff Augmentation" is not a copy of "☒ Installation": an
             # unticked box says what is NOT in scope, and each row is its own.
             slot = (*slot, f"#box:{id(atom)}")
+        elif slot in winners and _row_not_restated_by(winners[slot], atom):
+            # A table row folds only onto an atom stating the same words:
+            # otherwise its document loses the row with nothing left in its
+            # place (see `_row_not_restated_by`).
+            slot = (*slot, f"#row:{id(atom)}")
         elif slot in winners and not _fold_or_keep(winners[slot], atom):
             # The only copy of a ZIP / phone / email / instruction stands on
             # its own slot rather than being folded away.
