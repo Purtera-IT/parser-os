@@ -86,6 +86,17 @@ def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
     t = " ".join(str(text or "").split())
     if not t:
         return False
+    # A greeting is judged as a greeting and the rest of the line on its own:
+    # "Hello, we already have wall mounts, and I believe parking is not free"
+    # (010003) was hidden behind "Show small talk" for its first word. A line
+    # that is nothing BUT a greeting is small talk.
+    from app.core.greetings import starts_with_greeting, strip_leading_greeting
+
+    if starts_with_greeting(t):
+        rest = strip_leading_greeting(t)
+        if not rest or not re.search(r"[A-Za-z0-9]", rest):
+            return True
+        t = rest
     for k in entity_keys or []:
         if str(k).startswith(("device:", "vendor:", "quantity:", "site:", "req")):
             return False

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.address_parse import US_STATES, find_us_addresses_in_text
+from app.core.greetings import starts_with_greeting
 from app.core.ids import stable_id
 from app.core.internal_author import (
     apply_internal_author_elevation,
@@ -83,19 +84,43 @@ def _is_placeholder_note_title(text: str) -> bool:
     return " ".join(str(text or "").lower().split()).strip(" .:!-") in _PLACEHOLDER_NOTE_TITLES
 
 
+#: A finite verb makes a clause, and a clause is a statement: "parking is not
+#: free" says something, "psow from current partner" names something.
+_FINITE_VERB_RE = re.compile(
+    r"\b(?:is|are|was|were|am|be|been|has|have|had|do|does|did|will|would|can|could|"
+    r"should|shall|may|might|must|isn't|aren't|wasn't|don't|doesn't|didn't|won't|can't|"
+    r"believe|think|want|wants|know|knows)\b",
+    re.I,
+)
+
+
 def _is_upload_caption(text: str) -> bool:
     """A label for an attached file ("SOW", "psow from current partner"), not
-    a statement: short, no figures, no sentence punctuation, no ask. "PO!!"
-    and "Need Troy and Wilmington sites removed." are statements."""
+    a statement: short, no figures, no sentence punctuation, no ask, no verb,
+    nobody greeted. "PO!!", "Need Troy and Wilmington sites removed." and
+    "Hello, parking is not free" are statements."""
     t = " ".join(str(text or "").split())
     return bool(
         t
+        and not starts_with_greeting(t)
         and len(t.split()) <= 8
         and not re.search(r"\d|\$", t)
         and not re.search(r"[.!?]", t)
         and not _INSTRUCTION_RE.search(t)
+        and not _FINITE_VERB_RE.search(t)
         and not re.search(r"\b(?:need|needs|remove|removed|add|added|cancel|confirm|send)\b", t, re.I)
     )
+
+
+#: A line that revises what the author said just before it, in the same note:
+#: "Update on that they do have wall mounts and parking" (010003).
+_UPDATE_CUE_RE = re.compile(
+    # "Update the firmware on all APs" is an instruction, not a revision: a
+    # bare "update" counts only when punctuated as a lead-in.
+    r"^\s*(?:update\s+on\s+(?:that|this)\b|update\s*[:,\-]|correction\s*[:,\-]|"
+    r"actually\s*,|scratch\s+that\b)",
+    re.I,
+)
 
 
 _INSTRUCTION_RE = re.compile(
@@ -346,6 +371,8 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
             "author": "",
             "author_email": "",
             "body": body,
+            "raw_lines": lines,
+            "body_line_index": 0,
         }
     title = ""
     note_id = ""
@@ -354,10 +381,13 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
     author_email = ""
     body_lines: list[str] = []
     in_body = False
-    for line in lines:
+    body_line_index = len(lines)
+    for line_index, line in enumerate(lines):
         stripped = line.strip()
         if not stripped and not in_body:
             continue
+        if in_body and stripped and body_line_index == len(lines):
+            body_line_index = line_index
         if not in_body:
             m = re.match(r"^HubSpot Note:\s*(.*)$", stripped, re.I)
             if m:
@@ -384,11 +414,13 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
                 continue
             if title and not note_id and not date_raw and not author and not author_email:
                 body_lines.append(stripped)
+                body_line_index = min(body_line_index, line_index)
                 in_body = True
                 continue
             if title:
                 in_body = True
         if in_body and stripped:
+            body_line_index = min(body_line_index, line_index)
             body_lines.append(stripped)
     body = " ".join(body_lines).strip()
     if not body and title:
@@ -405,6 +437,10 @@ def parse_hubspot_note_text(raw: str) -> dict[str, Any]:
         # become one run of words. Carry the lines too, so a delimited table can
         # still be recovered. Additive -- ``body`` is unchanged.
         "body_lines": list(body_lines),
+        # Where the body begins in the file, so an atom can point at the body
+        # line and not at the identical title in the ``HubSpot Note:`` header.
+        "raw_lines": lines,
+        "body_line_index": body_line_index,
     }
 
 
@@ -921,11 +957,62 @@ class HubspotNoteParser(BaseParser):
                 return
             _mint_prose_one(" ".join(str(prose or "").split()), paragraph=None)
 
+        raw_lines = [str(ln) for ln in (parsed.get("raw_lines") or [])]
+        body_line_index = int(parsed.get("body_line_index") or 0)
+        # The statements of this note in order, so an "Update on that" line can
+        # name the one it revises.
+        statements: list[list[EvidenceAtom]] = []
+
+        def _prose_source_ref(prose: str) -> SourceRef:
+            """The BODY line(s) this prose came from. A note's first line is
+            also its title, so matching the text anywhere in the file finds the
+            ``HubSpot Note:`` header first and the viewer highlights that."""
+            words = " ".join(str(prose or "").split())
+            if not words or not raw_lines:
+                return source_ref
+            probe = words[: min(len(words), 40)]
+            for i in range(body_line_index, len(raw_lines)):
+                joined = " ".join(raw_lines[i].split())
+                col = joined.find(probe)
+                if col < 0:
+                    continue
+                # A sentence the author wrapped runs onto following lines.
+                end = i
+                acc = joined[col:]
+                while len(acc) < len(words) and end + 1 < len(raw_lines) and raw_lines[end + 1].strip():
+                    end += 1
+                    acc = f"{acc} {' '.join(raw_lines[end].split())}"
+                locator = dict(source_ref.locator or {})
+                locator.update({"line_start": i + 1, "line_end": end + 1, "region": "body"})
+                return source_ref.model_copy(update={
+                    "id": stable_id("src", artifact_id, "hubspot_note", str(i + 1), probe),
+                    "locator": locator,
+                })
+            return source_ref
+
         def _mint_prose_one(prose: str, paragraph: str | None) -> None:
             is_title = bool(
                 prose and title
                 and " ".join(prose.lower().split()) == " ".join(title.lower().split())
             )
+            first_atom = len(atoms)
+            _mint_prose_typed(prose, paragraph, is_title)
+            minted = atoms[first_atom:]
+            if not minted:
+                return
+            # "Update on that they do have wall mounts and parking": the author
+            # revising the statement just before, within this note. Both ends
+            # carry the link so neither is read without the other.
+            if statements and _UPDATE_CUE_RE.match(prose):
+                earlier = statements[-1]
+                for a in minted:
+                    a.value["supersedes"] = earlier[0].id
+                for a in earlier:
+                    a.value["superseded_by"] = minted[0].id
+            statements.append(minted)
+
+        def _mint_prose_typed(prose: str, paragraph: str | None, is_title: bool) -> None:
+            prose_ref = _prose_source_ref(prose)
             if is_title and _is_placeholder_note_title(prose):
                 # "Note", "Call" -- the CRM's default title with nothing under
                 # it. Genuinely empty; the header atom already records the note.
@@ -993,7 +1080,7 @@ class HubspotNoteParser(BaseParser):
                             atom_type=at,
                             text=prose,
                             value=val,
-                            source_ref=source_ref,
+                            source_ref=prose_ref,
                             confidence=0.84 if at == AtomType.scope_item else 0.8,
                             review_flags=["hubspot_note_training_row"] if at == AtomType.scope_item else [],
                             author_affiliation=affiliation,
