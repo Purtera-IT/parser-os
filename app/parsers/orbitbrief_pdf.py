@@ -89,6 +89,7 @@ from app.parsers.pdf._shared import (  # noqa: E402
     _table_rows_repaired,
     _grid_is_self_labelled,
     _drop_title_band,
+    _normalize_banded_grid,
 )
 
 # Moved to app.parsers.pdf.schematic_pre_pass. Re-exported so every existing import keeps working;
@@ -2185,12 +2186,21 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     _carry_cross_page_section_headings(pages)
 
     # Aggregate document title + metadata across pages (in order).
+    title_window_open = True
     for p in pages:
         # Pick the document title from the FIRST page that yields one, then stop
         # embedding — the semantic section-vs-title check only needs to run until
         # a title is found, not on every page (keeps the embedder calls bounded).
-        if not document_title:
+        # A title sits on the first page with headings, above its sections. Once
+        # a page has opened on its sections, no later heading is the title: a
+        # signed SOW (cover = logo) crowned "PURTERA SALES CONTACTS", the third
+        # section heading, and every atom's path, the stamp page included, was
+        # rooted at it.
+        if not document_title and title_window_open:
             page_title = p.get("title")
+            _heads = [(s.get("heading") or "").strip() for s in (p.get("sections") or [])]
+            if page_title or any(_heads):
+                title_window_open = False
             # A SECTION heading ("INTRODUCTION", "General Conditions") is NOT the
             # document title — it's a sibling of every other section. Crowning it
             # as the title force-nests all other sections beneath it
@@ -2206,13 +2216,16 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                     not p.get("title_is_chrome") and _is_meeting_section_heading_line(page_title))):
                 page_title = None
             if not page_title:
-                for s in (p.get("sections") or []):
-                    h = (s.get("heading") or "").strip()
-                    if h and len(h.split()) >= 2 and not _is_section_title(h) \
+                # Only a heading ABOVE the page's first section heading can be
+                # the cover title; one after it is a sibling section.
+                for h in _heads:
+                    if not h:
+                        continue
+                    if len(h.split()) >= 2 and not _is_section_title(h) \
                             and not _NUMBERED_LINE_RE.match(h) \
                             and not _is_meeting_section_heading_line(h):
                         page_title = h
-                        break
+                    break
             if page_title:
                 document_title = page_title
         for entry in p.get("metadata") or []:
@@ -4326,6 +4339,7 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
+                extracted = _normalize_banded_grid(table, extracted)
                 extracted = _drop_title_band(extracted)
                 if not extracted or (len(extracted) < 2 and not _grid_is_self_labelled(extracted)):
                     continue

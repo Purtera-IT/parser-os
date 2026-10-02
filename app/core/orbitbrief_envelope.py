@@ -536,6 +536,7 @@ def build_orbitbrief_envelope(
     # that document lists its copy, not the other document's atom.
     _copied_here: set[tuple[str, str]] = set()
     from app.core.cross_doc_copies import (
+        cited_not_held_in as _cited_not_held_in,
         holds_own_line as _holds_own_line,
         line_key as _line_key,
         quoted_in as _quoted_in,
@@ -552,6 +553,10 @@ def build_orbitbrief_envelope(
         that line (000132: 35 v1 atoms listed in v2's section), or when its
         line there was only a quote of the atom's own message (010003)."""
         if (artifact_id, str(a.id)) in _copied_here or artifact_id in _quoted_in(a):
+            return True
+        # It cites the document, but the document's text does not hold its
+        # line (it names the same person its own way, 010353).
+        if artifact_id in _cited_not_held_in(a):
             return True
         return _holds_own_line(a, _own_by_artifact.get(artifact_id, ()))
 
