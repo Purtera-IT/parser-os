@@ -2023,7 +2023,11 @@ def _thread_index(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # facts, and only the second tells you whose documents they are.
         g["messages"].append({
             "artifact_id": doc.get("artifact_id"),
-            "sender": doc.get("sender_email") or block.get("sender"),
+            # The message's own MIME From first. HubSpot's senderEmail is the
+            # engagement's logged sender, which can be the deal owner: on
+            # 010003 seven messages from Sarah, Trent and Tanner read
+            # "patrick@purtera-it.com".
+            "sender": block.get("sender") or doc.get("sender_email"),
             "originated_by": doc.get("originated_by"),
             "date": block.get("date"),
             "subject": block.get("subject"),

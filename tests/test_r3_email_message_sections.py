@@ -137,3 +137,39 @@ def test_the_earliest_file_that_quotes_a_message_owns_it():
     early = q("first_reply", 2, line)
     kept, dropped = dedup_quoted_history([late, early])
     assert kept == [early] and dropped == [late]
+
+
+ORIGINAL = """From: Saga Ops <saga@customer.com>
+To: Victor Lee <victor@purtera-it.com>
+Subject: Rollout sites
+Date: Mon, 10 Aug 2026 09:00:00 -0400
+Message-ID: <g1@customer.com>
+Content-Type: text/plain; charset=utf-8
+
+We need 12 access points installed at Dallas and Plano.
+"""
+
+
+def test_every_message_of_a_thread_gets_one_chronological_number(tmp_path: Path):
+    """010003: messages that exist only as quotes had no number, so the thread
+    looked like it started partway through; file numbers ran 1,2,3,1,1,..."""
+    from app.core.email_threading import thread_emails
+
+    a = tmp_path / "a.eml"
+    a.write_text(ORIGINAL, encoding="utf-8")
+    b = tmp_path / "b.eml"
+    b.write_text(GMAIL.replace("Message-ID: <g3@customer.com>",
+                               "Message-ID: <g3@customer.com>\nIn-Reply-To: <g1@customer.com>"), encoding="utf-8")
+    atoms = EmailParser().parse_artifact("p", "art_a", a) + EmailParser().parse_artifact("p", "art_b", b)
+    thread_emails(atoms, project_id="p")
+
+    def pos(aid, text):
+        at = next(x for x in atoms if x.artifact_id == aid and x.raw_text.startswith(text))
+        return at.value["email_thread"]["message"]["thread_position"], at.value["email_thread"]["message"]["thread_message_count"]
+
+    assert pos("art_a", "We need 12") == (1, 3)
+    assert pos("art_b", "Can you confirm") == (2, 3)  # Victor's mail: only a quote
+    assert pos("art_b", "Victor, Dallas") == (3, 3)
+    assert pos("art_b", "We need 12") == (1, 3)  # B's quote of A is A's message
+    files = {x.artifact_id: x.value["email_thread"]["thread_index"] for x in atoms}
+    assert files == {"art_a": 1, "art_b": 2}
