@@ -108,12 +108,61 @@ def _is_a_person(labeler: Any) -> bool:
     return not any(m in v for m in NOT_A_PERSON)
 
 
+#: The reading that marks THE line a deal is about -- "4 TVs install in
+#: CheckOut New York office." -- the one a router reads service, quantity, site
+#: and deal type from. There is one per deal, which is what makes it learnable
+#: from a single tick: once a person has picked it, every other line they
+#: labeled on that deal is a line they decided was NOT it.
+DEAL_SUMMARY = "deal_summary"
+
+
+def _marks_summary(lb: dict[str, Any]) -> bool:
+    reads = lb.get("reads_set")
+    if not isinstance(reads, dict) or DEAL_SUMMARY not in reads:
+        return False
+    v = reads[DEAL_SUMMARY]
+    return v is True or str(v or "").strip().lower() == "true"
+
+
+def _with_one_deal_summary(labels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """At most one `deal_summary` per deal per labeler, and the rest as negatives.
+
+    The page saves each card on its own, so a labeler who changes their mind
+    leaves two lines marked. The latest mark wins (``labeled_at``, then file
+    order) and an earlier one becomes `false`: it was considered and moved off.
+    Every other label by a labeler who marked a summary on this deal gets
+    `false` too. Without that a one-per-deal reading has one class and no head
+    can learn it; with it, each deal is one positive against all of its lines.
+    A labeler who marked nothing on the deal teaches nothing either way.
+    """
+    latest: dict[str, tuple[str, int]] = {}
+    for i, lb in enumerate(labels):
+        if _is_a_person(lb.get("labeler")) and _marks_summary(lb):
+            who = str(lb.get("labeler") or "")
+            at = (str(lb.get("labeled_at") or ""), i)
+            if who not in latest or at >= latest[who]:
+                latest[who] = at
+    if not latest:
+        return labels
+    out = []
+    for i, lb in enumerate(labels):
+        who = str(lb.get("labeler") or "")
+        if who not in latest or not _is_a_person(lb.get("labeler")):
+            out.append(lb)
+            continue
+        reads = dict(lb.get("reads_set") or {}) if isinstance(lb.get("reads_set"), dict) else {}
+        reads[DEAL_SUMMARY] = True if latest[who][1] == i else "false"
+        out.append({**lb, "reads_set": reads})
+    return out
+
+
 def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> list[dict[str, Any]]:
     from app.core.training_log import assign_split
 
     report = report if report is not None else IngestReport()
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
+    labels = _with_one_deal_summary(labels)
     if not deal_id or not (labels or doc.get("judgments") or doc.get("links")):
         report.skip("deal file without deal_id or labels")
         return []

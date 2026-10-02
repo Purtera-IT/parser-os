@@ -970,6 +970,18 @@
       "label": "Matters here, generalises nowhere",
       "values": "what it is doing on this deal",
       "desc": "Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing."
+    },
+    {
+      "key": "deal_summary",
+      "label": "The deal's scope in one line",
+      "values": "true/false",
+      "desc": "THE line a router should read the whole deal from: service, quantity, site and deal type in one sentence -- \"4 TVs install in CheckOut New York office.\" At most one per deal: if you mark a second line, training keeps only your latest mark. Every other line you labeled on that deal teaches \"not the summary\". Not every scope line -- a work_scope_item says one thing the job includes; this says what the job IS."
+    },
+    {
+      "key": "removes_cost",
+      "label": "Takes a cost off our quote",
+      "values": "which cost, and why it goes",
+      "desc": "Somebody else covers something we would otherwise price: \"the customer provides the wall mounts and parking\" removes the wall-mount and parking costs. Name WHICH cost goes, in the line's own words, not just that one does. Link the line to the quote, Gantt or BOM row it removes; if that row still charges for it, that is a Conflict."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",

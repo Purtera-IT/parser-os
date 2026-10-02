@@ -205,3 +205,61 @@ def test_an_answer_and_a_deferral_are_different_edges():
          "to_kind": "atom", "to_text": "Has the door been installed with the lock?", "relation": "context"},
     ]})
     assert [r["label"] for r in rows] == ["answers", "context"]
+
+
+def _summary_rows(rows):
+    return [(r["raw_text"].split(" [")[0], r["label"]) for r in rows
+            if r["relation"] == "reads:deal_summary"]
+
+
+#: Readings deal threads saved before they were registered. A key outside the
+#: registry reaches no backbone task, so each one here must be in
+#: app/core/atom_types.json `reads` (and Platform-infra's atom-types.json).
+SAVED_READS = ("deal_summary", "removes_cost")
+
+
+def test_readings_threads_already_saved_are_registered_backbone_tasks():
+    from app.learning.multitask_table import DEFAULT_TASKS
+
+    for key in SAVED_READS:
+        assert f"reads:{key}" in DEFAULT_TASKS, key
+
+
+def test_removes_cost_trains_presence_and_carries_which_cost():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [_label(
+        text="Customer provides wall mounts and parking",
+        reads_set={"removes_cost": "the wall-mount cost and the parking cost"})]})
+    by = {r["relation"]: r["label"] for r in rows}
+    assert by["reads:removes_cost"] == "present"
+    assert by["reads_value:removes_cost"] == "the wall-mount cost and the parking cost"
+
+
+def test_deal_summary_trains_one_positive_against_the_labelers_other_lines():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [
+        _label(label_key="a", text="4 TVs install in CheckOut New York office.",
+               reads_set={"deal_summary": True}),
+        _label(label_key="b", text="Mount 110 TVs in the lobby"),
+        # Somebody else labeled this deal and marked no summary: no opinion.
+        _label(label_key="c", text="Bring a ladder", labeler="b@purtera-it.com"),
+    ]})
+    got = sorted(_summary_rows(rows))
+    assert ("4 TVs install in CheckOut New York office.", "true") in got
+    assert ("Mount 110 TVs in the lobby", "false") in got
+    assert not any(t.startswith("Bring a ladder") for t, _ in got)
+    assert len(got) == 2
+
+
+def test_a_second_deal_summary_mark_moves_it_and_the_latest_wins():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [
+        _label(label_key="new", text="Install 4 TVs at CheckOut NYC", labeled_at="2026-10-02T10:00:00Z",
+               reads_set={"deal_summary": True}),
+        _label(label_key="old", text="Mount 110 TVs in the lobby", labeled_at="2026-10-01T10:00:00Z",
+               reads_set={"deal_summary": True}),
+    ]})
+    assert sorted(_summary_rows(rows)) == [
+        ("Install 4 TVs at CheckOut NYC", "true"), ("Mount 110 TVs in the lobby", "false")]
+
+
+def test_no_deal_summary_mark_means_no_deal_summary_rows():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [_label(), _label(label_key="b")]})
+    assert _summary_rows(rows) == []
