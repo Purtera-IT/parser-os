@@ -58,3 +58,41 @@ def test_every_messages_routing_header_survives_the_substance_gate(tmp_path: Pat
     q = kinds["quoted_message_header"]
     assert "Stephanie Hechsel" in q.raw_text and "July 7, 2026" in q.raw_text
     assert q.source_refs[0].locator["message_index"] == 1
+
+
+NOTE = """HubSpot Note: Fwd: Equipment list
+HubSpot Note ID: 112490900231
+Date: 2026-07-08T14:00:00.000Z
+Author: Trent Torrence
+Author-Email: t@purtera-it.com
+
+Fwd: Equipment list
+
+Sending this over for pricing.
+
+From: Stephanie Hechsel <stephanie.hechsel@amtivo.com>
+Sent: Tuesday, July 7, 2026 3:36 PM
+To: Trent Torrence <t@purtera-it.com>
+Subject: Equipment list
+
+Please find the equipment list below.
+- 4 Cisco C9300-48P switches
+- 2 Fortinet FG-100F firewalls
+"""
+
+
+def test_an_email_pasted_into_a_note_is_said_by_its_sender(tmp_path: Path):
+    """010087: note 112490900231 is Stephanie's email pasted by Trent; its
+    lines had no said_by at all."""
+    from app.core.deal_parties import stamp_note_parties
+    from app.parsers.hubspot_note_parser import HubspotNoteParser
+
+    p = tmp_path / "010087-hs-note-112490900231-fwd.txt"
+    p.write_text(NOTE, encoding="utf-8")
+    atoms = HubspotNoteParser().parse_artifact("p", "note", p)
+    assert stamp_note_parties(atoms) > 0
+    by = {a.raw_text.lstrip("- "): (a.value.get("said_by") or {}).get("email") for a in atoms}
+    assert by["4 Cisco C9300-48P switches"] == "stephanie.hechsel@amtivo.com"
+    assert next(v for k, v in by.items() if k.startswith("Sending this over")) == "t@purtera-it.com"
+    meta = next(a for a in atoms if a.value.get("kind") == "hubspot_note_meta")
+    assert "said_by" not in meta.value

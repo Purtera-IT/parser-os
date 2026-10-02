@@ -128,4 +128,79 @@ def stamp_parties(atoms: list[Any]) -> int:
     return stamped
 
 
-__all__ = ["party", "parties_for_message", "stamp_parties", "address_of", "domain_of", "OUR_DOMAINS"]
+#: The From: row of an email pasted into a note: "From: Stephanie Hechsel
+#: <s@amtivo.com>", or the one-line "From: X | Sent: Y" form.
+_PASTED_FROM_RE = re.compile(r"^[\s>*_]*from\s*:[\s*_]*(?P<who>[^|]+?)\s*(?:\|.*)?$", re.I)
+#: A Gmail-style attribution: "On Tue, Jul 7, 2026 at 3:36 PM Stephanie <s@x.com> wrote:".
+_PASTED_WROTE_RE = re.compile(r"^[\s>]*on\s.+?\d.*?(?P<who>[A-Z][^<>]*?<[^<>@\s]+@[^<>\s]+>)\s*wrote:\s*$", re.I)
+
+
+def stamp_note_parties(atoms: list[Any]) -> int:
+    """Who said each line of a HubSpot note.
+
+    A note is written by its HubSpot author, except where the author pasted an
+    email into it: from that email's "From:" row on, the lines are the
+    pasted message's sender's. Live 010087: note 112490900231 is Stephanie's
+    equipment-list email pasted by Trent, and its lines had no ``said_by``.
+    Same note only; lines without a line number are left alone. Returns the
+    number stamped. Atoms that already name a speaker keep it.
+    """
+    def _loc(a: Any) -> dict:
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        return loc if isinstance(loc, dict) else {}
+
+    def _line(a: Any) -> int | None:
+        loc = _loc(a)
+        ln = loc.get("line_start") if loc.get("line_start") is not None else loc.get("line")
+        try:
+            return int(ln) if ln is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    by_doc: dict[str, list[Any]] = {}
+    for a in atoms or []:
+        by_doc.setdefault(str(getattr(a, "artifact_id", "") or ""), []).append(a)
+    stamped = 0
+    for group in by_doc.values():
+        meta = next((a for a in group if isinstance(getattr(a, "value", None), dict)
+                     and a.value.get("kind") == "hubspot_note_meta"), None)
+        if meta is None:
+            continue
+        mv = meta.value
+        author = str(mv.get("author_email") or "")
+        if author and mv.get("author"):
+            author = f"{mv.get('author')} <{author}>"
+        turns: list[tuple[int, str]] = []
+        for a in group:
+            ln = _line(a)
+            if ln is None or a is meta:
+                continue
+            text = str(getattr(a, "raw_text", "") or "").strip()
+            m = _PASTED_FROM_RE.match(text) or _PASTED_WROTE_RE.match(text)
+            if m:
+                turns.append((ln, m.group("who").strip()))
+        turns.sort()
+        for a in group:
+            v = getattr(a, "value", None)
+            if a is meta or not isinstance(v, dict) or v.get("said_by") or "email_thread" in v:
+                continue
+            ln = _line(a)
+            if ln is None:
+                continue
+            who = author
+            for at, sender in turns:
+                if at <= ln:
+                    who = sender
+            p = party(who)
+            if not p:
+                continue
+            v["said_by"] = p
+            if who != author:
+                v["pasted_email_from"] = who
+            a.value = v
+            stamped += 1
+    return stamped
+
+
+__all__ = ["party", "parties_for_message", "stamp_parties", "stamp_note_parties", "address_of", "domain_of", "OUR_DOMAINS"]
