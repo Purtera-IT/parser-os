@@ -187,9 +187,36 @@ def _ref_key(ref: Any) -> tuple:
     return (str(getattr(ref, "id", "") or ""), str(getattr(ref, "filename", "") or ""), loc_key)
 
 
+#: A leading list marker: a bullet glyph ("- ", "* ", "• ") or an
+#: ordinal ("1. ", "2) ", "(3) "). Needs whitespace after it, so "1.5 hours",
+#: "-48V" and "*required" are left alone.
+_LIST_MARKER_RE = re.compile(
+    r"^\s*(?:[-*•·▪◦‣‧∙⁃–—+>]+|\(?\d{1,3}[.)])\s+"
+)
+
+
+def strip_list_marker(text: Any) -> str:
+    """The line without its leading list marker(s), for COMPARISON keys only.
+
+    A note bullet "- Install 4 APs" and the email line "Install 4 APs" are
+    one line; so are "1. Install 4 APs" and "2) Install 4 APs" in two pastes
+    of a list renumbered differently. Folding to ``[a-z0-9]`` drops a glyph
+    but keeps an ordinal, and a key truncated BEFORE folding shifts by the
+    marker's width -- either way the copies used to key apart. Displayed atom
+    text is never touched.
+    """
+    s = str(text or "")
+    for _ in range(3):  # "- 1. item" nests
+        t = _LIST_MARKER_RE.sub("", s, count=1)
+        if t == s or not t.strip():
+            break
+        s = t
+    return s
+
+
 def _text_key(atom: Any) -> str:
     t = getattr(atom, "raw_text", "") or getattr(atom, "normalized_text", "") or ""
-    return re.sub(r"[^a-z0-9]+", " ", str(t).lower()).strip()
+    return re.sub(r"[^a-z0-9]+", " ", strip_list_marker(t).lower()).strip()
 
 
 def _same_words(a: str, b: str) -> bool:

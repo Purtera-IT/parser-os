@@ -1315,7 +1315,11 @@ def _value_key(atom: Any) -> tuple | None:
         for f in fields:
             v = val.get(f)
             if v and isinstance(v, (str, int, float)):
-                s = str(v)[:n]
+                # Marker off BEFORE truncating: "- " shifts the 40-char
+                # window, so a note bullet and its email twin keyed apart.
+                from app.core.cross_doc_copies import strip_list_marker
+
+                s = strip_list_marker(v)[:n]
                 k = _norm_key(s)
                 # Use a shorter prefix of the normalized key for fuzzier
                 # collapse (LLM paraphrases of same fact diverge after
@@ -1884,8 +1888,10 @@ def _figures_stated(atom: Any):
 
 
 def _cross_type_text_key(atom: Any) -> str:
+    from app.core.cross_doc_copies import strip_list_marker
+
     raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
-    norm = _CROSS_TYPE_STRIP_RE.sub(" ", str(raw).lower())
+    norm = _CROSS_TYPE_STRIP_RE.sub(" ", strip_list_marker(raw).lower())
     norm = re.sub(r"\s+", " ", norm).strip()
     # Structure-aware scoping: a table cell is identified by (artifact, table,
     # row). When the atom comes from a table, prefix the key with that cell so
