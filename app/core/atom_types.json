@@ -1018,6 +1018,12 @@
       "label": "Which task it starts",
       "values": "which task it fires",
       "desc": "The task this event starts, in short words: \"PM schedules the install date with the customer\". Pairs with trigger_event."
+    },
+    {
+      "key": "deal_stage",
+      "label": "Where the deal was when this was said",
+      "values": "quoting | planning | delivery | closeout",
+      "desc": "quoting: before the SOW is signed or the PO is received. planning: after the PO, before the first on-site visit. delivery: visits underway. closeout: after the last visit (completion reports, invoicing). Set it from the source's date against the deal's milestones. The same question or promise means different things at different stages."
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
