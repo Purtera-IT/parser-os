@@ -33,7 +33,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping
 
 #: Marks an atom kept only so its document shows its own copy of a line that
 #: another (earlier) document owns. Consumers that count, price or roll up
@@ -442,7 +443,14 @@ def _jaccard_same(a: str, b: str) -> bool:
     return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= 0.6
 
 
-def ensure_own_copies(kept: list[Any], copies: list[Any], *, stage: str = "own_copy_sweep") -> list[Any]:
+def ensure_own_copies(
+    kept: list[Any],
+    copies: list[Any],
+    *,
+    stage: str = "own_copy_sweep",
+    doc_lines: Callable[[str], list[str] | None] | None = None,
+    dropped: Iterable[Any] = (),
+) -> list[Any]:
     """A copy for every document a kept atom cites but does not belong to.
 
     Every fold that merges a loser's source refs onto a survivor in another
@@ -459,6 +467,17 @@ def ensure_own_copies(kept: list[Any], copies: list[Any], *, stage: str = "own_c
     matters: a Deal Kit row is a ``raw_table_row`` AND a ``bom_line``, and
     when only the ``bom_line`` folded onto v1's, v2 still needs its own. Returns the new copies; the
     survivor lists the documents in ``value["also_in_documents"]``.
+
+    A ref is not the line. With ``doc_lines`` (``artifact_id -> the
+    document's own source lines``) a copy is made only where that document's
+    own text -- its source, or one of its own atoms (``kept`` / ``dropped``)
+    -- holds the survivor's line, outside its header and author metadata.
+    A document that merely names the same person is cited, not copied
+    (010353: the SOW's contacts row cloned into two intake files that list
+    the same people their own way; 010003: a vendor quote's "<name> |
+    <phone> | <email>" line cloned into a SOW and four emails). The survivor
+    records such documents in ``value["cited_not_held_in"]`` so no
+    document listing credits it to them.
     """
     held_by_doc: dict[tuple[str, str], list[str]] = {}
     copy_of: set[tuple[str, str]] = set()
@@ -469,6 +488,19 @@ def ensure_own_copies(kept: list[Any], copies: list[Any], *, stage: str = "own_c
         if isinstance(dup, dict) and dup.get("atom_id"):
             copy_of.add((aid, str(dup["atom_id"])))
     taken = {str(getattr(a, "id", "") or "") for a in list(kept) + list(copies)}
+    own_texts: dict[str, list[str]] = {}
+    if doc_lines is not None:
+        for a in list(kept) + list(dropped):
+            if is_cross_doc_copy(a) or _synthesized(a) or _is_metadata_atom(a):
+                continue
+            k = _text_key(a)
+            if k:
+                own_texts.setdefault(str(getattr(a, "artifact_id", "") or ""), []).append(k)
+    dropped_by_doc: dict[str, list[Any]] = {}
+    for d in dropped:
+        if not is_cross_doc_copy(d) and not _synthesized(d):
+            dropped_by_doc.setdefault(str(getattr(d, "artifact_id", "") or ""), []).append(d)
+    restored_ids: set[int] = set()
     out: list[Any] = []
     for w in kept:
         if is_cross_doc_copy(w) or _synthesized(w):
@@ -492,13 +524,49 @@ def ensure_own_copies(kept: list[Any], copies: list[Any], *, stage: str = "own_c
                 continue
             if any(_jaccard_same(words, k) for k in held_by_doc.get((aid, wtype), ())):
                 continue
+            if doc_lines is not None and not document_holds_line(
+                words, doc_lines(aid), own_texts.get(aid, ())
+            ):  # unreadable (None) is not evidence either
+                _note_cited_not_held(w, aid)
+                # The document's OWN atom that was folded into ``w`` (its ref
+                # is what ``w`` cites) comes back as its copy, in its own
+                # words: the intake's own "csm: <name>" line, not the
+                # SOW's contacts row.
+                ref_keys = {_ref_key(r) for r in refs}
+                for d in dropped_by_doc.get(aid, ()):
+                    if id(d) in restored_ids or not ({_ref_key(r) for r in d.source_refs or []} & ref_keys):
+                        continue
+                    if _is_metadata_atom(d) or is_metadata_line(_value(d).get("context")):
+                        continue
+                    dv = _value(d)
+                    dv = dict(dv) if isinstance(getattr(d, "value", None), dict) else {}
+                    dv.pop("_suppression", None)
+                    dv["duplicate_of"] = {"atom_id": wid, "artifact_id": own, "stage": stage}
+                    d.value = dv
+                    d.review_flags = [
+                        f for f in (getattr(d, "review_flags", None) or [])
+                        if not str(f).startswith("suppressed:")
+                    ] + [COPY_FLAG]
+                    restored_ids.add(id(d))
+                    out.append(d)
+                    copy_of.add((aid, wid))
+                    if isinstance(getattr(w, "value", None), dict):
+                        docs = list(w.value.get("also_in_documents") or [])
+                        if aid not in docs:
+                            w.value["also_in_documents"] = docs + [aid]
+                        cn = [x for x in w.value.get(CITED_NOT_HELD_KEY) or [] if x != aid]
+                        if cn:
+                            w.value[CITED_NOT_HELD_KEY] = cn
+                        else:
+                            w.value.pop(CITED_NOT_HELD_KEY, None)
+                    break
+                continue
             from app.core.ids import stable_id
 
             cid = stable_id("atm_copy", wid, aid)
             if cid in taken:
                 continue
-            v = dict(_value(w))
-            v.pop("also_in_documents", None)
+            v = {k: val for k, val in _value(w).items() if k not in DOCUMENT_SPECIFIC_KEYS}
             v["duplicate_of"] = {"atom_id": wid, "artifact_id": own, "stage": stage}
             flags = [f for f in (getattr(w, "review_flags", None) or []) if f != COPY_FLAG] + [COPY_FLAG]
             try:
@@ -527,9 +595,226 @@ def ensure_own_copies(kept: list[Any], copies: list[Any], *, stage: str = "own_c
     return out
 
 
+#: ``value`` keys that describe the ORIGINAL's document (its kind, origin,
+#: page, section, message, note, speaker) or its cross-document bookkeeping.
+#: A copy in another document never inherits them (010003: six copies of a
+#: vendor quote's contact line each said ``document_kind: vendor_quote_bom``).
+DOCUMENT_SPECIFIC_KEYS = frozenset({
+    "also_in_documents", "cited_not_held_in", QUOTED_IN_KEY,
+    "document_kind", "doc_origin", "document_date", "page", "page_number",
+    "locator", "section_path", "section", "lead_in", "block_id", "block_index",
+    "block_kind", "row_index", "line", "line_start", "line_end",
+    "email_thread", "message_index", "message_id", "quoted", "hubspot_note_id",
+    "note_id", "note_date", "said_by", "authored_at", "context",
+})
+
+#: ``value`` key on a survivor: documents its refs cite whose own text does
+#: not hold its line (they name the same person, nothing more).
+CITED_NOT_HELD_KEY = "cited_not_held_in"
+
+#: A header / author-metadata line: who wrote or sent a document is not a line
+#: of its content (010353: a note's "Author: <name>" header line, and a body that never
+#: names her).
+_METADATA_LINE_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:from|to|cc|bcc|sent|date|subject|reply-to|message-id|importance|"
+    r"author|author[- ]email|author[- ]affiliation|created by|owner|"
+    r"hubspot note(?: id)?|note id)\s*:"
+    r"|note_id\s*="
+    r")"
+    r"|(?:^|\|)\s*(?:author|author_email|note_id|date)\s*=",
+    re.I,
+)
+
+
+def is_metadata_line(line: Any) -> bool:
+    return bool(_METADATA_LINE_RE.search(str(line or "")))
+
+
+def _is_metadata_atom(atom: Any) -> bool:
+    v = _value(atom)
+    kind = str(v.get("kind") or "")
+    if kind.endswith("_meta") or kind.endswith("_header"):
+        return True
+    return is_metadata_line(getattr(atom, "raw_text", "") or "")
+
+
+def _fold_line(text: Any) -> str:
+    s = str(text or "")
+    if "&" in s:
+        try:
+            from app.core.textio import decode_html_entities
+
+            s = decode_html_entities(s)
+        except Exception:
+            pass
+    return re.sub(r"[^a-z0-9]+", " ", strip_list_marker(s).lower()).strip()
+
+
+def document_holds_line(words: str, lines: list[str] | None, own_texts: Iterable[str] = ()) -> bool | None:
+    """Does a document's own text hold the line whose folded words are ``words``?
+
+    The line itself, normalised, must appear: in the document's source
+    ``lines`` outside header / author metadata (read end to end, so a wrapped
+    line still matches), or as one of its own atoms (``own_texts``, folded).
+    The same name, or the same phone digits in a signature, is not the line
+    (010003: a quote's "<name> | <phone> | <email>" line against an email
+    signature showing the same name and the phone written with dots). None when the source
+    cannot be read and no own atom holds the line.
+    """
+    if not words:
+        return False
+    padded = f" {words} "
+    if any(padded in f" {t} " for t in own_texts):
+        return True
+    if lines is None:
+        return None
+    content = " ".join(c for c in (_fold_line(ln) for ln in lines if not is_metadata_line(ln)) if c)
+    return padded in f" {content} "
+
+
+def _only_in_metadata(words: str, lines: list[str] | None) -> bool:
+    """The line appears in the document only on its header / metadata lines."""
+    if not words or not lines:
+        return False
+    padded = f" {words} "
+    every = " ".join(c for c in (_fold_line(ln) for ln in lines) if c)
+    if padded not in f" {every} ":
+        return False
+    return not document_holds_line(words, lines)
+
+
+def _note_cited_not_held(survivor: Any, aid: str) -> None:
+    if not isinstance(getattr(survivor, "value", None), dict):
+        return
+    docs = list(survivor.value.get(CITED_NOT_HELD_KEY) or [])
+    if aid not in docs:
+        docs.append(aid)
+        survivor.value[CITED_NOT_HELD_KEY] = docs
+
+
+def cited_not_held_in(atom: Any) -> set[str]:
+    """Documents an atom cites that do not hold its line (see :data:`CITED_NOT_HELD_KEY`)."""
+    return {str(x) for x in (_value(atom).get(CITED_NOT_HELD_KEY) or [])}
+
+
+_TEXT_SUFFIXES = {".txt", ".md", ".eml", ".html", ".htm", ".json", ".vtt", ".srt", ".csv", ".tsv", ".text"}
+
+
+def _read_source_lines(path: Path) -> list[str] | None:
+    """A document's own text as lines, or None when it cannot be read back."""
+    try:
+        from app.core.filetype import content_suffix
+
+        suffix = content_suffix(path)
+    except Exception:
+        suffix = path.suffix.lower()
+    try:
+        if suffix == ".pdf":
+            from app.core.text_coverage import _read_pdf_lines
+
+            got = [ln for _, ln in _read_pdf_lines(path)]
+            return got or None
+        if suffix == ".docx":
+            from app.core.source_replay import _docx_full_text
+
+            body = _docx_full_text(path)
+            return body.splitlines() if body else None
+        if suffix in {".xlsx", ".xlsm"}:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(str(path), read_only=True, data_only=True)
+            out: list[str] = []
+            try:
+                for ws in wb.worksheets:
+                    for row in ws.iter_rows(values_only=True):
+                        cells = [str(c) for c in row if c not in (None, "")]
+                        if cells:
+                            out.append(" | ".join(cells))
+            finally:
+                wb.close()
+            return out or None
+        if suffix in _TEXT_SUFFIXES:
+            from app.core.text_coverage import _read_text
+
+            body = _read_text(path)
+            return body.splitlines() if body else None
+    except Exception:
+        return None
+    return None
+
+
+def source_lines_reader(artifact_paths: Mapping[str, Any]) -> Callable[[str], list[str] | None]:
+    """``artifact_id -> its own source lines`` (cached; None when unreadable)."""
+    cache: dict[str, list[str] | None] = {}
+
+    def read(aid: str) -> list[str] | None:
+        if aid not in cache:
+            p = artifact_paths.get(aid)
+            cache[aid] = _read_source_lines(Path(p)) if p else None
+        return cache[aid]
+
+    return read
+
+
+def drop_unheld_copies(
+    copies: list[Any],
+    final_atoms: list[Any],
+    doc_lines: Callable[[str], list[str] | None],
+) -> tuple[list[Any], list[Any]]:
+    """Split the held copies into ``(kept, refused)``: a copy read off its
+    document's header or author metadata is refused.
+
+    A stage's fold can drop an atom a document's EXTRACTOR minted from its
+    header -- a note's "Author: <name>" read as a person (010353) --
+    and :func:`split_copies` then kept it as that document's copy of the
+    SOW's record of that person. Its own context is author metadata; the note's body
+    never names her. A refused copy is just a folded atom: it goes to the
+    suppression ledger, and the canonical atom stops listing the document.
+    """
+    by_id = {str(getattr(a, "id", "") or ""): a for a in final_atoms}
+    by_id.update({str(getattr(c, "id", "") or ""): c for c in copies})
+    kept: list[Any] = []
+    refused: list[Any] = []
+    for c in copies:
+        aid = str(getattr(c, "artifact_id", "") or "")
+        v = _value(c)
+        context = v.get("context")
+        meta = bool(context) and is_metadata_line(context)
+        # A held copy IS its document's own atom, minted by its parser (a JSON
+        # value reads "contacts[1].name: ...", not the file's bytes). It is
+        # refused only when what it was read from is the document's header or
+        # author metadata.
+        if not meta and not _only_in_metadata(_text_key(c), doc_lines(aid)):
+            kept.append(c)
+            continue
+        refused.append(c)
+        c.review_flags = [f for f in (getattr(c, "review_flags", None) or []) if f != COPY_FLAG]
+        dup = v.get("duplicate_of") if isinstance(v.get("duplicate_of"), dict) else {}
+        w = by_id.get(str(dup.get("atom_id") or ""))
+        if isinstance(v, dict):
+            v.pop("duplicate_of", None)
+        if w is not None and isinstance(getattr(w, "value", None), dict):
+            docs = [d for d in (w.value.get("also_in_documents") or []) if d != aid]
+            if docs:
+                w.value["also_in_documents"] = docs
+            else:
+                w.value.pop("also_in_documents", None)
+            if any(str(getattr(r, "artifact_id", "") or "") == aid for r in getattr(w, "source_refs", None) or []):
+                _note_cited_not_held(w, aid)
+    return kept, refused
+
+
 __all__ = [
+    "CITED_NOT_HELD_KEY",
     "COPY_FLAG",
+    "DOCUMENT_SPECIFIC_KEYS",
+    "cited_not_held_in",
+    "document_holds_line",
+    "drop_unheld_copies",
     "ensure_own_copies",
+    "is_metadata_line",
+    "source_lines_reader",
     "holds_own_line",
     "line_key",
     "quoted_in",
