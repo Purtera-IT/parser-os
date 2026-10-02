@@ -1165,8 +1165,8 @@ _UNIVERSAL_DEVICE_BASELINE: dict[str, tuple[str, ...]] = {
 }
 
 
-_DEVICE_INDEX_CACHE: dict[int, dict[str, str]] = {}
-_TYPED_INDEX_CACHE: dict[int, dict[str, dict[str, str]]] = {}
+_DEVICE_INDEX_CACHE: dict[int, tuple[DomainPack, dict[str, str]]] = {}
+_TYPED_INDEX_CACHE: dict[int, tuple[DomainPack, dict[str, dict[str, str]]]] = {}
 
 
 def _device_alias_index(pack: DomainPack) -> dict[str, str]:
@@ -1190,11 +1190,12 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
     devices still surface. The routed pack still wins on conflicts.
 
     Cached by ``id(pack)`` so subsequent calls inside a compile
-    hit the cache instead of rebuilding the index per atom.
+    hit the cache instead of rebuilding the index per atom. The entry
+    holds the pack too, so a recycled id never returns another pack's index.
     """
     cached = _DEVICE_INDEX_CACHE.get(id(pack))
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] is pack:
+        return cached[1]
     index: dict[str, str] = {}
 
     def _add(form: str, canonical: str) -> None:
@@ -1221,7 +1222,7 @@ def _device_alias_index(pack: DomainPack) -> dict[str, str]:
         _add(canonical.replace("_", " "), canonical)
         for alias in aliases:
             _add(alias, canonical)
-    _DEVICE_INDEX_CACHE[id(pack)] = index
+    _DEVICE_INDEX_CACHE[id(pack)] = (pack, index)
     return index
 
 
@@ -1253,8 +1254,8 @@ def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
     Cached by ``id(pack)``.
     """
     cached = _TYPED_INDEX_CACHE.get(id(pack))
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] is pack:
+        return cached[1]
     out: dict[str, dict[str, str]] = {}
     for entity in pack.entity_types or []:
         slot = out.setdefault(entity.name, {})
@@ -1266,7 +1267,7 @@ def _typed_alias_index(pack: DomainPack) -> dict[str, dict[str, str]]:
             example_norm = normalize_text(example)
             if example_norm:
                 slot.setdefault(example_norm, example)
-    _TYPED_INDEX_CACHE[id(pack)] = out
+    _TYPED_INDEX_CACHE[id(pack)] = (pack, out)
     return out
 
 
@@ -1323,25 +1324,27 @@ def _compiled_device_pattern(alias_lower: str) -> "re.Pattern[str]":
 # Pre-built per-pack matcher: a single union regex over all device
 # aliases. Reduces _emit_devices from O(aliases) regex compiles per
 # atom to O(1) — one search, one canonical lookup per match.
-_DEVICE_UNION_CACHE: dict[int, tuple["re.Pattern[str]", dict[str, str]]] = {}
+# Keyed by id(pack), so each entry also holds the pack itself: that keeps the
+# pack alive, and an id can't be recycled by a later pack (which would hand
+# it this pack's regex).
+_DEVICE_UNION_CACHE: dict[int, tuple[DomainPack, "re.Pattern[str]", dict[str, str]]] = {}
 
 
 def _device_union_for_pack(pack: DomainPack, alias_index: dict[str, str]) -> tuple["re.Pattern[str]", dict[str, str]]:
     key = id(pack)
     cached = _DEVICE_UNION_CACHE.get(key)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] is pack:
+        return cached[1], cached[2]
     if not alias_index:
         pattern = re.compile(r"(?!.*)")  # never matches
-        _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
-        return _DEVICE_UNION_CACHE[key]
-    # Sort longest-first so longer aliases win when nested
-    # ("access point" before "point").
-    aliases_sorted = sorted(alias_index.keys(), key=lambda a: (-len(a), a))
-    body = "|".join(re.escape(a) for a in aliases_sorted)
-    pattern = re.compile(r"(?<![a-z0-9])(" + body + r")" + _PLURAL_SUFFIX + r"(?![a-z0-9])")
-    _DEVICE_UNION_CACHE[key] = (pattern, alias_index)
-    return _DEVICE_UNION_CACHE[key]
+    else:
+        # Sort longest-first so longer aliases win when nested
+        # ("access point" before "point").
+        aliases_sorted = sorted(alias_index.keys(), key=lambda a: (-len(a), a))
+        body = "|".join(re.escape(a) for a in aliases_sorted)
+        pattern = re.compile(r"(?<![a-z0-9])(" + body + r")" + _PLURAL_SUFFIX + r"(?![a-z0-9])")
+    _DEVICE_UNION_CACHE[key] = (pack, pattern, alias_index)
+    return pattern, alias_index
 
 
 # ─── v57 P2: negation guard for device alias matching ───
