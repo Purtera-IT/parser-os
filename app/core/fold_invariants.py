@@ -115,6 +115,32 @@ def figures_stated(atom: Any) -> frozenset[str]:
     return figures(blob)
 
 
+_EMAIL_RE = __import__("re").compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def emails_stated(atom: Any) -> frozenset[str]:
+    """Every email address the atom states, in its words OR its value.
+
+    An address is how a contact is reached, and it carries no digit, so
+    :func:`figures_stated` never protected it: a contact row "Jane Roe | PM |
+    jane@acme.com" and its bare twin "Jane Roe | PM" key alike once the key
+    is cut, and the row with the address was the one folded away.
+    """
+    blob = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
+    value = getattr(atom, "value", None)
+    if isinstance(value, dict):
+        try:
+            blob = blob + " " + _json.dumps(value, default=str)
+        except Exception:
+            blob = blob + " " + str(value)
+    return frozenset(m.group(0).lower().rstrip(".") for m in _EMAIL_RE.finditer(blob))
+
+
+def emails_only_the_loser_states(winner: Any, loser: Any) -> frozenset[str]:
+    """Addresses that leave the compile if ``loser`` is folded into ``winner``."""
+    return emails_stated(loser) - emails_stated(winner)
+
+
 def identity(atom: Any) -> tuple[str, ...]:
     """What distinguishes this atom from another with the SAME words."""
     ident: list[str] = []
@@ -162,6 +188,9 @@ def refuse_fold(winner: Any, loser: Any) -> str | None:
     lost = figures_only_the_loser_states(winner, loser)
     if lost:
         return "states figures the survivor does not: " + ", ".join(sorted(lost)[:6])
+    gone = emails_only_the_loser_states(winner, loser)
+    if gone:
+        return "states email addresses the survivor does not: " + ", ".join(sorted(gone)[:6])
     if identities_differ(winner, loser):
         return f"different identity: {identity(loser)} vs {identity(winner)}"
     return None
