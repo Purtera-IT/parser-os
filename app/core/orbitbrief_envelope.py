@@ -477,6 +477,16 @@ def build_orbitbrief_envelope(
         fp.artifact_id for fp in (manifest.artifact_fingerprints if manifest is not None else [])
         if fp.artifact_type.value == "email"
     })
+    # Who said each line, on every atom the result holds -- held chatter,
+    # copies and atoms stamped just above included -- and, in a HubSpot note,
+    # the sender of an email pasted into it from its "From:" row on (010087).
+    try:
+        from app.core.deal_parties import stamp_note_parties, stamp_parties
+
+        stamp_parties(_kept)
+        stamp_note_parties(_kept)
+    except Exception:
+        pass
     packets = list(compile_result.packets or [])
     entities = list(compile_result.entities or [])
     edges = list(compile_result.edges or [])
