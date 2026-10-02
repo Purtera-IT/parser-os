@@ -186,6 +186,24 @@ _BANTER_MARKER_RE = re.compile(
 )
 
 
+#: A holiday's name is not a figure. "Hope you had a great 4th of July!" read
+#: as work because the "4" in "4th" is a digit, and the pleasantry came out of
+#: the email as deal_metadata context instead of chatter. Only the holiday
+#: phrase is removed before the work-cue test; any other digit still counts.
+_HOLIDAY_RE = re.compile(
+    r"\b(?:(?:the\s+)?(?:4th|fourth)(?:\s+of\s+july)?|july\s+(?:4th|4|fourth)|"
+    r"new\s+year'?s?(?:\s+(?:day|eve))?|christmas|xmas|thanksgiving|easter|hanukkah|"
+    r"memorial\s+day|labou?r\s+day|independence\s+day|veterans\s+day|"
+    r"president'?s'?\s+day|mlk\s+day|juneteenth|halloween)\b",
+    re.I,
+)
+_HOLIDAY_CONTEXT_RE = re.compile(
+    r"\b(?:hope|happy|enjoy|have\s+a|had\s+a|great|good|nice|wonderful|merry|"
+    r"weekend|holiday|break)\b",
+    re.I,
+)
+
+
 #: A ", so <subject>" clause boundary inside one sentence.
 _SO_CLAUSE_RE = re.compile(r",\s+so\s+(?=(?:i|we|you|they|it|he|she)\b)", re.I)
 
@@ -211,7 +229,10 @@ def sentence_kind(text: str) -> str:
         if not rest or not re.search(r"[A-Za-z0-9]", rest):
             return "banter"
         t = rest
-    if not _WORK_CUE_RE.search(t) and not _PROMISE_RE.search(t):
+    # The holiday is dropped only inside a pleasantry ("Hope you had a great
+    # 4th of July!"); "install before the 4th of July" keeps its date.
+    cue_text = _HOLIDAY_RE.sub(" ", t) if _HOLIDAY_CONTEXT_RE.search(t) else t
+    if not _WORK_CUE_RE.search(cue_text) and not _PROMISE_RE.search(t):
         if _BANTER_MARKER_RE.search(t) or (t.endswith("!") and len(t.split()) <= 8):
             return "banter"
     try:

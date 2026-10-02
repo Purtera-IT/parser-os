@@ -931,8 +931,20 @@ class TranscriptParser(BaseParser):
         # that belongs downstream where it can be learned and corrected;
         # deciding it was never spoken is not a judgement this layer is
         # entitled to make.
+        #
+        # Kept -- and typed the way an email sentence no pattern recognised is
+        # typed (``app.core.utterance_typing``): a pleasantry is an admission
+        # chatter atom, anything else gets the shared coarse prose type,
+        # flagged as a fallback guess. ``raw_utterance`` is not a type the
+        # labeler has, so a 582-turn call reached the labeling page untyped.
+        fallback_chatter: str | None = None
+        fallback_typed = False
         if not deduped_types:
-            deduped_types.append(AtomType.raw_utterance)
+            from app.core.utterance_typing import fallback_utterance_type
+
+            _fb_type, fallback_chatter = fallback_utterance_type(text)
+            deduped_types.append(_fb_type)
+            fallback_typed = True
 
         for atom_type in deduped_types:
             value: dict[str, Any] = {"text": text}
@@ -940,12 +952,15 @@ class TranscriptParser(BaseParser):
             review_flags: list[str] = []
             confidence = 0.78
 
-            if atom_type == AtomType.raw_utterance:
+            if atom_type == AtomType.raw_utterance or fallback_typed:
                 # Deliberately the lowest confidence any transcript atom
                 # carries, so it never outranks a typed one covering the same
                 # words and never reads as an assertion about the deal.
+                from app.core.utterance_typing import FALLBACK_TYPED_FLAG
+
                 confidence = 0.40
-                review_flags.append("unclassified_utterance")
+                review_flags.append(FALLBACK_TYPED_FLAG)
+                value["typed_by"] = "utterance_fallback"
 
             if atom_type == AtomType.quantity:
                 match = QUANTITY_RE.search(text)
@@ -975,7 +990,7 @@ class TranscriptParser(BaseParser):
             if atom_type == AtomType.exclusion:
                 review_status = ReviewStatus.needs_review
                 review_flags.extend(["verbal_commitment_requires_confirmation", "exclusion_present"])
-            if atom_type in {AtomType.scope_item, AtomType.decision, AtomType.meeting_commitment, AtomType.quantity}:
+            if atom_type in {AtomType.scope_item, AtomType.decision, AtomType.meeting_commitment, AtomType.quantity} and not fallback_typed:
                 review_status = ReviewStatus.needs_review
                 if "verbal_commitment_requires_confirmation" not in review_flags:
                     review_flags.append("verbal_commitment_requires_confirmation")
@@ -989,7 +1004,9 @@ class TranscriptParser(BaseParser):
                     project_id,
                     artifact_id,
                     segment["utterance_index"],
-                    atom_type.value,
+                    # A fallback-typed turn keeps the id it had as an untyped
+                    # one, so labels already given to it still attach.
+                    "raw_utterance" if fallback_typed else atom_type.value,
                     text,
                 ),
                 project_id=project_id,
@@ -1006,5 +1023,9 @@ class TranscriptParser(BaseParser):
                 review_flags=sorted(set(review_flags)),
                 parser_version=self.parser_version,
             )
+            if fallback_chatter:
+                from app.core.admission_chatter import mark_admission_chatter
+
+                mark_admission_chatter(atom, fallback_chatter)
             atoms.append(atom)
         return atoms

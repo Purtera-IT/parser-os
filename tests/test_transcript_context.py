@@ -15,6 +15,7 @@ from app.core.atom_substance_gate import apply_substance_gate, demote_transcript
 from app.core.confidence_recalibration import accept_verified_high_confidence
 from app.core.orbitbrief_envelope import _document_header_date
 from app.core.schemas import AtomType
+from app.core.utterance_typing import is_untyped_speech
 from app.parsers.transcript_parser import TranscriptParser, _iso_date, _ulid_iso
 
 
@@ -84,10 +85,14 @@ def test_small_talk_loses_its_type_and_filler_is_dropped(tmp_path: Path) -> None
     filler = {a.raw_text: a for a in kept if a.raw_text in ("Yeah.", "Okay.")}
     for text, atom in filler.items():
         assert LOW_SUBSTANCE_FLAG in atom.review_flags, f"{text} kept with no verdict on it"
-        assert atom.atom_type in (AtomType.deal_metadata, AtomType.raw_utterance),             f"{text} survived as {atom.atom_type}"
+        assert atom.atom_type == AtomType.deal_metadata, f"{text} survived as {atom.atom_type}"
     texts = {a.raw_text for a in kept if LOW_SUBSTANCE_FLAG not in a.review_flags}
     assert "Yeah." not in texts and "Okay." not in texts
-    typed = {a.raw_text: a.atom_type for a in kept if a.atom_type != AtomType.raw_utterance and (a.value or {}).get("kind") != "transcript_header"}
+    # Every turn has a type now (raw_utterance is not one the labeler has);
+    # "typed" here means typed as a CLAIM -- not a fallback guess, not small
+    # talk the gate demoted.
+    assert not any(a.atom_type == AtomType.raw_utterance for a in kept)
+    typed = {a.raw_text: a.atom_type for a in kept if not is_untyped_speech(a) and (a.value or {}).get("kind") != "transcript_header"}
     assert "And they play Youngstown State, right?" not in typed
     assert "Their schedule this year is insane." not in typed
     # Substance keeps its type: a figure, a scope verb, an entity.
@@ -95,14 +100,16 @@ def test_small_talk_loses_its_type_and_filler_is_dropped(tmp_path: Path) -> None
     assert any("NewBold" in t for t in typed), typed
     assert any("170 sites" in a.raw_text for a in kept)
     demoted = [a for a in kept if "transcript_smalltalk_demoted" in (a.review_flags or [])]
-    assert demoted and all(a.atom_type == AtomType.raw_utterance for a in demoted)
+    assert demoted and all(a.atom_type == AtomType.deal_metadata for a in demoted)
+    assert all("chatter" in a.review_flags for a in demoted)
+    assert all(any(r.get("key") == "small_talk" for r in a.value.get("reads") or []) for a in demoted)
 
 
 def test_raw_turns_are_context_not_review_work(tmp_path: Path) -> None:
     atoms = TranscriptParser().parse_artifact("p", "art_ff", _write(tmp_path, _CALL))
     kept, _ = apply_substance_gate(atoms)
     accept_verified_high_confidence(kept)
-    raw = [a for a in kept if a.atom_type == AtomType.raw_utterance]
+    raw = [a for a in kept if is_untyped_speech(a)]
     assert raw
     assert all(a.review_status.value == "auto_accepted" for a in raw)
     assert any("context_only" in (a.review_flags or []) for a in raw)
@@ -137,5 +144,6 @@ def test_grounding_in_the_deal_documents_keeps_a_turns_type() -> None:
     ]
     demote_transcript_smalltalk(atoms)
     assert atoms[1].atom_type == AtomType.open_question
-    assert atoms[2].atom_type == AtomType.raw_utterance
-    assert atoms[3].atom_type == AtomType.raw_utterance
+    assert atoms[2].atom_type == AtomType.deal_metadata
+    assert atoms[3].atom_type == AtomType.deal_metadata
+    assert all(is_untyped_speech(a) for a in atoms[2:])

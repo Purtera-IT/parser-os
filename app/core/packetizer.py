@@ -1212,8 +1212,13 @@ def build_packets(
     # Same treatment as the physical_site roster above: keep them in the
     # envelope, exclude them from packet candidate scans. A human or a trained
     # head promoting one clears the flag, and it packetizes from then on.
+    # A spoken turn typed only by the fallback (or demoted as small talk) is
+    # the same: a guess for a labeler, not a claim a packet can be about.
+    from app.core.utterance_typing import is_untyped_speech
+
     low_substance = {a.id for a in atoms
-                     if "low_substance" in (getattr(a, "review_flags", None) or [])}
+                     if "low_substance" in (getattr(a, "review_flags", None) or [])
+                     or is_untyped_speech(a)}
     if low_substance:
         atoms = [a for a in atoms if a.id not in low_substance]
         edges = [e for e in edges

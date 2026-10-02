@@ -2544,8 +2544,18 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
             out["phone"] = ph[-10:]
         return out
 
-    def _richness(a: Any) -> int:
-        return len(_ident(a))
+    def _richness(a: Any) -> tuple[int, int, int]:
+        # How much of a contact the record carries, and on a tie the one with
+        # an email wins: "Megan Blevins | <phone>" and "Megan Blevins
+        # <megan@...>" (010246) are one detail each, and the fold kept
+        # whichever came first -- often the row without the address, so the
+        # contact the labeler saw had no email. The fields are unioned either
+        # way; this decides which row (and whose text) survives.
+        ident = _ident(a)
+        v = getattr(a, "value", None) or {}
+        role = str((v.get("title") or v.get("role") or "") if isinstance(v, dict) else "").strip().lower()
+        has_title = int(bool(role) and role not in {"stakeholder", "person", "contact"})
+        return (len(ident), int("email" in ident), has_title)
 
     def _subsumed(sparse: Any, full: Any) -> bool:
         # The sparser record carries no contact detail that CONTRADICTS the

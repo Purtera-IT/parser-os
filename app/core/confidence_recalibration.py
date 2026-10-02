@@ -255,7 +255,9 @@ def accept_verified_high_confidence(atoms: list[Any], *, min_confidence: float =
         # spoke (live 010300: 181 of 231 queued atoms were the call's turns).
         _at = getattr(atom, "atom_type", None)
         _flags0 = [str(f) for f in (getattr(atom, "review_flags", None) or [])]
-        if str(getattr(_at, "value", _at) or "") == "raw_utterance" and "calibration_abstain" not in _flags0:
+        from app.core.utterance_typing import is_untyped_speech as _untyped_speech
+
+        if _untyped_speech(atom) and "calibration_abstain" not in _flags0:
             atom.review_status = ReviewStatus.auto_accepted
             _fl = list(getattr(atom, "review_flags", None) or [])
             if "context_only" not in _fl:

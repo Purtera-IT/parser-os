@@ -437,11 +437,19 @@ def _message_blocks(atoms: list[EvidenceAtom]) -> dict[int, dict[str, str]]:
         except (TypeError, ValueError):
             continue
         rec = out.setdefault(mi, {"author": "", "sent_at": "", "gist": ""})
-        if not rec["author"] and v.get("author"):
-            rec["author"] = str(v.get("author"))
-        if not rec["sent_at"] and v.get("authored_at"):
-            rec["sent_at"] = str(v.get("authored_at"))
         kind = str(v.get("kind") or "")
+        # A quoted block's own "From: / Sent:" header names its author even
+        # when every line under it is chatter ("Let's go!!" and a name): the
+        # block used to come out authorless, and the line was read as part
+        # of the message it answers.
+        _author = v.get("author") or (v.get("sender") if kind == "quoted_message_header" else None)
+        _sent = v.get("authored_at") or (v.get("sent_at") if kind == "quoted_message_header" else None)
+        if str(_author or "").strip().lower() == "unknown":
+            _author = None
+        if not rec["author"] and _author:
+            rec["author"] = str(_author)
+        if not rec["sent_at"] and _sent:
+            rec["sent_at"] = str(_sent)
         text = str(a.raw_text or "").strip()
         # A body line is the gist; a message that is only a pleasantry
         # ("Thank you for the opportunity!") falls back to that line.
@@ -625,4 +633,75 @@ def dedup_quoted_history(
     return kept, dropped
 
 
-__all__ = ["thread_emails", "dedup_quoted_history"]
+def _message_identity(atom: EvidenceAtom) -> tuple[str, str, set[str]] | None:
+    """``(thread_id, author address, minute stamps)`` of the message a line
+    belongs to, or ``None`` when the thread stamp cannot say."""
+    v = atom.value if isinstance(atom.value, dict) else {}
+    et = v.get("email_thread")
+    if not isinstance(et, dict) or not et.get("thread_id"):
+        return None
+    msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+    quoted = bool(v.get("quoted"))
+    author = str(msg.get("author") or v.get("author") or ("" if quoted else et.get("sender")) or "")
+    sent = str(msg.get("sent_at") or v.get("authored_at") or ("" if quoted else et.get("date")) or "")
+    addr = _address(author)
+    if not addr or not sent:
+        return None
+    if quoted:
+        stamp = _minute_stamp(sent)
+        return (str(et["thread_id"]), addr, {stamp} if stamp else set())
+    return (str(et["thread_id"]), addr, _minute_stamps_around(sent))
+
+
+def dedup_quoted_chatter(
+    chatter: list[EvidenceAtom], *, context: list[EvidenceAtom] = ()
+) -> tuple[list[EvidenceAtom], list[EvidenceAtom]]:
+    """One atom per chatter line per MESSAGE, however often it is quoted.
+
+    Greetings, sign-offs and cheers ("Hi Megan,", "Let's go!!") are held out
+    of every head, so :func:`dedup_quoted_history` never saw them: each reply
+    that quoted a message minted its "Hi Megan," again. They are too short to
+    collapse on text alone -- Chase's "Hi Megan," is not Patrick's -- so the
+    key is the text AND the message it belongs to (author address plus the
+    minute it was sent, zone-shift tolerant). A quoted copy is dropped when the
+    message's own email holds the line, or an earlier copy was kept; the kept
+    atom is credited to the message that first authored it.
+    """
+    def _key(atom: EvidenceAtom) -> str:
+        return _norm_key(atom)
+
+    authored: set[tuple[str, str, str, str]] = set()
+    for atom in list(context) + list(chatter):
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if v.get("quoted"):
+            continue
+        ident = _message_identity(atom)
+        k = _key(atom)
+        if ident is None or not k:
+            continue
+        tid, addr, stamps = ident
+        for st in stamps:
+            authored.add((tid, addr, st, k))
+
+    seen: set[tuple[str, str, str, str]] = set()
+    kept: list[EvidenceAtom] = []
+    dropped: list[EvidenceAtom] = []
+    for atom in chatter:
+        v = atom.value if isinstance(atom.value, dict) else {}
+        ident = _message_identity(atom) if v.get("quoted") else None
+        k = _key(atom)
+        if ident is None or not k or not ident[2]:
+            kept.append(atom)
+            continue
+        tid, addr, stamps = ident
+        st = next(iter(stamps))
+        sig = (tid, addr, st, k)
+        if sig in authored or sig in seen:
+            dropped.append(atom)
+            continue
+        seen.add(sig)
+        kept.append(atom)
+    return kept, dropped
+
+
+__all__ = ["thread_emails", "dedup_quoted_history", "dedup_quoted_chatter"]

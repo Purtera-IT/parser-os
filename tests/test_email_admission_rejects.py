@@ -56,7 +56,10 @@ def test_greeting_signoff_and_signature_come_out_as_chatter_atoms(tmp_path):
         project_id="p", artifact_id="a", path=_write(tmp_path)
     )
     rejects = _rejects(out.atoms)
-    assert rejects == {"Hi Trent,": "greeting", "Thank you,": "signoff", "Stephanie Hechsel": "signature"}
+    # "Hope you had a great 4th of July!" is a pleasantry: the digit in "4th"
+    # used to make it read as work, so it came out as deal_metadata context.
+    assert rejects == {"Hi Trent,": "greeting", "Hope you had a great 4th of July!": "banter",
+                       "Thank you,": "signoff", "Stephanie Hechsel": "signature"}
     for a in out.atoms:
         if a.raw_text in rejects:
             # The same chatter mark relationship talk gets, and the reason.

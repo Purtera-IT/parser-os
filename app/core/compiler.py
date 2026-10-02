@@ -1245,6 +1245,30 @@ def compile_project(
                     _v["email_thread"] = dict(_et)
         except Exception:  # pragma: no cover - ordering sugar, never fatal
             pass
+        # Quoted copies of a held line ("Hi Megan," once per reply that quoted
+        # the message) collapse to the one its message authored. They skip
+        # quoted_history_dedup with every other head, so they get their own
+        # pass, keyed by the message as well as the words.
+        try:
+            from app.core.email_threading import dedup_quoted_chatter
+
+            _before_chatter = list(held_chatter)
+            held_chatter, _dropped_chatter = dedup_quoted_chatter(held_chatter, context=atoms)
+            if _dropped_chatter:
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        _before_chatter, held_chatter,
+                        stage="quoted_chatter_dedup",
+                        reason="quoted copy of a greeting/sign-off its own message already holds",
+                    ),
+                )
+                warnings.append(
+                    f"INFO: quoted_chatter_dedup diverted {len(_dropped_chatter)} quoted "
+                    f"copy(ies) of held chatter to the ledger"
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: quoted_chatter_dedup failed: {type(exc).__name__}: {exc}")
 
     # A HubSpot note that is a pasted email is the same message, not a second
     # source -- and the fold has to happen HERE, before the first pass that
@@ -2042,21 +2066,19 @@ def compile_project(
                     )
             except Exception as exc:
                 warnings.append(f"WARNING: taught_answers failed: {type(exc).__name__}: {exc}")
-            before_q_filter = list(atoms)
             atoms, dropped_noise_q = filter_unhelpful_open_questions(atoms)
             if dropped_noise_q:
-                merge_suppressed(
-                    suppressed_atoms,
-                    capture_suppressed(
-                        before_q_filter,
-                        atoms,
-                        stage="open_question_quality_filter",
-                        reason="literal transcript/dialogue question is not a PM-actionable gap",
-                    ),
-                )
+                # Held, not deleted: out of every head from here on, exactly as
+                # before, but put back into the result beside the held chatter
+                # (flagged answered_in_corpus / not_pm_actionable_question), so
+                # a question somebody asked is still an atom a labeler sees.
+                # It used to go to the suppression sidecar, which the labeling
+                # page does not show -- 010087 lost "How many devices per
+                # school?" that way.
+                held_chatter.extend(dropped_noise_q)
                 warnings.append(
-                    f"INFO: open_question_quality_filter diverted {len(dropped_noise_q)} "
-                    f"non-actionable question atom(s)"
+                    f"INFO: open_question_quality_filter held {len(dropped_noise_q)} "
+                    f"non-actionable or answered question atom(s) out of the heads"
                 )
         except Exception as exc:
             warnings.append(f"WARNING: open_question_resolution failed: {type(exc).__name__}: {exc}")
@@ -2190,10 +2212,9 @@ def compile_project(
         # into a longer line by word overlap took real turns off the page
         # ("the only region that won't have a stack coordinator" vanished
         # into an earlier, longer turn that shared its words).
-        _untyped = {
-            id(a) for a in atoms
-            if str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", ""))) == "raw_utterance"
-        }
+        from app.core.utterance_typing import is_untyped_speech as _is_untyped_speech
+
+        _untyped = {id(a) for a in atoms if _is_untyped_speech(a)}
         _speech_kept = {
             id(a) for a in collapse_repeated_speech([a for a in atoms if id(a) not in _untyped])
         }
