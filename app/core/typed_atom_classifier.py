@@ -109,7 +109,7 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
         "fields": ["tier", "percent", "trigger"],
     },
     "change_order_rule": {
-        "desc": "A rule that governs change orders — when one is required, T&M rate caps, materials markup, after-hours rate.",
+        "desc": "A rule that governs change orders — when one is required, T&M rate caps, materials markup, the rate for change-order work. A standing rate term (after-hours billed at 150%) is a pricing_assumption.",
         "fields": ["trigger_kind", "rate_or_threshold"],
     },
 
@@ -235,7 +235,7 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
         "fields": ["item_class", "lead_days", "expedite_terms", "stock_location"],
     },
     "pricing_assumption": {
-        "desc": "An explicit pricing assumption (taxes excluded, hardware substitutions require approval, etc.).",
+        "desc": "An explicit pricing assumption or rate term (taxes excluded, hardware substitutions require approval, after-hours work billed at 150% of the standard rate, etc.).",
         "fields": ["domain", "statement"],
     },
 

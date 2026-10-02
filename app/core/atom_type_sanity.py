@@ -1898,6 +1898,57 @@ def retype_product_codes(atoms: list[Any]) -> int:
     return changed
 
 
+#: A rate stated: a multiplier on a rate, a premium, "billed at" a price.
+_RATE_STATEMENT_RE = re.compile(
+    r"\b\d{2,3}(?:\.\d+)?\s*%\s+of\s+(?:the\s+)?(?:\w+\s+){0,2}(?:rates?|price|fees?|pricing)\b"
+    r"|\b(?:billed|charged|invoiced|priced|calculated)\s+at\b"
+    r"|\btime[- ]and[- ]a[- ]half\b|\bdouble[- ]time\b|\b\d(?:\.\d+)?\s*[x\u00d7]\s+(?:the\s+)?(?:\w+\s+)?rate\b",
+    re.I)
+
+#: What makes a rate a change-order rule: the clause is about changes.
+_CHANGE_ORDER_WORDS_RE = re.compile(
+    r"\bchange[- ]?(?:orders?|requests?)\b|\bCOs?\b|\bscope changes?\b|\bout[- ]of[- ]scope\b"
+    r"|\badditional (?:work|services|scope)\b|\bnot (?:included|covered) (?:in|by) (?:this|the) (?:SOW|scope)\b",
+    re.I)
+
+
+def retype_rate_terms_off_change_orders(atoms: list[Any]) -> int:
+    """A rate is a pricing term, not a change-order rule, unless the clause
+    is about changes.
+
+    "After-hours work is billed at 150% of the standard rate." was typed
+    ``change_order_rule`` -- the type's own description lists "after-hours
+    rate" -- and so sat in the change-order packet instead of beside the
+    deal's other rates. A ``change_order_rule`` atom that states a rate or
+    multiplier and says nothing about change orders / out-of-scope work is
+    retyped ``pricing_assumption`` (the live commercial type that carries a
+    deal's rate terms; ``rate_card`` is label-only), with the old type kept
+    as an alternative. A clause that does name change orders ("Change orders
+    are billed at 150% ...") is left alone.
+    """
+    from app.core.schemas import AtomType
+
+    changed = 0
+    for a in atoms:
+        if _atom_type_str(a) != "change_order_rule":
+            continue
+        text = _atom_text(a)
+        if not _RATE_STATEMENT_RE.search(text) or _CHANGE_ORDER_WORDS_RE.search(text):
+            continue
+        a.atom_type = AtomType.pricing_assumption
+        v = getattr(a, "value", None)
+        if isinstance(v, dict):
+            alts = list(v.get("alt_atom_types") or [])
+            if "change_order_rule" not in alts:
+                v["alt_atom_types"] = alts + ["change_order_rule"]
+            v.setdefault("term_kind", "rate_term")
+        flags = list(getattr(a, "review_flags", None) or [])
+        if "rate_term_not_change_order" not in flags:
+            a.review_flags = flags + ["rate_term_not_change_order"]
+        changed += 1
+    return changed
+
+
 def apply_type_sanity(
     atoms: list[Any],
     *,
@@ -1921,6 +1972,7 @@ def apply_type_sanity(
     demoted += merge_signature_rows(atoms)
     demoted += demote_signatory_chrome(atoms)
     demoted += retype_product_codes(atoms)
+    demoted += retype_rate_terms_off_change_orders(atoms)
     demoted += enrich_vendor_line_items(atoms)
     demoted += demote_exclusions_without_negation(atoms)
     demoted += demote_manifest_metadata_bom_lines(atoms)
@@ -1943,6 +1995,7 @@ def apply_type_sanity(
 
 __all__ = [
     "apply_type_sanity",
+    "retype_rate_terms_off_change_orders",
     "cap_authority_to_source",
     "classify_document_contract_evidence",
     "demote_unearned_contract_authority",
