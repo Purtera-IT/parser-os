@@ -87,9 +87,13 @@ def test_overview_prose_without_scope_verb_is_captured_not_dropped() -> None:
 def test_section_heading_not_emitted_as_content_atom() -> None:
     # A section heading is structure, not a fact. It is NOT emitted as a content
     # atom — its text is preserved as section_path context on every child atom
-    # beneath it instead (matching the PDF parser). So the graph is never flooded
-    # with header labels masquerading as scope_items.
-    assert _emit("Project Overview", heading=True) == []
+    # beneath it. It is still a line of the source, so it is kept as ONE
+    # chatter reject (rejected_by section_heading) a labeler can see and
+    # reject -- never as a scope_item, even when its title says "Out of Scope".
+    atoms = _emit("Project Overview", heading=True)
+    assert _is_chatter_reject(atoms)
+    assert atoms[0].value["rejected_by"] == "section_heading"
+    assert _is_chatter_reject(_emit("7. Out of Scope", heading=True))
     # A bare label that is NOT a heading is still never content: it is kept
     # only as a chatter reject so the labeler can see and reject it.
     assert _is_chatter_reject(_emit("Scope"))

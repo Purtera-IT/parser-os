@@ -109,7 +109,7 @@ def _iter_block_items(parent):
                 yield from _iter_block_items(content)
 
 
-def _unwrap_content_controls(document) -> int:
+def _unwrap_content_controls(document, placeholders: list[str] | None = None) -> int:
     """Lift the content of every ``w:sdt`` content control in the body into its
     parent, in place, so python-docx's own views see it. Returns the count.
 
@@ -126,8 +126,12 @@ def _unwrap_content_controls(document) -> int:
     Replacing each control with its ``w:sdtContent`` children is lossless for
     the text (properties carry no content) and keeps document order. A control
     still showing its placeholder ("Click or tap here to enter text.") holds no
-    content anyone wrote, so it is lifted out empty. The document is
-    in-memory only; the file on disk is never touched.
+    content anyone wrote -- but it is still a line of the SOW, an unfilled
+    field someone must answer ("Phone: Click here to enter phone number"). It
+    is lifted like any other control and its text collected in
+    ``placeholders``, so the line becomes an atom typed as the open question
+    it is (see ``_mark_unfilled_placeholders``), never as content. The
+    document is in-memory only; the file on disk is never touched.
     """
     from docx.oxml.ns import qn
 
@@ -143,12 +147,77 @@ def _unwrap_content_controls(document) -> int:
         content = sdt.find(SDTC)
         pr = sdt.find(SDTPR)
         placeholder = pr is not None and pr.find(PLC) is not None
-        children = [] if content is None or placeholder else list(content)
+        children = [] if content is None else list(content)
+        if placeholder and placeholders is not None and content is not None:
+            ptxt = " ".join("".join(t.text or "" for t in content.iter(qn("w:t"))).split())
+            if ptxt:
+                placeholders.append(ptxt)
         idx = parent.index(sdt)
         for offset, child in enumerate(children):
             parent.insert(idx + offset, child)
         parent.remove(sdt)
     return len(controls)
+
+
+#: Word's own placeholder prompts, for a template field typed as plain text
+#: (or a control whose showingPlcHdr flag was lost): "Click here to enter
+#: text.", "Click or tap here to enter a date.", "Choose an item."
+_PLACEHOLDER_PROMPT_RE = re.compile(
+    r"\bclick (?:or tap )?here to (?:enter|add|select|choose|type)\b[^.\n|]*\.?"
+    r"|\bchoose an item\.?|\btap here to enter\b[^.\n|]*\.?",
+    re.I,
+)
+
+#: Types a placeholder line is retyped FROM: prose / chatter guesses. A
+#: structured row keeps its type and only carries the flag.
+_PLACEHOLDER_RETYPE_FROM = {"scope_item", "deal_metadata", "constraint", "assumption",
+                            "exclusion", "deliverable", "customer_instruction"}
+
+
+def _mark_unfilled_placeholders(atoms: list[Any], placeholders: list[str]) -> int:
+    """An SOW line still showing a Word placeholder is an open question.
+
+    "Phone: Click here to enter phone number" is a field the template asked
+    for and nobody filled: not scope, not chatter, but a gap someone must
+    answer. The line keeps its source text (so it highlights), is typed
+    ``open_question`` (prose guesses only; table rows keep their type) and
+    carries ``unfilled_placeholder`` with the placeholder and field label.
+    """
+    known = sorted({p for p in placeholders if p}, key=len, reverse=True)
+    n = 0
+    for a in atoms:
+        text = str(getattr(a, "raw_text", "") or "")
+        hits = [p for p in known if p in text]
+        hits += [m.group(0).strip() for m in _PLACEHOLDER_PROMPT_RE.finditer(text)
+                 if not any(m.group(0).strip() in h or h in m.group(0) for h in hits)]
+        if not hits:
+            continue
+        first = text.find(hits[0])
+        label = text[:first].strip().rstrip(":|-\u2013 ").split("|")[-1].strip() if first > 0 else ""
+        val = dict(a.value) if isinstance(getattr(a, "value", None), dict) else {}
+        val.pop("chatter", None)
+        val.pop("rejected_by", None)
+        val.update({
+            "placeholder": True,
+            "placeholder_text": hits,
+            "field_label": label,
+            "open_question_reason": "unfilled SOW placeholder",
+        })
+        a.value = val
+        at = getattr(getattr(a, "atom_type", None), "value", "")
+        if at in _PLACEHOLDER_RETYPE_FROM:
+            if at != "open_question":
+                val.setdefault("alt_atom_types", [])
+                if at not in val["alt_atom_types"]:
+                    val["alt_atom_types"].append(at)
+            a.atom_type = AtomType.open_question
+        flags = [f for f in (getattr(a, "review_flags", None) or []) if f not in ("chatter", "prose_fallback_capture")]
+        if "unfilled_placeholder" not in flags:
+            flags.append("unfilled_placeholder")
+        a.review_flags = flags
+        a.review_status = ReviewStatus.needs_review
+        n += 1
+    return n
 
 
 def _all_paragraphs(document):
@@ -264,6 +333,8 @@ class DocxParser(BaseParser):
     _structure_idxs = PerThreadState()
     _para_lead_in = PerThreadState()
     _table_lead_in = PerThreadState()
+    _structure_kind = PerThreadState()
+    _placeholder_texts = PerThreadState()
 
     parser_name = "docx"
     parser_version = "docx_parser_v2"
@@ -356,7 +427,9 @@ class DocxParser(BaseParser):
         document = Document(path)
         # Content controls inside paragraphs, cells and rows are invisible to
         # python-docx's views; lift their content in place before reading.
-        _unwrap_content_controls(document)
+        _placeholders: list[str] = []
+        _unwrap_content_controls(document, _placeholders)
+        self._placeholder_texts = _placeholders
         atoms: list[EvidenceAtom] = []
         # Universal reading-order section map: every paragraph/table learns the
         # heading chain it lives under, so site/section attribution has real
@@ -391,7 +464,9 @@ class DocxParser(BaseParser):
             is_heading = idx in getattr(self, "_structure_idxs", set())
             # One atom per clause: the PDF path's split, so a draft SOW and its
             # signed PDF produce matching atoms (see clause_split).
-            clauses = [] if is_heading else split_clauses(text)
+            has_placeholder = bool(_PLACEHOLDER_PROMPT_RE.search(text)) or any(
+                p in text for p in _placeholders)
+            clauses = [] if (is_heading or has_placeholder) else split_clauses(text)
             units = clauses or [text]
             for s_idx, unit in enumerate(units):
                 atoms.extend(
@@ -406,6 +481,7 @@ class DocxParser(BaseParser):
                         cell=None,
                         tracked_change=None,
                         heading=is_heading,
+                        structure_kind=(getattr(self, "_structure_kind", None) or {}).get(idx),
                         is_list_item=is_list_item,
                         section_path=para_section.get(idx, []),
                         lead_in=getattr(self, "_para_lead_in", {}).get(idx, []),
@@ -909,6 +985,7 @@ class DocxParser(BaseParser):
             return (10**9, 2)
         atoms.sort(key=_body_key)
         atoms = _dedupe_repeated_text(atoms)
+        _mark_unfilled_placeholders(atoms, _placeholders)
 
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
@@ -1719,6 +1796,9 @@ class DocxParser(BaseParser):
         # not content — the single source of truth the main loop uses to decide
         # which paragraphs are dropped as atoms (so it never diverges from here).
         structure_idxs: set[int] = set()
+        # What each structure paragraph IS, for the atom that keeps its line:
+        # "section_heading" or "list_lead_in".
+        structure_kind: dict[int, str] = {}
         # (level, breadcrumb_label, is_list_intro, lead_in_text). breadcrumb_label
         # is "" for a pure framing lead-in (it must NOT pollute the section path);
         # lead_in_text is None for a normal heading/short label.
@@ -1742,6 +1822,7 @@ class DocxParser(BaseParser):
             children = list(_iter_block_items(document.element.body))
         except Exception:
             self._structure_idxs = structure_idxs
+            self._structure_kind = structure_kind
             self._para_lead_in = para_lead_in
             return para_section, table_section, heading_paras, para_order, table_order
 
@@ -1866,12 +1947,14 @@ class DocxParser(BaseParser):
                         # breadcrumb label so the sentence never enters the path.
                         heading_paras[pidx] = (lvl, ancestors)
                         structure_idxs.add(pidx)
+                        structure_kind[pidx] = "list_lead_in"
                         stack.append((lvl, "", False, text, False))
                     else:
                         if not is_intro or intro_section_only:
                             # real heading or short label -> structure (no atom)
                             heading_paras[pidx] = (lvl, ancestors)
                             structure_idxs.add(pidx)
+                            structure_kind[pidx] = "list_lead_in" if is_intro else "section_heading"
                         # else: long intro sentence stays an atom (not structure)
                         label = text.rstrip(":").strip() if is_intro else text
                         # CONTRADICTION GATE: a real sub-heading meaning the OPPOSITE
@@ -1940,6 +2023,7 @@ class DocxParser(BaseParser):
                     else []
                 )
         self._structure_idxs = structure_idxs
+        self._structure_kind = structure_kind
         self._para_lead_in = para_lead_in
         self._table_lead_in = table_lead_in
         return para_section, table_section, heading_paras, para_order, table_order
@@ -1975,6 +2059,7 @@ class DocxParser(BaseParser):
         tracked_change: str | None,
         heading: bool,
         tracked_index: int | None = None,
+        structure_kind: str | None = None,
         is_list_item: bool = False,
         section_path: list[str] | None = None,
         lead_in: list[str] | None = None,
@@ -1994,24 +2079,25 @@ class DocxParser(BaseParser):
 
         # A heading is STRUCTURE, never a content atom — even when its title text
         # happens to match a lexical pattern (e.g. "7. Out of Scope" matches the
-        # exclusion regex, "2. Sites and Scope" the scope regex). Its text is
-        # already preserved as section_path on every child beneath it, so it never
-        # needs to be its own atom. Drop it here (recorded) BEFORE lexical typing,
-        # so a heading can't leak in as content just because of a title keyword.
+        # exclusion regex, "2. Sites and Scope" the scope regex). Its text rides
+        # as section_path on every child beneath it. But it is still a line of
+        # the source, and a line that is neither an atom nor a recorded
+        # suppression cannot be labeled: "A. IT Infrastructure Support" and
+        # "Provider is responsible for the following:" vanished from a SOW.
+        # So it is kept as ONE reject-able atom -- deal_metadata, flagged
+        # chatter, rejected_by section_heading / list_lead_in -- typed BEFORE
+        # lexical typing so a title keyword can't make it content.
         if heading and text:
+            kind = structure_kind or "section_heading"
             if ledger is not None:
-                from app.core.span_ledger import StageKind
-
-                ledger.record_drop(
-                    span_id=span_id,
-                    stage="docx_parse.heading_is_structure",
-                    kind=StageKind.GATE,
-                    rule="heading_not_content",
-                    reason="section heading preserved as section_path on children, not a content atom",
-                    raw_text=text,
-                    artifact=artifact_id,
-                )
-            return []
+                ledger.mark_represented(span_id)
+            return [self._structure_atom(
+                project_id=project_id, artifact_id=artifact_id, filename=filename,
+                text=text, kind=kind, paragraph_index=paragraph_index,
+                table_index=table_index, row=row, cell=cell,
+                tracked_change=tracked_change, tracked_index=tracked_index,
+                section_path=section_path,
+            )]
 
         atom_types = self._classify_text(text)
         # Weak-label flag: when the lexical regex assigns a type that CONTRADICTS
@@ -2228,6 +2314,49 @@ class DocxParser(BaseParser):
         if ledger is not None and atoms:
             ledger.mark_represented(span_id)
         return atoms
+
+    def _structure_atom(
+        self, *, project_id, artifact_id, filename, text, kind, paragraph_index,
+        table_index, row, cell, tracked_change, tracked_index, section_path,
+    ) -> EvidenceAtom:
+        """A heading / list lead-in kept as a reject-able atom (see caller)."""
+        from app.core.deal_chatter import CHATTER_FLAG
+
+        locator = {
+            "paragraph_index": paragraph_index,
+            "table_index": table_index,
+            "row": row,
+            "cell": cell,
+            "tracked_change": tracked_change,
+            "section_path": list(section_path) if section_path else [],
+        }
+        return EvidenceAtom(
+            id=stable_id("atm", project_id, artifact_id, kind, text, paragraph_index,
+                         table_index, row, cell, tracked_change, tracked_index),
+            project_id=project_id,
+            artifact_id=artifact_id,
+            atom_type=AtomType.deal_metadata,
+            raw_text=text,
+            normalized_text=normalize_text(text),
+            value={"text": text, "kind": kind, "structure": True,
+                   "chatter": True, "rejected_by": kind},
+            entity_keys=[],
+            source_refs=[SourceRef(
+                id=stable_id("src", artifact_id, paragraph_index, table_index, row, cell,
+                             tracked_change, tracked_index),
+                artifact_id=artifact_id,
+                artifact_type=ArtifactType.docx,
+                filename=filename,
+                locator=locator,
+                extraction_method="docx_text_and_ooxml",
+                parser_version=self.parser_version,
+            )],
+            authority_class=AuthorityClass.contractual_scope,
+            confidence=0.1,
+            review_status=ReviewStatus.needs_review,
+            review_flags=[CHATTER_FLAG, kind],
+            parser_version=self.parser_version,
+        )
 
     # -- never-detected recovery: content python-docx's body view can't see --
     def _emit_header_footer_atoms(
