@@ -81,12 +81,12 @@ def test_trigger_clause_split_still_works_and_composes() -> None:
     ]
 
 
-# --- Live 010003 wrote the sentence with NO comma before "so" -------------
-# The TV sentence above has ", so"; the real mail (text/plain, CRLF) reads
-# "...<aside>) so I also need ...", so the comma-only boundary never fired and
-# the atom stayed whole. The body below is synthetic but mirrors the real
-# one's shape: a cheer, a blank line, one long paragraph whose last sentence
-# follows "month…. ", then a signature and a quoted "From:" line.
+# --- A " so I ..." with NO comma is NOT a boundary ---------------------
+# #302 split live 010003's "...<aside>) so I also need ..." there; the deal
+# threads ruled that one sentence is one atom and a same-sentence fragment is
+# a defect, so that split is reversed. The body below is synthetic but mirrors
+# the real one's shape: a cheer, a blank line, one long paragraph whose last
+# sentence follows "month…. ", then a signature and a quoted "From:" line.
 
 NO_COMMA = (
     "But we are waiting for the switches to arrive at their office (they are with the "
@@ -114,36 +114,25 @@ SYNTH_HEADERS = (
 )
 
 
-def test_email_splits_a_paren_so_sentence_with_no_comma(tmp_path) -> None:
+def test_email_keeps_a_paren_so_sentence_with_no_comma_whole(tmp_path) -> None:
     from app.parsers.email_parser import EmailParser
 
     p = tmp_path / "m.eml"
     p.write_bytes((SYNTH_HEADERS + SYNTH_BODY).encode("utf-8"))
     texts = [a.raw_text for a in EmailParser().parse_artifact_full(
         project_id="p", artifact_id="a", path=p).atoms]
-    assert NO_COMMA not in texts
-    assert ("But we are waiting for the switches to arrive at their office "
-            "(they are with the freight carrier now)") in texts
-    assert "so I also need to keep an eye on the tracking status." in texts
+    assert NO_COMMA in texts
+    assert "so I also need to keep an eye on the tracking status." not in texts
 
 
-def test_paren_so_and_bare_so_i_we_are_boundaries() -> None:
-    assert split_compound_clauses(NO_COMMA) == [
-        "But we are waiting for the switches to arrive at their office (they are with the freight carrier now)",
-        "so I also need to keep an eye on the tracking status.",
-    ]
-    assert split_compound_clauses(
-        "The switches are on backorder until August (per the distributor) so they will ship late."
-    ) == [
-        "The switches are on backorder until August (per the distributor)",
-        "so they will ship late.",
-    ]
-    assert split_compound_clauses(
-        "The site contact is out of office this week so we need to reschedule the walkthrough."
-    ) == [
-        "The site contact is out of office this week",
-        "so we need to reschedule the walkthrough.",
-    ]
+def test_paren_so_and_bare_so_i_we_are_not_boundaries() -> None:
+    for sent in (
+        NO_COMMA,
+        "The switches are on backorder until August (per the distributor) so they will ship late.",
+        "The site contact is out of office this week so we need to reschedule the walkthrough.",
+    ):
+        assert split_compound_clauses(sent) == [sent], sent
+        assert split_trigger_clause(sent) == [sent], sent
 
 
 def test_ordinary_so_stays_whole() -> None:

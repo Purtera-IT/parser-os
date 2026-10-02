@@ -296,8 +296,6 @@ def split_trigger_clause(sentence: str) -> list[str]:
 #: Where one sentence joins two statements that each stand on their own:
 #:
 #:   ", so I ..."      -- a fact, then what the writer does about it
-#:   ") so I ..."      -- the same, after a parenthetical aside, no comma
-#:   " so I/we ..."    -- the same, no comma, first person only
 #:   "; it ..."        -- two clauses a semicolon holds side by side
 #:   " and I also ..." -- a fact, then a separate undertaking
 #:
@@ -306,13 +304,16 @@ def split_trigger_clause(sentence: str) -> list[str]:
 #: Rack B; the IDF"), addresses and "cats and dogs" whole, and "so that",
 #: "so far" and "and so on" whole (no subject after the "so").
 #:
-#: Live 010003 wrote the TV sentence with NO comma: "... (it is with the
-#: shipping carrier now) so I also need to keep my eye on the delivery
-#: status." -- the comma-only boundary never fired on the real mail.
+#: A " so I ..." with NO comma is never a boundary (#302 split there and this
+#: reverses it). Live 010003 "... (it is with the shipping carrier now) so I
+#: also need to keep my eye on the delivery status." and live 000132 "Even a
+#: quick "still moving" or "not happening" would be helpful so I can keep our
+#: pipeline accurate." are each one sentence on one source line; cut at the
+#: "so" they became two atoms, the second a fragment that starts mid-sentence.
+#: Without the comma the writer did not mark a clause break, and "so I can"
+#: is as often a purpose ("so that I can") as a consequence.
 _COMPOUND_BOUNDARY_RE = re.compile(
     r",\s+(?=so\s+(?:i|we|you|they|he|she|it)\s+\w)"
-    r"|(?<=\))\s+(?=so\s+(?:i|we|you|they|he|she|it)\s+\w)"
-    r"|(?<![,)])\s+(?=so\s+(?:i|we)\s+\w)"
     r"|;\s+(?=(?:i|we|you|they|he|she|it)(?:['’]\w+)?\s+\w)"
     r"|,?\s+and\s+(?=(?:i|we)\s+also\s+\w)",
     re.I,
