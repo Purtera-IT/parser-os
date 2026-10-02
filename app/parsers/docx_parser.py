@@ -437,6 +437,38 @@ def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, A
 _TYPED_ENUMERATOR_RE = re.compile(
     r"^\s*(?:\(?(?:[A-Za-z]|[ivxIVX]{1,4}|\d{1,2})[.)]|[\u2022\u00b7\u25aa\u25cf\u2013\-*])\s+\S")
 
+# The ordinal of a typed lead-line enumerator ("A. ", "3. ", "IV. "), as
+# (family, value) readings. "I." reads as both letter 9 and roman 1, so a
+# sibling test can match whichever sequence the line actually continues.
+_LEAD_ENUM_RE = re.compile(r"^\s*\(?([A-Za-z]|[ivxIVX]{1,4}|\d{1,2})([.)])\s+\S")
+_ROMAN = {"i": 1, "v": 5, "x": 10}
+
+
+def _lead_enum_readings(text: str) -> set[tuple[str, str, int]]:
+    m = _LEAD_ENUM_RE.match(text or "")
+    if not m:
+        return set()
+    tok, punct = m.group(1), m.group(2)
+    out: set[tuple[str, str, int]] = set()
+    if tok.isdigit():
+        out.add(("digit", punct, int(tok)))
+        return out
+    case = "upper" if tok.isupper() else "lower"
+    if len(tok) == 1:
+        out.add(("letter-" + case, punct, ord(tok.lower()) - ord("a") + 1))
+    if all(c in _ROMAN for c in tok.lower()) and (tok.isupper() or tok.islower()):
+        vals = [_ROMAN[c] for c in tok.lower()]
+        out.add(("roman-" + case, punct,
+                 sum(-v if i + 1 < len(vals) and v < vals[i + 1] else v for i, v in enumerate(vals))))
+    return out
+
+
+def _continues_enumeration(earlier: str, later: str) -> bool:
+    """``later`` carries the same enumerator pattern as ``earlier`` ("C." then
+    "D.", "2." then "3.", "iv)" then "v)") at a higher ordinal."""
+    a, b = _lead_enum_readings(earlier), _lead_enum_readings(later)
+    return any(fa == fb and pa == pb and vb > va for fa, pa, va in a for fb, pb, vb in b)
+
 class DocxParser(BaseParser):
     #: Per-DOCUMENT state on a parser the registry SHARES between threads.
     #: 010237's SLA table took its lead-in from whichever document happened to
@@ -2210,6 +2242,8 @@ class DocxParser(BaseParser):
         # for a normal heading/short label. all_caps / explicit_level drive the
         # sibling rule below.
         stack: list[tuple] = []
+        # stack entries opened by a style-named heading (Heading N), by identity.
+        style_entries: list[tuple] = []
         # A heading paragraph's OWN section: its parent chain plus itself, so the
         # reject-able heading atom (#268) reads as the head of its section rather
         # than a free-floating line with section [] (010087).
@@ -2312,6 +2346,7 @@ class DocxParser(BaseParser):
                             break
                         stack.pop()
                 lvl = self._heading_level(style)
+                style_heading = lvl is not None
                 if lvl is None and text and not is_list:
                     # The style name said nothing. Ask the XML, which is not
                     # in English: see _outline_level.
@@ -2392,6 +2427,22 @@ class DocxParser(BaseParser):
                         e_caps, e_explicit = e[5]
                         if e_caps and e[0] > 0 and e[1] and not (explicit and e_explicit):
                             lvl = e[0]
+                            break
+                if lvl is not None and lvl > 0 and text and not is_list and _LEAD_ENUM_RE.match(text):
+                    # ENUMERATED SIBLINGS: lead lines that continue one typed
+                    # sequence ("A. ..." "B. ..." ... "I. ...") under the same
+                    # heading are peers, whatever depth each one's formatting
+                    # suggested. 000132 put D. under C. and F.-I. under E.:
+                    # the lines read as headings at different depths, so the
+                    # stack popped only the shallower ones. Two style-named
+                    # headings (Heading 2 > Heading 3) are the author's own
+                    # outline and are left alone.
+                    for e in reversed(stack):
+                        if not e[1] or e[0] <= 0:
+                            continue
+                        if _continues_enumeration(e[1], text):
+                            if e[0] < lvl and not (style_heading and any(x is e for x in style_entries)):
+                                lvl = e[0]
                             break
                 # LIST-INTRO: a colon-ending label/bullet immediately followed by
                 # sub-bullets ("PMO Responsibilities:", "Services include:") is a
@@ -2482,6 +2533,8 @@ class DocxParser(BaseParser):
                         # ("Services include:") never block.
                         blocks = (not is_intro) and self._subsection_blocks_lift(label)
                         entry = (lvl, label, is_intro, None, blocks, (caps or label_head, explicit))
+                        if style_heading:
+                            style_entries.append(entry)
                         stack.append(entry)
                         if is_intro and item_ilvl is not None:
                             list_intros.append((entry, item_ilvl))
