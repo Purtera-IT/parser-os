@@ -124,6 +124,9 @@ def test_document_thread_reads_only_the_documents_own_atoms():
     # The note's atom list holds the mail line because the mail line cites it.
     assert _document_thread([mail_line, note_line], artifact_id="art_note") is None
     assert _document_thread([mail_line], artifact_id="art_mail")["thread_id"] == "thr_1"
+    # A note atom that took an email_thread in a dedup merge is still a note.
+    note_line.value["email_thread"] = dict(mail_line.value["email_thread"])
+    assert _document_thread([note_line], artifact_id="art_note", is_message=False) is None
 
 
 # -- 2. reading order ------------------------------------------------------
@@ -182,3 +185,17 @@ def test_one_city_line_alone_is_not_a_list():
     assert find_city_site_lists(["Thanks for the call.", "Troy, MI", "See you Monday."]) == []
     found = find_city_site_lists(["Sites:", "- Lima, OH", "- Troy, MI", "", "Nashville"])
     assert [(c.city, c.state, c.label) for c in found] == [("Lima", "OH", "Sites"), ("Troy", "MI", "Sites")]
+
+
+def test_every_note_atom_has_a_line_and_the_header_reads_first(tmp_path: Path):
+    """010087: a pasted email's signature sorted above the note's own header,
+    because only body prose carried a line."""
+    from app.core.orbitbrief_envelope import _in_reading_order, _note_author
+
+    text = NOTE_1.replace("Locations\n", "Stephanie Hechsel <stephanie.hechsel@amtivo.com>\nLocations\n")
+    atoms = _note_atoms(tmp_path, text)
+    assert all(a.source_refs[0].locator.get("line_start") is not None for a in atoms)
+    ordered = _in_reading_order(list(reversed(atoms)), [])
+    assert ordered[0].value["kind"] == "hubspot_note_meta"
+    # The note's author is the note's, never a pasted sender.
+    assert _note_author(atoms, "art_note")["note_author"]["email"] == "t@purtera-it.com"

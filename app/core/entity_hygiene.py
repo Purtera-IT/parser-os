@@ -103,13 +103,22 @@ def _drop_job_titles(keys: list[str]) -> list[str]:
     hygiene before it lands.
     """
     try:
-        from app.core.entity_extraction import _names_a_job_not_a_person
+        from app.core.entity_extraction import _names_a_job_not_a_person, _names_a_job_not_a_place
     except Exception:
         return keys
+    from app.core.place_names import is_place_name
+
     out = []
     for k in keys:
         if isinstance(k, str) and k.startswith("stakeholder:"):
             if _names_a_job_not_a_person(k[len("stakeholder:"):]):
+                continue
+            # A country / state / region is a rate dimension or a place,
+            # never a party (010246: stakeholder:united_states).
+            if is_place_name(k[len("stakeholder:"):]):
+                continue
+        if isinstance(k, str) and k.startswith(("site:", "customer:")):
+            if _names_a_job_not_a_place(k.split(":", 1)[1]):
                 continue
         out.append(k)
     return out

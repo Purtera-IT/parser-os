@@ -240,9 +240,15 @@ def read_deal_state(atoms: list[Any]) -> DealState:
     survey_done: list[Any] = []
     wants_firm: list[Any] = []
 
+    from app.core.deal_chatter import is_rejected_line
+
     for atom in atoms:
         t = _text(atom)
         if not t:
+            continue
+        # A heading ("2.1 Site Survey") or a dropdown list is structure: the
+        # deal is not waiting on a survey because a section is named for one.
+        if is_rejected_line(atom):
             continue
         if _ROM.search(t):
             rom.append(atom)

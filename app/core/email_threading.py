@@ -403,6 +403,12 @@ def thread_emails(
                         tb["position_in_file"] = len(_blocks) - mi
                     atom.value["email_thread"] = tb
 
+        _number_thread_messages(
+            ordered, meta_by_artifact,
+            {aid: _message_blocks(atoms_by_artifact.get(aid, [])) for aid in ordered},
+            atoms_by_artifact,
+        )
+
         summary_threads.append(
             {
                 "thread_id": thread_id,
@@ -420,6 +426,86 @@ def thread_emails(
         "threads": summary_threads,
     }
     return atoms, summary
+
+
+def _number_thread_messages(
+    ordered: list[str],
+    meta_by_artifact: dict[str, dict[str, Any]],
+    blocks_by_artifact: dict[str, dict[int, dict[str, str]]],
+    atoms_by_artifact: dict[str, list[EvidenceAtom]],
+) -> int:
+    """One chronological numbering for every MESSAGE of a thread.
+
+    ``thread_index`` numbers FILES. A message that exists only as a quote --
+    010003's Adobe Sign notice at 1:04 PM, Sarah's 1:19 PM email -- has no
+    file, so it had no number, and the thread appeared to start partway
+    through. Each message is identified by sender address and send minute
+    (the zone-free stamp ``dedup_quoted_history`` already matches quoted
+    headers on), so a quoted copy of a message that also has its own file
+    shares that file's number. Writes ``message.thread_position`` (1 =
+    earliest) and ``message.thread_message_count`` on every stamped atom.
+    """
+    from app.parsers.email_parser import _parse_date_epoch
+
+    def _epoch(raw: str) -> float:
+        ep = _parse_date_epoch(raw or "")
+        if ep:
+            return ep
+        st = _minute_stamp(raw or "")
+        if not st:
+            return 0.0
+        from datetime import datetime, timezone
+
+        day, minute = st.split("|")
+        # A quote's local clock, read as UTC: good to the day, which is all a
+        # tie with a dated file needs.
+        return datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp() + int(minute) * 60
+
+    def _ident(sender: str, sent: str) -> tuple[str, str] | None:
+        a, m = _address(sender), _minute_stamp(sent)
+        return (a, m) if a and m else None
+
+    entries: list[dict[str, Any]] = []
+    by_ident: dict[tuple[str, str], dict[str, Any]] = {}
+    slot: dict[tuple[str, int], dict[str, Any]] = {}
+    for fi, aid in enumerate(ordered):
+        meta = meta_by_artifact.get(aid, {})
+        own = {"epoch": float(meta.get("date_epoch") or 0.0), "order": (fi, 0)}
+        entries.append(own)
+        slot[(aid, 0)] = own
+        ident = _ident(str(meta.get("sender") or ""), str(meta.get("date_raw") or ""))
+        if ident:
+            for st in _minute_stamps_around(str(meta.get("date_raw") or "")):
+                by_ident.setdefault((ident[0], st), own)
+    for fi, aid in enumerate(ordered):
+        for mi, rec in sorted((blocks_by_artifact.get(aid) or {}).items()):
+            if mi == 0:
+                continue
+            ident = _ident(rec.get("author") or "", rec.get("sent_at") or "")
+            hit = by_ident.get(ident) if ident else None
+            if hit is None:
+                # Older quotes sit deeper in the file: higher index, earlier.
+                hit = {"epoch": _epoch(rec.get("sent_at") or ""), "order": (fi, -mi)}
+                entries.append(hit)
+                if ident:
+                    by_ident[ident] = hit
+            slot[(aid, mi)] = hit
+    entries.sort(key=lambda e: (e["epoch"] if e["epoch"] else float("inf"), e["order"]))
+    for n, e in enumerate(entries, start=1):
+        e["position"] = n
+    total = len(entries)
+    for aid in ordered:
+        for atom in atoms_by_artifact.get(aid, []):
+            v = atom.value if isinstance(atom.value, dict) else None
+            tb = v.get("email_thread") if v else None
+            msg = tb.get("message") if isinstance(tb, dict) else None
+            if not isinstance(msg, dict):
+                continue
+            e = slot.get((aid, int(msg.get("index") or 0)))
+            if e is not None:
+                msg["thread_position"] = e["position"]
+                msg["thread_message_count"] = total
+    return total
 
 
 def _message_blocks(atoms: list[EvidenceAtom]) -> dict[int, dict[str, str]]:
@@ -600,11 +686,27 @@ def dedup_quoted_history(
 
     # 2) Walk atoms in thread order; drop a quoted atom whose key matches an
     # authored original OR an earlier-kept quoted copy in the same thread.
+    #
+    # "Earlier" is the thread's send order, not the order the files happened
+    # to be listed in: the EARLIEST file that quotes a message owns it, and
+    # every later quoted copy is the repetition. Walking in list order kept
+    # the copy in whichever reply was listed first -- live 010003, sixteen
+    # lines of earlier emails (and their signatures) sat on a late reply,
+    # "You guys are the best! Thank you!" among them.
+    def _file_rank(item: tuple[int, EvidenceAtom]) -> tuple[int, int]:
+        i, atom = item
+        et = _thread_of(atom) or {}
+        try:
+            ti = int(et.get("thread_index")) if et.get("thread_index") is not None else 10**6
+        except (TypeError, ValueError):
+            ti = 10**6
+        return (ti, i)
+
     seen_quoted: dict[str, set[str]] = {}
     seen_headers: dict[str, set[tuple[str, str]]] = {}
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
-    for atom in atoms:
+    for _i, atom in sorted(enumerate(atoms), key=_file_rank):
         et = _thread_of(atom)
         v = atom.value if isinstance(atom.value, dict) else {}
         if et is not None and v.get("kind") == "quoted_message_header":
@@ -634,6 +736,8 @@ def dedup_quoted_history(
         seen.add(key)
         kept.append(atom)
 
+    gone = {id(a) for a in dropped}
+    kept = [a for a in atoms if id(a) not in gone]
     return kept, dropped
 
 

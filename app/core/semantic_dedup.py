@@ -1838,6 +1838,32 @@ def _adds_a_sentence(fuller: str, contained: str) -> bool:
     return any(w.islower() for w in words)
 
 
+def _not_at_the_cost_of_the_address(winner: Any, members: list[Any]) -> Any:
+    """Never trade a contact's email address for a type.
+
+    A contact row read twice -- "Jane Roe | Project Manager" typed by one
+    reader and "Jane Roe | Project Manager | jane@acme.com" by another --
+    shares the cut text key, and the bare copy could outrank the row with
+    the address. When a member states every address the winner does and
+    more, and its words contain the winner's, that member is the fuller
+    record of the same line and wins instead (the #268 rule for
+    _fold_bare_name_variants, applied here).
+    """
+    have = _fold.emails_stated(winner)
+    w_text = _norm_for_containment(winner)
+    best = winner
+    for m in members:
+        if m is winner:
+            continue
+        em = _fold.emails_stated(m)
+        if not (em - have) or not (have <= em):
+            continue
+        if w_text and w_text in _norm_for_containment(m):
+            if best is winner or len(em) > len(_fold.emails_stated(best)):
+                best = m
+    return best
+
+
 def _norm_for_containment(atom: Any) -> str:
     raw = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
     return re.sub(r"\s+", " ", str(raw).lower()).strip()
@@ -2036,7 +2062,76 @@ def _same_utterance_as_a_question(atoms: list[Any]) -> set[int]:
     return drop
 
 
-def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
+def _resolve_cross_type_group(members: list[Any], pool: list[Any] | None = None) -> tuple[Any, set[int]]:
+    """One cross-type group's winner (chosen from ``pool``, default all
+    members) and the ids of every member that survives."""
+    kept: set[int] = set()
+    pool = pool or members
+    winner = max(pool, key=lambda a: (_cross_type_priority(a), _rank(a)))
+    winner = _not_at_the_cost_of_the_words(winner, pool)
+    # Only a member of a DIFFERENT type is a lossy retyping of the winner's
+    # sentence. A member of the SAME type is an intra-type duplicate, which
+    # is semantic_dedup's job and not this one's -- as the docstring above
+    # has always said.
+    #
+    # That sentence was true of a two-member group and false of every
+    # larger one. The guard at the top of the loop only spares a group in
+    # which EVERY member shares a type, so one stray atom of a second type
+    # joining four emails turned "collapse a retyping" into "keep one atom
+    # and delete the rest". Measured over three live deals that deleted 76
+    # deal_metadata atoms into other deal_metadata atoms, 46 stakeholders
+    # into stakeholders and 18 commercial_totals into commercial_totals --
+    # and `_merge_atom_metadata` carries provenance, NOT `value`, so the
+    # survivor kept its own figures. Eighteen of those folds left a
+    # commercial_total whose `value` and `metric` were not the ones the
+    # deleted atom held, and seventeen left a stakeholder under another
+    # person's name. The key strips digits and cuts at 80 characters, so
+    # two quotes of one thread, or two totals of one table, reach it
+    # identical by construction.
+    winner_type = _atom_type_value(winner)
+    for member in members:
+        if member is winner:
+            continue
+        if _atom_type_value(member) == winner_type:
+            kept.add(id(member))
+            continue
+        # A retyping may not take a FIGURE with it. The group key strips
+        # digits by design, so an atom that dropped the numbers keys
+        # identically to the one that kept them.
+        #
+        # The test is containment, not the figures alone. When the winner's
+        # words ARE the start of the member's -- "ESTIMATED TOTAL FEES"
+        # inside "ESTIMATED TOTAL FEES | $21,560.00" -- the member is the
+        # same sentence with a money column still attached, and the typed
+        # atom must win; that is what this stage is for, and two tests
+        # pin it. When the winner's words are NOT in the member at all,
+        # the two only ever met because the key strips digits, and folding
+        # them is not a retyping. Live 010238 put
+        #
+        #     raw_table_row "Effective Date:: Account # | 2022-10-01
+        #                    00:00:00: 2701149/5698885"
+        #     signatory     "Effective Date: : Exp"
+        #
+        # in one group on that basis and kept the label with the values
+        # torn off it: the account number, the effective date and the
+        # expiry date left the compile, and nothing else in the deal
+        # stated them.
+        if (_figures_stated(member) - _figures_stated(winner)
+                and _norm_for_containment(winner)
+                not in _norm_for_containment(member)):
+            kept.add(id(member))
+            continue
+        # Nor an email address: the contact row that HAS the address is
+        # the one to keep (010246 lost its contacts' addresses here).
+        if _fold.emails_only_the_loser_states(winner, member):
+            kept.add(id(member))
+            continue
+        _merge_atom_metadata(winner, member)
+    kept.add(id(winner))
+    return winner, kept
+
+
+def cross_type_dedup_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | None = None) -> list[Any]:
     """Collapse the *same sentence* emitted under multiple atom types.
 
     Groups atoms by a money/quantity-stripped text key. Within any group
@@ -2101,62 +2196,37 @@ def cross_type_dedup_atoms(atoms: list[Any]) -> list[Any]:
             # Single atom, or all one type — not a cross-type duplicate; keep all.
             survivors.update(id(m) for m in members)
             continue
-        winner = max(members, key=lambda a: (_cross_type_priority(a), _rank(a)))
-        winner = _not_at_the_cost_of_the_words(winner, members)
-        # Only a member of a DIFFERENT type is a lossy retyping of the winner's
-        # sentence. A member of the SAME type is an intra-type duplicate, which
-        # is semantic_dedup's job and not this one's -- as the docstring above
-        # has always said.
-        #
-        # That sentence was true of a two-member group and false of every
-        # larger one. The guard at the top of the loop only spares a group in
-        # which EVERY member shares a type, so one stray atom of a second type
-        # joining four emails turned "collapse a retyping" into "keep one atom
-        # and delete the rest". Measured over three live deals that deleted 76
-        # deal_metadata atoms into other deal_metadata atoms, 46 stakeholders
-        # into stakeholders and 18 commercial_totals into commercial_totals --
-        # and `_merge_atom_metadata` carries provenance, NOT `value`, so the
-        # survivor kept its own figures. Eighteen of those folds left a
-        # commercial_total whose `value` and `metric` were not the ones the
-        # deleted atom held, and seventeen left a stakeholder under another
-        # person's name. The key strips digits and cuts at 80 characters, so
-        # two quotes of one thread, or two totals of one table, reach it
-        # identical by construction.
-        winner_type = _atom_type_value(winner)
-        for member in members:
-            if member is winner:
-                continue
-            if _atom_type_value(member) == winner_type:
-                survivors.add(id(member))
-                continue
-            # A retyping may not take a FIGURE with it. The group key strips
-            # digits by design, so an atom that dropped the numbers keys
-            # identically to the one that kept them.
-            #
-            # The test is containment, not the figures alone. When the winner's
-            # words ARE the start of the member's -- "ESTIMATED TOTAL FEES"
-            # inside "ESTIMATED TOTAL FEES | $21,560.00" -- the member is the
-            # same sentence with a money column still attached, and the typed
-            # atom must win; that is what this stage is for, and two tests
-            # pin it. When the winner's words are NOT in the member at all,
-            # the two only ever met because the key strips digits, and folding
-            # them is not a retyping. Live 010238 put
-            #
-            #     raw_table_row "Effective Date:: Account # | 2022-10-01
-            #                    00:00:00: 2701149/5698885"
-            #     signatory     "Effective Date: : Exp"
-            #
-            # in one group on that basis and kept the label with the values
-            # torn off it: the account number, the effective date and the
-            # expiry date left the compile, and nothing else in the deal
-            # stated them.
-            if (_figures_stated(member) - _figures_stated(winner)
-                    and _norm_for_containment(winner)
-                    not in _norm_for_containment(member)):
-                survivors.add(id(member))
-                continue
-            _merge_atom_metadata(winner, member)
-        survivors.add(id(winner))
+        docs: dict[str, list[Any]] = {}
+        for m in members:
+            docs.setdefault(str(getattr(m, "artifact_id", "") or ""), []).append(m)
+        if not doc_order or len(docs) == 1:
+            survivors.update(_resolve_cross_type_group(members)[1])
+            continue
+        # Across documents the earliest one owns the sentence. Each document
+        # first settles its own retypings exactly as before; then the
+        # documents' winners meet, the winner is taken from the earliest
+        # document, and a later document's retyping folds onto it (keeping a
+        # copy under its own document -- see cross_doc_copies).
+        from app.core.cross_doc_copies import doc_key
+
+        first_doc = min(docs, key=lambda d: doc_key(docs[d][0], doc_order))
+        pool: list[Any] = []
+        for doc, doc_members in docs.items():
+            if len({_atom_type_value(a) for a in doc_members}) == 1:
+                kept = {id(m) for m in doc_members}
+                w = doc_members[0]
+            else:
+                w, kept = _resolve_cross_type_group(doc_members)
+            survivors.update(kept)
+            if doc == first_doc:
+                pool = [w]
+        standing = [m for m in members if id(m) in survivors]
+        if len({_atom_type_value(a) for a in standing}) == 1:
+            continue
+        _w, kept = _resolve_cross_type_group(standing, pool)
+        for m in standing:
+            if id(m) not in kept:
+                survivors.discard(id(m))
 
     # Emit in ORIGINAL input order: each atom survives if it's a passthrough
     # (open_question / unkeyed) or the kept member of its group.
@@ -2220,9 +2290,11 @@ def _suppress_table_row_blob_doubles(atoms: list[Any]) -> list[Any]:
             #
             # and the deal's account number and its contract effective and
             # expiry dates left the compile with nothing else stating them.
+            # Same for an email address: the contact row that has it is not
+            # a double of a richer atom that does not (010246).
             if winner is not None and not (
                 _figures_stated(a) - _figures_stated(winner)
-            ):
+            ) and not _fold.emails_only_the_loser_states(winner, a):
                 _merge_atom_metadata(winner, a)
                 continue
         out.append(a)
@@ -2342,7 +2414,23 @@ def collapse_repeated_speech(atoms: list[Any], *, threshold: float = 0.8) -> lis
     return out
 
 
-def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
+def _earliest_first(doc_order: dict[str, tuple] | None):
+    """Sort key: the earliest document first, then the best copy within it.
+
+    See :mod:`app.core.cross_doc_copies`: across documents the survivor is the
+    earliest source, not the best-scoring copy -- the later, larger email kept
+    a HubSpot note's bullets (000132). With no ``doc_order`` every atom shares
+    one document position and the order is exactly ``_rank`` descending.
+    """
+    from app.core.cross_doc_copies import doc_key
+
+    def _key(atom: Any) -> tuple:
+        return (doc_key(atom, doc_order), tuple(-x for x in _rank(atom)))
+
+    return _key
+
+
+def semantic_dedup_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | None = None) -> list[Any]:
     """Collapse atoms that share a semantic key into one (highest-
     confidence wins; loser values merged into winner).
 
@@ -2405,7 +2493,7 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
                 return k
             n += 1
 
-    for atom in sorted(atoms, key=_rank, reverse=True):
+    for atom in sorted(atoms, key=_earliest_first(doc_order)):
         key = _key_for_generic_pass(atom)
         if key is None:
             continue
@@ -2441,7 +2529,7 @@ def semantic_dedup_atoms(atoms: list[Any]) -> list[Any]:
 _DEFERRED_IDENTITY_TYPES = frozenset({"stakeholder", "bom_line"})
 
 
-def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
+def dedupe_stakeholder_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | None = None) -> list[Any]:
     """Collapse duplicate stakeholder identities -- deferred here, and only
     here, so every instance keeps its OWN document's site: key first.
 
@@ -2463,7 +2551,7 @@ def dedupe_stakeholder_atoms(atoms: list[Any]) -> list[Any]:
         return atoms
 
     winners: dict[tuple, Any] = {}
-    for atom in sorted(atoms, key=_rank, reverse=True):
+    for atom in sorted(atoms, key=_earliest_first(doc_order)):
         if _atom_type_value(atom) not in _DEFERRED_IDENTITY_TYPES:
             continue
         key = _value_key(atom)

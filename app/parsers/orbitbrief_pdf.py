@@ -109,7 +109,7 @@ from app.parsers.pdf.site_roster import (  # noqa: E402
 
 # Moved to app.parsers.pdf.tables. Re-exported so every existing import keeps working;
 # this module stays the single public entry point for PDF parsing.
-from app.parsers.pdf.page_kind import _page_is_a_drawing
+from app.parsers.pdf.page_kind import _page_is_a_drawing, table_cuts_words
 from app.parsers.sow_sections import (  # noqa: E402
     DOC_STAMP_RULE,
     is_doc_stamp,
@@ -4114,6 +4114,10 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                 return [], []
             tables = list(getattr(finder, "tables", []) or [])
             for table in tables:
+                # A grid drawn through the words is a figure's lines, not a
+                # table (see page_kind.table_cuts_words).
+                if table_cuts_words(page, table):
+                    continue
                 try:
                     extracted = _table_rows_repaired(page, table)
                 except Exception:

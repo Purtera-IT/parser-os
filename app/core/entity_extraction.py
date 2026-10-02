@@ -33,6 +33,7 @@ from app.core.atom_type_sanity import number_is_naming_label
 from app.core.automated_senders import is_automated_address
 from app.core.phones import find_phones
 from app.core.deal_chatter import CHATTER_FLAG as _CHATTER_FLAG
+from app.core.deal_chatter import is_rejected_line as _is_rejected_line
 from app.core.device_alias_context import device_match_is_spurious, is_legal_boilerplate
 from app.core.entity_hygiene import filter_entity_keys_for_atom
 from app.core.normalizers import normalize_entity_key, normalize_text
@@ -1537,11 +1538,45 @@ _BARE_TYPED_ALIAS_STOPLIST: frozenset[str] = frozenset(
 )
 
 
+#: Vendor surfaces that are also ordinary words, places or surnames. Each
+#: names its vendor only beside a cue from that vendor's world, the same rule
+#: app.core.device_alias_context applies to device words. Live 010246:
+#: "Niagara Tech #1 | Field Tech | Onsite" (a subcontractor's resource) read as
+#: vendor:tridium; "est 3 hrs" as Edwards EST; "Mike Edwards" as a fire panel.
+_BMS_WORLD = r"\b(?:bms|bas|jace|tridium|bacnet|modbus|ddc|hvac|ahus?|vavs?|n4|workbench|supervisor|building automation|controls?|thermostats?)\b"
+_FIRE_WORLD = r"\b(?:fire|alarm|facp|smoke|strobes?|horns?|notification|signaling|sprinkler|io-?\d+|quickstart)\b"
+_VENDOR_SURFACE_CUES: dict[str, re.Pattern[str]] = {
+    surface: re.compile(rx, re.I) for surface, rx in {
+        "niagara": _BMS_WORLD,
+        "alc": _BMS_WORLD,
+        "trane": _BMS_WORLD + r"|\b(?:chillers?|rtus?|air handlers?)\b",
+        "edwards": _FIRE_WORLD,
+        "est": _FIRE_WORLD,
+        "rave": r"\b(?:mass notification|panic|alerts?|911|smart911|mobile safety)\b",
+        "regroup": r"\b(?:mass notification|alerts?|notifications?)\b",
+        "t2": r"\b(?:parking|lpr|permits?|citations?|enforcement|garage)\b",
+        "solstice": r"\b(?:mersive|wireless presentation|pods?|displays?|conference|screen share)\b",
+        "fluke": r"\b(?:tester|certif\w*|cable|cabling|dsx|versiv|copper|fiber|otdr)\b",
+        "tableau": r"\b(?:dashboards?|analytics|bi|reporting|salesforce|data)\b",
+        "cambium": r"\b(?:wireless|ptp|ptmp|radios?|wi-?fi|aps?|backhaul)\b",
+        "rhombus": r"\b(?:cameras?|video|surveillance|sensors?)\b",
+    }.items()
+}
+
+
+def _vendor_surface_ok(text_lower: str, surface: str) -> bool:
+    cue = _VENDOR_SURFACE_CUES.get(surface)
+    if cue is None:
+        return True
+    rest = re.sub(r"\b" + re.escape(surface) + r"\b", " ", text_lower)
+    return bool(cue.search(rest))
+
+
 def _emit_vendors(text_lower: str) -> set[str]:
     keys: set[str] = set()
     for canonical, surfaces in _CROSS_PACK_VENDORS.items():
         for surface in surfaces:
-            if _word_match(text_lower, surface):
+            if _word_match(text_lower, surface) and _vendor_surface_ok(text_lower, surface):
                 keys.add(f"vendor:{canonical}")
                 break
     return keys
@@ -4004,7 +4039,44 @@ _ROLE_ONLY_TOKENS: frozenset[str] = frozenset({
     "channel", "inside", "outside", "business", "development", "marketing",
     "finance", "procurement", "delivery", "product", "program", "project",
     "of", "and", "the", "for",
+    # field roles a rate sheet / Gantt prices ("Field Tech", "Lead Tech")
+    "tech", "techs", "technician", "technicians", "installer", "installers",
+    "foreman", "helper", "laborer", "crew",
 })
+
+
+_STAFF_TAIL = frozenset({"tech", "techs", "technician", "engineer", "installer", "resource"})
+
+
+def _numbered_staff_slot(slug: str, text: str) -> bool:
+    """"Niagara Tech #1", "Lead Engineer #2": a numbered staffing slot on a
+    Gantt or rate sheet, not a site or a customer ("Virginia Tech" carries no
+    slot number)."""
+    tokens = [t for t in str(slug or "").split("_") if t]
+    if len(tokens) < 2 or tokens[-1] not in _STAFF_TAIL:
+        return False
+    run = r"\s+".join(re.escape(t) for t in tokens)
+    return bool(re.search(r"\b" + run + r"\s*#\s*\d", str(text or ""), re.I))
+
+
+def _named_in(slug: str, text: str) -> bool:
+    """Every token of a stakeholder slug occurs as a word of ``text``."""
+    low = set(re.findall(r"[a-z0-9]+", str(text or "").lower()))
+    toks = [t for t in str(slug or "").split("_") if t]
+    return bool(toks) and all(t in low for t in toks)
+
+
+def _names_a_job_not_a_place(slug: str) -> bool:
+    """True when a site / customer slug is made only of title words.
+
+    "Field Tech" on a Gantt resource row is a role, but it is a capitalised
+    two-word run ending in "tech" ("Virginia Tech"), so it was minted
+    ``site:field_tech`` AND ``customer:field_tech`` (010246). Unlike a
+    person's surname, a one-word site or customer named "Tech" is never
+    meant either, so a single title token counts too.
+    """
+    tokens = [t for t in str(slug or "").split("_") if t]
+    return bool(tokens) and all(t in _ROLE_ONLY_TOKENS for t in tokens)
 
 
 def _names_a_job_not_a_person(slug: str) -> bool:
@@ -4170,6 +4242,19 @@ def extract_keys(
     keys = {k for k in keys
             if not (isinstance(k, str) and k.startswith("stakeholder:")
                     and _names_a_job_not_a_person(k[len("stakeholder:"):]))}
+    # A COUNTRY IS NOT A PARTY either: "Owner: United States" on a Gantt row,
+    # "Lead Technician, Hong Kong" on a rate sheet (010246).
+    from app.core.place_names import is_place_name
+
+    keys = {k for k in keys
+            if not (isinstance(k, str) and k.startswith("stakeholder:")
+                    and (is_place_name(k[len("stakeholder:"):])
+                         or _numbered_staff_slot(k[len("stakeholder:"):], text)))}
+    # A JOB IS NOT A PLACE OR A CUSTOMER: "Field Tech" (010246).
+    keys = {k for k in keys
+            if not (isinstance(k, str) and k.startswith(("site:", "customer:"))
+                    and (_names_a_job_not_a_place(k.split(":", 1)[1])
+                         or _numbered_staff_slot(k.split(":", 1)[1], text)))}
     return sorted(keys)
 
 
@@ -4919,8 +5004,13 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
             if len(_toks) >= 2:
                 _covered_slugs.add(_slug(" ".join(_toks[:2])))
 
+    from app.core.place_names import is_place_name as _is_place_name
+
     def _put_stakeholder(slug: str, source_atom: Any, value: dict[str, Any], raw: str, confidence: float) -> None:
         if not slug or slug in {"mock_vendor", "vendor", "customer", "project_manager"}:
+            return
+        # A country, state or region is never a person ("Owner: United States").
+        if _is_place_name(slug) or _is_place_name(str(value.get("name") or "")):
             return
         parts = slug.split("_")
         if value.get("kind") != "team_contact" and len(parts) < 2:
@@ -5393,6 +5483,14 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     total_keys_added += 1
             continue
 
+        # A heading / list lead-in / lookup list kept only so it can be
+        # labeled says nothing about the job: "2.1 Site Survey" is not a
+        # quantity of 1, "COST RATES | T&M" names no vendor.
+        if _is_rejected_line(atom):
+            if getattr(atom, "entity_keys", None):
+                atom.entity_keys = []
+            continue
+
         # Structured site reference on task / site note atoms (no regex guessing).
         if _atype_str in {"task", "site_implementation_note"}:
             if _emit_site_key_from_value(atom):
@@ -5423,6 +5521,15 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                 scan_text, pack=pack, value=value,
                 authoritative_sites=authoritative_sites,
             )
+            if section_ctx:
+                # A person is named in the line, not in its heading: the
+                # section context is scanned for institution / site names,
+                # and read with a role cue in the line it minted people out
+                # of sheet titles ("Project Manager: PK" under "OxBlue
+                # Pumphouse - Project Gantt" -> stakeholder:gantt_ox, 010246).
+                new_keys = [k for k in new_keys
+                            if not str(k).startswith("stakeholder:")
+                            or _named_in(str(k)[len("stakeholder:"):], text)]
             if is_chatter_atom:
                 new_keys = [k for k in new_keys if not str(k).startswith("device:")]
             if new_keys:
@@ -5468,6 +5575,8 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
             # NEW prefix families.
             if prefix in existing_prefixes:
                 continue
+            if prefix == "stakeholder:" and section_ctx and not _named_in(k[len(prefix):], text):
+                continue  # named only by the heading, not by the line
             augment.append(k)
         if augment:
             merged = sorted(set(cleaned) | set(augment))

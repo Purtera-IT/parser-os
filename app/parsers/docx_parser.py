@@ -529,7 +529,10 @@ class DocxParser(BaseParser):
                         heading=is_heading,
                         structure_kind=(getattr(self, "_structure_kind", None) or {}).get(idx),
                         is_list_item=is_list_item,
-                        section_path=para_section.get(idx, []),
+                        section_path=(
+                            (getattr(self, "_heading_own_path", None) or {}).get(idx, para_section.get(idx, []))
+                            if is_heading else para_section.get(idx, [])
+                        ),
                         lead_in=getattr(self, "_para_lead_in", {}).get(idx, []),
                         sentence_index=s_idx if clauses else None,
                     )
@@ -1704,6 +1707,47 @@ class DocxParser(BaseParser):
 
         return all(_bold(r) for r in runs)
 
+    # The document's own title. Only "statement of work": "SCOPE OF WORK" is a
+    # section heading in most SOWs (010087), not the title.
+    _DOC_TITLE_RE = re.compile(r"^\s*(?:(?:draft|final|revised)\s+)?statement\s+of\s+work\b", re.I)
+
+    @staticmethod
+    def _is_caps_heading(paragraph: Any) -> bool:
+        """A short standalone line set in capitals -- typed in caps or formatted
+        with Word's All Caps -- that reads as a heading, not a sentence: 1-8
+        words, at least 4 letters, no terminal sentence punctuation (a trailing
+        colon is allowed). Not a list item (the caller checks)."""
+        text = (paragraph.text or "").strip()
+        if not text or len(text) > 80 or text.endswith((".", ";", "?", "!", ",")):
+            return False
+        letters = re.findall(r"[A-Za-z]", text)
+        if len(letters) < 4:
+            return False
+        words = re.findall(r"[A-Za-z][A-Za-z'&/\-]*", text)
+        if not (1 <= len(words) <= 8):
+            return False
+        if text.upper() == text:
+            return True
+        runs = [r for r in getattr(paragraph, "runs", []) if (r.text or "").strip()]
+        if not runs:
+            return False
+
+        def _all_caps(r: Any) -> bool:
+            try:
+                if r.font is not None and r.font.all_caps is not None:
+                    return bool(r.font.all_caps)
+                st = getattr(paragraph, "style", None)
+                while st is not None:
+                    v = st.font.all_caps if getattr(st, "font", None) is not None else None
+                    if v is not None:
+                        return bool(v)
+                    st = st.base_style
+            except Exception:  # noqa: BLE001
+                return False
+            return False
+
+        return all(_all_caps(r) for r in runs)
+
     @staticmethod
     def _paragraph_in_table(paragraph: Any) -> bool:
         """Whether a python-docx paragraph lives inside a table cell.
@@ -1904,10 +1948,17 @@ class DocxParser(BaseParser):
         # What each structure paragraph IS, for the atom that keeps its line:
         # "section_heading" or "list_lead_in".
         structure_kind: dict[int, str] = {}
-        # (level, breadcrumb_label, is_list_intro, lead_in_text). breadcrumb_label
-        # is "" for a pure framing lead-in (it must NOT pollute the section path);
-        # lead_in_text is None for a normal heading/short label.
-        stack: list[tuple[int, str, bool, str | None]] = []
+        # (level, breadcrumb_label, is_list_intro, lead_in_text, blocks_lift,
+        # (all_caps, explicit_level)). breadcrumb_label is "" for a pure framing
+        # lead-in (it must NOT pollute the section path); lead_in_text is None
+        # for a normal heading/short label. all_caps / explicit_level drive the
+        # sibling rule below.
+        stack: list[tuple] = []
+        # A heading paragraph's OWN section: its parent chain plus itself, so the
+        # reject-able heading atom (#268) reads as the head of its section rather
+        # than a free-floating line with section [] (010087).
+        heading_own: dict[int, list[str]] = {}
+        title_seen = False
         # Bullet hierarchy: last bullet text seen at each list level, so a sub-bullet
         # ("After Hours: 50% increase") carries its PARENT bullet ("All Services will
         # be performed during normal Business Hours...") as context instead of
@@ -1984,7 +2035,7 @@ class DocxParser(BaseParser):
                     style = (para.style.name or "") if para.style is not None else ""
                     is_list = self._paragraph_is_list_item(para)
                 except Exception:
-                    para_section[pidx] = [t for _, t, _, _, _ in stack if t]
+                    para_section[pidx] = [t for _, t, _, _, _, _ in stack if t]
                     para_lead_in[pidx] = []
                     continue
                 lvl = self._heading_level(style)
@@ -1994,10 +2045,42 @@ class DocxParser(BaseParser):
                     outline = self._outline_level(para)
                     if outline is not None:
                         lvl = outline + 1
+                explicit = lvl is not None
+                caps = bool(text) and not is_list and self._is_caps_heading(para)
                 if lvl is None and text and not is_list and self._is_bold_subheading(para):
                     # bold sub-heading Word left on Normal style — nest it below
                     # style headings so its following bullets inherit the section.
                     lvl = 3
+                if lvl is None and caps:
+                    # A short standalone ALL-CAPS line ("PURTERA RESPONSIBILITIES",
+                    # "CUSTOMER RESPONSIBILITIES:") is a heading even when it is
+                    # neither styled nor bold: 010087 left them on Normal, so they
+                    # opened no section and the PMO duties beneath them stayed in
+                    # the OUT OF SCOPE section above and were typed exclusions.
+                    lvl = 3
+                if (
+                    lvl is not None
+                    and lvl != 0
+                    and not title_seen
+                    and self._DOC_TITLE_RE.match(text)
+                ):
+                    # The document's own title ("STATEMENT OF WORK (SOW)") is the
+                    # root of the document, never a child of a heading that
+                    # happens to precede it (010087: it sat under SOW LOCATION).
+                    lvl = 0
+                if lvl is not None and lvl > 0 and caps:
+                    # SIBLING RULE: all-caps standalone headings are peers. The
+                    # stack popped only on a strictly higher level, so an all-caps
+                    # bold line (level 3) after an all-caps Heading 1 nested under
+                    # it -- PURTERA RESPONSIBILITIES became a child of OUT OF
+                    # SCOPE. A heading that looks like an earlier open heading
+                    # replaces it. Two EXPLICIT style levels (Heading 1 > Heading
+                    # 2) are the author's own outline and are left alone.
+                    for e in reversed(stack):
+                        e_caps, e_explicit = e[5]
+                        if e_caps and e[0] > 0 and e[1] and not (explicit and e_explicit):
+                            lvl = e[0]
+                            break
                 # LIST-INTRO: a colon-ending label/bullet immediately followed by
                 # sub-bullets ("PMO Responsibilities:", "Services include:") is a
                 # sub-section over those bullets — promote it so the bullets carry
@@ -2006,6 +2089,14 @@ class DocxParser(BaseParser):
                 # AND opens the section (keeps its clause, still organizes children).
                 is_intro = lvl is None and bool(text) and text.endswith(":") and _next_is_bullet(k)
                 intro_section_only = False
+                if is_intro and not is_list:
+                    # A colon list-intro that is not itself a bullet starts a NEW
+                    # list: it is the sibling of the list-intro before it, not
+                    # its child ("Purtera Responsibilities:" then "Customer
+                    # Responsibilities:"). Plain content already closes an open
+                    # list-intro (below); an intro must as well.
+                    while stack and stack[-1][2]:
+                        stack.pop()
                 if is_intro:
                     # Structure-only (no standalone atom) when it's a list HEADER by
                     # MEANING (embedding), short or long, any polarity — so neither a
@@ -2038,8 +2129,11 @@ class DocxParser(BaseParser):
                 if lvl is not None and text:
                     while stack and stack[-1][0] >= lvl:
                         stack.pop()
-                    ancestors = [t for _, t, _, _, _ in stack if t]
+                    if lvl == 0:
+                        title_seen = True
+                    ancestors = [t for _, t, _, _, _, _ in stack if t]
                     para_section[pidx] = ancestors
+                    heading_own[pidx] = list(ancestors)
                     para_lead_in[pidx] = []
                     # a heading / list-intro starts a fresh bullet context — a
                     # sub-bullet's parent must come from the SAME list, not a prior
@@ -2053,7 +2147,7 @@ class DocxParser(BaseParser):
                         heading_paras[pidx] = (lvl, ancestors)
                         structure_idxs.add(pidx)
                         structure_kind[pidx] = "list_lead_in"
-                        stack.append((lvl, "", False, text, False))
+                        stack.append((lvl, "", False, text, False, (False, False)))
                     else:
                         if not is_intro or intro_section_only:
                             # real heading or short label -> structure (no atom)
@@ -2061,14 +2155,15 @@ class DocxParser(BaseParser):
                             structure_idxs.add(pidx)
                             structure_kind[pidx] = "list_lead_in" if is_intro else "section_heading"
                         # else: long intro sentence stays an atom (not structure)
-                        label = text.rstrip(":").strip() if is_intro else text
+                        label = text.rstrip(":").strip() if (is_intro or caps) else text
+                        heading_own[pidx] = list(ancestors) + [label]
                         # CONTRADICTION GATE: a real sub-heading meaning the OPPOSITE
                         # of a "vendor will provide" preamble ("Out of Scope",
                         # "Customer Responsibilities") blocks that preamble from being
                         # lifted onto its bullets. Semantic + cached; colon list-intros
                         # ("Services include:") never block.
                         blocks = (not is_intro) and self._subsection_blocks_lift(label)
-                        stack.append((lvl, label, is_intro, None, blocks))
+                        stack.append((lvl, label, is_intro, None, blocks, (caps, explicit)))
                 else:
                     # plain content: if we've left the bullet list, close any open
                     # tight list-intro sub-section(s) so a following paragraph doesn't
@@ -2078,14 +2173,14 @@ class DocxParser(BaseParser):
                     if not is_list:
                         while stack and stack[-1][2]:
                             stack.pop()
-                    para_section[pidx] = [t for _, t, _, _, _ in stack if t]
+                    para_section[pidx] = [t for _, t, _, _, _, _ in stack if t]
                     # Lift the governing preamble onto LIST ITEMS — UNLESS a
                     # contradiction subsection is active (an exclusion / other-party
                     # section), in which case a vendor "will provide" preamble must
                     # not apply to these bullets.
                     leads = (
-                        [li for _, _, _, li, _ in stack if li]
-                        if (is_list and not any(b for *_, b in stack))
+                        [li for _, _, _, li, _, _ in stack if li]
+                        if (is_list and not any(e[4] for e in stack))
                         else []
                     )
                     if is_list:
@@ -2117,20 +2212,21 @@ class DocxParser(BaseParser):
                 tidx += 1
                 table_order[tidx] = seq
                 seq += 1
-                table_section[tidx] = [t for _, t, _, _, _ in stack if t]
+                table_section[tidx] = [t for _, t, _, _, _, _ in stack if t]
                 # a forward-reference qualifier ("the fees outlined below are Fixed
                 # Fee") riding on the stack lifts onto THIS table's rows — unless a
                 # contradiction subsection is active. Non-list prose between the
                 # qualifier and the table is untouched (it's not a list/table row).
                 table_lead_in[tidx] = (
-                    [li for _, _, _, li, _ in stack if li] + list(section_qualifiers)
-                    if not any(b for *_, b in stack)
+                    [li for _, _, _, li, _, _ in stack if li] + list(section_qualifiers)
+                    if not any(e[4] for e in stack)
                     else []
                 )
         self._structure_idxs = structure_idxs
         self._structure_kind = structure_kind
         self._para_lead_in = para_lead_in
         self._table_lead_in = table_lead_in
+        self._heading_own_path = heading_own
         return para_section, table_section, heading_paras, para_order, table_order
 
     # Section-heading -> atom type. The document's OWN heading is the authority:
