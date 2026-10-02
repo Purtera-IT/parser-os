@@ -76,6 +76,47 @@ def _band_split(grid):
     return bands
 
 
+def _rejoin_split_table(band, groups):
+    """Put back together one table that a blank column cut in two.
+
+    "Item | Description | <blank> | Qty | Unit Price" is one table with a
+    spacer column, not two tables: split there, each part number lost its
+    prices to a separate block. Two neighbouring column groups are one table
+    when they fill the same rows and either side fails to read as a table of
+    its own -- its rows below the first do not carry both a label and a
+    number. Side-by-side tables (a Level of Effort table beside a Key Unit
+    Metrics box) each carry both, or fill different rows, and stay apart.
+    """
+    if len(groups) < 2:
+        return groups
+
+    def _cells(r, a, b):
+        return [r[c] for c in range(a, b) if c < len(r) and r[c] != ""]
+
+    def _rows(a, b):
+        return {i for i, r in enumerate(band) if _cells(r, a, b)}
+
+    def _self_contained(a, b):
+        filled = [_cells(r, a, b) for r in band]
+        filled = [f for f in filled if f][1:]
+        if not filled:
+            return False
+        whole = sum(1 for f in filled
+                    if any(_is_num(x) for x in f) and any(not _is_num(x) for x in f))
+        return whole * 5 >= len(filled) * 4
+
+    out = [groups[0]]
+    for g in groups[1:]:
+        a0, b0 = out[-1]
+        a1, b1 = g
+        if (_rows(a0, b0) == _rows(a1, b1)
+                and not (_self_contained(a0, b0) and _self_contained(a1, b1))):
+            out[-1] = (a0, b1)
+        else:
+            out.append(g)
+    return out
+
+
 def _col_split(band):
     width = max((len(r) for r in band), default=0)
     blank_col = [all((c >= len(r) or r[c] == "") for r in band) for c in range(width)]
@@ -87,6 +128,7 @@ def _col_split(band):
             groups.append((start, c)); start = None
     if start is not None:
         groups.append((start, width))
+    groups = _rejoin_split_table(band, groups)
     out = []
     for (a, b) in groups:
         # Carry each row's sheet origin across the column slice, or the block
@@ -274,8 +316,13 @@ def _is_label_value_box(body):
     "Item | Qty" over quantities).
     """
     rows = [r for r in body if _filled(r)]
-    if len(rows) < 2:
+    if not rows:
         return False
+    if len(rows) == 1:
+        # One "Customer: | OxBlue" pair: a label that says it is a label.
+        nz = [x for x in rows[0] if x != ""]
+        return (len(nz) == 2 and nz[0].rstrip().endswith(":")
+                and not _is_num(nz[0]) and len(nz[0]) <= 40)
     cols = set()
     for r in rows:
         cols |= {c for c, x in enumerate(r) if x != ""}

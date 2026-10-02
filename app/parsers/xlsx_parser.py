@@ -3671,8 +3671,18 @@ class XlsxParser(BaseParser):
         # ``line_count`` reflects every money-bearing row found, whether it
         # became its own atom (financial summary) or was folded (rate card).
         line_count = len(atoms) if not collapse_to_summary else len(folded_rows)
+        # A label/value info box on a priced sheet ("Customer | OxBlue" /
+        # "OPPTY # | 010246") carries no money, so the money gate above skips
+        # every row of it, and on a Deal Kit tab with nothing else it left the
+        # sheet with no atoms at all. Its pairs are emitted as key: value atoms.
+        _emitted_rows = {
+            (a.source_refs[0].locator or {}).get("row") for a in atoms if a.source_refs
+        } | {fr.get("row") for fr in folded_rows}
+        box_atoms = self._commercial_label_box_atoms(
+            project_id, artifact_id, artifact_type, filename, sheet_name, rows, _emitted_rows,
+        )
         if line_count == 0:
-            return []
+            return box_atoms
 
         # Roll-up banner: only for COLLAPSED sheets (rate cards / catalogs),
         # where it IS the sheet's single atom — it carries the full row matrix
@@ -3683,7 +3693,7 @@ class XlsxParser(BaseParser):
         # build_deal_financials) — the very "Gantt Financials: 12 pricing
         # lines, $-1,908-$26,450" atom the PM flagged as confusing. Drop it.
         if not collapse_to_summary:
-            return atoms
+            return atoms + box_atoms
         summary = self._commercial_summary_atom(
             project_id=project_id,
             artifact_id=artifact_id,
@@ -3696,6 +3706,7 @@ class XlsxParser(BaseParser):
             values=all_values,
             folded_rows=folded_rows,
         )
+        atoms = atoms + box_atoms
         # Summary first (full matrix in value.rows), then one atom per row.
         # When EVERY folded row also became its own atom, the "N pricing lines"
         # banner says nothing the rows do not, and sat beside them as a second,
@@ -3717,6 +3728,64 @@ class XlsxParser(BaseParser):
                 },
             }
         return [summary, *atoms]
+
+    def _commercial_label_box_atoms(
+        self, project_id, artifact_id, artifact_type, filename, sheet_name, rows, emitted_rows,
+    ) -> list[EvidenceAtom]:
+        """key: value atoms for the label/value info boxes of a priced sheet,
+        skipping any worksheet row already emitted as a priced line."""
+        from app.parsers.xlsx_blocks import sheet_blocks
+        try:
+            blocks = sheet_blocks(rows)
+        except Exception as exc:
+            self._note_block_failure(
+                f"{sheet_name}: {type(exc).__name__}: {str(exc)[:200]}"
+            )
+            return []
+        out: list[EvidenceAtom] = []
+        for bi, b in enumerate(blocks):
+            if b.get("kind") != "keyval" or not b.get("label_box"):
+                continue
+            title = b.get("title")
+            sp = [sheet_name] + ([title] if title else []) if sheet_name else []
+            pair_rows = b.get("pair_rows") or []
+            for pj, (k, v) in enumerate(b.get("pairs") or []):
+                k, v = str(k).strip(), str(v).strip()
+                srow = pair_rows[pj] if pj < len(pair_rows) else None
+                if not k or srow in emitted_rows:
+                    continue
+                label = k.rstrip().rstrip(":").rstrip()
+                text = (f"{label}: {v}" if v else k)[:4000]
+                field = _DEAL_HEADER_LABELS.get(label.lower())
+                value: dict[str, Any] = {"kind": "key_value", "label": label, "value": v,
+                                         "sheet_name": sheet_name, "box_label": title}
+                ekeys: list[str] = []
+                if field and v:
+                    value.update({"kind": "deal_header", "fields": {field: v}, "field": field})
+                    if field == "opportunity_id":
+                        ekeys.append(f"deal:{v}")
+                    elif field == "customer":
+                        slug = re.sub(r"[^a-z0-9]+", "_", v.lower()).strip("_")
+                        if slug:
+                            ekeys.append(f"customer:{slug}")
+                aid = stable_id("atm", artifact_id, "commercial_box", sheet_name, bi, pj)
+                out.append(EvidenceAtom(
+                    id=aid, project_id=project_id, artifact_id=artifact_id,
+                    atom_type=AtomType.deal_metadata, raw_text=text,
+                    normalized_text=text.lower(), value=value, entity_keys=ekeys,
+                    source_refs=[SourceRef(
+                        id=stable_id("src", aid), artifact_id=artifact_id,
+                        artifact_type=artifact_type, filename=filename,
+                        locator={"sheet": sheet_name, "row": srow or 0, "section_path": sp,
+                                 "extraction": "commercial_label_box_v1"},
+                        extraction_method="commercial_label_box_v1",
+                        parser_version=self.parser_version)],
+                    receipts=[], authority_class=AuthorityClass.vendor_quote,
+                    confidence=0.78, confidence_raw=0.78, calibrated_confidence=0.78,
+                    review_status=ReviewStatus.needs_review, review_flags=[],
+                    parser_version=self.parser_version,
+                ))
+        return out
 
     def _commercial_summary_atom(
         self,
@@ -5139,7 +5208,9 @@ class XlsxParser(BaseParser):
                 box_fill = b.get("fill")  # the highlight color the rows share
                 for pi, (k, v, sheet_row) in enumerate(pairs):
                     seq += 1
-                    line = (f"{k}: {v}" if v else k).strip()
+                    # A label that carries its own colon ("Customer:") is not
+                    # given a second one.
+                    line = (f"{k.rstrip().rstrip(':').rstrip()}: {v}" if v else k).strip()
                     if not line:
                         continue
                     # A numeric LABEL ('70: 0.3684') is not a field — it's two

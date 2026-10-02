@@ -114,3 +114,78 @@ def test_block_table_splits_at_a_new_header_row():
     assert [t["header"][0] for t in tables] == ["Country", "Service"], tables
     assert [r[0] for r in tables[1]["rows"]] == ["L2 EUC 2 hour minimum", "PC", "PM"]
     assert all(r[0] not in ("PC", "PM", "Service") for r in tables[0]["rows"])
+
+
+# ── a blank column inside one table ─────────────────────────────────────────
+
+
+def test_blank_column_inside_one_table_keeps_each_row_whole():
+    rows = [["Item", "Description", None, "Qty", "Unit Price", "Extended Price"]]
+    rows += [[f"P-{i}", f"Part number {i}", None, 2 + i, 10 + i, (2 + i) * (10 + i)] for i in range(4)]
+    tables = [b for b in sheet_blocks(rows) if b["kind"] == "table"]
+    assert len(tables) == 1, tables
+    t = tables[0]
+    assert t["header"][0] == "Item" and t["header"][4] == "Unit Price"
+    assert t["rows"][1][0] == "P-1" and t["rows"][1][4] == "11"
+
+
+def test_side_by_side_tables_still_split():
+    rows = [["Task Category", "Labor Hours", "Rate", None, "Metric", "Value"]]
+    rows += [["Install", 40, 85, None, "Cost per drop", 125],
+             ["Programming", 10, 105, None, "Hours per drop", 1.5],
+             ["Testing", 6, 95, None, "Drops", 48]]
+    tables = [b for b in sheet_blocks(rows) if b["kind"] == "table"]
+    assert [t["header"][0] for t in tables] == ["Task Category", "Metric"], tables
+
+
+def test_blank_column_table_through_the_parser(tmp_path):
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Scope"
+    ws.append(["Customer:", "OxBlue"])
+    ws.append([])
+    ws.append(["Item", "Description", None, "Qty", "Unit Price", "Extended Price"])
+    for i in range(4):
+        ws.append([f"P-{i}", f"Part number {i}", None, 2 + i, 10 + i, (2 + i) * (10 + i)])
+    texts = [a.raw_text for a in _parse(tmp_path, wb)]
+    for i in range(4):
+        hits = [t for t in texts if f"Item: P-{i} |" in t]
+        assert hits and all(f"Unit Price: {10 + i}" in t for t in hits), (i, texts)
+
+
+def test_single_colon_pair_above_a_table_is_kept(tmp_path):
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Scope"
+    ws.append(["Customer:", "OxBlue"])
+    ws.append([])
+    ws.append(["Item", "Qty", "Unit Price"])
+    ws.append(["Cat6 cable", 40, 2])
+    ws.append(["Jacks", 20, 3])
+    texts = [a.raw_text for a in _parse(tmp_path, wb)]
+    assert "Customer: OxBlue" in texts, texts
+
+
+# ── a lone info box on a "Deal Kit" sheet ───────────────────────────────────
+
+
+def test_deal_kit_sheet_with_only_an_info_box_emits_its_pairs(tmp_path):
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Deal Kit"
+    ws.append(["Customer", "OxBlue"])
+    ws.append(["OPPTY #", "010246"])
+    atoms = _parse(tmp_path, wb, "Deal Kit.xlsx")
+    by_text = {a.raw_text: a for a in atoms}
+    assert "Customer: OxBlue" in by_text, list(by_text)
+    assert "OPPTY #: 010246" in by_text, list(by_text)
+    assert "deal:010246" in by_text["OPPTY #: 010246"].entity_keys
+
+
+def test_deal_kit_info_box_beside_priced_rows_is_kept(tmp_path):
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Deal Kit"
+    ws.append(["Customer", "OxBlue"])
+    ws.append(["OPPTY #", "010246"])
+    ws.append([])
+    ws.append(["Task", "Hours", "Rate", "Total"])
+    ws.append(["Install cameras", 40, 95, 3800])
+    ws.append(["Configure NVR", 8, 120, 960])
+    texts = [a.raw_text for a in _parse(tmp_path, wb, "Deal Kit.xlsx")]
+    assert "Customer: OxBlue" in texts and "OPPTY #: 010246" in texts, texts
+    assert any("Task: Install cameras | Hours: 40" in t for t in texts), texts
+    # A priced row is never repeated as a pair.
+    assert sum(1 for t in texts if "Install cameras" in t) == 1, texts
