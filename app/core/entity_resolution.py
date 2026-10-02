@@ -816,7 +816,9 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
                     row[field] = candidate
 
     all_groups.extend(address_identity_groups(universe, site_rows))
-    all_groups.extend(semantic_site_fusion_groups(universe, site_rows, deal_id=deal_id))
+    all_groups.extend(semantic_site_fusion_groups(
+        universe, site_rows, deal_id=deal_id, evidence=_deal_evidence_text(atoms),
+    ))
 
     # ─── HYGIENE PASS ON ALIAS GROUPS ───
     # Drop any site:* key that fails hygiene before grouping is
@@ -939,6 +941,7 @@ def semantic_site_fusion_groups(
     site_keys: set[str],
     rows_by_key: dict[str, dict[str, Any]] | None = None,
     deal_id: str = "",
+    evidence: str = "",
 ) -> list[set[str]]:
     """Merge physical-site keys that name the same place but slug-equality misses.
 
@@ -1008,7 +1011,7 @@ def semantic_site_fusion_groups(
         from app.core.site_duplicate_candidates import site_duplicate_candidates
 
         known = set(keys)
-        for cand in site_duplicate_candidates([describe(k) for k in keys]):
+        for cand in site_duplicate_candidates([describe(k) for k in keys], evidence):
             a, b = str(cand.get("unlocated") or ""), str(cand.get("located") or "")
             if a in known and b in known:
                 pairs.append((a, b, str(cand.get("exemplar") or "")))
@@ -1066,10 +1069,27 @@ def semantic_site_fusion_groups(
         if ra != rb:
             parent[ra] = rb
 
+    from app.core.site_duplicate_candidates import UNCERTAIN, named_place_address_verdict
+
+    all_rows = [describe(k) for k in keys]
     for a, b, pair_text in pairs:
         if find(a) == find(b):
             continue  # already merged transitively — skip the round-trip
         pa, pb = phrase(a), phrase(b)
+        # A NAME AND AN ADDRESS ARE READ FROM THE DEAL, NOT FROM EACH OTHER.
+        #
+        # Deal 010003 asked about "checkout llc new york office" and
+        # "40 10th ave fl 4" and got distinct_site: two strings with no word in
+        # common read as two places. The customer's New York office is at 40
+        # 10th Ave. When the deal ties them -- the name printed beside the
+        # street, or the only address in the city the name gives -- that is
+        # the answer; when nothing does, a model's "distinct" is a guess and
+        # is recorded as uncertain, never as a judgement.
+        prior, _why = named_place_address_verdict(describe(a), describe(b), all_rows, evidence)
+        if prior == SAME_SITE:
+            verdicts["context:same_site"] = verdicts.get("context:same_site", 0) + 1
+            union(a, b)
+            continue
         d = decide(
             relation=SITE_PAIR_RELATION,
             text=pair_text,
@@ -1089,7 +1109,10 @@ def semantic_site_fusion_groups(
         )
         if d.source == "llm":
             llm_budget -= 1
-        verdicts[f"{d.source}:{d.verdict}"] = verdicts.get(f"{d.source}:{d.verdict}", 0) + 1
+        verdict = d.verdict
+        if prior == UNCERTAIN and verdict != SAME_SITE and d.source != "store":
+            verdict = UNCERTAIN  # needs a person; not evidence of two sites
+        verdicts[f"{d.source}:{verdict}"] = verdicts.get(f"{d.source}:{verdict}", 0) + 1
         if d.verdict == SAME_SITE:
             union(a, b)
 

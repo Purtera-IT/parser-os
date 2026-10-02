@@ -1104,8 +1104,15 @@ def build_orbitbrief_envelope(
 
         _sr_block = envelope.get("site_readiness")
         if isinstance(_sr_block, dict):
+            # The deal's text, so a name printed beside its street ("Checkout
+            # LLC, 40 10th Ave") is offered as one site.
+            _evidence = " || ".join(
+                str(a.get("text") or "") for a in (envelope.get("atoms") or [])
+                if isinstance(a, dict) and a.get("text")
+            )
             _sr_block["duplicate_candidates"] = site_duplicate_candidates(
-                [r for r in (_sr_block.get("sites") or []) if isinstance(r, dict)]
+                [r for r in (_sr_block.get("sites") or []) if isinstance(r, dict)],
+                _evidence,
             )
     except Exception:
         pass

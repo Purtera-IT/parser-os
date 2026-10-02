@@ -22,6 +22,7 @@ pass asked with "symphonyai hillview office || palo alto ca 94304".
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 #: A pair is only worth a person's attention when one side has no location of
@@ -165,7 +166,9 @@ def _same_address_pairs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def site_duplicate_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def site_duplicate_candidates(
+    rows: list[dict[str, Any]], evidence: str = "",
+) -> list[dict[str, Any]]:
     """Pairs worth asking a person about, best evidence first.
 
     A candidate is an UNLOCATED row — no address, no city, not anchored, so it
@@ -178,6 +181,15 @@ def site_duplicate_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     # evidence, not a coincidence to rule out. These are invisible to the
     # token rule below, which only ever looks at rows with no address at all.
     same_address = _same_address_pairs(rows)
+    # A name and the street the deal ties it to ("Checkout LLC New York
+    # office" / "40 10th Ave, Fl 4"): no shared token, so the rule below can
+    # never see them, but the deal's context can.
+    seen_pairs = {frozenset((c["unlocated"], c["located"])) for c in same_address}
+    for cand in _named_place_pairs(rows, evidence):
+        key = frozenset((cand["unlocated"], cand["located"]))
+        if key not in seen_pairs:
+            seen_pairs.add(key)
+            same_address.append(cand)
 
     located = [r for r in rows if isinstance(r, dict) and _is_located(r)]
     unlocated = [
@@ -221,6 +233,215 @@ def site_duplicate_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     out.sort(key=lambda c: (-len(c["shared_token"]), c["unlocated"]))
     # Same-address pairs first, then the token shortlist, with no pair asked
     # about twice.
-    seen = {(c["unlocated"], c["located"]) for c in same_address}
-    merged = same_address + [c for c in out if (c["unlocated"], c["located"]) not in seen]
+    merged = same_address + [
+        c for c in out if frozenset((c["unlocated"], c["located"])) not in seen_pairs
+    ]
     return merged[:_MAX_CANDIDATES]
+
+
+# ── A named place and a street address ──────────────────────────────────────
+#
+# Deal 010003 compared "checkout llc new york office" with "40 10th ave fl 4"
+# and judged them distinct_site. They are one place: the customer's New York
+# office IS 40 10th Ave, Fl 4. Nothing above could see it -- the name shares no
+# token with the street, so the shortlist never offered it, and the fusion pass
+# handed the pair to a model that read two strings with nothing in common and
+# said "two sites".
+#
+# A name and an address are not two descriptions of the same KIND, so "they
+# share no words" is no evidence they differ. What ties them is the deal: the
+# documents print the name beside the street, or the name says the city and
+# the deal knows exactly one address in that city. Without either, the honest
+# answer is "a person should look", never "distinct".
+
+#: Verdict for a pair the evidence neither ties nor separates.
+UNCERTAIN = "uncertain"
+
+#: Words that say what KIND of place a name is, not WHICH one. They never tie
+#: a name to an address on their own.
+_GENERIC_NAME_TOKENS = frozenset({
+    "office", "offices", "the", "llc", "inc", "corp", "corporation", "ltd",
+    "company", "site", "location", "hq", "headquarters", "building", "campus",
+    "branch", "main", "and", "store", "facility",
+})
+
+_SUFFIX_VARIANTS = {
+    "st": "street", "ave": "avenue", "av": "avenue", "blvd": "boulevard",
+    "rd": "road", "dr": "drive", "ln": "lane", "ct": "court", "pl": "place",
+    "pkwy": "parkway", "hwy": "highway", "cir": "circle", "trl": "trail",
+}
+_SUFFIX_ALTS: dict[str, set[str]] = {}
+for _short, _long in _SUFFIX_VARIANTS.items():
+    _SUFFIX_ALTS.setdefault(_short, {_short}).add(_long)
+    _SUFFIX_ALTS.setdefault(_long, {_long}).add(_short)
+
+#: How far from a street the name may sit and still be "printed beside it".
+_CO_MENTION_WINDOW = 250
+
+
+def _evidence_norm(text: Any) -> str:
+    return _norm_str(str(text or ""))
+
+
+@lru_cache(maxsize=8)
+def _norm_str(text: str) -> str:
+    # Cached: the deal's whole text is normalised once, not once per pair.
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _row_name(row: dict[str, Any]) -> str:
+    name = str(row.get("facility_name") or row.get("display_name") or "").strip()
+    if not name:
+        name = str(row.get("site") or "").split(":", 1)[-1].replace("_", " ").strip()
+    return name
+
+
+def _row_street(row: dict[str, Any]) -> str:
+    """The row's street line, or its name when the name IS a street."""
+    from app.core.address_parse import looks_like_street_address
+
+    street = str(row.get("street_address") or row.get("address") or "").strip()
+    if street:
+        return street
+    name = _row_name(row)
+    return name if looks_like_street_address(name) else ""
+
+
+def _street_pattern(street: str) -> re.Pattern[str] | None:
+    """House number and street name up to its type ("40 10th ave"), with the
+    street type matched in either spelling. The unit ("fl 4") is dropped: the
+    same office is "Fl 4", "Floor 4" and "4th Floor" in three documents."""
+    tokens = _evidence_norm(street).split()
+    if len(tokens) < 2 or not tokens[0].isdigit():
+        return None
+    core: list[str] = []
+    for tok in tokens:
+        core.append(tok)
+        if tok in _SUFFIX_ALTS and len(core) >= 2:
+            break
+    else:
+        core = tokens[:3]
+    parts = [
+        "(?:" + "|".join(sorted(_SUFFIX_ALTS[t])) + ")" if t in _SUFFIX_ALTS else re.escape(t)
+        for t in core
+    ]
+    return re.compile(r"\b" + r" ".join(parts) + r"\b")
+
+
+def _distinctive_name_tokens(name: str) -> list[str]:
+    return [
+        t for t in _evidence_norm(name).split()
+        if len(t) > 2 and t not in _GENERIC_NAME_TOKENS
+    ]
+
+
+def _co_mentioned(name: str, street: str, evidence: str) -> bool:
+    """Do the documents print this name's distinctive words beside this street?"""
+    pattern = _street_pattern(street)
+    words = _distinctive_name_tokens(name)
+    if pattern is None or not words or not evidence:
+        return False
+    for m in pattern.finditer(evidence):
+        window = evidence[max(0, m.start() - _CO_MENTION_WINDOW): m.end() + _CO_MENTION_WINDOW]
+        if all(re.search(rf"\b{re.escape(w)}\b", window) for w in words):
+            return True
+    return False
+
+
+def _contains_phrase(haystack: str, phrase: str) -> bool:
+    p = _evidence_norm(phrase)
+    return bool(p) and re.search(rf"\b{re.escape(p)}\b", _evidence_norm(haystack)) is not None
+
+
+def _address_city(row: dict[str, Any]) -> str:
+    """The address row's own city. Never guessed from the documents here --
+    co-mention is the evidence path for that."""
+    return _evidence_norm(row.get("city"))
+
+
+def named_place_address_verdict(
+    a: dict[str, Any],
+    b: dict[str, Any],
+    rows: list[dict[str, Any]] | None = None,
+    evidence: str = "",
+) -> tuple[str | None, str]:
+    """Judge a NAMED place against a STREET ADDRESS from the deal's own context.
+
+    Returns ``(verdict, why)``:
+
+    * ``SAME_SITE`` -- the documents print the name beside the street, or the
+      name's city is the address's city and the deal knows no other address in
+      that city.
+    * ``UNCERTAIN`` -- a name and an address nothing ties or separates. A
+      person should look; "they share no words" is not "two places".
+    * ``None`` -- not this shape (two names, two addresses), or the two say
+      different cities. Left to the other rules.
+
+    ``rows`` is every site row on the deal, for "the only address in that
+    city". ``evidence`` is the deal's text; the caller may pass it raw.
+    """
+    a_street, b_street = _row_street(a), _row_street(b)
+    if bool(a_street) == bool(b_street):
+        return None, ""
+    named, addressed = (b, a) if a_street else (a, b)
+    street = a_street or b_street
+    name = _row_name(named)
+    if not _distinctive_name_tokens(name) and not _evidence_norm(named.get("city")):
+        return None, ""
+    evidence = _evidence_norm(evidence)
+
+    if _co_mentioned(name, street, evidence):
+        return SAME_SITE, (
+            f"The documents give {name!r} beside {street!r}: a name and its address."
+        )
+
+    addr_city = _address_city(addressed)
+    named_city = _evidence_norm(named.get("city"))
+    if named_city and addr_city and named_city != addr_city:
+        return None, ""
+    city = named_city or (addr_city if addr_city and _contains_phrase(name, addr_city) else "")
+    if city and addr_city == city:
+        same_city = [
+            r for r in (rows or [])
+            if isinstance(r, dict) and _row_street(r)
+            and _address_city(r) == city
+            and _row_street(r).casefold() != street.casefold()
+        ]
+        if not same_city:
+            return SAME_SITE, (
+                f"{name!r} is in {city.title()}, and {street!r} is the only address "
+                f"this deal has there."
+            )
+        return UNCERTAIN, (
+            f"{name!r} is in {city.title()}, where this deal has more than one address."
+        )
+    return UNCERTAIN, (
+        f"{name!r} is a name and {street!r} an address; nothing on the deal ties "
+        f"or separates them."
+    )
+
+
+def _named_place_pairs(rows: list[dict[str, Any]], evidence: str = "") -> list[dict[str, Any]]:
+    """Name/address pairs the deal context TIES -- proposed with their verdict.
+
+    Only the tied ones: a deal with five names and five addresses has
+    twenty-five "uncertain" pairs, and asking all of them trains people to click
+    through.
+    """
+    clean = [r for r in rows if isinstance(r, dict) and r.get("site")]
+    out: list[dict[str, Any]] = []
+    for i, a in enumerate(clean):
+        for b in clean[i + 1:]:
+            verdict, why = named_place_address_verdict(a, b, clean, evidence)
+            if verdict != SAME_SITE:
+                continue
+            named, addressed = (b, a) if _row_street(a) else (a, b)
+            out.append({
+                "unlocated": str(named.get("site") or ""),
+                "located": str(addressed.get("site") or ""),
+                "exemplar": pair_exemplar(named, addressed),
+                "shared_token": "",
+                "verdict": verdict,
+                "why": why,
+            })
+    return out

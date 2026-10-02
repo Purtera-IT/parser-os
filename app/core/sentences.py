@@ -226,15 +226,71 @@ def split_trigger_clause(sentence: str) -> list[str]:
     schedule the install." is a dependency AND the commitment it gates -- two
     statements (010003). "We will install once the TVs arrive" has no comma
     and no second subject, and stays whole.
+
+    Each side is then split at its compound-clause boundaries
+    (:func:`split_compound_clauses`), so the callers -- the email and note
+    splitters -- get one piece per statement from one call.
     """
     t = str(sentence or "").strip()
     m = _TRIGGER_SPLICE_RE.search(t)
     if not m:
-        return [t] if t else []
+        return split_compound_clauses(t) if t else []
     head, tail = t[: m.start()].strip(), t[m.end():].strip()
     if len(head.split()) < 4 or len(tail.split()) < 4 or not _HEAD_CLAUSE_RE.match(head):
+        return split_compound_clauses(t)
+    return [*split_compound_clauses(head), *split_compound_clauses(tail[:1].upper() + tail[1:])]
+
+
+#: Where one sentence joins two statements that each stand on their own:
+#:
+#:   ", so I ..."      -- a fact, then what the writer does about it
+#:   "; it ..."        -- two clauses a semicolon holds side by side
+#:   " and I also ..." -- a fact, then a separate undertaking
+#:
+#: Each boundary requires a PRONOUN SUBJECT right after it, so the right-hand
+#: side is a clause with its own subject. That is what keeps lists ("Rack A;
+#: Rack B; the IDF"), addresses and "cats and dogs" whole.
+_COMPOUND_BOUNDARY_RE = re.compile(
+    r",\s+(?=so\s+(?:i|we|you|they|he|she|it)\s+\w)"
+    r"|;\s+(?=(?:i|we|you|they|he|she|it)(?:['’]\w+)?\s+\w)"
+    r"|,?\s+and\s+(?=(?:i|we)\s+also\s+\w)",
+    re.I,
+)
+_COMPOUND_MIN_WORDS = 4
+
+
+def split_compound_clauses(sentence: str) -> list[str]:
+    """One sentence holding several statements, as one piece per statement.
+
+    Live 010003: "But we are waiting for tv to arrive at their office (it is
+    with the shipping carrier now), so I also need to keep my eye on the
+    delivery status." is the delivery fact AND the writer's own note that they
+    are watching it -- two statements, and as one atom the dependency was
+    typed by the remark. Split at ", so <subject>", "; <subject>" and
+    " and I also"; each piece is the source text verbatim (the connector "so"
+    stays on its clause), so every piece is still findable in the document.
+
+    Conservative: a boundary inside parentheses never splits, and both sides
+    must hold at least four words. Anything else returns ``[sentence]``.
+    """
+    t = str(sentence or "").strip()
+    if not t:
+        return []
+    pieces: list[str] = []
+    start = 0
+    for m in _COMPOUND_BOUNDARY_RE.finditer(t):
+        before = t[: m.start()]
+        if before.count("(") != before.count(")"):
+            continue  # inside a parenthetical aside
+        head, tail = t[start: m.start()], t[m.end():]
+        if len(head.split()) < _COMPOUND_MIN_WORDS or len(tail.split()) < _COMPOUND_MIN_WORDS:
+            continue
+        pieces.append(head.strip().rstrip(",;").strip())
+        start = m.end()
+    if not pieces:
         return [t]
-    return [head, tail[:1].upper() + tail[1:]]
+    pieces.append(t[start:].strip())
+    return pieces
 
 
 #: A ", so <subject>" clause boundary inside one sentence.
