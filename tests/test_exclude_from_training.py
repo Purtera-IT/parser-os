@@ -63,3 +63,54 @@ def test_unmarked_slight_tier_still_trains():
     lb = _label("lbl_s", "A slight but real line of scope", weight_tier="slight")
     rows = rows_for_deal(_doc(lb))
     assert "A slight but real line of scope" in _texts(rows)
+
+
+# --- train_for: the quote parser and the delivery parser (Atlas, runbook) ---
+
+from app.learning.human_labels import DELIVERY_PARSER, QUOTE_PARSER, train_for  # noqa: E402
+
+
+def test_train_for_reads_list_string_or_column():
+    assert train_for({"reads_set": {"train_for": ["quote_parser", "delivery_parser"]}}) == {
+        QUOTE_PARSER, DELIVERY_PARSER}
+    assert train_for({"reads_set": {"train_for": "delivery_parser"}}) == {DELIVERY_PARSER}
+    assert train_for({"train_for": "quote_parser, delivery_parser"}) == {QUOTE_PARSER, DELIVERY_PARSER}
+    assert train_for({"reads_set": {}}) is None
+
+
+def test_old_deal_kit_tagged_for_delivery_reaches_only_the_delivery_export():
+    kit = _label("lbl_kit", "Deal Kit: 4 techs for 3 days at 2 sites",
+                 note="EXCLUDE_FROM_TRAINING: old manual Deal Kit",
+                 reads_set={"train_for": ["delivery_parser"]})
+    quote = _texts(rows_for_deal(_doc(KEEP, kit)))
+    assert "4 techs" not in quote and "30.43%" in quote
+    delivery = _texts(rows_for_deal(_doc(KEEP, kit), parser=DELIVERY_PARSER))
+    assert "4 techs" in delivery
+    assert "30.43%" not in delivery  # untagged rows stay quote-only
+
+
+def test_train_for_without_quote_parser_leaves_quote_training():
+    only = _label("lbl_only", "SOW clause: crew of two on site", reads_set={"train_for": "delivery_parser"})
+    both = _label("lbl_both", "SOW clause: work starts June 9",
+                  reads_set={"train_for": ["quote_parser", "delivery_parser"]})
+    quote = _texts(rows_for_deal(_doc(only, both)))
+    assert "crew of two" not in quote and "June 9" in quote
+    delivery = _texts(rows_for_deal(_doc(only, both), parser=DELIVERY_PARSER))
+    assert "crew of two" in delivery and "June 9" in delivery
+
+
+def test_delivery_export_is_facts_only():
+    tag = {"train_for": ["delivery_parser"]}
+    fact = _label("lbl_fact", "Install 12 displays in the lobby", reads_set=tag)
+    reject = {**_label("lbl_rej", "Thanks so much, talk soon", reads_set=tag), "label_type": "_keep"}
+    chat = {**_label("lbl_chat", "Hope you had a good weekend", reads_set=tag), "label_type": "small_talk"}
+    answered = {**_label("lbl_ans", "Yes, the lift is available", reads_set=tag), "label_type": "answered_question"}
+    trigger = _label("lbl_trig", "Once the PO lands we schedule the crew",
+                     reads_set={**tag, "trigger_event": "po_received"})
+    link = {"labeler": PERSON, "relation": "context", "from_key": "lbl_fact", "to_key": "lbl_chat",
+            "from_text": "Install 12 displays in the lobby", "to_text": "Hope you had a good weekend"}
+    rows = rows_for_deal(_doc(fact, reject, chat, answered, trigger, links=[link]), parser=DELIVERY_PARSER)
+    text = _texts(rows)
+    assert "12 displays" in text
+    for gone in ("Thanks so much", "good weekend", "lift is available", "PO lands"):
+        assert gone not in text, gone

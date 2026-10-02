@@ -21,7 +21,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.learning.human_labels import docs_from_gold_export, write_db  # noqa: E402
+from app.learning.human_labels import (  # noqa: E402
+    QUOTE_PARSER, TRAIN_TARGETS, docs_from_gold_export, write_db,
+)
 
 PREFIX = "_labeling/labels/"
 
@@ -52,14 +54,18 @@ def main() -> int:
     ap.add_argument("--dir", type=Path)
     ap.add_argument("--gold-export", type=Path, action="append", default=[],
                     help="also fold in an offline zip-labeler gold_labels*.json (repeatable)")
-    ap.add_argument("--out", type=Path, default=Path("_training_human.db"))
+    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--parser", choices=TRAIN_TARGETS, default=QUOTE_PARSER,
+                    help="which parser's rows to export (delivery_parser: facts tagged train_for it)")
     ap.add_argument("--container", default="orbitbrief-artifacts")
     ap.add_argument("--account", default="purpulsedevstg01")
     a = ap.parse_args()
     docs = list(_dir_docs(a.dir) if a.dir else _blob_docs(a.container, a.account))
     for p in a.gold_export:
         docs.extend(docs_from_gold_export(json.load(io.open(p, encoding="utf-8")), labeler=p.stem))
-    rep = write_db(docs, a.out)
+    if a.out is None:
+        a.out = Path("_training_human.db" if a.parser == QUOTE_PARSER else f"_training_{a.parser}.db")
+    rep = write_db(docs, a.out, a.parser)
     print(f"deals={rep.deals} labels={rep.labels} rows={rep.rows} "
           f"deal_answers={rep.deal_answers} -> {a.out}")
     for why, n in sorted(rep.skipped.items(), key=lambda kv: -kv[1]):

@@ -156,15 +156,40 @@ def _with_one_deal_summary(labels: list[dict[str, Any]]) -> list[dict[str, Any]]
     return out
 
 
+#: Which parser a label teaches. The quote parser (every head trained today)
+#: reads a deal before the quote; the delivery parser (Atlas, runbook) is
+#: triggered after it and reads our own SOW and Deal Kit plus what came after.
+#: A labeler sets ``reads_set.train_for`` (a list, or a comma string) on a row;
+#: unset means the quote parser only, which is what every older row meant.
+QUOTE_PARSER = "quote_parser"
+DELIVERY_PARSER = "delivery_parser"
+TRAIN_TARGETS = (QUOTE_PARSER, DELIVERY_PARSER)
+
 #: A labeler marks a row "do not learn from this" -- e.g. old hand-built Deal
-#: Kit lines no parser should be taught to produce or to drop. Rejecting them
-#: would teach the heads to drop real Deal Kit facts, so they are left out of
-#: training entirely. Labelers reached for whichever field was at hand; all of
-#: these mean the same thing.
+#: Kit lines the quote parser should not be taught to produce or to drop.
+#: Rejecting them would teach the heads to drop real Deal Kit facts, so they
+#: are left out of quote-parser training. Labelers reached for whichever field
+#: was at hand; all of these mean the same thing. They say nothing about the
+#: delivery parser: a row reaches it only by naming it in ``train_for``.
 EXCLUDE_NOTE_PREFIX = "EXCLUDE_FROM_TRAINING"
 
 
-def is_excluded_from_training(row: dict[str, Any]) -> bool:
+def train_for(row: dict[str, Any]) -> set[str] | None:
+    """The parsers a row names in ``reads_set.train_for`` (or a ``train_for``
+    column); None when it names none."""
+    reads = row.get("reads_set")
+    raw = reads.get("train_for") if isinstance(reads, dict) else None
+    if raw in (None, "", []):
+        raw = row.get("train_for")
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, (list, tuple, set)):
+        return None
+    out = {str(x).strip().lower() for x in raw if str(x).strip()}
+    return out or None
+
+
+def _marked_excluded(row: dict[str, Any]) -> bool:
     note = str(row.get("note") or "").lstrip().upper()
     if note.startswith(EXCLUDE_NOTE_PREFIX):
         return True
@@ -178,43 +203,82 @@ def is_excluded_from_training(row: dict[str, Any]) -> bool:
     return False
 
 
-def _without_excluded(doc: dict[str, Any], report: IngestReport) -> dict[str, Any]:
-    """The deal file minus excluded labels, and minus every link or judgment
-    that touches an excluded atom (by label key or atom id) or is itself
-    marked -- so an older link drawn to that atom need not be deleted."""
+def is_excluded_from_training(row: dict[str, Any], parser: str = QUOTE_PARSER) -> bool:
+    named = train_for(row)
+    if parser == QUOTE_PARSER:
+        return _marked_excluded(row) or (named is not None and QUOTE_PARSER not in named)
+    return named is None or parser not in named
+
+
+#: Only facts flow downstream. Rejects, chatter and answered or internal
+#: questions are training signal for the quote parser, not delivery facts.
+_NOT_FACT_TYPES = frozenset({KEEP, "small_talk", "answered_question", "internal_question"})
+
+
+def is_delivery_fact(row: dict[str, Any]) -> bool:
+    fine = str(row.get("label_type") or "").strip()
+    if not fine or fine in _NOT_FACT_TYPES:
+        return False
+    rejected = str(row.get("rejected") or "").strip().lower()
+    if rejected and rejected not in ("false", "f", "0", "no"):
+        return False
+    reads = row.get("reads_set")
+    return not (isinstance(reads, dict) and reads.get("trigger_event"))
+
+
+def _without_excluded(doc: dict[str, Any], report: IngestReport,
+                      parser: str = QUOTE_PARSER) -> dict[str, Any]:
+    """The deal file minus labels excluded for ``parser``, and minus every
+    link or judgment that touches an excluded atom (by label key or atom id)
+    or is itself marked -- so an older link drawn to that atom need not be
+    deleted. For the delivery parser, links and judgments are kept only
+    between atoms it keeps."""
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
-    gone = [lb for lb in labels if is_excluded_from_training(lb)]
-    if not gone and not any(
-        isinstance(x, dict) and is_excluded_from_training(x)
+    if parser == QUOTE_PARSER:
+        gone = [lb for lb in labels if is_excluded_from_training(lb, parser)]
+    else:
+        gone = [lb for lb in labels
+                if is_excluded_from_training(lb, parser) or not is_delivery_fact(lb)]
+    if parser == QUOTE_PARSER and not gone and not any(
+        isinstance(x, dict) and _marked_excluded(x)
         for x in (doc.get("links") or []) + (doc.get("judgments") or [])
     ):
         return doc
     keys = {str(v) for lb in gone for v in (lb.get("label_key"), lb.get("atom_id")) if v}
+    kept_keys = {str(v) for lb in labels if lb not in gone
+                 for v in (lb.get("label_key"), lb.get("atom_id")) if v}
+    why = "excluded from training" if parser == QUOTE_PARSER else f"not a {parser} fact"
     for _ in gone:
-        report.skip("excluded from training")
+        report.skip(why)
+
+    def refs(x: dict[str, Any]) -> list[str]:
+        return [str(r) for r in (x.get("from_key"), x.get("from_atom_id"), x.get("to_key"),
+                                 x.get("to_atom_id"), x.get("target_key"), x.get("label_key"),
+                                 x.get("atom_id")) if r]
 
     def touches(x: dict[str, Any]) -> bool:
-        refs = (x.get("from_key"), x.get("from_atom_id"), x.get("to_key"), x.get("to_atom_id"),
-                x.get("target_key"), x.get("label_key"), x.get("atom_id"))
-        return is_excluded_from_training(x) or any(str(r) in keys for r in refs if r)
+        if parser == QUOTE_PARSER:
+            return _marked_excluded(x) or any(r in keys for r in refs(x))
+        return not any(r in kept_keys for r in refs(x)) or any(r in keys for r in refs(x))
 
     out = {**doc, "labels": [lb for lb in labels if lb not in gone]}
     for field in ("links", "judgments"):
         kept = []
         for x in doc.get(field) or []:
             if isinstance(x, dict) and touches(x):
-                report.skip(f"{field[:-1]} touches an atom excluded from training")
+                report.skip(f"{field[:-1]} touches an atom {why}")
                 continue
             kept.append(x)
         out[field] = kept
     return out
 
 
-def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> list[dict[str, Any]]:
+def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
+                  parser: str = QUOTE_PARSER) -> list[dict[str, Any]]:
     from app.core.training_log import assign_split
 
     report = report if report is not None else IngestReport()
-    doc = _without_excluded(doc, report)
+    doc = _without_excluded(doc, report, parser)
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
     labels = _with_one_deal_summary(labels)
@@ -298,7 +362,8 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None) -> li
     out.extend(_judgment_rows(doc, deal_id, split, report))
     out.extend(_question_rows(doc, labels, deal_id, split, report))
     out.extend(_link_rows(doc, deal_id, split, report))
-    out.extend(deal_rationale_rows(doc, deal_id, split))
+    if parser == QUOTE_PARSER:
+        out.extend(deal_rationale_rows(doc, deal_id, split))
     report.rows += len(out)
     return out
 
@@ -954,8 +1019,9 @@ def _site_count(v: Any) -> int | None:
     return None
 
 
-def write_db(docs: Iterable[dict[str, Any]], target: Path) -> IngestReport:
-    """Replace ``target``'s tables with the rows for ``docs``. Re-ingest is a rebuild."""
+def write_db(docs: Iterable[dict[str, Any]], target: Path,
+             parser: str = QUOTE_PARSER) -> IngestReport:
+    """Replace ``target``'s tables with ``parser``'s rows for ``docs``. Re-ingest is a rebuild."""
     report = IngestReport()
     conn = sqlite3.connect(target)
     try:
@@ -975,9 +1041,9 @@ def write_db(docs: Iterable[dict[str, Any]], target: Path) -> IngestReport:
         )
         for doc in docs:
             report.deals += 1
-            rows = rows_for_deal(doc, report)
+            rows = rows_for_deal(doc, report, parser)
             conn.executemany(insert, [tuple(r.get(c) for c in _COLUMNS) for r in rows])
-            for ans in doc.get("deal_answers") or []:
+            for ans in (doc.get("deal_answers") or []) if parser == QUOTE_PARSER else []:
                 if not isinstance(ans, dict):
                     continue
                 conn.execute(
