@@ -63,7 +63,7 @@ def test_stamps_flag_and_marker_on_dropped_atom():
     dropped = capture_suppressed([a, b], [a], stage="semantic_dedup", reason="dup of a")
     (only,) = dropped
     assert f"{SUPPRESSION_FLAG_PREFIX}semantic_dedup" in only.review_flags
-    assert only.value["_suppression"] == {"stage": "semantic_dedup", "reason": "dup of a"}
+    assert only.value["_suppression"] == {"stage": "semantic_dedup", "reason": "dup of a", "kind": "fold"}
 
 
 def test_does_not_touch_kept_atoms():

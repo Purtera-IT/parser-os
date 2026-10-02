@@ -28,6 +28,7 @@ from typing import Any
 
 from app.core.ids import stable_id
 from app.core.schemas import EvidenceAtom
+from app.core.suppression_ledger import note_folded_into
 
 _GIST_MAX = 160
 
@@ -661,6 +662,9 @@ def dedup_quoted_history(
     # 1) Per-thread set of AUTHORED content keys (the originals we must keep and
     # that make a quoted echo redundant).
     authored_keys: dict[str, set[str]] = {}
+    # The atom each key, header or message names: the survivor a dropped
+    # echo is folded into.
+    survivor_of: dict[tuple, EvidenceAtom] = {}
     for atom in atoms:
         et = _thread_of(atom)
         if et is None or _is_quoted(atom):
@@ -668,6 +672,7 @@ def dedup_quoted_history(
         key = _norm_key(atom)
         if len(key) >= _MIN_DEDUP_LEN:
             authored_keys.setdefault(et["thread_id"], set()).add(key)
+            survivor_of.setdefault(("k", et["thread_id"], key), atom)
 
     # 1b) The messages that exist in the thread as their OWN email, by sender
     # and the minute they were sent. A quoted "From: X | Sent: Y" routing
@@ -683,6 +688,7 @@ def dedup_quoted_history(
         addr = _address(str(v.get("from") or ""))
         for stamp in _minute_stamps_around(str(v.get("date") or "")) if addr else ():
             originals.setdefault(et["thread_id"], set()).add((addr, stamp))
+            survivor_of.setdefault(("h", (addr, stamp)), atom)
 
     # 1c) The same, deal-wide, keyed by WHO wrote the line and WHEN. A reply
     # filed under another thread (a new subject, no In-Reply-To) still quotes
@@ -699,14 +705,21 @@ def dedup_quoted_history(
         if ident is not None:
             for stamp in ident[2]:
                 authored_by.setdefault(key, set()).add((ident[1], stamp))
+                survivor_of.setdefault(("m", key, ident[1], stamp), atom)
     all_originals: set[tuple[str, str]] = set().union(*originals.values()) if originals else set()
 
-    def _quotes_a_held_message(atom: EvidenceAtom, key: str) -> bool:
+    def _held_message_line(atom: EvidenceAtom, key: str) -> EvidenceAtom | None:
+        """The held message's own line this quoted atom repeats, if any."""
         who = authored_by.get(key)
         if not who:
-            return False
+            return None
         ident = _message_identity(atom)
-        return ident is not None and any((ident[1], st) in who for st in ident[2])
+        if ident is None:
+            return None
+        for st in ident[2]:
+            if (ident[1], st) in who:
+                return survivor_of.get(("m", key, ident[1], st))
+        return None
 
     # 2) Walk atoms in thread order; drop a quoted atom whose key matches an
     # authored original OR an earlier-kept quoted copy in the same thread.
@@ -738,9 +751,11 @@ def dedup_quoted_history(
             key = (_address(str(v.get("sender") or "")), _minute_stamp(str(v.get("sent_at") or "")))
             if key[0] and key[1] and (key in originals.get(tid, ()) or key in seen_headers.get(tid, ())
                                       or key in all_originals):
+                note_folded_into(atom, survivor_of.get(("h", key)) or survivor_of.get(("sh", tid, key)))
                 dropped.append(atom)
                 continue
             seen_headers.setdefault(tid, set()).add(key)
+            survivor_of.setdefault(("sh", tid, key), atom)
             kept.append(atom)
             continue
         if et is None or not _is_quoted(atom):
@@ -751,16 +766,20 @@ def dedup_quoted_history(
             kept.append(atom)
             continue
         tid = et["thread_id"]
-        if key in authored_keys.get(tid, ()) or _quotes_a_held_message(atom, key):
+        held = None if key in authored_keys.get(tid, ()) else _held_message_line(atom, key)
+        if key in authored_keys.get(tid, ()) or held is not None:
             # echo of an authored original (in this thread, or the same
             # author's message held as a file under another thread)
+            note_folded_into(atom, survivor_of.get(("k", tid, key)) or held)
             dropped.append(atom)
             continue
         seen = seen_quoted.setdefault(tid, set())
         if key in seen:  # duplicate quoted copy across replies
+            note_folded_into(atom, survivor_of.get(("q", tid, key)))
             dropped.append(atom)
             continue
         seen.add(key)
+        survivor_of.setdefault(("q", tid, key), atom)
         kept.append(atom)
 
     gone = {id(a) for a in dropped}
@@ -831,6 +850,8 @@ def dedup_quoted_chatter(
         return _norm_key(atom)
 
     authored: set[tuple[str, str, str, str]] = set()
+    # The atom each key names: the survivor a dropped copy is folded into.
+    survivor_of: dict[tuple, EvidenceAtom] = {}
     for atom in list(context) + list(chatter):
         v = atom.value if isinstance(atom.value, dict) else {}
         if v.get("quoted"):
@@ -848,6 +869,7 @@ def dedup_quoted_chatter(
         for st in stamps:
             for w in who:
                 authored.add((tid, w, st, k))
+                survivor_of.setdefault(("a", tid, w, st, k), atom)
 
     # Signature chrome -- a name, a title, a phone, a separator rule -- is
     # the same line in every message its author signs, so a quoted copy
@@ -865,6 +887,7 @@ def dedup_quoted_chatter(
         k = _key(atom)
         if k:
             authored_chrome.add((_chrome_scope(atom), k))
+            survivor_of.setdefault(("c", _chrome_scope(atom), k), atom)
     seen_chrome: set[tuple[str, str]] = set()
 
     # The messages the deal holds as their OWN email, by thread, sender and
@@ -881,6 +904,7 @@ def dedup_quoted_chatter(
         addr = _address(str(v.get("from") or ""))
         for st in _minute_stamps_around(str(v.get("date") or "")) if addr else ():
             originals.add((str(et["thread_id"]), addr, st))
+            survivor_of.setdefault(("h", str(et["thread_id"]), addr, st), atom)
 
     seen: set[tuple[str, str, str, str]] = set()
     kept: list[EvidenceAtom] = []
@@ -890,16 +914,20 @@ def dedup_quoted_chatter(
         if v.get("quoted") and str(v.get("reason") or "") == "quote_attribution":
             ident = _message_identity(atom)
             if ident is not None and any((ident[0], ident[1], st) in originals for st in ident[2]):
+                note_folded_into(atom, next((survivor_of[("h", ident[0], ident[1], st)] for st in ident[2]
+                                             if ("h", ident[0], ident[1], st) in survivor_of), None))
                 dropped.append(atom)
                 continue
         if v.get("quoted") and str(v.get("reason") or "") in _SIGNATURE_CHROME_REASONS:
             k = _key(atom)
             ck = (_chrome_scope(atom), k)
             if k and (ck in authored_chrome or ck in seen_chrome):
+                note_folded_into(atom, survivor_of.get(("c",) + ck) or survivor_of.get(("sc",) + ck))
                 dropped.append(atom)
                 continue
             if k:
                 seen_chrome.add(ck)
+                survivor_of.setdefault(("sc",) + ck, atom)
             kept.append(atom)
             continue
         ident = _message_identity(atom) if v.get("quoted") else None
@@ -911,9 +939,11 @@ def dedup_quoted_chatter(
         st = next(iter(stamps))
         sig = (tid, addr, st, k)
         if sig in authored or sig in seen:
+            note_folded_into(atom, survivor_of.get(("a",) + sig) or survivor_of.get(("s",) + sig))
             dropped.append(atom)
             continue
         seen.add(sig)
+        survivor_of.setdefault(("s",) + sig, atom)
         kept.append(atom)
     return kept, dropped
 

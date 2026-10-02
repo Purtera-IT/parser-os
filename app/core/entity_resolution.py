@@ -16,6 +16,7 @@ from app.core.ids import stable_id
 from app.core.entity_extraction import is_site_boilerplate_slug
 from app.core.normalizers import normalize_entity_key, normalize_text
 from app.core.schemas import EntityRecord, EvidenceAtom, ReviewStatus
+from app.core.suppression_ledger import note_folded_into
 from app.domain import get_active_domain_pack
 from app.domain.schemas import DomainPack
 
@@ -453,6 +454,8 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             if norm_key not in seen_normalized:
                 seen_normalized[norm_key] = atom
                 unique.append(atom)
+            else:
+                note_folded_into(atom, seen_normalized[norm_key])
         # Second pass: fuzzy dedup on long prose only (≥50 chars).
         # Structured rows (physical_site, BOM, site_allocation, tasks, etc.)
         # have semantic keys and should not pay the O(n²) SequenceMatcher
@@ -486,6 +489,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         #      near-dup beyond `cap` distinct prose items is negligible).
         max_reps = max(1, int(os.environ.get("SOWSMITH_FUZZY_DEDUP_MAX_REPS", "400")))
         fuzzy_buckets: dict[tuple[str, str], list[str]] = {}
+        rep_atoms: dict[tuple[str, str], list] = {}
         for atom in progress.track(
             unique, desc=f"dedup {str(aid)[:8]}", total=len(unique), min_total=500
         ):
@@ -516,26 +520,27 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             # part. It is the fact, not the noise around it.
             bucket_key = (atype, " ".join(norm.split()[:8]), _numbers(rt))
             reps = fuzzy_buckets.setdefault(bucket_key, [])
+            owners = rep_atoms.setdefault(bucket_key, [])
             rt500 = rt[:500]
             is_dup = False
             if reps:
                 if _rf_process is not None:
                     # One C call over all reps; returns None if none clear 92.
-                    is_dup = (
-                        _rf_process.extractOne(
-                            rt500, reps, scorer=fuzz.ratio, score_cutoff=92.0
-                        )
-                        is not None
-                    )
+                    hit = _rf_process.extractOne(rt500, reps, scorer=fuzz.ratio, score_cutoff=92.0)
+                    if hit is not None:
+                        is_dup = True
+                        note_folded_into(atom, owners[hit[2]])
                 else:  # pragma: no cover - difflib fallback when rapidfuzz absent
-                    for ext in reps:
+                    for i, ext in enumerate(reps):
                         if SequenceMatcher(None, rt500, ext).ratio() > 0.92:
                             is_dup = True
+                            note_folded_into(atom, owners[i])
                             break
             if not is_dup:
                 final.append(atom)
                 if len(reps) < max_reps:
                     reps.append(rt500)
+                    owners.append(atom)
         result.extend(final)
     return result
 

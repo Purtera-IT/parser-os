@@ -328,8 +328,7 @@ def _mark_copy(d: Any, w: Any, stage: str) -> None:
             wv["also_in_documents"] = docs
 
 
-#: ``value`` key on a suppressed atom: the kept atom it was folded into.
-SURVIVOR_KEY = "_survivor"
+from app.core.suppression_ledger import SURVIVOR_KEY  # noqa: E402  (the kept atom a fold went into)
 
 
 def settle_folds(
@@ -339,6 +338,8 @@ def settle_folds(
     folds: Mapping[int, tuple[Any, Any]],
     *,
     stage: str,
+    standing: Iterable[Any] = (),
+    make_copies: bool = True,
 ) -> tuple[list[Any], list[Any], list[Any]]:
     """Every atom a dedup stage dropped either names a survivor or comes back.
 
@@ -359,15 +360,23 @@ def settle_folds(
 
     An atom the stage dropped on purpose rather than folded (a hallucinated
     site; see ``semantic_dedup.mark_dropped_not_folded``) is left alone.
+
+    ``standing`` are atoms outside ``after`` that a fold may also name (a
+    stage run over a side list -- held chatter, vision transcriptions --
+    folds onto the main list). ``make_copies=False`` keeps a fold across
+    documents suppressed, naming its survivor, instead of making a copy (a
+    quoted echo of another message is that message's line).
     Returns ``(after_with_restored, new_copies, restored)``.
     """
-    from app.core.semantic_dedup import DROPPED_NOT_FOLDED_KEY
+    from app.core.suppression_ledger import DROPPED_NOT_FOLDED_KEY
 
-    kept_ids = {id(a) for a in after}
+    after = list(after)
+    extra = [a for a in standing if a is not None]
+    kept_ids = {id(a) for a in after} | {id(a) for a in extra}
     copy_ids = {id(c) for c in copies}
-    kept_by_atom_id = {str(getattr(a, "id", "") or ""): a for a in after}
+    kept_by_atom_id = {str(getattr(a, "id", "") or ""): a for a in after + extra}
     by_text: dict[str, list[Any]] = {}
-    for a in after:
+    for a in after + extra:
         by_text.setdefault(_text_key(a), []).append(a)
 
     def _standing(atom: Any) -> Any | None:
@@ -401,7 +410,7 @@ def settle_folds(
         if w is None:
             restored.append(d)
             continue
-        if str(getattr(w, "artifact_id", "") or "") != own and not _is_quoted_mail_echo(d) \
+        if make_copies and str(getattr(w, "artifact_id", "") or "") != own and not _is_quoted_mail_echo(d) \
                 and not is_cross_doc_copy(d):
             _mark_copy(d, w, stage)
             new_copies.append(d)
@@ -415,6 +424,7 @@ def settle_folds(
     if not restored:
         return list(after), new_copies, []
     # Put each restored atom back after the nearest kept atom preceding it.
+    kept_ids = {id(a) for a in after}
     restored_ids = {id(a) for a in restored}
     follow: dict[int, list[Any]] = {}
     lead: list[Any] = []
