@@ -407,7 +407,15 @@ def build_orbitbrief_envelope(
             })
         else:
             _kept.append(_a)
-    atoms = _kept
+    # Lines a parser's admission regex refused ("Hi Trent,", "Thanks,", the
+    # name under it) are kept chatter atoms -- labeling data for the admission
+    # head, not evidence. Every section below is built WITHOUT them, so no
+    # roll-up, head, site, roster or scope summary reads one; they rejoin the
+    # atom list, in reading order, only at the very end.
+    from app.core.admission_chatter import is_admission_chatter as _is_admission_chatter
+
+    held_chatter = [a for a in _kept if _is_admission_chatter(a)]
+    atoms = [a for a in _kept if not _is_admission_chatter(a)]
     packets = list(compile_result.packets or [])
     entities = list(compile_result.entities or [])
     edges = list(compile_result.edges or [])
@@ -1124,7 +1132,41 @@ def build_orbitbrief_envelope(
     if threads:
         envelope["email_threads"] = threads
         _enrich_atom_threads(envelope.get("atoms") or [], threads)
+    if held_chatter:
+        _merge_held_chatter(envelope, held_chatter, atoms, documents, threads)
     return envelope
+
+
+def _merge_held_chatter(
+    envelope: dict[str, Any],
+    held: list[Any],
+    atoms: list[Any],
+    documents: list[dict[str, Any]],
+    threads: list[dict[str, Any]] | None,
+) -> None:
+    """Put the held chatter atoms back into ``envelope["atoms"]`` where they
+    read: same reading-order key as every other atom, nothing else moved."""
+    order = {
+        str(a.id): i for i, a in enumerate(_in_reading_order(list(atoms) + list(held), documents))
+    }
+    rows = [_compact_atom(a) for a in held]
+    if threads:
+        _enrich_atom_threads(rows, threads)
+    rows.sort(key=lambda r: order.get(str(r.get("id")), 10**9))
+    present = {str(r.get("id")) for r in envelope.get("atoms") or []}
+    rows = [r for r in rows if str(r.get("id")) not in present]
+    merged: list[dict[str, Any]] = []
+    j = 0
+    last = -1
+    for row in envelope.get("atoms") or []:
+        pos = order.get(str(row.get("id")), last)
+        while j < len(rows) and order.get(str(rows[j].get("id")), 10**9) < pos:
+            merged.append(rows[j])
+            j += 1
+        merged.append(row)
+        last = pos
+    merged.extend(rows[j:])
+    envelope["atoms"] = merged
 
 
 #: A PurTera deal number as it prefixes an artifact filename:

@@ -77,7 +77,11 @@ def compute_quality(
     pack_routing_confidence: float = 0.0,
 ) -> CompileQuality:
     """Build a :class:`CompileQuality` from a finished compile result."""
-    atoms = list(result.atoms or [])
+    # Regex-refused lines kept as chatter atoms are labeling data, not parse
+    # yield: they never move a quality number.
+    from app.core.admission_chatter import is_admission_chatter
+
+    atoms = [a for a in (result.atoms or []) if not is_admission_chatter(a)]
     entities = list(result.entities or [])
     edges = list(result.edges or [])
     packets = list(result.packets or [])
