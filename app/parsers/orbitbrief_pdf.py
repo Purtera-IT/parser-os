@@ -1255,6 +1255,8 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             continue
         is_list = prev_block.get("kind") == "bullet_list"
         target = prev_block["items"][-1] if is_list else prev_block
+        while is_list and target.get("children"):
+            target = target["children"][-1]  # the last line set is the deepest item
         ptext = (target.get("text") or "").rstrip()
         if not ptext or ptext[-1] in ".!?:":
             continue  # previous page ended a sentence cleanly — no wrap
@@ -2017,6 +2019,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         sections = _text_rich_sections(
             prose_text,
             heading_hints=_page_heading_lines(pdf_path, page_index, table_bboxes if table_blocks else []),
+            line_lefts=_page_line_lefts(pdf_path, page_index, table_bboxes if table_blocks else []),
         )
         if table_blocks:
             _place_tables_in_sections(
@@ -3605,7 +3608,14 @@ def _atoms_for_bullet(
     list_section: str | None = None,
     section_header: str | None = None,
     lead_in: list[str] | None = None,
+    parent_path: list[str] | None = None,
+    parent_lead: list[str] | None = None,
 ) -> Iterator[EvidenceAtom]:
+    # parent_path / parent_lead: what the bullets above a sub-bullet add to
+    # its locator, as the DOCX parser records a Word sub-list -- a parent that
+    # ends in ":" ("Install the display:") heads its sub-items' section_path,
+    # any other parent rides on their lead_in. Classification still reads
+    # the list's own section_path, so nesting changes no atom's type.
     text = (item.get("text") or "").strip()
     if text:
         # Strip page-band prefix that some extractors fold into bullet text.
@@ -3653,8 +3663,8 @@ def _atoms_for_bullet(
             **base_locator,
             "bullet_path": list(path_indices),
             "bullet_depth": depth,
-            "lead_in": effective_lead,
-            "section_path": section_path,
+            "lead_in": effective_lead + list(parent_lead or []),
+            "section_path": section_path + list(parent_path or []),
         }
         # A list item that states several facts is one atom per sentence, by
         # the same clause split a paragraph gets here and a Word list item gets
@@ -3694,6 +3704,12 @@ def _atoms_for_bullet(
                 locator=bullet_locator,
                 value=value,
             )
+    own = text.rstrip(":").strip()
+    child_path, child_lead = list(parent_path or []), list(parent_lead or [])
+    if own and text.endswith(":"):
+        child_path.append(own)
+    elif own:
+        child_lead.append(text)
     for child_index, child in enumerate(item.get("children", []) or []):
         yield from _atoms_for_bullet(
             item=child,
@@ -3708,6 +3724,8 @@ def _atoms_for_bullet(
             list_section=list_section,
             section_header=section_header,
             lead_in=lead_in,
+            parent_path=child_path,
+            parent_lead=child_lead,
         )
 
 
@@ -4563,6 +4581,20 @@ def _page_heading_lines(pdf_path: Path, page_index: int, bboxes: list[Any]) -> s
             return heading_lines(doc[page_index], bboxes)
     except Exception:
         return set()
+
+
+def _page_line_lefts(pdf_path: Path, page_index: int, bboxes: list[Any]) -> dict[str, tuple[float, float]]:
+    """Where each line of the page starts (``pdf/layout_text.line_lefts``);
+    empty on any failure."""
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        from app.parsers.pdf.layout_text import line_lefts
+
+        with fitz.open(str(pdf_path)) as doc:
+            return line_lefts(doc[page_index], bboxes)
+    except Exception:
+        return {}
 
 
 def _layout_prose_text(
@@ -5833,7 +5865,9 @@ def _promote_list_intros_to_subsections(sections: list[dict[str, Any]]) -> None:
 
 
 def _text_rich_sections(
-    page_text: str, heading_hints: Iterable[str] | None = None
+    page_text: str,
+    heading_hints: Iterable[str] | None = None,
+    line_lefts: dict[str, tuple[float, float]] | None = None,
 ) -> list[dict[str, Any]]:
     """Lightweight prose splitter for text-rich PDF pages.
 
@@ -5853,6 +5887,10 @@ def _text_rich_sections(
         starts a new section, prior content flushed
       * a line the page sets bold or large (``heading_hints``, see
         ``pdf/layout_text.heading_lines``) over a body → heading too
+      * where the page's geometry is known (``line_lefts``, see
+        ``pdf/layout_text.line_lefts``) a bullet indented past the one before
+        it is that bullet's sub-item, and a line set at a bullet's hanging
+        indent is the rest of that bullet
       * otherwise → paragraph line, accumulated then joined.
     """
     if not page_text or not page_text.strip():
@@ -5865,6 +5903,15 @@ def _text_rich_sections(
     current_blocks: list[dict[str, Any]] = []
     paragraph_lines: list[str] = []
     bullet_buffer: list[str] = []
+    #: Per buffered bullet: (marker x0, text x0, glyph rank), x0s None when
+    #: the page geometry does not place the line.
+    bullet_geo: list[tuple[float | None, float | None, int]] = []
+    pending_geo: tuple[float | None, float | None, int] = (None, None, 0)
+    geo_of = dict(line_lefts or {})
+
+    def _geo(text: str) -> tuple[float, float] | None:
+        return geo_of.get(re.sub(r"\s+", "", text or ""))
+
     pending_bullet = False  # saw a lone bullet glyph; next content line is its text
     # A field-report / questionnaire page (>=2 '?') stacks Q&A under short visual
     # sub-headers ("Tablet Install", "BK Audio", "POS Cabling"). Recognise those
@@ -5931,13 +5978,16 @@ def _text_rich_sections(
                 current_blocks.append({"kind": "paragraph", "text": text, "lines": run})
 
     def flush_bullets() -> None:
-        nonlocal bullet_buffer
+        nonlocal bullet_buffer, bullet_geo
         if not bullet_buffer:
             return
-        items = [{"text": x} for x in bullet_buffer if x.strip()]
+        items = _nest_bullets(
+            [(x, g) for x, g in zip(bullet_buffer, bullet_geo) if x.strip()]
+        )
         if items:
             current_blocks.append({"kind": "bullet_list", "items": items})
         bullet_buffer = []
+        bullet_geo = []
 
     def flush_section() -> None:
         nonlocal current_heading, current_blocks
@@ -6109,12 +6159,17 @@ def _text_rich_sections(
         if _BARE_BULLET_RE.match(line) or _BARE_ENUM_RE.match(line):
             flush_paragraph()
             pending_bullet = True
+            _g = _geo(line)
+            pending_geo = (_g[0] if _g else None, None, _bullet_glyph_rank(line.strip()))
             continue
 
         bullet_m = _BULLET_LINE_RE.match(line)
         if bullet_m:
             flush_paragraph()
             bullet_buffer.append(bullet_m.group(2).strip())
+            _g = _geo(line)
+            bullet_geo.append((_g[0] if _g else None, _g[1] if _g else None,
+                               _bullet_glyph_rank(bullet_m.group(1))))
             pending_bullet = False
             continue
 
@@ -6122,6 +6177,8 @@ def _text_rich_sections(
         if pending_bullet:
             flush_paragraph()
             bullet_buffer.append(line.strip())
+            _g = _geo(line)
+            bullet_geo.append((pending_geo[0], _g[0] if _g else None, pending_geo[2]))
             pending_bullet = False
             continue
 
@@ -6145,6 +6202,7 @@ def _text_rich_sections(
         if action_body:
             flush_paragraph()
             bullet_buffer.append(action_body)
+            bullet_geo.append((None, None, 0))
             pending_bullet = False
             continue
 
@@ -6196,6 +6254,7 @@ def _text_rich_sections(
             stripped[:1].islower()
             or (_prev_content is not None and _is_wrapped_tail(lines, idx, prev_index=_prev_content))
             or _ends_mid_phrase(bullet_buffer[-1])
+            or _at_hanging_indent(_geo(stripped), bullet_geo[-1])
         ):
             bullet_buffer[-1] = f"{bullet_buffer[-1]} {stripped}".strip()
             continue
@@ -6212,6 +6271,61 @@ def _text_rich_sections(
     # Drop empty sections that may have been created by trailing
     # whitespace.
     return [s for s in sections if s.get("blocks") or s.get("heading") or s.get("subsections")]
+
+
+#: Second-level list markers: Word's "o" (read as "◦"), a small square, a dash.
+_SUB_BULLET_GLYPHS = frozenset("◦o▪‣-–")
+
+
+def _bullet_glyph_rank(marker: str) -> int:
+    """1 for a second-level list marker, 0 for any other (a "•", a number)."""
+    return 1 if (marker or "").strip() in _SUB_BULLET_GLYPHS else 0
+
+
+def _bullet_is_deeper(
+    cur: tuple[float | None, float | None, int], prev: tuple[float | None, float | None, int]
+) -> bool:
+    """A bullet sits under ``prev`` when its marker starts further right; with
+    no geometry for either, when it uses a second-level glyph under a
+    first-level one."""
+    if cur[0] is not None and prev[0] is not None:
+        return cur[0] > prev[0] + 3.0
+    return cur[2] > prev[2]
+
+
+def _nest_bullets(
+    entries: list[tuple[str, tuple[float | None, float | None, int]]],
+) -> list[dict[str, Any]]:
+    """Build the list tree: each bullet goes under the nearest bullet above it
+    that it is deeper than (``_bullet_is_deeper``), else at the top level. A
+    Word list's "o" sub-bullets under "Install the display:" are that item's
+    children, and the "•" after them returns to the top (010003)."""
+    roots: list[dict[str, Any]] = []
+    stack: list[tuple[dict[str, Any], tuple[float | None, float | None, int]]] = []
+    for text, geo in entries:
+        node: dict[str, Any] = {"text": text}
+        while stack and not _bullet_is_deeper(geo, stack[-1][1]):
+            stack.pop()
+        if stack:
+            stack[-1][0].setdefault("children", []).append(node)
+        else:
+            roots.append(node)
+        stack.append((node, geo))
+    return roots
+
+
+def _at_hanging_indent(
+    line_geo: tuple[float, float] | None, bullet: tuple[float | None, float | None, int]
+) -> bool:
+    """A line that starts where a bullet's words start, right of its marker, is
+    that bullet wrapped onto its next line, whatever its first word: 010003's
+    item 8 "All parties will agree ... shipped." / "Typically, Provider
+    requires ..." (both at x 90, marker at 72) is one list item."""
+    if line_geo is None or bullet[0] is None or bullet[1] is None:
+        return False
+    if bullet[1] - bullet[0] < 4.0:
+        return False
+    return abs(line_geo[0] - bullet[1]) <= 1.5
 
 
 def _is_set_heading(stripped: str, lines: list[str], idx: int) -> bool:
