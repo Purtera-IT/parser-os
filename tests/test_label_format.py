@@ -100,7 +100,7 @@ def test_reads_in_real_use_are_registered():
              "lead_time": "2 weeks", "tech_coverage": "local", "sow_available_note": "x",
              "scope_category_note": "x", "derivation_note": "x", "sow_coverage_note": "x",
              "address_note": "x", "needed_by": ["quoting", "sow", "delivery"],
-             "address_level": "street_no_city", "location_tier": ["small_town", "rural"]}
+             "address_level": "street_no_city", "location_tier": ["major_metro", "rural"]}
     checks = _checks(_row(reads_set=reads))
     assert "unregistered_read" not in checks and "value_outside_vocab" not in checks
     for lvl in ("street_only", "name_only", "state_only", "region_only", "street_no_zip"):
@@ -136,7 +136,9 @@ def test_multi_readings_split_from_any_older_join():
     assert after("project_manager|atlas|portal") == ["project_manager", "atlas", "portal"]
     assert after("quote|sow|delivery") == ["quoting", "sow", "delivery"]
     assert after("quote, SOW and dispatch") == ["quoting", "sow", "delivery"]
-    assert after("small_town/rural", "location_tier") == ["small_town", "rural"]
+    assert after("small_town/rural", "location_tier") == "small_town/rural"
+    assert "value_outside_vocab" in _checks(_row(reads_set={"location_tier": "small_town/rural"}))
+    assert after("major_metro, rural", "location_tier") == ["major_metro", "rural"]
     mixed = "mixed: 4 major_metro, 2 rural"
     assert after(mixed, "location_tier") == mixed
     row = _row(reads_set={"needed_by": ["quoting"]})

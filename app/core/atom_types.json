@@ -1291,7 +1291,7 @@
       "key": "location_tier",
       "label": "What labor market the site is in",
       "values": "major_metro | mid_metro | small_town | rural",
-      "desc": "Geography only: whether a metro tech pool is within reach of the site. How a company prices a tier is its own policy and is not labeled here. A list: two tiers when the text cannot tell them apart (small_town and rural), or one per site on a line that covers several.",
+      "desc": "Geography only: whether a metro tech pool is within reach of the site. How a company prices a tier is its own policy and is not labeled here. A list only on a line that covers several sites, one tier per site; a single site has one tier.",
       "layer": "universal",
       "multi": true
     },

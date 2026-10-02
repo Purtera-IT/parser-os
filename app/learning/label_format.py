@@ -80,8 +80,12 @@ HOURS_ALIASES = ("hours", "loe_hours", "tech_hours")
 #: equal; a reading that differs stays where it is.
 COLUMN_READS = ("about", "supplier", "entity_keys")
 
-#: How older labels joined several values of one reading.
-_MULTI_SPLIT = re.compile(r"\s*(?:,|\||/|;|\band\b)\s*", re.I)
+#: How older labels joined several values of one reading. Prose and slashes
+#: split only needed_by ("quote, SOW and dispatch"): "small_town/rural" is one
+#: tier written with a slash, not two, so it stays whole and is flagged.
+_MULTI_SPLIT = re.compile(r"\s*[,|;]\s*")
+_PROSE_SPLIT = re.compile(r"\s*(?:,|\||/|;|\band\b)\s*", re.I)
+_PROSE_SPLIT_KEYS = frozenset({"needed_by"})
 
 #: Words that make a universal WHY company-specific (portable-labels.md,
 #: note-split cleanup rules). Checked outside quoted source text only, since a
@@ -185,7 +189,8 @@ def _split_multi(key: str, v: Any) -> list[str] | None:
     """A multi reading's items, or None when splitting would lose something:
     an item outside a closed set ("mixed: 4 major_metro ...") keeps the
     whole value as it was, for a person to rewrite."""
-    items = v if isinstance(v, list) else _MULTI_SPLIT.split(str(v))
+    split = _PROSE_SPLIT if key in _PROSE_SPLIT_KEYS else _MULTI_SPLIT
+    items = v if isinstance(v, list) else split.split(str(v))
     aliases = VALUE_ALIASES.get(key, {})
     out: list[str] = []
     for x in items:
