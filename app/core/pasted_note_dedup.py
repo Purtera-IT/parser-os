@@ -253,7 +253,14 @@ def _mail_line_date(atom: Any):
     return None
 
 
-def _note_is_the_original(note_items: list[Any], twins: list[Any]) -> bool:
+def _note_is_the_original(
+    note_items: list[Any],
+    twins: list[Any],
+    *,
+    note_doc: str = "",
+    mail_doc: str = "",
+    doc_order: dict[str, tuple] | None = None,
+) -> bool:
     """Which way a shared text runs between a note and a mail.
 
     The default is that the PM pasted the mail into the note (010289). But
@@ -264,14 +271,23 @@ def _note_is_the_original(note_items: list[Any], twins: list[Any]) -> bool:
 
     1. the mail's copy sits in its quoted/forwarded region -> the mail is the
        copy; the note keeps the text;
-    2. both are dated -> the earlier one is the original;
-    3. otherwise the mail is the original (it has a sender and a timestamp).
+    2. both DOCUMENTS are dated (the compile's document order: the note's
+       date, the email's own sent date, the manifest's authored time) -> the
+       earlier document is the original. 000132 again: the note's bullets and
+       its city list went to a June email because the lines the note matched
+       carried no date of their own, so rule 3 handed them to the mail;
+    3. both lines are dated -> the earlier one is the original;
+    4. otherwise the mail is the original (it has a sender and a timestamp).
     """
     if not twins:
         return False
     quoted = sum(1 for t in twins if _value(t).get("quoted"))
     if quoted * 2 > len(twins):
         return True
+    if doc_order and note_doc and mail_doc:
+        nk, mk = doc_order.get(note_doc), doc_order.get(mail_doc)
+        if nk is not None and mk is not None and nk[0] == 0 and mk[0] == 0 and nk[1] != mk[1]:
+            return nk[1] < mk[1]
     note_d = _note_date(note_items)
     if note_d is None:
         return False
@@ -290,8 +306,13 @@ def _contains(container: Any, contained: Any) -> bool:
     return bool(b) and b in a
 
 
-def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+def collapse_pasted_note_duplicates(
+    atoms: list[Any], *, doc_order: dict[str, tuple] | None = None,
+) -> tuple[list[Any], list[Any]]:
     """Fold a document that is a copy of another onto the original.
+
+    ``doc_order`` (``cross_doc_copies.document_order``) decides which way a
+    shared text runs when both documents are dated: the earlier one owns it.
 
     Returns ``(kept, dropped)``. Each surviving original records
     ``also_in_note``; a line the copy ADDED keeps its own document and is
@@ -345,7 +366,7 @@ def collapse_pasted_note_duplicates(atoms: list[Any]) -> tuple[list[Any], list[A
             continue
 
         twins = [t for t in best_pairs.values() if t is not None]
-        if _note_is_the_original(items, twins):
+        if _note_is_the_original(items, twins, note_doc=doc, mail_doc=best, doc_order=doc_order):
             # The mail quoted the note. The note is the source: it keeps every
             # line, and only the mail's copies that it fully contains fold
             # onto it (a mail line with words the note lacks stays).

@@ -414,8 +414,20 @@ def build_orbitbrief_envelope(
     # atom list, in reading order, only at the very end.
     from app.core.admission_chatter import is_admission_chatter as _is_admission_chatter
 
-    held_chatter = [a for a in _kept if _is_admission_chatter(a)]
-    atoms = [a for a in _kept if not _is_admission_chatter(a)]
+    # A later document's copy of a line an earlier document owns (see
+    # cross_doc_copies) is held the same way: it is listed under its own
+    # document, in reading order, and no section counts it a second time.
+    from app.core.cross_doc_copies import is_cross_doc_copy as _is_copy
+
+    def _held(a: Any) -> bool:
+        return _is_admission_chatter(a) or _is_copy(a)
+
+    held_chatter = [a for a in _kept if _held(a)]
+    atoms = [a for a in _kept if not _held(a)]
+    _copy_ids_by_artifact: dict[str, list[str]] = defaultdict(list)
+    for _a in held_chatter:
+        if _is_copy(_a):
+            _copy_ids_by_artifact[str(_a.artifact_id or "")].append(str(_a.id))
     _inherit_message_stamps(_kept, mail_files={
         fp.artifact_id for fp in (manifest.artifact_fingerprints if manifest is not None else [])
         if fp.artifact_type.value == "email"
@@ -661,6 +673,12 @@ def build_orbitbrief_envelope(
                 "parser_version": fp.parser_version,
                 "structured": structured_projection,
                 "atom_ids": sorted(a.id for a in artifact_atoms),
+                # This document's own copies of lines an earlier document owns
+                # (``structured.duplicate_of`` names the canonical atom). Kept
+                # apart from ``atom_ids`` so nothing that counts atom_ids counts
+                # a line twice.
+                **({"copy_atom_ids": sorted(_copy_ids_by_artifact[fp.artifact_id])}
+                   if _copy_ids_by_artifact.get(fp.artifact_id) else {}),
                 # A6 graceful degradation: per-file parse outcome.
                 # ``status`` is one of ok / ok_empty / skipped_no_parser
                 # / failed_parse. PM_HANDOFF reads this to surface
@@ -3509,6 +3527,11 @@ def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
     prov = getattr(atom, "decision_provenance", None)
     if prov:
         projected["decision_provenance"] = dict(prov)
+    # A later document's copy of a line an earlier document owns: listed under
+    # its own document, pointing at the canonical atom, counted nowhere.
+    _dup = atom.value.get("duplicate_of") if isinstance(atom.value, dict) else None
+    if isinstance(_dup, dict) and _dup.get("atom_id"):
+        projected["duplicate_of"] = dict(_dup)
     return projected
 
 
