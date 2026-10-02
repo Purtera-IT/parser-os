@@ -1001,6 +1001,12 @@ class HubspotNoteParser(BaseParser):
 
         raw_lines = [str(ln) for ln in (parsed.get("raw_lines") or [])]
         body_line_index = int(parsed.get("body_line_index") or 0)
+        from app.core.city_site_list import find_city_site_lists
+
+        _city_sites = {
+            " ".join(cs.text.split()).lower(): cs
+            for cs in find_city_site_lists([str(ln) for ln in (parsed.get("body_lines") or [])])
+        }
         # The statements of this note in order, so an "Update on that" line can
         # name the one it revises.
         statements: list[list[EvidenceAtom]] = []
@@ -1072,6 +1078,24 @@ class HubspotNoteParser(BaseParser):
             if is_title and _is_placeholder_note_title(prose):
                 # "Note", "Call" -- the CRM's default title with nothing under
                 # it. Genuinely empty; the header atom already records the note.
+                return
+            city_site = None if is_title else _city_sites.get(" ".join(str(prose or "").split()).lower())
+            if city_site is not None:
+                # A line of a "City, ST" list is a job site (live 000132's
+                # "Locations" list), not a sentence of scope.
+                from app.core.city_site_list import city_site_value
+
+                atoms.append(self._mint_atom(
+                    project_id=project_id, artifact_id=artifact_id, filename=filename,
+                    atom_type=AtomType.physical_site, text=city_site.text,
+                    value=city_site_value(
+                        city_site, hubspot_note_id=note_id, title=title, source="hubspot_note",
+                        author=author, author_email=author_email, author_affiliation=affiliation,
+                    ),
+                    source_ref=prose_ref, confidence=0.8, entity_keys=[city_site.entity_key],
+                    review_flags=["hubspot_note_physical_site", "city_site_list"],
+                    author_affiliation=affiliation,
+                ))
                 return
             atom_types: list[AtomType] = []
             chatter_reason: str | None = None
