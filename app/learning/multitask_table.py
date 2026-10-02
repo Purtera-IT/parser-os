@@ -107,12 +107,17 @@ DEFAULT_TASKS = (
     "decided_from",
     # What the Questions card records beside valid / invalid. From the gap
     # judgment's fields, with the atom's own readings as the fallback for a
-    # question the card never answered. `needed_by` is multi-label: one row
-    # per consumer.
-    "question:intake_gap",
-    "question:needed_by",
+    # question the card never answered. The stage is universal; whether a
+    # question was an intake gap and who needs the answer are Purtera's
+    # (COMPANY_QUESTION_TASKS).
     "question:deal_stage",
 ) + _reads_tasks()
+
+#: Questions-card heads that answer by a company's own standard: "should
+#: have been asked at quoting" is Purtera's intake standard, and the
+#: consumers (project_manager / atlas / portal) are Purtera's. `needed_by`
+#: is multi-label: one row per consumer.
+COMPANY_QUESTION_TASKS = {"purtera": ("question:intake_gap", "question:needed_by")}
 
 #: The base task list, by its name in the design: every universal task.
 BASE_TASKS = DEFAULT_TASKS
@@ -133,7 +138,8 @@ def tasks_for(profile: str = "base") -> tuple[str, ...]:
         return BASE_TASKS
     if profile not in COMPANY_PROFILES:
         raise ValueError(f"unknown profile {profile!r}; one of base, {', '.join(COMPANY_PROFILES)}")
-    return BASE_TASKS + _reads_tasks(("company",)) + (f"policy:{profile}",)
+    return (BASE_TASKS + COMPANY_QUESTION_TASKS.get(profile, ())
+            + _reads_tasks(("company",)) + (f"policy:{profile}",))
 
 #: Not backbone tasks, and deliberately so. A span is an extraction problem and
 #: a rationale is a generative one; admitting either to a classifier would put a

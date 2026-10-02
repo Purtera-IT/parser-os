@@ -343,10 +343,15 @@ def test_question_values_outside_their_sets_are_skipped_and_machines_teach_nothi
 
 
 def test_question_heads_are_backbone_tasks():
-    from app.learning.multitask_table import DEFAULT_TASKS
+    from app.learning.multitask_table import DEFAULT_TASKS, tasks_for
 
+    # The stage is universal; intake_gap and needed_by are Purtera's standard
+    # (labeling/portable-labels.md b) and train only its profile.
+    assert "question:deal_stage" in DEFAULT_TASKS
+    for f in ("intake_gap", "needed_by"):
+        assert f"question:{f}" not in DEFAULT_TASKS
     for f in ("intake_gap", "needed_by", "deal_stage"):
-        assert f"question:{f}" in DEFAULT_TASKS
+        assert f"question:{f}" in tasks_for("purtera")
 
 
 def test_answers_trains_both_ways_whichever_card_drew_it():

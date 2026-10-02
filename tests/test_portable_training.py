@@ -118,7 +118,7 @@ def test_the_base_trains_universal_readings_only():
     reads = {t.split(":", 1)[1] for t in BASE_TASKS if t.startswith("reads:")}
     assert reads == {k for k, v in LAYER.items() if v == "universal"}
     assert not [t for t in BASE_TASKS if t.startswith(("reads:co_", "policy:"))]
-    assert "reads:intake_gap" not in BASE_TASKS and "reads:needed_by" not in BASE_TASKS
+    assert not [t for t in BASE_TASKS if "intake_gap" in t or "needed_by" in t]
     assert tasks_for() == tasks_for("base") == BASE_TASKS == DEFAULT_TASKS
 
 
@@ -126,7 +126,8 @@ def test_the_purtera_profile_adds_its_layer_and_never_meta_or_staging():
     tasks = tasks_for("purtera")
     assert set(BASE_TASKS) < set(tasks)
     extra = set(tasks) - set(BASE_TASKS)
-    assert extra == {f"reads:{k}" for k, v in LAYER.items() if v == "company"} | {"policy:purtera"}
+    assert extra == ({f"reads:{k}" for k, v in LAYER.items() if v == "company"}
+                     | {"policy:purtera", "question:intake_gap", "question:needed_by"})
     for k, v in LAYER.items():
         if v in ("meta", "staging"):
             assert f"reads:{k}" not in tasks
@@ -201,3 +202,36 @@ def test_dropout_rates_and_the_domain_drop():
 def test_holdout_rows_get_no_copies():
     rows = rows_for_deal({"deal_id": "d1", "labels": [_label(purpose="eval")]}, dropout_seed=3)
     assert not [r for r in rows if "augmentation" in json.loads(r["provenance"])]
+
+
+def test_a_deal_kit_row_is_excluded_by_its_column_or_marker_without_train_for():
+    # The backfilled shape: weight_tier and consumer are columns, reads_set has
+    # no train_for, and the note ends with the company's ignore line.
+    note = ("A labor line copied from a hand-built kit for this site.\n"
+            "[purtera] ignore: old manual Deal Kit row, nothing to learn.")
+    for row in (
+        _label(label_key="kit1", weight_tier="exclude", consumer="ignore", note=note,
+               reads_set={"co_action": "ignore", "co_reason": "old_manual_deal_kit"}),
+        _label(label_key="kit2", note="EXCLUDE_FROM_TRAINING: old kit\n" + note,
+               reads_set={"co_action": "ignore"}),
+    ):
+        report = IngestReport()
+        assert rows_for_deal({"deal_id": "d1", "labels": [row]}, report) == []
+        assert report.skipped["excluded from training"] == 1
+    # Not excluded and no train_for: trains, and the ignore is the policy class.
+    rows = _rows(note=note, reads_set={"co_action": "ignore"})
+    by = {r["relation"]: r["label"] for r in rows}
+    assert by["policy:purtera"] == "ignore"
+    assert by["rationale:policy:purtera"].startswith("ignore: old manual Deal Kit row")
+
+
+def test_provenance_lines_go_through_the_same_generic_split():
+    # No special case for review provenance or a policy line that restates the
+    # WHY: before the marker is the universal argument, after it the policy.
+    note = ("RULING: a reviewer settled this line as a quoted fee basis. Accepted from claude-code "
+            "draft with edits.\n[purtera] keep: the fee basis is a quoted fee basis.")
+    why, policy = split_note(note)
+    assert why.startswith("RULING: a reviewer settled") and "Accepted from claude-code" in why
+    assert policy == "keep: the fee basis is a quoted fee basis."
+    one_line = "RULING: noise. Accepted from claude-code."
+    assert split_note(one_line) == (one_line, "")
