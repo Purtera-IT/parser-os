@@ -515,9 +515,13 @@ def _minute_stamp(raw: str) -> str:
     except Exception:
         dt = None
     if dt is None:
-        for fmt in ("%A, %B %d, %Y %I:%M %p", "%A, %B %d, %Y %H:%M", "%B %d, %Y %I:%M %p", "%m/%d/%Y %I:%M %p"):
+        # Gmail's "Mon, Jul 10, 2026 at 9:04 AM" (quote attribution).
+        _plain = re.sub(r"\s+at\s+", " ", raw).replace(" , ", ", ")
+        for fmt in ("%A, %B %d, %Y %I:%M %p", "%A, %B %d, %Y %H:%M", "%B %d, %Y %I:%M %p", "%m/%d/%Y %I:%M %p",
+                    "%a, %b %d, %Y %I:%M %p", "%a, %b %d, %Y, %I:%M %p", "%a, %b %d, %Y %H:%M",
+                    "%b %d, %Y %I:%M %p", "%m/%d/%y %I:%M %p", "%m/%d/%y, %I:%M %p", "%a, %d %b %Y %H:%M"):
             try:
-                dt = datetime.strptime(raw, fmt)
+                dt = datetime.strptime(_plain, fmt)
                 break
             except ValueError:
                 continue
@@ -633,6 +637,17 @@ def dedup_quoted_history(
     return kept, dropped
 
 
+def _name_identity(author: str) -> str:
+    """``name:patrick kelly`` for an author written with no address
+    (Outlook's ``From: Patrick Kelly``), so its quoted lines still key on
+    who wrote them."""
+    name = re.sub(r"<[^>]*>", " ", author or "")
+    name = " ".join(re.sub(r"[^a-z ]+", " ", name.lower()).split())
+    if not name or name in {"unknown", "none"} or len(name.split()) > 5:
+        return ""
+    return "name:" + name
+
+
 def _message_identity(atom: EvidenceAtom) -> tuple[str, str, set[str]] | None:
     """``(thread_id, author address, minute stamps)`` of the message a line
     belongs to, or ``None`` when the thread stamp cannot say."""
@@ -644,13 +659,27 @@ def _message_identity(atom: EvidenceAtom) -> tuple[str, str, set[str]] | None:
     quoted = bool(v.get("quoted"))
     author = str(msg.get("author") or v.get("author") or ("" if quoted else et.get("sender")) or "")
     sent = str(msg.get("sent_at") or v.get("authored_at") or ("" if quoted else et.get("date")) or "")
-    addr = _address(author)
+    addr = _address(author) or _name_identity(author)
     if not addr or not sent:
         return None
     if quoted:
         stamp = _minute_stamp(sent)
         return (str(et["thread_id"]), addr, {stamp} if stamp else set())
     return (str(et["thread_id"]), addr, _minute_stamps_around(sent))
+
+
+#: Admission-reject reasons that mark a line as signature chrome (see
+#: ``EmailParser._admission_reject_atom``): the same words in every message
+#: their author signs.
+_SIGNATURE_CHROME_REASONS = frozenset({"signature", "identity_only", "link_only", "quote_attribution"})
+
+
+def _chrome_scope(atom: EvidenceAtom) -> str:
+    v = atom.value if isinstance(atom.value, dict) else {}
+    et = v.get("email_thread")
+    if isinstance(et, dict) and et.get("thread_id"):
+        return "t:" + str(et["thread_id"])
+    return "a:" + str(getattr(atom, "artifact_id", "") or "")
 
 
 def dedup_quoted_chatter(
@@ -680,14 +709,48 @@ def dedup_quoted_chatter(
         if ident is None or not k:
             continue
         tid, addr, stamps = ident
+        msg = (v.get("email_thread") or {}).get("message") or {}
+        who = {addr}
+        _nm = _name_identity(str(msg.get("author") or v.get("author") or (v.get("email_thread") or {}).get("sender") or ""))
+        if _nm:
+            who.add(_nm)
         for st in stamps:
-            authored.add((tid, addr, st, k))
+            for w in who:
+                authored.add((tid, w, st, k))
+
+    # Signature chrome -- a name, a title, a phone, a separator rule -- is
+    # the same line in every message its author signs, so a quoted copy
+    # collapses on the thread and the words alone: kept once, on the message
+    # that authored it when the deal holds that message. Live 010003: a
+    # seller's "Patrick Kelly" / "770.769.7311" were 72 atoms each, quoted
+    # under "From: Patrick Kelly" headers with no address (and under Gmail
+    # "On ... wrote:" quotes with no author at all), which the per-message
+    # key below could never resolve.
+    authored_chrome: set[tuple[str, str]] = set()
+    for atom in list(context) + list(chatter):
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if v.get("quoted"):
+            continue
+        k = _key(atom)
+        if k:
+            authored_chrome.add((_chrome_scope(atom), k))
+    seen_chrome: set[tuple[str, str]] = set()
 
     seen: set[tuple[str, str, str, str]] = set()
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
     for atom in chatter:
         v = atom.value if isinstance(atom.value, dict) else {}
+        if v.get("quoted") and str(v.get("reason") or "") in _SIGNATURE_CHROME_REASONS:
+            k = _key(atom)
+            ck = (_chrome_scope(atom), k)
+            if k and (ck in authored_chrome or ck in seen_chrome):
+                dropped.append(atom)
+                continue
+            if k:
+                seen_chrome.add(ck)
+            kept.append(atom)
+            continue
         ident = _message_identity(atom) if v.get("quoted") else None
         k = _key(atom)
         if ident is None or not k or not ident[2]:

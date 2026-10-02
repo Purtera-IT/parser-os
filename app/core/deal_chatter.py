@@ -116,6 +116,26 @@ _DEPENDENCY_RE = re.compile(
 )
 
 
+#: The dependency cues that name a THING moving ("arrive", "delivered",
+#: "backordered", "the PO"), not the bare "waiting for" a call's
+#: "we're waiting for Bob to join" also says.
+_GOODS_DEPENDENCY_RE = re.compile(
+    r"\b(?:in transit|back-?order\w*|tracking (?:number|status)|deliver(?:y|ed|s)?|"
+    r"arriv(?:e|es|ed|al)|ship(?:s|ped|ping|ment)?|need(?:s|ed)? (?:the |a |an |)po\b|"
+    r"purchase order)\b",
+    re.I,
+)
+
+
+def states_dependency(text: str, *, goods_only: bool = False) -> bool:
+    """Does this line say what the work waits on ("waiting for the TVs to
+    arrive", "once they are delivered")? Such a line is never chatter.
+    ``goods_only`` asks for a thing moving (delivery, arrival, shipment, a
+    PO), which a call's own logistics never are."""
+    t = " ".join(str(text or "").split())
+    return bool((_GOODS_DEPENDENCY_RE if goods_only else _DEPENDENCY_RE).search(t))
+
+
 def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
     """Is this line relationship talk rather than a statement about the work?
 
@@ -209,4 +229,4 @@ def mark_chatter(atoms: list[Any]) -> int:
     return marked
 
 
-__all__ = ["is_chatter", "mark_chatter", "CHATTER_FLAG"]
+__all__ = ["is_chatter", "mark_chatter", "states_dependency", "CHATTER_FLAG"]

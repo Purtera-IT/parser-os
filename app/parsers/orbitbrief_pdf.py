@@ -2682,6 +2682,10 @@ def _mark_blocks_on_a_drawing(sections: list[dict[str, Any]]) -> None:
         _mark_blocks_on_a_drawing(section.get("subsections") or [])
 
 
+#: ``rejected_by`` of a page footer / header band kept as a chatter atom.
+PAGE_FOOTER_RULE = "page_footer"
+
+
 def _chatter_atom(
     text: str,
     rule: str,
@@ -2825,6 +2829,11 @@ def _atoms_for_block(
         # 25-107 Wireless Equipment ... Page 17 of 25").  These appear
         # once per page and bloat the atom set N-fold for an N-page PDF.
         if _looks_like_page_footer(text):
+            # Kept as boilerplate chatter, never a fact: every line of the
+            # source is an atom or a recorded suppression, and a footer
+            # read as a clause fed a cross-document "conflict" (010003).
+            yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
             return
         # P1.3 (band-prefix variant): when PDF extraction folded the
         # header/footer band into the *start* of a real paragraph,
@@ -3202,7 +3211,7 @@ def _atoms_for_block(
                         for k, v in [
                             ("site_id", site_row.site_id),
                             ("facility", site_row.facility_name),
-                            ("address", site_row.street_address),
+                            ("address", _site_row_address_text(site_row)),
                             ("mdf_idf", site_row.mdf_idf),
                             ("access", site_row.access_window),
                             ("escort", site_row.escort_owner),
@@ -3320,7 +3329,11 @@ def _atoms_for_block(
             return
         # P1.3 / P1.2 / P1.4: notes also catch page-footer text and
         # form-field templates on some layouts; same filters as paragraph.
-        if _looks_like_form_field(text) or _looks_like_page_footer(text) or _looks_like_fragment(text):
+        if _looks_like_page_footer(text):
+            yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator, block_id, project_id,
+                                artifact_id, filename, parser_version)
+            return
+        if _looks_like_form_field(text) or _looks_like_fragment(text):
             return
         atom_type, authority = _classify_text_block(text=text, section_path=section_path, kind="note")
         yield _make_atom(
@@ -3367,6 +3380,10 @@ def _atoms_for_bullet(
     # three of the four items a signed SOW says we may install per site (live
     # 010300) and a ten-character floor silently dropped them. A list item
     # needs letters or digits, not a minimum width.
+    if text and len(re.sub(r"[^0-9A-Za-z]", "", text)) >= 3 and _looks_like_page_footer(text):
+        yield _chatter_atom(text, PAGE_FOOTER_RULE, base_locator,
+                            str(base_locator.get("block_id") or ""), project_id,
+                            artifact_id, filename, parser_version)
     if (
         text
         and len(re.sub(r"[^0-9A-Za-z]", "", text)) >= 3
@@ -3724,6 +3741,12 @@ def _classify_text_block(
             section_atom = atom_type
             section_auth = auth
             break
+    # A "Note: ..." printed below an exclusions list is the page's footnote
+    # ("Note: CDW PO's are not transferrable.", 010003), not one more thing
+    # excluded: it is typed by its own words.
+    if section_atom == AtomType.exclusion and re.match(r"^\s*(?:note|nb|n\.b\.)\s*[:\-]", text or "", re.I):
+        section_atom = None
+        section_auth = None
 
     # Week 5: when the chunk is a coalesced Q+A pair (Q4. ... A4. ...),
     # the *answer* body carries the customer's substantive position, so
@@ -4181,6 +4204,21 @@ def _merge_table_extractions(
     blocks = [b for b, _ in keep_ruled] + [b for b, _ in keep_cols]
     bboxes = [x for _, x in keep_ruled] + [x for _, x in keep_cols]
     return blocks, bboxes
+
+
+def _site_row_address_text(site_row: Any) -> str | None:
+    """The row's address as the source wrote it: street, then the city /
+    state / ZIP line when the row resolved one ("40 10th Ave Fl 4, NEW YORK,
+    NY 10014"). The atom's text is its evidence; the city line read off the
+    page must be in it, not only in the value (010003)."""
+    street = str(getattr(site_row, "street_address", None) or "").strip()
+    city = str(getattr(site_row, "city", None) or "").strip()
+    state = str(getattr(site_row, "state", None) or "").strip()
+    zip_ = str(getattr(site_row, "zip", None) or "").strip()
+    tail = ", ".join(x for x in (city, " ".join(x for x in (state, zip_) if x)) if x)
+    if street and tail and tail.lower() not in street.lower():
+        return f"{street}, {tail}"
+    return street or None
 
 
 def _drop_side_by_side_box_tables(
@@ -5135,6 +5173,11 @@ def _looks_like_section_heading(stripped: str) -> bool:
         return True
     if not (stripped.isupper() and len(stripped) >= 3):
         return False
+    # "NEW YORK, NY 10014" is the city line of an address, written in caps the
+    # way a mailing label is, not a heading (010003: it became the section of
+    # every atom after it and no atom carried it).
+    if re.search(r",\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\s*$", stripped):
+        return False
     # Headings don't end with sentence punctuation.
     if stripped[-1] in ".,;":
         return False
@@ -5478,7 +5521,16 @@ def _text_rich_sections(page_text: str) -> list[dict[str, Any]]:
             for x in paragraph_lines
             if x.strip() and not _looks_like_page_footer(x.strip())
         ]
+        # ...but it is still a line of the page: its own block, which the
+        # atom emitter keeps as boilerplate chatter.
+        footers = [
+            x.strip()
+            for x in paragraph_lines
+            if x.strip() and _looks_like_page_footer(x.strip())
+        ]
         paragraph_lines = []
+        for f in footers:
+            current_blocks.append({"kind": "paragraph", "text": f, "lines": [f], "page_footer": True})
         if not kept:
             return
         # An unambiguous record-list (signature roster, "Name: decision."
@@ -5780,10 +5832,35 @@ def _is_wrapped_tail(
         return False
     if _numbered_heading(cur) or _looks_like_section_heading(cur):
         return False
+    # A line cut mid-phrase: the next line opens in lower case, or its first
+    # word completes the term the previous line ended on. "After a Change" /
+    # "Order that requires additional work is signed..." (010003) is one
+    # sentence that a layout break set apart, and "After a Change" read as a
+    # heading.
+    if _completes_cut_phrase(prev, cur):
+        return True
     full = max((len((l or "").rstrip()) for l in lines), default=0)
     if full < 40:
         return False
     return len(prev) >= fill * full
+
+
+#: Two-word terms a line break can cut in half ("Change" / "Order").
+_CUT_TERMS = frozenset({
+    ("change", "order"), ("change", "orders"), ("change", "request"), ("purchase", "order"),
+    ("purchase", "orders"), ("work", "order"), ("sales", "order"), ("service", "order"),
+    ("statement", "of"), ("bill", "of"), ("scope", "of"), ("notice", "to"), ("certificate", "of"),
+})
+
+
+def _completes_cut_phrase(prev: str, cur: str) -> bool:
+    prev_words = re.findall(r"[A-Za-z]+", prev or "")
+    cur_words = re.findall(r"[A-Za-z]+", cur or "")
+    if not prev_words or not cur_words:
+        return False
+    if (cur or "").lstrip()[:1].islower():
+        return True
+    return (prev_words[-1].lower(), cur_words[0].lower()) in _CUT_TERMS
 
 
 def _stamp_section_and_block_ids(sections: list[dict[str, Any]], page_index: int) -> None:

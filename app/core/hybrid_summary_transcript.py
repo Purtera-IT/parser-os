@@ -524,6 +524,12 @@ def classify_transcript_turn_role(text: str) -> TurnRole:
         return "filler"
     if _DEAL_SUBSTANCE_RE.search(probe):
         return "deal"
+    # "We are waiting for the TVs to arrive" is what the schedule hangs on,
+    # not call logistics (010003).
+    from app.core.deal_chatter import states_dependency
+
+    if states_dependency(probe, goods_only=True):
+        return "deal"
     if _ACK_ONLY_RE.match(probe):
         return "acknowledgment"
     # Greeting wins over soft-social when both fire — e.g. "We'll touch on

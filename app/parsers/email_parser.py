@@ -813,6 +813,32 @@ def _is_brand_chrome_ocr(text: str) -> bool:
 
 
 BLOCK_SPLIT_RE = re.compile(r"^(On .+ wrote:|-----Original Message-----)$", flags=re.IGNORECASE)
+
+#: Gmail / Apple Mail's quote attribution: "On Mon, Jul 10, 2026 at 9:04 AM
+#: Patrick Kelly <patrick@x.com> wrote:". The date runs up to the name; the
+#: name is capitalised words with no digits, and never the AM/PM of the time
+#: (live 010003: "AM Patrick Kelly" was minted as a stakeholder).
+_QUOTE_ATTRIBUTION_RE = re.compile(
+    r"^On\s+(?P<date>.+?)[,\s]+(?!(?:AM|PM|am|pm|at)\b)"
+    r"(?P<name>[A-Z][^<>,@\d()\[\]]*?)\s*"
+    r"(?:[<(\[]\s*(?:mailto:)?(?P<addr>[^<>()\[\]\s]+@[^<>()\[\]\s]+?)\s*[>)\]])?\s*wrote:\s*$"
+)
+
+
+def parse_quote_attribution(line: str) -> dict[str, str] | None:
+    """``{"name", "email", "sent_at", "sender"}`` from a Gmail-style "On <date>,
+    <name> <addr> wrote:" line (any ``>`` quote prefix ignored), or ``None``."""
+    t = " ".join(str(line or "").lstrip("> ").split())
+    m = _QUOTE_ATTRIBUTION_RE.match(t)
+    if not m:
+        return None
+    name = m.group("name").strip().strip('"').strip()
+    addr = (m.group("addr") or "").strip().lower()
+    if not name or len(name.split()) > 5:
+        return None
+    sent_at = re.sub(r"\s+at\s+", " ", m.group("date").strip().rstrip(","))
+    return {"name": name, "email": addr, "sent_at": sent_at,
+            "sender": f"{name} <{addr}>" if addr else name}
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\s?-\s?\d{1,2}(?::\d{2})?\s?(?:am|pm)\b", re.I)
 
 EXCLUSION_PATTERNS = [
@@ -1582,7 +1608,7 @@ def _expand_lines_to_sentences(
     line number is the ORIGINAL one for every piece: splitting changes what a
     single atom covers, never where it came from.
     """
-    from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences
+    from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences, split_trigger_clause
 
     out: list[tuple[int, int, str]] = []
     for line_idx, line in enumerate(lines):
@@ -1613,6 +1639,15 @@ def _expand_lines_to_sentences(
         # one period and two sentences, and counted as one line it was typed
         # as the question and the work in it was never a task.
         if not stripped or "|" in stripped or len(_SENTENCE_END_RE.findall(stripped)) < 2:
+            # One sentence -- unless it is a dependency spliced onto the
+            # commitment it gates ("..., once they are delivered we will
+            # schedule the install.").
+            _parts = split_trigger_clause(stripped.lstrip("> ")) if stripped and "|" not in stripped else []
+            if len(_parts) > 1:
+                prefix = line[: len(line) - len(line.lstrip("> "))]
+                for seq, piece in enumerate(_parts):
+                    out.append((line_num, seq, prefix + piece))
+                continue
             out.append((line_num, 0, line))
             continue
         # The quote marker is the line's, not the first sentence's: split the
@@ -1643,8 +1678,11 @@ def _expand_lines_to_sentences(
         # nothing downstream can order them: the envelope's reading-order sort
         # falls back to the atom id, and live 010288 showed one paragraph's
         # three sentences back to front.
-        for seq, piece in enumerate(pieces):
-            out.append((line_num, seq, prefix + piece))
+        seq = 0
+        for piece in pieces:
+            for part in split_trigger_clause(piece) or [piece]:
+                out.append((line_num, seq, prefix + part))
+                seq += 1
     return out
 
 
@@ -1879,6 +1917,51 @@ def _stakeholder_keys(slug: str) -> list[str]:
         pass
     return [f"stakeholder:{slug}"]
 
+
+
+_ANY_ADDR_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_HEADER_FROM_RE = re.compile(r"^\s*(?:from|sender|reply-to)\s*:\s*(.+)$", re.I)
+
+
+def _names_automated_sender(line: str) -> bool:
+    """Does this body line carry an automated sender: a robot's address
+    anywhere in it, or a header-shaped ``From: Adobe Sign`` line?"""
+    from app.core.automated_senders import is_automated_address, is_automated_sender
+
+    if any(is_automated_address(m.group(0)) for m in _ANY_ADDR_RE.finditer(line or "")):
+        return True
+    m = _HEADER_FROM_RE.match(line or "")
+    return bool(m and is_automated_sender(m.group(1)))
+
+
+def _has_content_before(lines: list[Any], idx: int) -> bool:
+    """Is there a line of the message's own content above ``lines[idx]``?
+
+    Greetings, header-shaped lines, separators, names and contact chrome do
+    not count: a sign-off with nothing but those above it is an opener.
+    """
+    for raw in list(lines)[: max(0, idx)]:
+        t = _BULLET_PREFIX_RE.sub("", str(raw or "").lstrip("> ").strip()).strip()
+        if not t or not re.search(r"[A-Za-z]{2}", t):
+            continue
+        if _is_greeting_line(t) or _PSEUDO_HEADER_RE.match(t) or _SIGNOFF_RE.match(t):
+            continue
+        if BLOCK_SPLIT_RE.match(t) or _is_identity_only_line(t):
+            continue
+        return True
+    return False
+
+
+def _has_sentence_after(lines: list[Any], idx: int) -> bool:
+    """Does a full sentence (five words or more, ending . ! or ?) follow
+    ``lines[idx]`` in the message? A signature card never has one."""
+    for raw in list(lines)[idx + 1:]:
+        t = _BULLET_PREFIX_RE.sub("", str(raw or "").lstrip("> ").strip()).strip()
+        if BLOCK_SPLIT_RE.match(t):
+            return False
+        if len(t.split()) >= 5 and re.search(r"[.!?]$", t) and not _is_identity_only_line(t):
+            return True
+    return False
 
 
 def _without_automated_senders(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
@@ -2299,6 +2382,13 @@ class EmailParser(BaseParser):
         }
         out: list[EvidenceAtom] = []
         seen: set[str] = set()
+        # A quote attribution ("On ... 9:04 AM Patrick Kelly <x> wrote:") is
+        # chrome: its author is credited on the quoted message, never minted
+        # as a stakeholder from the line (live 010003: "AM Sarah Halpern").
+        text = "\n".join(
+            ln for ln in str(text or "").splitlines()
+            if not (BLOCK_SPLIT_RE.match(ln.lstrip("> ").strip()) and " wrote:" in ln.lower())
+        )
         for m in self._NAMED_ADDRESS_RE.finditer(text or ""):
             name = re.sub(r"\s+", " ", m.group(1)).strip().strip('"')
             addr = m.group(2).strip().lower().rstrip(".,;")
@@ -2828,7 +2918,13 @@ class EmailParser(BaseParser):
         current: list[tuple[int, str]] = []
         for idx, line in enumerate(lines, start=1):
             stripped = line.strip()
-            is_new_message_boundary = bool(BLOCK_SPLIT_RE.match(stripped))
+            # A Gmail reply nests each older message one ">" deeper, and its
+            # "> > On ... wrote:" opens that message just as the bare line does
+            # (live 010003: the whole nested history was one block, so every
+            # quoted "Hi Sarah," belonged to the newest quote and none collapsed).
+            is_new_message_boundary = bool(
+                BLOCK_SPLIT_RE.match(stripped) or BLOCK_SPLIT_RE.match(stripped.lstrip("> ").strip())
+            )
             is_from_after_body = (
                 stripped.lower().startswith("from:")
                 and current
@@ -2885,6 +2981,15 @@ class EmailParser(BaseParser):
         stripped_lines = [line.strip() for _, line in lines]
         sender = self._find_header_value(stripped_lines, "from")
         sent_at = self._find_header_value(stripped_lines, "sent") or self._find_header_value(stripped_lines, "date")
+        if not sender and existing:
+            # A Gmail quote has no From:/Sent: -- its attribution line names
+            # the author and the time.
+            for _l in stripped_lines[:2]:
+                _attr = parse_quote_attribution(_l)
+                if _attr:
+                    sender = _attr["sender"]
+                    sent_at = sent_at or _attr["sent_at"]
+                    break
         # Deliberately NOT folded into `sender`. _authority_for_block reads that
         # field, and giving the first block a real sender flips the top-level
         # message of every .eml we wrote from customer_current_authored to
@@ -3297,6 +3402,12 @@ class EmailParser(BaseParser):
                     cleaned=_cleaned, source_ref=_ref, authority=authority,
                     line_num=_line, sentence_index=_sent, reason=reason,
                 ))
+            # "On <date> <name> <addr> wrote:" is quote chrome: the message
+            # it opens is credited to that author (``_build_block``), and the
+            # line itself is a chatter atom, never scope and never a person.
+            if BLOCK_SPLIT_RE.match(cleaned) and " wrote:" in cleaned.lower():
+                _reject("quote_attribution")
+                continue
             # Shape, not position: a line that is ONLY a name, an email, a
             # phone, or a punctuation fragment around one carries no scope
             # wherever it sits. Live 010215 (R3): the leading-lines-only rule
@@ -3382,6 +3493,14 @@ class EmailParser(BaseParser):
                 # rule below; "Stephanie Hechsel" under "Thank you," too.
                 _reject("greeting" if _is_greeting_line(cleaned)
                         else "signature" if in_signature else "identity_only")
+                continue
+            # A line that names an e-signature robot's mailbox ("please add
+            # echosign@echosign.com to your address book", a pasted "From:
+            # Adobe Sign <echosign@...>") is the robot's chrome, never an
+            # instruction from a person. Live 010003: both typed
+            # customer_instruction.
+            if _names_automated_sender(cleaned):
+                _reject("automated_sender")
                 continue
             # Inside a signature cluster every line is contact chrome (title,
             # org, phone label); the person was already read from it above.
@@ -3555,7 +3674,15 @@ class EmailParser(BaseParser):
             # next. Site extraction runs above this and is untouched, so an
             # address in a signature is still recovered.
             if _SIGNOFF_RE.match(cleaned):
-                in_signature = True
+                # "Thank you!" as the FIRST thing a message says opens it; it
+                # signs nothing off. Latching there turned the whole message
+                # into signature chrome (010003: "We are waiting for the TVs
+                # to arrive. Once they are delivered we will schedule the
+                # install." under a "Thank you!" opener was chatter).
+                _blk = block.get("lines") or []
+                _at = line_num - int(block.get("line_start") or 0)
+                if _has_content_before(_blk, _at) or not _has_sentence_after(_blk, _at):
+                    in_signature = True
                 _reject("signoff")
                 continue
             # 1b) A quoted message's own header block ("To: …", "Sent: …",

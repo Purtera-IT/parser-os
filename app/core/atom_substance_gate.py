@@ -1175,6 +1175,12 @@ def demote_transcript_smalltalk(atoms: list[Any], lexicon: set[str] | None = Non
 
         if asks_or_states_deal_fact(text):
             continue
+        # A dependency or trigger ("We are waiting for the TVs to arrive") is
+        # what the schedule hangs on, never small talk (010003).
+        from app.core.deal_chatter import states_dependency
+
+        if states_dependency(text, goods_only=True):
+            continue
         tokens = [t for t in _content_tokens(text) if t]
         if lexicon:
             # Two shared content words, one of them specific (six letters or

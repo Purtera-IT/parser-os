@@ -219,6 +219,37 @@ _EMAIL_HEADER_RE = re.compile(
 )
 
 
+#: The most targets one exclusion clause may claim with ``excludes`` edges.
+_MAX_EXCLUDES_PER_CLAUSE = 5
+
+
+def _site_named_in(text: str, site_key: str) -> bool:
+    slug = site_key.split(":", 1)[1] if ":" in site_key else site_key
+    tokens = [t for t in re.split(r"[^a-z0-9]+", slug.lower()) if len(t) >= 3 or t.isdigit()]
+    if not tokens:
+        return False
+    words = set(re.split(r"[^a-z0-9]+", (text or "").lower()))
+    return all(t in words for t in tokens)
+
+
+def _exclusion_reaches_target(ex: EvidenceAtom, ex_scoping: set[str], shared: set[str]) -> bool:
+    """Does ``ex`` exclude something the target actually is?
+
+    A shared SITE key alone says only that both lines are about the same
+    place. A clause that names a thing of its own (a device, a part) and
+    shares nothing but the site with the target excludes some other thing
+    there. A clause with no thing of its own excludes the site only when it
+    names it; otherwise the site key was inherited from the document and the
+    clause is generic boilerplate ("Furniture movement") that conflicts with
+    nothing in particular.
+    """
+    if any(not k.startswith("site:") for k in shared):
+        return True
+    if any(not k.startswith("site:") for k in ex_scoping):
+        return False
+    return any(_site_named_in(ex.raw_text or "", k) for k in shared)
+
+
 def _looks_like_email_header(text: str) -> bool:
     """True when an atom's text is an email header line (To:/From:/Cc:/...),
     which the type head often mis-labels as an exclusion."""
@@ -1055,6 +1086,10 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         for k in ex_keys:
             for idx in key_to_indices.get(k, []):
                 target_idx_set.add(idx)
+        ex_scoping = {
+            k for k in ex_keys if not k.startswith(_NON_SCOPING_EXCLUSION_PREFIXES)
+        }
+        _ex_targets: list[tuple[int, str, EvidenceAtom, set[str]]] = []
         for idx in sorted(target_idx_set):
             target = ordered[idx]
             if target.id == ex.id:
@@ -1070,6 +1105,16 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
                 if not _is_unknown_entity_key(k)
                 and not k.startswith(_NON_SCOPING_EXCLUSION_PREFIXES)
             }
+            if meaningful and not _exclusion_reaches_target(ex, ex_scoping, meaningful):
+                meaningful = set()
+            if meaningful:
+                _ex_targets.append((-len(meaningful), target.id, target, meaningful))
+        # One clause, a handful of conflicts at most: a SOW's boilerplate
+        # "Electrical work is not included" sharing one key with every scope
+        # line minted dozens of excludes edges per clause (010003: 150 from
+        # four clauses). The most specific matches are kept.
+        _ex_targets.sort(key=lambda row: (row[0], row[1]))
+        for _neg, _tid, target, meaningful in _ex_targets[:_MAX_EXCLUDES_PER_CLAUSE]:
             if meaningful:
                 # Computed confidence (not a flat 0.9): anchor on the exclusion
                 # atom's own confidence and rise with the number of shared
@@ -1505,6 +1550,19 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
             continue
         if candidate.proposed_edge_type == EdgeType.contradicts:
             continue
+        if candidate.proposed_edge_type == EdgeType.excludes:
+            _shared = {
+                k for k in set(from_atom.entity_keys) & set(to_atom.entity_keys)
+                if not _is_unknown_entity_key(k)
+                and not k.startswith(_NON_SCOPING_EXCLUSION_PREFIXES)
+            }
+            _own = {
+                k for k in from_atom.entity_keys
+                if not _is_unknown_entity_key(k)
+                and not k.startswith(_NON_SCOPING_EXCLUSION_PREFIXES)
+            }
+            if _shared and not _exclusion_reaches_target(from_atom, _own, _shared):
+                continue
         reason = (
             "semantic_candidate_linker "
             f"method={candidate.method} score={candidate.similarity_score:.3f} "
@@ -1551,8 +1609,29 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         except Exception:
             pass
 
+    edges = _cap_excludes_per_clause(edges)
     edges.sort(key=lambda e: e.id)
     return edges
+
+
+def _cap_excludes_per_clause(edges: list[EvidenceEdge]) -> list[EvidenceEdge]:
+    """At most ``_MAX_EXCLUDES_PER_CLAUSE`` excludes edges leave one clause,
+    counting every generator (entity keys and the semantic linker): the most
+    confident are kept. 010003: four boilerplate exclusions sharing a device
+    key with every display line were 150 conflicts."""
+    by_clause: dict[str, list[EvidenceEdge]] = {}
+    for e in edges:
+        if e.edge_type == EdgeType.excludes:
+            by_clause.setdefault(e.from_atom_id, []).append(e)
+    drop: set[str] = set()
+    for group in by_clause.values():
+        if len(group) <= _MAX_EXCLUDES_PER_CLAUSE:
+            continue
+        group = sorted(group, key=lambda e: (-float(e.confidence or 0.0), e.to_atom_id, e.id))
+        drop.update(e.id for e in group[_MAX_EXCLUDES_PER_CLAUSE:])
+    if not drop:
+        return edges
+    return [e for e in edges if e.id not in drop]
 
 
 def build_entity_edges(atoms: list[EvidenceAtom]):

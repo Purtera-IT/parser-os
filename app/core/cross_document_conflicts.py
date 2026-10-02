@@ -54,8 +54,19 @@ def _text(atom: Any) -> str:
     return str(getattr(atom, "raw_text", None) or getattr(atom, "normalized_text", None) or "")
 
 
+#: A phone number is a contact, not a figure of a clause.
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\d)")
+_BAND_RE = re.compile(r"all rights reserved|(?:\(c\)|\u00a9|copyright)\s*(?:19|20)\d{2}|\bpage\s+\d+\s+of\s+\d+\b", re.I)
+
+
+def _is_boilerplate_band(text: str) -> bool:
+    """A copyright / page-number band: page furniture, never a clause."""
+    return len(text or "") <= 240 and bool(_BAND_RE.search(text or ""))
+
+
 def _figures(text: str) -> list[str]:
     out = []
+    text = _PHONE_RE.sub(" ", text or "")
     for m in _FIGURE_RE.finditer(text):
         tok = _SPACE_RE.sub(" ", m.group(0).strip().lower())
         # "two (2)" and "2" are one figure; keep the digits when present.
@@ -91,7 +102,14 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
         kind = str((v or {}).get("kind") or "") if isinstance(v, dict) else ""
         if kind.endswith(_SKIP_KINDS[:2]) or kind in _SKIP_KINDS:
             continue
+        # Chatter and page furniture are not clauses: a footer's copyright year
+        # and phone number read as "2026 800.800 4239 vs (no figure)" between
+        # two of a reseller's documents (010003).
+        if "chatter" in (getattr(atom, "review_flags", None) or []):
+            continue
         text = _text(atom)
+        if _is_boilerplate_band(text):
+            continue
         figs = _figures(text)
         if not figs:
             continue

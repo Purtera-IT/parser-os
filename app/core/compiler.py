@@ -2509,13 +2509,37 @@ def compile_project(
             warnings.append(f"WARNING: quote_context_head failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=quote_context_n)
 
+    # A schedule row named "Milestone ..." is a milestone and a row that is
+    # only a PO number is the deal's PO reference, whatever the row typers
+    # said -- before the quote-line head, which would drop them as tasks.
+    try:
+        from app.core.atom_type_sanity import retype_schedule_reference_rows
+
+        _sched_n = retype_schedule_reference_rows(atoms)
+        if _sched_n:
+            warnings.append(f"INFO: retyped {_sched_n} milestone / PO-reference table row(s)")
+    except Exception as exc:
+        warnings.append(f"WARNING: schedule row typing failed: {type(exc).__name__}: {exc}")
+
     with telemetry.stage("quote_line_head", input_count=len(atoms)) as stage:
         quote_line_n = 0
         try:
             from app.core.quote_line_head import consolidate_quote_line_tasks
 
+            _before_quote_line = list(atoms)
             atoms, quote_line_n = consolidate_quote_line_tasks(
                 atoms, project_id=resolved_project_id
+            )
+            # A PMO/admin step ("Complete billing tasks", "Develop schedule
+            # for installation activities") is not a quote line, and the
+            # head drops it -- which removed the line from the deal without a
+            # record (010003). Every removal goes to the ledger.
+            merge_suppressed(
+                suppressed_atoms,
+                capture_suppressed(
+                    _before_quote_line, atoms, stage="quote_line_head",
+                    reason="PMO/admin task or a line folded into a quote-line umbrella",
+                ),
             )
             if quote_line_n:
                 warnings.append(

@@ -504,6 +504,11 @@ def _looks_like_page_footer(text: str) -> bool:
             has_qty = bool(re.search(r"\b\d+(?:,\d{3})*\s*(?:cameras?|aps?|drops?|outlets?|jacks?|users?|licenses?|installations?)\b", text, re.IGNORECASE))
             if not (has_money or has_qty):
                 return True
+    # "(c) 2026 CDW LLC. All rights reserved. | 800.800.4239 | CDW.com" -- a
+    # rights notice on a short line is the page band, whether or not the
+    # copyright sign survived extraction (010003: it was read as a bullet).
+    if "all rights reserved" in text.lower() and len(text) <= 200:
+        return True
     # Copyright + confidentiality marker on a short pipe-separated line
     # is universally a footer band (every page repeats it).
     if _COPYRIGHT_PATTERN.search(text):
