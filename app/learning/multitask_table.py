@@ -93,6 +93,13 @@ DEFAULT_TASKS = (
     # part of 56 of 010288's 159 pointers that any head can learn: they name a
     # structured field, so there is no text on the page to extract.
     "decided_from",
+    # What the Questions card records beside valid / invalid. From the gap
+    # judgment's fields, with the atom's own readings as the fallback for a
+    # question the card never answered. `needed_by` is multi-label: one row
+    # per consumer.
+    "question:intake_gap",
+    "question:needed_by",
+    "question:deal_stage",
 ) + _reads_tasks()
 
 #: Not backbone tasks, and deliberately so. A span is an extraction problem and
