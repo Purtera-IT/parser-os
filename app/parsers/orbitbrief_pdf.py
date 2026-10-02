@@ -1911,6 +1911,17 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                 col_blocks, col_bboxes = _drop_side_by_side_box_tables(
                     pdf_path, page_index, col_blocks, col_bboxes
                 )
+        # A vendor quote / PO line-item grid read by its header row: every
+        # cell under the header it sits beneath, an item's tail lines
+        # ("Mfg. Part#: QM55C", the wrapped description) folded into it. It
+        # owns its region over the whitespace-column reading, which let a
+        # right-aligned QTY drift and glued each item's tail to the next.
+        grid_blocks, grid_bboxes = ([], []) if _is_questionnaire_page(page_texts[page_index]) \
+            else _extract_header_grids(pdf_path, page_index, ruled_bboxes)
+        if grid_blocks:
+            ruled_blocks, ruled_bboxes = _merge_table_extractions(
+                ruled_blocks, ruled_bboxes, grid_blocks, grid_bboxes
+            )
         table_blocks, table_bboxes = _merge_table_extractions(
             ruled_blocks, ruled_bboxes, col_blocks, col_bboxes
         )
@@ -4223,6 +4234,21 @@ def _site_row_address_text(site_row: Any) -> str | None:
     if street and tail and tail.lower() not in street.lower():
         return f"{street}, {tail}"
     return street or None
+
+
+def _extract_header_grids(
+    pdf_path: Path, page_index: int, exclude: list[Any]
+) -> tuple[list[dict[str, Any]], list[Any]]:
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        from app.parsers.pdf.layout_text import header_grid_tables
+
+        with fitz.open(str(pdf_path)) as doc:
+            found = header_grid_tables(doc[page_index], exclude)
+    except Exception:
+        return [], []
+    return [b for b, _ in found], [r for _, r in found]
 
 
 def _drop_side_by_side_box_tables(

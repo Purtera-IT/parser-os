@@ -2086,16 +2086,41 @@ def _logo_images_are_chatter(atoms: list[EvidenceAtom]) -> None:
         words = str(atom.raw_text or "").split()
         if not words or len(words) > 3 or any(ch.isdigit() for ch in atom.raw_text):
             continue
-        mark_admission_chatter(atom, "signature_logo")
-        refs = list(atom.source_refs or [])
-        if refs:
-            loc = {k: x for k, x in dict(refs[0].locator or {}).items() if k not in ("lead_in", "section_path")}
-            refs[0] = refs[0].model_copy(update={"locator": loc})
-            atom.source_refs = refs
-        val = dict(atom.value)
-        for k in ("lead_in", "section_path", "intro"):
-            val.pop(k, None)
-        atom.value = val
+        _signature_image_atom(atom, "signature_logo")
+
+
+def _signature_image_atom(atom: EvidenceAtom, reason: str) -> None:
+    """Hold an inline image's reading as signature chatter, on its own
+    message, with no borrowed "Equipment list" heading or lead-in."""
+    from app.core.admission_chatter import mark_admission_chatter
+
+    mark_admission_chatter(atom, reason)
+    refs = list(atom.source_refs or [])
+    if refs:
+        loc = {k: x for k, x in dict(refs[0].locator or {}).items() if k not in ("lead_in", "section_path")}
+        refs[0] = refs[0].model_copy(update={"locator": loc})
+        atom.source_refs = refs
+    val = dict(atom.value)
+    for k in ("lead_in", "section_path", "intro"):
+        val.pop(k, None)
+    atom.value = val
+
+
+def _cid_anchor_in_signature(blocks: list[dict[str, Any]], message_index: int, line: int) -> bool:
+    """True when an inline image sits after its message's sign-off
+    ("Thanks," / "Regards,"): it is part of the signature -- a logo, a
+    certification badge, a banner with the sender's address."""
+    for block in blocks or []:
+        if int(block.get("message_index") or 0) != int(message_index):
+            continue
+        base = int(block.get("line_start") or 1)
+        lines = list(block.get("lines") or [])
+        if not (base <= line <= base + len(lines)):
+            continue
+        for idx in range(0, min(len(lines), line - base)):
+            if _SIGNOFF_RE.match(str(lines[idx] or "").lstrip("> ").strip()):
+                return True
+    return False
 
 
 def _message_label(sender: str, sent_at: str) -> str:
@@ -2843,7 +2868,13 @@ class EmailParser(BaseParser):
             msg_i, line_i = _cid_reading_anchor(
                 body_text=body_text, content_id=cid, blocks=blocks or []
             )
-            return _hardware_atoms_from_equipment_text(
+            # An image set after the sign-off is the sender's signature (a
+            # logo, a certification badge, an address banner), not the
+            # equipment screenshot the lead-in introduces. Live 010087: the
+            # signature images of an email that also carried an equipment
+            # list were typed scope_item under "Equipment list".
+            in_signature = _cid_anchor_in_signature(blocks or [], msg_i, line_i)
+            out = _hardware_atoms_from_equipment_text(
                 project_id=project_id,
                 artifact_id=artifact_id,
                 filename=path.name,
@@ -2852,8 +2883,13 @@ class EmailParser(BaseParser):
                 parser_version=self.parser_version,
                 message_index=msg_i,
                 anchor_line=line_i,
-                lead_in=equipment_lead_in or None,
+                lead_in=None if in_signature else (equipment_lead_in or None),
             )
+            if in_signature:
+                for a in out:
+                    if (a.value or {}).get("kind") == "email_cid_inline_body":
+                        _signature_image_atom(a, "signature_image")
+            return out
 
         equipment_lines: list[EvidenceAtom] = []
         if ocr_by_cid:
