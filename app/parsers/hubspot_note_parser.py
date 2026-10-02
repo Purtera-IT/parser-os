@@ -259,6 +259,8 @@ def _pasted_email_sender(parsed: dict[str, Any]) -> tuple[dict[str, str], int] |
         if not m or not any(_PASTED_HDR_RE.match(x) for x in lines[i + 1:i + 5]):
             continue
         nm, addr = parseaddr(m.group("v"))
+        if "@" not in addr:  # "From: Morgan Ellery": a name, not a mailbox
+            nm, addr = nm or m.group("v"), ""
         nm = " ".join((nm or "").split()) or (m.group("v").split("<")[0].strip(' "') if not addr else "")
         if not nm and not addr:
             continue
@@ -311,6 +313,15 @@ def _credit_pasted_email(atoms: list[EvidenceAtom], parsed: dict[str, Any]) -> N
         start_line = next((i + 1 for i in range(body_at, len(raw_lines))
                            if raw_lines[i].strip() == target), 0) or 10 ** 9
     affiliation = classify_author_affiliation(sender.get("name"), author_email=sender.get("email") or None)
+    # Who said it, for the label walk: the sender, never the note's author.
+    # Their address, when the paste dropped it, may still be in the note.
+    from app.core.deal_parties import address_for_name, pasted_sender_party
+
+    said_by = pasted_sender_party(
+        sender.get("name") or "",
+        sender.get("email") or address_for_name(sender.get("name") or "", raw_lines),
+        internal=affiliation == "internal",
+    )
     for atom in atoms:
         val = atom.value if isinstance(atom.value, dict) else None
         if val is None or val.get("kind") in ("hubspot_note_meta", "automated_note"):
@@ -328,6 +339,8 @@ def _credit_pasted_email(atoms: list[EvidenceAtom], parsed: dict[str, Any]) -> N
         val["author_email"] = sender.get("email") or ""
         val["author_affiliation"] = affiliation
         val["pasted_email"] = True
+        if said_by:
+            val["said_by"] = dict(said_by)
         atom.value = val
         if affiliation != "internal" and "internal_author" in (atom.review_flags or []):
             atom.review_flags = [f for f in atom.review_flags
