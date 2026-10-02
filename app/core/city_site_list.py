@@ -51,8 +51,13 @@ class CitySite:
         return f"site:{self.slug}"
 
 
+def _unquote(line: str) -> str:
+    """A quoted mail line (">> Dallas, TX") without its quote marks."""
+    return re.sub(r"^\s*(?:>\s?)+", "", str(line or ""))
+
+
 def _city_state(line: str) -> tuple[str, str] | None:
-    s = _BULLET_RE.sub("", str(line or "")).strip().rstrip(";.")
+    s = _BULLET_RE.sub("", _unquote(line)).strip().rstrip(";.")
     if not s or len(s) > 60 or not re.search(r"[,/]", s):
         return None
     city, state = split_city_state_strict(s)
@@ -78,12 +83,12 @@ def find_city_site_lists(lines: Iterable[str]) -> list[CitySite]:
         if len(run) >= MIN_RUN:
             label = ""
             k = i - 1
-            if k >= 0 and seq[k].strip():
-                head = seq[k].strip()
+            if k >= 0 and _unquote(seq[k]).strip():
+                head = _unquote(seq[k]).strip()
                 if len(head.split()) <= 5 and len(head) <= 60:
                     label = head.rstrip(":").strip()
             for idx, city, state in run:
-                out.append(CitySite(idx, _BULLET_RE.sub("", seq[idx]).strip(), city, state, label))
+                out.append(CitySite(idx, _BULLET_RE.sub("", _unquote(seq[idx])).strip(), city, state, label))
         i = j
     return out
 
