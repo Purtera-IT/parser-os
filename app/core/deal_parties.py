@@ -80,9 +80,21 @@ def party(raw: str) -> dict[str, Any] | None:
 def parties_for_message(thread_block: dict[str, Any] | None) -> dict[str, Any]:
     """``{said_by, said_to}`` for one message, from its thread block."""
     tb = thread_block if isinstance(thread_block, dict) else {}
-    said_by = party(str(tb.get("sender") or ""))
+    # The message the line was written in, not the file it was found in. A
+    # reply carries older messages quoted beneath it; their lines were said by
+    # THAT message's author, to people the reply's header does not name. Live
+    # 010087: Stephanie's quoted 7/7 email was credited to Trent, who only
+    # replied above it.
+    msg = tb.get("message") if isinstance(tb.get("message"), dict) else {}
+    quoted = bool(msg.get("quoted")) or int(msg.get("index") or 0) > 0
+    if quoted:
+        said_by = party(str(msg.get("author") or ""))
+        recipients: list = []
+    else:
+        said_by = party(str(tb.get("sender") or msg.get("author") or ""))
+        recipients = list(tb.get("to") or []) + list(tb.get("cc") or [])
     said_to = []
-    for raw in list(tb.get("to") or []) + list(tb.get("cc") or []):
+    for raw in recipients:
         p = party(str(raw))
         if p and all(p["email"] != x["email"] for x in said_to):
             said_to.append(p)
