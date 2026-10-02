@@ -921,6 +921,17 @@ class HubspotNoteParser(BaseParser):
                     author_affiliation=affiliation,
                 )
             )
+            # "note_id=... | author=..." is composed, not written: flag it and
+            # point at the export's own header lines ("HubSpot Note ID: ...",
+            # "Author: ...") so a reviewer highlights those instead.
+            from app.parsers.synthetic_text import find_source_lines, mark_synthetic
+
+            _labels = [lab for lab, have in (("HubSpot Note", title), ("HubSpot Note ID", note_id),
+                                             ("Date", date_raw), ("Author", author),
+                                             ("Author-Email", author_email)) if have]
+            _body_at = int(parsed.get("body_line_index") or 0)
+            mark_synthetic(atoms[-1], find_source_lines(
+                [str(ln) for ln in (parsed.get("raw_lines") or [])][: _body_at or None], _labels))
 
         def _mint_prose(prose: str) -> None:
             # A paragraph is several statements. Minting it whole made 000036's

@@ -1917,6 +1917,24 @@ def _without_automated_senders(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
         out.append(atom)
     return out
 
+def _quoted_header_source_lines(lines: list[str], sender: str, sent_at: str, start: int = 0) -> list[dict[str, Any]]:
+    """The quoted block's own "From: <sender>" line (and the Sent/Date line
+    under it), verbatim, wherever the chain put it."""
+    out: list[dict[str, Any]] = []
+    name = sender.split("<")[0].strip().strip('"').lower() or sender.lower()
+    for i in range(start, len(lines)):
+        s = lines[i].strip().lstrip(">").strip()
+        if re.match(r"^(?:\*\*)?from:", s, re.I) and name and name in s.lower():
+            out.append({"line": i + 1, "text": s})
+            for j in range(i + 1, min(i + 6, len(lines))):
+                t = lines[j].strip().lstrip(">").strip()
+                if re.match(r"^(?:\*\*)?(?:sent|date):", t, re.I):
+                    out.append({"line": j + 1, "text": t})
+                    break
+            break
+    return out
+
+
 class EmailParser(BaseParser):
     parser_name = "email"
     parser_version = "email_parser_v2"
@@ -2154,7 +2172,7 @@ class EmailParser(BaseParser):
         atoms.extend(
             self._quoted_chain_atoms(
                 project_id=project_id, artifact_id=artifact_id,
-                filename=path.name, blocks=blocks,
+                filename=path.name, blocks=blocks, file_lines=self._file_lines(path),
             )
         )
         # Attachments are the real deal docs more often than the body — mark
@@ -2200,6 +2218,13 @@ class EmailParser(BaseParser):
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
         )
 
+    @staticmethod
+    def _file_lines(path: Path) -> list[str]:
+        try:
+            return path.read_bytes().decode("utf-8", errors="replace").splitlines()
+        except Exception:
+            return []
+
     def _pseudo_header_atom(
         self, *, project_id: str, artifact_id: str, path: Path, values: dict[str, str]
     ) -> EvidenceAtom | None:
@@ -2228,7 +2253,11 @@ class EmailParser(BaseParser):
             extraction_method="email_headers_plaintext",
             parser_version=self.parser_version,
         )
-        return EvidenceAtom(
+        from app.parsers.synthetic_text import find_source_lines, mark_synthetic
+
+        # The joined "From: ... | To: ..." string is not in the file: flag it
+        # and point at the header lines it was built from (see synthetic_text).
+        return mark_synthetic(EvidenceAtom(
             id=stable_id("atm", project_id, artifact_id, "email_header", text),
             project_id=project_id,
             artifact_id=artifact_id,
@@ -2241,7 +2270,9 @@ class EmailParser(BaseParser):
             review_status=ReviewStatus.auto_accepted,
             parser_version=self.parser_version,
             source_refs=[src],
-        )
+        ), find_source_lines(self._file_lines(path),
+                             [f for f in ("from", "sent", "date", "to", "cc", "subject") if values.get(f)],
+                             limit=60))
 
     _NAMED_ADDRESS_RE = re.compile(
         r"(?<![\w@.])([A-Z][\w'’.-]+(?:\s+[A-Z][\w'’.-]+){1,3})\s*<\s*([^<>\s@]+@[^<>\s]+)\s*>"
@@ -2314,7 +2345,8 @@ class EmailParser(BaseParser):
         return out
 
     def _quoted_chain_atoms(
-        self, *, project_id: str, artifact_id: str, filename: str, blocks: list[dict]
+        self, *, project_id: str, artifact_id: str, filename: str, blocks: list[dict],
+        file_lines: list[str] | None = None,
     ) -> list[EvidenceAtom]:
         """One routing atom per QUOTED message, mirroring ``_header_atom``.
 
@@ -2336,6 +2368,7 @@ class EmailParser(BaseParser):
         context, never a claim about the work.
         """
         atoms: list[EvidenceAtom] = []
+        _cursor = 0
         for block in blocks:
             if not block.get("quoted"):
                 continue
@@ -2382,6 +2415,14 @@ class EmailParser(BaseParser):
                     parser_version=self.parser_version,
                 )
             )
+            # "From: X | Sent: Y" is composed; the quoted block's own From /
+            # Sent lines are what a reviewer can highlight.
+            from app.parsers.synthetic_text import mark_synthetic
+
+            _lines = _quoted_header_source_lines(file_lines or [], sender, sent_at, _cursor)
+            if _lines:
+                _cursor = _lines[0]["line"]
+            mark_synthetic(atoms[-1], _lines)
         return atoms
 
     def _header_atom(
@@ -2418,7 +2459,11 @@ class EmailParser(BaseParser):
             extraction_method="email_headers",
             parser_version=self.parser_version,
         )
-        return EvidenceAtom(
+        from app.parsers.synthetic_text import find_source_lines, mark_synthetic
+
+        # The joined "From: ... | To: ..." string is not in the file: flag it
+        # and point at the real header lines (see synthetic_text).
+        return mark_synthetic(EvidenceAtom(
             id=stable_id("atm", project_id, artifact_id, "email_header", text),
             project_id=project_id,
             artifact_id=artifact_id,
@@ -2449,7 +2494,8 @@ class EmailParser(BaseParser):
             review_status=ReviewStatus.auto_accepted,
             review_flags=[],
             parser_version=self.parser_version,
-        )
+        ), find_source_lines(self._file_lines(path), [f for f in ("from", "to", "cc", "subject", "date") if values.get(f)],
+                             stop_at_blank=True))
 
     def _attachment_markers(
         self, *, project_id: str, artifact_id: str, path: Path

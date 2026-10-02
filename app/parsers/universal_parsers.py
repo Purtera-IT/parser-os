@@ -319,6 +319,8 @@ class MboxParser(BaseParser):
                         authority_class=AuthorityClass.machine_extractor,
                         value_extra={"kind": "email_header", "subject": subject, "from": sender, "date": date},
                     ))
+                    from app.parsers.synthetic_text import mark_synthetic
+                    mark_synthetic(atoms[-1])  # composed "From: | Subject: | Date:" -- not in the file
                 # Body
                 body_text = _extract_email_body(msg)
                 if body_text.strip():
