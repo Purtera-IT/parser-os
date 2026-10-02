@@ -108,3 +108,44 @@ def test_quoted_signature_lines_are_one_atom_per_authored_message(tmp_path: Path
         assert all(not (a.value or {}).get("quoted") for a in hits), line
     # The copies are recorded, not lost.
     assert [a for a in r.suppressed_atoms if a.raw_text == "770.769.7311"]
+
+
+# ── 8: an e-sign robot's lines are chatter, never instructions or people ──
+
+_ADOBE_BODY = (
+    "Sarah Halpern has signed CDW_SOW_TV_Install.\n\n"
+    "To ensure that you continue receiving our emails, please add "
+    "echosign@echosign.com to your address book or safe list.\n"
+)
+
+
+def test_adobe_sign_email_chrome_is_chatter(tmp_path: Path) -> None:
+    from app.parsers.email_parser import EmailParser
+
+    p = tmp_path / "adobe.eml"
+    p.write_text("From: Adobe Sign <echosign@echosign.com>\nTo: Sarah Halpern <sarah@acme.com>\n"
+                 "Subject: Signed: CDW_SOW_TV_Install\nDate: Tue, 14 Jul 2026 10:00:00 -0400\n"
+                 "Content-Type: text/plain; charset=utf-8\n\n" + _ADOBE_BODY, encoding="utf-8")
+    atoms = EmailParser().parse_artifact_full(project_id="p", artifact_id="a", path=p).atoms
+    add = [a for a in atoms if "add echosign@echosign.com" in a.raw_text]
+    assert len(add) == 1
+    assert add[0].atom_type == AtomType.deal_metadata and "chatter" in add[0].review_flags
+    assert not [a for a in atoms if a.atom_type in (AtomType.customer_instruction, AtomType.stakeholder)]
+    signed = [a for a in atoms if a.raw_text == "Sarah Halpern has signed CDW_SOW_TV_Install."]
+    assert signed and "chatter" not in signed[0].review_flags
+
+
+def test_pasted_adobe_sign_notice_in_a_note_is_chatter(tmp_path: Path) -> None:
+    from app.parsers.hubspot_note_parser import HubspotNoteParser
+
+    p = tmp_path / "010003-hs-note-7.txt"
+    p.write_text("HubSpot Note: fwd\nHubSpot Note ID: 7\nDate: 2026-07-20T18:58:14.007Z\n"
+                 "Author: Patrick Kelly\n\nFrom: Adobe Sign <echosign@echosign.com>\n"
+                 "Sent: Tuesday, July 14, 2026 10:00 AM\nTo: Patrick Kelly\nSubject: Signed: CDW_SOW\n\n"
+                 + _ADOBE_BODY, encoding="utf-8")
+    atoms = HubspotNoteParser().parse_artifact("p", "a", p)
+    robot = [a for a in atoms if "echosign" in a.raw_text.lower()]
+    assert len(robot) == 2, [a.raw_text for a in robot]
+    for a in robot:
+        assert a.atom_type == AtomType.deal_metadata and "chatter" in a.review_flags, a.raw_text
+    assert [a for a in atoms if a.raw_text.startswith("Sarah Halpern has signed")]

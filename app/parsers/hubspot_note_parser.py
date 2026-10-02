@@ -80,6 +80,35 @@ _PLACEHOLDER_NOTE_TITLES = frozenset({
 })
 
 
+def _automated_sender_lines_as_chatter(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """A pasted e-sign notice's chrome is the robot's, never a person's.
+
+    "From: Adobe Sign <echosign@echosign.com>" and "please add
+    echosign@echosign.com to your address book" were a customer_instruction
+    and a scope line (010003). Each such line stays an atom, typed
+    ``deal_metadata`` and flagged admission chatter, so a labeler can reject
+    it and no head reads it; one line read as several types keeps one atom.
+    """
+    from app.core.admission_chatter import mark_admission_chatter
+    from app.parsers.email_parser import _names_automated_sender
+
+    out: list[EvidenceAtom] = []
+    seen: set[str] = set()
+    for atom in atoms:
+        text = str(getattr(atom, "raw_text", "") or "")
+        at = getattr(atom.atom_type, "value", atom.atom_type)
+        if at in ("stakeholder", "physical_site") or not _names_automated_sender(text):
+            out.append(atom)
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        atom.atom_type = AtomType.deal_metadata
+        mark_admission_chatter(atom, "automated_sender")
+        out.append(atom)
+    return out
+
+
 def _is_placeholder_note_title(text: str) -> bool:
     return " ".join(str(text or "").lower().split()).strip(" .:!-") in _PLACEHOLDER_NOTE_TITLES
 
@@ -552,6 +581,7 @@ class HubspotNoteParser(BaseParser):
             filename=path.name,
             parsed=parsed,
         )
+        atoms = _automated_sender_lines_as_chatter(atoms)
         structured_doc = self._build_structured_doc(filename=path.name, parsed=parsed)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(

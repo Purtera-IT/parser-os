@@ -1881,6 +1881,21 @@ def _stakeholder_keys(slug: str) -> list[str]:
 
 
 
+_ANY_ADDR_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_HEADER_FROM_RE = re.compile(r"^\s*(?:from|sender|reply-to)\s*:\s*(.+)$", re.I)
+
+
+def _names_automated_sender(line: str) -> bool:
+    """Does this body line carry an automated sender: a robot's address
+    anywhere in it, or a header-shaped ``From: Adobe Sign`` line?"""
+    from app.core.automated_senders import is_automated_address, is_automated_sender
+
+    if any(is_automated_address(m.group(0)) for m in _ANY_ADDR_RE.finditer(line or "")):
+        return True
+    m = _HEADER_FROM_RE.match(line or "")
+    return bool(m and is_automated_sender(m.group(1)))
+
+
 def _without_automated_senders(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     """Drop person atoms for automated senders; flag their header lines chatter.
 
@@ -3336,6 +3351,14 @@ class EmailParser(BaseParser):
                 # rule below; "Stephanie Hechsel" under "Thank you," too.
                 _reject("greeting" if _is_greeting_line(cleaned)
                         else "signature" if in_signature else "identity_only")
+                continue
+            # A line that names an e-signature robot's mailbox ("please add
+            # echosign@echosign.com to your address book", a pasted "From:
+            # Adobe Sign <echosign@...>") is the robot's chrome, never an
+            # instruction from a person. Live 010003: both typed
+            # customer_instruction.
+            if _names_automated_sender(cleaned):
+                _reject("automated_sender")
                 continue
             # Inside a signature cluster every line is contact chrome (title,
             # org, phone label); the person was already read from it above.
