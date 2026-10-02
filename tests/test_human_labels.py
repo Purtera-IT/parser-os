@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from app.learning.human_labels import decide_text, rows_for_deal, write_db
+from app.learning.human_labels import IngestReport, decide_text, rows_for_deal, write_db
 from app.learning.multitask_table import assemble
 
 
@@ -187,10 +187,14 @@ def test_evidence_links_become_human_edges():
     ]})
     assert [(r["relation"], r["label"]) for r in rows] == [
         ("edge_relation", "answers"),
+        ("edge_relation", "answered_by"),
         ("edge_relation", "contradicts"),
         ("edge_relation", "context"),
     ]
-    assert rows[0]["raw_text"] == "Who provides the lift? || Customer provides the lift"
+    # Drawn on the Questions card (from = the question), written answer-first
+    # like an `answers` link drawn on the answer's own atom card.
+    assert rows[0]["raw_text"] == "Customer provides the lift || Who provides the lift?"
+    assert rows[1]["raw_text"] == "Who provides the lift? || Customer provides the lift"
 
 
 def test_an_answer_and_a_deferral_are_different_edges():
@@ -204,7 +208,7 @@ def test_an_answer_and_a_deferral_are_different_edges():
         {"from_head": "type", "from_key": "b", "from_text": "I am not sure if it is already installed",
          "to_kind": "atom", "to_text": "Has the door been installed with the lock?", "relation": "context"},
     ]})
-    assert [r["label"] for r in rows] == ["answers", "context"]
+    assert [r["label"] for r in rows] == ["answers", "answered_by", "context"]
 
 
 def _summary_rows(rows):
@@ -263,3 +267,100 @@ def test_a_second_deal_summary_mark_moves_it_and_the_latest_wins():
 def test_no_deal_summary_mark_means_no_deal_summary_rows():
     rows = rows_for_deal({"deal_id": "d1", "labels": [_label(), _label(label_key="b")]})
     assert _summary_rows(rows) == []
+
+
+# ---- the Questions card: intake_gap / needed_by / deal_stage, answered_by ----
+
+def _q_rows(rows, field_name):
+    return sorted((r["raw_text"], r["label"]) for r in rows if r["relation"] == f"question:{field_name}")
+
+
+_QUESTION = "Is there power at the TV location?"
+
+
+def _gap_judgment(fields, **extra):
+    return {"head": "gap", "target_key": "gap:1", "verdict": "valid", "text": _QUESTION,
+            "target": {"source": {"atomId": "q1"}}, "labeler": "a@b.com", "fields": fields, **extra}
+
+
+def test_questions_card_fields_become_question_heads():
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        _gap_judgment({"intake_gap": True, "needed_by": ["project_manager", "atlas"], "deal_stage": "planning"}),
+    ]})
+    assert _q_rows(rows, "intake_gap") == [(_QUESTION, "true")]
+    # Multi-label: one row per consumer, same text.
+    assert _q_rows(rows, "needed_by") == [(_QUESTION, "atlas"), (_QUESTION, "project_manager")]
+    assert _q_rows(rows, "deal_stage") == [(_QUESTION, "planning")]
+    # The verdict still trains gap_valid as before.
+    assert [r["label"] for r in rows if r["relation"] == "gap_valid"] == ["valid"]
+
+
+def test_atom_readings_are_the_fallback_only_where_the_card_is_silent():
+    label = {"label_key": "k1", "atom_id": "q1", "label_type": "question", "text": _QUESTION,
+             "labeler": "a@b.com",
+             "reads_set": {"intake_gap": "false", "needed_by": "portal", "deal_stage": "quoting"}}
+    other = {"label_key": "k2", "atom_id": "q2", "label_type": "question",
+             "text": "Who holds the key to the riser closet?", "labeler": "a@b.com",
+             "reads_set": {"needed_by": ["project_manager", "portal"], "deal_stage": "delivery"}}
+    report = IngestReport()
+    rows = rows_for_deal({"deal_id": "d1", "labels": [label, other], "judgments": [
+        # The card answered intake_gap and deal_stage for q1, not needed_by.
+        _gap_judgment({"intake_gap": True, "deal_stage": "planning"}),
+    ]}, report=report)
+    assert _q_rows(rows, "intake_gap") == [(_QUESTION, "true")], "the card wins over the atom"
+    assert _q_rows(rows, "deal_stage") == [
+        (_QUESTION, "planning"),
+        ("Who holds the key to the riser closet?", "delivery"),
+    ]
+    assert _q_rows(rows, "needed_by") == [
+        (_QUESTION, "portal"),
+        ("Who holds the key to the riser closet?", "portal"),
+        ("Who holds the key to the riser closet?", "project_manager"),
+    ]
+    assert report.skipped.get("question intake_gap: the Questions card answered it") == 1
+    # The atom readings still train their own reads:* heads.
+    assert any(r["relation"] == "reads:intake_gap" for r in rows)
+
+
+def test_the_card_covers_an_atom_by_its_words_after_a_reparse():
+    label = {"label_key": "k1", "atom_id": "q1-recompiled", "label_type": "question", "text": _QUESTION,
+             "labeler": "a@b.com", "reads_set": {"deal_stage": "quoting"}}
+    rows = rows_for_deal({"deal_id": "d1", "labels": [label], "judgments": [
+        _gap_judgment({"deal_stage": "planning"}),
+    ]})
+    assert _q_rows(rows, "deal_stage") == [(_QUESTION, "planning")]
+
+
+def test_question_values_outside_their_sets_are_skipped_and_machines_teach_nothing():
+    report = IngestReport()
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        _gap_judgment({"deal_stage": "signed", "needed_by": ["accounting"]}),
+        _gap_judgment({"intake_gap": True}, labeler="Proposer (assistant)"),
+    ]}, report=report)
+    assert not [r for r in rows if r["relation"].startswith("question:")]
+    assert report.skipped.get("question deal_stage outside its values") == 1
+    assert report.skipped.get("question needed_by outside its values") == 1
+
+
+def test_question_heads_are_backbone_tasks():
+    from app.learning.multitask_table import DEFAULT_TASKS
+
+    for f in ("intake_gap", "needed_by", "deal_stage"):
+        assert f"question:{f}" in DEFAULT_TASKS
+
+
+def test_answers_trains_both_ways_whichever_card_drew_it():
+    q, a = "Do we know the type of lock?", "They are intending to use a maglock."
+    on_question = rows_for_deal({"deal_id": "d1", "labels": [], "links": [
+        {"from_head": "gap", "from_key": "gap:1", "from_text": q, "to_kind": "atom", "to_text": a,
+         "relation": "answers", "labeler": "a@b.com"},
+    ]})
+    on_answer = rows_for_deal({"deal_id": "d1", "labels": [], "links": [
+        {"from_head": "type", "from_key": "k", "from_text": a, "to_kind": "atom", "to_text": q,
+         "relation": "answers", "labeler": "a@b.com"},
+    ]})
+    pairs = lambda rows: [(r["raw_text"], r["label"]) for r in rows if r["relation"] == "edge_relation"]
+    assert pairs(on_question) == pairs(on_answer) == [
+        (f"{a} || {q}", "answers"),
+        (f"{q} || {a}", "answered_by"),
+    ]
