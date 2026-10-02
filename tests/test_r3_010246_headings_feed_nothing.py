@@ -1,4 +1,4 @@
-"""A docx section heading is a reject-able atom that feeds nothing.
+"""A docx section heading is a reject-able line that feeds nothing.
 
 Deal 010246's SOW (re-run on #268) came back with every section heading as
 its own ``deal_metadata`` atom -- 17 on one SOW. That is by design: every
@@ -7,6 +7,9 @@ not a statement, so it must stay behind "Show small talk" (chatter,
 ``rejected_by`` section_heading) and must not reach anything built on
 content: "2.1 Site Survey" read as ``quantity:1``, and a heading that names a
 survey must not stage the deal "awaiting site survey".
+
+Since r4 (010087) a bare heading is held in the suppressed sidecar rather
+than the atom list: it is the section_path of the lines under it.
 """
 from __future__ import annotations
 
@@ -58,11 +61,16 @@ def test_headings_are_chatter_and_feed_nothing(tmp_path: Path) -> None:
     _build(deal / "SOW.docx")
     r = compile_project(deal, project_id="p", allow_errors=True, use_cache=False)
     by_text = {a.raw_text: a for a in r.atoms}
+    # A bare heading is its section's header, not an atom: it waits in the
+    # suppressed sidecar (r4: 010087 "INTRODUCTION"), still labeled chatter.
+    held = {a.raw_text: a for a in r.suppressed_atoms}
 
     heading_ids = set()
     for h in HEADINGS:
-        a = by_text.get(h)
-        assert a is not None, (h, sorted(by_text))
+        assert h not in by_text, h
+        a = held.get(h)
+        assert a is not None, (h, sorted(held))
+        assert "suppressed:section_heading" in a.review_flags
         assert _type(a) == "deal_metadata"
         assert "chatter" in a.review_flags
         assert a.value.get("chatter") is True and a.value.get("rejected_by") == "section_heading"

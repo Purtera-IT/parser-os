@@ -608,6 +608,43 @@ def layout_page_text(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> 
         return None
 
 
+def heading_lines(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> set[str]:
+    """Lines the page SETS as headings: a short label line (at most eight
+    words, no closing punctuation) printed bold on a page whose body is not
+    bold, or larger than the body text. ``pdftotext``-style text drops the
+    weight and the size, so a Title-Case "Introduction" over its paragraph read
+    as one more line of prose. Returned as the line text the reader emits
+    (``" ".join`` of the row), for the prose splitter to look up."""
+    try:
+        segs = _segments(page, exclude_bboxes or [])
+    except Exception:
+        return set()
+    if not segs:
+        return set()
+    chars = sum(len(s.text) for s in segs) or 1
+    bold_share = sum(len(s.text) for s in segs if s.bold) / chars
+    sizes = sorted((s.size, len(s.text)) for s in segs)
+    acc, body = 0, sizes[-1][0]
+    for size, n in sizes:
+        acc += n
+        if acc >= chars / 2:
+            body = size
+            break
+    out: set[str] = set()
+    for row in _rows(segs):
+        text = " ".join(s.text for s in row).strip()
+        words = text.split()
+        if not (1 <= len(words) <= 8) or len(text) > 80 or text[-1] in ".,;:!?":
+            continue
+        if not any(len(w) >= 3 and w.isalpha() for w in words):
+            continue
+        bold = all(s.bold for s in row) and bold_share < 0.5
+        large = body > 0 and min(s.size for s in row) >= 1.15 * body
+        if bold or large:
+            out.add(" ".join(words))
+    return out
+
+
 def region_is_side_by_side_boxes(page: Any, bbox: Any) -> bool:
     """True when the text inside ``bbox`` lays out as independent boxes standing
     side by side (shipping | remit-to | contact; a two-column step list) rather
