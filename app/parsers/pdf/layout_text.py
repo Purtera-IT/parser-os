@@ -563,6 +563,31 @@ def _style_key(s: _Seg) -> tuple:
     return (s.bold, s.color, s.link)
 
 
+def _box_head(prow: list[_Seg], row: list[_Seg], rows: list[list[_Seg]]) -> bool:
+    """``prow`` is a box's label set on its shaded header bar and ``row`` the
+    first line of the framed box under it: "Ship To" over the address on a
+    PO. The fill change read as a block boundary, so the label became an atom
+    of its own, apart from its value (010003). It is a box head only when the
+    label is a short bold line wholly on one fill, the line below is off that
+    fill, inside a stroked frame of at most eight lines, directly beneath."""
+    text = " ".join(s.text for s in prow).strip()
+    if not text or len(text) > 32 or len(text.split()) > 4 or text[-1] in ".!?;,":
+        return False
+    fill = prow[0].fill
+    if fill < 0 or any(s.fill != fill or not s.bold for s in prow):
+        return False
+    if any(s.fill == fill for s in row):
+        return False
+    frames = set.intersection(*(set(s.boxes) for s in row))
+    if not frames:
+        return False
+    frame = min(frames)
+    if len([r for r in rows if any(frame in s.boxes for s in r)]) > 8:
+        return False
+    size = max(s.size for s in prow + row) or 10.0
+    return min(s.y0 for s in row) - max(s.y1 for s in prow) <= 1.5 * size
+
+
 def _leaf_lines(segs: list[_Seg]) -> list[str]:
     """One column box, top to bottom, with "" at every visual-block boundary."""
     rows = _rows(segs)
@@ -586,6 +611,11 @@ def _leaf_lines(segs: list[_Seg]) -> list[str]:
             out.append(text)
             continue
         prow, ptext = lines[i - 1]
+        if out[-1] == ptext and _box_head(prow, row, rows):
+            # The label and its value are one field: "Ship To: <address>".
+            label = ptext.strip()
+            out[-1] = f"{label} {text}" if label.endswith(":") else f"{label}: {text}"
+            continue
         ps = max(prow, key=lambda s: len(s.text))
         cs = max(row, key=lambda s: len(s.text))
         psize = max(s.size for s in prow) or 10.0
