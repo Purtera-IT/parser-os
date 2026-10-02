@@ -126,6 +126,30 @@ def _declared_site_count(
 
 
 def _found_site_count(atoms: Sequence[EvidenceAtom]) -> int:
+    """How many sites the deal's site list shows.
+
+    The question atom says "N identified", and the PM reads that against the
+    live site list -- so it must be the site list's own count. Counting only
+    ``site:`` entity keys on physical_site atoms disagreed with it: a site
+    anchored by its value id with no ``site:`` key (a name-only roster row),
+    or one surfaced under an alias, is on the list and was not counted (live
+    000132: "declare 6 locations; 3 identified" beside four live sites).
+    ``build_site_readiness`` is the list; the key count is the fallback when
+    it cannot run.
+    """
+    try:
+        from app.core.orbitbrief_core import build_site_readiness
+
+        listed = build_site_readiness(atoms=list(atoms), edges=[])
+        n = int((listed or {}).get("site_count") or 0)
+        if n or not _physical_site_key_count(atoms):
+            return n
+    except Exception:  # pragma: no cover - the cross-check must not fail a compile
+        pass
+    return _physical_site_key_count(atoms)
+
+
+def _physical_site_key_count(atoms: Sequence[EvidenceAtom]) -> int:
     slugs: set[str] = set()
     for atom in atoms:
         if getattr(atom, "atom_type", None) == AtomType.physical_site:

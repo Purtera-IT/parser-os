@@ -2849,6 +2849,20 @@ class XlsxParser(BaseParser):
                     parser_version=self.parser_version,
                 )
             )
+            # The site's service-type tick boxes are facts of their own: one
+            # atom per cell, beside (never inside) the site's name/address.
+            from app.parsers.checkbox_cells import checkbox_atom
+
+            for _col, _val in (getattr(site_row, "checkbox_fields", None) or ()):
+                out.append(checkbox_atom(
+                    project_id=project_id, artifact_id=artifact_id,
+                    artifact_type=artifact_type, filename=filename, text=_val,
+                    column=_col, subject=site_row.facility_name or canon_id,
+                    locator={"sheet": sheet_name, "row": row_index,
+                             "section_path": [sheet_name] if sheet_name else []},
+                    extraction_method="xlsx_checkbox_cell_v1",
+                    parser_version=self.parser_version, entity_keys=entity_keys,
+                ))
         return out
 
     @staticmethod

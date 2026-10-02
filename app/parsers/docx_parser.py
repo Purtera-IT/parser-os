@@ -645,6 +645,35 @@ class DocxParser(BaseParser):
                 ):
                     continue
                 row_text = " | ".join(cell_texts)
+                # Checkbox cells ("☐ Assessment ☒ Installation") are their own
+                # facts: split off the row so a site name never carries them.
+                from app.parsers.checkbox_cells import checkbox_atom, is_checkbox_cell, looks_like_site_column
+
+                _cb_cells = [
+                    (i, c.text.strip()) for i, c in enumerate(row_cells.cells)
+                    if c.text.strip() and is_checkbox_cell(c.text)
+                ] if row_idx > 0 or not header_cells else []
+                _cb_texts = {t for _i, t in _cb_cells}
+                _plain_cells = [t for t in cell_texts if t not in _cb_texts]
+                if _cb_cells and _plain_cells:
+                    row_text = " | ".join(_plain_cells)
+                    _subject = _plain_cells[0]
+                    _site_like = bool(header_cells) and looks_like_site_column(header_cells[0] if header_cells else "")
+                    _seen_cb: set[str] = set()
+                    for _ci, _ct in _cb_cells:
+                        if _ct in _seen_cb:  # a merged cell repeats its text
+                            continue
+                        _seen_cb.add(_ct)
+                        atoms.append(checkbox_atom(
+                            project_id=project_id, artifact_id=artifact_id,
+                            artifact_type=ArtifactType.docx, filename=path.name, text=_ct,
+                            column=(header_cells[_ci] if _ci < len(header_cells) else ""),
+                            subject=_subject,
+                            locator={"table_index": table_idx, "row": row_idx, "cell": _ci,
+                                     "section_path": table_section.get(table_idx, [])},
+                            extraction_method="docx_checkbox_cell_v1",
+                            parser_version=self.parser_version, site_row=_site_like,
+                        ))
                 # v49.2: emit a raw_table_row atom alongside the legacy
                 # row blob. The centralized _enrich_table_atoms() in
                 # entity_extraction will classify all raw_table_row
@@ -721,6 +750,7 @@ class DocxParser(BaseParser):
                             "kind": "table_row",
                             "columns": header_cells,
                             "cells": _cells_by_column(header_cells, cell_texts),
+                            **({"checkbox_cells_split": True} if (_cb_cells and _plain_cells) else {}),
                         },
                         entity_keys=[],
                         source_refs=[row_src],
@@ -986,6 +1016,20 @@ class DocxParser(BaseParser):
         atoms.sort(key=_body_key)
         atoms = _dedupe_repeated_text(atoms)
         _mark_unfilled_placeholders(atoms, _placeholders)
+        # A low-confidence roster also falls through to the per-row emitter
+        # ("duplicate coverage beats silent data loss"); its checkbox cells
+        # are then minted twice at the same table cell. Keep one.
+        _cb_seen: set[tuple] = set()
+        _deduped: list[Any] = []
+        for a in atoms:
+            if "checkbox_cell" in (a.review_flags or []):
+                loc = a.source_refs[0].locator if a.source_refs else {}
+                k = (loc.get("table_index"), loc.get("row"), a.raw_text)
+                if k in _cb_seen:
+                    continue
+                _cb_seen.add(k)
+            _deduped.append(a)
+        atoms = _deduped
 
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
@@ -1163,6 +1207,20 @@ class DocxParser(BaseParser):
                     parser_version=self.parser_version,
                 )
             )
+            # The site's service-type tick boxes: their own atoms, never
+            # glued onto the site's name/address text.
+            from app.parsers.checkbox_cells import checkbox_atom
+
+            for _col, _val in (getattr(site_row, "checkbox_fields", None) or ()):
+                out.append(checkbox_atom(
+                    project_id=project_id, artifact_id=artifact_id,
+                    artifact_type=ArtifactType.docx, filename=filename, text=_val,
+                    column=_col, subject=site_row.facility_name or canon_id,
+                    locator={"table_index": table_index, "row": row_index,
+                             "section_path": list(section_path) if section_path else []},
+                    extraction_method="docx_checkbox_cell_v1",
+                    parser_version=self.parser_version, entity_keys=entity_keys,
+                ))
         return out
 
     def _build_structured_doc(
