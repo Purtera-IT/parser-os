@@ -237,10 +237,8 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
             common &= set(fl)
         values = []
         for (key, a), fl in zip(variants.items(), fig_lists):
-            # A copy that simply lacks the figure ("at a rate of per hour",
-            # the draft left the rate blank) says so, instead of borrowing a
-            # figure both copies share.
-            differing = list(dict.fromkeys(f for f in fl if f not in common)) or ["(no figure)"]
+            # Only the figures this copy does not share with the others.
+            differing = list(dict.fromkeys(f for f in fl if f not in common))
             values.append(
                 {
                     "figures": " ".join(differing),
@@ -250,6 +248,15 @@ def find_cross_document_conflicts(atoms: list[Any], *, project_id: str) -> list[
                     "artifact_id": str(getattr(a, "artifact_id", "")),
                 }
             )
+        # A conflict is two real values. A copy that simply lacks the figure
+        # is a different rendering of the line (a footer with the copyright
+        # year beside one without: "2026 vs (no figure)", 010003), not a
+        # second value to choose between.
+        values = [v for v in values if v["figures"]]
+        if len(values) < 2:
+            continue
+        reps = [a for a in reps if any(v["atom_id"] == str(getattr(a, "id", "")) for v in values)]
+        first = reps[0]
         summary = " vs ".join(v["figures"] for v in values)
         text = (
             f"Documents disagree on one clause: {summary}. "
