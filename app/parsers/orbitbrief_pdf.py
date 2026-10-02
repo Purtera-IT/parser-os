@@ -1209,31 +1209,52 @@ def _fold_photo_requests_into_images(atoms: list[EvidenceAtom]) -> list[Evidence
 
 
 
+def _is_page_furniture_block(block: dict[str, Any]) -> bool:
+    """A page footer / header band or doc stamp kept as its own block."""
+    if block.get("page_footer") or block.get("doc_stamp"):
+        return True
+    if block.get("kind") != "paragraph":
+        return False
+    text = (block.get("text") or "").strip()
+    return bool(text) and _looks_like_page_footer(text)
+
+
 def _last_block_if_paragraph(page: dict[str, Any]) -> dict[str, Any] | None:
-    """The page's final content block, but only if it's a paragraph."""
+    """The page's final content block, but only if it's a paragraph or a
+    bullet list. The footer band printed under it is not content: 010353's
+    page footer sat last on the page, so the next page's continuation line
+    was glued onto the footer instead of the sentence it finishes."""
     for sec in reversed(page.get("sections") or []):
-        blocks = sec.get("blocks") or []
+        blocks = [b for b in (sec.get("blocks") or []) if not _is_page_furniture_block(b)]
         if not blocks:
             continue
         last = blocks[-1]
-        return last if last.get("kind") == "paragraph" else None
+        if last.get("kind") == "paragraph":
+            return last
+        if last.get("kind") == "bullet_list" and (last.get("items") or []):
+            return last
+        return None
     return None
 
 
 def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
     """Re-join a paragraph that the PDF wrapped across a page boundary.
 
-    When a page's last paragraph ends mid-sentence (no terminal punctuation)
-    and the next page opens with a lowercase continuation paragraph *before*
-    any heading, the sentence was split by the page break. Splice the
-    continuation back onto the previous block so it doesn't orphan into a
-    fragment atom (e.g. "and payment schedule."). Mutates ``pages`` in place.
+    When a page's last paragraph (or last bullet item) ends mid-sentence (no
+    terminal punctuation) and the next page opens with a lowercase
+    continuation paragraph *before* any heading, the sentence was split by
+    the page break. Splice the continuation back onto the previous block so
+    it doesn't orphan into a fragment atom (e.g. "and payment schedule.").
+    Page footer / header bands on either side of the break are skipped.
+    Mutates ``pages`` in place.
     """
     for i in range(len(pages) - 1):
         prev_block = _last_block_if_paragraph(pages[i])
         if prev_block is None:
             continue
-        ptext = (prev_block.get("text") or "").rstrip()
+        is_list = prev_block.get("kind") == "bullet_list"
+        target = prev_block["items"][-1] if is_list else prev_block
+        ptext = (target.get("text") or "").rstrip()
         if not ptext or ptext[-1] in ".!?:":
             continue  # previous page ended a sentence cleanly — no wrap
         nxt_sections = pages[i + 1].get("sections") or []
@@ -1243,17 +1264,18 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
         if (first_sec.get("heading") or "").strip():
             continue  # a heading precedes the text — a new section, not a wrap
         nblocks = first_sec.get("blocks") or []
-        if not nblocks or nblocks[0].get("kind") != "paragraph":
+        ci = next((k for k, b in enumerate(nblocks) if not _is_page_furniture_block(b)), None)
+        if ci is None or nblocks[ci].get("kind") != "paragraph":
             continue
-        cont = nblocks[0]
+        cont = nblocks[ci]
         ctext = (cont.get("text") or "").strip()
         if not ctext or not ctext[0].islower():
             continue  # continuation must start lowercase (mid-sentence)
-        prev_block["text"] = f"{ptext} {ctext}".strip()
-        prev_lines = prev_block.get("lines")
+        target["text"] = f"{ptext} {ctext}".strip()
+        prev_lines = target.get("lines")
         if isinstance(prev_lines, list):
             prev_lines.extend(cont.get("lines") or [ctext])
-        del nblocks[0]
+        del nblocks[ci]
         if not nblocks:
             del nxt_sections[0]
 
