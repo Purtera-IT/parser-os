@@ -1027,6 +1027,15 @@ def compile_project(
                                 )
                             )
                         cache_misses += 1
+                    # A sheet row joined into one atom ("AP-1 | Access point
+                    # | 4") is in no single cell: name the cells it came
+                    # from, whichever parser read the workbook (the quote
+                    # parser reads many). Provenance only -- never fails.
+                    try:
+                        from app.parsers.cell_fragments import stamp_cell_fragments
+                        parsed_atoms = stamp_cell_fragments(parsed_atoms, artifact)
+                    except Exception:  # noqa: BLE001
+                        pass
                     # Materialize parser-emitted derived files next to
                     # the source artifact on every pass — cache or no
                     # cache.  This is what keeps OrbitBrief PDF

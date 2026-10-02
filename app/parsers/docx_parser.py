@@ -1097,6 +1097,13 @@ class DocxParser(BaseParser):
         atoms = _deduped
         _stamp_reading_order(atoms, para_order, table_order)
 
+        # A table row joined into one atom ("Boston | 1 Main St | 4") is in
+        # no single cell: name the cells, so the source pane marks each one.
+        try:
+            from app.parsers.cell_fragments import stamp_docx_cell_fragments
+            atoms = stamp_docx_cell_fragments(atoms, list(_all_tables(document)))
+        except Exception:  # provenance never fails a parse
+            pass
         structured_doc = self._build_structured_doc(filename=path.name, document=document)
         stamp_section_and_block_ids(structured_doc, artifact_seed=artifact_id)
         return ParserOutput(
