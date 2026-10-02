@@ -27,6 +27,7 @@ from app.core.schemas import (
 )
 from app.parsers.base import BaseParser
 from app.parsers.email_body import _extract_email_text
+from app.core.textio import decode_html_entities
 from app.parsers.binary_markers import attachment_marker
 from app.parsers.segmenters import segment_email
 from app.parsers.structured_projection import (
@@ -2500,7 +2501,9 @@ class EmailParser(BaseParser):
     @staticmethod
     def _file_lines(path: Path) -> list[str]:
         try:
-            return path.read_bytes().decode("utf-8", errors="replace").splitlines()
+            # Decoded like the body (line count unchanged), so a header found
+            # here reads the same text the body atoms carry.
+            return decode_html_entities(path.read_bytes().decode("utf-8", errors="replace")).splitlines()
         except Exception:
             return []
 
