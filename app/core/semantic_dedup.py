@@ -2130,6 +2130,9 @@ def _resolve_cross_type_group(members: list[Any], pool: list[Any] | None = None)
         if _atom_type_value(member) == winner_type:
             kept.add(id(member))
             continue
+        if _checkbox_states_differ(winner, member):
+            kept.add(id(member))
+            continue
         # A retyping may not take a FIGURE with it. The group key strips
         # digits by design, so an atom that dropped the numbers keys
         # identically to the one that kept them.
@@ -2287,12 +2290,15 @@ def _suppress_table_row_blob_doubles(atoms: list[Any]) -> list[Any]:
     match for the duplicate to collapse. Universal across docx tables + xlsx
     sheets; provenance of the dropped blob is merged into the survivor."""
     rich_by_cell: dict[str, Any] = {}
+    people_by_cell: dict[str, list[Any]] = {}
     for a in atoms:
         if _atom_type_value(a) in ("scope_item", "raw_table_row"):
             continue
         cell = _atom_cell_locator(a)
         if cell:
             rich_by_cell.setdefault(cell, a)
+            if _atom_type_value(a) == "stakeholder":
+                people_by_cell.setdefault(cell, []).append(a)
     if not rich_by_cell:
         return atoms
 
@@ -2329,11 +2335,30 @@ def _suppress_table_row_blob_doubles(atoms: list[Any]) -> list[Any]:
             # a double of a richer atom that does not (010246).
             if winner is not None and not (
                 _figures_stated(a) - _figures_stated(winner)
-            ) and not _fold.emails_only_the_loser_states(winner, a):
+            ) and not _fold.emails_only_the_loser_states(winner, a) and not _row_names_more_people(
+                a, people_by_cell.get(_atom_cell_locator(a)) or []
+            ):
                 _merge_atom_metadata(winner, a)
                 continue
         out.append(a)
     return out
+
+
+class _Said:
+    """Every word and value the person records read off one row state."""
+
+    __slots__ = ("raw_text", "value")
+
+    def __init__(self, atoms: list[Any]) -> None:
+        self.raw_text = " | ".join(str(getattr(a, "raw_text", "") or "") for a in atoms)
+        self.value = {f"_{i}": getattr(a, "value", None) for i, a in enumerate(atoms)}
+
+
+def _row_names_more_people(blob: Any, people: list[Any]) -> bool:
+    """A contact row the classifier read as ONE person may name two ("John ...
+    | Danny ... | Danny's phone not provided", 010353): the blob is then the
+    only copy of the second person, and is not a double."""
+    return bool(people) and bool(_fold.person_detail_only_the_loser_states(_Said(people), blob))
 
 
 def _suppress_line_item_doubles(atoms: list[Any]) -> list[Any]:
@@ -2470,7 +2495,13 @@ def collapse_repeated_speech(atoms: list[Any], *, threshold: float = 0.8) -> lis
 
 
 def _detail_lost(winner: Any, loser: Any) -> frozenset[str]:
-    return _fold.detail_only_the_loser_states(winner, loser)
+    lost = _fold.detail_only_the_loser_states(winner, loser)
+    if _atom_type_value(loser) == "stakeholder":
+        # A person record also carries other people, roles and notes ("Danny's
+        # phone not provided", 010353): a fold that drops the only copy of
+        # those is a deletion too.
+        lost |= _fold.person_detail_only_the_loser_states(winner, loser)
+    return lost
 
 
 def _survivor_keeping_detail(ranked: list[Any]) -> Any:
@@ -2510,6 +2541,49 @@ def _keep_instruction_standing(atom: Any) -> None:
         flags.append("kept_over_dedup")
 
 
+class _WordsOf:
+    """An atom's words alone, without its structured value."""
+
+    __slots__ = ("raw_text", "value")
+
+    def __init__(self, atom: Any) -> None:
+        self.raw_text = str(getattr(atom, "raw_text", "") or "")
+        self.value = None
+
+
+def _contact_text_lost(winner: Any, loser: Any) -> frozenset[str]:
+    """A phone or email the loser's ROW shows and the survivor's words do not.
+
+    The value union hands the address to the survivor, but a bare mention
+    ("Trent Smith <trent@...>") then stands in for the contact row that showed
+    it (010087: the SOW row with Trent's email folded into a name-only
+    mention, and no copy of the row survived)."""
+    w, l = _WordsOf(winner), _WordsOf(loser)
+    lost = {f"phone:{p}" for p in _fold.phones_stated(l) - _fold.phones_stated(w)}
+    lost |= {f"email:{e}" for e in _fold.emails_only_the_loser_states(w, l)}
+    return frozenset(lost)
+
+
+def _shown_only_by(loser: Any, winner: Any) -> frozenset[str]:
+    """What ``loser``'s WORDS show and ``winner``'s words do not."""
+    return _contact_text_lost(winner, loser) | _fold.person_detail_only_the_loser_states(
+        _WordsOf(winner), _WordsOf(loser))
+
+
+def _says_more_person(atom: Any, winner: Any) -> bool:
+    """``atom`` is the fuller copy of the person ``winner`` holds: its words
+    show everything the winner's do and more (a role, an email, a phone, a
+    second name). The value union would hand the fields over either way, but
+    the record a reader sees should be the row that shows them (010087: the
+    SOW row with Trent's email and role folded into "Trent Smith <trent@...>").
+    An instruction never becomes the person record."""
+    if _atom_type_value(atom) != "stakeholder" or _atom_type_value(winner) != "stakeholder":
+        return False
+    if _fold.actions_stated(atom):
+        return False
+    return bool(_shown_only_by(atom, winner)) and not _shown_only_by(winner, atom)
+
+
 def _fold_or_keep(winner: Any, loser: Any) -> bool:
     """Merge ``loser`` into ``winner``; False when the loser must stay standing
     because the survivor would still lack a detail only it carries. A person
@@ -2527,6 +2601,43 @@ def _fold_or_keep(winner: Any, loser: Any) -> bool:
         if isinstance(flags, list) and "kept_over_dedup" not in flags:
             flags.append("kept_over_dedup")
     return False
+
+
+def _checkbox_state(atom: Any) -> frozenset[tuple[bool, str]] | None:
+    """The (ticked, label) pairs a checkbox line states, or None for a line
+    that is not one. Read from the value a parser recorded, else the text."""
+    def _norm(label: Any) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", str(label or "").lower()))
+
+    v = getattr(atom, "value", None)
+    if isinstance(v, dict):
+        kind = str(v.get("kind") or "")
+        if kind == "checkbox" and v.get("label"):
+            return frozenset({(bool(v.get("checked")), _norm(v.get("label")))})
+        if kind == "checkbox_selection" and isinstance(v.get("options"), list):
+            return frozenset(
+                (bool(o.get("checked")), _norm(o.get("label")))
+                for o in v["options"] if isinstance(o, dict)
+            )
+    try:
+        from app.parsers.checkbox_cells import checkbox_options
+
+        opts = checkbox_options(str(getattr(atom, "raw_text", "") or ""))
+    except Exception:
+        opts = None
+    return frozenset((c, _norm(l)) for c, l in opts) if opts else None
+
+
+def _checkbox_states_differ(a: Any, b: Any) -> bool:
+    """Two checkbox lines that tick different boxes, or name different
+    options, are two facts (010003: the unticked "☐ Staff Augmentation" and
+    "☐ Knowledge Transfer" rows keyed alike with "☒ Installation" on site +
+    column and were folded away). A checkbox line and a line that is not one
+    are two facts too."""
+    sa, sb = _checkbox_state(a), _checkbox_state(b)
+    if sa is None and sb is None:
+        return False
+    return sa != sb
 
 
 def _earliest_first(doc_order: dict[str, tuple] | None):
@@ -2621,7 +2732,11 @@ def semantic_dedup_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | None
         if key is None:
             continue
         slot = _slot_for(atom, key)
-        if slot in winners and not _fold_or_keep(winners[slot], atom):
+        if slot in winners and _checkbox_states_differ(winners[slot], atom):
+            # "☐ Staff Augmentation" is not a copy of "☒ Installation": an
+            # unticked box says what is NOT in scope, and each row is its own.
+            slot = (*slot, f"#box:{id(atom)}")
+        elif slot in winners and not _fold_or_keep(winners[slot], atom):
             # The only copy of a ZIP / phone / email / instruction stands on
             # its own slot rather than being folded away.
             slot = (*slot, f"#kept:{id(atom)}")
@@ -2681,6 +2796,18 @@ def dedupe_stakeholder_atoms(atoms: list[Any], *, doc_order: dict[str, tuple] | 
             continue
         key = _value_key(atom)
         if key is None:
+            continue
+        if key in winners and _says_more_person(atom, winners[key]):
+            # Keep the copy with more information: it becomes the survivor
+            # and the sparser one folds into it (or stands, if it too holds
+            # a detail only it carries).
+            prev = winners[key]
+            winners[key] = atom
+            key_of[id(atom)] = key
+            if not _fold_or_keep(atom, prev):
+                kept = (*key, f"#kept:{id(prev)}")
+                key_of[id(prev)] = kept
+                winners[kept] = prev
             continue
         if key in winners and not _fold_or_keep(winners[key], atom):
             # Never the only copy of a detail: it stands on its own key.
@@ -2767,7 +2894,12 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
         v = getattr(a, "value", None) or {}
         role = str((v.get("title") or v.get("role") or "") if isinstance(v, dict) else "").strip().lower()
         has_title = int(bool(role) and role not in {"stakeholder", "person", "contact"})
-        return (len(ident), int("email" in ident), has_title)
+        # Then the row whose own WORDS show the contact: after a fold has
+        # merged values, "Trent Smith <trent@...>" and his SOW row with role,
+        # email and phone (010087) tie on fields, and the row must survive.
+        w = _WordsOf(a)
+        shown = len(_fold.phones_stated(w)) + len(_fold.emails_stated(w))
+        return (len(ident), int("email" in ident), has_title, shown, len(_fold.person_words(w.raw_text)))
 
     def _subsumed(sparse: Any, full: Any) -> bool:
         # The sparser record carries no contact detail that CONTRADICTS the
@@ -2792,9 +2924,13 @@ def _fold_bare_name_variants(atoms: list[Any]) -> list[Any]:
     people = [a for a in atoms if _atom_type_value(a) == "stakeholder" and _parts(a)]
     drop: set[int] = set()
     for a in sorted(people, key=_richness):
+        # A record kept standing as an instruction below loses its name and
+        # its person type; it is no longer a candidate on either side.
+        if not _parts(a):
+            continue
         fa, la = _parts(a)
         for b in sorted(people, key=_richness, reverse=True):
-            if b is a or id(b) in drop or id(a) in drop:
+            if b is a or id(b) in drop or id(a) in drop or not _parts(a) or not _parts(b):
                 continue
             same_doc = str(getattr(b, "artifact_id", "")) == str(getattr(a, "artifact_id", ""))
             fb, lb = _parts(b)
