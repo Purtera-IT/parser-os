@@ -40,10 +40,18 @@ from typing import Iterable
 #: are pipeline rows re-ranked as PM, not verified human gold.
 _TEACHER_RANK = {"human": 4, "pm": 3, "pipeline": 2, "llm": 1, "deepseek": 1, "": 0}
 
-#: The tasks the backbone trains on. Everything else in the DBs (edge tables,
-#: span work) has its own machinery and is excluded on purpose.
-def _reads_tasks() -> tuple[str, ...]:
-    """One task per reading in the registry.
+#: Reading layers no profile ever trains.
+UNTRAINED_LAYERS = ("meta", "staging")
+
+
+def _reads_tasks(layers: tuple[str, ...] = ("universal",)) -> tuple[str, ...]:
+    """One task per reading in the registry whose `layer` is in ``layers``.
+
+    The default is the base: `universal` readings only, which any company's
+    labels can teach (labeling/portable-labels.md, f.6). `company` readings
+    train only a company profile (``tasks_for``). `meta` and `staging`
+    readings are stored on a row and never trained: whose policy it is, how
+    the deal ended (leakage), a backfill's scratch key.
 
     A reading whose values are a fixed set trains as those classes. One whose
     value is a phrase ("what was promised") trains as presence -- the phrase
@@ -53,12 +61,13 @@ def _reads_tasks() -> tuple[str, ...]:
     """
     from app.core.atom_type_registry import load_registry
 
-    # `meta` and `staging` readings are stored on a row and never trained:
-    # whose policy it is, how the deal ended (leakage), a backfill's scratch key.
+    layers = tuple(x for x in layers if x not in UNTRAINED_LAYERS)
     return tuple(sorted(f"reads:{r.get('key')}" for r in load_registry().get("reads") or []
-                        if r.get("layer") not in ("meta", "staging")))
+                        if r.get("layer") in layers))
 
 
+#: The tasks the backbone trains on. Everything else in the DBs (edge tables,
+#: span work) has its own machinery and is excluded on purpose.
 DEFAULT_TASKS = (
     "atom_type",
     "atom_type_coarse",
@@ -98,12 +107,39 @@ DEFAULT_TASKS = (
     "decided_from",
     # What the Questions card records beside valid / invalid. From the gap
     # judgment's fields, with the atom's own readings as the fallback for a
-    # question the card never answered. `needed_by` is multi-label: one row
-    # per consumer.
-    "question:intake_gap",
-    "question:needed_by",
+    # question the card never answered. The stage is universal; whether a
+    # question was an intake gap and who needs the answer are Purtera's
+    # (COMPANY_QUESTION_TASKS).
     "question:deal_stage",
 ) + _reads_tasks()
+
+#: Questions-card heads that answer by a company's own standard: "should
+#: have been asked at quoting" is Purtera's intake standard, and the
+#: consumers (project_manager / atlas / portal) are Purtera's. `needed_by`
+#: is multi-label: one row per consumer.
+COMPANY_QUESTION_TASKS = {"purtera": ("question:intake_gap", "question:needed_by")}
+
+#: The base task list, by its name in the design: every universal task.
+BASE_TASKS = DEFAULT_TASKS
+
+#: Companies with a policy layer. Each adds its `company` readings, its
+#: keep / reject / ignore filter (`policy:<company>`) and, held back like
+#: every rationale, `rationale:policy:<company>`.
+COMPANY_PROFILES = ("purtera",)
+
+
+def tasks_for(profile: str = "base") -> tuple[str, ...]:
+    """The backbone tasks for a profile: ``base`` or a company in COMPANY_PROFILES.
+
+    A company profile is the base plus that company's layer, so its adapter
+    trains on top of the same universal heads.
+    """
+    if profile == "base":
+        return BASE_TASKS
+    if profile not in COMPANY_PROFILES:
+        raise ValueError(f"unknown profile {profile!r}; one of base, {', '.join(COMPANY_PROFILES)}")
+    return (BASE_TASKS + COMPANY_QUESTION_TASKS.get(profile, ())
+            + _reads_tasks(("company",)) + (f"policy:{profile}",))
 
 #: Not backbone tasks, and deliberately so. A span is an extraction problem and
 #: a rationale is a generative one; admitting either to a classifier would put a
@@ -340,10 +376,15 @@ def _fallback_split(deal_id: str) -> str:
 
 
 if __name__ == "__main__":  # pragma: no cover - operator entry point
+    import argparse
     import glob
 
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--profile", default="base", choices=("base",) + COMPANY_PROFILES,
+                    help="base: universal tasks only; a company adds its policy layer")
+    a = ap.parse_args()
     dbs = [Path(p) for p in glob.glob("_training_*.db")]
-    table = assemble(dbs)
+    table = assemble(dbs, tasks=tasks_for(a.profile))
     print(table.summary())
     written = table.write(Path("_multitask_table.db"))
     print(f"\nwrote {written} rows -> _multitask_table.db")

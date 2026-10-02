@@ -57,6 +57,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--parser", choices=TRAIN_TARGETS, default=QUOTE_PARSER,
                     help="which parser's rows to export (delivery_parser: facts tagged train_for it)")
+    ap.add_argument("--context-dropout", type=int, default=None, metavar="SEED",
+                    help="also write context-dropout augmentation copies (train split only)")
     ap.add_argument("--container", default="orbitbrief-artifacts")
     ap.add_argument("--account", default="purpulsedevstg01")
     a = ap.parse_args()
@@ -65,7 +67,7 @@ def main() -> int:
         docs.extend(docs_from_gold_export(json.load(io.open(p, encoding="utf-8")), labeler=p.stem))
     if a.out is None:
         a.out = Path("_training_human.db" if a.parser == QUOTE_PARSER else f"_training_{a.parser}.db")
-    rep = write_db(docs, a.out, a.parser)
+    rep = write_db(docs, a.out, a.parser, dropout_seed=a.context_dropout)
     print(f"deals={rep.deals} labels={rep.labels} rows={rep.rows} "
           f"deal_answers={rep.deal_answers} -> {a.out}")
     for why, n in sorted(rep.skipped.items(), key=lambda kv: -kv[1]):
