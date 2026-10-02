@@ -1274,6 +1274,19 @@ _NEGATION_RE = re.compile(
 )
 
 
+def _under_exclusion_heading(atom: Any) -> bool:
+    """The atom's own document section is an exclusions section."""
+    try:
+        from app.parsers.sow_sections import under_exclusion_heading
+    except Exception:
+        return False
+    for ref in list(getattr(atom, "source_refs", None) or [])[:1]:
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and under_exclusion_heading(loc.get("section_path") or []):
+            return True
+    return False
+
+
 def demote_exclusions_without_negation(atoms: list[Any]) -> int:
     """An ``exclusion`` with nothing negated in it is not an exclusion.
 
@@ -1295,6 +1308,12 @@ def demote_exclusions_without_negation(atoms: list[Any]) -> int:
         val = getattr(atom, "value", None)
         if isinstance(val, dict) and val.get("list_section") == "exclude":
             continue  # an item under an "Excluded:" header is negated by its header
+        if _under_exclusion_heading(atom):
+            # "Long-term warehousing of customer equipment" under an "OUT OF
+            # SCOPE" heading carries no negation of its own: the heading is
+            # the negation (signed SOWs 010087 / 010246 lost their whole
+            # exclusions list to scope_item here).
+            continue
         try:
             from app.core.schemas import AtomType as _AT
             atom.atom_type = _AT.scope_item

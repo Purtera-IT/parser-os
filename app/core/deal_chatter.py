@@ -125,6 +125,18 @@ def is_chatter(text: str, *, entity_keys: list[str] | None = None) -> bool:
     return bool(_PIPELINE_RE.search(t) or _HANDOFF_RE.search(t) or _SOCIAL_RE.match(t))
 
 
+def _under_exclusion_heading(atom: Any) -> bool:
+    try:
+        from app.parsers.sow_sections import under_exclusion_heading
+    except Exception:
+        return False
+    for ref in list(getattr(atom, "source_refs", None) or [])[:1]:
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and under_exclusion_heading(loc.get("section_path") or []):
+            return True
+    return False
+
+
 def mark_chatter(atoms: list[Any]) -> int:
     """Leave a small-talk PREDICTION on prose that reads as relationship talk.
 
@@ -150,6 +162,11 @@ def mark_chatter(atoms: list[Any]) -> int:
         # sounds like: "Here are the details for the small job" says the job
         # is small, and hiding it throws that away.
         if val.get("signals"):
+            continue
+        # A line under an "Out of Scope" / "Exclusions" heading is a thing we
+        # will not do, however chatty or short it reads ("Long-term
+        # warehousing...", "Chromebook imaging...").
+        if _under_exclusion_heading(atom):
             continue
         text = getattr(atom, "raw_text", "") or ""
         if not is_chatter(text, entity_keys=list(getattr(atom, "entity_keys", None) or [])):
