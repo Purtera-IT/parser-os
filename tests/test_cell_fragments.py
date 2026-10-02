@@ -120,9 +120,9 @@ def test_pdf_totals_rows_carry_their_cells(tmp_path):
     atoms = {a.raw_text: a for a in _pdf_atoms(pdf)}
     page = _page_text(pdf)
     for text, cells in [
-        ("SUBTOTAL | $4,309.20", ["SUBTOTAL", "$4,309.20"]),
-        ("SHIPPING | $0.00", ["SHIPPING", "$0.00"]),
-        ("SALES TAX | $382.44", ["SALES TAX", "$382.44"]),
+        ("SUBTOTAL: $4,309.20", ["SUBTOTAL", "$4,309.20"]),
+        ("SHIPPING: $0.00", ["SHIPPING", "$0.00"]),
+        ("SALES TAX: $382.44", ["SALES TAX", "$382.44"]),
         ("Need Help? | My Account | Support | Call 800.800.4239",
          ["Need Help?", "My Account", "Support", "Call 800.800.4239"]),
     ]:
@@ -137,14 +137,14 @@ def test_pdf_totals_rows_carry_their_cells(tmp_path):
             assert len(f["bbox"]) == 4
             assert "".join(f["text"].split()).lower() in page
     # the totals box's GRAND TOTAL, not the header row's
-    gt = _frags(atoms["GRAND TOTAL | $4,691.64"])
+    gt = _frags(atoms["GRAND TOTAL: $4,691.64"])
     assert [f["text"] for f in gt] == ["GRAND TOTAL", "$4,691.64"]
     assert all(f["bbox"][1] > 250 for f in gt), gt
     # which copy of the words it is, for a viewer without geometry
     assert [f["nth"] for f in gt] == [1, 1]
-    assert [f["nth"] for f in _frags(atoms["SUBTOTAL | $4,309.20"])] == [0, 0]
+    assert [f["nth"] for f in _frags(atoms["SUBTOTAL: $4,309.20"])] == [0, 0]
     # a cell's value sits on its label's row
-    ship = _frags(atoms["SHIPPING | $0.00"])
+    ship = _frags(atoms["SHIPPING: $0.00"])
     assert abs(ship[0]["bbox"][1] - ship[1]["bbox"][1]) < 3
 
 
@@ -234,6 +234,6 @@ def test_compiled_envelope_atom_keeps_the_fragments(tmp_path):
 
     pdf = tmp_path / "CDW Quote.pdf"
     _cdw_bom(pdf)
-    atom = next(a for a in _pdf_atoms(pdf) if a.raw_text == "SUBTOTAL | $4,309.20")
+    atom = next(a for a in _pdf_atoms(pdf) if a.raw_text == "SUBTOTAL: $4,309.20")
     compact = _compact_atom(atom)
     assert [f["text"] for f in compact["locator"]["cell_fragments"]] == ["SUBTOTAL", "$4,309.20"]
