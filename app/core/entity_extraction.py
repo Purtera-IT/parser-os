@@ -5009,16 +5009,27 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
                 role = "stakeholder"
                 title = ""
                 conf = 0.72
+                # The person's OWN words, never the whole passage they are
+                # mentioned in. This used to be ``raw[:500]``: the person atom
+                # carried the entire paragraph, so it was the same text as the
+                # paragraph's own atom and pre_classify_dedup folded one into
+                # the other. Live 010353: the SOW premium-rate block came out
+                # as a stakeholder (and, typed higher, left a "stakeholder"
+                # drop of itself) because it named who approves premium work.
+                # A verbatim span keeps source replay exact.
+                span = display
                 for m in owner_re.finditer(raw):
                     if _slug_name(m.group("name")) == slug:
                         role = "owner"
                         conf = 0.78
+                        span = m.group(0).strip()
                         break
                 for m in delegate_re.finditer(raw):
                     if _slug_name(m.group("name")) == slug:
                         role = "approval delegate"
                         title = m.group("title").strip()
                         conf = 0.80
+                        span = m.group(0).strip().rstrip(":").strip()
                         break
                 if "approv" in raw.lower() and role == "stakeholder":
                     role = "approver"
@@ -5028,8 +5039,16 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
                     "title": title,
                     "role": role,
                     "kind": "person",
+                    # The passage it was read from, for context only.
+                    "context": raw[:500],
                 }
-                _put_stakeholder(slug, atom, value, raw[:500], conf)
+                if span == display:
+                    # "Dana Whitfield, Project Manager" -- a name with its
+                    # title right after it, read verbatim from the passage.
+                    _t = re.search(re.escape(display) + r",\s*[A-Z][^,;:.\n]{1,60}", raw)
+                    if _t:
+                        span = _t.group(0).strip()
+                _put_stakeholder(slug, atom, value, span, conf)
 
         for m in signatory_re.finditer(raw):
             role = re.sub(r"^SIGNATURE BLOCKS\s+", "", m.group("role").strip(), flags=re.IGNORECASE)
