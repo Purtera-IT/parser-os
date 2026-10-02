@@ -623,3 +623,27 @@ __all__ = [
     "state_code",
 ]
 
+
+
+_ADDRESS_BOX_CAPTION_RE = re.compile(
+    r"^(?:ship(?:ping)?|bill(?:ing)?|sold|remit(?:\s+payments?)?|mail(?:ing)?|deliver(?:y)?|invoice|"
+    r"install(?:ation)?|site)[\s-]*(?:to|address|location)\b[\s:]*(?:address)?[\s:]*$",
+    re.I,
+)
+
+
+def is_address_block_line(text: str | None) -> bool:
+    """A line of a postal-address box: its caption ("SHIP TO:", "Billing
+    Address"), a street line ("40 10TH AVE FL 4"), a PO box, or a
+    "City, ST ZIP" line. Such a line names a place inside a box; it is never
+    a section heading (live 010003: "40 10TH AVE FL 4" headed 13 atoms)."""
+    s = (text or "").strip()
+    if not s or len(s) > 80:
+        return False
+    if _ADDRESS_BOX_CAPTION_RE.match(s):
+        return True
+    if re.match(r"^P\.?\s*O\.?\s+BOX\s+\d", s, re.I):
+        return True
+    if re.match(r"^\d", s) and looks_like_street_address(s):
+        return True
+    return bool(re.search(r",\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\s*$", s))

@@ -324,9 +324,20 @@ def _regions(rows: list[list[_Seg]]) -> list[tuple[list[list[_Seg]], list[tuple[
     regions: list[tuple[list[list[_Seg]], list[tuple[float, float]]]] = []
     cur: list[list[_Seg]] = [rows[0]]
     cur_g = _gutters(cur, min_gap)
+    med = statistics.median(sizes)
     for row in rows[1:]:
         row_g = _gutters([row], min_gap)
         trial_g = _gutters(cur + [row], min_gap)
+        # A wide band of white space ends a column region when the row below
+        # it does not keep the region's gutters: boxes set above a table share
+        # its gutter COUNT by coincidence, and kept together the
+        # table below was read column by column ("CDW# 7506872 5502114",
+        # "Mfg# QM75C WMN6575SE") under the boxes' columns.
+        if cur_g and min(s.y0 for s in row) - max(s.y1 for s in cur[-1]) > 2.5 * med \
+                and not _gutters_kept(cur_g, trial_g):
+            regions.append((cur, cur_g))
+            cur, cur_g = [row], row_g
+            continue
         if cur_g:
             # Same columns: the row sits inside the region's gutters.
             keep = len(trial_g) == len(cur_g)
@@ -343,7 +354,59 @@ def _regions(rows: list[list[_Seg]]) -> list[tuple[list[list[_Seg]], list[tuple[
             regions.append((cur, cur_g))
             cur, cur_g = [row], row_g
     regions.append((cur, cur_g))
-    return regions
+    return _pull_box_heads(regions, min_gap)
+
+
+def _gutters_kept(cur_g: list[tuple[float, float]], trial_g: list[tuple[float, float]]) -> bool:
+    """Every gutter of the region survives, at least half its width, once the
+    row is added."""
+    for a, b in cur_g:
+        w = max(1e-6, b - a)
+        if not any(min(b, d) - max(a, c) >= 0.5 * w for c, d in trial_g):
+            return False
+    return True
+
+
+def _pull_box_heads(
+    regions: list[tuple[list[list[_Seg]], list[tuple[float, float]]]], min_gap: float
+) -> list[tuple[list[list[_Seg]], list[tuple[float, float]]]]:
+    """A box that starts higher than the box beside it begins in the
+    single-column run above their shared rows: a ship-to box ("SHIP TO:",
+    company, street ...) whose last lines sit beside a "Shipping Method" box.
+    Cut off from its head, the column region held only the shared rows, two
+    rows read as a table and fused "NEW YORK, NY 10014-1066 | Shipping
+    Method: DROP SHIP-GROUND" (010003). Two or more trailing rows of the run
+    above, stacked tight on the first column's left edge and leaving a gutter
+    before the second column, move down into the column region."""
+    out = list(regions)
+    for i in range(1, len(out)):
+        rows, gut = out[i]
+        prev_rows, prev_gut = out[i - 1]
+        if not gut or prev_gut or len(prev_rows) < 3:
+            continue
+        first = [s for s in rows[0] if s.x1 <= gut[0][0] + 0.5]
+        if not first:
+            continue
+        x0 = min(s.x0 for s in first)
+        lh = max(1.0, max(s.y1 - s.y0 for s in first))
+        take = 0
+        top = min(s.y0 for s in rows[0])
+        for r in reversed(prev_rows):
+            if top - max(s.y1 for s in r) > 0.9 * lh:
+                break
+            if abs(min(s.x0 for s in r) - x0) > 3.0 or max(s.x1 for s in r) > gut[0][1] - min_gap:
+                break
+            take += 1
+            top = min(s.y0 for s in r)
+            if take >= len(prev_rows) - 1:
+                break
+        if take < 2:
+            continue
+        moved = prev_rows[-take:]
+        out[i - 1] = (prev_rows[:-take], prev_gut)
+        new_rows = moved + rows
+        out[i] = (new_rows, _gutters(new_rows, min_gap) or gut)
+    return [r for r in out if r[0]]
 
 
 def _split_columns(rows: list[list[_Seg]], gutters: list[tuple[float, float]]) -> list[list[_Seg]]:
@@ -562,3 +625,145 @@ def region_is_side_by_side_boxes(page: Any, bbox: Any) -> bool:
         return False
     except Exception:
         return False
+
+
+# ── Vendor quote / PO line-item grids ────────────────────────────────────
+#
+# A reseller quote (CDW, SHI, Insight ...) or a PO sets its items under a
+# header row ("ITEM | QTY | CDW# | UNIT PRICE | EXT. PRICE"). Each item is an
+# ANCHOR line carrying the figures, then lines under it in the text column
+# only: the wrapped description, "Mfg. Part#: QM55C", "Contract: Standard
+# Pricing". Read as text, the anchor line was one row and its tail glued to
+# the NEXT item ("...Standard Pricing Samsung QM75C ..."); read by the
+# whitespace-column extractor, a right-aligned quantity drifted out of the
+# QTY column and the item number landed under QTY (010003). This reads the
+# grid by its header: every cell is assigned to the header it sits under,
+# every tail line folds into the item above it, and a "Label: value" tail
+# line becomes a field of its own.
+
+_LABEL_VALUE = re.compile(r"^([A-Za-z][\w .#/&'-]{0,30}?)\s*:\s*(\S.*)$")
+_HEADER_WORD = re.compile(r"^[A-Za-z][A-Za-z .#/&'()-]*$")
+
+
+def _cell_column(seg: _Seg, heads: list[_Seg]) -> int:
+    best, best_ov = -1, 0.0
+    for i, h in enumerate(heads):
+        ov = min(seg.x1, h.x1) - max(seg.x0, h.x0)
+        if ov > best_ov:
+            best, best_ov = i, ov
+    if best >= 0:
+        return best
+    cx = (seg.x0 + seg.x1) / 2.0
+    return min(range(len(heads)), key=lambda i: abs(cx - (heads[i].x0 + heads[i].x1) / 2.0))
+
+
+def _is_header_row(row: list[_Seg]) -> bool:
+    if len(row) < 3:
+        return False
+    for s in row:
+        t = s.text.strip()
+        if not t or len(t.split()) > 3 or not _HEADER_WORD.match(t) or len(t) > 24:
+            return False
+    return True
+
+
+def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> list[tuple[dict[str, Any], Any]]:
+    """``[(table block, fitz.Rect)]`` for each line-item grid on the page."""
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        segs = _segments(page, exclude_bboxes or [])
+        rows = _rows(segs)
+    except Exception:
+        return []
+    out: list[tuple[dict[str, Any], Any]] = []
+    taken: set[int] = set()
+    i = 0
+    while i < len(rows):
+        head = rows[i]
+        if not _is_header_row(head):
+            i += 1
+            continue
+        heads = sorted(head, key=lambda s: s.x0)
+        lh = statistics.median([max(1.0, s.y1 - s.y0) for r in rows for s in r]) if rows else 10.0
+        records: list[dict[str, Any]] = []
+        numeric_cols: set[int] = set()
+        prev_bottom = max(s.y1 for s in head)
+        used = [head]
+        j = i + 1
+        while j < len(rows):
+            row = rows[j]
+            gap = min(s.y0 for s in row) - prev_bottom
+            if gap > (2.5 if not records else 1.6) * lh:
+                break
+            cells: dict[int, list[str]] = {}
+            for s in row:
+                cells.setdefault(_cell_column(s, heads), []).append(s.text.strip())
+            nums = {c for c, ts in cells.items() if all(_NUMERICISH.match(t) for t in ts)}
+            if 0 in cells and len(cells) >= 2 and nums:
+                records.append({"cells": cells, "extra": []})
+                numeric_cols |= nums
+            elif records and not nums and not (set(cells) & numeric_cols) \
+                    and not _is_header_row(row):
+                rec = records[-1]
+                for c, ts in cells.items():
+                    for t in ts:
+                        m = _LABEL_VALUE.match(t)
+                        if m and c == 0:
+                            rec["extra"].append((m.group(1).strip(), m.group(2).strip()))
+                        else:
+                            rec["cells"].setdefault(c, []).append(t)
+            else:
+                break
+            used.append(row)
+            prev_bottom = max(s.y1 for s in row)
+            j += 1
+        # One header over one value row ("QUOTE # | QUOTE DATE | ... |
+        # GRAND TOTAL" over "PSNV676 | 1/14/2026 | ...") is a set of labelled
+        # values: one row whose cells pair each header with its value.
+        if numeric_cols and records:
+            columns = [h.text.strip() for h in heads]
+            out_rows = []
+            for rec in records:
+                d: dict[str, str] = {}
+                for c, name in enumerate(columns):
+                    d[name] = " ".join(rec["cells"].get(c, [])).strip()
+                for k, v in rec["extra"]:
+                    if k not in d:
+                        d[k] = v
+                out_rows.append(d)
+            box = fitz.Rect(min(s.x0 for r in used for s in r), min(s.y0 for r in used for s in r),
+                            max(s.x1 for r in used for s in r), max(s.y1 for r in used for s in r))
+            out.append(({"kind": "table", "columns": columns, "rows": out_rows,
+                         "extraction": "header_grid_v1"}, box))
+            taken.update(id(r) for r in used)
+            i = j
+        else:
+            i += 1
+    # Totals: "SUBTOTAL  $5,694.50", "SALES TAX  $0.00", "GRAND TOTAL  $4,691.64"
+    # set as a label with its amount to the right. Read as two boxes the
+    # amount came away from its label; each is one labelled value.
+    for row in rows:
+        if id(row) in taken or len(row) < 2:
+            continue
+        segs = sorted(row, key=lambda s: s.x0)
+        label = " ".join(s.text.strip() for s in segs[:-1]).strip().rstrip(":").strip()
+        amount = segs[-1].text.strip()
+        if not (_TOTAL_LABEL.match(label) and _MONEY.fullmatch(amount)):
+            continue
+        try:
+            box = fitz.Rect(min(s.x0 for s in segs), min(s.y0 for s in segs),
+                            max(s.x1 for s in segs), max(s.y1 for s in segs))
+        except Exception:
+            continue
+        out.append(({"kind": "table", "columns": [label], "rows": [{label: amount}],
+                     "extraction": "labelled_total_v1"}, box))
+    return out
+
+
+_TOTAL_LABEL = re.compile(
+    r"^(?:(?:sub|grand|order|quote|estimated|est\.?)\s*)?total(?:\s+(?:amount|price|due|cost))?|"
+    r"^(?:sales\s+|use\s+)?tax(?:es)?|^shipping(?:\s*(?:&|and)\s*handling)?|^freight|^handling|"
+    r"^(?:environmental|recycling|ewaste|e-waste)\s+fees?|^discount|^balance\s+due|^amount\s+due",
+    re.I)
+_MONEY = re.compile(r"-?\(?\$?\s?\d[\d,]*(?:\.\d{2})?\)?|\$?0\.00|free|tbd|included", re.I)

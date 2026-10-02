@@ -1609,6 +1609,44 @@ _MIN_SENTENCE_CHARS = 12
 _SENTENCE_END_RE = re.compile(r"[.?!](?=\s|$)")
 
 
+_WRAP_MIN_CHARS = 50
+_WRAP_OPEN_TERMINAL_RE = re.compile(r"[.!?:;]\s*[\"\u201d\u2019')\]]*\s*$")
+
+
+def _unwrap_hard_wrapped(lines: list[str]) -> list[tuple[int, str]]:
+    """``(index of first line, text)`` with hard-wrapped prose lines rejoined.
+
+    A plain-text mail client wraps a paragraph at ~72 columns, so one
+    sentence arrives as two lines: "But we are waiting for tv to arrive at
+    their office (it is with the shipping" / "carrier now). I also need to
+    keep my eye on the delivery status." Read line by line, the first half
+    of the sentence was one atom and "carrier now)." another (010003). A
+    long line that stops without terminal punctuation, followed by a line
+    that opens in lowercase under the same quote marker, is one line wrapped;
+    the sentence splitter then cuts the joined text at its real sentence
+    ends. A short line (a greeting, a signature, a list label) never joins.
+    """
+    out: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        text = line or ""
+        body = text.lstrip("> ")
+        if out and body[:1].islower() and "|" not in body \
+                and not _BULLET_PREFIX_RE.match(body):
+            prev_idx, prev = out[-1]
+            prev_body = prev.lstrip("> ")
+            prefix = text[: len(text) - len(body)].replace(" ", "")
+            prev_prefix_line = (lines[idx - 1] or "")
+            prev_prefix = prev_prefix_line[: len(prev_prefix_line) - len(prev_prefix_line.lstrip("> "))].replace(" ", "")
+            last_physical = prev_prefix_line.lstrip("> ").rstrip()
+            if (prefix == prev_prefix and len(last_physical) >= _WRAP_MIN_CHARS
+                    and "|" not in prev_body
+                    and not _WRAP_OPEN_TERMINAL_RE.search(last_physical)):
+                out[-1] = (prev_idx, prev.rstrip() + " " + body.strip())
+                continue
+        out.append((idx, text))
+    return out
+
+
 def _expand_lines_to_sentences(
     lines: list[str], line_start: int
 ) -> list[tuple[int, int, str]]:
@@ -1623,7 +1661,7 @@ def _expand_lines_to_sentences(
     from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences, split_trigger_clause
 
     out: list[tuple[int, int, str]] = []
-    for line_idx, line in enumerate(lines):
+    for line_idx, line in _unwrap_hard_wrapped(lines):
         line_num = line_start + line_idx
         stripped = (line or "").strip()
         # A bullet list flattened onto one line (live 000132, quoted from a
@@ -2079,16 +2117,41 @@ def _logo_images_are_chatter(atoms: list[EvidenceAtom]) -> None:
         words = str(atom.raw_text or "").split()
         if not words or len(words) > 3 or any(ch.isdigit() for ch in atom.raw_text):
             continue
-        mark_admission_chatter(atom, "signature_logo")
-        refs = list(atom.source_refs or [])
-        if refs:
-            loc = {k: x for k, x in dict(refs[0].locator or {}).items() if k not in ("lead_in", "section_path")}
-            refs[0] = refs[0].model_copy(update={"locator": loc})
-            atom.source_refs = refs
-        val = dict(atom.value)
-        for k in ("lead_in", "section_path", "intro"):
-            val.pop(k, None)
-        atom.value = val
+        _signature_image_atom(atom, "signature_logo")
+
+
+def _signature_image_atom(atom: EvidenceAtom, reason: str) -> None:
+    """Hold an inline image's reading as signature chatter, on its own
+    message, with no borrowed "Equipment list" heading or lead-in."""
+    from app.core.admission_chatter import mark_admission_chatter
+
+    mark_admission_chatter(atom, reason)
+    refs = list(atom.source_refs or [])
+    if refs:
+        loc = {k: x for k, x in dict(refs[0].locator or {}).items() if k not in ("lead_in", "section_path")}
+        refs[0] = refs[0].model_copy(update={"locator": loc})
+        atom.source_refs = refs
+    val = dict(atom.value)
+    for k in ("lead_in", "section_path", "intro"):
+        val.pop(k, None)
+    atom.value = val
+
+
+def _cid_anchor_in_signature(blocks: list[dict[str, Any]], message_index: int, line: int) -> bool:
+    """True when an inline image sits after its message's sign-off
+    ("Thanks," / "Regards,"): it is part of the signature -- a logo, a
+    certification badge, a banner with the sender's address."""
+    for block in blocks or []:
+        if int(block.get("message_index") or 0) != int(message_index):
+            continue
+        base = int(block.get("line_start") or 1)
+        lines = list(block.get("lines") or [])
+        if not (base <= line <= base + len(lines)):
+            continue
+        for idx in range(0, min(len(lines), line - base)):
+            if _SIGNOFF_RE.match(str(lines[idx] or "").lstrip("> ").strip()):
+                return True
+    return False
 
 
 def _message_label(sender: str, sent_at: str) -> str:
@@ -2836,7 +2899,13 @@ class EmailParser(BaseParser):
             msg_i, line_i = _cid_reading_anchor(
                 body_text=body_text, content_id=cid, blocks=blocks or []
             )
-            return _hardware_atoms_from_equipment_text(
+            # An image set after the sign-off is the sender's signature (a
+            # logo, a certification badge, an address banner), not the
+            # equipment screenshot the lead-in introduces. Live 010087: the
+            # signature images of an email that also carried an equipment
+            # list were typed scope_item under "Equipment list".
+            in_signature = _cid_anchor_in_signature(blocks or [], msg_i, line_i)
+            out = _hardware_atoms_from_equipment_text(
                 project_id=project_id,
                 artifact_id=artifact_id,
                 filename=path.name,
@@ -2845,8 +2914,13 @@ class EmailParser(BaseParser):
                 parser_version=self.parser_version,
                 message_index=msg_i,
                 anchor_line=line_i,
-                lead_in=equipment_lead_in or None,
+                lead_in=None if in_signature else (equipment_lead_in or None),
             )
+            if in_signature:
+                for a in out:
+                    if (a.value or {}).get("kind") == "email_cid_inline_body":
+                        _signature_image_atom(a, "signature_image")
+            return out
 
         equipment_lines: list[EvidenceAtom] = []
         if ocr_by_cid:

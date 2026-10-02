@@ -388,6 +388,16 @@ def _enriched_physical_site_value(site_row: Any, sid: str | None) -> dict[str, A
     }
 
 
+# A list item whose marker is TYPED, not Word numbering: "f. Complete billing
+# tasks", "(iv) Remove old mounts", "3) Label ports". Word wrote no w:numPr,
+# so _paragraph_is_list_item cannot see it -- but the marker is the same
+# structural fact, and a short lettered item (4 words, no digit) must not
+# fall to the prose gate while its 5-word siblings survive (deal 010003's SOW
+# lost "f. Complete billing tasks" exactly so). "e.g. ..." does not match:
+# the marker must be followed by whitespace.
+_TYPED_ENUMERATOR_RE = re.compile(
+    r"^\s*(?:\(?(?:[A-Za-z]|[ivxIVX]{1,4}|\d{1,2})[.)]|[\u2022\u00b7\u25aa\u25cf\u2013\-*])\s+\S")
+
 class DocxParser(BaseParser):
     #: Per-DOCUMENT state on a parser the registry SHARES between threads.
     #: 010237's SLA table took its lead-in from whichever document happened to
@@ -518,7 +528,8 @@ class DocxParser(BaseParser):
             text = paragraph.text.strip()
             if not text:
                 continue
-            is_list_item = self._paragraph_is_list_item(paragraph)
+            is_list_item = self._paragraph_is_list_item(paragraph) or bool(
+                _TYPED_ENUMERATOR_RE.match(text))
             # _build_section_index is the single source of truth for what's
             # structure (style heading / bold sub-heading / short colon list-intro)
             # vs content, so the heading-drop decision can never diverge from the
@@ -1704,6 +1715,31 @@ class DocxParser(BaseParser):
         return cls._SUBSECTION_BLOCK_RULE.fires(h)
 
     @staticmethod
+    def _in_address_box(children: list[Any], k: int, document: Any, text: str) -> bool:
+        """``text`` is a line of a postal-address box: an address line
+        itself, or a line set directly above a street / City-ST-ZIP line or
+        directly under an address caption (the company line of a ship-to)."""
+        from app.core.address_parse import _ADDRESS_BOX_CAPTION_RE, is_address_block_line
+
+        if is_address_block_line(text):
+            return True
+
+        def _text_at(j: int) -> str:
+            if 0 <= j < len(children) and children[j][0] == "p":
+                try:
+                    return (_DocxParagraph(children[j][1], document).text or "").strip()
+                except Exception:
+                    return ""
+            return ""
+
+        nxt, prv = _text_at(k + 1), _text_at(k - 1)
+        if prv and _ADDRESS_BOX_CAPTION_RE.match(prv):
+            return True
+        if nxt and is_address_block_line(nxt) and not _ADDRESS_BOX_CAPTION_RE.match(nxt):
+            return True
+        return False
+
+    @staticmethod
     def _is_bold_subheading(paragraph: Any) -> bool:
         """A short, fully-bold, non-list line that Word left on the ``Normal``
         style is a VISUAL sub-heading (e.g. "Configuration Support") the author
@@ -2103,7 +2139,12 @@ class DocxParser(BaseParser):
                     # bold sub-heading Word left on Normal style — nest it below
                     # style headings so its following bullets inherit the section.
                     lvl = 3
-                if lvl is None and caps:
+                if lvl is not None and not explicit and self._in_address_box(children, k, document, text):
+                    # A bold / all-caps line of a postal-address box (caption,
+                    # company, street, City ST ZIP) is the box's content, not a
+                    # section: 010003's "40 10TH AVE FL 4" headed 13 atoms.
+                    lvl = None
+                if lvl is None and caps and not self._in_address_box(children, k, document, text):
                     # A short standalone ALL-CAPS line ("PURTERA RESPONSIBILITIES",
                     # "CUSTOMER RESPONSIBILITIES:") is a heading even when it is
                     # neither styled nor bold: 010087 left them on Normal, so they
@@ -2118,6 +2159,7 @@ class DocxParser(BaseParser):
                     and k + 1 < len(children)
                     and not _next_is_bullet(k)
                     and self._is_label_heading(text)
+                    and not self._in_address_box(children, k, document, text)
                 ):
                     # A Title Case label ending in a colon on its own line
                     # ("Invoicing Procedures:") heads the paragraphs and table
@@ -2133,6 +2175,7 @@ class DocxParser(BaseParser):
                     and not text.endswith(":")
                     and _next_is_bullet(k)
                     and self._is_label_heading(text + ":", min_words=1)
+                    and not self._in_address_box(children, k, document, text)
                 ):
                     # A Title Case line with no closing punctuation directly
                     # over a bullet list ("Out of Scope", "PurTera
