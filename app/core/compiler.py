@@ -253,6 +253,16 @@ def _deal_state_atom(template: Any, line: Any) -> Any:
     if hasattr(atom, "id"):
         atom.id = stable_id("atm", str(getattr(atom, "project_id", "")),
                             "deal_state", line.key)
+    # Nobody wrote this line, so it has no page, row or cell: the copied
+    # locator pointed a reader at a cell that says something else (010003:
+    # a Deal Kit SELL RATES row). Keep the artifact; name the evidence.
+    _ev_ids = [str(getattr(a, "id", "")) for a in (getattr(line, "evidence_atoms", None) or []) if getattr(a, "id", None)]
+    atom.value["evidence_atom_ids"] = _ev_ids
+    for ref in getattr(atom, "source_refs", None) or []:
+        try:
+            ref.locator = {"derived": True, "derived_from": _ev_ids}
+        except Exception:
+            pass
     return atom
 
 
@@ -2756,7 +2766,13 @@ def compile_project(
                     # Pin the line to the artifact its evidence came from; the
                     # first atom of the deal is only a last resort (000132's
                     # survey line landed on an unrelated note).
-                    template = next(iter(getattr(line, "evidence_atoms", None) or []), None) or fallback
+                    # A sentence outranks a sheet row as the anchor: a row's
+                    # locator names a cell the line was never written in
+                    # (010003: survey lines pinned to the Deal Kit SELL RATES).
+                    from app.core.deal_state import _from_a_sheet as _ds_sheet
+
+                    _ev = list(getattr(line, "evidence_atoms", None) or [])
+                    template = next((a for a in _ev if not _ds_sheet(a)), None) or next(iter(_ev), None) or fallback
                     if template is None:
                         break
                     atoms.append(_deal_state_atom(template, line))
