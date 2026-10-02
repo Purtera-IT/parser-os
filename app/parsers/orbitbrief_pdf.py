@@ -6121,8 +6121,15 @@ def _text_rich_sections(
         # "...prior to leaving an" | "Implementation Site Visit...", "...It
         # is" | "Seller's assumption...", "...in the SOW. All" | "Work
         # Product..." — four clauses cut in half, the tails mistyped).
+        # The tail is measured against the last CONTENT line: the blank rule
+        # above already let a layout gap before a wrap through, and measured
+        # against that blank the bullet's own wrap read as a new paragraph
+        # (010353: a bold bullet ending "...costs and/or" lost "SOW changes
+        # specified herein.", and two bullets' identical tails then deduped).
+        _prev_content = next((k for k in range(idx - 1, -1, -1) if lines[k].strip()), None)
         if bullet_buffer and not paragraph_lines and (
-            stripped[:1].islower() or _is_wrapped_tail(lines, idx)
+            stripped[:1].islower()
+            or (_prev_content is not None and _is_wrapped_tail(lines, idx, prev_index=_prev_content))
             or _ends_mid_phrase(bullet_buffer[-1])
         ):
             bullet_buffer[-1] = f"{bullet_buffer[-1]} {stripped}".strip()
