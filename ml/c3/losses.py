@@ -38,20 +38,68 @@ class LossWeights:
     rule_links: float = 0.5        # follows_rule / exception_to supervise a rule's region
     why_echo: float = 0.2          # r_to_text(r_i) lands on the encoded WHY (ask.py)
     clause_use: float = 0.1        # removing any non-statement clause must change the output
+    pointers: float = 0.3          # hint_refs: the lines a decision came from
+    entities: float = 0.2          # entity_keys: lines naming the same entity pull together
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
+
+
+def row_weights(batch: Batch, device) -> torch.Tensor:
+    """Per-line weight from weight_tier (load_bearing 3, ordinary 1, slight 0.3)."""
+    w = batch.weights if len(batch.weights) == len(batch) else [1.0] * len(batch)
+    return torch.tensor(w, device=device, dtype=torch.float32)
+
+
+def weighted_ce(logits: torch.Tensor, y: torch.Tensor, rw: torch.Tensor) -> torch.Tensor:
+    """Cross-entropy averaged with row weights over the lines with a label."""
+    m = y != IGNORE
+    ce = F.cross_entropy(logits, y.clamp(min=0), reduction="none")
+    return (ce * rw * m).sum() / (rw * m).sum().clamp(min=1e-6)
+
+
+def pointer_loss(out: C3Output, batch: Batch) -> torch.Tensor:
+    """hint_refs name the lines a decision came from: the pointer head puts
+    its mass on the earlier ones (the heads see only the past)."""
+    if out.pointers is None or not batch.hint_lines:
+        return out.r.new_zeros(())
+    total, terms = out.r.new_zeros(()), 0
+    for i, js in enumerate(batch.hint_lines):
+        js = [j for j in js if j < i]
+        if js:
+            total = total - torch.logsumexp(out.pointers[i, js], 0)
+            terms += 1
+    return total / max(terms, 1)
+
+
+def entity_loss(out: C3Output, batch: Batch, tau: float = 0.1) -> torch.Tensor:
+    """entity_keys: lines naming the same site, person or device pull
+    together in r, against every other line of the deal (supervised
+    contrastive)."""
+    ents = [set(e) for e in (batch.entities or [])]
+    n = out.r.shape[0]
+    if len(ents) != n or sum(bool(e) for e in ents) < 2:
+        return out.r.new_zeros(())
+    pos = torch.tensor([[a != b and bool(ents[a] & ents[b]) for b in range(n)] for a in range(n)],
+                       device=out.r.device)
+    has = pos.any(1)
+    if not has.any():
+        return out.r.new_zeros(())
+    z = F.normalize(out.r, dim=-1)
+    sim = (z @ z.T / tau).masked_fill(torch.eye(n, dtype=torch.bool, device=z.device), -1e4)
+    logp = sim.log_softmax(-1)
+    return -((logp * pos).sum(1)[has] / pos.sum(1)[has]).mean()
 
 
 def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
                 layer: str) -> tuple[torch.Tensor, torch.Tensor]:
     dev = out.r.device
     ce, num, terms = out.r.new_zeros(()), out.r.new_zeros(()), 0
+    rw = row_weights(batch, dev)
     for opp in model.schema.select(layer=layer):
         if opp.key not in out.logits:
             continue
         y = torch.tensor(batch.targets[opp.key], device=dev)
         if (y != IGNORE).any():
-            ce = ce + w.space.get(opp.space, 1.0) * F.cross_entropy(
-                out.logits[opp.key], y, ignore_index=IGNORE)
+            ce = ce + w.space.get(opp.space, 1.0) * weighted_ce(out.logits[opp.key], y, rw)
             terms += 1
         if opp.kind == NUMBER and opp.key in out.numbers:
             vals = batch.numbers_target.get(opp.key, [])
@@ -227,13 +275,18 @@ def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: Explanati
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None) -> tuple[torch.Tensor, dict[str, float]]:
-    """``bank``: explanations to read. Default: this deal's WHYs and company
-    lines (each line masked from its own), plus ``rules``. In real training
+    """``bank``: explanations for the v5 reader to read. Default: none, unless
+    ``rules`` are given or ``C3Config.legacy_reasons`` is set; then this
+    deal's WHYs and company lines (each line masked from its own), plus
+    ``rules``. In real training
     the bank should hold other deals' explanations too, which is what the
     model will have at inference."""
     w = w or LossWeights()
     desc = model.describe()
-    if bank is None:
+    # v6: reading explanations is the brain's job (brain.py, brain_loss).
+    # The v5 bank (reader votes, compiled operators, rule cards, clause
+    # slots) runs only when asked for, as a baseline to beat.
+    if bank is None and (rules is not None or model.cfg.legacy_reasons):
         bank = ExplanationBank.from_batch(batch, model.schema)
     if rules is not None:
         bank = bank.extend(rules.items)
@@ -255,7 +308,9 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["claims"] = claims_loss(out, batch, bank)
     parts["rule_links"] = rule_link_loss(out, batch, bank)
     parts["why_echo"] = why_echo_loss(model, out, batch)
-    if w.clause_use:
+    parts["pointers"] = pointer_loss(out, batch)
+    parts["entities"] = entity_loss(out, batch)
+    if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
         y = torch.full((len(batch),), model.companies.index(batch.company), device=out.r.device)
@@ -263,3 +318,89 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["policy_l1"] = out.alpha.abs().sum() if out.alpha is not None else out.r.new_zeros(())
     total = sum(getattr(w, k) * v for k, v in parts.items())
     return total, {k: float(v.detach()) if torch.is_tensor(v) else float(v) for k, v in parts.items()}
+
+
+# ---------------------------------------------------------------- v6: the brain
+@dataclass
+class BrainWeights:
+    direct: float = 1.0        # the label, answered from the bare page
+    reasoned: float = 1.0      # the label, answered with the human's WHY on the page
+    rationale: float = 1.0     # write the human's WHY, token by token
+    distill: float = 0.5       # the direct answer moves toward what the reasoning concludes
+    consolidate: float = 0.5   # notes written into weights must act as notes on the page
+    numbers: float = 0.2
+
+
+def _answer_ce(out, batch: Batch, keys) -> torch.Tensor:
+    total, terms = None, 0
+    for k in keys:
+        if k not in out.logits:
+            continue
+        y = torch.tensor(batch.targets[k], device=out.logits[k].device)
+        if (y != IGNORE).any():
+            ce = F.cross_entropy(out.logits[k], y, ignore_index=IGNORE)
+            total = ce if total is None else total + ce
+            terms += 1
+    if total is None:
+        return next(iter(out.logits.values())).new_zeros(())
+    return total / terms
+
+
+def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
+               graph: torch.Tensor | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+    """Every v6 term for one deal (brain.py has the table). Notes come from
+    the deal's other lines; the reasoned pass and the rationale use each
+    line's own WHY, which the direct pass never sees."""
+    from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
+    from .consolidate import context_distillation_loss  # noqa: PLC0415
+
+    w = w or BrainWeights()
+    desc = brain.describe()
+    keys = [k for k in batch.targets]
+    notes, cnotes = notes_from_deal(batch)
+    company = batch.company or None
+    parts: dict[str, torch.Tensor] = {}
+
+    direct = brain(batch, company=company, notes=notes, company_notes=cnotes, graph=graph, desc=desc)
+    why = told_why(batch, brain.schema)
+    cfield = company_field_notes(batch, brain.schema)
+    reasoned = brain(batch, company=company, why=why, notes=notes,
+                     company_notes=[c + f for c, f in zip(cnotes, cfield)], graph=graph, desc=desc)
+    parts["direct"] = _answer_ce(direct, batch, keys)
+    parts["reasoned"] = _answer_ce(reasoned, batch, keys)
+    parts["rationale"] = brain.rationale_loss(batch, notes, graph)
+
+    has_why = torch.tensor([bool(t) for t in why], device=parts["direct"].device)
+    if has_why.any():
+        parts["distill"] = torch.stack([
+            F.kl_div(direct.logits[k][has_why].log_softmax(-1),
+                     reasoned.logits[k][has_why].detach().log_softmax(-1),
+                     log_target=True, reduction="batchmean") for k in direct.logits]).mean()
+    else:
+        parts["distill"] = parts["direct"].new_zeros(())
+
+    # Context distillation: the deal's notes, once on the page (teacher) and
+    # once written into weights with the page bare (student).
+    uni = sorted({t for ns in notes for t in ns})
+    com = sorted({t for ns in cnotes for t in ns})
+    if uni or com:
+        with torch.no_grad():
+            teacher = brain(batch, company=company, notes=[uni] * len(batch),
+                            company_notes=[com] * len(batch), graph=graph, desc=desc)
+        student = brain(batch, company=company, graph=graph, desc=desc,
+                        deltas=brain.memory_universal(brain.lm, uni),
+                        company_deltas=brain.memory_company(brain.lm, com))
+        parts["consolidate"] = context_distillation_loss(teacher.logits, student.logits)
+    else:
+        parts["consolidate"] = parts["direct"].new_zeros(())
+
+    num = parts["direct"].new_zeros(())
+    for k, pred in direct.numbers.items():
+        vals = batch.numbers_target.get(k, [])
+        m = torch.tensor([v is not None for v in vals], device=pred.device, dtype=torch.bool)
+        if m.any():
+            t = torch.tensor([v or 0.0 for v in vals], device=pred.device)
+            num = num + F.smooth_l1_loss(pred[m], torch.log1p(t[m]))
+    parts["numbers"] = num
+    total = sum(getattr(w, k) * v for k, v in parts.items())
+    return total, {k: float(v.detach()) for k, v in parts.items()}

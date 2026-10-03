@@ -194,7 +194,27 @@ Extra ablations:
 | E2 | leave-one-out off | inflated train scores, worse held-out deals (it copies its own WHY) |
 | E3 | rule cards held out, then added at test time | the zero-shot gain from a new rule; the main result to show |
 
-## 5. v5: reasons compiled into operators, graded by outcomes
+## 5. v6 (current): the long labels teach the heads in training
+
+The product is the heads above. At run time nothing else runs: no WHY, no
+language model, no text generation. The WHY paragraphs do their work in
+training, as privileged information:
+
+| File | What it does |
+|---|---|
+| `brain.py`, `lm.py` | The **teacher**, training only. A language model (tiny byte-level stand-in here; any pretrained causal LM via `HFCausalLM`) reads each line in its deal context with its WHY on the page, answers every head, and learns to write the WHY. No keyword or if/and rule on its path (tested). |
+| `supercharge.py` | What the heads learn from it: `teach_heads` (every head matches the teacher's WHY-informed answer, so one paragraph teaches many heads), `teach_geometry` (lines alike for the same reason end up alike in r_i), `teach_unlabeled` (unlabeled lines get the teacher's read), `teach_pointers` and `teach_words` (which earlier lines a WHY rests on and which words of the line carry it, read from the teacher by `Brain.grounding`, not parsed). `mask_labels` keeps a chosen subset of labels. |
+| `consolidate.py` | Teacher-side memory: a paragraph written into low-rank weights by context distillation, for when notes outgrow the page. |
+| `notes.drop_meta` | Drops the optional last `[parser]` line of a note (parser remarks), so training never learns them. |
+| `data.featurize` | Uses all of the labeling (heads-readthrough.md): skips old manual Deal Kit rows, makes Missed rows into lines, weights rows by weight_tier, maps the old `rejected` column to co_action, keeps per-field notes for the teacher, and turns hint_refs and entity_keys into pointer and same-entity targets. |
+| `efficiency.py` | The measurement: same heads, same labeled lines, with and without the WHYs, on held-out lines, across budgets and seeds. `python -m ml.c3.efficiency --deal ml/c3/fixtures/synthetic_deal.json` (synthetic: proves the harness only). |
+
+The v5 explanation bank (reader votes, compiled operators, clause roles,
+rule cards) is off by default (`C3Config.legacy_reasons=False`) and kept only
+as the baseline to beat. Design and prior-work comparison: the project's
+`labeling/base-architecture-v6.md`.
+
+## 6. v5 (baseline): reasons compiled into operators, graded by outcomes
 
 The full design and novelty write-up is `labeling/base-architecture-v5.md`
 in the project files; this is the code map.
@@ -210,7 +230,7 @@ in the project files; this is the code map.
 
 Ablations F1 to F5 and results R1 to R6 are in the v5 doc.
 
-## 6. Is it novel?
+## 7. Is it novel?
 
 Honestly, partly. Each ingredient has close relatives:
 - **Label text as the classifier:** zero-shot classification with label

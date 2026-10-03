@@ -56,6 +56,24 @@ def split_note(note: str, company: str = "purtera") -> tuple[str, str]:
     return "\n".join(universal).strip(), "\n".join(policy).strip()
 
 
+#: Parser remarks (SHOULD SPLIT, SHOULD MERGE, fixed or open parse problems,
+#: atom/column/page notes) go on an optional last line tagged ``[parser]``
+#: (user decision, Oct 3). They are about our tooling, not the deal, and a
+#: model taught to reproduce them learns to talk about the parser, so
+#: training drops that line and anything after it.
+PARSER_TAG = "[parser]"
+
+
+def drop_meta(text: str) -> str:
+    """``text`` up to, not including, its ``[parser]`` line."""
+    keep = []
+    for line in str(text or "").splitlines():
+        if line.lstrip().lower().startswith(PARSER_TAG):
+            break
+        keep.append(line)
+    return "\n".join(keep).strip()
+
+
 def mask_verdict(text: str) -> str:
     return _VERDICT_RE.sub(MASK, str(text or ""))
 

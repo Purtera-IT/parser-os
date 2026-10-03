@@ -225,7 +225,7 @@
      "hours_stated": "true",
      "sow_coverage": "in_sow"
     },
-    "note": "Labor estimate: 2 techs x 8 hours = 16 hours, one day per site for 2 sites. Rests on 8 displays at about 2 hours each including plates."
+    "note": "Labor estimate: 2 techs x 8 hours = 16 hours. The 8 hours rest on the 8 displays on the hardware line at about 2 hours each, backing plates included because the customer said the walls are steel stud with no blocking. Two techs because each 65-inch panel is a two-person lift (the customer's size line), and one day per site because the site cut left 2 clinics with 4 displays each. If the walls had blocking, the hours per display would drop, not the crew."
    }
   },
   {
@@ -256,7 +256,7 @@
   },
   {
    "key": "a12",
-   "text": "65\" display, qty 8, unit price $1,180.",
+   "text": "65\" display, model XD65-Q, qty 8, unit price $1,180.",
    "entered_at": "2026-04-11T10:00:00Z",
    "doc_id": "quote-1",
    "doc_kind": "quote",
@@ -275,7 +275,7 @@
      "co_action": "reject",
      "co_reason": "hw_price_not_ours"
     },
-    "note": "Reseller hardware line: 8 displays at 65 inches. The quantity agrees with the SOW's 8.\n[purtera] reject: hardware prices are the reseller's; quantity and size are kept for crew planning.",
+    "note": "WHY KEPT (how to scope a hardware line for a display install): This is the reseller's hardware line, and the unit price on it does not scope the install. What scopes the job: qty 8 displays = 8 units of mount, backing-plate and power-on work, which drives the hours; the 65-inch size makes every mount a two-person lift, which is where the 2 techs come from, not throughput. Model XD65-Q identifies the panel, so its VESA pattern can be checked against the mounts the SOW includes. SOW check: the scope line \"eight (8) 65\\\" displays across two (2) locations\" matches this line (qty 8, 65in).\n[purtera] reject: hardware prices are the reseller's; quantity and size are kept for crew planning.\n[parser] One atom per quote line, qty read from the qty column (fixed).",
     "follows_rules": [
      "two_techs_over_55"
     ]

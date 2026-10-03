@@ -96,6 +96,9 @@ class Schema:
     #: Sentences dropped from universal guidance because they name company
     #: policy: (opportunity key, sentence). Shown by ``python -m ml.c3.card``.
     scrubbed: list[tuple[str, str]] = field(default_factory=list)
+    #: Free-text readings ("the reasoning behind <field>"): not answers, but
+    #: per-field WHYs the teacher reads (data.field_note_targets).
+    note_fields: list[str] = field(default_factory=list)
 
     def by_key(self) -> dict[str, Opportunity]:
         return {o.key: o for o in self.opportunities}
@@ -221,6 +224,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
         return scrub(f"{h.get('label', '')}. {h.get('question', '')}", universal)
 
     opps: list[Opportunity] = []
+    note_fields: list[str] = []
     for h in heads["heads"]:
         if h.get("layer") not in ("universal", "company"):
             continue                      # meta: bookkeeping, never trained
@@ -244,15 +248,36 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     key=f"col:{col}", field=col, source="column", kind=CLASS,
                     description=f"{lead(h, universal)} {scrub(types.get(col + '_doc', ''), universal)}".strip(),
                     answers=_answers(CLASS, docs, col, docs), **base))
-            # entity_keys, weight_tier, hints, note, rejected: spans, weights
+            elif col == "hints":
+                # "What told you?": which part of the context decided the label
+                # (the card's context-hint chips; a list, its first member taught).
+                docs = {c["key"]: scrub(f"{c.get('label', '')}. {c.get('desc', '')}", universal)
+                        for c in types.get("context_hints", [])}
+                opps.append(Opportunity(
+                    key="col:hints", field="hints", source="column", kind=CLASS,
+                    description=f"{lead(h, universal)} Which part of the context decided it.",
+                    answers=_answers(CLASS, docs, "what told you", docs), **base))
+            # entity_keys, weight_tier, hint_refs, note, rejected: spans, weights
             # and text, trained by the claim, rationale and conduct paths.
+
+        if "admission" in h.get("tasks", []):
+            # Should this text be an atom at all? keep, or drop as not a fact
+            # (wreckage, boilerplate, small talk, a fragment). Derived per row
+            # in data.featurize the way app.learning.human_labels does.
+            docs = {"keep": "keep: a real fact about the work, worth an atom",
+                    "drop": "drop: not a fact; wreckage, boilerplate, small talk or a torn fragment"}
+            opps.append(Opportunity(
+                key="col:admission", field="admission", source="column", kind=CLASS,
+                description=lead(h, universal), answers=_answers(CLASS, docs, "admission", docs),
+                **base))
 
         for rk in h.get("reads", []):
             r = reads.get(rk)
             if r is None or r.get("layer") not in ("universal", "company"):
                 continue
             if r.get("values") == "free text":
-                continue                  # a side note; it is rationale, not an answer
+                note_fields.append(rk)    # a per-field WHY, not an answer
+                continue
             kind, values = _value_kind(r.get("values", ""))
             subject = scrub(r.get("label", rk), universal) or _spell(rk)
             opps.append(Opportunity(
@@ -260,6 +285,15 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 description=" ".join(x for x in (
                     lead(h, universal), f"{subject}.", scrub(r.get("desc", ""), universal)) if x),
                 answers=_answers(kind, values, subject), **base))
+            if rk == "train_for":
+                # Which parser a Deal Kit line trains is our own routing rule
+                # (the Deal Kit is our pricing workbook), so it lives in the
+                # company layer; data._derived moves it there per line.
+                opps.append(Opportunity(
+                    key="read:co_deal_kit_route", field="co_deal_kit_route", source="read", kind=kind,
+                    description=f"{lead(h, False)} Which parser one of our own Deal Kit lines trains.",
+                    answers=_answers(kind, values, subject),
+                    **{**base, "layer": "company"}))
 
         for rel in h.get("relations", []):
             r = rels.get(rel, {"label": rel})
@@ -269,7 +303,8 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     lead(h, universal), f"{r.get('label', rel)}.", scrub(r.get("desc", ""), universal)) if x),
                 **base))
 
-    schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")))
+    schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")),
+                    note_fields=note_fields)
     if guidance is not None:
         if not isinstance(guidance, dict):
             guidance = json.loads(Path(guidance).read_text(encoding="utf-8"))
