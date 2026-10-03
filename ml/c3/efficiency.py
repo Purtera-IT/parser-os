@@ -87,7 +87,8 @@ def _train_heads(schema: Schema, batch: Batch, seed: int, steps: int, cfg: C3Con
         loss, _ = c3_loss(model, batch, w)
         if view is not None:
             out = model(batch.inputs(), company=batch.company or None)
-            loss = loss + weighted(supercharge_loss(model, out, view), TeachWeights())
+            loss = loss + weighted(supercharge_loss(model, out, view, texts=batch.texts),
+                                     TeachWeights())
         opt.zero_grad()
         loss.backward()
         opt.step()

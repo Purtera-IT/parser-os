@@ -195,6 +195,7 @@ class C3Output:
     reason_claims: dict[str, torch.Tensor] = field(default_factory=dict)  # layer -> [M, slots, 3]
     reason_index: dict[str, list[int]] = field(default_factory=dict)      # layer -> bank indices
     changes: torch.Tensor | None = None                                # [N, slots, 3] what each line changes
+    pointers: torch.Tensor | None = None                               # [N, N+1] log p(reason rests on j); last = itself
 
     @property
     def q_mean(self) -> torch.Tensor:
@@ -255,6 +256,14 @@ class C3Model(nn.Module):
         # can voice its own predicted reason for the question engine (ask.py).
         self.changes_head = nn.Linear(c.d_q + c.d_r, len(CHANGE_SLOTS) * 3)
         self.r_to_text = nn.Linear(c.d_r, c.d_text)
+        # What a line's reason rests on (v6, supercharge.py): which earlier
+        # lines it points at, and which of its own words carry it. Taught
+        # from the teacher's reading of the WHYs; run without them.
+        self.cite_q = nn.Linear(c.d_r, c.d_head)
+        self.cite_k = nn.Linear(c.d_r, c.d_head)
+        self.cite_self = nn.Parameter(torch.zeros(1))
+        self.word_r = nn.Linear(c.d_r, c.d_head)
+        self.word_w = nn.Linear(c.d_text, c.d_head)
         self.companies = list(companies)
         # Starting codes are small and dense so every atom gets a gradient; the
         # L1 term then makes them sparse. A zero code would starve the atoms.
@@ -332,6 +341,7 @@ class C3Model(nn.Module):
         out.absence = self.absence(torch.cat([q_mean, r], -1))
         out.changes = self.changes_head(torch.cat([q_mean, r], -1)).view(n, len(CHANGE_SLOTS), 3)
         out.company_logits = self.adversary(GradReverse.apply(z_c, adv_lambda))
+        out.pointers = self._pointers(r)
 
         if company is not None:
             self.conduct(out, company, q_mean, desc, bank, bank_emb)
@@ -425,6 +435,30 @@ class C3Model(nn.Module):
         emb = self.ctx(groups)
         empty = torch.tensor([not g for g in groups], device=dev).unsqueeze(-1)
         return torch.where(empty, self.ctx_null.expand(n, -1), emb)
+
+    def _pointers(self, r: torch.Tensor) -> torch.Tensor:
+        """log p(line i's reason rests on earlier line j), plus a last column
+        for "on the line itself". Foresight: only j < i."""
+        n = r.shape[0]
+        s = self.cite_q(r) @ self.cite_k(r).T / self.cite_q.out_features ** 0.5
+        later = torch.triu(torch.ones(n, n, dtype=torch.bool, device=r.device))
+        s = s.masked_fill(later, float("-inf"))
+        return torch.cat([s, self.cite_self.expand(n, 1)], -1).log_softmax(-1)
+
+    def word_weights(self, out: "C3Output", texts: list[str]) -> list[torch.Tensor | None]:
+        """log p(word w of line i carries its reason), over text.word_spans."""
+        from .text import word_spans  # noqa: PLC0415
+
+        res: list[torch.Tensor | None] = []
+        q = self.word_r(out.r)
+        for i, t in enumerate(texts):
+            ws = [w for w, _, _ in word_spans(t)]
+            if not ws:
+                res.append(None)
+                continue
+            k = self.word_w(self.text(ws))
+            res.append((k @ q[i] / k.shape[-1] ** 0.5).log_softmax(-1))
+        return res
 
     def _box_containment(self, r: torch.Tensor) -> torch.Tensor:
         """log P(box_j ⊂ box_i): a parent's box contains its children's, so

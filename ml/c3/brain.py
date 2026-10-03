@@ -212,6 +212,79 @@ class Brain(nn.Module):
         return F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]), tgt.reshape(-1),
                                ignore_index=IGNORE)
 
+    # ------------------------------------------------------------ grounding
+    def grounded_page(self, batch: Batch, i: int, window: int = 12
+                      ) -> tuple[str, dict[int, tuple[int, int]], tuple[int, int]]:
+        """The teacher's privileged page for line i: the deal's lines around
+        it, before AND after (the teacher may see hindsight; the heads never
+        do), each numbered, then the line's WHY. Returns the text, each
+        line's character span, and the WHY's span."""
+        lo, hi = max(0, i - window), min(len(batch), i + window + 1)
+        text, spans = "Deal lines:\n", {}
+        for j in range(lo, hi):
+            role = ", ".join(x for x in (batch.role[j], batch.doc_kind[j]) if x) or "line"
+            head = f"{'>>' if j == i else '-'} [{j}] ({role}) "
+            spans[j] = (len(text) + len(head), len(text) + len(head) + len(batch.texts[j]))
+            text += head + batch.texts[j] + "\n"
+        text += f"Why line [{i}] is labeled as it is: "
+        why = (len(text), len(text) + len(batch.why[i] or ""))
+        return text + (batch.why[i] or ""), spans, why
+
+    def grounding(self, batch: Batch, window: int = 12
+                  ) -> tuple[torch.Tensor, list[torch.Tensor | None]]:
+        """What each WHY rests on, read from the teacher itself, not parsed.
+
+        For every line with a WHY, the teacher's log-likelihood of that WHY is
+        traced back to the page by gradient x input: the weight on each
+        token is how much the expert's reasoning, as the teacher reads it,
+        depends on that token. Summed per line, it says which other lines
+        and documents the reasoning points at (``pointers``: [N, N+1], last
+        column = rests on the line itself). Summed per word of the line, it
+        says which facts were cited and which were passed over, such as a
+        price the WHY calls irrelevant (``words``: one distribution per line
+        over text.word_spans). Rows without a WHY are zero / None.
+        """
+        from .text import word_spans  # noqa: PLC0415
+
+        n = len(batch)
+        dev = next(self.parameters()).device
+        pointers = torch.zeros(n, n + 1, device=dev)
+        words: list[torch.Tensor | None] = [None] * n
+        was = self.training
+        self.eval()
+        for i in range(n):
+            if not batch.why[i]:
+                continue
+            text, spans, (ws, we) = self.grounded_page(batch, i, window)
+            ids, mask = self.lm.tokenize([text])
+            offs = self.lm.offsets(text)[: ids.shape[1]]
+            emb = self.lm.input_embeddings(ids).detach().requires_grad_(True)
+            with torch.enable_grad():
+                _, logits = self.lm(ids, mask, inputs_embeds=emb)
+                start = next((t for t, (a, _) in enumerate(offs) if a >= ws and t > 0), len(offs))
+                lp = logits[0, start - 1:-1].log_softmax(-1)
+                ll = lp.gather(-1, ids[0, start:].unsqueeze(-1)).sum()
+                (g,) = torch.autograd.grad(ll, emb)
+            sal = (g * emb).sum(-1).abs()[0].detach()                     # [T]
+            per_char = {}
+            for t, (a, b) in enumerate(offs):
+                if b > a and b <= ws:
+                    for c in range(a, b):
+                        per_char[c] = per_char.get(c, 0.0) + float(sal[t]) / (b - a)
+            def mass(a: int, b: int) -> float:
+                return sum(per_char.get(c, 0.0) for c in range(a, b))
+            for j, (a, b) in spans.items():
+                pointers[i, n if j == i else j] = mass(a, b)
+            a0, _ = spans[i]
+            w = [mass(a0 + a, a0 + b) for _, a, b in word_spans(batch.texts[i])]
+            if w and sum(w) > 0:
+                words[i] = torch.tensor(w, device=dev) / sum(w)
+            tot = pointers[i].sum()
+            if tot > 0:
+                pointers[i] /= tot
+        self.train(was)
+        return pointers, words
+
     @torch.no_grad()
     def explain(self, batch: Batch, i: int, max_new: int = 120,
                 notes: list[str] | None = None) -> str:

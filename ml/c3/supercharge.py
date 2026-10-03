@@ -26,7 +26,19 @@ term                what it does                                           why i
 ``teach_unlabeled`` unlabeled lines get the teacher's answer with the      labels spread to
                     deal's other WHYs on its page                          the lines nobody
                                                                            labeled
+``teach_pointers``  which other lines the WHY rests on (the SOW line it    the heads learn
+                    checks, the email that sets the crew), as the teacher  where to look, not
+                    reads it, becomes the heads' pointer head              only what to answer
+``teach_words``     which words of the line carry the reason (qty, size,   the heads learn
+                    model number) and which the WHY passes over (a price   which facts count;
+                    it calls irrelevant), as a weight per word             the rest is noise
 ==================  =====================================================  ==================
+
+The last two are read from the teacher, not parsed: the teacher's
+likelihood of the WHY is traced back to the page (``Brain.grounding``), so
+"QTY 4 = 4 units of mount work" puts weight on the 4 and the QTY column, and
+"the prices are irrelevant" leaves the price with almost none, because that
+is what a model that predicts the paragraph has to rely on.
 
 Plus what v4/v5 already do with the WHY in the heads' own space
 (``why_align``, ``why_sufficiency`` in losses.py).
@@ -50,6 +62,8 @@ class TeachWeights:
     heads: float = 1.0
     geometry: float = 0.5
     unlabeled: float = 0.3
+    pointers: float = 0.5
+    words: float = 0.5
     temperature: float = 2.0
 
 
@@ -61,10 +75,13 @@ class TeacherView:
     embedding: torch.Tensor              # [N, dim] the told page, mean-pooled
     has_why: torch.Tensor                # [N] bool
     labeled: torch.Tensor                # [N] bool
+    pointers: torch.Tensor | None = None  # [N, N+1] what each WHY rests on (last = itself)
+    words: list[torch.Tensor | None] | None = None  # per line: weight on each of its words
 
 
 @torch.no_grad()
-def teacher_view(teacher, batch: Batch, company: str | None = None) -> TeacherView:
+def teacher_view(teacher, batch: Batch, company: str | None = None,
+                 grounding: bool = True) -> TeacherView:
     from .brain import notes_from_deal  # noqa: PLC0415
 
     was = teacher.training
@@ -75,11 +92,12 @@ def teacher_view(teacher, batch: Batch, company: str | None = None) -> TeacherVi
     noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc)
     m = told.mask.unsqueeze(-1).to(told.hidden.dtype)
     emb = (told.hidden * m).sum(1) / m.sum(1).clamp(min=1)
+    pointers, words = teacher.grounding(batch) if grounding else (None, None)
     teacher.train(was)
     dev = emb.device
     return TeacherView(told.logits, noted.logits, emb,
                        torch.tensor([bool(t) for t in batch.why], device=dev),
-                       torch.tensor(batch.labeled, device=dev))
+                       torch.tensor(batch.labeled, device=dev), pointers, words)
 
 
 def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float) -> torch.Tensor:
@@ -88,13 +106,15 @@ def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float) -> torch.Tensor:
 
 
 def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
-                     w: TeachWeights | None = None) -> dict[str, torch.Tensor]:
+                     w: TeachWeights | None = None,
+                     texts: list[str] | None = None) -> dict[str, torch.Tensor]:
     """The three teaching terms for one deal. ``out`` is the heads' own
     forward pass (no teacher inside it); ``view`` is detached."""
     w = w or TeachWeights()
     zero = out.r.new_zeros(())
     keys = [k for k in view.told if k in out.logits]
-    parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero}
+    parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
+             "teach_pointers": zero, "teach_words": zero}
     if not keys:
         return parts
     why = view.has_why
@@ -113,13 +133,31 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     if rest.any():
         parts["teach_unlabeled"] = torch.stack(
             [_kl(out.logits[k][rest], view.noted[k][rest], w.temperature) for k in keys]).mean()
+    if view.pointers is not None and out.pointers is not None and why.any():
+        # The heads see only earlier lines: the teacher's weight on later
+        # lines is dropped and the rest renormalized.
+        allowed = torch.isfinite(out.pointers)
+        t = view.pointers.masked_fill(~allowed, 0.0)[why]
+        keep = t.sum(-1) > 0
+        if keep.any():
+            t = t[keep] / t[keep].sum(-1, keepdim=True)
+            s = out.pointers[why][keep].clamp(min=-1e4)
+            parts["teach_pointers"] = -(t * s).sum(-1).mean() + (t * t.clamp(min=1e-9).log()).sum(-1).mean()
+    if view.words is not None and texts is not None:
+        mine = model.word_weights(out, texts)
+        kls = [F.kl_div(m, t.clamp(min=1e-9).log(), log_target=True, reduction="sum")
+               for m, t in zip(mine, view.words) if m is not None and t is not None
+               and m.shape == t.shape]
+        if kls:
+            parts["teach_words"] = torch.stack(kls).mean()
     return parts
 
 
 def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> torch.Tensor:
     w = w or TeachWeights()
     return (w.heads * parts["teach_heads"] + w.geometry * parts["teach_geometry"]
-            + w.unlabeled * parts["teach_unlabeled"])
+            + w.unlabeled * parts["teach_unlabeled"] + w.pointers * parts["teach_pointers"]
+            + w.words * parts["teach_words"])
 
 
 def mask_labels(batch: Batch, keep: set[int]) -> Batch:

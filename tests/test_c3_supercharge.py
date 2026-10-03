@@ -88,3 +88,52 @@ def test_the_efficiency_harness_compares_matched_arms(schema, deal):
         a, b = [r for r in rows if r.budget == k]
         assert a.keep == b.keep and len(a.keep) == k and a.n_eval == b.n_eval > 0
         assert 0.0 <= a.accuracy <= 1.0 and 0.0 <= b.accuracy <= 1.0
+
+
+def test_the_teacher_reads_what_each_why_rests_on(schema, batch):
+    torch.manual_seed(0)
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
+    pointers, words = teacher.grounding(batch, window=4)
+    for i in range(len(batch)):
+        if batch.why[i]:
+            assert torch.isclose(pointers[i].sum(), torch.tensor(1.0))
+            assert words[i] is not None and torch.isclose(words[i].sum(), torch.tensor(1.0))
+        else:
+            assert pointers[i].sum() == 0 and words[i] is None
+    # The hardware line's WHY reaches back to other lines (the SOW scope line
+    # sits inside its window), not only to the line itself.
+    hw = next(i for i, t in enumerate(batch.texts) if "XD65" in t)
+    assert pointers[hw, :-1].sum() > 0
+
+
+def test_pointers_and_words_reach_the_heads(schema, batch):
+    torch.manual_seed(0)
+    m = C3Model(schema, SMALL)
+    m.train()
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
+    view = teacher_view(teacher, batch, "purtera")
+    out = m(batch.inputs(), company="purtera")
+    parts = supercharge_loss(m, out, view, texts=batch.texts)
+    assert parts["teach_pointers"] > 0 and parts["teach_words"] > 0
+    (parts["teach_pointers"] + parts["teach_words"]).backward()
+    for p in (m.cite_q.weight, m.cite_k.weight, m.word_r.weight, m.word_w.weight):
+        assert p.grad is not None and p.grad.abs().sum() > 0
+    # Foresight: a line can only point at earlier lines.
+    s = out.pointers[:, :-1]
+    assert torch.isinf(s[torch.triu(torch.ones_like(s, dtype=torch.bool))]).all()
+
+
+def test_parser_feedback_never_reaches_training(batch):
+    from ml.c3.notes import drop_meta
+
+    from ml.c3.notes import split_note
+
+    note = ("Qty 4 displays = 4 units of mount work; the price does not scope the job.\n"
+            "[purtera] keep: crew planning.\n"
+            "[parser] SHOULD SPLIT: two quote lines in one atom.")
+    why, policy = split_note(note)
+    assert drop_meta(why) == why and "[parser]" not in why
+    assert drop_meta(policy) == "keep: crew planning."
+    assert drop_meta("Real reason.\n[parser] one atom per line (fixed).") == "Real reason."
+    assert not any("[parser]" in (t or "").lower() or "qty column" in (t or "")
+                   for t in batch.why + batch.policy_note)

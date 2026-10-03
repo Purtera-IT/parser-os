@@ -94,6 +94,12 @@ class LMBase(nn.Module):
                 prefix: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
 
+    def offsets(self, text: str) -> list[tuple[int, int]]:
+        """Character span of each token of ``text`` as ``tokenize`` cuts it
+        ((0, 0) for special tokens), so a token's weight can be traced back to
+        the words and lines of the page."""
+        raise NotImplementedError
+
     def embed(self, texts: list[str]) -> torch.Tensor:
         """Mean-pooled hidden states [B, dim]."""
         ids, mask = self.tokenize(texts)
@@ -153,6 +159,12 @@ class TinyCausalLM(LMBase):
     def input_embeddings(self, ids: torch.Tensor) -> torch.Tensor:
         return self.tok(ids)
 
+    def offsets(self, text: str) -> list[tuple[int, int]]:
+        out = [(0, 0)]                                # BOS
+        for ci, ch in enumerate(str(text)):
+            out += [(ci, ci + 1)] * len(ch.encode("utf-8"))
+        return out[: self.max_len]
+
     def forward(self, ids: torch.Tensor, mask: torch.Tensor,
                 prefix: torch.Tensor | None = None,
                 inputs_embeds: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -201,6 +213,11 @@ class HFCausalLM(LMBase):
 
     def input_embeddings(self, ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings()(ids)
+
+    def offsets(self, text: str) -> list[tuple[int, int]]:
+        enc = self.tokenizer(text, truncation=True, max_length=self.max_len,
+                             return_offsets_mapping=True)
+        return [tuple(o) for o in enc["offset_mapping"]]
 
     def forward(self, ids: torch.Tensor, mask: torch.Tensor,
                 prefix: torch.Tensor | None = None,

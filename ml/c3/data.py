@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .notes import mask_verdict, split_note
+from .notes import drop_meta, mask_verdict, split_note
 from .schema import ABSENT, BINARY, CLASS, NUMBER, PRESENCE, RELATION, Schema
 
 IGNORE = -100
@@ -241,6 +241,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     for a in atoms:
         note = (a.label or {}).get("note") or ""
         u, p = split_note(note, company)
+        u, p = drop_meta(u), drop_meta(p)
         why.append(mask_verdict(u) if u else None)
         policy.append(p or None)
 
