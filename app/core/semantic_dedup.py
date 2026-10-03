@@ -157,8 +157,6 @@ _PHYSICAL_SITE_ALLOWED_FIELDS: frozenset[str] = frozenset({
     # can see the site is inferred; the cleaner must not silently drop them.
     "inferred", "source_context", "mention", "mentions",
     "geo_mention_source", "geo_mention_confidence", "geo_mention_judged_as", "geo_mention_correction_id",
-    # The other lines that stated the fallback site's address (one site minted).
-    "address_also_stated_in",
 })
 
 _NON_SITE_CODE_HEADS: frozenset[str] = frozenset({

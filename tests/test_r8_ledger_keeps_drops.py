@@ -142,17 +142,3 @@ def test_the_envelope_ledger_row_carries_fold_or_drop(monkeypatch):
     by_id = {r["id"]: r for r in rows}
     assert by_id[folded.id]["kind"] == "fold" and by_id[folded.id]["survivor"]["id"] == kept.id
     assert by_id[gate.id]["kind"] == "drop"
-
-
-def test_one_address_stated_three_times_mints_one_site_naming_every_line():
-    from app.core.site_geo_fallback import geo_fallback_sites
-
-    line = _atom("100 Example Rd, Springfield, OH 45000", MD, atype=AtomType.scope_item)
-    brief = _atom("Please quote 1 x Camera system(s) -- PTZ camera at Site A located at "
-                  "100 Example Rd, Springfield, OH 45000.", MD, atype=AtomType.scope_item)
-    js = _atom("narrative.dispatch_brief: Please quote ... at Site A located at 100 Example Rd, Springfield, OH 45000.",
-               "art_json", atype=AtomType.scope_item)
-    sites = geo_fallback_sites([line, brief, js], project_id="p")
-    assert len(sites) == 1
-    assert sites[0].raw_text == "100 Example Rd, Springfield, OH 45000"
-    assert [r["atom_id"] for r in sites[0].value["address_also_stated_in"]] == [brief.id, js.id]
