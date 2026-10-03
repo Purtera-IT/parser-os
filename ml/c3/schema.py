@@ -248,8 +248,28 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     key=f"col:{col}", field=col, source="column", kind=CLASS,
                     description=f"{lead(h, universal)} {scrub(types.get(col + '_doc', ''), universal)}".strip(),
                     answers=_answers(CLASS, docs, col, docs), **base))
-            # entity_keys, weight_tier, hints, note, rejected: spans, weights
+            elif col == "hints":
+                # "What told you?": which part of the context decided the label
+                # (the card's context-hint chips; a list, its first member taught).
+                docs = {c["key"]: scrub(f"{c.get('label', '')}. {c.get('desc', '')}", universal)
+                        for c in types.get("context_hints", [])}
+                opps.append(Opportunity(
+                    key="col:hints", field="hints", source="column", kind=CLASS,
+                    description=f"{lead(h, universal)} Which part of the context decided it.",
+                    answers=_answers(CLASS, docs, "what told you", docs), **base))
+            # entity_keys, weight_tier, hint_refs, note, rejected: spans, weights
             # and text, trained by the claim, rationale and conduct paths.
+
+        if "admission" in h.get("tasks", []):
+            # Should this text be an atom at all? keep, or drop as not a fact
+            # (wreckage, boilerplate, small talk, a fragment). Derived per row
+            # in data.featurize the way app.learning.human_labels does.
+            docs = {"keep": "keep: a real fact about the work, worth an atom",
+                    "drop": "drop: not a fact; wreckage, boilerplate, small talk or a torn fragment"}
+            opps.append(Opportunity(
+                key="col:admission", field="admission", source="column", kind=CLASS,
+                description=lead(h, universal), answers=_answers(CLASS, docs, "admission", docs),
+                **base))
 
         for rk in h.get("reads", []):
             r = reads.get(rk)

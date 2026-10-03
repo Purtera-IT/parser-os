@@ -2,7 +2,10 @@
 
 * old manual Deal Kit rows never train, whichever way they are marked;
 * Missed rows (text the parser skipped) become lines;
-* weight_tier weights the loss; the old `rejected` column teaches co_action;
+* weight_tier weights the loss; a reject on the card teaches admission (not a
+  fact), never the company's keep/reject;
+* readings the labeler removed or ruled out are taught as absent, and the
+  why-not reaches the teacher;
 * per-field notes reach the teacher's reasoned pass for the right layer;
 * hint_refs teach the pointer head; entity_keys pull lines together.
 """
@@ -49,9 +52,11 @@ BLOB = {"labels": [
      "reads_set": {"sow_coverage": "in_sow",
                    "sow_coverage_note": "Matches the customer's ask of six panels, same site.",
                    "scope_category_note": "Our display-install SOW group."}},
-    {"label_key": "k4", "label_type": "_keep", "weight_tier": "slight", "rejected": "true",
+    {"label_key": "k4", "label_type": "bom_line", "weight_tier": "slight", "rejected": "true",
+     "hints": ["table_column", "own_words"],
      "note": "Reseller hardware line; qty 6 agrees with the SOW, price is not ours.",
-     "reads_set": {"equipment_qty": "6"}},
+     "reads_set": {"equipment_qty": "6"}, "reads_shown": ["equipment_qty", "rate"],
+     "rejected_reads": {"billing_type": "A unit price on a hardware line is not how the job bills."}},
     {"label_key": "k5", "label_type": "_keep", "weight_tier": "exclude",
      "reads_set": {"site": "north office"}},
     {"label_key": "k9", "origin": "labeler", "label_type": "_keep",
@@ -90,11 +95,19 @@ def test_missed_rows_become_lines(batch):
     assert batch.targets["read:scope_side"][i] != IGNORE
 
 
-def test_weight_tier_and_the_old_rejected_column(schema, batch):
-    assert batch.weights[_i(batch, "six panels hung")] == 3.0
-    assert batch.weights[_i(batch, "Hardware quote")] == 0.3
-    co = schema.by_key()["read:co_action"]
-    assert batch.targets["read:co_action"][_i(batch, "Hardware quote")] == co.index("reject")
+def test_weight_tier_reject_and_known_negatives(schema, batch):
+    by = schema.by_key()
+    hw, ask = _i(batch, "Hardware quote"), _i(batch, "six panels hung")
+    assert batch.weights[ask] == 3.0 and batch.weights[hw] == 0.3
+    # The card's reject means "not a fact": admission drop, not a company reject.
+    assert batch.targets["col:admission"][hw] == by["col:admission"].index("drop")
+    assert batch.targets["read:co_action"][hw] == IGNORE
+    assert batch.targets["col:admission"][_i(batch, "move the old screens")] == by["col:admission"].index("keep")
+    # Removed by the labeler (rate) and ruled out (billing_type): known absent.
+    assert batch.targets["read:rate"][hw] == by["read:rate"].index("_absent")
+    assert batch.targets["read:billing_type"][hw] == by["read:billing_type"].index("_absent")
+    assert batch.field_notes[hw]["read:billing_type"].startswith("not billing_type:")
+    assert batch.targets["col:hints"][hw] == by["col:hints"].index("table_column")
 
 
 def test_field_notes_reach_the_teacher_on_the_right_side(schema, batch):

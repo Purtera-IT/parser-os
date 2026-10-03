@@ -240,16 +240,42 @@ def excluded(label: dict[str, Any] | None) -> bool:
             or str(reads.get("skip")).strip().lower() in _TRUE)
 
 
-def _with_legacy_reject(label: dict[str, Any]) -> dict[str, Any]:
-    """Older rows record a company reject only in the ``rejected`` column;
-    it teaches co_action = reject when co_action is blank."""
-    rej = label.get("rejected")
-    reads = label.get("reads_set") if isinstance(label.get("reads_set"), dict) else {}
-    if rej in (None, "", False) or str(rej).strip().lower() in ("false", "f", "0", "no"):
-        return label
-    if reads.get("co_action"):
-        return label
-    return {**label, "reads_set": {**reads, "co_action": "reject"}}
+_NOT_FACT = ("_keep", "small_talk")
+_FLAG_FALSE = ("", "false", "f", "0", "no", "none")
+
+
+def _rejected_flag(label: dict[str, Any]) -> bool:
+    """The card's reject: "this atom is not a fact" (wreckage, boilerplate, a
+    fragment). Older rows hold a type name here instead (the type the labeler
+    ruled out), which is not a flag."""
+    v = str(label.get("rejected") or "").strip().lower()
+    return v in ("true", "t", "1", "yes")
+
+
+def _derived(label: dict[str, Any]) -> dict[str, Any]:
+    """Fields the card records implicitly, made explicit for the heads:
+
+    * ``admission``: drop for a reject or a not-a-fact type (a hand-added
+      ``_keep`` aside), keep for a hand-added line or a real type; the same
+      rule as app.learning.human_labels.
+    * known negatives: a reading the parser proposed and the labeler removed
+      (``reads_shown`` minus ``reads_set``) or one the labeler considered and
+      ruled out (``rejected_reads``) is taught as absent, not left unknown.
+    """
+    reads = dict(label.get("reads_set") or {}) if isinstance(label.get("reads_set"), dict) else {}
+    typ = str(label.get("label_type") or "").strip()
+    origin = str(label.get("origin") or "").strip().lower()
+    out = dict(label)
+    if _rejected_flag(label) or (typ in _NOT_FACT and not (typ == "_keep" and origin == "labeler")):
+        out["admission"] = "drop"
+    elif origin == "labeler" or (typ and typ not in _NOT_FACT):
+        out["admission"] = "keep"
+    removed = {str(k) for k in (label.get("reads_shown") or [])} - set(reads)
+    removed |= {str(k) for k in (label.get("rejected_reads") or {})}
+    for k in removed:
+        reads.setdefault(k, ABSENT)
+    out["reads_set"] = reads
+    return out
 
 
 def field_note_targets(schema: Schema) -> dict[str, str]:
@@ -280,7 +306,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     import dataclasses
 
     atoms = [dataclasses.replace(a, label=None) if excluded(a.label)
-             else dataclasses.replace(a, label=_with_legacy_reject(a.label)) if a.label else a
+             else dataclasses.replace(a, label=_derived(a.label)) if a.label else a
              for a in deal.atoms]
     n = len(atoms)
     index = {a.key: i for i, a in enumerate(atoms)}
@@ -355,6 +381,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             t = drop_meta(str(reads.get(name) or ""))
             if t:
                 notes[key] = mask_verdict(t) if opp_layer.get(key) == "universal" else t
+        for key, why_not in (lb.get("rejected_reads") or {}).items():
+            t = drop_meta(str(why_not or ""))
+            k = f"read:{key}"
+            if t and k in opp_layer:
+                notes.setdefault(k, f"not {key}: {mask_verdict(t) if opp_layer[k] == 'universal' else t}")
         field_notes.append(notes)
         weights.append(TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))
         refs = [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)]
