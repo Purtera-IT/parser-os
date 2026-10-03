@@ -206,6 +206,7 @@ training, as privileged information:
 | `supercharge.py` | What the heads learn from it: `teach_heads` (every head matches the teacher's WHY-informed answer, so one paragraph teaches many heads), `teach_geometry` (lines alike for the same reason end up alike in r_i), `teach_unlabeled` (unlabeled lines get the teacher's read), `teach_pointers` and `teach_words` (which earlier lines a WHY rests on and which words of the line carry it, read from the teacher by `Brain.grounding`, not parsed). `mask_labels` keeps a chosen subset of labels. |
 | `consolidate.py` | Teacher-side memory: a paragraph written into low-rank weights by context distillation, for when notes outgrow the page. |
 | `notes.drop_meta` | Drops the optional last `[parser]` line of a note (parser remarks), so training never learns them. |
+| `data.featurize` | Uses all of the labeling (heads-readthrough.md): skips old manual Deal Kit rows, makes Missed rows into lines, weights rows by weight_tier, maps the old `rejected` column to co_action, keeps per-field notes for the teacher, and turns hint_refs and entity_keys into pointer and same-entity targets. |
 | `efficiency.py` | The measurement: same heads, same labeled lines, with and without the WHYs, on held-out lines, across budgets and seeds. `python -m ml.c3.efficiency --deal ml/c3/fixtures/synthetic_deal.json` (synthetic: proves the harness only). |
 
 The v5 explanation bank (reader votes, compiled operators, clause roles,
