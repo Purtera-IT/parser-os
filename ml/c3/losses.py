@@ -37,6 +37,7 @@ class LossWeights:
     claims: float = 0.3            # a WHY's compiled claim matches its line's changes
     rule_links: float = 0.5        # follows_rule / exception_to supervise a rule's region
     why_echo: float = 0.2          # r_to_text(r_i) lands on the encoded WHY (ask.py)
+    clause_use: float = 0.1        # removing any non-statement clause must change the output
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -193,6 +194,36 @@ def why_echo_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
     return (1 - F.cosine_similarity(model.r_to_text(out.r[idx]), target, -1)).mean()
 
 
+def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: ExplanationBank,
+                    desc, margin: float = 0.02) -> torch.Tensor:
+    """Nothing in a paragraph may be dead weight. Pick one condition,
+    exception, cause, consequence, evidence or quantity clause of one
+    explanation at random, delete it, and require the answers to move by at
+    least ``margin`` (mean KL over the questions the explanations touched).
+    Costs one extra forward pass."""
+    import dataclasses
+    import random
+
+    from .clauses import STATEMENT, split_clauses
+
+    cands = []
+    for j, e in enumerate(bank.items):
+        cs = split_clauses(e.text)
+        if len(cs) > 1:
+            cands += [(j, ci, cs) for ci, c in enumerate(cs) if c.role != STATEMENT]
+    keys = [k for k in out.gates if k in out.logits]
+    if not cands or not keys:
+        return out.r.new_zeros(())
+    j, ci, cs = random.choice(cands)
+    shorter = " ".join(c.text for i, c in enumerate(cs) if i != ci)
+    items = list(bank.items)
+    items[j] = dataclasses.replace(items[j], text=shorter)
+    out2 = model(batch.inputs(), company=batch.company, desc=desc, bank=ExplanationBank(items))
+    kl = torch.stack([F.kl_div(out2.logits[k].log_softmax(-1), out.logits[k].log_softmax(-1),
+                               log_target=True, reduction="batchmean") for k in keys]).mean()
+    return F.relu(margin - kl)
+
+
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None) -> tuple[torch.Tensor, dict[str, float]]:
@@ -224,6 +255,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["claims"] = claims_loss(out, batch, bank)
     parts["rule_links"] = rule_link_loss(out, batch, bank)
     parts["why_echo"] = why_echo_loss(model, out, batch)
+    if w.clause_use:
+        parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
         y = torch.full((len(batch),), model.companies.index(batch.company), device=out.r.device)
         parts["adversary"] = F.cross_entropy(out.company_logits, y)

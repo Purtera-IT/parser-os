@@ -205,6 +205,7 @@ in the project files; this is the code map.
 | Change vector and outcome grading | `consequence.py` | Each line predicts what it changes (hours, crew, sites, price, tasks, schedule × down/none/up). Each explanation claims a change. Closed deals grade the claims, and `ReliabilityLedger` scales each explanation by its track record. |
 | Planted-rule twins | `synthetic.py` | Same synthetic lines, two rule texts differing in one detail, labels following each text. Trains and tests following a rule from its words. |
 | Explanation value | `ask.py` | Ranks lines by how much the model's own voiced reason for a line, compiled as a rule, would move its answers on the other lines: which WHY to ask for first. |
+| Full paragraphs (v5.1) | `clauses.py`, `operators.py` | A paragraph is cut into clauses with roles (condition, exception, cause, consequence, evidence, quantity, statement). Each clause gets its own slot: conditions AND into the region, exceptions are cut out, causes shape the fold, consequences add to the move and the claims, arithmetic becomes programs. Every word stays readable by each line (`detail`). `clause_use` makes sure no clause is dead weight. `python -m ml.c3.clauses "<text>"` shows how a paragraph was read. |
 | Proposed labeling fields | `data.py` (`changes`, `follows_rules`, `exception_to`, quoted/final outcome) | Read when present, ignored when absent. Not on the labeling card or in the registry until the user decides. |
 
 Ablations F1 to F5 and results R1 to R6 are in the v5 doc.

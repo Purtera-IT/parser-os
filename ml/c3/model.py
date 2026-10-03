@@ -370,7 +370,7 @@ class C3Model(nn.Module):
             return
         exps = [bank.items[i] for i in idx]
         emb = bank_emb[idx]
-        ops = compiler.compile(emb)
+        ops = compiler.compile(emb, texts=[e.text for e in exps], encoder=self.text)
         out.reason_claims[layer] = ops["claims"]
         out.reason_index[layer] = idx
         for o in opps:
