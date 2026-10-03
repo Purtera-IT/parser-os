@@ -43,6 +43,26 @@ class HashingEncoder(nn.Module):
         dev = self.bag.weight.device
         return self.bag(torch.tensor(ids, device=dev), torch.tensor(offsets, device=dev))
 
+    def tokens(self, texts: list[str], max_len: int = 128) -> tuple[torch.Tensor, torch.Tensor]:
+        """Per-word vectors [B, T, d] and a mask [B, T]: every word kept, so a
+        reader can attend to the exact words of a paragraph (operators.py)."""
+        words = [_WORD.findall(str(t or "").lower())[:max_len] or ["<empty>"] for t in texts]
+        T = max(len(w) for w in words)
+        ids, offsets = [], []
+        for ws in words:
+            for i in range(T):
+                offsets.append(len(ids))
+                if i < len(ws):
+                    w = ws[i]
+                    grams = [w[j:j + 3] for j in range(max(1, len(w) - 2))]
+                    ids.extend(_hash(t, self.buckets) for t in [f"w:{w}"] + [f"g:{g}" for g in grams])
+                else:
+                    ids.append(0)
+        dev = self.bag.weight.device
+        vec = self.bag(torch.tensor(ids, device=dev), torch.tensor(offsets, device=dev))
+        mask = torch.tensor([[i < len(ws) for i in range(T)] for ws in words], device=dev)
+        return vec.view(len(texts), T, -1), mask
+
 
 class HFEncoder(nn.Module):
     """A pretrained encoder, mean-pooled. ``pip install transformers`` first."""
@@ -63,6 +83,12 @@ class HFEncoder(nn.Module):
         out = self.model(**enc).last_hidden_state
         mask = enc["attention_mask"].unsqueeze(-1).to(out.dtype)
         return (out * mask).sum(1) / mask.sum(1).clamp(min=1)
+
+    def tokens(self, texts: list[str], max_len: int = 256) -> tuple[torch.Tensor, torch.Tensor]:
+        dev = next(self.model.parameters()).device
+        enc = self.tok(list(texts), padding=True, truncation=True,
+                       max_length=max_len, return_tensors="pt").to(dev)
+        return self.model(**enc).last_hidden_state, enc["attention_mask"].bool()
 
 
 class TagEmbedding(nn.Module):
