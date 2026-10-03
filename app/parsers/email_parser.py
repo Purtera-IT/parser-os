@@ -3655,7 +3655,9 @@ class EmailParser(BaseParser):
             raw_cleaned = line.lstrip("> ").strip()
             if not raw_cleaned:
                 continue
-            is_bullet = bool(_BULLET_PREFIX_RE.match(raw_cleaned))
+            _bullet_m = _BULLET_PREFIX_RE.match(raw_cleaned)
+            is_bullet = bool(_bullet_m)
+            _bullet_marker = _bullet_m.group(0).strip() if _bullet_m else ""
             cleaned = _BULLET_PREFIX_RE.sub("", raw_cleaned).strip()
             if not cleaned:
                 continue
@@ -4178,6 +4180,11 @@ class EmailParser(BaseParser):
                     # gained nothing from having two fields.
                     atom_value["lead_in"] = [lead_for_line[-1]]
                     atom_value["intro"] = lead_for_line[-1]
+                if is_bullet and _bullet_marker:
+                    # The marker is list metadata, never atom text (as in a
+                    # HubSpot note): it is how a one-item-per-line list is
+                    # told apart from the lines around it.
+                    atom_value["list_marker"] = _bullet_marker
                 if list_item_line:
                     atom_value["list_item"] = True
                     atom_value["list_label"] = list_label[-1]  # the nearest label, as `intro` is
@@ -4291,6 +4298,8 @@ class EmailParser(BaseParser):
                     # gained nothing from having two fields.
                     baseline_value["lead_in"] = [lead_for_line[-1]]
                     baseline_value["intro"] = lead_for_line[-1]
+                if is_bullet and _bullet_marker:
+                    baseline_value["list_marker"] = _bullet_marker
                 if list_item_line:
                     baseline_value["list_item"] = True
                     baseline_value["list_label"] = list_label[-1]  # the nearest label, as `intro` is
