@@ -1005,6 +1005,9 @@ def build_orbitbrief_envelope(
         "suppressed_chrome_total": _suppressed_chrome_total(compile_result),
         "rule_decisions": _rule_decisions_for_review(),
         "rule_decisions_total": _rule_decisions_total(),
+        # Folds that hide content, found after the compile (report only):
+        # counts plus examples with atom ids. See app/core/ledger_audit.py.
+        "ledger_audit": dict(getattr(compile_result, "ledger_audit", None) or {}),
         "coverage": {
             "unrecovered_regions": unrecovered_regions,
             # Line-level: what the parser read, dropped, or never touched.

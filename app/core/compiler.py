@@ -3498,11 +3498,23 @@ def compile_project(
         _coverage = []
         warnings.append(f"WARNING: text_coverage failed: {type(exc).__name__}: {exc}")
 
+    # Report-only check of the ledger: folds that hide content (no standing
+    # survivor, a merged or lossy survivor, a list only partly folded). It
+    # reads the atoms and never changes which are kept. See ledger_audit.py.
+    try:
+        from app.core.ledger_audit import audit_ledger
+
+        _ledger_audit = audit_ledger(atoms, suppressed_atoms)
+    except Exception as exc:  # never fail a compile over a report
+        _ledger_audit = {"error": f"{type(exc).__name__}: {exc}"}
+        warnings.append(f"WARNING: ledger_audit failed: {type(exc).__name__}: {exc}")
+
     result = CompileResult(
         project_id=resolved_project_id,
         atoms=atoms,
         suppressed_atoms=sorted(suppressed_atoms, key=lambda x: x.id),
         text_coverage=_coverage,
+        ledger_audit=_ledger_audit,
         entities=entities,
         edges=edges,
         packets=packets,
