@@ -16,9 +16,21 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--deal", help="a deal in the ml/c3 JSON contract")
     ap.add_argument("--params", action="store_true", help="build the small model and count parameters")
+    ap.add_argument("--guidance", help="a guidance JSON to fold into the descriptions")
+    ap.add_argument("--guidance-template", action="store_true",
+                    help="print a blank guidance file covering every question and answer")
     args = ap.parse_args()
 
-    schema = load_schema()
+    schema = load_schema(guidance=args.guidance)
+    if args.guidance_template:
+        import json
+
+        from .schema import guidance_template
+
+        print(json.dumps(guidance_template(schema), indent=2))
+        return
+    for key, sentence in schema.scrubbed:
+        print(f"dropped from universal guidance on {key} (names company policy): {sentence}")
     counts: dict[str, int] = {}
     if args.deal:
         from .data import IGNORE, DealExample, featurize

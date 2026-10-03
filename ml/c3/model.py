@@ -38,6 +38,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
 from .schema import NUMBER, RELATION, Schema
 from .text import HashingEncoder, TagEmbedding
@@ -178,6 +179,8 @@ class C3Output:
     absence: torch.Tensor | None = None                                # [N, slots] logits
     company_logits: torch.Tensor | None = None                         # adversary
     alpha: torch.Tensor | None = None
+    explained: dict[str, torch.Tensor] = field(default_factory=dict)   # opportunity -> votes [N, A]
+    attention: dict[str, torch.Tensor] = field(default_factory=dict)   # opportunity -> [N, M+1]
 
     @property
     def q_mean(self) -> torch.Tensor:
@@ -226,6 +229,10 @@ class C3Model(nn.Module):
         self.conduct_base = nn.Linear(d_in, c.d_head)
         self.conduct_head = DescribedHead(c.d_text, c.d_head, c.n_folds)
         self.alpha_from_text = nn.Linear(c.d_text, m)
+        # Readers of written explanations (explain.py): one per layer, so a
+        # company's rules can never reach a universal head.
+        self.reader_universal = ExplanationReader(c.d_text, c.d_head)
+        self.reader_company = ExplanationReader(c.d_text, c.d_head)
         self.companies = list(companies)
         # Starting codes are small and dense so every atom gets a gradient; the
         # L1 term then makes them sparse. A zero code would starve the atoms.
@@ -266,7 +273,8 @@ class C3Model(nn.Module):
 
     # ------------------------------------------------------------ forward
     def forward(self, inp: dict[str, Any], company: str | None = None,
-                desc: dict[str, Any] | None = None, adv_lambda: float = 1.0) -> C3Output:
+                desc: dict[str, Any] | None = None, adv_lambda: float = 1.0,
+                bank: ExplanationBank | None = None) -> C3Output:
         c = self.cfg
         h = self.encoder(inp)
         n = h.shape[0]
@@ -282,7 +290,8 @@ class C3Model(nn.Module):
                        r=r, residual=residual)
 
         desc = desc if desc is not None else self.describe()
-        self.universal_heads(out, r, q_mean, desc)
+        bank_emb = self.text([e.text for e in bank.items]) if bank is not None and len(bank) else None
+        self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
 
         # Links: described pair scores, boxes for governs.
         rels = [o for o in self.schema.select(kind=RELATION) if o.field != "governs"]
@@ -300,11 +309,12 @@ class C3Model(nn.Module):
         out.company_logits = self.adversary(GradReverse.apply(z_c, adv_lambda))
 
         if company is not None:
-            self.conduct(out, company, q_mean, desc)
+            self.conduct(out, company, q_mean, desc, bank, bank_emb)
         return out
 
     def universal_heads(self, out: C3Output, r: torch.Tensor, q_mean: torch.Tensor,
-                        desc: dict[str, Any]) -> None:
+                        desc: dict[str, Any], bank: ExplanationBank | None = None,
+                        bank_emb: torch.Tensor | None = None) -> None:
         """Every universal opportunity, read from r (and q for consequence).
 
         Separate so the WHY-sufficiency loss can run the same heads with the
@@ -322,9 +332,29 @@ class C3Model(nn.Module):
                 out.logits[o.key] = lg
                 if o.kind == NUMBER:
                     out.numbers[o.key] = nums[:, j]
+            self._read(out, x, opps, desc, bank, bank_emb, "universal", "", self.reader_universal)
+
+    def _read(self, out: C3Output, x: torch.Tensor, opps: list, desc: dict[str, Any],
+              bank: ExplanationBank | None, bank_emb: torch.Tensor | None,
+              layer: str, company: str, reader: ExplanationReader) -> None:
+        """Add the votes of the explanations in this layer to each head's logits."""
+        if bank is None or bank_emb is None:
+            return
+        idx = bank.select(layer, company)
+        if not idx:
+            return
+        exps = [bank.items[i] for i in idx]
+        emb = bank_emb[idx]
+        for o in opps:
+            votes, att = reader(x, desc[o.key][0], desc[o.key][1], o.key,
+                                [a.value for a in o.answers], emb, exps)
+            out.explained[o.key] = votes
+            out.attention[o.key] = att
+            out.logits[o.key] = out.logits[o.key] + votes
 
     def conduct(self, out: C3Output, company: str, q_mean: torch.Tensor,
-                desc: dict[str, Any]) -> None:
+                desc: dict[str, Any], bank: ExplanationBank | None = None,
+                bank_emb: torch.Tensor | None = None) -> None:
         k = self.companies.index(company) if company in self.companies else self.add_company(company)
         alpha = self.alpha[k]
         x = torch.cat([out.r, q_mean], -1)
@@ -341,6 +371,7 @@ class C3Model(nn.Module):
             out.logits[o.key] = lg
             if o.kind == NUMBER:
                 out.numbers[o.key] = nums[:, j]
+        self._read(out, y, opps, desc, bank, bank_emb, "company", company, self.reader_company)
         out.alpha = alpha
 
     def _context(self, context: dict[str, list], n: int, dev) -> torch.Tensor:

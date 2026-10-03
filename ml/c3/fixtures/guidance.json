@@ -1,0 +1,11 @@
+{
+  "_note": "Synthetic example of per-question decision guidance. Generate a full blank file with: python -m ml.c3.card --guidance-template > guidance.json",
+  "read:sow_coverage": {
+    "how_to_decide": "Compare the line with the signed or final SOW. What matters is whether the final document carries the same fact, not who said it or how it was worded.",
+    "answers": {
+      "in_sow": "The SOW states the same fact, possibly in other words.",
+      "differs": "The SOW states the fact with a different number, site or date.",
+      "missing_from_sow": "The fact affects the work but the SOW never states it."
+    }
+  }
+}

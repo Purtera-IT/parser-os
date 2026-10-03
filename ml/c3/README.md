@@ -56,6 +56,7 @@ atoms ─ AtomEncoder ─ DealGraph (foresight mask, same-doc/section biases) �
 | Rationale bottleneck + residual | `rationale`, `res_down/res_up` | built |
 | Described heads (the new part) | `folds.py` | built; section 3 |
 | Box containment for governs | `_box_containment` | built |
+| Explanation reader: WHYs, company lines and rule cards applied as votes | `explain.py`, `_read` | built; section 4 |
 | Absence head, with free targets from the timeline | `absence`, `losses.absence_targets` | built |
 | Policy genome: sparse codes, low-rank atoms, one readable threshold θ per atom | `conduct` | built; universal outputs tested identical under any code |
 | New company: freeze all but its code, seed it from its written rules | `add_company`, `freeze_for_new_company` | built |
@@ -135,7 +136,65 @@ On top of v3's C1 to C8:
 
 D4 is the control a reviewer will ask for first.
 
-## 4. Is it novel?
+## 4. Learning the connection from the explanation, not from a pile of examples
+
+Section 3 uses the text to *shape* the heads. That still learns slowly: a
+connection like "over 55 inches means two technicians" would only appear
+after many such lines. A person learns it from one sentence. `explain.py`
+gives the model that route.
+
+**Write the connection once, in words.** Three kinds of text go into an
+explanation bank, each kept in its layer:
+
+| Source | Layer | Example |
+|---|---|---|
+| every labeled line's WHY, with the card it led to | universal | "Cuts the site count from 3 to 2. Every quantity derived from 3 sites changes: 2 x 4 = 8." |
+| every labeled line's company line | that company | "[purtera] reject: sellers do not own delivery tasks." |
+| **rule cards** written once, no examples needed (`fixtures/rule_cards.json`) | either | "A display larger than 55 inches is mounted by two technicians, because one person cannot lift and level it safely." |
+
+A rule card can name the question and answer it argues for, or name neither
+and let the model decide where it applies. SAs and PMs can write company
+cards in their own words ("how my SAs use this line").
+
+**The model reads the bank and applies it.** For each line and each question,
+a reader asks whether each explanation applies to this line (with a
+"nothing applies" option), and which answer the explanation argues for, read
+from its words and its stated conclusion. The votes are added to the heads.
+
+**Why that speeds learning up.** The reader is trained on every pair of
+(line, someone else's WHY). A line never sees its own WHY, so it has to
+transfer reasoning written about a different line, and `explanation_only`
+makes the votes reach the right answer by themselves. That is the skill of
+*applying a stated reason*, learned once from all the WHYs. After it is
+learned, a new rule card works the moment it's added: no retraining and no
+new parameters (tested). The model changes because of what the sentence says,
+the way a person does after being told.
+
+**Guidance for every question and every answer.** `load_schema(guidance=...)`
+adds a written "how to decide" to any question and a "when to pick it" to any
+answer. It is folded straight into the descriptions the heads are built from.
+`python -m ml.c3.card --guidance-template` prints a blank file with every
+question and answer in the base. Company words in universal guidance are
+dropped and reported, so the base stays portable.
+
+**Firewall.** Universal heads read only universal explanations. Company heads
+read only the active company's. A Purtera rule card cannot move a universal
+output (tested bit-identical).
+
+**What this does not do on day one.** The reader itself has to be trained
+before a rule card means anything; until then its votes are noise. The WHYs
+being written now are its training data, which is one more reason
+line-specific WHYs matter.
+
+Extra ablations:
+
+| | Remove | Predicts a drop in |
+|---|---|---|
+| E1 | the reader (no bank) | few-shot accuracy on rare readings; new-company curve |
+| E2 | leave-one-out off | inflated train scores, worse held-out deals (it copies its own WHY) |
+| E3 | rule cards held out, then added at test time | the zero-shot gain from a new rule; the main result to show |
+
+## 5. Is it novel?
 
 Honestly, partly. Each ingredient has close relatives:
 - **Label text as the classifier:** zero-shot classification with label
@@ -158,9 +217,15 @@ literature search):
 2. **The per-line explanation trained as a sufficient displacement through
    those same folds**, so the WHY, the descriptions and the line live in one
    geometry and the model must predict the WHY's displacement at inference.
-3. Both inside a **factored schema** where the universal layer is provably
-   blind to the company and the company layer can be seeded from the
-   company's written rules.
+3. A **small model that learns to apply written rules**: a reader
+   meta-trained on lines paired with *other* lines' WHYs, so a new rule card
+   moves predictions with no retraining. Close relatives are BabbleLabble
+   (explanations compiled into labeling functions), ExpBERT and CLUES
+   (classifiers from explanations), and LLM in-context learning, which
+   already does this but at frontier cost and with no firewall.
+4. All of it inside a **factored schema**: the universal layer is provably
+   blind to the company, and the company layer reads only that company's
+   rules.
 
 So the components aren't new; the combination and the fold mechanism likely
 are. Whether it *helps* is an empirical question that D1 to D4 answer. If D4

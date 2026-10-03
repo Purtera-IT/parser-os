@@ -93,6 +93,9 @@ class Schema:
     opportunities: list[Opportunity]
     spaces: dict[str, dict[str, Any]] = field(default_factory=dict)
     version: str = ""
+    #: Sentences dropped from universal guidance because they name company
+    #: policy: (opportunity key, sentence). Shown by ``python -m ml.c3.card``.
+    scrubbed: list[tuple[str, str]] = field(default_factory=list)
 
     def by_key(self) -> dict[str, Opportunity]:
         return {o.key: o for o in self.opportunities}
@@ -158,7 +161,56 @@ def _answers(kind: str, values: Iterable[str], subject: str,
     return tuple(out)
 
 
-def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH) -> Schema:
+def dropped(text: str) -> list[str]:
+    """The sentences ``scrub`` would drop from a universal description."""
+    text = " ".join(str(text or "").split())
+    return [s for s in re.split(r"(?<=[.!?])\s+", text)
+            if any(w in s.lower() for w in POLICY_WORDS)]
+
+
+def apply_guidance(schema: Schema, guidance: dict[str, Any]) -> Schema:
+    """Add written decision guidance to opportunities and their answers.
+
+    ``guidance`` maps an opportunity key to
+    ``{"how_to_decide": "...", "answers": {"<value>": "when to pick it, and why"}}``.
+    The text is appended to the descriptions the heads are built from, so it
+    changes the heads directly. Universal guidance loses any sentence naming
+    company policy (recorded in ``schema.scrubbed``); write that in the
+    company opportunities or in a company rule card instead.
+    """
+    by_key = schema.by_key()
+    unknown = sorted(set(guidance) - set(by_key))
+    if unknown:
+        raise ValueError(f"guidance for unknown opportunities: {unknown}")
+    out = []
+    for o in schema.opportunities:
+        g = guidance.get(o.key)
+        if not g:
+            out.append(o)
+            continue
+        how = str(g.get("how_to_decide", ""))
+        notes = {str(k): str(v) for k, v in (g.get("answers") or {}).items()}
+        bad = sorted(set(notes) - {a.value for a in o.answers})
+        if bad:
+            raise ValueError(f"guidance for {o.key}: not answers of it: {bad}")
+        if o.universal:
+            schema.scrubbed += [(o.key, s) for t in [how, *notes.values()] for s in dropped(t)]
+        desc = f"{o.description} How to decide: {scrub(how, o.universal)}" if how else o.description
+        answers = tuple(Answer(a.value, f"{a.description} {scrub(notes[a.value], o.universal)}".strip())
+                        if a.value in notes else a for a in o.answers)
+        out.append(Opportunity(**{**o.__dict__, "description": desc, "answers": answers}))
+    schema.opportunities = out
+    return schema
+
+
+def guidance_template(schema: Schema) -> dict[str, Any]:
+    """An empty guidance file covering every class-like opportunity."""
+    return {o.key: {"how_to_decide": "", "answers": {a.value: "" for a in o.answers}}
+            for o in schema.opportunities if o.kind != RELATION}
+
+
+def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
+                guidance: str | Path | dict[str, Any] | None = None) -> Schema:
     heads = json.loads(Path(heads_path).read_text(encoding="utf-8"))
     types = json.loads(Path(types_path).read_text(encoding="utf-8"))
     reads = {r["key"]: r for r in types["reads"]}
@@ -217,4 +269,10 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH) ->
                     lead(h, universal), f"{r.get('label', rel)}.", scrub(r.get("desc", ""), universal)) if x),
                 **base))
 
-    return Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")))
+    schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")))
+    if guidance is not None:
+        if not isinstance(guidance, dict):
+            guidance = json.loads(Path(guidance).read_text(encoding="utf-8"))
+        guidance = {k: v for k, v in guidance.items() if not k.startswith("_")}
+        apply_guidance(schema, guidance)
+    return schema

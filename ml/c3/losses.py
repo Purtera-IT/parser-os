@@ -12,6 +12,7 @@ import torch
 from torch.nn import functional as F
 
 from .data import IGNORE, Batch
+from .explain import ExplanationBank
 from .model import CLAIM_SLOTS, C3Model, C3Output, log_gauss_mixture
 from .schema import NUMBER
 
@@ -31,6 +32,7 @@ class LossWeights:
     adversary: float = 0.1
     policy_l1: float = 0.01
     conduct: float = 1.0
+    explanation_only: float = 0.5  # the explanations' votes alone must reach the answer
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -165,11 +167,33 @@ def absence_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     return F.binary_cross_entropy_with_logits(out.absence[m], t[m])
 
 
+def explanation_only_loss(out: C3Output, batch: Batch) -> torch.Tensor:
+    """CE of the explanation votes by themselves. Trains the reader to apply
+    another line's reasoning (its own WHY is masked) to this line."""
+    total, terms = out.r.new_zeros(()), 0
+    for key, votes in out.explained.items():
+        y = torch.tensor(batch.targets[key], device=votes.device)
+        if (y != IGNORE).any():
+            total = total + F.cross_entropy(votes, y, ignore_index=IGNORE)
+            terms += 1
+    return total / max(terms, 1)
+
+
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
-            adv_lambda: float = 1.0) -> tuple[torch.Tensor, dict[str, float]]:
+            adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
+            rules: ExplanationBank | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+    """``bank``: explanations to read. Default: this deal's WHYs and company
+    lines (each line masked from its own), plus ``rules``. In real training
+    the bank should hold other deals' explanations too, which is what the
+    model will have at inference."""
     w = w or LossWeights()
     desc = model.describe()
-    out = model(batch.inputs(), company=batch.company, desc=desc, adv_lambda=adv_lambda)
+    if bank is None:
+        bank = ExplanationBank.from_batch(batch, model.schema)
+    if rules is not None:
+        bank = bank.extend(rules.items)
+    out = model(batch.inputs(), company=batch.company, desc=desc, adv_lambda=adv_lambda,
+                bank=bank)
     parts: dict[str, torch.Tensor] = {}
     parts["heads"], parts["numbers"] = head_losses(model, out, batch, w, "universal")
     parts["conduct"], _ = head_losses(model, out, batch, w, "company")
@@ -179,6 +203,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["residual"] = out.residual.pow(2).mean()
     parts["hindsight"], parts["variance"] = hindsight_loss(model, out, batch)
     parts["absence"] = absence_loss(out, batch)
+    parts["explanation_only"] = explanation_only_loss(out, batch)
     if len(model.companies) > 1 and batch.company in model.companies:
         y = torch.full((len(batch),), model.companies.index(batch.company), device=out.r.device)
         parts["adversary"] = F.cross_entropy(out.company_logits, y)
