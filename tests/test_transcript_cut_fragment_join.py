@@ -208,7 +208,7 @@ def test_restart_is_not_a_continuation_and_the_restarted_head_stays_off_the_sent
         ("A", 10.0, "Because we'll need to know exactly where the racks sit in the rooms."),
         ("A", 15.0, "How are we gonna."),
         ("A", 16.2, "How are we thinking?"),
-    ]) == [[0], [1], [2]]
+    ]) == [[0], [1, 2]]
     assert _groups([
         ("A", 10.0, "We can move fast, finish Denver first and then do Ohio."),
         ("A", 20.0, "What was the."),
@@ -350,3 +350,40 @@ def test_a_word_cut_before_its_stem_joins():
         ("A", 4.8, "Quote."),
         ("A", 6.4, "Just refresh the numbers."),
     ]) == [[0, 1], [2]]
+
+
+def test_a_cut_restart_joins_the_cue_that_restates_its_head_and_finishes_it():
+    # "How are we gonna." stops on an auxiliary with no verb; the next cue
+    # repeats its head and finishes it, even as a question.
+    assert _groups([
+        ("A", 10.0, "Or."),
+        ("A", 11.0, "I guess."),
+        ("A", 12.0, "How."),
+        ("A", 12.3, "How are we gonna."),
+        ("A", 14.8, "How are we thinking?"),
+        ("A", 16.0, "Because we'll need to know exactly where the racks sit in the rooms."),
+    ]) == [[0, 1], [2, 3, 4], [5]]
+    assert _groups([("A", 1.0, "What do we wanna."), ("A", 2.5, "What do we want the crew to bring?")]) == [[0, 1]]
+    # a restart cut on an article still heads its own question
+    assert _groups([("A", 1.0, "What was the."), ("A", 1.7, "What was the last day we need it all done by?")]) == [[0], [1]]
+    # nor a head past three words, nor one past the pause
+    assert _groups([("A", 1.0, "So how are we gonna."), ("A", 2.0, "So how are we thinking?")]) == [[0], [1]]
+    assert _groups([("A", 1.0, "How are we gonna."), ("A", 12.0, "How are we thinking?")]) == [[0], [1]]
+
+
+def test_a_dropped_subject_hedge_heads_the_clause_the_next_cue_restates():
+    assert _groups([
+        ("B", 9.0, "Yeah, that sounds about right."),
+        ("A", 10.0, "Think there's a cap."),
+        ("A", 10.6, "There's a few sites that came on this term that had two racks."),
+        ("A", 13.3, "So I think there's room for about 20 in each."),
+    ]) == [[0], [1, 2], [3]]
+    # not after a joined sentence, not into a question, not a bare "think so"
+    for a, b in (("Think there's a cap.", "There's a cap?"), ("Think so.", "So we go Tuesday then.")):
+        assert _groups([("A", 1.0, a), ("A", 1.6, b)]) == [[0], [1]], (a, b)
+    assert _groups([
+        ("A", 1.0, "We'll check the."),
+        ("A", 1.8, "The rooms."),
+        ("A", 2.4, "Think there's a cap."),
+        ("A", 3.0, "There's a few sites that had two racks."),
+    ]) == [[0, 1], [2, 3]]
