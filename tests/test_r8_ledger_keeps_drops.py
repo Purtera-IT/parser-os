@@ -142,3 +142,24 @@ def test_the_envelope_ledger_row_carries_fold_or_drop(monkeypatch):
     by_id = {r["id"]: r for r in rows}
     assert by_id[folded.id]["kind"] == "fold" and by_id[folded.id]["survivor"]["id"] == kept.id
     assert by_id[gate.id]["kind"] == "drop"
+
+
+def test_a_fold_whose_survivor_is_a_cross_document_copy_names_it_in_the_envelope(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.core.orbitbrief_envelope import _suppressed_for_review
+
+    monkeypatch.setenv("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "1")
+    v1_row = _atom("Ann Lee | PM | ann@customer.example", "art_sow_v1", value={"kind": "table_row"})
+    v2_copy = _atom("Ann Lee | PM | ann@customer.example", "art_sow_v2",
+                    value={"kind": "table_row", "duplicate_of": {"atom_id": v1_row.id, "artifact_id": "art_sow_v1",
+                                                                 "stage": "semantic_dedup"}}, flags=[COPY_FLAG])
+    folded = _atom("Ann Lee | Project Manager | ann@customer.example", "art_sow_v2", value={"kind": "table_row"})
+    capture_suppressed([folded], [], stage="semantic_dedup", reason="dup")
+    folded.value[SURVIVOR_KEY] = {"atom_id": v2_copy.id, "artifact_id": "art_sow_v2", "stage": "semantic_dedup"}
+    result = SimpleNamespace(suppressed_atoms=[folded], atoms=[v1_row, v2_copy], project_id="p")
+    # The envelope's kept list leaves the copy out (it is held under its document).
+    (row,) = _suppressed_for_review(result, [v1_row])
+    assert row["survivor"]["id"] == v2_copy.id
+    assert row["survivor"]["copy_of"] == v1_row.id
+    assert row["kind"] == "fold"

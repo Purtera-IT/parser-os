@@ -440,6 +440,19 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
     for atom in kept:
         survivors.setdefault(norm(atom), atom)
         kept_by_id.setdefault(str(getattr(atom, "id", "") or ""), atom)
+    # ``kept`` leaves out a document's cross-document copy (it is listed under
+    # its own document), but a fold can survive in one: then the row said
+    # ``survivor: null`` and read as "vanished" (010087: the v2 contacts row).
+    # Every atom of the result can be a survivor; a copy also names its
+    # canonical atom.
+    for atom in list(getattr(compile_result, "atoms", None) or []):
+        survivors.setdefault(norm(atom), atom)
+        kept_by_id.setdefault(str(getattr(atom, "id", "") or ""), atom)
+
+    def _copy_of(atom: Any) -> str:
+        v = getattr(atom, "value", None)
+        dup = v.get("duplicate_of") if isinstance(v, dict) else None
+        return str(dup.get("atom_id") or "") if isinstance(dup, dict) else ""
 
     def _recorded_survivor(atom) -> Any:
         # The fold records the atom it went into (cross_doc_copies.SURVIVOR_KEY):
@@ -498,6 +511,7 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
             "survivor": None if survivor is None else {
                 "id": str(getattr(survivor, "id", "") or ""),
                 "text": (getattr(survivor, "raw_text", "") or getattr(survivor, "text", "") or "")[:2000],
+                **({"copy_of": _copy_of(survivor)} if _copy_of(survivor) else {}),
             },
         })
     return out
