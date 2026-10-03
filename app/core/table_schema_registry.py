@@ -850,7 +850,11 @@ def emit_atoms_for_schema(
             atoms.append(_atom(
                 "stakeholder",
                 AtomType.stakeholder,
-                f"{name} | {title or role}" if (title or role) else name,
+                # The whole row, as every other schema row reads: "name |
+                # title" alone dropped the EMAIL ADDRESS column from the only
+                # atom left standing once its full-row twins folded into it
+                # (010087 contacts table).
+                row_text,
                 {"name": name, "title": title, "role": role, "email": email,
                  "phone": phone, "org": org, "approval_domain": approval_domain,
                  "raw": row_text},

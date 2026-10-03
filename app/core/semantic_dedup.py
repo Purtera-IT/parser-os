@@ -2388,16 +2388,28 @@ def _suppress_table_row_blob_doubles(atoms: list[Any]) -> list[Any]:
             # and the deal's account number and its contract effective and
             # expiry dates left the compile with nothing else stating them.
             # Same for an email address: the contact row that has it is not
-            # a double of a richer atom that does not (010246).
+            # a double of a richer atom that does not (010246) -- judged on
+            # the WORDS each states, since an address held only in the rich
+            # atom's value never reaches the reader (010087: a contact read
+            # "name | title" with the email in value.email, and the full row
+            # folded into it).
             if winner is not None and not (
                 _figures_stated(a) - _figures_stated(winner)
-            ) and not _fold.emails_only_the_loser_states(winner, a) and not _row_names_more_people(
+            ) and not _fold.emails_only_the_loser_states(winner, a) and not (
+                _emails_in_words(a) - _emails_in_words(winner)
+            ) and not _row_names_more_people(
                 a, people_by_cell.get(_atom_cell_locator(a)) or []
             ):
                 _merge_atom_metadata(winner, a)
                 continue
         out.append(a)
     return out
+
+
+def _emails_in_words(atom: Any) -> frozenset[str]:
+    """Email addresses an atom states in its text (not its value)."""
+    text = str(getattr(atom, "raw_text", None) or getattr(atom, "text", None) or "")
+    return frozenset(m.group(0).lower().rstrip(".") for m in _fold._EMAIL_RE.finditer(text))
 
 
 class _Said:
