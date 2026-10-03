@@ -82,21 +82,30 @@ class TeacherView:
 @torch.no_grad()
 def teacher_view(teacher, batch: Batch, company: str | None = None,
                  grounding: bool = True) -> TeacherView:
-    from .brain import notes_from_deal  # noqa: PLC0415
+    from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
 
     was = teacher.training
     teacher.eval()
     desc = teacher.describe()
     notes, cnotes = notes_from_deal(batch)
-    told = teacher(batch, company=company, why=batch.why, desc=desc)
+    why = told_why(batch, teacher.schema)
+    told = teacher(batch, company=company, why=why, desc=desc,
+                   company_notes=company_field_notes(batch, teacher.schema))
     noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc)
     m = told.mask.unsqueeze(-1).to(told.hidden.dtype)
     emb = (told.hidden * m).sum(1) / m.sum(1).clamp(min=1)
     pointers, words = teacher.grounding(batch) if grounding else (None, None)
     teacher.train(was)
     dev = emb.device
+    if pointers is not None:
+        # Where a labeler named the lines a decision came from (hint_refs),
+        # their answer replaces the teacher's reading.
+        for i, js in enumerate(batch.hint_lines or []):
+            if js:
+                pointers[i] = 0.0
+                pointers[i, js] = 1.0 / len(js)
     return TeacherView(told.logits, noted.logits, emb,
-                       torch.tensor([bool(t) for t in batch.why], device=dev),
+                       torch.tensor([bool(t) for t in why], device=dev),
                        torch.tensor(batch.labeled, device=dev), pointers, words)
 
 
@@ -179,4 +188,7 @@ def mask_labels(batch: Batch, keep: set[int]) -> Batch:
         policy_note=[x if i in keep else None for i, x in enumerate(batch.policy_note)],
         rule_links=[x for x in batch.rule_links if x[0] in keep],
         changes=[x if i in keep else None for i, x in enumerate(batch.changes)],
+        field_notes=[x if i in keep else {} for i, x in enumerate(batch.field_notes)],
+        hint_lines=[x if i in keep else [] for i, x in enumerate(batch.hint_lines)],
+        entities=[x if i in keep else [] for i, x in enumerate(batch.entities)],
     )
