@@ -40,6 +40,7 @@ class LossWeights:
     clause_use: float = 0.1        # removing any non-statement clause must change the output
     pointers: float = 0.3          # hint_refs: the lines a decision came from
     entities: float = 0.2          # entity_keys: lines naming the same entity pull together
+    judgments: float = 1.0         # judgment tabs about two lines, a group or the deal
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -108,6 +109,27 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
                 t = torch.tensor([v or 0.0 for v in vals], device=dev)
                 num = num + F.smooth_l1_loss(out.numbers[opp.key][mask], torch.log1p(t[mask]))
     return ce / max(terms, 1), num
+
+
+def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
+                  desc: dict | None = None) -> torch.Tensor:
+    """Cross-entropy on each judgment-tab verdict about two lines, a group of
+    lines or the whole deal, one batch per question. Company questions train
+    only when the company layer ran."""
+    by: dict[str, list] = {}
+    for j in batch.judged:
+        by.setdefault(j.key, []).append(j)
+    opps = model.schema.by_key()
+    total, terms = out.r.new_zeros(()), 0
+    for key, js in by.items():
+        o = opps.get(key)
+        if o is None or (not o.universal and out.conduct_x is None):
+            continue
+        logits = model.judge(out, key, [j.lines for j in js], desc)
+        y = torch.tensor([j.answer for j in js], device=logits.device)
+        total = total + F.cross_entropy(logits, y)
+        terms += 1
+    return total / max(terms, 1)
 
 
 def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
@@ -310,6 +332,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["why_echo"] = why_echo_loss(model, out, batch)
     parts["pointers"] = pointer_loss(out, batch)
     parts["entities"] = entity_loss(out, batch)
+    parts["judgments"] = judgment_loss(model, out, batch, desc)
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:

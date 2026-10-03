@@ -191,4 +191,7 @@ def mask_labels(batch: Batch, keep: set[int]) -> Batch:
         field_notes=[x if i in keep else {} for i, x in enumerate(batch.field_notes)],
         hint_lines=[x if i in keep else [] for i, x in enumerate(batch.hint_lines)],
         entities=[x if i in keep else [] for i, x in enumerate(batch.entities)],
+        # Pair verdicts follow their lines; a group's or the deal's verdict is
+        # not a line label and stays.
+        judged=[j for j in batch.judged if j.size != "pair" or set(j.lines) <= keep],
     )

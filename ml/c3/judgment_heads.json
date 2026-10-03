@@ -1,0 +1,173 @@
+{
+  "doc": "The judgment tabs of the labeling page (Platform-infra azure-function-api/shared/atom-labeling-judgments.js HEADS), as model questions. Layer and space come from the label_heads.json head that lists the judgment. size: line = one line; pair = two lines; group = a document, table or sheet (its lines pooled); deal = the whole deal pooled. alias: the judgment asks an existing line question in other words, so its verdicts become that question's targets instead of a new head. Vocabularies must match parser-os app/core/pm_feedback.py HEAD_REGISTRY where it declares candidates (tests/test_c3_judgments.py checks).",
+  "heads": {
+    "conflict": {
+      "size": "pair", "subject": "How these two lines relate",
+      "question": "Two lines the parser thought might disagree. Do they really conflict?",
+      "answers": {
+        "contradicts": "They state incompatible facts about the same thing; at most one can hold.",
+        "supports": "They agree; one confirms or restates the other.",
+        "excludes": "One carves the other out of scope: a stated exception or exclusion.",
+        "unrelated": "They are about different things; no conflict and no support."
+      }
+    },
+    "site": {
+      "size": "pair", "subject": "One place or two",
+      "question": "Two site names from the deal. Are they the same physical place?",
+      "answers": {
+        "same_site": "The same physical place under two names or spellings.",
+        "distinct_site": "Two different physical places."
+      }
+    },
+    "site_role": {
+      "size": "line", "subject": "Where the work happens",
+      "question": "A place the deal names. Is it a place where the work happens?",
+      "answers": {
+        "job_site": "A place where the work is done.",
+        "vendor_or_billing_address": "An office, vendor or billing address; no work happens there."
+      }
+    },
+    "geo_mention": {
+      "size": "line", "subject": "Named place",
+      "question": "A place named in the line. Is it a work site or only a mention?",
+      "answers": {
+        "job_site": "The work happens at this place.",
+        "mention_only": "The place is mentioned (a head office, a city in a signature, a comparison) but no work happens there."
+      }
+    },
+    "facility": {
+      "size": "line", "subject": "Site label",
+      "question": "How should this address be named as a site?",
+      "answers": {
+        "city_office": "Name it by its city; the text gives no better name.",
+        "keep_facility": "Keep the facility name the text gives (a building, campus or store).",
+        "keep_name": "Keep the name exactly as written."
+      }
+    },
+    "gap": {
+      "size": "line", "subject": "Worth asking",
+      "question": "A question the parser would ask the customer about this line. Would a person actually ask it?",
+      "answers": {
+        "valid": "A real open question worth asking the customer.",
+        "invalid": "Not worth asking: already answered, a duplicate, or the wrong question for this job."
+      }
+    },
+    "question_answered": {
+      "size": "line", "subject": "Question answered",
+      "question": "An open question in the deal. Has a later line already answered it?",
+      "answers": {
+        "answered": "A later line answers it.",
+        "open": "Still open; nothing in the deal answers it."
+      }
+    },
+    "task_tier": {
+      "size": "line", "subject": "Line or step",
+      "question": "A task line. Is it a whole line of work, or a step inside one?",
+      "answers": {
+        "parent": "A line of work that other steps sit under.",
+        "child": "A step inside a larger line of work."
+      }
+    },
+    "image": {
+      "size": "line", "subject": "Image kind",
+      "question": "A picture in a document. What kind of picture is it?",
+      "answers": {
+        "skip": "Not worth reading.", "photo": "A photograph.", "diagram": "A drawing or diagram.",
+        "chart": "A chart or graph.", "table_image": "A table captured as an image.",
+        "screenshot": "A screenshot.", "instructions": "Written instructions as an image.",
+        "label": "A product or equipment label.", "map": "A map or floor plan.", "logo": "A logo.",
+        "decorative": "Decoration with no content.", "signature": "A signature.", "empty": "Blank."
+      }
+    },
+    "facet": {
+      "size": "line", "subject": "Brief section",
+      "question": "Which section of a project brief does this line belong in?",
+      "answers": {
+        "WORK": "What is done: the work itself.", "SITE": "Where: the places and their conditions.",
+        "COMMERCIAL": "Money and terms.", "COMPLIANCE": "Rules, insurance, safety and paperwork.",
+        "PARTY": "Who: the people and companies.", "TIMING": "When: dates, windows and order.",
+        "META": "About the documents themselves."
+      }
+    },
+    "document_job": {
+      "size": "group", "subject": "Document belongs to this job",
+      "question": "A document in the deal. Is it about this job, or another job for the same customer?",
+      "answers": {
+        "this_deal": "About this job.",
+        "other_job": "About another job; it should not shape this one."
+      }
+    },
+    "roster": {
+      "size": "group", "subject": "Site list",
+      "question": "A table in the deal. Is it a list of the job's sites?",
+      "answers": {
+        "site_roster": "A list of the places where the work happens.",
+        "not_site_roster": "Not a site list."
+      }
+    },
+    "sheet": {
+      "size": "group", "subject": "Sheet role",
+      "question": "A sheet of a workbook. What is it for?",
+      "answers": {
+        "scope": "The work to be done.", "reference": "Background to look things up in.",
+        "rate_card": "Prices per unit of work.", "catalog": "A list of products.",
+        "financial_summary": "Totals and margins.", "instructions": "How to fill in or use the workbook.",
+        "empty": "No content."
+      }
+    },
+    "billing_type": {
+      "size": "deal", "subject": "How the job is billed",
+      "question": "How is this job billed?",
+      "answers": {
+        "fixed": "One fixed price.", "t_and_m": "Time and materials: billed for hours and parts used.",
+        "milestone": "In payments tied to milestones.", "per_site": "A unit price times the number of sites."
+      }
+    },
+    "hardware_scope": {
+      "size": "deal", "subject": "Who supplies the hardware",
+      "question": "Who supplies the job's hardware?",
+      "answers": {
+        "we_supply": "The service provider supplies it.", "customer_furnished": "The customer supplies it.",
+        "none": "The job needs no hardware."
+      }
+    },
+    "materials_scope": {
+      "size": "deal", "subject": "Consumables",
+      "question": "Does the job include consumables (fasteners, cable ties, patch cords)?",
+      "answers": {"consumables": "Yes, consumables are in scope.", "none": "No consumables."}
+    },
+    "expenses_scope": {
+      "size": "deal", "subject": "Expenses",
+      "question": "Are expenses (shipping, per diem, freight) billed on this job?",
+      "answers": {"expenses": "Yes, expenses are billed.", "none": "No expenses."}
+    },
+    "travel_scope": {
+      "size": "deal", "subject": "Travel",
+      "question": "Is travel (mileage, airfare, hotel, drive time) billed on this job?",
+      "answers": {"travel": "Yes, travel is billed.", "none": "No travel."}
+    },
+    "tier": {
+      "size": "deal", "subject": "Project tier",
+      "question": "Which of the company's project tiers is this job?",
+      "answers": {"1": "Tier 1.", "2": "Tier 2.", "3": "Tier 3."}
+    },
+    "suppression": {
+      "alias": {"target": "col:admission", "map": {"should_have_been_kept": "keep", "correctly_dropped": "drop"}}
+    },
+    "admission": {
+      "alias": {"target": "col:admission", "map": {"keep": "keep", "drop": "drop"}}
+    },
+    "bom_owner": {
+      "alias": {"target": "col:supplier", "map": {"we_supply": "us", "customer_furnished": "customer"}}
+    }
+  },
+  "not_trained": {
+    "type": "The atom card's type picker already teaches it.",
+    "rule": "The rule runs before atoms exist, so this model never sees its input; it stays in the parser.",
+    "router": "No fixed vocabulary yet.",
+    "norm": "The answer is free text; a later PR can give it to the teacher.",
+    "commercial": "The answer is free text; a later PR can give it to the teacher.",
+    "terminology": "The answer is free text; a later PR can give it to the teacher.",
+    "hours": "Task hours: a later PR can map it onto the labor hours number."
+  }
+}

@@ -31,6 +31,7 @@ from typing import Any, Iterable
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HEADS_PATH = REPO_ROOT / "app" / "core" / "label_heads.json"
 TYPES_PATH = REPO_ROOT / "app" / "core" / "atom_types.json"
+JUDGMENTS_PATH = Path(__file__).resolve().parent / "judgment_heads.json"
 
 #: Words a universal description must not carry (project instructions, note
 #: grammar). A sentence holding one is dropped from a universal opportunity's
@@ -47,6 +48,12 @@ NUMBER = "number"        # a number the text states (crew_size, labor_hours)
 PRESENCE = "presence"    # a phrase is present or not (commitment, urgency)
 RELATION = "relation"    # an edge to another line
 
+#: What one answer is about. Line questions are asked of every line; the
+#: judgment tabs also ask about two lines, a group of lines (a document, a
+#: table, a sheet) or the whole deal.
+LINE, PAIR, GROUP, DEAL = "line", "pair", "group", "deal"
+SIZES = (LINE, PAIR, GROUP, DEAL)
+
 #: Absent is always a class: a reading the line does not have.
 ABSENT = "_absent"
 
@@ -61,13 +68,14 @@ class Answer:
 class Opportunity:
     key: str                 # "read:sow_coverage", "col:label_type", "rel:answers"
     field: str               # the label field it reads ("sow_coverage")
-    source: str              # "column" | "read" | "relation"
+    source: str              # "column" | "read" | "relation" | "judgment"
     head: str                # "consequence.outcome"
     space: str               # "consequence"
     layer: str               # "universal" | "company"
     kind: str                # CLASS | BINARY | NUMBER | PRESENCE | RELATION
     description: str         # the question the labeler is asked, in full
     answers: tuple[Answer, ...] = ()
+    size: str = LINE         # LINE | PAIR | GROUP | DEAL
 
     @property
     def universal(self) -> bool:
@@ -99,6 +107,9 @@ class Schema:
     #: Free-text readings ("the reasoning behind <field>"): not answers, but
     #: per-field WHYs the teacher reads (data.field_note_targets).
     note_fields: list[str] = field(default_factory=list)
+    #: Judgment tabs that ask an existing line question in other words:
+    #: judgment head -> (opportunity key, verdict -> that question's answer).
+    judgment_aliases: dict[str, tuple[str, dict[str, str]]] = field(default_factory=dict)
 
     def by_key(self) -> dict[str, Opportunity]:
         return {o.key: o for o in self.opportunities}
@@ -108,11 +119,14 @@ class Schema:
                      if o.source == source and o.field == name), None)
 
     def select(self, *, layer: str | None = None, kind: str | None = None,
-               space: str | None = None) -> list[Opportunity]:
+               space: str | None = None, size: str | None = LINE) -> list[Opportunity]:
+        """Opportunities by layer, kind and space. Line questions only unless
+        ``size`` says otherwise (None: every size)."""
         return [o for o in self.opportunities
                 if (layer is None or o.layer == layer)
                 and (kind is None or o.kind == kind)
-                and (space is None or o.space == space)]
+                and (space is None or o.space == space)
+                and (size is None or o.size == size)]
 
     def texts(self) -> list[str]:
         """Every description the model encodes, opportunity first, then answers."""
@@ -213,8 +227,11 @@ def guidance_template(schema: Schema) -> dict[str, Any]:
 
 
 def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
-                guidance: str | Path | dict[str, Any] | None = None) -> Schema:
+                guidance: str | Path | dict[str, Any] | None = None,
+                judgments_path: Path = JUDGMENTS_PATH) -> Schema:
     heads = json.loads(Path(heads_path).read_text(encoding="utf-8"))
+    judgments = json.loads(Path(judgments_path).read_text(encoding="utf-8"))["heads"]
+    aliases: dict[str, tuple[str, dict[str, str]]] = {}
     types = json.loads(Path(types_path).read_text(encoding="utf-8"))
     reads = {r["key"]: r for r in types["reads"]}
     rels = {r["key"]: r for r in types["relations"]}
@@ -303,8 +320,26 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     lead(h, universal), f"{r.get('label', rel)}.", scrub(r.get("desc", ""), universal)) if x),
                 **base))
 
+        for name in h.get("judgments", []):
+            # A judgment tab's question, at the size it is asked (one line, two
+            # lines, a document or the whole deal), in the layer of the head
+            # that lists it. Its text comes from judgment_heads.json.
+            j = judgments.get(name)
+            if j is None:
+                continue                  # not trained (judgment_heads.json says why)
+            if "alias" in j:
+                aliases[name] = (j["alias"]["target"], dict(j["alias"]["map"]))
+                continue
+            docs = {str(v): scrub(d, universal) for v, d in j["answers"].items()}
+            subject = scrub(j.get("subject", ""), universal) or _spell(name)
+            opps.append(Opportunity(
+                key=f"jdg:{name}", field=name, source="judgment", kind=CLASS, size=j["size"],
+                description=" ".join(x for x in (
+                    lead(h, universal), scrub(j.get("question", ""), universal)) if x),
+                answers=_answers(CLASS, docs, subject, docs), **base))
+
     schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")),
-                    note_fields=note_fields)
+                    note_fields=note_fields, judgment_aliases=aliases)
     if guidance is not None:
         if not isinstance(guidance, dict):
             guidance = json.loads(Path(guidance).read_text(encoding="utf-8"))
