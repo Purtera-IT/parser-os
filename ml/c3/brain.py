@@ -188,6 +188,25 @@ class Brain(nn.Module):
             out.attention.update(cout.attention)
         return out
 
+    # ------------------------------------------------------------ flips
+    def flip_read(self, batch: Batch, why: list[str | None], flips: list,
+                  notes: list[list[str]] | None = None, desc=None,
+                  graph: torch.Tensor | None = None) -> BrainOutput:
+        """The supposition pass: for each (line, sentence), the reasoned page
+        with the sentence assumed. Row n of every output is supposition n.
+        Nothing tells the teacher whether the sentence changes the case: it
+        reads it and applies the rule on the page, and that reading is what
+        it teaches the heads (supercharge.teach_flip). It practices on
+        look-alike lines, where the answer is known (losses.supposed_twins)."""
+        desc = desc if desc is not None else self.describe()
+        notes = notes or [[] for _ in range(len(batch))]
+        pages = [self.page(batch, f.line, notes[f.line])
+                 + (f"Why: {why[f.line]}\n" if why[f.line] else "")
+                 + f"Suppose instead: {f.condition}\nAnswer:" for f in flips]
+        g = graph[[f.line for f in flips]] if graph is not None else None
+        out, _, _, _ = self.read(pages, "universal", desc, g)
+        return out
+
     # ------------------------------------------------------------ the WHY
     def rationale_loss(self, batch: Batch, notes: list[list[str]] | None = None,
                        graph: torch.Tensor | None = None) -> torch.Tensor:
@@ -286,11 +305,9 @@ class Brain(nn.Module):
         return pointers, words
 
     @torch.no_grad()
-    def explain(self, batch: Batch, i: int, max_new: int = 120,
-                notes: list[str] | None = None) -> str:
-        """Greedy-write the model's own WHY for line i. Untrained: noise."""
-        text = self.page(batch, i, notes) + "Why: "
-        ids, mask = self.lm.tokenize([text])
+    def write(self, prompt: str, max_new: int = 120, stop: str | None = None) -> str:
+        """Greedy-continue ``prompt``; cut at ``stop`` when given."""
+        ids, mask = self.lm.tokenize([prompt])
         start = int(mask.sum())
         ids = ids[:, :start]
         for _ in range(max_new):
@@ -300,8 +317,26 @@ class Brain(nn.Module):
             if ids.shape[1] >= self.lm.max_len:
                 break
         if hasattr(self.lm, "tokenizer"):
-            return self.lm.tokenizer.decode(ids[0, start:].tolist(), skip_special_tokens=True)
-        return bytes(t for t in ids[0, start:].tolist() if t < 256).decode("utf-8", "replace")
+            text = self.lm.tokenizer.decode(ids[0, start:].tolist(), skip_special_tokens=True)
+        else:
+            text = bytes(t for t in ids[0, start:].tolist() if t < 256).decode("utf-8", "replace")
+        return text.split(stop)[0] if stop else text
+
+    def explain(self, batch: Batch, i: int, max_new: int = 120,
+                notes: list[str] | None = None) -> str:
+        """Greedy-write the model's own WHY for line i. Untrained: noise."""
+        return self.write(self.page(batch, i, notes) + "Why: ", max_new)
+
+    def rewrite(self, batch: Batch, i: int, why: str, change: str | None = None,
+                max_new: int = 80) -> str:
+        """Line i written again by the teacher, with its WHY on the page.
+        Without ``change``: other words, the same reason (what the answer
+        depends on stays). With ``change`` (a sentence of the WHY): the
+        smallest edit that makes the sentence hold. The teacher's reading of
+        the result, not this prompt, decides what the new line answers."""
+        ask = (f"Rewrite the line so that this holds: {change}" if change else
+               "Rewrite the line in other words, keeping everything the reason depends on.")
+        return self.write(self.page(batch, i) + f"Why: {why}\n{ask}\nLine: ", max_new, "\n").strip()
 
 
 def notes_from_deal(batch: Batch, k: int = 3) -> tuple[list[list[str]], list[list[str]]]:

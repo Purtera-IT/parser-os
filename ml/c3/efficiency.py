@@ -39,7 +39,7 @@ from .lm import TinyCausalLM
 from .losses import BrainWeights, LossWeights, brain_loss, c3_loss
 from .model import C3Config, C3Model
 from .schema import Schema, load_schema
-from .supercharge import TeachWeights, mask_labels, supercharge_loss, teacher_view, weighted
+from .supercharge import TeachWeights, mask_labels, rewrite_lines, supercharge_loss, teacher_view, weighted
 
 SMALL = C3Config(d_text=64, d=64, n_layers=1, n_heads=4, d_r=32, d_q=16, d_head=32,
                  residual_dim=8, box_dim=8, n_policy_atoms=4, policy_rank=4)
@@ -54,6 +54,10 @@ class Row:
     accuracy: float
     n_eval: int
     keep: tuple[int, ...]
+    near_miss: float = float("nan")   # held-out near-miss pairs with both lines right
+    n_pairs: int = 0
+    twin: float = float("nan")        # held-out twins given the same answers
+    n_twins: int = 0
 
 
 def heads_accuracy(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[float, int]:
@@ -75,20 +79,63 @@ def heads_accuracy(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[f
     return (hit / total if total else float("nan")), total
 
 
+def near_miss_accuracy(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[float, int]:
+    """The small-difference test: of the near-miss pairs (lines that read
+    almost alike but answer differently) with both lines held out, the share
+    where the heads get both right. Averaging the two scores at most half."""
+    held = set(eval_ids)
+    pairs = [p for p in batch.near_misses if p[0] in held and p[1] in held]
+    if not pairs:
+        return float("nan"), 0
+    model.eval()
+    with torch.no_grad():
+        out = model(batch.inputs())
+    hit = 0
+    for i, j, key in pairs:
+        pred = out.logits[key].argmax(-1)
+        hit += int(pred[i] == batch.targets[key][i] and pred[j] == batch.targets[key][j])
+    return hit / len(pairs), len(pairs)
+
+
+def twin_consistency(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[float, int]:
+    """The keyword test: of the twins (lines that read almost alike and were
+    labeled the same) with both lines held out, the share where the heads
+    give both lines the same answer on every universal line head either has
+    gold for. A model that keys on surface words splits twins whose wording
+    differs where the answer does not care (55 inch vs 65 inch); one that
+    reads the line does not. No word list picks the twins: the labels do."""
+    held = set(eval_ids)
+    pairs = [p for p in batch.twins if p[0] in held and p[1] in held]
+    if not pairs:
+        return float("nan"), 0
+    model.eval()
+    with torch.no_grad():
+        out = model(batch.inputs())
+    keys = [o.key for o in model.schema.select(layer="universal") if o.key in out.logits]
+    hit = 0
+    for i, j in pairs:
+        ks = [k for k in keys if k in batch.targets
+              and IGNORE not in (batch.targets[k][i], batch.targets[k][j])]
+        hit += int(all(out.logits[k][i].argmax() == out.logits[k][j].argmax() for k in ks))
+    return hit / len(pairs), len(pairs)
+
+
 def _train_heads(schema: Schema, batch: Batch, seed: int, steps: int, cfg: C3Config,
-                 teacher: Brain | None, lr: float) -> C3Model:
+                 teacher: Brain | None, lr: float, rewrites: bool = False) -> C3Model:
     torch.manual_seed(seed)
     model = C3Model(schema, cfg)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     w = LossWeights(clause_use=0.0, **({} if teacher is not None else NO_WHY))
-    view = teacher_view(teacher, batch, batch.company or None) if teacher is not None else None
+    view = (teacher_view(teacher, batch, batch.company or None,
+                         rewrites=rewrite_lines(teacher, batch) if rewrites else None)
+            if teacher is not None else None)
     for _ in range(steps):
         model.train()
         loss, _ = c3_loss(model, batch, w)
         if view is not None:
             out = model(batch.inputs(), company=batch.company or None)
-            loss = loss + weighted(supercharge_loss(model, out, view, texts=batch.texts),
-                                     TeachWeights())
+            loss = loss + weighted(supercharge_loss(model, out, view, texts=batch.texts,
+                                                    batch=batch), TeachWeights())
         opt.zero_grad()
         loss.backward()
         opt.step()
@@ -114,7 +161,7 @@ def run_curve(deal: DealExample, schema: Schema | None = None, budgets=(2, 4, 6)
               steps: int = 30, teacher_steps: int = 10, cfg: C3Config = SMALL,
               lr: float = 3e-3,
               make_lm: Callable[[], torch.nn.Module] = lambda: TinyCausalLM(32, 1, 2, 1024),
-              ) -> list[Row]:
+              rewrites: bool = False) -> list[Row]:
     schema = schema or load_schema()
     full = featurize(deal, schema)
     labeled = [i for i, x in enumerate(full.labeled) if x]
@@ -132,12 +179,15 @@ def run_curve(deal: DealExample, schema: Schema | None = None, budgets=(2, 4, 6)
             train = mask_labels(full, keep)
             plain = mask_labels(full, keep)
             plain.why = [None] * len(plain)
+            plain.flips = []          # suppositions come from WHYs: the labels-only arm has none
             m_lab = _train_heads(schema, plain, seed, steps, cfg, None, lr)
             teacher = _train_teacher(schema, train, seed, teacher_steps, lr, make_lm)
-            m_exp = _train_heads(schema, train, seed, steps, cfg, teacher, lr)
+            m_exp = _train_heads(schema, train, seed, steps, cfg, teacher, lr, rewrites)
             for arm, m in (("labels", m_lab), ("explained", m_exp)):
                 acc, n = heads_accuracy(m, full, eval_ids)
-                rows.append(Row(k, seed, arm, acc, n, tuple(sorted(keep))))
+                nm, n_nm = near_miss_accuracy(m, full, eval_ids)
+                tw, n_tw = twin_consistency(m, full, eval_ids)
+                rows.append(Row(k, seed, arm, acc, n, tuple(sorted(keep)), nm, n_nm, tw, n_tw))
     return rows
 
 
@@ -148,12 +198,16 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, default=1)
     ap.add_argument("--steps", type=int, default=30)
     ap.add_argument("--teacher-steps", type=int, default=10)
+    ap.add_argument("--rewrites", action="store_true",
+                    help="the teacher rewrites labeled lines (meaning lock); slow with a real LM")
     a = ap.parse_args()
     rows = run_curve(DealExample.load(a.deal), budgets=[int(x) for x in a.budgets.split(",")],
-                     seeds=range(a.seeds), steps=a.steps, teacher_steps=a.teacher_steps)
-    print(f"{'labels':>6}  {'seed':>4}  {'arm':<9}  {'accuracy':>8}  {'pairs':>5}")
+                     seeds=range(a.seeds), steps=a.steps, teacher_steps=a.teacher_steps,
+                     rewrites=a.rewrites)
+    print(f"{'labels':>6}  {'seed':>4}  {'arm':<9}  {'accuracy':>8}  {'pairs':>5}  {'near-miss':>9}  {'n':>3}  {'twins':>5}  {'n':>3}")
     for r in rows:
-        print(f"{r.budget:>6}  {r.seed:>4}  {r.arm:<9}  {r.accuracy:>8.3f}  {r.n_eval:>5}")
+        print(f"{r.budget:>6}  {r.seed:>4}  {r.arm:<9}  {r.accuracy:>8.3f}  {r.n_eval:>5}"
+              f"  {r.near_miss:>9.3f}  {r.n_pairs:>3}  {r.twin:>5.3f}  {r.n_twins:>3}")
 
 
 if __name__ == "__main__":

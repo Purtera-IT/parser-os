@@ -225,6 +225,10 @@ class C3Model(nn.Module):
         self.res_down = nn.Linear(c.d, c.residual_dim)
         self.res_up = nn.Linear(c.residual_dim, c.d_r, bias=False)
         self.why_proj = nn.Linear(c.d_text, c.d_r)       # the WHY, into rationale space
+        # A supposed WHY sentence ("if the customer supplied the mounts..."),
+        # as a move in rationale space. Training only: it teaches the heads
+        # where the boundary sits next to each line; nothing reads it at run time.
+        self.flip_proj = nn.Linear(c.d_text, c.d_r)
 
         spaces = sorted({o.space for o in schema.opportunities if o.universal})
         self.space_in = nn.ModuleDict({s: nn.Linear(c.d_r + (c.d_q if s == "consequence" else 0),

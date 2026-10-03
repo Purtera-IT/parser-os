@@ -87,6 +87,22 @@ def mask_verdict(text: str) -> str:
     return _VERDICT_RE.sub(MASK, str(text or ""))
 
 
+# ---------------------------------------------------------------- sentences
+
+_SENT = re.compile(r"(?<=[.!?;])\s+|\n+")
+
+
+def sentences(why: str) -> list[str]:
+    """A WHY cut into sentences, on punctuation and line breaks only.
+
+    Nothing here decides what a sentence means: no word lists, no "if" or
+    "unless" patterns. Every sentence is a candidate supposition, and the
+    teacher's own reading of the page with that sentence assumed
+    (``Brain.flip_read``) decides whether it changes the answer, and to
+    what."""
+    return [re.sub(r"\s+", " ", t).strip() for t in _SENT.split(str(why or "")) if t.strip()]
+
+
 # ---------------------------------------------------------------- programs
 
 _NUM = r"\$?\d[\d,]*(?:\.\d+)?"

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 import torch
 from torch.nn import functional as F
 
-from .data import IGNORE, Batch
+from .data import IGNORE, Batch, FlipTarget
 from .explain import ExplanationBank
 from .model import CLAIM_SLOTS, C3Model, C3Output, log_gauss_mixture
 from .schema import NUMBER
@@ -42,6 +42,8 @@ class LossWeights:
     entities: float = 0.2          # entity_keys: lines naming the same entity pull together
     judgments: float = 1.0         # judgment tabs about two lines, a group or the deal
     negatives: float = 0.3         # answers known wrong (the parser's type a person overruled)
+    near_misses: float = 0.5       # lines that read alike but answer differently stay apart
+    near_miss_margin: float = 1.0
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -145,6 +147,33 @@ def negative_loss(out: C3Output, batch: Batch) -> torch.Tensor:
             if bad:
                 total = total - torch.log1p(-p[i, bad].sum().clamp(max=1 - 1e-6))
                 terms += 1
+    return total / max(terms, 1)
+
+
+def moved_heads(model: C3Model, out: C3Output, rows: list[int], move: torch.Tensor,
+                desc) -> C3Output:
+    """The universal heads on lines ``rows`` with r moved by ``move``: what the
+    heads would say if each line were a little different."""
+    r = out.r[rows] + move
+    sub = C3Output(h=out.h[rows], z_c=out.z_c[rows], q_mu=out.q_mu[rows],
+                   q_logvar=out.q_logvar[rows], q_logit=out.q_logit[rows], r=r,
+                   residual=out.residual[rows])
+    model.universal_heads(sub, r, out.q_mean[rows], desc)
+    return sub
+
+
+def near_miss_loss(out: C3Output, batch: Batch, margin: float = 1.0) -> torch.Tensor:
+    """Lines that read almost alike but were labeled differently: each must
+    prefer its own answer over its twin's by ``margin`` (in logits), so the
+    heads learn the small difference instead of averaging the two."""
+    total, terms = out.r.new_zeros(()), 0
+    for i, j, key in batch.near_misses:
+        lg = out.logits.get(key)
+        if lg is None:
+            continue
+        yi, yj = batch.targets[key][i], batch.targets[key][j]
+        total = total + F.relu(margin - (lg[i, yi] - lg[i, yj])) + F.relu(margin - (lg[j, yj] - lg[j, yi]))
+        terms += 2
     return total / max(terms, 1)
 
 
@@ -350,6 +379,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["entities"] = entity_loss(out, batch)
     parts["judgments"] = judgment_loss(model, out, batch, desc)
     parts["negatives"] = negative_loss(out, batch)
+    parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
@@ -368,6 +398,7 @@ class BrainWeights:
     rationale: float = 1.0     # write the human's WHY, token by token
     distill: float = 0.5       # the direct answer moves toward what the reasoning concludes
     consolidate: float = 0.5   # notes written into weights must act as notes on the page
+    flip: float = 0.5          # with a look-alike line supposed, answer what that line was labeled
     numbers: float = 0.2
 
 
@@ -384,6 +415,24 @@ def _answer_ce(out, batch: Batch, keys) -> torch.Tensor:
     if total is None:
         return next(iter(out.logits.values())).new_zeros(())
     return total / terms
+
+
+def supposed_twins(batch: Batch) -> tuple[list[FlipTarget], list[tuple[str, int]]]:
+    """Practice for the supposition pass, from labels alone: line i's page
+    with "Suppose instead: <line j's text>", for look-alike lines i and j,
+    must answer what j was labeled (on the head where they differ for a near
+    miss, the type for twins). The teacher learns to read a supposed case
+    and apply the page's rule to it, so its reading of a WHY's sentences
+    (supercharge.teach_flip) comes from comprehension, not from words."""
+    sup: list[FlipTarget] = []
+    gold: list[tuple[str, int]] = []
+    pairs = [(i, j, k) for i, j, k in batch.near_misses] + \
+            [(i, j, "col:label_type") for i, j in batch.twins]
+    for i, j, k in pairs:
+        for a, b in ((i, j), (j, i)):
+            sup.append(FlipTarget(a, batch.texts[b]))
+            gold.append((k, batch.targets[k][b]))
+    return sup, gold
 
 
 def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
@@ -433,6 +482,16 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
         parts["consolidate"] = context_distillation_loss(teacher.logits, student.logits)
     else:
         parts["consolidate"] = parts["direct"].new_zeros(())
+
+    parts["flip"] = parts["direct"].new_zeros(())
+    sup, gold = supposed_twins(batch)
+    if sup:
+        flipped = brain.flip_read(batch, why, sup, notes, desc, graph)
+        terms = [F.cross_entropy(flipped.logits[k][n].unsqueeze(0),
+                                 torch.tensor([y], device=flipped.logits[k].device))
+                 for n, (k, y) in enumerate(gold) if k in flipped.logits]
+        if terms:
+            parts["flip"] = torch.stack(terms).mean()
 
     num = parts["direct"].new_zeros(())
     for k, pred in direct.numbers.items():

@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .notes import drop_meta, mask_verdict, split_note
+from .notes import drop_meta, mask_verdict, sentences, split_note
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
 
@@ -286,6 +286,15 @@ class Batch:
     #: Answers known to be wrong for a line, by opportunity: the parser's type
     #: when a person picked another, or a type an older row ruled out.
     negatives: dict[str, list[list[int]]] = field(default_factory=dict)
+    #: Suppositions: each sentence of a labeled line's WHY, for the teacher
+    #: to read with that sentence assumed (training only).
+    flips: list["FlipTarget"] = field(default_factory=list)
+    #: Labeled lines that read almost alike but got different answers:
+    #: (i, j, opportunity), i < j.
+    near_misses: list[tuple[int, int, str]] = field(default_factory=list)
+    #: Labeled lines that read almost alike and got the same answers: (i, j),
+    #: i < j. A difference in wording that the answer ignores.
+    twins: list[tuple[int, int]] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -305,6 +314,104 @@ class Judged:
     lines: tuple[int, ...]       # the two lines, the group's lines, or every line
     answer: int                  # class index
     note: str = ""               # the labeler's reason and note, for the teacher
+
+
+@dataclass(frozen=True)
+class FlipTarget:
+    """A supposition about line ``line``: read it as if ``condition`` held.
+    No answer is attached: the teacher's reading supplies it."""
+    line: int
+    condition: str
+
+
+def _words(t: str) -> str:
+    return " " + re.sub(r"[^a-z0-9]+", " ", str(t).lower().replace("_", " ")).strip() + " "
+
+
+def suppositions(why_raw: list[str], per_line: int = 6, min_words: int = 4) -> list[FlipTarget]:
+    """Every sentence of every labeled line's WHY, as a supposition.
+
+    Which sentences describe a different case ("if the customer supplied the
+    mounts, this would be a customer task") and which only restate the rule
+    is not decided here, by any word: the teacher reads the page with each
+    one assumed and answers. A sentence that changes nothing teaches the
+    heads to hold their answer; one that changes it teaches where the
+    boundary is. Sentences under ``min_words`` words are skipped; each line
+    keeps its first ``per_line``."""
+    out: list[FlipTarget] = []
+    for i, why in enumerate(why_raw):
+        sents = [t for t in sentences(why) if len(t.split()) >= min_words]
+        out += [FlipTarget(i, t) for t in sents[:per_line]]
+    return out
+
+
+def _shingles(t: str, n: int = 3) -> set[str]:
+    w = _words(t).strip()
+    return {w[k:k + n] for k in range(max(1, len(w) - n + 1))}
+
+
+def look_alikes(texts: list[str], targets: dict[str, list[int]], labeled: list[bool],
+                schema: Schema, threshold: float = 0.6, per_line: int = 3,
+                common: int = 200) -> tuple[list[tuple[int, int, str]], list[tuple[int, int]]]:
+    """Pairs of labeled lines whose text is nearly the same (character
+    trigram Jaccard >= ``threshold``), split two ways:
+
+    * near misses: gold answers differ on a line-size universal opportunity
+      (the type first), as (i, j, opportunity);
+    * twins: both have a gold type and every opportunity both answered
+      agrees, as (i, j): the wording differs where the answer does not care.
+
+    Each line keeps its ``per_line`` closest partners of each kind.
+    Candidates come from an inverted index over trigrams, skipping trigrams
+    in more than ``common`` lines, so a 2,000-line deal stays cheap."""
+    idx = [i for i, x in enumerate(labeled) if x and texts[i].strip()]
+    sh = {i: _shingles(texts[i]) for i in idx}
+    inv: dict[str, list[int]] = {}
+    for i in idx:
+        for g in sh[i]:
+            inv.setdefault(g, []).append(i)
+    keys = ["col:label_type"] + [o.key for o in schema.select(layer="universal")
+                                 if o.size == LINE and o.kind in (CLASS, PRESENCE)
+                                 and o.key != "col:label_type" and o.key in targets]
+    keys = [k for k in keys if k in targets]
+    near: dict[int, list[tuple[float, int, str]]] = {}
+    same: dict[int, list[tuple[float, int]]] = {}
+    for i in idx:
+        shared: dict[int, int] = {}
+        for g in sh[i]:
+            js = inv[g]
+            if len(js) > common:
+                continue
+            for j in js:
+                if j > i:
+                    shared[j] = shared.get(j, 0) + 1
+        for j, c in shared.items():
+            jac = c / (len(sh[i]) + len(sh[j]) - c)
+            if jac < threshold:
+                continue
+            both = [k for k in keys if IGNORE not in (targets[k][i], targets[k][j])]
+            key = next((k for k in both if targets[k][i] != targets[k][j]), None)
+            if key:
+                near.setdefault(i, []).append((jac, j, key))
+                near.setdefault(j, []).append((jac, i, key))
+            elif "col:label_type" in both and texts[i].strip() != texts[j].strip():
+                same.setdefault(i, []).append((jac, j))
+                same.setdefault(j, []).append((jac, i))
+    pairs: set[tuple[int, int, str]] = set()
+    for i, cands in near.items():
+        for _, j, key in sorted(cands, reverse=True)[:per_line]:
+            pairs.add((min(i, j), max(i, j), key))
+    twins: set[tuple[int, int]] = set()
+    for i, cands in same.items():
+        for _, j in sorted(cands, reverse=True)[:per_line]:
+            twins.add((min(i, j), max(i, j)))
+    return sorted(pairs), sorted(twins)
+
+
+def find_near_misses(texts: list[str], targets: dict[str, list[int]], labeled: list[bool],
+                     schema: Schema, **kw: Any) -> list[tuple[int, int, str]]:
+    """The near-miss half of ``look_alikes``."""
+    return look_alikes(texts, targets, labeled, schema, **kw)[0]
 
 
 def _field_value(label: dict[str, Any], source: str, name: str) -> Any:
@@ -569,12 +676,14 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 edges[rel].append(pair)
 
     why: list[str | None] = []
+    why_raw: list[str] = []
     policy: list[str | None] = []
     for a in atoms:
         note = (a.label or {}).get("note") or ""
         u, p = split_note(note, company)
         u, p = drop_meta(u), drop_meta(p)
         why.append(mask_verdict(u) if u else None)
+        why_raw.append(u if a.label is not None and not excluded(a.label) else "")
         policy.append(p or None)
 
     rule_links: list[tuple[int, str, int]] = []
@@ -727,6 +836,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
 
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
+    alike = look_alikes([a.text for a in atoms], targets,
+                        [a.label is not None and not excluded(a.label) for a in atoms], schema)
     return Batch(
         deal_id=deal.deal_id, company=company, company_policy=deal.company_policy,
         texts=[a.text for a in atoms], numbers=[number_tokens(a.text) for a in atoms],
@@ -739,7 +850,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
         field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities,
-        judged=judged, negatives=negatives)
+        judged=judged, negatives=negatives,
+        flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1])
 
 
 def _as_list(v: Any) -> list[str]:
@@ -775,5 +887,5 @@ def realized_changes(outcome: dict[str, float], tol: float = 0.02) -> dict[str, 
     return out
 
 
-__all__ = ["Atom", "Batch", "DealExample", "featurize", "number_tokens", "IGNORE",
+__all__ = ["Atom", "Batch", "DealExample", "FlipTarget", "featurize", "find_near_misses", "look_alikes", "suppositions", "number_tokens", "IGNORE",
            "CONTEXT_SLOTS", "ABSENT", "BINARY", "CLASS", "NUMBER", "PRESENCE"]
