@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .notes import drop_meta, extract_flips, mask_verdict, split_note
+from .notes import drop_meta, mask_verdict, sentences, split_note
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
 
@@ -286,12 +286,15 @@ class Batch:
     #: Answers known to be wrong for a line, by opportunity: the parser's type
     #: when a person picked another, or a type an older row ruled out.
     negatives: dict[str, list[list[int]]] = field(default_factory=dict)
-    #: Near-miss contrasts a labeler wrote ("if X, this would be Y"), one per
-    #: (line, opportunity) they move.
+    #: Suppositions: each sentence of a labeled line's WHY, for the teacher
+    #: to read with that sentence assumed (training only).
     flips: list["FlipTarget"] = field(default_factory=list)
     #: Labeled lines that read almost alike but got different answers:
     #: (i, j, opportunity), i < j.
     near_misses: list[tuple[int, int, str]] = field(default_factory=list)
+    #: Labeled lines that read almost alike and got the same answers: (i, j),
+    #: i < j. A difference in wording that the answer ignores.
+    twins: list[tuple[int, int]] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -315,12 +318,9 @@ class Judged:
 
 @dataclass(frozen=True)
 class FlipTarget:
-    """A flip resolved against the schema: on line ``line``, if ``condition``
-    held, opportunity ``key`` would answer ``answer`` (a class index), or just
-    not its gold answer when ``answer`` is None."""
+    """A supposition about line ``line``: read it as if ``condition`` held.
+    No answer is attached: the teacher's reading supplies it."""
     line: int
-    key: str
-    answer: int | None
     condition: str
 
 
@@ -328,38 +328,20 @@ def _words(t: str) -> str:
     return " " + re.sub(r"[^a-z0-9]+", " ", str(t).lower().replace("_", " ")).strip() + " "
 
 
-def resolve_flips(schema: Schema, why_raw: list[str], targets: dict[str, list[int]]
-                  ) -> list[FlipTarget]:
-    """Turn each WHY's flip sentences into targets.
+def suppositions(why_raw: list[str], per_line: int = 6, min_words: int = 4) -> list[FlipTarget]:
+    """Every sentence of every labeled line's WHY, as a supposition.
 
-    The new answer is the registered answer the "then" part names (its value,
-    underscores read as spaces, three letters or more), on an opportunity the
-    line has a gold answer for and where it differs from that gold. A flip
-    that names no such answer ("unless ...", or words that are not a
-    registered value) still says the type would change: it becomes "not the
-    gold type". A flip on a line with no gold anywhere teaches nothing."""
-    opps = [o for o in schema.opportunities
-            if o.universal and o.kind in (CLASS, PRESENCE) and o.key in targets]
+    Which sentences describe a different case ("if the customer supplied the
+    mounts, this would be a customer task") and which only restate the rule
+    is not decided here, by any word: the teacher reads the page with each
+    one assumed and answers. A sentence that changes nothing teaches the
+    heads to hold their answer; one that changes it teaches where the
+    boundary is. Sentences under ``min_words`` words are skipped; each line
+    keeps its first ``per_line``."""
     out: list[FlipTarget] = []
     for i, why in enumerate(why_raw):
-        if not why:
-            continue
-        for f in extract_flips(why):
-            then = _words(f.then)
-            found: list[FlipTarget] = []
-            for o in opps:
-                gold = targets[o.key][i]
-                if gold == IGNORE:
-                    continue
-                for a_i, a in enumerate(o.answers):
-                    name = _words(a.value).strip()
-                    if a_i != gold and len(name) >= 3 and not a.value.startswith("_") \
-                            and f" {name} " in then:
-                        found.append(FlipTarget(i, o.key, a_i, f.condition))
-                        break
-            if not found and targets.get("col:label_type", [IGNORE] * (i + 1))[i] != IGNORE:
-                found.append(FlipTarget(i, "col:label_type", None, f.condition))
-            out += found
+        sents = [t for t in sentences(why) if len(t.split()) >= min_words]
+        out += [FlipTarget(i, t) for t in sents[:per_line]]
     return out
 
 
@@ -368,15 +350,20 @@ def _shingles(t: str, n: int = 3) -> set[str]:
     return {w[k:k + n] for k in range(max(1, len(w) - n + 1))}
 
 
-def find_near_misses(texts: list[str], targets: dict[str, list[int]], labeled: list[bool],
-                     schema: Schema, threshold: float = 0.6, per_line: int = 3,
-                     common: int = 200) -> list[tuple[int, int, str]]:
+def look_alikes(texts: list[str], targets: dict[str, list[int]], labeled: list[bool],
+                schema: Schema, threshold: float = 0.6, per_line: int = 3,
+                common: int = 200) -> tuple[list[tuple[int, int, str]], list[tuple[int, int]]]:
     """Pairs of labeled lines whose text is nearly the same (character
-    trigram Jaccard >= ``threshold``) but whose gold answers differ on a
-    line-size universal opportunity (the type first). Each line keeps its
-    ``per_line`` closest such partners. Candidates come from an inverted
-    index over trigrams, skipping trigrams in more than ``common`` lines, so
-    a 2,000-line deal stays cheap."""
+    trigram Jaccard >= ``threshold``), split two ways:
+
+    * near misses: gold answers differ on a line-size universal opportunity
+      (the type first), as (i, j, opportunity);
+    * twins: both have a gold type and every opportunity both answered
+      agrees, as (i, j): the wording differs where the answer does not care.
+
+    Each line keeps its ``per_line`` closest partners of each kind.
+    Candidates come from an inverted index over trigrams, skipping trigrams
+    in more than ``common`` lines, so a 2,000-line deal stays cheap."""
     idx = [i for i, x in enumerate(labeled) if x and texts[i].strip()]
     sh = {i: _shingles(texts[i]) for i in idx}
     inv: dict[str, list[int]] = {}
@@ -387,7 +374,8 @@ def find_near_misses(texts: list[str], targets: dict[str, list[int]], labeled: l
                                  if o.size == LINE and o.kind in (CLASS, PRESENCE)
                                  and o.key != "col:label_type" and o.key in targets]
     keys = [k for k in keys if k in targets]
-    best: dict[int, list[tuple[float, int, str]]] = {}
+    near: dict[int, list[tuple[float, int, str]]] = {}
+    same: dict[int, list[tuple[float, int]]] = {}
     for i in idx:
         shared: dict[int, int] = {}
         for g in sh[i]:
@@ -401,16 +389,29 @@ def find_near_misses(texts: list[str], targets: dict[str, list[int]], labeled: l
             jac = c / (len(sh[i]) + len(sh[j]) - c)
             if jac < threshold:
                 continue
-            key = next((k for k in keys if IGNORE not in (targets[k][i], targets[k][j])
-                        and targets[k][i] != targets[k][j]), None)
+            both = [k for k in keys if IGNORE not in (targets[k][i], targets[k][j])]
+            key = next((k for k in both if targets[k][i] != targets[k][j]), None)
             if key:
-                best.setdefault(i, []).append((jac, j, key))
-                best.setdefault(j, []).append((jac, i, key))
+                near.setdefault(i, []).append((jac, j, key))
+                near.setdefault(j, []).append((jac, i, key))
+            elif "col:label_type" in both and texts[i].strip() != texts[j].strip():
+                same.setdefault(i, []).append((jac, j))
+                same.setdefault(j, []).append((jac, i))
     pairs: set[tuple[int, int, str]] = set()
-    for i, cands in best.items():
+    for i, cands in near.items():
         for _, j, key in sorted(cands, reverse=True)[:per_line]:
             pairs.add((min(i, j), max(i, j), key))
-    return sorted(pairs)
+    twins: set[tuple[int, int]] = set()
+    for i, cands in same.items():
+        for _, j in sorted(cands, reverse=True)[:per_line]:
+            twins.add((min(i, j), max(i, j)))
+    return sorted(pairs), sorted(twins)
+
+
+def find_near_misses(texts: list[str], targets: dict[str, list[int]], labeled: list[bool],
+                     schema: Schema, **kw: Any) -> list[tuple[int, int, str]]:
+    """The near-miss half of ``look_alikes``."""
+    return look_alikes(texts, targets, labeled, schema, **kw)[0]
 
 
 def _field_value(label: dict[str, Any], source: str, name: str) -> Any:
@@ -835,6 +836,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
 
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
+    alike = look_alikes([a.text for a in atoms], targets,
+                        [a.label is not None and not excluded(a.label) for a in atoms], schema)
     return Batch(
         deal_id=deal.deal_id, company=company, company_policy=deal.company_policy,
         texts=[a.text for a in atoms], numbers=[number_tokens(a.text) for a in atoms],
@@ -848,10 +851,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
         field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities,
         judged=judged, negatives=negatives,
-        flips=resolve_flips(schema, why_raw, targets),
-        near_misses=find_near_misses([a.text for a in atoms], targets,
-                                     [a.label is not None and not excluded(a.label) for a in atoms],
-                                     schema))
+        flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1])
 
 
 def _as_list(v: Any) -> list[str]:
@@ -887,5 +887,5 @@ def realized_changes(outcome: dict[str, float], tol: float = 0.02) -> dict[str, 
     return out
 
 
-__all__ = ["Atom", "Batch", "DealExample", "FlipTarget", "featurize", "find_near_misses", "resolve_flips", "number_tokens", "IGNORE",
+__all__ = ["Atom", "Batch", "DealExample", "FlipTarget", "featurize", "find_near_misses", "look_alikes", "suppositions", "number_tokens", "IGNORE",
            "CONTEXT_SLOTS", "ABSENT", "BINARY", "CLASS", "NUMBER", "PRESENCE"]

@@ -56,6 +56,8 @@ class Row:
     keep: tuple[int, ...]
     near_miss: float = float("nan")   # held-out near-miss pairs with both lines right
     n_pairs: int = 0
+    twin: float = float("nan")        # held-out twins given the same answers
+    n_twins: int = 0
 
 
 def heads_accuracy(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[float, int]:
@@ -92,6 +94,29 @@ def near_miss_accuracy(model: C3Model, batch: Batch, eval_ids: list[int]) -> tup
     for i, j, key in pairs:
         pred = out.logits[key].argmax(-1)
         hit += int(pred[i] == batch.targets[key][i] and pred[j] == batch.targets[key][j])
+    return hit / len(pairs), len(pairs)
+
+
+def twin_consistency(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[float, int]:
+    """The keyword test: of the twins (lines that read almost alike and were
+    labeled the same) with both lines held out, the share where the heads
+    give both lines the same answer on every universal line head either has
+    gold for. A model that keys on surface words splits twins whose wording
+    differs where the answer does not care (55 inch vs 65 inch); one that
+    reads the line does not. No word list picks the twins: the labels do."""
+    held = set(eval_ids)
+    pairs = [p for p in batch.twins if p[0] in held and p[1] in held]
+    if not pairs:
+        return float("nan"), 0
+    model.eval()
+    with torch.no_grad():
+        out = model(batch.inputs())
+    keys = [o.key for o in model.schema.select(layer="universal") if o.key in out.logits]
+    hit = 0
+    for i, j in pairs:
+        ks = [k for k in keys if k in batch.targets
+              and IGNORE not in (batch.targets[k][i], batch.targets[k][j])]
+        hit += int(all(out.logits[k][i].argmax() == out.logits[k][j].argmax() for k in ks))
     return hit / len(pairs), len(pairs)
 
 
@@ -152,14 +177,15 @@ def run_curve(deal: DealExample, schema: Schema | None = None, budgets=(2, 4, 6)
             train = mask_labels(full, keep)
             plain = mask_labels(full, keep)
             plain.why = [None] * len(plain)
-            plain.flips = []          # flips come from WHYs: the labels-only arm has none
+            plain.flips = []          # suppositions come from WHYs: the labels-only arm has none
             m_lab = _train_heads(schema, plain, seed, steps, cfg, None, lr)
             teacher = _train_teacher(schema, train, seed, teacher_steps, lr, make_lm)
             m_exp = _train_heads(schema, train, seed, steps, cfg, teacher, lr)
             for arm, m in (("labels", m_lab), ("explained", m_exp)):
                 acc, n = heads_accuracy(m, full, eval_ids)
                 nm, n_nm = near_miss_accuracy(m, full, eval_ids)
-                rows.append(Row(k, seed, arm, acc, n, tuple(sorted(keep)), nm, n_nm))
+                tw, n_tw = twin_consistency(m, full, eval_ids)
+                rows.append(Row(k, seed, arm, acc, n, tuple(sorted(keep)), nm, n_nm, tw, n_tw))
     return rows
 
 
@@ -173,10 +199,10 @@ def main() -> None:
     a = ap.parse_args()
     rows = run_curve(DealExample.load(a.deal), budgets=[int(x) for x in a.budgets.split(",")],
                      seeds=range(a.seeds), steps=a.steps, teacher_steps=a.teacher_steps)
-    print(f"{'labels':>6}  {'seed':>4}  {'arm':<9}  {'accuracy':>8}  {'pairs':>5}  {'near-miss':>9}  {'n':>3}")
+    print(f"{'labels':>6}  {'seed':>4}  {'arm':<9}  {'accuracy':>8}  {'pairs':>5}  {'near-miss':>9}  {'n':>3}  {'twins':>5}  {'n':>3}")
     for r in rows:
         print(f"{r.budget:>6}  {r.seed:>4}  {r.arm:<9}  {r.accuracy:>8.3f}  {r.n_eval:>5}"
-              f"  {r.near_miss:>9.3f}  {r.n_pairs:>3}")
+              f"  {r.near_miss:>9.3f}  {r.n_pairs:>3}  {r.twin:>5.3f}  {r.n_twins:>3}")
 
 
 if __name__ == "__main__":

@@ -192,11 +192,12 @@ class Brain(nn.Module):
     def flip_read(self, batch: Batch, why: list[str | None], flips: list,
                   notes: list[list[str]] | None = None, desc=None,
                   graph: torch.Tensor | None = None) -> BrainOutput:
-        """The flip pass: for each near-miss contrast a labeler wrote ("if X,
-        this would be Y"), the reasoned page with X assumed. Row n of every
-        output is flip n. The page never states Y: the teacher has to apply
-        the rule in the WHY to the changed case, which is what it then
-        teaches the heads (supercharge.teach_flip)."""
+        """The supposition pass: for each (line, sentence), the reasoned page
+        with the sentence assumed. Row n of every output is supposition n.
+        Nothing tells the teacher whether the sentence changes the case: it
+        reads it and applies the rule on the page, and that reading is what
+        it teaches the heads (supercharge.teach_flip). It practices on
+        look-alike lines, where the answer is known (losses.supposed_twins)."""
         desc = desc if desc is not None else self.describe()
         notes = notes or [[] for _ in range(len(batch))]
         pages = [self.page(batch, f.line, notes[f.line])

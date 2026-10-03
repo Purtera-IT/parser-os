@@ -32,17 +32,19 @@ term                what it does                                           why i
 ``teach_words``     which words of the line carry the reason (qty, size,   the heads learn
                     model number) and which the WHY passes over (a price   which facts count;
                     it calls irrelevant), as a weight per word             the rest is noise
-``teach_flip``      a WHY's "if X, this would be Y": the teacher answers    the heads learn
-                    the case with X assumed; the heads, with the line      where the boundary
-                    moved by X, match it (the label alone gives Y; the     sits next to each
-                    teacher says how sure, and what moves with it)         line, so near
-                                                                           misses split
+``teach_flip``      each sentence of a WHY, supposed: the teacher reads    the heads learn
+                    the page with it assumed and answers (it decides       where the boundary
+                    whether the sentence names a different case, no        sits next to each
+                    word lists); the heads, with the line moved a little   line, and to hold
+                    by the sentence, match that answer                     still when nothing
+                                                                           that matters moved
 ==================  =====================================================  ==================
 
-Two more terms live in losses.py because they need no teacher:
-``flip_loss`` (the moved line must answer Y, and the move stays small) and
-``near_miss_loss`` (lines that read alike but were labeled differently must
-each prefer their own answer by a margin).
+``near_miss_loss`` lives in losses.py because it needs no teacher: lines
+that read alike but were labeled differently must each prefer their own
+answer by a margin. The teacher learns the supposition pass it uses for
+``teach_flip`` from look-alike lines (losses.supposed_twins): line i's page
+with line j supposed must answer j's label.
 
 ``teach_pointers`` and ``teach_words`` are read from the teacher, not parsed: the teacher's
 likelihood of the WHY is traced back to the page (``Brain.grounding``), so
@@ -75,6 +77,7 @@ class TeachWeights:
     pointers: float = 0.5
     words: float = 0.5
     flips: float = 0.5
+    flip_size: float = 0.05     # the sentence moves the line only a little
     temperature: float = 2.0
 
 
@@ -88,7 +91,7 @@ class TeacherView:
     labeled: torch.Tensor                # [N] bool
     pointers: torch.Tensor | None = None  # [N, N+1] what each WHY rests on (last = itself)
     words: list[torch.Tensor | None] | None = None  # per line: weight on each of its words
-    flipped: dict[str, torch.Tensor] | None = None  # flip pass, row n = batch.flips[n] [F, A]
+    flipped: dict[str, torch.Tensor] | None = None  # supposition pass, row n = batch.flips[n] [F, A]
 
 
 @torch.no_grad()
@@ -139,9 +142,10 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     zero = out.r.new_zeros(())
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
-             "teach_pointers": zero, "teach_words": zero, "teach_flip": zero}
+             "teach_pointers": zero, "teach_words": zero, "teach_flip": zero, "teach_flip_size": zero}
     if batch is not None and view.flipped is not None and batch.flips:
-        parts["teach_flip"] = teach_flip(model, out, view, batch, w.temperature, desc)
+        parts["teach_flip"], parts["teach_flip_size"] = teach_flip(model, out, view, batch,
+                                                                   w.temperature, desc)
     if not keys:
         return parts
     why = view.has_why
@@ -181,28 +185,35 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
 
 
 def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
-               t: float, desc=None) -> torch.Tensor:
-    """``teach_flip``: the heads, with the line moved by the flip's condition
-    (losses.flip_loss), match the teacher's answer to the changed case. The
-    label says only what the flipped answer is; the teacher says how sure,
-    and what else would move with it, on every head of the flipped line."""
+               t: float, desc=None) -> tuple[torch.Tensor, torch.Tensor]:
+    """``teach_flip``: for each supposed sentence, the heads on the line moved
+    by the sentence's text (``flip_proj``, training only) match the teacher's
+    reading of the page with that sentence assumed, on every universal head.
+    Where the teacher's answer changes, the heads must change with a small
+    move, so the boundary sits right beside the line, along what the
+    sentence says; where it does not, they learn to hold. Returns (the KL,
+    the move's size relative to the line, which stays small)."""
     from .losses import moved_heads  # noqa: PLC0415 (cycle)
 
+    zero = out.r.new_zeros(())
     fl = list(batch.flips)
     move = model.flip_proj(model.text([f.condition for f in fl]))
     sub = moved_heads(model, out, [f.line for f in fl], move,
                       desc if desc is not None else model.describe())
+    rows = [f.line for f in fl]
+    size = (move.pow(2).sum(-1) / out.r[rows].detach().pow(2).sum(-1).clamp(min=1e-6)).mean()
     keys = [k for k in view.flipped if k in sub.logits]
     if not keys:
-        return out.r.new_zeros(())
-    return torch.stack([_kl(sub.logits[k], view.flipped[k], t) for k in keys]).mean()
+        return zero, size
+    return torch.stack([_kl(sub.logits[k], view.flipped[k], t) for k in keys]).mean(), size
 
 
 def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> torch.Tensor:
     w = w or TeachWeights()
     return (w.heads * parts["teach_heads"] + w.geometry * parts["teach_geometry"]
             + w.unlabeled * parts["teach_unlabeled"] + w.pointers * parts["teach_pointers"]
-            + w.words * parts["teach_words"] + w.flips * parts.get("teach_flip", 0.0))
+            + w.words * parts["teach_words"] + w.flips * parts.get("teach_flip", 0.0)
+            + w.flip_size * parts.get("teach_flip_size", 0.0))
 
 
 def mask_labels(batch: Batch, keep: set[int]) -> Batch:
@@ -233,4 +244,5 @@ def mask_labels(batch: Batch, keep: set[int]) -> Batch:
         negatives={k: [x if i in keep else [] for i, x in enumerate(v)] for k, v in batch.negatives.items()},
         flips=[f for f in batch.flips if f.line in keep],
         near_misses=[p for p in batch.near_misses if p[0] in keep and p[1] in keep],
+        twins=[p for p in batch.twins if p[0] in keep and p[1] in keep],
     )
