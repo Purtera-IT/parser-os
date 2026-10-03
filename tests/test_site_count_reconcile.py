@@ -73,3 +73,26 @@ def test_evidence_is_capped_but_present():
     out = reconcile_site_count([long], 6)
     assert out["agrees"] is False
     assert len(out["evidence"][0]) <= 240
+
+
+def test_hours_visits_and_on_site_adverbials_are_not_site_counts():
+    # A support SOW states the weekly visit length next to "on site": the number
+    # counts hours, not sites. Likewise a per-site rate ("3 hrs per site") and
+    # technician/visit/day quantities. None of these may become a stated count.
+    not_counts = [
+        A("Provide 8 hours of on site support per weekly visit to each location."),
+        A("Engineer (est 3 hrs per site)"),
+        A("2 technicians on site for setup"),
+        A("4 visits to the site each quarter"),
+        A("5 days on site"),
+    ]
+    assert stated_site_counts(not_counts) == []
+    real = [
+        A("Support covers 6 sites."),
+        A("33 Locations - North and South"),
+        A("Service at six locations"),
+        A("Technician per day (6 locations x 52 days per year)"),
+    ]
+    out = reconcile_site_count(not_counts * 4 + real, resolved_sites=6)
+    assert out["stated"] == 6
+    assert out["all_counts_seen"] == {6: 3, 33: 1}
