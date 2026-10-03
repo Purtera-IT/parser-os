@@ -184,7 +184,8 @@ def test_xlsx_generic_table_binds_a_lone_name(tmp_path):
     texts = [a.raw_text for a in parse_artifact("p", "a", p)]
     assert "Chase Smith" not in texts
     assert "Name: Chase Smith" in texts
-    assert "Dana Whitfield | Project Manager | dana@x.com | 555-123-4567" in texts
+    # a full row reads in the same keyed shape as the lone cell above it
+    assert "Name: Dana Whitfield | Title: Project Manager | Email: dana@x.com | Phone: 555-123-4567" in texts
 
 
 # ── signature / e-sign blocks ───────────────────────────────────────────────
