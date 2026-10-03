@@ -2524,15 +2524,20 @@ def atoms_from_structured_doc(
         # Stable reading-order index for post-compile id-sort recovery.
         # Stamp both block_index (PDF/DOCX audit key) and line_start (email
         # audit key) so every consumer restores reading order the same way.
+        # A heading atom takes the half slot just before the line it leads
+        # (n - 0.5), so every other atom keeps the integer index it had before
+        # headings were emitted, and any sort on block_index or line_start
+        # still reads the heading first. Sharing the line's own index left
+        # the pair tied, and the tie fell to the atom id (a hash): 010353's
+        # ASSUMPTIONS / OUT OF SCOPE headings read after their first item.
+        is_heading = loc.get("block_kind") == "heading"
+        slot = emit_seq[0] - 0.5 if is_heading else emit_seq[0]
         if "block_index" not in loc:
-            loc["block_index"] = emit_seq[0]
+            loc["block_index"] = slot
         if "line_start" not in loc:
-            loc["line_start"] = emit_seq[0]
-            loc["line_end"] = emit_seq[0]
-        # A heading atom shares the reading-order index of the line it leads,
-        # so every other atom keeps the index it had before headings were
-        # emitted.
-        if loc.get("block_kind") != "heading":
+            loc["line_start"] = slot
+            loc["line_end"] = slot
+        if not is_heading:
             emit_seq[0] += 1
         if not doc_title:
             return atom
