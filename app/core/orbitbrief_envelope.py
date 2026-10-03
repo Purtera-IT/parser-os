@@ -3686,9 +3686,14 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         except (TypeError, ValueError):
             return default
 
-    def _line(loc: dict) -> int | None:
+    def _num(x: Any, default: int = 0) -> int | float:
+        if isinstance(x, float) and x == x:
+            return x
+        return _int(x, default)
+
+    def _line(loc: dict) -> int | float | None:
         line = loc.get("line_start") if loc.get("line_start") is not None else loc.get("line")
-        return _int(line) if line is not None else None
+        return _num(line) if line is not None else None
 
     def _thread(a: Any) -> dict:
         v = getattr(a, "value", None)
@@ -3746,7 +3751,9 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         # A docx atom carries block_index, its body element's position, so
         # paragraphs, tables and content controls interleave; it wins.
         if loc.get("block_index") is not None:
-            blk = (0, _int(loc.get("block_index")), 0)
+            # A PDF heading sits at the half slot before the line it leads
+            # (n - 0.5); truncating it to an int tied it with the line before.
+            blk = (0, _num(loc.get("block_index")), 0)
         elif loc.get("paragraph_index") is not None:
             blk = (0, _int(loc.get("paragraph_index")), 0)
         elif loc.get("table_index") is not None:
