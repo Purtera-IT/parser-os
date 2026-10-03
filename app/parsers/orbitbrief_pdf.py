@@ -924,6 +924,7 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _repair_clipped_site_ids(atoms)
         atoms = _weak_label_prose_line_items(atoms)
         atoms = _flag_doc_stamps(atoms)
+        atoms = _mark_running_page_footers(atoms)
         atoms = _drop_repeated_header_bands(atoms)
         atoms = _strip_placeholder_table_labels(atoms)
         atoms = _drop_table_header_as_data_rows(atoms)
@@ -1645,6 +1646,43 @@ def _mark_signature_blocks(sections: list[dict[str, Any]]) -> None:
         _mark_signature_blocks(sec.get("subsections") or [])
 
 
+#: ``value`` key on a page-footer atom whose band repeats on other pages.
+RUNNING_BAND_KEY = "running_band"
+
+
+def _mark_running_page_footers(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """Mark a page footer that runs across pages as page chrome.
+
+    A footer band is read per page as its own chatter atom ("Proprietary and
+    Confidential | Page 2 | CDW Technologies LLC | SOW 198950", 010003). Its
+    page number differs on every page, so the verbatim repeat check missed it
+    and the band stayed an atom on all seven pages. A ``page_footer`` atom
+    whose text, numbers aside, appears on two or more pages is marked
+    ``running_band``; the compiler moves it to the chrome ledger (see
+    app/core/email_chrome). A footer-shaped line on one page only stays."""
+    from collections import defaultdict
+
+    def _key(a: EvidenceAtom) -> str | None:
+        val = a.value if isinstance(getattr(a, "value", None), dict) else {}
+        if val.get("rejected_by") != PAGE_FOOTER_RULE:
+            return None
+        return re.sub(r"\d+", "#", " ".join((a.raw_text or "").split()).lower()) or None
+
+    pages: dict[str, set] = defaultdict(set)
+    for a in atoms:
+        k = _key(a)
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        page = loc.get("page") if isinstance(loc, dict) else None
+        if k and page is not None:
+            pages[k].add(page)
+    for a in atoms:
+        k = _key(a)
+        if k and len(pages.get(k) or ()) >= 2:
+            a.value = {**a.value, RUNNING_BAND_KEY: True}
+    return atoms
+
+
 def _drop_repeated_header_bands(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     """Drop a running header/footer band that repeats verbatim across pages.
 
@@ -1663,9 +1701,13 @@ def _drop_repeated_header_bands(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]
         return None
 
     pages_by_text: dict[str, set] = defaultdict(set)
+    def _running(a: EvidenceAtom) -> bool:
+        # Each copy of a running footer goes to the chrome ledger instead.
+        return isinstance(a.value, dict) and bool(a.value.get(RUNNING_BAND_KEY))
+
     for a in atoms:
         txt = (getattr(a, "raw_text", "") or "").strip()
-        if 0 < len(txt) <= 90:
+        if 0 < len(txt) <= 90 and not _running(a):
             pages_by_text[txt].add(_page(a))
     repeated = {
         t for t, pgs in pages_by_text.items()
@@ -1677,7 +1719,7 @@ def _drop_repeated_header_bands(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]
     out: list[EvidenceAtom] = []
     for a in atoms:
         txt = (getattr(a, "raw_text", "") or "").strip()
-        if txt in repeated:
+        if txt in repeated and not _running(a):
             if txt in seen:
                 continue
             seen.add(txt)
@@ -2775,6 +2817,11 @@ def _atoms_for_sections(
                 pending_meeting_section = None
             elif pending_meeting_section and block.get("kind") != "bullet_list":
                 pending_meeting_section = None
+            if pending is not None and _is_page_furniture_block(block):
+                # A page band read between a lead-in and what it frames (the
+                # footer under a page-ending list, 010003) frames nothing.
+                yield from _emit(block)
+                continue
             if pending is not None:
                 # Previous block was a framing lead-in — lift onto THIS block.
                 yield from _emit(block, [pending[1]])

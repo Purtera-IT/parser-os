@@ -31,7 +31,8 @@ ADMISSION_CHROME_REASONS = frozenset({
 #: no head, roll-up or atom list ever carries it. A signature logo / badge /
 #: address banner read off an inline image (010087: typed scope under
 #: "Equipment list"), and an e-signature page stamp ("Docusign Envelope ID:
-#: 3F2A...", 010087: a deal_metadata atom on every page of a signed SOW).
+#: 3F2A...", 010087: a deal_metadata atom on every page of a signed SOW), and
+#: a page footer band that runs across the pages of a PDF (010003).
 DIVERTED_CHROME_REASONS = frozenset({"signature_image", "signature_logo"})
 CHROME_STAGE = "chrome"
 
@@ -163,6 +164,11 @@ def diverted_chrome_reason(atom: Any) -> str | None:
         return regex_reason
     if str(val.get("rejected_by") or "") == "doc_stamp":
         return "esign_stamp"
+    if str(val.get("rejected_by") or "") == "page_footer" and val.get("running_band"):
+        # A page footer band repeated on every page, page number aside
+        # ("Proprietary and Confidential | Page 2 | CDW Technologies LLC |
+        # SOW 198950", 010003).
+        return "page_footer"
     return None
 
 
