@@ -187,6 +187,9 @@ def format_checks(row: dict[str, Any]) -> list[dict[str, str]]:
     if dup_at and dup_at != [first]:
         add("duplicate_marker_misplaced", "meta.bookkeeping",
             "DUPLICATE of parser atom goes once, as the first line (after any EXCLUDE line), never on the [parser] line.")
+    if first >= 0 and first not in dup_at and lines[first].lstrip().upper().startswith("DUPLICATE"):
+        add("duplicate_marker_unmatched", "meta.bookkeeping",
+            'A duplicate marker must read "DUPLICATE of parser atom ...", or the training mirror does not see it.')
     rest = "\n".join(ln for i, ln in enumerate(lines) if i not in parser_at and i not in dup_at)
     if PARSER_REMARK.search(_QUOTED.sub("", rest)) or PARSER_NOTE_MARKER in rest.lower():
         add("parser_remark_outside_line", "rationale.why",

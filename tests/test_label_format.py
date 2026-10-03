@@ -199,3 +199,10 @@ def test_the_duplicate_marker_opens_the_note():
     assert "duplicate_marker_misplaced" not in _checks(_row(note=after_exclude))
     assert "duplicate_marker_misplaced" in _checks(_row(note="Four racks.\nDUPLICATE of parser atom lbl_1"))
     assert "duplicate_marker_misplaced" in _checks(_row(note="Four racks.\n[parser] DUPLICATE of parser atom lbl_1"))
+
+
+def test_a_duplicate_marker_in_other_words_is_flagged():
+    other = "DUPLICATE: this line is now an atom from the parser.\nFour racks."
+    assert "duplicate_marker_unmatched" in _checks(_row(note=other))
+    ok = "EXCLUDE_FROM_TRAINING: old manual Deal Kit.\nDUPLICATE of parser atom lbl_1"
+    assert not _checks(_row(note=ok)) & {"duplicate_marker_unmatched", "duplicate_marker_misplaced"}
