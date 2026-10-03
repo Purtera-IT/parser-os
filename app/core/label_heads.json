@@ -220,7 +220,7 @@
       "layer": "universal",
       "status": "label",
       "label": "Current or replaced",
-      "question": "Is this the same fact as another line, a different value for it, or a value later replaced?",
+      "question": "Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently?",
       "output": "same_as clusters, contradicts and superseded edges consistent with the tracked belief state; site identity",
       "columns": [],
       "reads": [
@@ -228,7 +228,8 @@
       ],
       "relations": [
         "same_as",
-        "contradicts"
+        "contradicts",
+        "near_miss"
       ],
       "judgments": [
         "conflict",

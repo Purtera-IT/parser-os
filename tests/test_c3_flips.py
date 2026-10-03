@@ -168,3 +168,14 @@ def test_meaning_lock_rewrites(schema, batch):
     assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
     out = model(batch.inputs())
     assert supercharge_loss(model, out, view, texts=batch.texts, batch=batch)["teach_rewrites"] > 0
+
+
+def test_a_near_miss_link_adds_lines_alike_in_meaning_not_wording(schema):
+    # k3 and k4 share almost no characters, so trigrams never pair them; a
+    # labeler's near_miss link does, at the first answer that differs.
+    link = {"from_key": "k4", "to_label_key": "k3", "relation": "near_miss",
+            "labeler": "pm@example.com", "note": "Both are about the site, but one is a time window."}
+    deal = DealExample.from_training_blob({"labels": LABELS, "links": [link]}, ATOMS, deal_id="synthetic-link")
+    b = featurize(deal, schema)
+    assert (2, 3, "col:label_type") in b.near_misses
+    assert "rel:near_miss" in schema.by_key()
