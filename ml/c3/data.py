@@ -73,6 +73,8 @@ class DealExample:
     #: The judgment tabs' verdicts as the training blob stores them (head,
     #: target, text, verdict, reason, note, labeler); resolved in featurize.
     judgments: list[dict[str, Any]] = field(default_factory=list)
+    #: Why a labeler drew a link, by (src key, dst key, relation).
+    edge_notes: dict[tuple[str, str, str], str] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -91,7 +93,9 @@ class DealExample:
             company_policy=str(d.get("company_policy", "")),
             edges=[(str(e["src"]), str(e["dst"]), str(e["relation"])) for e in d.get("edges", [])],
             outcome={k: float(v) for k, v in (d.get("outcome") or {}).items()},
-            judgments=[j for j in d.get("judgments") or [] if isinstance(j, dict)])
+            judgments=[j for j in d.get("judgments") or [] if isinstance(j, dict)],
+            edge_notes={(str(e["src"]), str(e["dst"]), str(e["relation"])): str(e["note"])
+                        for e in d.get("edges", []) if e.get("note")})
 
     @staticmethod
     def load(path: str | Path) -> "DealExample":
@@ -137,9 +141,61 @@ class DealExample:
                          "speaker_side": lb.get("speaker_side", "")})
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
+        edges += _blob_links(blob.get("links") or [], rows)
         return DealExample.from_dict({"deal_id": deal_id, "company": company,
                                       "atoms": rows, "edges": edges,
                                       "judgments": blob.get("judgments") or []})
+
+
+#: A relation the model reads only from the later line back to the earlier
+#: one (model.CAUSAL_RELATIONS) whose direction a labeler does not mean:
+#: either line's card can draw a contradiction.
+_LATER_FIRST = ("contradicts",)
+#: A link note that says nothing (the card's default).
+_EMPTY_LINK_NOTES = ("drawn while labelling the whole deal", "drawn while labelling", "")
+
+
+def _blob_links(links: list[Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The evidence links the labeling page stores at the top of the training
+    blob (``doc.links``: from_key, from_text, from_head, to_label_key,
+    to_atom_id, to_text, relation, note, labeler), as edges between lines.
+
+    The from side is the card the link was drawn on (its label_key; a
+    Questions card has a gap key, so its text is used); the to side is
+    resolved by label_key, then atom id, then text. An ``answers`` link always
+    runs answer -> question (a Questions card draws it the other way round),
+    and a contradiction runs later line -> earlier.
+    Model-written drafts never train. The labeler's note goes with the edge."""
+    by_key = {str(r.get("key")): r for r in rows if r.get("key")}
+    by_id = {str(r.get("atom_id") or r.get("id")): r for r in rows if r.get("atom_id") or r.get("id")}
+    by_text: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        by_text.setdefault(_norm_text(r.get("text")), r)
+
+    def find(key: Any, atom_id: Any, text: Any) -> dict[str, Any] | None:
+        return (by_key.get(str(key or "")) or by_id.get(str(atom_id or ""))
+                or (by_text.get(_norm_text(text)) if str(text or "").strip() else None))
+
+    out = []
+    for k in links:
+        if not isinstance(k, dict) or not _is_a_person(k.get("labeler")):
+            continue
+        rel = str(k.get("relation") or "")
+        a = find(k.get("from_key"), k.get("from_atom_id"), k.get("from_text"))
+        b = find(k.get("to_label_key"), k.get("to_atom_id"), k.get("to_text"))
+        if not rel or a is None or b is None or a is b:
+            continue
+        if rel == "answers" and str(k.get("from_head") or "") == "gap":
+            a, b = b, a                              # question card: question -> answer
+        if rel in _LATER_FIRST and (_time(a.get("entered_at")), a.get("order", 0)) < \
+                (_time(b.get("entered_at")), b.get("order", 0)):
+            a, b = b, a
+        note = str(k.get("note") or "").strip()     # line breaks kept: the [company] line
+        edge = {"src": a["key"], "dst": b["key"], "relation": rel}
+        if " ".join(note.split()).lower() not in _EMPTY_LINK_NOTES:
+            edge["note"] = note
+        out.append(edge)
+    return out
 
 
 def _time(v: Any) -> float:
@@ -365,6 +421,19 @@ def _norm_text(text: Any) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
 
 
+def _by_ref_text(by_text: dict[str, int], text: Any) -> int | None:
+    """The line a pointer's text names. The page sometimes prefixes the text
+    with where it came from ("<file tail>: <the line>"), so the part after
+    the first ": " is tried too."""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    j = by_text.get(_norm_text(t))
+    if j is None and ": " in t:
+        j = by_text.get(_norm_text(t.split(": ", 1)[1]))
+    return j
+
+
 class _Lines:
     """Find a deal's lines from what a judgment stores about its subject: an
     atom id (rehashed by every re-parse) or, failing that, the atom's text."""
@@ -469,9 +538,13 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
 
     edges: dict[str, list[tuple[int, int]]] = {}
     edges_ok = {o.field for o in schema.select(kind=RELATION)}
+    # A link touching a row set aside trains nothing (as in app.learning.human_labels).
+    aside = {a.key for a in deal.atoms if excluded(a.label)}
     for src, dst, rel in deal.edges:
-        if src in index and dst in index:
-            edges.setdefault(rel, []).append((index[src], index[dst]))
+        if src in index and dst in index and not {src, dst} & aside:
+            pair = (index[src], index[dst])
+            if pair not in edges.setdefault(rel, []):
+                edges[rel].append(pair)
 
     why: list[str | None] = []
     policy: list[str | None] = []
@@ -502,6 +575,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     hint_lines: list[list[int]] = []
     entities: list[list[str]] = []
     by_atom = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
+    by_text: dict[str, int] = {}
+    for i, a in enumerate(atoms):
+        by_text.setdefault(_norm_text(a.text), i)
     for i, a in enumerate(atoms):
         lb = a.label or {}
         reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
@@ -525,8 +601,18 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         field_notes.append(notes)
         weights.append(TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))
         refs = [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)]
-        hint_lines.append(sorted({by_atom.get(str(r.get("atomId")), index.get(str(r.get("atomId"))))
-                                  for r in refs} - {None}))
+        # A ref names a line by atom id, or (on most real rows) only by the
+        # text the labeler pointed at. Its own words, a heading or a document
+        # type are not another line, so they point nowhere.
+        found = set()
+        for r in refs:
+            j = by_atom.get(str(r.get("atomId")), index.get(str(r.get("atomId"))))
+            if j is None and str(r.get("hint") or "") != "own_words" \
+                    and str(r.get("kind") or "") not in ("heading", "doc_type"):
+                j = _by_ref_text(by_text, r.get("text"))
+            if j is not None and j != i:
+                found.add(j)
+        hint_lines.append(sorted(found))
         entities.append(_as_list(lb.get("entity_keys")))
 
     # Judgment tabs. A verdict about one line is that line's target (an alias
@@ -571,6 +657,20 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         if head == "site" and verdict == "same_site":
             for i in idx:
                 entities[i] = [*entities[i], f"site:judged:{j.get('target_key') or idx}"]
+
+    # Why a link was drawn: the teacher reads it as the WHY of that relation
+    # on the line the link starts from (a [purtera] part goes to the company).
+    for (src, dst, rel), note in deal.edge_notes.items():
+        i, k = index.get(src), f"rel:{rel}"
+        if i is None or dst not in index or k not in by_key or {src, dst} & aside:
+            continue
+        u, p = split_note(note, company)
+        u, p = drop_meta(u), drop_meta(p)
+        if u:
+            prev = field_notes[i].get(k)
+            field_notes[i][k] = f"{prev} {mask_verdict(u)}" if prev else mask_verdict(u)
+        if p:
+            policy[i] = " ".join(x for x in (policy[i], p) if x)
 
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
