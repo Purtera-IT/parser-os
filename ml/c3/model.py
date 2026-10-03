@@ -40,6 +40,7 @@ from torch.nn import functional as F
 
 from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
+from .operators import ReasonCompiler, apply_reasons
 from .schema import NUMBER, RELATION, Schema
 from .text import HashingEncoder, TagEmbedding
 
@@ -61,6 +62,11 @@ CLAIM_SLOTS: dict[str, tuple[str, ...]] = {
 #: Relations whose source must enter the deal no earlier than its target
 #: (the answer comes after the question; a derived total after its inputs).
 CAUSAL_RELATIONS = {"answers": 1, "derived_from": 1, "contradicts": 1}
+
+#: What a line can change, per the WHY grammar ("what it changes in hours,
+#: crew, sites, tasks or price"), plus the schedule. Directions: down, none, up.
+CHANGE_SLOTS = ("hours", "crew", "sites", "price", "tasks", "schedule")
+DIRECTIONS = ("down", "none", "up")
 
 
 @dataclass
@@ -181,6 +187,10 @@ class C3Output:
     alpha: torch.Tensor | None = None
     explained: dict[str, torch.Tensor] = field(default_factory=dict)   # opportunity -> votes [N, A]
     attention: dict[str, torch.Tensor] = field(default_factory=dict)   # opportunity -> [N, M+1]
+    gates: dict[str, torch.Tensor] = field(default_factory=dict)       # opportunity -> [N, M] (operators)
+    reason_claims: dict[str, torch.Tensor] = field(default_factory=dict)  # layer -> [M, slots, 3]
+    reason_index: dict[str, list[int]] = field(default_factory=dict)      # layer -> bank indices
+    changes: torch.Tensor | None = None                                # [N, slots, 3] what each line changes
 
     @property
     def q_mean(self) -> torch.Tensor:
@@ -233,6 +243,14 @@ class C3Model(nn.Module):
         # company's rules can never reach a universal head.
         self.reader_universal = ExplanationReader(c.d_text, c.d_head)
         self.reader_company = ExplanationReader(c.d_text, c.d_head)
+        # Reasons compiled into operators (operators.py), one compiler per
+        # layer so company text never trains what the base uses.
+        self.compiler_universal = ReasonCompiler(c.d_text, c.d_head, n_change_slots=len(CHANGE_SLOTS))
+        self.compiler_company = ReasonCompiler(c.d_text, c.d_head, n_change_slots=len(CHANGE_SLOTS))
+        # What a line changes (consequence.py), and r -> text space so the model
+        # can voice its own predicted reason for the question engine (ask.py).
+        self.changes_head = nn.Linear(c.d_q + c.d_r, len(CHANGE_SLOTS) * 3)
+        self.r_to_text = nn.Linear(c.d_r, c.d_text)
         self.companies = list(companies)
         # Starting codes are small and dense so every atom gets a gradient; the
         # L1 term then makes them sparse. A zero code would starve the atoms.
@@ -274,7 +292,8 @@ class C3Model(nn.Module):
     # ------------------------------------------------------------ forward
     def forward(self, inp: dict[str, Any], company: str | None = None,
                 desc: dict[str, Any] | None = None, adv_lambda: float = 1.0,
-                bank: ExplanationBank | None = None) -> C3Output:
+                bank: ExplanationBank | None = None,
+                bank_emb: torch.Tensor | None = None) -> C3Output:
         c = self.cfg
         h = self.encoder(inp)
         n = h.shape[0]
@@ -290,7 +309,8 @@ class C3Model(nn.Module):
                        r=r, residual=residual)
 
         desc = desc if desc is not None else self.describe()
-        bank_emb = self.text([e.text for e in bank.items]) if bank is not None and len(bank) else None
+        if bank_emb is None and bank is not None and len(bank):
+            bank_emb = self.text([e.text for e in bank.items])
         self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
 
         # Links: described pair scores, boxes for governs.
@@ -306,6 +326,7 @@ class C3Model(nn.Module):
                                                                  device=h.device), float("-inf"))
         out.governs = self._box_containment(r)
         out.absence = self.absence(torch.cat([q_mean, r], -1))
+        out.changes = self.changes_head(torch.cat([q_mean, r], -1)).view(n, len(CHANGE_SLOTS), 3)
         out.company_logits = self.adversary(GradReverse.apply(z_c, adv_lambda))
 
         if company is not None:
@@ -332,12 +353,16 @@ class C3Model(nn.Module):
                 out.logits[o.key] = lg
                 if o.kind == NUMBER:
                     out.numbers[o.key] = nums[:, j]
-            self._read(out, x, opps, desc, bank, bank_emb, "universal", "", self.reader_universal)
+            self._read(out, x, opps, desc, bank, bank_emb, "universal", "",
+                       self.reader_universal, self.compiler_universal, head)
 
     def _read(self, out: C3Output, x: torch.Tensor, opps: list, desc: dict[str, Any],
               bank: ExplanationBank | None, bank_emb: torch.Tensor | None,
-              layer: str, company: str, reader: ExplanationReader) -> None:
-        """Add the votes of the explanations in this layer to each head's logits."""
+              layer: str, company: str, reader: ExplanationReader,
+              compiler: ReasonCompiler, head: DescribedHead) -> None:
+        """Let this layer's explanations act on each head: compiled operators
+        move the lines before the head reads them, and the reader's votes are
+        added on top. With no explanations in the layer, nothing changes."""
         if bank is None or bank_emb is None:
             return
         idx = bank.select(layer, company)
@@ -345,12 +370,18 @@ class C3Model(nn.Module):
             return
         exps = [bank.items[i] for i in idx]
         emb = bank_emb[idx]
+        ops = compiler.compile(emb)
+        out.reason_claims[layer] = ops["claims"]
+        out.reason_index[layer] = idx
         for o in opps:
-            votes, att = reader(x, desc[o.key][0], desc[o.key][1], o.key,
-                                [a.value for a in o.answers], emb, exps)
+            answers = [a.value for a in o.answers]
+            votes, att = reader(x, desc[o.key][0], desc[o.key][1], o.key, answers, emb, exps)
+            moved, g = apply_reasons(compiler, head, x, desc[o.key][0], desc[o.key][1],
+                                     o.key, answers, ops, exps)
             out.explained[o.key] = votes
             out.attention[o.key] = att
-            out.logits[o.key] = out.logits[o.key] + votes
+            out.gates[o.key] = g
+            out.logits[o.key] = moved + votes
 
     def conduct(self, out: C3Output, company: str, q_mean: torch.Tensor,
                 desc: dict[str, Any], bank: ExplanationBank | None = None,
@@ -371,7 +402,8 @@ class C3Model(nn.Module):
             out.logits[o.key] = lg
             if o.kind == NUMBER:
                 out.numbers[o.key] = nums[:, j]
-        self._read(out, y, opps, desc, bank, bank_emb, "company", company, self.reader_company)
+        self._read(out, y, opps, desc, bank, bank_emb, "company", company,
+                   self.reader_company, self.compiler_company, self.conduct_head)
         out.alpha = alpha
 
     def _context(self, context: dict[str, list], n: int, dev) -> torch.Tensor:

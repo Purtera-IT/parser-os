@@ -1,75 +1,380 @@
 {
-  "deal_id": "synthetic-0001",
-  "company": "purtera",
-  "company_policy": "Displays over 55 inches need two technicians. Sellers do not own delivery tasks. Hardware prices are the reseller's, not ours.",
-  "_note": "Entirely invented. No customer text: names, sites, numbers and wording are made up to exercise every part of the contract.",
-  "atoms": [
-    {"key": "a01", "text": "Hi team, thanks for the quick call yesterday!", "entered_at": "2026-04-01T15:00:00Z",
-     "doc_id": "email-1", "doc_kind": "email", "section": "body", "order": 0, "speaker_role": "customer", "speaker_side": "customer",
-     "label": {"label_type": "_keep", "reads_set": {"noise_class": "greeting_thanks", "stage_std": "intake"},
-               "note": "Greeting with no fact about the work."}},
-    {"key": "a02", "text": "We need wall-mounted displays installed at our three clinics: Bayview, Cedar Hill and Linden.", "entered_at": "2026-04-01T15:00:00Z",
-     "doc_id": "email-1", "doc_kind": "email", "section": "body", "order": 1, "speaker_role": "customer", "speaker_side": "customer",
-     "label": {"label_type": "work_scope_item", "about": "deal", "reads_set": {"stage_std": "intake", "scope_facet": "summary", "superseded": "true"},
-               "note": "The job in one line: wall-mount displays at 3 clinics (Bayview, Cedar Hill, Linden). Sets the site count at 3, later cut to 2.\n[purtera] keep: opens the Deal Kit scope."}},
-    {"key": "a03", "text": "Each clinic gets four 65\" displays in the waiting room.", "entered_at": "2026-04-01T15:00:00Z",
-     "doc_id": "email-1", "doc_kind": "email", "section": "body", "order": 2, "speaker_role": "customer", "speaker_side": "customer",
-     "label": {"label_type": "quantity", "about": "deal", "reads_set": {"stage_std": "intake", "equipment_qty": "4", "display_size": "65"},
-               "note": "Quantity and size per site: 4 displays at 65 inches each, so 3 sites x 4 = 12 displays. A 65 inch panel is a two-person lift.\n[purtera] keep: over 55 inches, so 2 techs per mount."}},
-    {"key": "a04", "text": "Is there power and blocking behind the waiting room walls?", "entered_at": "2026-04-02T13:00:00Z",
-     "doc_id": "email-2", "doc_kind": "email", "section": "body", "order": 0, "speaker_role": "seller", "speaker_side": "provider",
-     "label": {"label_type": "open_question", "about": "deal", "wants": "confirm-with-customer", "reads_set": {"stage_std": "scoping"},
-               "note": "Asks whether the walls have power and blocking. The answer decides whether an electrician and backing plates are added before the mounts."}},
-    {"key": "a05", "text": "Our account rep will send the hardware quote by Friday.", "entered_at": "2026-04-02T13:00:00Z",
-     "doc_id": "email-2", "doc_kind": "email", "section": "body", "order": 1, "speaker_role": "seller", "speaker_side": "provider",
-     "label": {"label_type": "commitment", "about": "deal", "reads_set": {"stage_std": "scoping", "commitment": "send the hardware quote by Friday", "task_owner_role": "seller", "co_action": "reject", "co_reason": "seller_promise"},
-               "note": "A promise to send the hardware quote by Friday, owned by the seller. It sets no delivery work.\n[purtera] reject: sellers do not own delivery tasks."}},
-    {"key": "a06", "text": "Power is there at every location; walls are steel stud with no blocking.", "entered_at": "2026-04-03T16:30:00Z",
-     "doc_id": "email-3", "doc_kind": "email", "section": "body", "order": 0, "speaker_role": "customer", "speaker_side": "customer",
-     "label": {"label_type": "answered_question", "about": "deal", "reads_set": {"stage_std": "scoping"},
-               "note": "Answers the power and blocking question: power exists, but steel studs without blocking mean backing plates at every mount, which adds install time per display."}},
-    {"key": "a07", "text": "Update: Linden is closing, so only Bayview and Cedar Hill.", "entered_at": "2026-04-08T14:00:00Z",
-     "doc_id": "email-4", "doc_kind": "email", "section": "body", "order": 0, "speaker_role": "customer", "speaker_side": "customer",
-     "label": {"label_type": "decision", "about": "deal", "reads_set": {"stage_std": "scoping", "situational": "scope change: 3 sites to 2"},
-               "note": "Cuts the site count from 3 to 2 (Linden out). Every quantity derived from 3 sites changes: 2 x 4 = 8 displays."}},
-    {"key": "a08", "text": "Statement of Work - Scope of Work", "entered_at": "2026-04-10T12:00:00Z",
-     "doc_id": "sow-1", "doc_kind": "sow", "section": "scope_of_work", "order": 0, "speaker_role": "", "speaker_side": "provider",
-     "label": {"label_type": "list_header", "reads_set": {"stage_std": "quoted", "list_header": "true", "sow_section": "scope_of_work"},
-               "note": "Heading that opens the SOW scope list; it governs the scope lines under it."}},
-    {"key": "a09", "text": "Install eight (8) 65\" displays across two (2) locations, including backing plates.", "entered_at": "2026-04-10T12:00:00Z",
-     "doc_id": "sow-1", "doc_kind": "sow", "section": "scope_of_work", "order": 1, "speaker_role": "", "speaker_side": "provider",
-     "label": {"label_type": "work_scope_item", "about": "deal", "reads_set": {"stage_std": "quoted", "sow_fill": "filled", "sow_section": "scope_of_work", "sow_coverage": "in_sow", "equipment_qty": "8", "derivation": "inferred"},
-               "note": "SOW scope: 8 displays over 2 sites with backing plates, worked out as 2 sites x 4 = 8 from the site cut and the per-site count, and the plates from the steel-stud answer."}},
-    {"key": "a10", "text": "Estimated labor: 2 technicians, 16 hours total.", "entered_at": "2026-04-10T12:00:00Z",
-     "doc_id": "sow-1", "doc_kind": "sow", "section": "fees", "order": 2, "speaker_role": "", "speaker_side": "provider",
-     "label": {"label_type": "pricing_assumption", "about": "deal", "reads_set": {"stage_std": "quoted", "sow_fill": "filled", "sow_section": "fees", "crew_size": "2", "labor_hours": "16", "hours_stated": "true", "sow_coverage": "in_sow"},
-               "note": "Labor estimate: 2 techs x 8 hours = 16 hours, one day per site for 2 sites. Rests on 8 displays at about 2 hours each including plates."}},
-    {"key": "a11", "text": "Fees: 16 hours x $95 = $1,520, billed time and materials.", "entered_at": "2026-04-10T12:00:00Z",
-     "doc_id": "sow-1", "doc_kind": "sow", "section": "fees", "order": 3, "speaker_role": "", "speaker_side": "provider",
-     "label": {"label_type": "commercial_total", "about": "deal", "reads_set": {"stage_std": "quoted", "sow_fill": "filled", "sow_section": "fees", "billing_type": "t_and_m", "derivation": "inferred"},
-               "note": "Labor fee: 16 hours x $95 = $1,520 on a time and materials basis, so the total is an estimate of hours times rate.\n[purtera] keep: matches the Deal Kit labor line."}},
-    {"key": "a12", "text": "65\" display, qty 8, unit price $1,180.", "entered_at": "2026-04-11T10:00:00Z",
-     "doc_id": "quote-1", "doc_kind": "quote", "section": "line items", "order": 0, "speaker_role": "partner", "speaker_side": "partner",
-     "label": {"label_type": "bom_line", "about": "deal", "reads_set": {"stage_std": "quoted", "bom_role": "hardware", "equipment_qty": "8", "display_size": "65", "co_action": "reject", "co_reason": "hw_price_not_ours"},
-               "note": "Reseller hardware line: 8 displays at 65 inches. The quantity agrees with the SOW's 8.\n[purtera] reject: hardware prices are the reseller's; quantity and size are kept for crew planning."}},
-    {"key": "a13", "text": "Bayview, 410 Harbor Rd, Port Alder", "entered_at": "2026-04-12T09:00:00Z",
-     "doc_id": "note-1", "doc_kind": "crm_note", "section": "sites", "order": 0, "speaker_role": "project_manager", "speaker_side": "provider",
-     "label": {"label_type": "physical_site", "about": "deal", "reads_set": {"stage_std": "planning", "site": "Bayview", "address_level": "street_no_zip", "location_tier": "small_town"},
-               "note": "Site 1 of 2: Bayview at 410 Harbor Rd, Port Alder. Street address without ZIP, enough to dispatch."}},
-    {"key": "a14", "text": "Cedar Hill clinic - Port Alder", "entered_at": "2026-04-12T09:00:00Z",
-     "doc_id": "note-1", "doc_kind": "crm_note", "section": "sites", "order": 1, "speaker_role": "project_manager", "speaker_side": "provider",
-     "label": {"label_type": "physical_site", "about": "deal", "reads_set": {"stage_std": "planning", "site": "Cedar Hill", "address_level": "city_only", "location_tier": "small_town", "intake_gap": "true"},
-               "note": "Site 2 of 2: Cedar Hill, city only (Port Alder). A street address is still needed before a tech can be dispatched.\n[purtera] keep: intake gap, the address should have been asked at quoting."}}
-  ],
-  "edges": [
-    {"src": "a06", "dst": "a04", "relation": "answers"},
-    {"src": "a07", "dst": "a02", "relation": "contradicts"},
-    {"src": "a08", "dst": "a09", "relation": "governs"},
-    {"src": "a08", "dst": "a10", "relation": "governs"},
-    {"src": "a09", "dst": "a07", "relation": "derived_from"},
-    {"src": "a09", "dst": "a03", "relation": "derived_from"},
-    {"src": "a12", "dst": "a09", "relation": "same_as"},
-    {"src": "a11", "dst": "a10", "relation": "derived_from"}
-  ],
-  "outcome": {"final_hours": 18, "final_price": 1710}
+ "deal_id": "synthetic-0001",
+ "company": "purtera",
+ "company_policy": "Displays over 55 inches need two technicians. Sellers do not own delivery tasks. Hardware prices are the reseller's, not ours.",
+ "_note": "Entirely invented. No customer text. Fields marked proposed in base-architecture-v5 (changes, follows_rules, exception_to, quoted_/final_ outcome) are not on the labeling card yet.",
+ "atoms": [
+  {
+   "key": "a01",
+   "text": "Hi team, thanks for the quick call yesterday!",
+   "entered_at": "2026-04-01T15:00:00Z",
+   "doc_id": "email-1",
+   "doc_kind": "email",
+   "section": "body",
+   "order": 0,
+   "speaker_role": "customer",
+   "speaker_side": "customer",
+   "label": {
+    "label_type": "_keep",
+    "reads_set": {
+     "noise_class": "greeting_thanks",
+     "stage_std": "intake"
+    },
+    "note": "Greeting with no fact about the work."
+   }
+  },
+  {
+   "key": "a02",
+   "text": "We need wall-mounted displays installed at our three clinics: Bayview, Cedar Hill and Linden.",
+   "entered_at": "2026-04-01T15:00:00Z",
+   "doc_id": "email-1",
+   "doc_kind": "email",
+   "section": "body",
+   "order": 1,
+   "speaker_role": "customer",
+   "speaker_side": "customer",
+   "label": {
+    "label_type": "work_scope_item",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "intake",
+     "scope_facet": "summary",
+     "superseded": "true"
+    },
+    "note": "The job in one line: wall-mount displays at 3 clinics (Bayview, Cedar Hill, Linden). Sets the site count at 3, later cut to 2.\n[purtera] keep: opens the Deal Kit scope."
+   }
+  },
+  {
+   "key": "a03",
+   "text": "Each clinic gets four 65\" displays in the waiting room.",
+   "entered_at": "2026-04-01T15:00:00Z",
+   "doc_id": "email-1",
+   "doc_kind": "email",
+   "section": "body",
+   "order": 2,
+   "speaker_role": "customer",
+   "speaker_side": "customer",
+   "label": {
+    "label_type": "quantity",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "intake",
+     "equipment_qty": "4",
+     "display_size": "65",
+     "changes": "crew:up,hours:up"
+    },
+    "note": "Quantity and size per site: 4 displays at 65 inches each, so 3 sites x 4 = 12 displays. A 65 inch panel is a two-person lift.\n[purtera] keep: over 55 inches, so 2 techs per mount.",
+    "follows_rules": [
+     "two_techs_over_55"
+    ]
+   }
+  },
+  {
+   "key": "a04",
+   "text": "Is there power and blocking behind the waiting room walls?",
+   "entered_at": "2026-04-02T13:00:00Z",
+   "doc_id": "email-2",
+   "doc_kind": "email",
+   "section": "body",
+   "order": 0,
+   "speaker_role": "seller",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "open_question",
+    "about": "deal",
+    "wants": "confirm-with-customer",
+    "reads_set": {
+     "stage_std": "scoping"
+    },
+    "note": "Asks whether the walls have power and blocking. The answer decides whether an electrician and backing plates are added before the mounts."
+   }
+  },
+  {
+   "key": "a05",
+   "text": "Our account rep will send the hardware quote by Friday.",
+   "entered_at": "2026-04-02T13:00:00Z",
+   "doc_id": "email-2",
+   "doc_kind": "email",
+   "section": "body",
+   "order": 1,
+   "speaker_role": "seller",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "commitment",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "scoping",
+     "commitment": "send the hardware quote by Friday",
+     "task_owner_role": "seller",
+     "co_action": "reject",
+     "co_reason": "seller_promise"
+    },
+    "note": "A promise to send the hardware quote by Friday, owned by the seller. It sets no delivery work.\n[purtera] reject: sellers do not own delivery tasks.",
+    "follows_rules": [
+     "sellers_dont_own_delivery"
+    ]
+   }
+  },
+  {
+   "key": "a06",
+   "text": "Power is there at every location; walls are steel stud with no blocking.",
+   "entered_at": "2026-04-03T16:30:00Z",
+   "doc_id": "email-3",
+   "doc_kind": "email",
+   "section": "body",
+   "order": 0,
+   "speaker_role": "customer",
+   "speaker_side": "customer",
+   "label": {
+    "label_type": "answered_question",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "scoping",
+     "changes": "hours:up"
+    },
+    "note": "Answers the power and blocking question: power exists, but steel studs without blocking mean backing plates at every mount, which adds install time per display."
+   }
+  },
+  {
+   "key": "a07",
+   "text": "Update: Linden is closing, so only Bayview and Cedar Hill.",
+   "entered_at": "2026-04-08T14:00:00Z",
+   "doc_id": "email-4",
+   "doc_kind": "email",
+   "section": "body",
+   "order": 0,
+   "speaker_role": "customer",
+   "speaker_side": "customer",
+   "label": {
+    "label_type": "decision",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "scoping",
+     "situational": "scope change: 3 sites to 2",
+     "changes": "sites:down,hours:down,price:down"
+    },
+    "note": "Cuts the site count from 3 to 2 (Linden out). Every quantity derived from 3 sites changes: 2 x 4 = 8 displays.",
+    "follows_rules": [
+     "site_count_change"
+    ]
+   }
+  },
+  {
+   "key": "a08",
+   "text": "Statement of Work - Scope of Work",
+   "entered_at": "2026-04-10T12:00:00Z",
+   "doc_id": "sow-1",
+   "doc_kind": "sow",
+   "section": "scope_of_work",
+   "order": 0,
+   "speaker_role": "",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "list_header",
+    "reads_set": {
+     "stage_std": "quoted",
+     "list_header": "true",
+     "sow_section": "scope_of_work"
+    },
+    "note": "Heading that opens the SOW scope list; it governs the scope lines under it."
+   }
+  },
+  {
+   "key": "a09",
+   "text": "Install eight (8) 65\" displays across two (2) locations, including backing plates.",
+   "entered_at": "2026-04-10T12:00:00Z",
+   "doc_id": "sow-1",
+   "doc_kind": "sow",
+   "section": "scope_of_work",
+   "order": 1,
+   "speaker_role": "",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "work_scope_item",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "quoted",
+     "sow_fill": "filled",
+     "sow_section": "scope_of_work",
+     "sow_coverage": "in_sow",
+     "equipment_qty": "8",
+     "derivation": "inferred"
+    },
+    "note": "SOW scope: 8 displays over 2 sites with backing plates, worked out as 2 sites x 4 = 8 from the site cut and the per-site count, and the plates from the steel-stud answer."
+   }
+  },
+  {
+   "key": "a10",
+   "text": "Estimated labor: 2 technicians, 16 hours total.",
+   "entered_at": "2026-04-10T12:00:00Z",
+   "doc_id": "sow-1",
+   "doc_kind": "sow",
+   "section": "fees",
+   "order": 2,
+   "speaker_role": "",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "pricing_assumption",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "quoted",
+     "sow_fill": "filled",
+     "sow_section": "fees",
+     "crew_size": "2",
+     "labor_hours": "16",
+     "hours_stated": "true",
+     "sow_coverage": "in_sow"
+    },
+    "note": "Labor estimate: 2 techs x 8 hours = 16 hours, one day per site for 2 sites. Rests on 8 displays at about 2 hours each including plates."
+   }
+  },
+  {
+   "key": "a11",
+   "text": "Fees: 16 hours x $95 = $1,520, billed time and materials.",
+   "entered_at": "2026-04-10T12:00:00Z",
+   "doc_id": "sow-1",
+   "doc_kind": "sow",
+   "section": "fees",
+   "order": 3,
+   "speaker_role": "",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "commercial_total",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "quoted",
+     "sow_fill": "filled",
+     "sow_section": "fees",
+     "billing_type": "t_and_m",
+     "derivation": "inferred"
+    },
+    "note": "Labor fee: 16 hours x $95 = $1,520 on a time and materials basis, so the total is an estimate of hours times rate.\n[purtera] keep: matches the Deal Kit labor line.",
+    "exception_to": [
+     "sellers_dont_own_delivery"
+    ]
+   }
+  },
+  {
+   "key": "a12",
+   "text": "65\" display, qty 8, unit price $1,180.",
+   "entered_at": "2026-04-11T10:00:00Z",
+   "doc_id": "quote-1",
+   "doc_kind": "quote",
+   "section": "line items",
+   "order": 0,
+   "speaker_role": "partner",
+   "speaker_side": "partner",
+   "label": {
+    "label_type": "bom_line",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "quoted",
+     "bom_role": "hardware",
+     "equipment_qty": "8",
+     "display_size": "65",
+     "co_action": "reject",
+     "co_reason": "hw_price_not_ours"
+    },
+    "note": "Reseller hardware line: 8 displays at 65 inches. The quantity agrees with the SOW's 8.\n[purtera] reject: hardware prices are the reseller's; quantity and size are kept for crew planning.",
+    "follows_rules": [
+     "two_techs_over_55"
+    ]
+   }
+  },
+  {
+   "key": "a13",
+   "text": "Bayview, 410 Harbor Rd, Port Alder",
+   "entered_at": "2026-04-12T09:00:00Z",
+   "doc_id": "note-1",
+   "doc_kind": "crm_note",
+   "section": "sites",
+   "order": 0,
+   "speaker_role": "project_manager",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "planning",
+     "site": "Bayview",
+     "address_level": "street_no_zip",
+     "location_tier": "small_town"
+    },
+    "note": "Site 1 of 2: Bayview at 410 Harbor Rd, Port Alder. Street address without ZIP, enough to dispatch."
+   }
+  },
+  {
+   "key": "a14",
+   "text": "Cedar Hill clinic - Port Alder",
+   "entered_at": "2026-04-12T09:00:00Z",
+   "doc_id": "note-1",
+   "doc_kind": "crm_note",
+   "section": "sites",
+   "order": 1,
+   "speaker_role": "project_manager",
+   "speaker_side": "provider",
+   "label": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "reads_set": {
+     "stage_std": "planning",
+     "site": "Cedar Hill",
+     "address_level": "city_only",
+     "location_tier": "small_town",
+     "intake_gap": "true"
+    },
+    "note": "Site 2 of 2: Cedar Hill, city only (Port Alder). A street address is still needed before a tech can be dispatched.\n[purtera] keep: intake gap, the address should have been asked at quoting."
+   }
+  }
+ ],
+ "edges": [
+  {
+   "src": "a06",
+   "dst": "a04",
+   "relation": "answers"
+  },
+  {
+   "src": "a07",
+   "dst": "a02",
+   "relation": "contradicts"
+  },
+  {
+   "src": "a08",
+   "dst": "a09",
+   "relation": "governs"
+  },
+  {
+   "src": "a08",
+   "dst": "a10",
+   "relation": "governs"
+  },
+  {
+   "src": "a09",
+   "dst": "a07",
+   "relation": "derived_from"
+  },
+  {
+   "src": "a09",
+   "dst": "a03",
+   "relation": "derived_from"
+  },
+  {
+   "src": "a12",
+   "dst": "a09",
+   "relation": "same_as"
+  },
+  {
+   "src": "a11",
+   "dst": "a10",
+   "relation": "derived_from"
+  }
+ ],
+ "outcome": {
+  "quoted_hours": 16,
+  "final_hours": 18,
+  "quoted_price": 1520,
+  "final_price": 1710,
+  "quoted_sites": 2,
+  "final_sites": 2
+ }
 }

@@ -114,6 +114,17 @@ class DescribedHead(nn.Module):
             numbers.append(FoldStack.apply(x, p, o) @ F.normalize(self.number(desc[o]), dim=-1))
         return logits, torch.stack(numbers, -1) if numbers else x.new_zeros(x.shape[0], 0)
 
+    def one(self, x: torch.Tensor, desc: torch.Tensor, answers: torch.Tensor) -> torch.Tensor:
+        """Logits [N, A] for a single opportunity (desc [d_desc], answers [A, d_desc]).
+        Same computation as ``forward`` for that opportunity; used after a
+        compiled reason has moved the lines (operators.py)."""
+        logits, _ = self.forward(x, desc.unsqueeze(0), [answers])
+        return logits[0]
+
+    def prototypes(self, desc: torch.Tensor, answers: torch.Tensor) -> torch.Tensor:
+        """Answer points [A, d] in this head's (unfolded) space."""
+        return self.proto(answers)
+
 
 class DescribedRelation(nn.Module):
     """Pair scores for a relation, with both ends folded by the relation's text."""

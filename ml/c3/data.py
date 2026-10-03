@@ -171,6 +171,9 @@ class Batch:
     why: list[str | None]                        # universal WHY, verdict words masked
     policy_note: list[str | None]                # the company's line
     outcome: dict[str, float]
+    #: Proposed labeling fields (v5 section 6); empty until the card has them.
+    rule_links: list[tuple[int, str, int]] = field(default_factory=list)  # (line, rule id, +1 follows / -1 exception)
+    changes: list[dict[str, str] | None] = field(default_factory=list)    # line -> {slot: down|none|up}
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -241,6 +244,17 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         why.append(mask_verdict(u) if u else None)
         policy.append(p or None)
 
+    rule_links: list[tuple[int, str, int]] = []
+    changes: list[dict[str, str] | None] = []
+    for i, a in enumerate(atoms):
+        lb = a.label or {}
+        reads = lb.get("reads_set") or {}
+        for rid in _as_list(lb.get("follows_rules", reads.get("follows_rule"))):
+            rule_links.append((i, rid, 1))
+        for rid in _as_list(lb.get("exception_to", reads.get("exception_to"))):
+            rule_links.append((i, rid, -1))
+        changes.append(parse_changes(reads.get("changes")))
+
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
     return Batch(
@@ -253,7 +267,40 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                        for b in atoms] for a in atoms],
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
-        outcome=dict(deal.outcome))
+        outcome=dict(deal.outcome), rule_links=rule_links, changes=changes)
+
+
+def _as_list(v: Any) -> list[str]:
+    if v in (None, ""):
+        return []
+    if isinstance(v, str):
+        return [p.strip() for p in v.split(",") if p.strip()]
+    return [str(x) for x in v]
+
+
+def parse_changes(v: Any) -> dict[str, str] | None:
+    """``"hours:up, price:up, sites:down"`` (or a dict) -> {slot: direction}."""
+    if v in (None, ""):
+        return None
+    items = v.items() if isinstance(v, dict) else (p.split(":", 1) for p in _as_list(v) if ":" in p)
+    out = {str(k).strip(): str(d).strip() for k, d in items}
+    return out or None
+
+
+def realized_changes(outcome: dict[str, float], tol: float = 0.02) -> dict[str, str]:
+    """What actually moved between the quote and the close: for each slot with
+    ``quoted_<slot>`` and ``final_<slot>``, up / down / none."""
+    out = {}
+    for k, final in outcome.items():
+        if not k.startswith("final_"):
+            continue
+        slot = k[len("final_"):]
+        quoted = outcome.get(f"quoted_{slot}")
+        if quoted is None:
+            continue
+        rel = (final - quoted) / max(abs(quoted), 1e-9)
+        out[slot] = "up" if rel > tol else "down" if rel < -tol else "none"
+    return out
 
 
 __all__ = ["Atom", "Batch", "DealExample", "featurize", "number_tokens", "IGNORE",

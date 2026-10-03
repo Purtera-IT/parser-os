@@ -194,7 +194,22 @@ Extra ablations:
 | E2 | leave-one-out off | inflated train scores, worse held-out deals (it copies its own WHY) |
 | E3 | rule cards held out, then added at test time | the zero-shot gain from a new rule; the main result to show |
 
-## 5. Is it novel?
+## 5. v5: reasons compiled into operators, graded by outcomes
+
+The full design and novelty write-up is `labeling/base-architecture-v5.md`
+in the project files; this is the code map.
+
+| Mechanism | File | What it does |
+|---|---|---|
+| Reason compiler | `operators.py` | Every explanation (WHY, company line, rule card) compiles into a region (where it applies), a topic (which questions), a fold and a move. Operators apply in order before the head reads the line; an overruling switches the older one off only inside its own region. |
+| Change vector and outcome grading | `consequence.py` | Each line predicts what it changes (hours, crew, sites, price, tasks, schedule × down/none/up). Each explanation claims a change. Closed deals grade the claims, and `ReliabilityLedger` scales each explanation by its track record. |
+| Planted-rule twins | `synthetic.py` | Same synthetic lines, two rule texts differing in one detail, labels following each text. Trains and tests following a rule from its words. |
+| Explanation value | `ask.py` | Ranks lines by how much the model's own voiced reason for a line, compiled as a rule, would move its answers on the other lines: which WHY to ask for first. |
+| Proposed labeling fields | `data.py` (`changes`, `follows_rules`, `exception_to`, quoted/final outcome) | Read when present, ignored when absent. Not on the labeling card or in the registry until the user decides. |
+
+Ablations F1 to F5 and results R1 to R6 are in the v5 doc.
+
+## 6. Is it novel?
 
 Honestly, partly. Each ingredient has close relatives:
 - **Label text as the classifier:** zero-shot classification with label
@@ -226,6 +241,11 @@ literature search):
 4. All of it inside a **factored schema**: the universal layer is provably
    blind to the company, and the company layer reads only that company's
    rules.
+
+v5 adds the reason compiler with case-law overruling, outcome-graded
+reasons, planted-rule following, and asking for the explanation worth the
+most; the v5 doc compares each claim with its closest prior work, including
+explanation-based learning (1986), which had the core idea symbolically.
 
 So the components aren't new; the combination and the fold mechanism likely
 are. Whether it *helps* is an empirical question that D1 to D4 answer. If D4

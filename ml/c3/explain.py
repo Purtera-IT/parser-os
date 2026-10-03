@@ -68,6 +68,13 @@ class Explanation:
     source: str = RULE_CARD
     ref: str = ""
     line: int = -1                              # line it came from in this deal, else -1
+    #: Refs of explanations this one overrules or is an exception to. Inside
+    #: this one's region, theirs is switched off (operators.py). Case law:
+    #: the old one stays in the bank, marked, and still applies elsewhere.
+    overrules: tuple[str, ...] = ()
+    #: Track record from closed deals (consequence.ReliabilityLedger); scales
+    #: how strongly the explanation acts. 1.0 until graded.
+    reliability: float = 1.0
 
 
 @dataclass
@@ -113,7 +120,8 @@ class ExplanationBank:
 
 def load_rule_cards(path: str | Path, schema: Schema | None = None) -> ExplanationBank:
     """Rule cards from JSON: a list of
-    ``{"id", "layer", "company"?, "text", "opportunity"?, "answer"?}``.
+    ``{"id", "layer", "company"?, "text", "opportunity"?, "answer"?,
+    "overrules"?: [ids], "exception_to"?: [ids]}``.
 
     ``opportunity`` and ``answer`` are optional: a card that names neither is
     read against every question in its layer, and the reader decides where it
@@ -135,8 +143,10 @@ def load_rule_cards(path: str | Path, schema: Schema | None = None) -> Explanati
                     raise ValueError(f"rule card {c.get('id')}: layer {c['layer']} but {o.key} is {o.layer}")
             if c.get("answer"):
                 concl = ((c["opportunity"], c["answer"]),)
+        over = tuple(c.get("overrules", [])) + tuple(c.get("exception_to", []))
         out.append(Explanation(text=c["text"], layer=c["layer"], company=c.get("company", ""),
-                               conclusions=concl, source=RULE_CARD, ref=c.get("id", "")))
+                               conclusions=concl, source=RULE_CARD, ref=c.get("id", ""),
+                               overrules=over))
     return ExplanationBank(out)
 
 

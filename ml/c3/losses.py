@@ -33,6 +33,10 @@ class LossWeights:
     policy_l1: float = 0.01
     conduct: float = 1.0
     explanation_only: float = 0.5  # the explanations' votes alone must reach the answer
+    changes: float = 0.3           # what each line changes (hours, crew, sites, price...)
+    claims: float = 0.3            # a WHY's compiled claim matches its line's changes
+    rule_links: float = 0.5        # follows_rule / exception_to supervise a rule's region
+    why_echo: float = 0.2          # r_to_text(r_i) lands on the encoded WHY (ask.py)
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -179,6 +183,16 @@ def explanation_only_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     return total / max(terms, 1)
 
 
+def why_echo_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
+    """The model's voiced reason, r_to_text(r_i), should land on the line's
+    encoded WHY (cosine). It is what ask.py compiles as a pseudo-explanation."""
+    idx = [i for i, t in enumerate(batch.why) if t]
+    if not idx:
+        return out.r.new_zeros(())
+    target = model.text([batch.why[i] for i in idx]).detach()
+    return (1 - F.cosine_similarity(model.r_to_text(out.r[idx]), target, -1)).mean()
+
+
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None) -> tuple[torch.Tensor, dict[str, float]]:
@@ -204,6 +218,12 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["hindsight"], parts["variance"] = hindsight_loss(model, out, batch)
     parts["absence"] = absence_loss(out, batch)
     parts["explanation_only"] = explanation_only_loss(out, batch)
+    from .consequence import changes_loss, claims_loss, rule_link_loss  # noqa: PLC0415 (cycle)
+
+    parts["changes"] = changes_loss(out, batch)
+    parts["claims"] = claims_loss(out, batch, bank)
+    parts["rule_links"] = rule_link_loss(out, batch, bank)
+    parts["why_echo"] = why_echo_loss(model, out, batch)
     if len(model.companies) > 1 and batch.company in model.companies:
         y = torch.full((len(batch),), model.companies.index(batch.company), device=out.r.device)
         parts["adversary"] = F.cross_entropy(out.company_logits, y)
