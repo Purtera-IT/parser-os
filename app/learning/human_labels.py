@@ -244,6 +244,19 @@ def _marked_excluded(row: dict[str, Any]) -> bool:
 #: (`reads_set.co_company`). Every row labeled so far is Purtera's.
 DEFAULT_COMPANY = "purtera"
 
+#: The note grammar's last line: remarks about the parse, not the deal
+#: ("[parser] SHOULD SPLIT: ..."). The labeler shows it; no head learns it.
+PARSER_NOTE_MARKER = "[parser]"
+
+
+def strip_parser_lines(note: str) -> str:
+    """The note without its ``[parser]`` line(s), for anything that trains."""
+    text = str(note or "")
+    if PARSER_NOTE_MARKER not in text.lower():
+        return text
+    kept = [ln for ln in text.splitlines() if not ln.lstrip().lower().startswith(PARSER_NOTE_MARKER)]
+    return "\n".join(kept).rstrip()
+
 
 def company_of(row: dict[str, Any]) -> str:
     reads = row.get("reads_set")
@@ -259,9 +272,10 @@ def split_note(note: str, company: str = DEFAULT_COMPANY) -> tuple[str, str]:
     line starting ``[<company>]`` with the company's rule. The WHY may argue
     only from what the line, its context and trade knowledge show, so it
     trains the base; the policy part trains only that company's profile.
-    The exclusion marker is bookkeeping, not an argument, and is stripped.
+    The exclusion marker is bookkeeping, not an argument, and is stripped;
+    so is the closing ``[parser]`` line (remarks about the parse).
     """
-    text = str(note or "").strip()
+    text = strip_parser_lines(note).strip()
     head = text.lstrip()
     if head.lstrip("[").upper().startswith(EXCLUDE_NOTE_PREFIX):
         end = head.find("]") if head.startswith("[") else -1
@@ -454,7 +468,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
             "neighbors_above": _as_list(lb.get("neighbors_above"))[:3],
             "neighbors_below": _as_list(lb.get("neighbors_below"))[:3],
             "entity_keys": _as_list(lb.get("entity_keys")),
-            "note": lb.get("note") or "",
+            "note": strip_parser_lines(lb.get("note") or ""),
             "labeler": lb.get("labeler") or "",
             "purpose": lb.get("purpose") or "train",
         }
@@ -1243,7 +1257,7 @@ def docs_from_gold_export(payload: dict[str, Any], *, labeler: str = "") -> list
             "label_type": lab,
             "coarse": row.get("coarse") or None,
             "parser_type": row.get("parser_guess") or row.get("g") or "",
-            "note": row.get("note") or "",
+            "note": strip_parser_lines(row.get("note") or ""),
             "labeler": labeler,
             "source": "offline_gold_labeler",
             "purpose": "train",

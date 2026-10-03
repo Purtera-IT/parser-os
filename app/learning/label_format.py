@@ -31,7 +31,7 @@ from typing import Any, Iterable
 
 from app.core.atom_type_registry import KEEP, load_registry
 from app.core.label_heads import head_of_read, heads
-from app.learning.human_labels import split_note
+from app.learning.human_labels import PARSER_NOTE_MARKER, split_note
 
 #: Types that are noise for every company: only these carry `noise_class`.
 NOISE_TYPES = frozenset({KEEP, "small_talk"})
@@ -93,6 +93,13 @@ _PROSE_SPLIT_KEYS = frozenset({"needed_by"})
 #: Our own pricing workbook is the Deal Kit, so it belongs on the company line;
 #: a customer's pricing workbook is a universal source and stays allowed.
 POLICY_WORDS = re.compile(r"\b(reject(?:s|ed)?|deal kit|atlas|hubspot|gantt|(?:internal|our) pricing workbook)\b", re.I)
+#: A remark about the parse rather than the deal (SHOULD SPLIT/MERGE, a parse
+#: problem). It belongs on the closing [parser] line, which training skips.
+PARSER_REMARK = re.compile(r"\bshould\s+(?:split|merge)\b|\bparser\b|\bmis-?pars(?:e|ed|es|ing)\b|\bparse\s+(?:problem|bug|error)s?\b", re.I)
+#: A Missed row marked as a copy of a parser atom ("DUPLICATE of parser atom
+#: ..."). The training mirror keeps it out; the marker opens the note (after
+#: an EXCLUDE line), never on the [parser] line.
+DUPLICATE_MARKER = re.compile(r"^\s*(?:\[parser\]\s*)?duplicate of parser atom", re.I)
 _QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|'[^'\n]{3,}'")
 
 
@@ -168,6 +175,22 @@ def format_checks(row: dict[str, Any]) -> list[dict[str, str]]:
     if n_exclude > 1 or (n_exclude == 1 and not re.match(r"\s*\[?EXCLUDE_FROM_TRAINING", note, re.I)):
         add("exclude_marker_misplaced", "meta.bookkeeping",
             "EXCLUDE_FROM_TRAINING belongs once, at the very start of the note.")
+    parser_at = [i for i, ln in enumerate(lines) if ln.lstrip().lower().startswith(PARSER_NOTE_MARKER)]
+    if parser_at and (len(parser_at) > 1 or any(ln.strip() for ln in lines[parser_at[0] + 1:])):
+        add("parser_line_not_last", "meta.bookkeeping",
+            f"{PARSER_NOTE_MARKER} goes once, on the last line of the note, so training can drop it.")
+    content = [i for i, ln in enumerate(lines) if ln.strip()]
+    if content and re.match(r"\s*\[?EXCLUDE_FROM_TRAINING", lines[content[0]], re.I):
+        content = content[1:]
+    first = content[0] if content else -1
+    dup_at = [i for i, ln in enumerate(lines) if DUPLICATE_MARKER.match(ln)]
+    if dup_at and dup_at != [first]:
+        add("duplicate_marker_misplaced", "meta.bookkeeping",
+            "DUPLICATE of parser atom goes once, as the first line (after any EXCLUDE line), never on the [parser] line.")
+    rest = "\n".join(ln for i, ln in enumerate(lines) if i not in parser_at and i not in dup_at)
+    if PARSER_REMARK.search(_QUOTED.sub("", rest)) or PARSER_NOTE_MARKER in rest.lower():
+        add("parser_remark_outside_line", "rationale.why",
+            f"A remark about the parse (SHOULD SPLIT, SHOULD MERGE, a parse problem) goes on the {PARSER_NOTE_MARKER} line.")
     universal, _ = split_note(note, company)
     if POLICY_WORDS.search(_QUOTED.sub("", universal)):
         add("policy_words_in_why", "rationale.why",
