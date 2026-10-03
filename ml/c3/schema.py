@@ -285,6 +285,15 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 description=" ".join(x for x in (
                     lead(h, universal), f"{subject}.", scrub(r.get("desc", ""), universal)) if x),
                 answers=_answers(kind, values, subject), **base))
+            if rk == "train_for":
+                # Which parser a Deal Kit line trains is our own routing rule
+                # (the Deal Kit is our pricing workbook), so it lives in the
+                # company layer; data._derived moves it there per line.
+                opps.append(Opportunity(
+                    key="read:co_deal_kit_route", field="co_deal_kit_route", source="read", kind=kind,
+                    description=f"{lead(h, False)} Which parser one of our own Deal Kit lines trains.",
+                    answers=_answers(kind, values, subject),
+                    **{**base, "layer": "company"}))
 
         for rel in h.get("relations", []):
             r = rels.get(rel, {"label": rel})

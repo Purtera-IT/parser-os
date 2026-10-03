@@ -252,28 +252,65 @@ def _rejected_flag(label: dict[str, Any]) -> bool:
     return v in ("true", "t", "1", "yes")
 
 
-def _derived(label: dict[str, Any]) -> dict[str, Any]:
+_POLICY = ("reject", "ignore")
+DEAL_KIT_ROUTE = "co_deal_kit_route"
+
+
+def policy_reject(label: dict[str, Any] | None) -> bool:
+    """Our own keep/reject decision (co_action reject or ignore): a real fact
+    the company drops on purpose. It is Purtera's signal and never the base's;
+    the deal threads set ``rejected`` in the same statement, so the flag alone
+    does not mean "not a fact"."""
+    reads = (label or {}).get("reads_set")
+    act = reads.get("co_action") if isinstance(reads, dict) else None
+    return str(act or (label or {}).get("co_action") or "").strip().lower() in _POLICY
+
+
+def is_deal_kit(doc_kind: str) -> bool:
+    """Our own pricing workbook, however the document kind is spelled."""
+    return "dealkit" in re.sub(r"[^a-z]", "", str(doc_kind or "").lower())
+
+
+def _derived(label: dict[str, Any], universal_reads: frozenset[str] = frozenset(),
+             deal_kit: bool = False) -> dict[str, Any]:
     """Fields the card records implicitly, made explicit for the heads:
 
-    * ``admission``: drop for a reject or a not-a-fact type (a hand-added
-      ``_keep`` aside), keep for a hand-added line or a real type; the same
-      rule as app.learning.human_labels.
+    * ``admission`` (base): drop for a line that is not a fact (the card's
+      reject with no company decision, a noise class, a not-a-fact type; a
+      hand-added ``_keep`` aside), keep for a hand-added line or a real type.
+      A company reject (co_action reject or ignore) is a real fact we drop on
+      purpose: admission keeps its type's answer and the drop trains only the
+      Purtera layer through co_action.
     * known negatives: a reading the parser proposed and the labeler removed
       (``reads_shown`` minus ``reads_set``) or one the labeler considered and
       ruled out (``rejected_reads``) is taught as absent, not left unknown.
+      On a company reject a removed base reading may be our rule, so only
+      company readings are taught absent there.
+    * Deal Kit routing: which parser a Deal Kit line trains is our own rule,
+      so on a Deal Kit line ``train_for`` moves to the Purtera layer's
+      ``co_deal_kit_route`` and the base ``train_for`` head never sees it.
     """
     reads = dict(label.get("reads_set") or {}) if isinstance(label.get("reads_set"), dict) else {}
     typ = str(label.get("label_type") or "").strip()
     origin = str(label.get("origin") or "").strip().lower()
+    policy = policy_reject(label)
     out = dict(label)
-    if _rejected_flag(label) or (typ in _NOT_FACT and not (typ == "_keep" and origin == "labeler")):
+    real = bool(typ) and typ not in _NOT_FACT
+    if policy:
+        if real:
+            out["admission"] = "keep"
+    elif (_rejected_flag(label) or reads.get("noise_class")
+          or (typ in _NOT_FACT and not (typ == "_keep" and origin == "labeler"))):
         out["admission"] = "drop"
-    elif origin == "labeler" or (typ and typ not in _NOT_FACT):
+    elif origin == "labeler" or real:
         out["admission"] = "keep"
     removed = {str(k) for k in (label.get("reads_shown") or [])} - set(reads)
     removed |= {str(k) for k in (label.get("rejected_reads") or {})}
     for k in removed:
-        reads.setdefault(k, ABSENT)
+        if not (policy and k in universal_reads):
+            reads.setdefault(k, ABSENT)
+    if deal_kit and reads.get("train_for") not in (None, "", []):
+        reads[DEAL_KIT_ROUTE] = reads.pop("train_for")
     out["reads_set"] = reads
     return out
 
@@ -305,8 +342,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     """
     import dataclasses
 
+    universal_reads = frozenset(o.field for o in schema.opportunities
+                                if o.source == "read" and o.universal)
     atoms = [dataclasses.replace(a, label=None) if excluded(a.label)
-             else dataclasses.replace(a, label=_derived(a.label)) if a.label else a
+             else dataclasses.replace(a, label=_derived(a.label, universal_reads, is_deal_kit(a.doc_kind)))
+             if a.label else a
              for a in deal.atoms]
     n = len(atoms)
     index = {a.key: i for i, a in enumerate(atoms)}
@@ -373,9 +413,10 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     hint_lines: list[list[int]] = []
     entities: list[list[str]] = []
     by_atom = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
-    for a in atoms:
+    for i, a in enumerate(atoms):
         lb = a.label or {}
         reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
+        company_reject = policy_reject(lb)
         notes = {}
         for name, key in by_note.items():
             t = drop_meta(str(reads.get(name) or ""))
@@ -384,7 +425,13 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         for key, why_not in (lb.get("rejected_reads") or {}).items():
             t = drop_meta(str(why_not or ""))
             k = f"read:{key}"
-            if t and k in opp_layer:
+            if not t or k not in opp_layer:
+                continue
+            if company_reject and opp_layer[k] == "universal":
+                # Ruled out under our own reject: the reason is ours, so the
+                # company pass reads it and the base pass never does.
+                policy[i] = " ".join(x for x in (policy[i], f"not {key}: {t}") if x)
+            else:
                 notes.setdefault(k, f"not {key}: {mask_verdict(t) if opp_layer[k] == 'universal' else t}")
         field_notes.append(notes)
         weights.append(TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))

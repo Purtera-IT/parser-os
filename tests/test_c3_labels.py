@@ -2,8 +2,10 @@
 
 * old manual Deal Kit rows never train, whichever way they are marked;
 * Missed rows (text the parser skipped) become lines;
-* weight_tier weights the loss; a reject on the card teaches admission (not a
-  fact), never the company's keep/reject;
+* weight_tier weights the loss; a reject with no company decision teaches
+  admission (not a fact); a company reject (co_action) trains only the
+  Purtera layer, its ruled-out readings and why-not included;
+* train_for on our own Deal Kit lines trains the Purtera layer, not the base;
 * readings the labeler removed or ruled out are taught as absent, and the
   why-not reaches the teacher;
 * per-field notes reach the teacher's reasoned pass for the right layer;
@@ -37,6 +39,9 @@ ATOMS = [
     _atom("k3", "SOW: install six (6) displays at the north office.", 2, doc_kind="sow"),
     _atom("k4", "Hardware quote: panel, qty 6, $900 each.", 3, doc_kind="quote"),
     _atom("k5", "The north office loading dock closes at 3pm.", 4),
+    _atom("k6", "Reseller line: mounts, qty 6, $40 each.", 6, doc_kind="quote"),
+    _atom("k7", "Kit plan: 2 techs on site for 1 day.", 7, doc_kind="Deal Kit"),
+    _atom("k8", "Thanks again, talk soon!", 8),
 ]
 
 BLOB = {"labels": [
@@ -64,6 +69,14 @@ BLOB = {"labels": [
      "entered_at": "2026-05-01T10:05:00Z", "doc_kind": "email",
      "note": "Missed by the parser: a customer-side step before install.",
      "reads_set": {"scope_side": "customer"}},
+    {"label_key": "k6", "label_type": "bom_line", "rejected": "true",
+     "note": "Mount line from the reseller; qty agrees with six panels. [purtera] Hardware prices are not ours.",
+     "reads_set": {"equipment_qty": "6", "co_action": "reject", "co_reason": "hw_price_not_ours"},
+     "reads_shown": ["equipment_qty", "rate"],
+     "rejected_reads": {"billing_type": "We never bill from a reseller's unit price."}},
+    {"label_key": "k7", "label_type": "_keep", "note": "Crew plan for the install: 2 techs, 1 day.",
+     "reads_set": {"crew_size": "2", "train_for": ["delivery_parser"]}},
+    {"label_key": "k8", "label_type": "small_talk", "reads_set": {"noise_class": "greeting_thanks"}},
 ]}
 
 
@@ -108,6 +121,31 @@ def test_weight_tier_reject_and_known_negatives(schema, batch):
     assert batch.targets["read:billing_type"][hw] == by["read:billing_type"].index("_absent")
     assert batch.field_notes[hw]["read:billing_type"].startswith("not billing_type:")
     assert batch.targets["col:hints"][hw] == by["col:hints"].index("table_column")
+    assert batch.targets["col:admission"][_i(batch, "Thanks again")] == by["col:admission"].index("drop")
+
+
+def test_company_reject_stays_in_the_purtera_layer(schema, batch):
+    by = schema.by_key()
+    i = _i(batch, "Reseller line")
+    # A real fact we drop on purpose: the base keeps it, co_action rejects it.
+    assert batch.targets["col:admission"][i] == by["col:admission"].index("keep")
+    assert batch.targets["read:co_action"][i] == by["read:co_action"].index("reject")
+    # Base readings removed or ruled out under our reject are not taught absent,
+    # and the why-not reaches only the company pass.
+    assert batch.targets["read:rate"][i] == IGNORE
+    assert batch.targets["read:billing_type"][i] == IGNORE
+    assert "read:billing_type" not in batch.field_notes[i]
+    assert "never bill" not in (told_why(batch, schema)[i] or "")
+    assert "not billing_type: We never bill" in batch.policy_note[i]
+
+
+def test_deal_kit_routing_trains_only_the_purtera_layer(schema, batch):
+    by = schema.by_key()
+    i = _i(batch, "Kit plan")
+    assert by["read:co_deal_kit_route"].layer == "company" and by["read:train_for"].universal
+    assert batch.targets["read:train_for"][i] == IGNORE
+    assert batch.targets["read:co_deal_kit_route"][i] == by["read:co_deal_kit_route"].index("delivery_parser")
+    assert batch.targets["read:crew_size"][i] != IGNORE
 
 
 def test_field_notes_reach_the_teacher_on_the_right_side(schema, batch):
