@@ -392,3 +392,25 @@ def test_pool_budget_env_override(monkeypatch):
 def test_pool_budget_floor_when_local(monkeypatch):
     # No hosted teacher → falls back to 3x default_per_call, floored at 600.
     assert llm_client.pool_budget_seconds() == 600
+
+
+def test_seed_is_sent_only_when_given(monkeypatch):
+    import json as _j
+    sent = []
+
+    class _R:
+        def __init__(self, body): self._b = body
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=None):
+        sent.append(_j.loads(req.data.decode()))
+        return _R(b'{"choices":[{"message":{"content":"ok"}}]}')
+
+    monkeypatch.setenv("TEACHER_API_BASE", "http://x")
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", fake_urlopen)
+    llm_client.complete("p")
+    llm_client.complete("p", seed=7)
+    assert "seed" not in sent[0]
+    assert sent[1]["seed"] == 7
