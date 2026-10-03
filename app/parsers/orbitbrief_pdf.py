@@ -1283,6 +1283,81 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             del nxt_sections[0]
 
 
+def _first_block_if_list(page: dict[str, Any]) -> dict[str, Any] | None:
+    """The page's opening content block when it is a bullet list placed by
+    the page geometry and no heading comes before it."""
+    secs = page.get("sections") or []
+    if not secs or (secs[0].get("heading") or "").strip():
+        return None
+    first = next((b for b in (secs[0].get("blocks") or []) if not _is_page_furniture_block(b)), None)
+    if first is None or first.get("kind") != "bullet_list" or not first.get("list_edges"):
+        return None
+    return first
+
+
+def _carry_list_nesting_across_pages(pages: list[dict[str, Any]]) -> None:
+    """Keep a list's nesting across a page break.
+
+    Each page nests its own bullets (``_nest_bullets``), so a sub-item that the
+    page break moved to the next page started a new list at the top level:
+    010353's fourth "o" rate tier came out at [0], depth 1, with no lead line,
+    while its three siblings above the break sat at [0, 0..2] under their "•"
+    item. When a page ends inside a list and the next page opens (page bands
+    aside, no heading between) with a list, its first items continue the open
+    chain above the break: one whose marker sits at the x of an open sub-item
+    is that sub-item's sibling, and one deeper than the last open item
+    (``_bullet_is_deeper``) is its child. ``list_carry`` records each such
+    item's full bullet_path and the texts of the items above it. An item at the
+    top level ends the carry, so top-level numbering never moves, and only an
+    item the page geometry places is carried. Runs after
+    ``_stitch_cross_page_continuations``, which first rejoins a sentence the
+    break cut. Mutates ``pages`` in place.
+    """
+    for i in range(len(pages) - 1):
+        prev = _last_block_if_paragraph(pages[i])
+        if prev is None or prev.get("kind") != "bullet_list" or not prev.get("list_edges"):
+            continue
+        nxt = _first_block_if_list(pages[i + 1])
+        if nxt is None:
+            continue
+        tail = prev["list_edges"].get("tail") or []
+        if not tail:
+            continue
+        # The open chain above the break, with absolute paths: a list that was
+        # itself carried onto this page starts from where its carry put it.
+        base = (prev.get("list_carry") or {}).get(tail[0][1])
+        path = list(base["path"][:-1]) if base else []
+        texts = list(base["parents"]) if base else []
+        chain: list[dict[str, Any]] = []
+        for k, (geo, idx, text) in enumerate(tail):
+            path = path + [base["path"][-1] if (k == 0 and base) else idx]
+            texts = texts + [text]
+            n = tail[k + 1][1] + 1 if k + 1 < len(tail) else 0
+            chain.append({"geo": tuple(geo), "path": list(path), "texts": list(texts), "n": n})
+        carry: dict[int, dict[str, Any]] = {}
+        items = nxt.get("items") or []
+        for j, geo in enumerate(nxt["list_edges"].get("roots") or []):
+            geo = tuple(geo)
+            if geo[0] is None or j >= len(items):
+                break
+            same = next((k for k in range(len(chain) - 1, -1, -1)
+                         if chain[k]["geo"][0] is not None and abs(chain[k]["geo"][0] - geo[0]) <= 1.5), None)
+            if same is not None:
+                del chain[same:]  # a sibling of that item: its parent is above it
+            elif not (chain and _bullet_is_deeper(geo, chain[-1]["geo"])):
+                break
+            if not chain:
+                break  # back at the top level: the rest numbers as before
+            parent = chain[-1]
+            own = parent["path"] + [parent["n"]]
+            parent["n"] += 1
+            carry[j] = {"path": own, "parents": list(parent["texts"])}
+            chain.append({"geo": geo, "path": own, "texts": parent["texts"] + [items[j].get("text") or ""],
+                          "n": len(items[j].get("children") or [])})
+        if carry:
+            nxt["list_carry"] = carry
+
+
 #: A line opened by a section number: "1. Scope", "2.1 Survey", "3) Fees".
 _NUMBERED_LINE_RE = re.compile(r"^\s*\d{1,2}(?:\.\d{1,2})*[.)]?\s+[A-Za-z]")
 
@@ -2210,6 +2285,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     # ~2 s per-fork startup on macOS.
     pages: list[dict[str, Any]] = [_build_one_page(i) for i in range(page_count)]
     _stitch_cross_page_continuations(pages)
+    _carry_list_nesting_across_pages(pages)
     _carry_cross_page_section_headings(pages)
 
     # Aggregate document title + metadata across pages (in order).
@@ -3416,11 +3492,19 @@ def _atoms_for_block(
         # the intro line ("Partner(s) must:") is what colors every child.
         if intro:
             bullet_section_path = bullet_section_path + [intro]
+        carried = block.get("list_carry") or {}
         for index, item in enumerate(block.get("items", []) or []):
+            # An item continuing a list from the page before keeps its place
+            # in that list (``_carry_list_nesting_across_pages``).
+            carry = carried.get(index)
+            path0 = list(carry["path"]) if carry else [index]
+            parent_path, parent_lead = _parent_context(carry["parents"] if carry else [])
             yield from _atoms_for_bullet(
                 item=item,
-                depth=1,
-                path_indices=[index],
+                depth=len(path0),
+                path_indices=path0,
+                parent_path=parent_path,
+                parent_lead=parent_lead,
                 project_id=project_id,
                 artifact_id=artifact_id,
                 filename=filename,
@@ -3660,6 +3744,24 @@ def _atoms_for_block(
         return
 
 
+def _parent_context(
+    texts: Iterable[str],
+    parent_path: list[str] | None = None,
+    parent_lead: list[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """What a chain of parent bullets adds to a sub-item's locator: a parent
+    ending in ":" heads its section_path, any other rides on its lead_in."""
+    path, lead = list(parent_path or []), list(parent_lead or [])
+    for raw in texts:
+        text = _strip_page_band_prefix((raw or "").strip()) if (raw or "").strip() else ""
+        own = text.rstrip(":").strip()
+        if own and text.endswith(":"):
+            path.append(own)
+        elif own:
+            lead.append(text)
+    return path, lead
+
+
 def _atoms_for_bullet(
     *,
     item: dict[str, Any],
@@ -3770,12 +3872,7 @@ def _atoms_for_bullet(
                 locator=bullet_locator,
                 value=value,
             )
-    own = text.rstrip(":").strip()
-    child_path, child_lead = list(parent_path or []), list(parent_lead or [])
-    if own and text.endswith(":"):
-        child_path.append(own)
-    elif own:
-        child_lead.append(text)
+    child_path, child_lead = _parent_context([text], parent_path, parent_lead)
     for child_index, child in enumerate(item.get("children", []) or []):
         yield from _atoms_for_bullet(
             item=child,
@@ -6047,11 +6144,16 @@ def _text_rich_sections(
         nonlocal bullet_buffer, bullet_geo
         if not bullet_buffer:
             return
+        edges: dict[str, Any] = {}
         items = _nest_bullets(
-            [(x, g) for x, g in zip(bullet_buffer, bullet_geo) if x.strip()]
+            [(x, g) for x, g in zip(bullet_buffer, bullet_geo) if x.strip()], edges
         )
         if items:
-            current_blocks.append({"kind": "bullet_list", "items": items})
+            block: dict[str, Any] = {"kind": "bullet_list", "items": items}
+            placed = [*(edges.get("roots") or []), *(g for g, _, _ in edges.get("tail") or [])]
+            if any(g[0] is not None for g in placed):
+                block["list_edges"] = edges
+            current_blocks.append(block)
         bullet_buffer = []
         bullet_geo = []
 
@@ -6361,22 +6463,35 @@ def _bullet_is_deeper(
 
 def _nest_bullets(
     entries: list[tuple[str, tuple[float | None, float | None, int]]],
+    edges: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the list tree: each bullet goes under the nearest bullet above it
     that it is deeper than (``_bullet_is_deeper``), else at the top level. A
     Word list's "o" sub-bullets under "Install the display:" are that item's
-    children, and the "•" after them returns to the top (010003)."""
+    children, and the "•" after them returns to the top (010003).
+
+    ``edges``, when given, receives where the list starts and ends: each top
+    item's geometry (``roots``) and the chain of items still open at its end
+    (``tail``: geometry, index under its parent, text), so a list the page
+    break cuts can be continued on the next page
+    (``_carry_list_nesting_across_pages``)."""
     roots: list[dict[str, Any]] = []
-    stack: list[tuple[dict[str, Any], tuple[float | None, float | None, int]]] = []
+    stack: list[tuple[dict[str, Any], tuple[float | None, float | None, int], int]] = []
+    root_geo: list[tuple[float | None, float | None, int]] = []
     for text, geo in entries:
         node: dict[str, Any] = {"text": text}
         while stack and not _bullet_is_deeper(geo, stack[-1][1]):
             stack.pop()
         if stack:
-            stack[-1][0].setdefault("children", []).append(node)
+            siblings = stack[-1][0].setdefault("children", [])
         else:
-            roots.append(node)
-        stack.append((node, geo))
+            siblings = roots
+            root_geo.append(geo)
+        siblings.append(node)
+        stack.append((node, geo, len(siblings) - 1))
+    if edges is not None:
+        edges["roots"] = root_geo
+        edges["tail"] = [(g, i, n.get("text") or "") for n, g, i in stack]
     return roots
 
 
