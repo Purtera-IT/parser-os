@@ -7,6 +7,10 @@
   moved a little by the sentence (teach_flip);
 * lines that read almost alike are near misses (different answers) or twins
   (same answers); both give the teacher practice at supposing, from labels;
+* the teacher writes each labeled line again (same reason in other words,
+  and changed as a WHY sentence says) and reads both; the heads, on the real
+  rewritten text, hold on the first and follow the teacher on the second;
+  a reworded line the teacher reads differently is dropped;
 * the efficiency check scores held-out near misses and twins; the
   labels-only arm and lines masked out carry no suppositions.
 """
@@ -24,7 +28,8 @@ from ml.c3.losses import BrainWeights, LossWeights, brain_loss, c3_loss, near_mi
 from ml.c3.model import C3Config, C3Model  # noqa: E402
 from ml.c3.notes import sentences  # noqa: E402
 from ml.c3.schema import load_schema  # noqa: E402
-from ml.c3.supercharge import mask_labels, supercharge_loss, teach_flip, teacher_view  # noqa: E402
+from ml.c3.supercharge import (  # noqa: E402
+    Rewrite, mask_labels, rewrite_lines, supercharge_loss, teach_flip, teach_rewrites, teacher_view)
 
 SMALL = C3Config(d_text=32, d=32, n_layers=1, n_heads=2, d_r=16, d_q=8, d_head=16,
                  residual_dim=4, box_dim=4, n_policy_atoms=2, policy_rank=2)
@@ -141,3 +146,25 @@ def test_masked_lines_carry_nothing_and_pairs_are_scored(schema, batch):
     assert n == len(batch.near_misses) and 0.0 <= acc <= 1.0
     tw, n_tw = twin_consistency(model, batch, [0, 1, 2, 3, 4])
     assert n_tw == len(batch.twins) == 1 and tw in (0.0, 1.0)
+
+
+def test_meaning_lock_rewrites(schema, batch):
+    torch.manual_seed(0)
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 1024), context_lines=2)
+    written = rewrite_lines(teacher, batch, max_new=12)   # untrained: noise, but well formed
+    assert all(isinstance(r, Rewrite) and batch.labeled[r.line] for r in written)
+    rewrites = [Rewrite(0, "Provider fits 4 wall brackets for the 55 inch screens.", True),
+                Rewrite(0, "Customer installs 4 wall mounts for the 55 inch displays.", False),
+                Rewrite(3, "Work window is weekends before 8am.", True)]
+    view = teacher_view(teacher, batch, grounding=False, rewrites=rewrites)
+    assert any(not r.same for r in view.rewrites)          # a changed line is always read
+    for n, r in enumerate(view.rewrites):
+        if r.same:                                         # held to the original reading
+            assert torch.allclose(view.rewritten["col:label_type"][n], view.told["col:label_type"][r.line])
+    model = C3Model(schema, SMALL)
+    loss = teach_rewrites(model, batch, view, 2.0)
+    assert loss > 0
+    loss.backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())
+    out = model(batch.inputs())
+    assert supercharge_loss(model, out, view, texts=batch.texts, batch=batch)["teach_rewrites"] > 0

@@ -39,7 +39,7 @@ from .lm import TinyCausalLM
 from .losses import BrainWeights, LossWeights, brain_loss, c3_loss
 from .model import C3Config, C3Model
 from .schema import Schema, load_schema
-from .supercharge import TeachWeights, mask_labels, supercharge_loss, teacher_view, weighted
+from .supercharge import TeachWeights, mask_labels, rewrite_lines, supercharge_loss, teacher_view, weighted
 
 SMALL = C3Config(d_text=64, d=64, n_layers=1, n_heads=4, d_r=32, d_q=16, d_head=32,
                  residual_dim=8, box_dim=8, n_policy_atoms=4, policy_rank=4)
@@ -121,12 +121,14 @@ def twin_consistency(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple
 
 
 def _train_heads(schema: Schema, batch: Batch, seed: int, steps: int, cfg: C3Config,
-                 teacher: Brain | None, lr: float) -> C3Model:
+                 teacher: Brain | None, lr: float, rewrites: bool = False) -> C3Model:
     torch.manual_seed(seed)
     model = C3Model(schema, cfg)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     w = LossWeights(clause_use=0.0, **({} if teacher is not None else NO_WHY))
-    view = teacher_view(teacher, batch, batch.company or None) if teacher is not None else None
+    view = (teacher_view(teacher, batch, batch.company or None,
+                         rewrites=rewrite_lines(teacher, batch) if rewrites else None)
+            if teacher is not None else None)
     for _ in range(steps):
         model.train()
         loss, _ = c3_loss(model, batch, w)
@@ -159,7 +161,7 @@ def run_curve(deal: DealExample, schema: Schema | None = None, budgets=(2, 4, 6)
               steps: int = 30, teacher_steps: int = 10, cfg: C3Config = SMALL,
               lr: float = 3e-3,
               make_lm: Callable[[], torch.nn.Module] = lambda: TinyCausalLM(32, 1, 2, 1024),
-              ) -> list[Row]:
+              rewrites: bool = False) -> list[Row]:
     schema = schema or load_schema()
     full = featurize(deal, schema)
     labeled = [i for i, x in enumerate(full.labeled) if x]
@@ -180,7 +182,7 @@ def run_curve(deal: DealExample, schema: Schema | None = None, budgets=(2, 4, 6)
             plain.flips = []          # suppositions come from WHYs: the labels-only arm has none
             m_lab = _train_heads(schema, plain, seed, steps, cfg, None, lr)
             teacher = _train_teacher(schema, train, seed, teacher_steps, lr, make_lm)
-            m_exp = _train_heads(schema, train, seed, steps, cfg, teacher, lr)
+            m_exp = _train_heads(schema, train, seed, steps, cfg, teacher, lr, rewrites)
             for arm, m in (("labels", m_lab), ("explained", m_exp)):
                 acc, n = heads_accuracy(m, full, eval_ids)
                 nm, n_nm = near_miss_accuracy(m, full, eval_ids)
@@ -196,9 +198,12 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, default=1)
     ap.add_argument("--steps", type=int, default=30)
     ap.add_argument("--teacher-steps", type=int, default=10)
+    ap.add_argument("--rewrites", action="store_true",
+                    help="the teacher rewrites labeled lines (meaning lock); slow with a real LM")
     a = ap.parse_args()
     rows = run_curve(DealExample.load(a.deal), budgets=[int(x) for x in a.budgets.split(",")],
-                     seeds=range(a.seeds), steps=a.steps, teacher_steps=a.teacher_steps)
+                     seeds=range(a.seeds), steps=a.steps, teacher_steps=a.teacher_steps,
+                     rewrites=a.rewrites)
     print(f"{'labels':>6}  {'seed':>4}  {'arm':<9}  {'accuracy':>8}  {'pairs':>5}  {'near-miss':>9}  {'n':>3}  {'twins':>5}  {'n':>3}")
     for r in rows:
         print(f"{r.budget:>6}  {r.seed:>4}  {r.arm:<9}  {r.accuracy:>8.3f}  {r.n_eval:>5}"

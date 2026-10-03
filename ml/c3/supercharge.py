@@ -38,6 +38,13 @@ term                what it does                                           why i
                     word lists); the heads, with the line moved a little   line, and to hold
                     by the sentence, match that answer                     still when nothing
                                                                            that matters moved
+``teach_rewrites``  the teacher writes each labeled line again: in other   the meaning lock:
+                    words with the reason kept, and changed as a WHY       the encoder itself
+                    sentence says; it reads both. The heads, on the real   learns that wording
+                    rewritten text, hold their answer on the first and     is not meaning, so
+                    take the teacher's reading on the second. A reworded   a keyword shortcut
+                    line the teacher itself reads differently is dropped   stops paying in
+                                                                           training
 ==================  =====================================================  ==================
 
 ``near_miss_loss`` lives in losses.py because it needs no teacher: lines
@@ -60,12 +67,13 @@ lines, with and without these terms (efficiency.py).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import dataclasses
+from dataclasses import dataclass, field
 
 import torch
 from torch.nn import functional as F
 
-from .data import IGNORE, Batch
+from .data import IGNORE, Batch, number_tokens
 from .model import C3Model, C3Output
 
 
@@ -78,7 +86,17 @@ class TeachWeights:
     words: float = 0.5
     flips: float = 0.5
     flip_size: float = 0.05     # the sentence moves the line only a little
+    rewrites: float = 0.5
     temperature: float = 2.0
+
+
+@dataclass(frozen=True)
+class Rewrite:
+    """Line ``line`` written again by the teacher (Brain.rewrite). ``same``:
+    other words, the same reason; otherwise changed as a WHY sentence says."""
+    line: int
+    text: str
+    same: bool
 
 
 @dataclass
@@ -92,11 +110,13 @@ class TeacherView:
     pointers: torch.Tensor | None = None  # [N, N+1] what each WHY rests on (last = itself)
     words: list[torch.Tensor | None] | None = None  # per line: weight on each of its words
     flipped: dict[str, torch.Tensor] | None = None  # supposition pass, row n = batch.flips[n] [F, A]
+    rewrites: list[Rewrite] = field(default_factory=list)   # kept after the round trip
+    rewritten: dict[str, torch.Tensor] | None = None  # target per rewrite, row n = rewrites[n] [R, A]
 
 
 @torch.no_grad()
 def teacher_view(teacher, batch: Batch, company: str | None = None,
-                 grounding: bool = True) -> TeacherView:
+                 grounding: bool = True, rewrites: list[Rewrite] | None = None) -> TeacherView:
     from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
 
     was = teacher.training
@@ -112,6 +132,7 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     pointers, words = teacher.grounding(batch) if grounding else (None, None)
     flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc).logits
                if batch.flips else None)
+    kept, rewritten = read_rewrites(teacher, batch, rewrites or [], why, told.logits, desc)
     teacher.train(was)
     dev = emb.device
     if pointers is not None:
@@ -123,7 +144,96 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
                 pointers[i, js] = 1.0 / len(js)
     return TeacherView(told.logits, noted.logits, emb,
                        torch.tensor([bool(t) for t in why], device=dev),
-                       torch.tensor(batch.labeled, device=dev), pointers, words, flipped)
+                       torch.tensor(batch.labeled, device=dev), pointers, words, flipped,
+                       kept, rewritten)
+
+
+def with_texts(batch: Batch, repl: dict[int, str]) -> Batch:
+    """The same deal with some lines' text replaced."""
+    texts, numbers = list(batch.texts), list(batch.numbers)
+    for i, t in repl.items():
+        texts[i], numbers[i] = t, number_tokens(t)
+    return dataclasses.replace(batch, texts=texts, numbers=numbers)
+
+
+@torch.no_grad()
+def rewrite_lines(teacher, batch: Batch, max_new: int = 80) -> list[Rewrite]:
+    """Two rewrites per labeled line with a WHY, both written by the teacher:
+    one in other words with the reason kept, one changed as the line's first
+    supposed sentence says. Training only, once per deal; costs one short
+    generation per rewrite. Empty or unchanged text is dropped."""
+    from .brain import told_why  # noqa: PLC0415
+
+    why = told_why(batch, teacher.schema)
+    first = {}
+    for f in batch.flips:
+        first.setdefault(f.line, f.condition)
+    out: list[Rewrite] = []
+    for i, w in enumerate(why):
+        if not w or not batch.labeled[i]:
+            continue
+        for change in [None] + ([first[i]] if i in first else []):
+            t = teacher.rewrite(batch, i, w, change, max_new)
+            if t and t.strip() != batch.texts[i].strip():
+                out.append(Rewrite(i, t, change is None))
+    return out
+
+
+def read_rewrites(teacher, batch: Batch, rewrites: list[Rewrite], why: list[str | None],
+                  told: dict[str, torch.Tensor], desc
+                  ) -> tuple[list[Rewrite], dict[str, torch.Tensor] | None]:
+    """The teacher reads each rewritten line in its deal, with the WHY.
+
+    A reworded line ("same") must read as the original did on the type: if
+    the teacher's own reading moves, the rewrite changed the meaning and is
+    dropped (the round trip). Its target is the original reading, so the
+    heads learn to hold. A changed line's target is whatever the teacher
+    reads: it decides what the change did."""
+    if not rewrites:
+        return [], None
+    pages = [teacher.page(with_texts(batch, {r.line: r.text}), r.line)
+             + (f"Why: {why[r.line]}\n" if why[r.line] else "") + "Answer:" for r in rewrites]
+    read, _, _, _ = teacher.read(pages, "universal", desc)
+    keys = [k for k in read.logits if k in told]
+    if not keys:
+        return [], None
+    keep: list[int] = []
+    for n, r in enumerate(rewrites):
+        k = "col:label_type" if "col:label_type" in keys else keys[0]
+        if not r.same or int(read.logits[k][n].argmax()) == int(told[k][r.line].argmax()):
+            keep.append(n)
+    if not keep:
+        return [], None
+    kept = [rewrites[n] for n in keep]
+    target = {k: torch.stack([told[k][r.line] if r.same else read.logits[k][n]
+                              for n, r in zip(keep, kept)]) for k in keys}
+    return kept, target
+
+
+def teach_rewrites(model: C3Model, batch: Batch, view: TeacherView, t: float) -> torch.Tensor:
+    """``teach_rewrites``: the heads run on the deal with lines replaced by
+    their rewrites (real text through the whole trunk, not a latent move)
+    and match each rewrite's target. Each forward replaces at most one
+    rewrite per line."""
+    zero = next(model.parameters()).new_zeros(())
+    if not view.rewrites or view.rewritten is None:
+        return zero
+    rounds: list[list[int]] = []
+    for n, r in enumerate(view.rewrites):
+        for g in rounds:
+            if all(view.rewrites[m].line != r.line for m in g):
+                g.append(n)
+                break
+        else:
+            rounds.append([n])
+    terms = []
+    for g in rounds:
+        b = with_texts(batch, {view.rewrites[n].line: view.rewrites[n].text for n in g})
+        out = model(b.inputs())
+        lines = [view.rewrites[n].line for n in g]
+        terms += [_kl(out.logits[k][lines], view.rewritten[k][g], t)
+                  for k in view.rewritten if k in out.logits]
+    return torch.stack(terms).mean() if terms else zero
 
 
 def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float) -> torch.Tensor:
@@ -142,10 +252,13 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     zero = out.r.new_zeros(())
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
-             "teach_pointers": zero, "teach_words": zero, "teach_flip": zero, "teach_flip_size": zero}
+             "teach_pointers": zero, "teach_words": zero, "teach_flip": zero, "teach_flip_size": zero,
+             "teach_rewrites": zero}
     if batch is not None and view.flipped is not None and batch.flips:
         parts["teach_flip"], parts["teach_flip_size"] = teach_flip(model, out, view, batch,
                                                                    w.temperature, desc)
+    if batch is not None and view.rewrites:
+        parts["teach_rewrites"] = teach_rewrites(model, batch, view, w.temperature)
     if not keys:
         return parts
     why = view.has_why
@@ -213,7 +326,8 @@ def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> t
     return (w.heads * parts["teach_heads"] + w.geometry * parts["teach_geometry"]
             + w.unlabeled * parts["teach_unlabeled"] + w.pointers * parts["teach_pointers"]
             + w.words * parts["teach_words"] + w.flips * parts.get("teach_flip", 0.0)
-            + w.flip_size * parts.get("teach_flip_size", 0.0))
+            + w.flip_size * parts.get("teach_flip_size", 0.0)
+            + w.rewrites * parts.get("teach_rewrites", 0.0))
 
 
 def mask_labels(batch: Batch, keep: set[int]) -> Batch:
