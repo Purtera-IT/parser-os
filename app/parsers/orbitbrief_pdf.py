@@ -1263,7 +1263,10 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
         nxt_sections = pages[i + 1].get("sections") or []
         if not nxt_sections:
             continue
-        first_sec = nxt_sections[0]
+        oi = _opening_section_index(nxt_sections)
+        if oi is None:
+            continue
+        first_sec = nxt_sections[oi]
         if (first_sec.get("heading") or "").strip():
             continue  # a heading precedes the text — a new section, not a wrap
         nblocks = first_sec.get("blocks") or []
@@ -1280,16 +1283,31 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             prev_lines.extend(cont.get("lines") or [ctext])
         del nblocks[ci]
         if not nblocks:
-            del nxt_sections[0]
+            del nxt_sections[oi]
+
+
+def _opening_section_index(secs: list[dict[str, Any]]) -> int | None:
+    """Where a page's content opens: its first section with a heading or a
+    block that is not a page band. A band the page builder sets apart as a
+    leading section of its own (the "Docusign Envelope ID" stamp at the top
+    of every signed page) is skipped: on 010087's signed SOW it stood first
+    on each page, so the passes that continue the previous page there saw
+    no content and the bullets under it lost their section."""
+    for k, sec in enumerate(secs):
+        blocks = sec.get("blocks") or []
+        if (sec.get("heading") or "").strip() or not all(_is_page_furniture_block(b) for b in blocks):
+            return k
+    return None
 
 
 def _first_block_if_list(page: dict[str, Any]) -> dict[str, Any] | None:
     """The page's opening content block when it is a bullet list placed by
     the page geometry and no heading comes before it."""
     secs = page.get("sections") or []
-    if not secs or (secs[0].get("heading") or "").strip():
+    oi = _opening_section_index(secs)
+    if oi is None or (secs[oi].get("heading") or "").strip():
         return None
-    first = next((b for b in (secs[0].get("blocks") or []) if not _is_page_furniture_block(b)), None)
+    first = next((b for b in (secs[oi].get("blocks") or []) if not _is_page_furniture_block(b)), None)
     if first is None or first.get("kind") != "bullet_list" or not first.get("list_edges"):
         return None
     return first
@@ -1381,11 +1399,14 @@ def _carry_cross_page_section_headings(pages: list[dict[str, Any]]) -> None:
         secs = page.get("sections") or []
         if not secs:
             continue
-        first = secs[0]
-        if last_heading and not (first.get("heading") or "").strip() \
-                and (first.get("blocks") or []):
-            first["heading"] = last_heading
-            first["heading_carried"] = True
+        # Up to and including where the content opens: a stamp-only band
+        # section before it carries the heading as it always did.
+        oi = _opening_section_index(secs)
+        for first in secs[: len(secs) if oi is None else oi + 1]:
+            if last_heading and not (first.get("heading") or "").strip() \
+                    and (first.get("blocks") or []):
+                first["heading"] = last_heading
+                first["heading_carried"] = True
         for s in secs:
             h = (s.get("heading") or "").strip()
             if h:
@@ -2524,15 +2545,20 @@ def atoms_from_structured_doc(
         # Stable reading-order index for post-compile id-sort recovery.
         # Stamp both block_index (PDF/DOCX audit key) and line_start (email
         # audit key) so every consumer restores reading order the same way.
+        # A heading atom takes the half slot just before the line it leads
+        # (n - 0.5), so every other atom keeps the integer index it had before
+        # headings were emitted, and any sort on block_index or line_start
+        # still reads the heading first. Sharing the line's own index left
+        # the pair tied, and the tie fell to the atom id (a hash): 010353's
+        # ASSUMPTIONS / OUT OF SCOPE headings read after their first item.
+        is_heading = loc.get("block_kind") == "heading"
+        slot = emit_seq[0] - 0.5 if is_heading else emit_seq[0]
         if "block_index" not in loc:
-            loc["block_index"] = emit_seq[0]
+            loc["block_index"] = slot
         if "line_start" not in loc:
-            loc["line_start"] = emit_seq[0]
-            loc["line_end"] = emit_seq[0]
-        # A heading atom shares the reading-order index of the line it leads,
-        # so every other atom keeps the index it had before headings were
-        # emitted.
-        if loc.get("block_kind") != "heading":
+            loc["line_start"] = slot
+            loc["line_end"] = slot
+        if not is_heading:
             emit_seq[0] += 1
         if not doc_title:
             return atom
