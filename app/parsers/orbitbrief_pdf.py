@@ -1221,22 +1221,53 @@ def _is_page_furniture_block(block: dict[str, Any]) -> bool:
     return bool(text) and _looks_like_page_footer(text)
 
 
+def _last_content_block(
+    secs: list[dict[str, Any]], heads: tuple[str, ...] = (),
+) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
+    """The last content block of ``secs`` in reading order (a section's own
+    blocks come before its subsections), page bands skipped, with the
+    headings of the sections it sits in, from ``secs``' level down."""
+    for sec in reversed(secs or []):
+        h = (sec.get("heading") or "").strip()
+        own = heads + ((h,) if h else ())
+        found, path = _last_content_block(sec.get("subsections") or [], own)
+        if found is not None:
+            return found, path
+        if any(not _is_page_furniture_block(b) for b in (sec.get("blocks") or [])):
+            return [b for b in sec["blocks"] if not _is_page_furniture_block(b)][-1], own
+    return None, heads
+
+
 def _last_block_if_paragraph(page: dict[str, Any]) -> dict[str, Any] | None:
     """The page's final content block, but only if it's a paragraph or a
     bullet list. The footer band printed under it is not content: 010353's
     page footer sat last on the page, so the next page's continuation line
-    was glued onto the footer instead of the sentence it finishes."""
-    for sec in reversed(page.get("sections") or []):
-        blocks = [b for b in (sec.get("blocks") or []) if not _is_page_furniture_block(b)]
-        if not blocks:
-            continue
-        last = blocks[-1]
-        if last.get("kind") == "paragraph":
-            return last
-        if last.get("kind") == "bullet_list" and (last.get("items") or []):
-            return last
+    was glued onto the footer instead of the sentence it finishes. A block
+    in a subsection counts: 010003's last list sat under the colon lead-in
+    "Provider will perform the following:", a subsection of PROJECT SCOPE."""
+    last, _heads = _last_content_block(page.get("sections") or [])
+    if last is None:
         return None
+    if last.get("kind") == "paragraph":
+        return last
+    if last.get("kind") == "bullet_list" and (last.get("items") or []):
+        return last
     return None
+
+
+def _open_subsection_headings(page: dict[str, Any]) -> list[str]:
+    """The subsection headings (below the top-level section) the page's last
+    content block sits under, when that top-level section is the page's last
+    headed one (so the heading carried onto the next page is its heading)."""
+    secs = page.get("sections") or []
+    for k in range(len(secs) - 1, -1, -1):
+        last, heads = _last_content_block([secs[k]])
+        if last is None:
+            continue
+        if any((s.get("heading") or "").strip() for s in secs[k + 1:]):
+            return []
+        return list(heads[1:]) if (secs[k].get("heading") or "").strip() else list(heads)
+    return []
 
 
 def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
@@ -1327,8 +1358,11 @@ def _carry_list_nesting_across_pages(pages: list[dict[str, Any]]) -> None:
     is that sub-item's sibling, and one deeper than the last open item
     (``_bullet_is_deeper``) is its child. ``list_carry`` records each such
     item's full bullet_path and the texts of the items above it. An item at the
-    top level ends the carry, so top-level numbering never moves, and only an
-    item the page geometry places is carried. Runs after
+    x of the list's outermost open item is that item's next sibling (010003:
+    "Work will take place ..." opened the next page at [0] after "Clean the
+    work area" [8]), and the list keeps the subsection it opened in
+    (``section_carry``). An item outside the open list ends the carry, and
+    only an item the page geometry places is carried. Runs after
     ``_stitch_cross_page_continuations``, which first rejoins a sentence the
     break cut. Mutates ``pages`` in place.
     """
@@ -1347,7 +1381,12 @@ def _carry_list_nesting_across_pages(pages: list[dict[str, Any]]) -> None:
         base = (prev.get("list_carry") or {}).get(tail[0][1])
         path = list(base["path"][:-1]) if base else []
         texts = list(base["parents"]) if base else []
-        chain: list[dict[str, Any]] = []
+        # The list's own level above the break: an item at the x of its
+        # outermost open item is that item's next sibling.
+        chain: list[dict[str, Any]] = [{
+            "geo": (None,), "path": list(path), "texts": list(texts),
+            "n": (base["path"][-1] if base else tail[0][1]) + 1,
+        }]
         for k, (geo, idx, text) in enumerate(tail):
             path = path + [base["path"][-1] if (k == 0 and base) else idx]
             texts = texts + [text]
@@ -1359,14 +1398,12 @@ def _carry_list_nesting_across_pages(pages: list[dict[str, Any]]) -> None:
             geo = tuple(geo)
             if geo[0] is None or j >= len(items):
                 break
-            same = next((k for k in range(len(chain) - 1, -1, -1)
+            same = next((k for k in range(len(chain) - 1, 0, -1)
                          if chain[k]["geo"][0] is not None and abs(chain[k]["geo"][0] - geo[0]) <= 1.5), None)
             if same is not None:
                 del chain[same:]  # a sibling of that item: its parent is above it
-            elif not (chain and _bullet_is_deeper(geo, chain[-1]["geo"])):
-                break
-            if not chain:
-                break  # back at the top level: the rest numbers as before
+            elif not (len(chain) > 1 and _bullet_is_deeper(geo, chain[-1]["geo"])):
+                break  # outside the open list: the rest numbers as before
             parent = chain[-1]
             own = parent["path"] + [parent["n"]]
             parent["n"] += 1
@@ -1375,6 +1412,12 @@ def _carry_list_nesting_across_pages(pages: list[dict[str, Any]]) -> None:
                           "n": len(items[j].get("children") or [])})
         if carry:
             nxt["list_carry"] = carry
+            # The list goes on under the subsection it opened in (010003: the
+            # colon lead-in "Provider will perform the following:"), not only
+            # under the top-level heading the next page inherits.
+            sub = _open_subsection_headings(pages[i])
+            if sub:
+                nxt["section_carry"] = sub
 
 
 #: A line opened by a section number: "1. Scope", "2.1 Survey", "3) Fees".
@@ -2795,7 +2838,8 @@ def _atoms_for_sections(
 
         def _emit(b, lead=None):
             yield from _atoms_for_block(
-                block=b, section_path=path, page_index=page_index,
+                block=b, section_path=path + list(b.get("section_carry") or []),
+                page_index=page_index,
                 project_id=project_id, artifact_id=artifact_id,
                 filename=filename, parser_version=parser_version, lead_in=lead,
             )
