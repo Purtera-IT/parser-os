@@ -77,7 +77,7 @@ reading and relation in `atom_types.json` belongs to exactly one head.
 | rationale.evidence | rationale | universal | hints, hint_refs |
 | rationale.why | rationale | universal | the note, up to the `[company]` line |
 | conduct.action | conduct | company | co_action, co_reason, the `[company]` line, rejected |
-| conduct.constants | conduct | company | co_crew_rule, co_hours_estimate |
+| conduct.constants | conduct | company | co_crew_rule, co_hours_estimate, co_tech_base_miles |
 | conduct.routing | conduct | company | scope_category, delivery_field, source_of_truth |
 | conduct.intake | conduct | company | intake_gap, needed_by |
 | conduct.stage | conduct | company | co_stage_raw |

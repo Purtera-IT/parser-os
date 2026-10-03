@@ -508,13 +508,14 @@
       "space": "conduct",
       "layer": "company",
       "status": "label",
-      "label": "Our crew and hours rules",
-      "question": "Which of our rules sets the crew, and what do we estimate the hours at?",
+      "label": "Our crew, hours and travel",
+      "question": "Which of our rules sets the crew, what do we estimate the hours at, and how far is the site from our techs?",
       "output": "the learned constants inside a policy atom, e.g. the display size above which we send two techs",
       "columns": [],
       "reads": [
         "co_crew_rule",
-        "co_hours_estimate"
+        "co_hours_estimate",
+        "co_tech_base_miles"
       ],
       "relations": [],
       "judgments": [],
