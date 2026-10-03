@@ -1263,7 +1263,10 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
         nxt_sections = pages[i + 1].get("sections") or []
         if not nxt_sections:
             continue
-        first_sec = nxt_sections[0]
+        oi = _opening_section_index(nxt_sections)
+        if oi is None:
+            continue
+        first_sec = nxt_sections[oi]
         if (first_sec.get("heading") or "").strip():
             continue  # a heading precedes the text — a new section, not a wrap
         nblocks = first_sec.get("blocks") or []
@@ -1280,16 +1283,31 @@ def _stitch_cross_page_continuations(pages: list[dict[str, Any]]) -> None:
             prev_lines.extend(cont.get("lines") or [ctext])
         del nblocks[ci]
         if not nblocks:
-            del nxt_sections[0]
+            del nxt_sections[oi]
+
+
+def _opening_section_index(secs: list[dict[str, Any]]) -> int | None:
+    """Where a page's content opens: its first section with a heading or a
+    block that is not a page band. A band the page builder sets apart as a
+    leading section of its own (the "Docusign Envelope ID" stamp at the top
+    of every signed page) is skipped: on 010087's signed SOW it stood first
+    on each page, so the passes that continue the previous page there saw
+    no content and the bullets under it lost their section."""
+    for k, sec in enumerate(secs):
+        blocks = sec.get("blocks") or []
+        if (sec.get("heading") or "").strip() or not all(_is_page_furniture_block(b) for b in blocks):
+            return k
+    return None
 
 
 def _first_block_if_list(page: dict[str, Any]) -> dict[str, Any] | None:
     """The page's opening content block when it is a bullet list placed by
     the page geometry and no heading comes before it."""
     secs = page.get("sections") or []
-    if not secs or (secs[0].get("heading") or "").strip():
+    oi = _opening_section_index(secs)
+    if oi is None or (secs[oi].get("heading") or "").strip():
         return None
-    first = next((b for b in (secs[0].get("blocks") or []) if not _is_page_furniture_block(b)), None)
+    first = next((b for b in (secs[oi].get("blocks") or []) if not _is_page_furniture_block(b)), None)
     if first is None or first.get("kind") != "bullet_list" or not first.get("list_edges"):
         return None
     return first
@@ -1381,11 +1399,14 @@ def _carry_cross_page_section_headings(pages: list[dict[str, Any]]) -> None:
         secs = page.get("sections") or []
         if not secs:
             continue
-        first = secs[0]
-        if last_heading and not (first.get("heading") or "").strip() \
-                and (first.get("blocks") or []):
-            first["heading"] = last_heading
-            first["heading_carried"] = True
+        # Up to and including where the content opens: a stamp-only band
+        # section before it carries the heading as it always did.
+        oi = _opening_section_index(secs)
+        for first in secs[: len(secs) if oi is None else oi + 1]:
+            if last_heading and not (first.get("heading") or "").strip() \
+                    and (first.get("blocks") or []):
+                first["heading"] = last_heading
+                first["heading_carried"] = True
         for s in secs:
             h = (s.get("heading") or "").strip()
             if h:
