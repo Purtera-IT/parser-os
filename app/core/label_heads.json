@@ -610,7 +610,8 @@
         "governs_count",
         "exclude_from_training",
         "skip",
-        "derived_from_count"
+        "derived_from_count",
+        "why_author"
       ],
       "relations": [],
       "judgments": [],

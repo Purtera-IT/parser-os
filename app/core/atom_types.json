@@ -1483,6 +1483,13 @@
       "values": "true/false",
       "desc": "Bookkeeping: the row is set aside (old manual Deal Kit exclusion). Never a task.",
       "layer": "meta"
+    },
+    {
+      "key": "why_author",
+      "label": "Who wrote the WHY",
+      "values": "person | edited_draft | accepted_draft | machine_draft",
+      "desc": "Who wrote the WHY in this row's note. person: the labeler wrote it. edited_draft: a model's draft the labeler changed. accepted_draft: a model's draft a person saved as is (one card, or accept-all). machine_draft: a model or deal thread wrote it and no person has saved it since. Set by the page and the accept route on save, and by deal threads on the rows they write.",
+      "layer": "meta"
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",

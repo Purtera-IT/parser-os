@@ -82,7 +82,7 @@ reading and relation in `atom_types.json` belongs to exactly one head.
 | conduct.intake | conduct | company | intake_gap, needed_by |
 | conduct.stage | conduct | company | co_stage_raw |
 | conduct.precedent | conduct | company | every saved label is a precedent; a later save overrules it |
-| meta.bookkeeping | — | meta | co_company, deal_outcome, universal_type (never a task or input) |
+| meta.bookkeeping | — | meta | co_company, deal_outcome, universal_type, why_author (never a task or input) |
 
 ## 4. The mechanisms
 
