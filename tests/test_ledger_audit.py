@@ -252,7 +252,7 @@ def test_audit_never_changes_its_inputs_and_caps_examples():
 # Wiring -----------------------------------------------------------------------
 
 def test_compile_and_envelope_carry_the_audit_and_main_fixtures_have_no_unresolved_survivor(
-    demo_project: Path,
+    demo_project: Path, monkeypatch,
 ) -> None:
     """The synthetic demo deal compiles with zero (a) findings, and the report
     rides on the compile result and the envelope without changing the atoms."""
@@ -266,8 +266,13 @@ def test_compile_and_envelope_carry_the_audit_and_main_fixtures_have_no_unresolv
     assert audit["suppressed_atoms"] == len(result.suppressed_atoms)
     assert audit["counts"]["unresolved_survivor"] == 0, audit["examples"]["unresolved_survivor"]
     assert audit == audit_ledger(result.atoms, result.suppressed_atoms)
+    monkeypatch.setenv("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "1")
     envelope = build_orbitbrief_envelope(project_dir=demo_project, compile_result=result)
     assert envelope["ledger_audit"] == audit
+    # The envelope's own rows (with their locator, kind and standing survivor)
+    # can be recounted by a deal thread; they agree there is nothing unresolved.
+    recount = audit_ledger(envelope["atoms"], envelope["suppressed"] + envelope["suppressed_chrome"])
+    assert recount["counts"]["unresolved_survivor"] == 0, recount["examples"]["unresolved_survivor"]
 
 
 def test_docx_stress_fixtures_have_no_unresolved_survivor(tmp_path: Path) -> None:
