@@ -5838,26 +5838,24 @@ class XlsxParser(BaseParser):
                     continue
                 bare.append(value_str)
                 cell_columns[col_name] = get_column_letter(col_idx + 1)
-            # raw_text is the bare pipe-join of cell VALUES (not "col: value"),
-            # matching the docx per-row blob and the schema row_text — so when a
-            # raw_table_row routes this same row to a typed atom (deal_metadata,
-            # etc.), cross_type_dedup collapses this scope twin into it. Column
-            # meaning is preserved in value.cells and rendered back by
-            # _atom_bound_text at decide-time, so nothing is lost for display.
             raw_text = " | ".join(bare).strip()
             if not raw_text:
                 continue
             # Skip the header row itself so it doesn't reappear as data.
             if row_idx == header_idx:
                 continue
-            # One value alone on its row ("Chase Smith", the rest blank) is
-            # nothing without its column's name: "Name: Chase Smith".
+            # Under a header row every row reads in one shape: each cell under
+            # its column's name ("Site: Springfield, IL | Drive: 15 miles"),
+            # a lone value too ("Site: Dayton, OH"). The scope twin of a
+            # typed row is dropped by its cell locator, not its text.
             if header_idx >= 0:
-                from app.parsers.table_headers import bind_lone_cell
+                from app.parsers.table_headers import bind_lone_cell, bind_row
 
-                raw_text = bind_lone_cell(
-                    [str(c).strip() if c is not None else "" for c in row[: len(columns)]], columns,
-                ) or raw_text
+                _cells = [str(c).strip() if c is not None else "" for c in row[: len(columns)]]
+                _names = [
+                    "" if re.fullmatch(r"col_?\d+", c, re.I) else c for c in columns
+                ]
+                raw_text = bind_lone_cell(_cells, columns) or bind_row(_cells, _names) or raw_text
 
             source_ref = self._build_source_ref(
                 artifact_id=artifact_id,
