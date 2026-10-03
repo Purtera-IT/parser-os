@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.suppression_ledger import mark_dropped_not_folded, note_folded_into
+from app.core.suppression_ledger import note_folded_into
 from app.core.training_log import TEACHER_STORE, TrainingRow, log_rows
 
 QUOTE_LABOR_LINE_RELATION = "quote_labor_line"
@@ -253,7 +253,7 @@ def _quote_line_bucket_key(
 
 
 def consolidate_quote_line_tasks(atoms: list[Any], *, project_id: str = "") -> tuple[list[Any], int]:
-    """Rewrite quote-level task atoms to umbrella lines; drop PMO/admin tasks."""
+    """Rewrite quote-level task atoms to umbrella lines; PMO/admin tasks stay atoms, off the quote."""
     delivery_model = _delivery_model(atoms)
     config_install = _is_config_install_deal(delivery_model)
     kept: list[Any] = []
@@ -271,8 +271,22 @@ def consolidate_quote_line_tasks(atoms: list[Any], *, project_id: str = "") -> t
         text = _task_text(atom)
         decision = decide_quote_line(text, config_install=config_install)
         if not decision.quote_line:
-            # A verdict, not a fold: the line lives on nowhere else.
-            mark_dropped_not_folded(atom, "PMO/admin task, not a quote line")
+            # Not a quote line, but still a line of its source: it stays an
+            # atom, only off the quote. Dropping it removed it with no
+            # survivor, and only when the parser had typed it a task -- the
+            # same SOW list item typed scope_item stood (000132 v1 vs v2).
+            val = dict(_atom_value(atom))
+            val["is_quote_line"] = False
+            val["quote_line"] = {
+                "label": "",
+                "technician_skill": "",
+                "source": decision.source,
+                "confidence": decision.confidence,
+                "original_text": text,
+                "reason": "PMO/admin task, not a quote line",
+            }
+            atom.value = val
+            kept.append(atom)
             changed += 1
             continue
 
