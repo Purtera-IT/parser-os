@@ -24,7 +24,7 @@ from ml.c3.folds import FoldStack  # noqa: E402
 from ml.c3.losses import LossWeights, absence_targets, c3_loss  # noqa: E402
 from ml.c3.model import C3Config, C3Model  # noqa: E402
 from ml.c3.notes import extract_programs, mask_verdict, split_note  # noqa: E402
-from ml.c3.schema import POLICY_WORDS, RELATION, Answer, Opportunity, load_schema  # noqa: E402
+from ml.c3.schema import POLICY_WORDS, Answer, Opportunity, load_schema  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parents[1] / "ml" / "c3" / "fixtures" / "synthetic_deal.json"
 SMALL = C3Config(d_text=64, d=64, n_layers=2, n_heads=4, d_r=32, d_q=16, d_head=32,

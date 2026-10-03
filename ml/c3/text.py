@@ -17,6 +17,13 @@ from torch import nn
 _WORD = re.compile(r"[a-z0-9$\"]+|\[mask\]")
 
 
+def word_spans(text: str) -> list[tuple[str, int, int]]:
+    """The words of a line as every encoder here sees them, with character
+    spans: what a per-word weight (supercharge.py) is defined over."""
+    t = str(text or "")
+    return [(m.group(0), m.start(), m.end()) for m in _WORD.finditer(t.lower())]
+
+
 def _hash(s: str, buckets: int) -> int:
     return zlib.crc32(s.encode("utf-8")) % buckets
 
