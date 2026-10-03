@@ -46,6 +46,12 @@ from typing import Any, Iterable
 # with their attributes (currently a marker for future wiring).
 _llm_site_attr_cache: dict[str, dict] = {}
 
+#: The " | " that starts the next "Label: value" cell of a keyed table row.
+_NEXT_KEYED_CELL_RE = re.compile(r"\s\|\s*[^|:\n]{1,60}:")
+
+#: A label value that is only a count ("12", "1,200", "12 total").
+_COUNT_VALUE_RE = re.compile(r"\s*\d[\d,]*(?:\s+total)?\s*(?:\||$)", re.IGNORECASE)
+
 # Headings that indicate the section IS the authoritative site list.
 # Match against normalized section path tokens (lower-cased).
 _LOCATIONS_SECTION_PHRASES: tuple[str, ...] = (
@@ -581,6 +587,16 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
             stop = re.search(r"\n\s*\n|\. [A-Z]|;\s*[A-Z][a-z]+\s", list_text)
             if stop:
                 list_text = list_text[:stop.start()]
+            # A keyed table row ("Locations: 12 | Hours(min): 3 | Total:
+            # 36", "Location: Kenton, OH | Remote: 15 miles") ends the
+            # label's value at its own cell; the next "Label:" cell is
+            # another column, not more of the site list.
+            cell = _NEXT_KEYED_CELL_RE.search(list_text)
+            if cell:
+                list_text = list_text[:cell.start()]
+            # "Locations: 12" is how many sites, not which ones.
+            if _COUNT_VALUE_RE.match(list_text):
+                continue
             for piece in re.split(r"[,;\n\r]+|\s{3,}|\bAND\b|\band\b", list_text):
                 piece = piece.strip(" .-•*\t()[]")
                 if 4 <= len(piece) <= 120 and any(c.isupper() for c in piece):
