@@ -1275,13 +1275,21 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         if id(atom) not in emitted_merged and id(atom) not in consumed_ids:
             out.append(atom)
     phys_out = sum(1 for a in out if _atom_type_value(a) == "physical_site")
+    # An atom kept above (a site demoted to keep its words is no longer a
+    # physical_site, so it went out with the other types) must not go out a
+    # second time: 010353's intake "Job site" line, demoted as an alias of no
+    # site, came back as the site-blind pick and the compile held two atoms
+    # with one id.
+    out_ids = {id(a) for a in out}
     if phys_out == 0 and physical:
         # Never leave a deal site-blind — keep best geo-fallback or highest-quality site.
         geo = [a for a in physical if _is_geo_fallback_physical_site(a)]
         pool = geo if geo else physical
         best = max(pool, key=lambda a: _physical_site_quality(a, _physical_site_id(a)))
-        out.append(best)
-        phys_out = 1
+        if id(best) not in out_ids:
+            out.append(best)
+            out_ids.add(id(best))
+            phys_out = 1
     # Multi-city deals: re-emit consumed geo-fallback sites when location differs
     # from any surviving winner (extends site-blind safety above).
     winner_location_buckets: set[str] = set()
@@ -1300,8 +1308,9 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         if not isinstance(val, dict):
             continue
         atom_buckets = _site_location_buckets(val, _physical_site_id(atom))
-        if atom_buckets and not (atom_buckets & winner_location_buckets):
+        if atom_buckets and not (atom_buckets & winner_location_buckets) and id(atom) not in out_ids:
             out.append(atom)
+            out_ids.add(id(atom))
             winner_location_buckets |= atom_buckets
     return out
 

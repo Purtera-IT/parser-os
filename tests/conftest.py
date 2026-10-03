@@ -36,6 +36,17 @@ def _offline_llm_by_default(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _strict_compile_invariants(monkeypatch) -> None:
+    """A compile-wide invariant (no two atoms share an id) raises in tests.
+
+    Production only warns, so a stage that breaks it would otherwise pass every
+    test with a WARNING nobody reads.
+    """
+    monkeypatch.setenv("SOWSMITH_STRICT_INVARIANTS", "1")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_active_domain_pack() -> None:
     """Avoid cross-test leakage via mutable domain-pack singleton state."""
     from app.domain import load_domain_pack, set_active_domain_pack
