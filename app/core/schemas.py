@@ -832,6 +832,10 @@ class CompileResult(BaseModel):
     # and which were never read at all. A recall miss otherwise leaves no
     # trace -- see app/core/text_coverage.py.
     text_coverage: list[dict[str, Any]] = Field(default_factory=list)
+    # Report-only audit of the suppression ledger: folds with no standing
+    # survivor, merged/lossy survivors, partly folded lists. Counts plus
+    # examples with atom ids -- see app/core/ledger_audit.py.
+    ledger_audit: dict[str, Any] = Field(default_factory=dict)
     manifest: "CompileManifest | None" = None
     trace: "CompileTrace | None" = None
     candidate_summary: CandidateSummary | None = None
@@ -860,6 +864,7 @@ class CompileResult(BaseModel):
                 "warnings": data.get("warnings", []),
                 "suppressed_atoms": data.get("suppressed_atoms", []),
                 "text_coverage": data.get("text_coverage", []),
+                "ledger_audit": data.get("ledger_audit", {}),
                 "manifest": data.get("manifest"),
                 "trace": data.get("trace"),
                 "candidate_summary": data.get("candidate_summary"),
