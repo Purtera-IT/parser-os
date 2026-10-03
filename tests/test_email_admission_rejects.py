@@ -195,7 +195,9 @@ Carl Painter
 _VOLATILE = {"compile_id", "generated_at", "created_at", "output_signature", "duration_ms",
              "stage_durations_ms", "trace", "telemetry", "coverage",
              # process-wide "last run" model counters, not envelope content
-             "deflect_counts"}
+             "deflect_counts",
+             # a report over every atom, chatter included (kept_atoms count), like coverage
+             "ledger_audit"}
 
 
 def _envelope_without(env, drop_ids):
