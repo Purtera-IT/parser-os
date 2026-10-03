@@ -38,20 +38,68 @@ class LossWeights:
     rule_links: float = 0.5        # follows_rule / exception_to supervise a rule's region
     why_echo: float = 0.2          # r_to_text(r_i) lands on the encoded WHY (ask.py)
     clause_use: float = 0.1        # removing any non-statement clause must change the output
+    pointers: float = 0.3          # hint_refs: the lines a decision came from
+    entities: float = 0.2          # entity_keys: lines naming the same entity pull together
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
+
+
+def row_weights(batch: Batch, device) -> torch.Tensor:
+    """Per-line weight from weight_tier (load_bearing 3, ordinary 1, slight 0.3)."""
+    w = batch.weights if len(batch.weights) == len(batch) else [1.0] * len(batch)
+    return torch.tensor(w, device=device, dtype=torch.float32)
+
+
+def weighted_ce(logits: torch.Tensor, y: torch.Tensor, rw: torch.Tensor) -> torch.Tensor:
+    """Cross-entropy averaged with row weights over the lines with a label."""
+    m = y != IGNORE
+    ce = F.cross_entropy(logits, y.clamp(min=0), reduction="none")
+    return (ce * rw * m).sum() / (rw * m).sum().clamp(min=1e-6)
+
+
+def pointer_loss(out: C3Output, batch: Batch) -> torch.Tensor:
+    """hint_refs name the lines a decision came from: the pointer head puts
+    its mass on the earlier ones (the heads see only the past)."""
+    if out.pointers is None or not batch.hint_lines:
+        return out.r.new_zeros(())
+    total, terms = out.r.new_zeros(()), 0
+    for i, js in enumerate(batch.hint_lines):
+        js = [j for j in js if j < i]
+        if js:
+            total = total - torch.logsumexp(out.pointers[i, js], 0)
+            terms += 1
+    return total / max(terms, 1)
+
+
+def entity_loss(out: C3Output, batch: Batch, tau: float = 0.1) -> torch.Tensor:
+    """entity_keys: lines naming the same site, person or device pull
+    together in r, against every other line of the deal (supervised
+    contrastive)."""
+    ents = [set(e) for e in (batch.entities or [])]
+    n = out.r.shape[0]
+    if len(ents) != n or sum(bool(e) for e in ents) < 2:
+        return out.r.new_zeros(())
+    pos = torch.tensor([[a != b and bool(ents[a] & ents[b]) for b in range(n)] for a in range(n)],
+                       device=out.r.device)
+    has = pos.any(1)
+    if not has.any():
+        return out.r.new_zeros(())
+    z = F.normalize(out.r, dim=-1)
+    sim = (z @ z.T / tau).masked_fill(torch.eye(n, dtype=torch.bool, device=z.device), -1e4)
+    logp = sim.log_softmax(-1)
+    return -((logp * pos).sum(1)[has] / pos.sum(1)[has]).mean()
 
 
 def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
                 layer: str) -> tuple[torch.Tensor, torch.Tensor]:
     dev = out.r.device
     ce, num, terms = out.r.new_zeros(()), out.r.new_zeros(()), 0
+    rw = row_weights(batch, dev)
     for opp in model.schema.select(layer=layer):
         if opp.key not in out.logits:
             continue
         y = torch.tensor(batch.targets[opp.key], device=dev)
         if (y != IGNORE).any():
-            ce = ce + w.space.get(opp.space, 1.0) * F.cross_entropy(
-                out.logits[opp.key], y, ignore_index=IGNORE)
+            ce = ce + w.space.get(opp.space, 1.0) * weighted_ce(out.logits[opp.key], y, rw)
             terms += 1
         if opp.kind == NUMBER and opp.key in out.numbers:
             vals = batch.numbers_target.get(opp.key, [])
@@ -260,6 +308,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["claims"] = claims_loss(out, batch, bank)
     parts["rule_links"] = rule_link_loss(out, batch, bank)
     parts["why_echo"] = why_echo_loss(model, out, batch)
+    parts["pointers"] = pointer_loss(out, batch)
+    parts["entities"] = entity_loss(out, batch)
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
@@ -301,7 +351,7 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     """Every v6 term for one deal (brain.py has the table). Notes come from
     the deal's other lines; the reasoned pass and the rationale use each
     line's own WHY, which the direct pass never sees."""
-    from .brain import notes_from_deal  # noqa: PLC0415 (keeps losses importable without the brain)
+    from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
     from .consolidate import context_distillation_loss  # noqa: PLC0415
 
     w = w or BrainWeights()
@@ -312,13 +362,15 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     parts: dict[str, torch.Tensor] = {}
 
     direct = brain(batch, company=company, notes=notes, company_notes=cnotes, graph=graph, desc=desc)
-    reasoned = brain(batch, company=company, why=batch.why, notes=notes, company_notes=cnotes,
-                     graph=graph, desc=desc)
+    why = told_why(batch, brain.schema)
+    cfield = company_field_notes(batch, brain.schema)
+    reasoned = brain(batch, company=company, why=why, notes=notes,
+                     company_notes=[c + f for c, f in zip(cnotes, cfield)], graph=graph, desc=desc)
     parts["direct"] = _answer_ce(direct, batch, keys)
     parts["reasoned"] = _answer_ce(reasoned, batch, keys)
     parts["rationale"] = brain.rationale_loss(batch, notes, graph)
 
-    has_why = torch.tensor([bool(t) for t in batch.why], device=parts["direct"].device)
+    has_why = torch.tensor([bool(t) for t in why], device=parts["direct"].device)
     if has_why.any():
         parts["distill"] = torch.stack([
             F.kl_div(direct.logits[k][has_why].log_softmax(-1),

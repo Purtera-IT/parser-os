@@ -96,6 +96,9 @@ class Schema:
     #: Sentences dropped from universal guidance because they name company
     #: policy: (opportunity key, sentence). Shown by ``python -m ml.c3.card``.
     scrubbed: list[tuple[str, str]] = field(default_factory=list)
+    #: Free-text readings ("the reasoning behind <field>"): not answers, but
+    #: per-field WHYs the teacher reads (data.field_note_targets).
+    note_fields: list[str] = field(default_factory=list)
 
     def by_key(self) -> dict[str, Opportunity]:
         return {o.key: o for o in self.opportunities}
@@ -221,6 +224,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
         return scrub(f"{h.get('label', '')}. {h.get('question', '')}", universal)
 
     opps: list[Opportunity] = []
+    note_fields: list[str] = []
     for h in heads["heads"]:
         if h.get("layer") not in ("universal", "company"):
             continue                      # meta: bookkeeping, never trained
@@ -252,7 +256,8 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
             if r is None or r.get("layer") not in ("universal", "company"):
                 continue
             if r.get("values") == "free text":
-                continue                  # a side note; it is rationale, not an answer
+                note_fields.append(rk)    # a per-field WHY, not an answer
+                continue
             kind, values = _value_kind(r.get("values", ""))
             subject = scrub(r.get("label", rk), universal) or _spell(rk)
             opps.append(Opportunity(
@@ -269,7 +274,8 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     lead(h, universal), f"{r.get('label', rel)}.", scrub(r.get("desc", ""), universal)) if x),
                 **base))
 
-    schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")))
+    schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")),
+                    note_fields=note_fields)
     if guidance is not None:
         if not isinstance(guidance, dict):
             guidance = json.loads(Path(guidance).read_text(encoding="utf-8"))

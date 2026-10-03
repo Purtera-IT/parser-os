@@ -318,6 +318,27 @@ def notes_from_deal(batch: Batch, k: int = 3) -> tuple[list[list[str]], list[lis
     return uni, com
 
 
+def told_why(batch: Batch, schema: Schema) -> list[str | None]:
+    """Each line's WHY plus its universal per-field notes ("sow_coverage: ..."),
+    as the reasoned pass reads them. Company field notes go to the company
+    pass only (``company_field_notes``)."""
+    layer = {o.key: o.layer for o in schema.opportunities}
+    out = []
+    for i in range(len(batch)):
+        parts = [batch.why[i]] if batch.why[i] else []
+        notes = batch.field_notes[i] if i < len(batch.field_notes) else {}
+        parts += [f"{k.split(':', 1)[1]}: {t}" for k, t in notes.items() if layer.get(k) == "universal"]
+        out.append("\n".join(parts) or None)
+    return out
+
+
+def company_field_notes(batch: Batch, schema: Schema) -> list[list[str]]:
+    layer = {o.key: o.layer for o in schema.opportunities}
+    return [[f"{k.split(':', 1)[1]}: {t}" for k, t in (batch.field_notes[i].items()
+             if i < len(batch.field_notes) else []) if layer.get(k) == "company"]
+            for i in range(len(batch))]
+
+
 def _tail(why: list[str | None] | None, i: int) -> str:
     if why is not None and why[i]:
         return f"Why: {why[i]}\nAnswer:"

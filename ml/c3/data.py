@@ -58,6 +58,7 @@ class Atom:
     speaker_role: str = ""
     speaker_side: str = ""
     label: dict[str, Any] | None = None
+    atom_id: str = ""
 
 
 @dataclass
@@ -76,7 +77,8 @@ class DealExample:
                       doc_id=str(a.get("doc_id", "")), doc_kind=str(a.get("doc_kind", "")),
                       section=str(a.get("section", "")), order=int(a.get("order", i)),
                       speaker_role=str(a.get("speaker_role", "")),
-                      speaker_side=str(a.get("speaker_side", "")), label=a.get("label"))
+                      speaker_side=str(a.get("speaker_side", "")), label=a.get("label"),
+                      atom_id=str(a.get("atom_id") or a.get("id") or ""))
                  for i, a in enumerate(d["atoms"])]
         # Time order is the deal's order: ties keep document order.
         atoms.sort(key=lambda a: (a.entered_at, a.order))
@@ -111,6 +113,25 @@ class DealExample:
                 for link in lb.get("links", []) or []:
                     edges.append({"src": row["key"], "dst": link["to"], "relation": link["relation"]})
             rows.append(row)
+        # Missed rows: text the parser made no atom of, highlighted by a
+        # labeler (origin "labeler"). They have no atom row, so they become
+        # lines from their own text, or the base never learns what the parser
+        # misses.
+        seen = {a.get("label_key") for a in atoms}
+        for lb in blob.get("labels", []):
+            if lb.get("label_key") in seen or not str(lb.get("text") or "").strip():
+                continue
+            if str(lb.get("origin") or "").strip().lower() != "labeler":
+                continue
+            rows.append({"key": lb["label_key"], "text": lb["text"], "label": lb,
+                         "atom_id": lb.get("atom_id") or "",
+                         "entered_at": lb.get("entered_at") or lb.get("source_date"),
+                         "doc_id": lb.get("doc_id", ""), "doc_kind": lb.get("doc_kind", ""),
+                         "section": lb.get("section", ""), "order": lb.get("order", len(rows)),
+                         "speaker_role": lb.get("speaker_role", ""),
+                         "speaker_side": lb.get("speaker_side", "")})
+            for link in lb.get("links", []) or []:
+                edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
         return DealExample.from_dict({"deal_id": deal_id, "company": company,
                                       "atoms": rows, "edges": edges})
 
@@ -174,6 +195,13 @@ class Batch:
     #: Proposed labeling fields (v5 section 6); empty until the card has them.
     rule_links: list[tuple[int, str, int]] = field(default_factory=list)  # (line, rule id, +1 follows / -1 exception)
     changes: list[dict[str, str] | None] = field(default_factory=list)    # line -> {slot: down|none|up}
+    #: The rest of the labeling (heads-readthrough.md): per-field notes by
+    #: opportunity, row weight from weight_tier, the lines a decision came
+    #: from (hint_refs), and the entities a line names (entity_keys).
+    field_notes: list[dict[str, str]] = field(default_factory=list)
+    weights: list[float] = field(default_factory=list)
+    hint_lines: list[list[int]] = field(default_factory=list)
+    entities: list[list[str]] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -191,6 +219,56 @@ def _field_value(label: dict[str, Any], source: str, name: str) -> Any:
     return (label.get("reads_set") or {}).get(name)
 
 
+#: Row weights by ``weight_tier`` (same values as app.learning.human_labels).
+TIER_WEIGHT = {"load_bearing": 3.0, "ordinary": 1.0, "slight": 0.3}
+EXCLUDE_NOTE_PREFIX = "EXCLUDE_FROM_TRAINING"
+_TRUE = ("true", "1", "yes", "t")
+
+
+def excluded(label: dict[str, Any] | None) -> bool:
+    """An old manual Deal Kit row, or one set aside: it never trains a head
+    (same test as app.learning.human_labels._marked_excluded, plus ``skip``).
+    The line stays in the deal as context for the others."""
+    if not label:
+        return False
+    note = str(label.get("note") or "").lstrip().lstrip("[").upper()
+    reads = label.get("reads_set") if isinstance(label.get("reads_set"), dict) else {}
+    return (note.startswith(EXCLUDE_NOTE_PREFIX)
+            or str(label.get("weight_tier") or "").strip().lower() == "exclude"
+            or str(label.get("consumer") or "").strip().lower() == "ignore"
+            or str(reads.get("exclude_from_training")).strip().lower() in _TRUE
+            or str(reads.get("skip")).strip().lower() in _TRUE)
+
+
+def _with_legacy_reject(label: dict[str, Any]) -> dict[str, Any]:
+    """Older rows record a company reject only in the ``rejected`` column;
+    it teaches co_action = reject when co_action is blank."""
+    rej = label.get("rejected")
+    reads = label.get("reads_set") if isinstance(label.get("reads_set"), dict) else {}
+    if rej in (None, "", False) or str(rej).strip().lower() in ("false", "f", "0", "no"):
+        return label
+    if reads.get("co_action"):
+        return label
+    return {**label, "reads_set": {**reads, "co_action": "reject"}}
+
+
+def field_note_targets(schema: Schema) -> dict[str, str]:
+    """Free-text ``<field>_note`` readings -> the opportunity they explain.
+    ``sow_coverage_note`` -> read:sow_coverage, ``address_note`` ->
+    read:address_level (the one reading in the registry that starts with it)."""
+    fields = {o.field: o.key for o in schema.opportunities if o.source == "read"}
+    out = {}
+    for name in schema.note_fields:
+        base = name[: -len("_note")]
+        if base in fields:
+            out[name] = fields[base]
+        else:
+            hits = [k for f, k in fields.items() if f.startswith(base + "_")]
+            if len(hits) == 1:
+                out[name] = hits[0]
+    return out
+
+
 def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = False) -> Batch:
     """Split one deal into model inputs and per-opportunity targets.
 
@@ -199,7 +277,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     reading is unknown unless a human removed it, so it is not taught as
     "absent". Columns (label_type, about...) are always taught when present.
     """
-    atoms = deal.atoms
+    import dataclasses
+
+    atoms = [dataclasses.replace(a, label=None) if excluded(a.label)
+             else dataclasses.replace(a, label=_with_legacy_reject(a.label)) if a.label else a
+             for a in deal.atoms]
     n = len(atoms)
     index = {a.key: i for i, a in enumerate(atoms)}
     company = deal.company or "purtera"
@@ -256,6 +338,30 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             rule_links.append((i, rid, -1))
         changes.append(parse_changes(reads.get("changes")))
 
+    # Per-field notes: the reasoning behind one field, kept per line by the
+    # opportunity it explains (the teacher reads it as that head's WHY).
+    by_note = field_note_targets(schema)
+    opp_layer = {o.key: o.layer for o in schema.opportunities}
+    field_notes: list[dict[str, str]] = []
+    weights: list[float] = []
+    hint_lines: list[list[int]] = []
+    entities: list[list[str]] = []
+    by_atom = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
+    for a in atoms:
+        lb = a.label or {}
+        reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
+        notes = {}
+        for name, key in by_note.items():
+            t = drop_meta(str(reads.get(name) or ""))
+            if t:
+                notes[key] = mask_verdict(t) if opp_layer.get(key) == "universal" else t
+        field_notes.append(notes)
+        weights.append(TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))
+        refs = [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)]
+        hint_lines.append(sorted({by_atom.get(str(r.get("atomId")), index.get(str(r.get("atomId"))))
+                                  for r in refs} - {None}))
+        entities.append(_as_list(lb.get("entity_keys")))
+
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
     return Batch(
@@ -268,7 +374,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                        for b in atoms] for a in atoms],
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
-        outcome=dict(deal.outcome), rule_links=rule_links, changes=changes)
+        outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
+        field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities)
 
 
 def _as_list(v: Any) -> list[str]:
