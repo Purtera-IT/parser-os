@@ -389,6 +389,21 @@ def _canonical_quantity_noun(raw: str) -> str:
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
 
 
+#: The longest context a surfaced quantity carries whole.
+_MAX_CONTEXT_CHARS = 320
+
+
+def _is_cell_field(atom: Any) -> bool:
+    """The atom's text is a table cell or a labelled box ("Bill To: <address
+    lines>") that the parser rebuilt from separate spots on the page, which
+    it marks with ``cell_fragments``."""
+    for ref in getattr(atom, "source_refs", None) or []:
+        loc = getattr(ref, "locator", None)
+        if isinstance(loc, dict) and loc.get("cell_fragments"):
+            return True
+    return False
+
+
 def _context_sentence(text: str, span: tuple[int, int]) -> str:
     """Return the sentence (or a bounded window) of ``text`` that contains the
     matched quantity span, so a surfaced quantity atom carries its subject and
@@ -411,7 +426,7 @@ def _context_sentence(text: str, span: tuple[int, int]) -> str:
         picked = text.strip()
     # A transcript "sentence" can still be a long multi-clause turn; keep it
     # bounded but always context-bearing (never shorter than the bare mention).
-    if len(picked) > 320:
+    if len(picked) > _MAX_CONTEXT_CHARS:
         left = max(0, start - 160)
         right = min(len(text), end + 160)
         picked = text[left:right].strip()
@@ -569,7 +584,14 @@ def surface_headline_quantities(atoms: list[Any], *, project_id: str) -> list[An
         if _atom_type_str(atom) not in _SOURCE_TYPES_FOR_HEADLINE:
             continue
         text = _atom_text(atom)
+        field = _is_cell_field(atom)
         for n, noun, metadata in _iter_quantity_mentions(text):
+            if field and len(text.strip()) <= _MAX_CONTEXT_CHARS:
+                # A boxed field's text is one value, not prose: its lines were
+                # joined, so a line ending "Dept." reads as a sentence end.
+                # Cut there, the quantity came out as a second atom on the
+                # same block holding the field minus its first line.
+                metadata["context"] = text.strip()
             emitted_key = (n, noun.lower())
             if n in have or n in names or emitted_key in emitted_counts:
                 continue
