@@ -197,6 +197,14 @@ def test_the_duplicate_marker_opens_the_note():
     assert not _checks(_row(note=ok)) & {"duplicate_marker_misplaced", "parser_remark_outside_line"}
     after_exclude = "[EXCLUDE_FROM_TRAINING: old manual Deal Kit]\nDUPLICATE of parser atom lbl_1\nWHY"
     assert "duplicate_marker_misplaced" not in _checks(_row(note=after_exclude))
+    # 010087: the marker follows the EXCLUDE reason on the same line.
+    same_line = "EXCLUDE_FROM_TRAINING: copy of a parser row. DUPLICATE of parser atom: lbl_1, same text.\nFour racks."
+    for c in ("duplicate_marker_misplaced", "duplicate_marker_unmatched", "parser_remark_outside_line"):
+        assert c not in _checks(_row(note=same_line)), c
+    assert "parser_remark_outside_line" not in _checks(_row(note=after_exclude))
+    assert "parser_remark_outside_line" in _checks(_row(note="EXCLUDE_FROM_TRAINING: x.\nThe parser cut this."))
+    twice = "EXCLUDE_FROM_TRAINING: DUPLICATE of parser atom lbl_1\nDUPLICATE of parser atom lbl_1"
+    assert "duplicate_marker_misplaced" in _checks(_row(note=twice))
     assert "duplicate_marker_misplaced" in _checks(_row(note="Four racks.\nDUPLICATE of parser atom lbl_1"))
     assert "duplicate_marker_misplaced" in _checks(_row(note="Four racks.\n[parser] DUPLICATE of parser atom lbl_1"))
 

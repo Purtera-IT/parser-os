@@ -100,6 +100,8 @@ PARSER_REMARK = re.compile(r"\bshould\s+(?:split|merge)\b|\bparser\b|\bmis-?pars
 #: ..."). The training mirror keeps it out; the marker opens the note (after
 #: an EXCLUDE line), never on the [parser] line.
 DUPLICATE_MARKER = re.compile(r"^\s*(?:\[parser\]\s*)?duplicate of parser atom", re.I)
+#: The marker may also follow the EXCLUDE reason on the EXCLUDE line itself.
+DUPLICATE_AFTER_EXCLUDE = re.compile(r"\bduplicate of parser atom", re.I)
 _QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|'[^'\n]{3,}'")
 
 
@@ -180,17 +182,22 @@ def format_checks(row: dict[str, Any]) -> list[dict[str, str]]:
         add("parser_line_not_last", "meta.bookkeeping",
             f"{PARSER_NOTE_MARKER} goes once, on the last line of the note, so training can drop it.")
     content = [i for i, ln in enumerate(lines) if ln.strip()]
+    exclude_at = -1
     if content and re.match(r"\s*\[?EXCLUDE_FROM_TRAINING", lines[content[0]], re.I):
-        content = content[1:]
+        exclude_at, content = content[0], content[1:]
     first = content[0] if content else -1
-    dup_at = [i for i, ln in enumerate(lines) if DUPLICATE_MARKER.match(ln)]
-    if dup_at and dup_at != [first]:
+    # "EXCLUDE_FROM_TRAINING: ... DUPLICATE of parser atom: ..." on one line.
+    dup_on_exclude = exclude_at >= 0 and bool(DUPLICATE_AFTER_EXCLUDE.search(lines[exclude_at]))
+    dup_at = [i for i, ln in enumerate(lines)
+              if DUPLICATE_MARKER.match(ln) or (i == exclude_at and dup_on_exclude)]
+    if dup_at and not (len(dup_at) == 1 and dup_at[0] in (first, exclude_at)):
         add("duplicate_marker_misplaced", "meta.bookkeeping",
             "DUPLICATE of parser atom goes once, as the first line (after any EXCLUDE line), never on the [parser] line.")
     if first >= 0 and first not in dup_at and lines[first].lstrip().upper().startswith("DUPLICATE"):
         add("duplicate_marker_unmatched", "meta.bookkeeping",
             'A duplicate marker must read "DUPLICATE of parser atom ...", or the training mirror does not see it.')
-    rest = "\n".join(ln for i, ln in enumerate(lines) if i not in parser_at and i not in dup_at)
+    # The EXCLUDE line is bookkeeping and never trains, so it may name the parser.
+    rest = "\n".join(ln for i, ln in enumerate(lines) if i not in parser_at and i not in dup_at and i != exclude_at)
     if PARSER_REMARK.search(_QUOTED.sub("", rest)) or PARSER_NOTE_MARKER in rest.lower():
         add("parser_remark_outside_line", "rationale.why",
             f"A remark about the parse (SHOULD SPLIT, SHOULD MERGE, a parse problem) goes on the {PARSER_NOTE_MARKER} line.")

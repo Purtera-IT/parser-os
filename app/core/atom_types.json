@@ -1255,8 +1255,8 @@
     {
       "key": "sow_section",
       "label": "Which SOW section it belongs in",
-      "values": "scope_of_work | deliverables | out_of_scope | assumptions | customer_responsibilities | provider_responsibilities | timeline | fees | contacts | other",
-      "desc": "The standard SOW section this line lands in. provider_responsibilities is the service provider's side; no company name belongs in the value.",
+      "values": "overview | scope_of_work | deliverables | acceptance | out_of_scope | assumptions | customer_responsibilities | provider_responsibilities | timeline | fees | change_control | terms | contacts | other",
+      "desc": "The standard SOW section this line lands in. overview is the introduction, executive summary or project overview; acceptance is how the work is accepted; change_control is how scope changes are requested and priced; terms is termination and the other legal terms. provider_responsibilities is the service provider's side; no company name belongs in the value.",
       "layer": "universal"
     },
     {
