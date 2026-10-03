@@ -160,11 +160,30 @@ def apply_site_attributes(rows: list[dict], atoms: Iterable[Any]) -> tuple[int, 
 #: the payload bounded on a pathological file without letting one noisy
 #: document (a 4,000-line mail thread) starve every other one of its drops.
 #: What the cap cuts is counted in the envelope's `suppressed_truncated`.
+#:
+#: The default is 5,000. Every dropped line now travels as a visible copy in
+#: the labelling walk, so the cap must not bind on a real document: 300 was
+#: below what one real deal drops (000132: ~323 across its documents; live
+#: 010353 ledger: 477) and the largest whole-deal ledger measured is 4,591.
+#: 5,000 per document holds all of that and still bounds a pathological file.
+#: Override with SOWSMITH_SUPPRESSED_MAX_PER_DOC (or SOWSMITH_SUPPRESSED_MAX),
+#: read at call time.
+_SUPPRESSED_MAX_DEFAULT = 5000
 _SUPPRESSED_MAX = int(
     os.environ.get("SOWSMITH_SUPPRESSED_MAX_PER_DOC")
     or os.environ.get("SOWSMITH_SUPPRESSED_MAX")
-    or "300"
+    or str(_SUPPRESSED_MAX_DEFAULT)
 )
+
+
+def _suppressed_cap() -> int:
+    """The per-document cap, from the environment when it is set now."""
+    raw = (os.environ.get("SOWSMITH_SUPPRESSED_MAX_PER_DOC")
+           or os.environ.get("SOWSMITH_SUPPRESSED_MAX") or "").strip()
+    try:
+        return max(0, int(raw)) if raw else _SUPPRESSED_MAX
+    except ValueError:
+        return _SUPPRESSED_MAX
 
 
 #: Cap on the rule decisions an envelope carries, same reasoning as
@@ -271,6 +290,54 @@ def _where(atom) -> tuple[str, str]:
     return "", ""
 
 
+def _first_locator(atom: Any) -> dict:
+    """The atom's own ``source_refs[0].locator``, copied: the same object a
+    kept atom carries as ``locator`` in ``env.atoms`` (see `_compact_atom`)."""
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else None
+    return dict(loc) if isinstance(loc, dict) else {}
+
+
+def _walk_page(loc: dict) -> Any:
+    """The page the labelling walk keys an atom by: ``loc.page ?? loc.sheet``
+    (Platform-infra ``shared/atom-labeling.js`` ``buildWalk``). Unlike `_where`
+    it never falls back to ``page_number`` or ``table_index``: a docx table
+    row has ``page: None, table_index: 0``, which `_where` reads as page "0"
+    and the walk as no page, so the two keys differed."""
+    page = loc.get("page")
+    if page is None:
+        page = loc.get("sheet")
+    # JavaScript prints 2.0 as "2".
+    if isinstance(page, float) and page.is_integer():
+        page = int(page)
+    return page
+
+
+def _walk_label_key(deal_id: str, atom: Any, filename_of: dict[str, str] | None) -> str:
+    """The bare `label_key` the labelling walk would give this atom if it sat
+    in ``env.atoms``: (deal, the envelope document's filename -- or the
+    artifact id when no document has it --, ``page ?? sheet``, its text).
+
+    Bare: the walk's ``assignLabelKeys`` suffixes the 2nd..nth row of a
+    colliding group with "@<position>" / "#n"; that suffix depends on the
+    whole walk, so it is the walk's to add, from the row's ``locator``.
+    Without an envelope document list, falls back to the source filename.
+    """
+    text = getattr(atom, "raw_text", "") or getattr(atom, "text", "") or ""
+    aid = str(getattr(atom, "artifact_id", "") or "")
+    if filename_of:
+        # buildWalk: ``doc ? doc.filename : a.artifact_id``.
+        fname = filename_of[aid] if aid in filename_of else aid
+    else:
+        fname = _where(atom)[0]
+        if not fname:
+            return ""
+    try:
+        return _label_key(deal_id, fname, _walk_page(_first_locator(atom)), text)
+    except Exception:
+        return ""
+
+
 def _suppressed_total(compile_result: "CompileResult") -> int:
     """How many atoms the compile dropped, before `_SUPPRESSED_MAX` cuts them.
 
@@ -341,6 +408,11 @@ def _suppressed_chrome_for_review(compile_result: "CompileResult") -> list[dict]
             "reason": why_of.get(id(atom), ""),
             "filename": _fname,
             "page": _page,
+            # Where it sits and what kind of removal it was, so the labeller
+            # can place the line and collapse it.
+            "locator": _first_locator(atom),
+            "kind": suppression_kind(atom, stage),
+            "drop_reason": _drop_reason(atom),
         })
     return out
 
@@ -355,10 +427,11 @@ def _suppressed_capped(dropped: list) -> tuple[list, dict[str, int]]:
     kept: list = []
     seen: dict[str, int] = {}
     cut: dict[str, int] = {}
+    cap = _suppressed_cap()
     for atom in dropped:
         doc = _suppressed_doc_key(atom)
         n = seen.get(doc, 0)
-        if n >= _SUPPRESSED_MAX:
+        if n >= cap:
             cut[doc] = cut.get(doc, 0) + 1
             continue
         seen[doc] = n + 1
@@ -370,12 +443,12 @@ def _suppressed_truncated(compile_result: "CompileResult") -> dict[str, Any]:
     """What the per-document cap cut from the ledger: a total and the count per
     artifact. Zero when nothing was cut or the ledger is not carried."""
     if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
-        return {"count": 0, "per_document_cap": _SUPPRESSED_MAX, "by_artifact": {}}
+        return {"count": 0, "per_document_cap": _suppressed_cap(), "by_artifact": {}}
     dropped = _split_chrome(list(getattr(compile_result, "suppressed_atoms", None) or []))[0]
     _kept, cut = _suppressed_capped(dropped)
     return {
         "count": sum(cut.values()),
-        "per_document_cap": _SUPPRESSED_MAX,
+        "per_document_cap": _suppressed_cap(),
         "by_artifact": cut,
     }
 
@@ -404,7 +477,59 @@ def _drop_reason(atom: Any) -> str:
     return str(sup.get("drop_reason") or v.get(DROPPED_NOT_FOLDED_KEY) or "")
 
 
-def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[dict]:
+def _suppressed_order(
+    shown: list, kept: list, documents: list[dict] | None, env_atom_ids: list[str] | None,
+) -> dict[int, int]:
+    """Where each shown drop belongs in ``env.atoms``: the number of atoms of
+    ``env.atoms`` that precede it in the envelope's reading order. Sorted with
+    the same key ``env.atoms`` is (`_in_reading_order`), then anchored on the
+    kept atom right before it, so it stays right when ``env.atoms`` gains rows
+    after this is built (held chatter). {} without a document list."""
+    if documents is None or not shown:
+        return {}
+    try:
+        ids = env_atom_ids if env_atom_ids is not None else [
+            str(getattr(a, "id", "") or "") for a in _in_reading_order(list(kept), documents)
+        ]
+        index = {aid: i for i, aid in enumerate(ids)}
+        dropped = {id(a) for a in shown}
+        out: dict[int, int] = {}
+        before = 0
+        for a in _in_reading_order(list(kept) + list(shown), documents):
+            if id(a) in dropped:
+                out[id(a)] = before
+                continue
+            at = index.get(str(getattr(a, "id", "") or ""))
+            if at is not None:
+                before = max(before, at + 1)
+        return out
+    except Exception:  # pragma: no cover - placement is never fatal
+        return {}
+
+
+def _place_suppressed_rows(
+    envelope: dict, compile_result: "CompileResult", kept: list, documents: list[dict],
+) -> None:
+    """Re-anchor each suppressed row's ``order`` on the final ``env.atoms``
+    (held chatter is merged into it after the rows are built). Touches only
+    ``envelope["suppressed"]``."""
+    rows = envelope.get("suppressed") or []
+    if not rows:
+        return
+    shown = _suppressed_capped(
+        _split_chrome(list(getattr(compile_result, "suppressed_atoms", None) or []))[0]
+    )[0]
+    if len(shown) != len(rows):
+        return
+    ids = [str(r.get("id") or "") for r in envelope.get("atoms") or []]
+    order_of = _suppressed_order(shown, kept, documents, ids)
+    for atom, row in zip(shown, rows):
+        row["order"] = order_of.get(id(atom))
+
+
+def _suppressed_for_review(
+    compile_result: "CompileResult", kept: list, documents: list[dict] | None = None,
+) -> list[dict]:
     """The atoms the compile dropped, with the stage that dropped them.
 
     `CompileResult.suppressed_atoms` has recorded every one of these all
@@ -423,6 +548,23 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
 
     Opt-in via ``SOWSMITH_SUPPRESSED_IN_ENVELOPE=1``. A few hundred extra
     atoms is not free, and only a labelling run needs them.
+
+    Each row also carries what the labeller needs to show a folded line as a
+    copy where it sits (no kept atom, product section or atom id changes):
+
+    * ``locator`` -- the atom's own ``source_refs[0].locator``, verbatim, the
+      same object a kept atom carries in ``env.atoms``.
+    * ``order`` -- an insertion index into ``env.atoms``: the number of kept
+      atoms that precede this one in the envelope's reading order. The row
+      belongs between ``env.atoms[order - 1]`` and ``env.atoms[order]``
+      (null without the envelope's document list).
+    * ``label_key`` -- the BARE key the walk would give the atom if it were
+      kept (see `_walk_label_key`); the walk adds its own "@pos" / "#n".
+    * ``same_key_as_survivor`` -- the survivor has that same bare key: the
+      same words in the same file on the same page (a duplicate_atom_collapse).
+    * ``survivor.in_atoms`` -- whether ``survivor.id`` is in ``env.atoms``.
+      When it is not (a cross-document copy), ``survivor.copy_of`` names the
+      atom of ``env.atoms`` it copies.
     """
     if os.environ.get("SOWSMITH_SUPPRESSED_IN_ENVELOPE", "").strip() != "1":
         return []
@@ -463,8 +605,31 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
             return kept_by_id.get(str(rec.get("atom_id") or ""))
         return None
 
+    in_atoms = {str(getattr(a, "id", "") or "") for a in kept}
+
+    def _copy_in_atoms(atom: Any) -> str:
+        # Follow duplicate_of until it reaches an atom of env.atoms.
+        seen: set[str] = set()
+        cur = atom
+        while cur is not None:
+            target = _copy_of(cur)
+            if not target or target in seen:
+                return ""
+            if target in in_atoms:
+                return target
+            seen.add(target)
+            cur = kept_by_id.get(target)
+        return ""
+
+    filename_of: dict[str, str] | None = None
+    if documents:
+        filename_of = {str(d.get("artifact_id") or ""): str(d.get("filename") or "") for d in documents}
+
+    shown = _suppressed_capped(dropped)[0]
+    order_of = _suppressed_order(shown, kept, documents, None)
+
     out: list[dict] = []
-    for atom in _suppressed_capped(dropped)[0]:
+    for atom in shown:
         stage = ""
         for flag in (getattr(atom, "review_flags", None) or []):
             if str(flag).startswith("suppressed:"):
@@ -472,14 +637,10 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
                 break
         survivor = _recorded_survivor(atom) or survivors.get(norm(atom))
         _fname, _page = _where(atom)
-        try:
-            _lkey = _label_key(
-                _deal_id, _fname,
-                _page or None,
-                getattr(atom, "raw_text", "") or getattr(atom, "text", "") or "",
-            ) if _fname else ""
-        except Exception:
-            _lkey = ""
+        _lkey = _walk_label_key(_deal_id, atom, filename_of)
+        _skey = _walk_label_key(_deal_id, survivor, filename_of) if survivor is not None else ""
+        _sid = "" if survivor is None else str(getattr(survivor, "id", "") or "")
+        _scopy = "" if survivor is None else (_copy_in_atoms(survivor) or _copy_of(survivor))
         out.append({
             "id": str(getattr(atom, "id", "") or ""),
             "artifact_id": str(getattr(atom, "artifact_id", "") or ""),
@@ -505,13 +666,17 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
             "filename": _fname,
             "page": _page,
             "label_key": _lkey,
+            "same_key_as_survivor": bool(_lkey) and _lkey == _skey,
+            "locator": _first_locator(atom),
+            "order": order_of.get(id(atom)),
             "entity_keys": [str(k) for k in (getattr(atom, "entity_keys", None) or [])],
             # Present only when something with the same words survived -- that
             # is what makes a fold judgeable.
             "survivor": None if survivor is None else {
-                "id": str(getattr(survivor, "id", "") or ""),
+                "id": _sid,
                 "text": (getattr(survivor, "raw_text", "") or getattr(survivor, "text", "") or "")[:2000],
-                **({"copy_of": _copy_of(survivor)} if _copy_of(survivor) else {}),
+                "in_atoms": _sid in in_atoms,
+                **({"copy_of": _scopy} if _scopy else {}),
             },
         })
     return out
@@ -983,7 +1148,7 @@ def build_orbitbrief_envelope(
         "indexes": indexes,
         # What the compile THREW AWAY, so a person can say whether it should
         # have. See `_suppressed_for_review`.
-        "suppressed": _suppressed_for_review(compile_result, atoms),
+        "suppressed": _suppressed_for_review(compile_result, atoms, documents),
         # HOW MANY there were, before the cap. Without this the ledger is
         # indistinguishable from a complete one: a deal that suppressed exactly
         # 300 atoms and a deal that suppressed 4,591 both ship 300 rows, and
@@ -1410,6 +1575,7 @@ def build_orbitbrief_envelope(
         _enrich_atom_threads(envelope.get("atoms") or [], threads)
     if held_chatter:
         _merge_held_chatter(envelope, held_chatter, atoms, documents, threads)
+        _place_suppressed_rows(envelope, compile_result, list(atoms) + list(held_chatter), documents)
     # Last, once every atom is in place: who brought each document in and
     # which way it went, on the document and on each of its atoms.
     from app.core.doc_origin import annotate_doc_origin
