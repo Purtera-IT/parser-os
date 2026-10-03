@@ -18,8 +18,8 @@ folded is a copy as a unit and stays folded.
 A "list" is the structure the parser read:
 
 * the items one source line was split into (an inline " - " list), and
-* a run of three or more adjacent lines of one message, each one short item
-  (a bullet list, its lead-in line, a list of site names).
+* a run of adjacent bulleted lines of one message, each one item, with the
+  lead-in line just above it.
 
 Structure only: no atom's type, text or id changes.
 """
@@ -105,18 +105,6 @@ def _line_lists(atoms: list[Any]) -> list[list[Any]]:
     return out
 
 
-#: A list item reads as one: it opens like one, is short, and holds no
-#: sentence break (the same shape ``split_inline_dash_list`` asks of a segment).
-_MAX_ITEM_WORDS = 20
-
-
-def _item_shaped(text: str) -> bool:
-    import re
-
-    return bool(text) and bool(re.match(r"^[A-Z0-9(\"']", text)) \
-        and len(text.split()) <= _MAX_ITEM_WORDS and not re.search(r"[.!?]\s+[A-Z]", text)
-
-
 def _scaffolding(atom: Any) -> bool:
     """A header, or chatter (a signature block is not a list of items)."""
     kind = str(_value(atom).get("kind") or "")
@@ -126,32 +114,43 @@ def _scaffolding(atom: Any) -> bool:
 
 
 def _line_runs(atoms: list[Any]) -> list[list[Any]]:
-    """A list written one item per line: adjacent lines of one message, each
-    holding one short item (its own atom, and any copy of it)."""
-    by_line: dict[tuple, list[Any]] = {}
+    """A list written one item per line: adjacent bulleted lines of one
+    message (``list_marker``), each one item, with the lead-in line just above.
+
+    Only a line the parser read as a bullet counts. A run of short unmarked
+    lines -- "Locations" and the site names under it -- is not this list,
+    even when it sits right above it.
+    """
+    by_line: dict[tuple, dict[int, list[Any]]] = {}
     for a in atoms:
         line = _line(a)
-        if line is None:
+        if line is None or _scaffolding(a):
             continue
         by_line.setdefault(_place(a), {}).setdefault(line, []).append(a)
     out: list[list[Any]] = []
+
+    def _close(lines: dict[int, list[Any]], run: list[int]) -> None:
+        if len(run) < 2:
+            return
+        group = [m for ln in run for m in lines[ln]]
+        lead = lines.get(run[0] - 1, [])
+        if lead and len({_bare(getattr(m, "raw_text", "")) for m in lead}) == 1 \
+                and not any(_value(m).get("list_marker") for m in lead):
+            group = list(lead) + group
+        out.append(group)
+
     for lines in by_line.values():
-        run: list[Any] = []
-        prev = None
+        run: list[int] = []
         for line in sorted(lines):
             members = lines[line]
             texts = {_bare(getattr(m, "raw_text", "")) for m in members}
-            one_item = len(texts) == 1 and _item_shaped(next(iter(texts))) \
-                and not any(_scaffolding(m) for m in members)
-            if one_item and prev is not None and line == prev + 1 and run:
-                run.extend(members)
-            else:
-                if len({_line(m) for m in run}) >= 3:
-                    out.append(run)
-                run = list(members) if one_item else []
-            prev = line
-        if len({_line(m) for m in run}) >= 3:
-            out.append(run)
+            bullet = len(texts) == 1 and all(_value(m).get("list_marker") for m in members)
+            if bullet and run and line == run[-1] + 1:
+                run.append(line)
+                continue
+            _close(lines, run)
+            run = [line] if bullet else []
+        _close(lines, run)
     return out
 
 
@@ -168,7 +167,10 @@ def keep_lists_whole(atoms: list[Any], suppressed: list[Any]) -> tuple[list[Any]
         return atoms, suppressed, []
     standing = {id(a) for a in atoms}
     by_id = {str(getattr(a, "id", "") or ""): a for a in atoms}
-    pool = list(atoms) + list(suppressed)
+    # A copy the own-copy sweep minted is not one of the document's own
+    # lines: it neither makes a list partial nor belongs to one.
+    pool = [a for a in list(atoms) + list(suppressed)
+            if (_value(a).get("duplicate_of") or {}).get("stage") != "own_copy_sweep"]
     groups = _line_lists(pool) + _line_runs(pool)
 
     def _canonical(atom_id: str) -> Any | None:

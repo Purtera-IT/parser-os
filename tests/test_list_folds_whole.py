@@ -200,3 +200,33 @@ def test_prose_sentences_of_one_line_are_not_a_list():
     ]
     atoms, suppressed, back = keep_lists_whole(note + mail[1:], [mail[0]])
     assert back == [] and [a.id for a in suppressed] == ["m0"]
+
+
+def test_unmarked_lines_above_a_bulleted_list_are_not_part_of_it():
+    # "Locations" and its place names sit right above the bulleted list; they
+    # are not bullets, so their folds are not the list's business.
+    note = [_Atom(f"n{i}", t, "note", 9) for i, t in enumerate(["Locations", "Springfield", *ITEMS])]
+    places = [_Atom("p0", "Locations", "mail", 20, survivor="n0"),
+              _Atom("p1", "Springfield", "mail", 21, survivor="n1")]
+    lead = _Atom("l0", LEAD, "mail", 22)
+    bullets = [_Atom(f"b{i}", t, "mail", 23 + i, survivor=(f"n{i + 2}" if i < 2 else "")) for i, t in enumerate(ITEMS)]
+    for b in bullets:
+        b.value["list_marker"] = "-"
+    standing = [lead] + [b for b in bullets if SURVIVOR_KEY not in b.value]
+    folded = places + [b for b in bullets if SURVIVOR_KEY in b.value]
+    atoms, suppressed, back = keep_lists_whole(note + standing, folded)
+    assert sorted(a.id for a in back) == ["b0", "b1"]
+    assert sorted(a.id for a in suppressed) == ["p0", "p1"]
+
+
+def test_an_email_bullet_line_records_its_marker(tmp_path: Path):
+    from app.parsers.email_parser import EmailParser
+
+    p = tmp_path / "list.eml"
+    p.write_text("From: A <a@x.example>\nTo: b@y.example\nSubject: s\nDate: Mon, 1 Jun 2026 10:00:00 -0400\n\n"
+                 f"Hi,\n\n{LEAD}\n" + "\n".join(f"- {i}" for i in ITEMS) + "\n\nThanks\n", encoding="utf-8")
+    atoms = EmailParser().parse_artifact(project_id="p", artifact_id="m", path=p)
+    by_text = {a.raw_text: a for a in atoms}
+    for i in ITEMS:
+        assert by_text[i].value.get("list_marker") == "-", i
+    assert "list_marker" not in by_text[LEAD].value
