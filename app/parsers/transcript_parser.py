@@ -327,6 +327,39 @@ def _is_restart(text: str, nxt: str) -> bool:
     return len(a) >= 3 and len(b) >= 2 and a[:2] == b[:2]
 
 
+def _finishes_restart(text: str, nxt: str) -> bool:
+    """The next cue restates the cut restart's 2-3 word head and finishes it
+    ("How are we gonna." / "How are we thinking?"): the restart stopped on an
+    auxiliary with no verb after it, so the two are one sentence."""
+    a, b = _lower_words(text), _lower_words(nxt)
+    if not a or a[-1] not in _CUT_AUXILIARIES or not _cue_ends_cut(text):
+        return False
+    head = len(a) - 1
+    return 2 <= head <= 3 and len(b) > head and a[:head] == b[:head] and not _cue_ends_cut(nxt)
+
+
+#: A hedge verb whose subject the speaker dropped ("Think there's a cap.")
+#: and the clause openers it hedges.
+_HEDGE_VERBS = frozenset({"think", "guess"})
+_HEDGE_CLAUSES = frozenset({"there's", "it's", "that's", "there", "it", "we", "they"})
+
+
+def _hedge_restarts(text: str, nxt: str) -> bool:
+    """A short hedge with a dropped subject ("Think there's a cap.") whose
+    clause the next cue opens again and carries on ("There's a few sites
+    that ..."): the hedge heads that sentence."""
+    a, b = _lower_words(text), _lower_words(nxt)
+    return (
+        3 <= len(a) <= _HEAD_MAX_WORDS
+        and a[0] in _HEDGE_VERBS
+        and a[1] in _HEDGE_CLAUSES
+        and text[:1].isupper()
+        and len(b) > len(a)
+        and a[1] == b[0]
+        and not nxt.rstrip().endswith("?")
+    )
+
+
 def _is_open_tail(text: str) -> bool:
     """A short cut cue that may close the sentence before it."""
     words = _lower_words(text)
@@ -387,6 +420,8 @@ def _continues_cue(
         prev_open = False
     if prev_open or _cue_echoes(p, s):
         return _within_pause(prev, seg, both_sides=_is_fragment(s))
+    if _finishes_restart(p, s) or (prev_alone and _hedge_restarts(p, s)):
+        return _within_pause(prev, seg, both_sides=False)
     if _continues(s) or (
         _is_verbless(s) and not p.rstrip().endswith("?") and not s_question
         and not _opens_aside(s) and _restates(p, s)
