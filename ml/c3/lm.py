@@ -1,20 +1,15 @@
-"""The language-model brain C3 reads explanations with (architecture v6).
+"""The language model inside the training-only teacher (architecture v6).
 
 A person who is told "the 65-inch panels are a two-person lift, so every
 mount needs two techs and the hours double, unless the customer's staff do
 the lifting" understands it because they already know the language: what a
-lift is, what "unless" does, that doubling techs doubles labor. They do not
-need fifty million examples to learn that, and neither should the model. The
-knowledge that makes a paragraph understandable comes from a pretrained
-language model, which learned it from trillions of words before it ever saw
-a deal. Our labels then teach it Purtera's reasoning, which is the part only
-we have.
-
-So v6 puts a causal language model at the center. It reads each line in its
-deal context, reads (or writes) the WHY paragraph, and the heads read its
-hidden states (brain.py). Nothing on that path splits sentences with
-keywords or applies if/and rules: the paragraph goes in as words and the
-network decides what each word does.
+lift is, what "unless" does, that doubling techs doubles labor. A pretrained
+language model carries that knowledge, learned from trillions of words
+before it sees a deal. v6 uses one only as the **teacher** (brain.py) that
+reads our WHY paragraphs in training; the task heads learn from it
+(supercharge.py) and run without it. Nothing on the teacher's path splits
+sentences with keywords or applies if/and rules: the paragraph goes in as
+words.
 
 This file holds the two interchangeable LMs and the adapter slots that let a
 paragraph be compiled into weights (consolidate.py):
@@ -23,7 +18,7 @@ paragraph be compiled into weights (consolidate.py):
   pretrained knowledge. It exists so the tests and shape checks run on CPU
   with nothing downloaded. Its outputs mean nothing until trained.
 * ``HFCausalLM``: any pretrained causal LM from ``transformers`` (the v6 doc
-  names candidates). This is the real brain. Optional import, as with
+  names candidates). This is the real teacher. Optional import, as with
   ``text.HFEncoder``.
 
 Both expose the same interface: ``tokenize``, ``forward(ids, mask, prefix)

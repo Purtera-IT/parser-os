@@ -174,7 +174,7 @@ model asks the one question worth the most, with its worth.
 | Training table | `app/learning/multitask_table.py` (rows carry `head` and `space`) |
 | API | Platform-infra `azure-function-api/shared/label-heads.json` (vendored), `/types` serves it, saves return format checks |
 | Page | purpulse-frontend `LabelingWorkspace.tsx`: one card section per space |
-| Model (untrained) | `ml/c3/`: the spaces, heads and losses above as PyTorch, heads built from this registry's text; never imported by `app` (`ml/c3/README.md`). v5 (explanations compiled into operators, graded by outcomes) is described there and in the project's base-architecture-v5.md |
+| Model (untrained) | `ml/c3/`: the spaces, heads and losses above as PyTorch, heads built from this registry's text; never imported by `app` (`ml/c3/README.md`). v6 (current): the heads run alone; the WHY paragraphs teach them in training through a teacher that reads them (`ml/c3/supercharge.py`), measured as label efficiency (`ml/c3/efficiency.py`); see the project's base-architecture-v6.md. v5 (compiled operators) is kept as a baseline |
 
 ## 7. Build order
 

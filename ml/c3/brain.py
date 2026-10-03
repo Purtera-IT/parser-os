@@ -1,9 +1,15 @@
-"""Heads that read with a language model (architecture v6).
+"""The training-only teacher that reads the long labels (architecture v6).
+
+The product is the task heads (model.C3Model); they run alone, with no
+language model. This module is the teacher they learn from in training
+(supercharge.py), and is never loaded at run time. It can wrap a pretrained
+LM or encoder so it already knows the language; the heads never depend on
+it generating text.
 
 For every line, a causal LM (lm.py) reads a plain-text page: the earlier
 lines of the deal (never later ones), the line itself, optionally notes from
 other labeled lines, and in the reasoned pass the line's own WHY paragraph.
-Every head then reads the LM's hidden states over that whole page, queried
+The teacher's heads read the LM's hidden states over that whole page, queried
 by its own description, and scores each answer against the answer's
 description, both embedded by the same LM. There is no keyword table, clause
 splitter or if/and rule anywhere on this path: the paragraph goes in as
@@ -22,11 +28,11 @@ rationale      the same page, scored token by token on the WHY  next-token loss:
                                                                 learns to write the reason
 =============  ==============================================  ============================
 
-The reasoned pass makes the heads use the paragraph. The rationale loss makes
+The reasoned pass makes the teacher use the paragraph. The rationale loss makes
 the LM able to produce the reasoning itself, so it learns the connection,
 not the answer string. Distillation moves what the reasoning concludes into
-the direct pass, so at inference the model answers fast and can still be
-asked to write its WHY first (``explain``).
+the direct pass, which is the read the teacher gives on lines nobody
+labeled. ``explain`` lets a person see what WHY the teacher would write.
 
 Notes from other lines are read in context (``notes``) or compiled into
 weights by consolidate.py, so a paragraph read once keeps working after it
