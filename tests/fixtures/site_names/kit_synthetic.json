@@ -1,0 +1,5 @@
+{"deal_id": "SYN-K", "sites": [
+ {"name": "St. Louis Office", "site_key": "site:st_louis_office"},
+ {"name": "Harbor Warehouse", "site_key": "site:harbor_warehouse"},
+ {"name": "Nowhere Annex"}
+]}

@@ -789,6 +789,37 @@ def _contains_at_boundary(haystack: str, needle: str) -> bool:
     return re.search(rf"(?:^|_){re.escape(needle)}(?:_|$)", haystack) is not None
 
 
+def site_name_label(index: int, total: int, name: Any) -> str:
+    """How the brief says which site this is.
+
+    A site no document names is still a site: it renders as
+    ``"site 3 of 7, name unknown"`` instead of a composed placeholder
+    ("<City> Office", "Site 1") that no document ever wrote.
+    """
+    text = str(name or "").strip()
+    if text:
+        return text
+    return f"site {int(index)} of {int(total)}, name unknown"
+
+
+def annotate_site_name_status(rows: Sequence[Any]) -> int:
+    """Stamp ``name_status`` and ``name_label`` on site rows in place.
+
+    Returns how many rows are unnamed. ``display_name`` (the address-backed
+    label) is left alone; ``name_label`` is what a renderer shows as the
+    site's name.
+    """
+    dict_rows = [r for r in rows if isinstance(r, dict)]
+    total = len(dict_rows)
+    unknown = 0
+    for i, row in enumerate(dict_rows, start=1):
+        name = str(row.get("facility_name") or "").strip()
+        row["name_status"] = "named" if name else "unknown"
+        row["name_label"] = site_name_label(i, total, name)
+        unknown += 0 if name else 1
+    return unknown
+
+
 def recover_site_display_names(
     *,
     sites: Sequence[Mapping[str, Any]],
@@ -889,6 +920,8 @@ __all__ = [
     "clean_site_name",
     "collapse_number_word_duplication",
     "recover_site_display_names",
+    "annotate_site_name_status",
+    "site_name_label",
     "resolve_site_names",
     "unsupported_name_tokens",
 ]
