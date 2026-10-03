@@ -43,6 +43,8 @@ _ANAPHORIC_RE = re.compile(
     r"means|applies|apply|requires?|covers?|consists?|refers?)\b",
     re.I,
 )
+# A line that opens with a label of its own ("Hours: Subject to ...").
+_LABEL_LINE_RE = re.compile(r"^[A-Z][\w&/'’()-]*(?:\s+[\w&/'’()-]+){0,3}:(?:\s|$)")
 _BULLET_GLYPH_RE = re.compile(r"^(?:[•▪●◦‣\-–—*]|\d{1,2}[.)]|[a-z][.)])\s+\S")
 _MIN_SENTENCE = 25
 
@@ -97,8 +99,32 @@ def _split_semicolon_rules(sentence: str) -> list[str]:
     return parts
 
 
-def split_clauses(text: str, *, min_chars: int = 160) -> list[str]:
-    """The paragraph's clauses, or ``[]`` when it should stay one atom."""
+def _hard_break_segments(lines: list[str]) -> list[str]:
+    """Lines joined back into runs, broken only where a manual line break
+    (Word's ``w:br``) ends a line: the next line opens with a label of its own
+    ("Hours: ..."), or the line before already closed its sentence. A
+    break inside a sentence (the next line starts lower-case, or simply runs
+    on) is a visual wrap and stays joined."""
+    segs: list[str] = []
+    for ln in lines:
+        if segs and not ln[:1].islower() and (
+            _LABEL_LINE_RE.match(ln) or re.search(r"[.!?][\"”’)]*$", segs[-1])
+        ):
+            segs.append(ln)
+        elif segs:
+            segs[-1] = f"{segs[-1]} {ln}"
+        else:
+            segs.append(ln)
+    return segs
+
+
+def split_clauses(text: str, *, min_chars: int = 160, hard_breaks: bool = False) -> list[str]:
+    """The paragraph's clauses, or ``[]`` when it should stay one atom.
+
+    ``hard_breaks``: the text's newlines are manual line breaks typed by the
+    author (a docx ``w:br``), not layout wraps, so a break before a labelled
+    line ends the sentence before it even without a full stop (see
+    ``_hard_break_segments``)."""
     raw = text or ""
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     # A lead-in line ("Business hours are as follows:") over rows typed as
@@ -136,7 +162,10 @@ def split_clauses(text: str, *, min_chars: int = 160) -> list[str]:
         return units
 
     joined = " ".join(raw.split())
-    parts = sentences(joined)
+    if hard_breaks and len(lines) >= 2:
+        parts = [p for seg in _hard_break_segments(lines) for p in sentences(seg)]
+    else:
+        parts = sentences(joined)
     if len(parts) < 2 and joined.count(";") < 2:
         return []
     lead_in = parts[-1] if len(parts) >= 2 and parts[-1].endswith(":") else None
