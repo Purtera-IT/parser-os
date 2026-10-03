@@ -41,6 +41,7 @@ class LossWeights:
     pointers: float = 0.3          # hint_refs: the lines a decision came from
     entities: float = 0.2          # entity_keys: lines naming the same entity pull together
     judgments: float = 1.0         # judgment tabs about two lines, a group or the deal
+    negatives: float = 0.3         # answers known wrong (the parser's type a person overruled)
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -129,6 +130,21 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
         y = torch.tensor([j.answer for j in js], device=logits.device)
         total = total + F.cross_entropy(logits, y)
         terms += 1
+    return total / max(terms, 1)
+
+
+def negative_loss(out: C3Output, batch: Batch) -> torch.Tensor:
+    """Push probability off answers a person ruled out: -log(1 - p(wrong))."""
+    total, terms = out.r.new_zeros(()), 0
+    for key, rows in batch.negatives.items():
+        lg = out.logits.get(key)
+        if lg is None:
+            continue
+        p = lg.softmax(-1)
+        for i, bad in enumerate(rows):
+            if bad:
+                total = total - torch.log1p(-p[i, bad].sum().clamp(max=1 - 1e-6))
+                terms += 1
     return total / max(terms, 1)
 
 
@@ -333,6 +349,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["pointers"] = pointer_loss(out, batch)
     parts["entities"] = entity_loss(out, batch)
     parts["judgments"] = judgment_loss(model, out, batch, desc)
+    parts["negatives"] = negative_loss(out, batch)
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
