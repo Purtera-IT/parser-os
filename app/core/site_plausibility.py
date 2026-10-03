@@ -58,6 +58,15 @@ _PLACE = re.compile(
 #: prose that merely contains the word "context" is untouched.
 _SERIALIZED_SOURCE = re.compile(r"^context\.[A-Za-z_]")
 
+#: A keyed count cell: "Locations: 12 | Hours(min): 3", "# of Sites: 12",
+#: "Site count: 4". The value is how many places, never which one.
+_COUNT_CELL = re.compile(
+    r"(?:^|\|)\s*(?:#|no\.?|number)?\s*(?:of\s+)?"
+    r"(?:sites?|locations?|facilities|buildings?|schools?|stores?|branches|campuses)"
+    r"(?:\s*(?:count|total|qty))?\s*:\s*(\d[\d,]*)\s*(?=\||$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def _clean(s: Any) -> str:
     return str(s or "").replace(" ", " ")
@@ -80,6 +89,33 @@ def is_serialized_source(text: Any) -> bool:
     return bool(_SERIALIZED_SOURCE.match(_clean(text).lstrip()))
 
 
+def is_count_cell_name(name: Any, *texts: Any) -> bool:
+    """True when ``name`` is read off a keyed count cell in ``texts``.
+
+    "Locations: 12 | Hours(min): 3 | Total: 36" names no place; a site
+    candidate that is the bare count, or begins with it ("12 hours min 3
+    total 36"), came from that cell. A real place in a Location column
+    ("Location: Kenton, OH") has no count value and is untouched.
+    """
+    # A bare ``site:<slug>`` key passed alongside stands in for a missing name.
+    names = [name, *(t for t in texts if _clean(t).startswith("site:"))]
+    counts = {
+        m.group(1).replace(",", "")
+        for t in texts
+        for m in _COUNT_CELL.finditer(_clean(t))
+    }
+    if not counts:
+        return False
+    for nm in names:
+        raw = _clean(nm)
+        if raw.startswith("site:"):
+            raw = raw[len("site:"):]
+        s = re.sub(r"[^a-z0-9]+", " ", raw.lower()).strip()
+        if s and any(s == n or s.startswith(n + " ") for n in counts):
+            return True
+    return False
+
+
 def rejects_as_site(name: Any = "", *texts: Any) -> str:
     """The one call every site minter should make.
 
@@ -90,6 +126,8 @@ def rejects_as_site(name: Any = "", *texts: Any) -> str:
     """
     if is_equipment_shaped(name):
         return "equipment_not_a_place"
+    if is_count_cell_name(name, *texts):
+        return "count_not_a_place"
     for t in (name, *texts):
         if is_serialized_source(t):
             return "recycled_pipeline_output"
