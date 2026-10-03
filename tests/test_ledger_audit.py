@@ -193,7 +193,7 @@ def test_quoted_email_list_with_some_items_folded_is_flagged():
     assert len(ex) == 1
     assert ex[0]["items"] == 6 and ex[0]["suppressed_items"] == 3
     assert sorted(e["atom_id"] for e in ex[0]["suppressed"]) == ["e0", "e1", "e5"]
-    assert ex[0]["list"]["by"] == "list"
+    assert ex[0]["list"]["by"] in {"list", "mail_line"}  # one source line split into items
     assert report["counts"]["unresolved_survivor"] == 0
 
 
@@ -281,3 +281,26 @@ def test_docx_stress_fixtures_have_no_unresolved_survivor(tmp_path: Path) -> Non
         build(out)
     result = compile_project(project_dir=out, project_id="docx_stress", allow_unverified_receipts=True)
     assert result.ledger_audit["counts"]["unresolved_survivor"] == 0, result.ledger_audit["examples"]
+
+
+def test_mail_lists_read_as_list_whole_reads_them_and_its_copies_count_as_kept(tmp_path: Path, monkeypatch):
+    """A quoted mail list whose items fold onto a note one by one is a
+    partial list; once list_whole gives the folded items back as the mail's
+    cross-document copies, it is accounted for."""
+    import app.core.list_whole as list_whole
+    from tests.test_list_folds_whole import ITEMS, LEAD, MAIL_ONLY, _compile
+
+    note = " - ".join([LEAD, *ITEMS])
+    mail = " - ".join([LEAD, *ITEMS, MAIL_ONLY])
+    (tmp_path / "whole").mkdir()
+    (tmp_path / "holes").mkdir()
+    r, _mail_id = _compile(tmp_path / "whole", note, mail)
+    assert r.ledger_audit["counts"]["partial_list"] == 0
+    assert r.ledger_audit["counts"]["unresolved_survivor"] == 0
+
+    monkeypatch.setattr(list_whole, "keep_lists_whole", lambda atoms, supp: (atoms, supp, []))
+    r, mail_id = _compile(tmp_path / "holes", note, mail)
+    ex = r.ledger_audit["examples"]["partial_list"]
+    assert len(ex) == 1 and ex[0]["artifact_id"] == mail_id
+    assert ex[0]["list"]["by"] == "mail_line"
+    assert ex[0]["suppressed_items"] == len(ITEMS) + 1  # the lead segment folded too

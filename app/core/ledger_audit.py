@@ -29,7 +29,10 @@ Rules
 ``partial_list``
     A source list where only some items were suppressed. A list is one source
     document plus one list parent, found from whatever locator fields the atom
-    carries: the parent paragraph a prose split came from, the bullet_path
+    carries: the items one mail line was split into and a run of bulleted
+    mail lines (the lists ``list_whole`` keeps whole; a folded item it gives
+    back as a cross-document copy stands, so it counts as kept), the parent
+    paragraph a prose split came from, the bullet_path
     parent, the list label / lead_in, a table, or the run of whole paragraphs
     under one docx section path. An item counts as suppressed only when no
     kept atom stands at the same source position with the same words (two
@@ -199,6 +202,31 @@ def _ex(a: _View, **extra: Any) -> dict[str, Any]:
     return out
 
 
+def _mail_lists(raw: list[Any]) -> dict[str, tuple]:
+    """Atom id -> list key for the lists ``list_whole`` reads in mail: the
+    items one line was split into, and a run of bulleted lines with its
+    lead-in. Same structure the fix keeps whole, so the audit and the fix
+    agree on what a list is. Object atoms only (an envelope row has no value
+    to read it from)."""
+    objs = [a for a in raw if not isinstance(a, dict)]
+    if not objs:
+        return {}
+    try:
+        from app.core.list_whole import _line_lists, _line_runs
+    except Exception:  # pragma: no cover - the audit stands on its own
+        return {}
+    out: dict[str, tuple] = {}
+    for by, groups in (("mail_line", _line_lists(objs)), ("mail_run", _line_runs(objs))):
+        for members in groups:
+            first = members[0]
+            v = _get(first, "value", None) or {}
+            key = (by, str(_get(first, "artifact_id", "") or ""), str(v.get("message_index", "")),
+                   str(min(str(_get(m, "id", "")) for m in members)))
+            for m in members:
+                out.setdefault(str(_get(m, "id", "") or ""), key)
+    return out
+
+
 def audit_ledger(
     kept: Iterable[Any],
     suppressed: Iterable[Any],
@@ -206,8 +234,11 @@ def audit_ledger(
     max_examples: int = DEFAULT_EXAMPLES,
 ) -> dict[str, Any]:
     """Counts and up to ``max_examples`` examples per rule (see module doc)."""
-    kept_v = [_View(a, suppressed=False) for a in (kept or [])]
-    supp_v = [_View(a, suppressed=True) for a in (suppressed or [])]
+    kept = list(kept or [])
+    suppressed = list(suppressed or [])
+    kept_v = [_View(a, suppressed=False) for a in kept]
+    supp_v = [_View(a, suppressed=True) for a in suppressed]
+    mail_lists = _mail_lists(kept + suppressed)
     kept_by_id = {a.id: a for a in kept_v if a.id}
     supp_by_id = {a.id: a for a in supp_v if a.id}
     # A re-pointed fold keeps the first name it had under ``via``.
@@ -275,7 +306,7 @@ def audit_ledger(
     for a, is_kept in [(k, True) for k in kept_v] + [(s, False) for s in supp_v]:
         if not is_kept and (a.stage in _STRUCTURE_STAGES or a.loc.get("block_kind") == "heading"):
             continue
-        lk = _list_key(a)
+        lk = mail_lists.get(a.id) or _list_key(a)
         if lk is None:
             continue
         g = groups.setdefault(lk, {"units": {}, "members": set()})
