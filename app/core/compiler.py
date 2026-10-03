@@ -2743,10 +2743,11 @@ def compile_project(
                 atoms, project_id=resolved_project_id
             )
             atoms, _ = _settle_folds(_before_quote_line, atoms, [], "quote_line_head", make_copies=False)
-            # A PMO/admin step ("Complete billing tasks", "Develop schedule
-            # for installation activities") is not a quote line, and the
-            # head drops it -- which removed the line from the deal without a
-            # record (010003). Every removal goes to the ledger.
+            # A PMO/admin step ("Complete billing tasks") is not a quote line,
+            # but the head keeps it as an atom, off the quote: dropping it
+            # removed a SOW list line with no survivor (010003, 000132). The
+            # only removals left are folds into a standing umbrella, and
+            # every removal goes to the ledger.
             merge_suppressed(
                 suppressed_atoms,
                 capture_suppressed(
