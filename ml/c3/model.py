@@ -41,7 +41,7 @@ from torch.nn import functional as F
 from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
 from .operators import ReasonCompiler, apply_reasons
-from .schema import NUMBER, RELATION, Schema
+from .schema import NUMBER, PAIR, RELATION, Schema
 from .text import HashingEncoder, TagEmbedding
 
 #: The claim slots the belief tracker and the absence head work over, with the
@@ -196,6 +196,7 @@ class C3Output:
     reason_index: dict[str, list[int]] = field(default_factory=dict)      # layer -> bank indices
     changes: torch.Tensor | None = None                                # [N, slots, 3] what each line changes
     pointers: torch.Tensor | None = None                               # [N, N+1] log p(reason rests on j); last = itself
+    conduct_x: torch.Tensor | None = None                              # [N, d_head] the company layer's lines
 
     @property
     def q_mean(self) -> torch.Tensor:
@@ -264,6 +265,18 @@ class C3Model(nn.Module):
         self.cite_self = nn.Parameter(torch.zeros(1))
         self.word_r = nn.Linear(c.d_r, c.d_head)
         self.word_w = nn.Linear(c.d_text, c.d_head)
+        # Judgment tabs asked about more than one line (judgment_heads.json):
+        # two lines read as one symmetric pair, a document / table / sheet or
+        # the whole deal read by attention pooling over its lines. Universal
+        # questions pool r; the company's (project tier) pools the conduct
+        # layer's lines, so the base never reads company state.
+        self.pair_in = nn.Linear(3 * c.d_r, c.d_head)
+        self.pool_score = nn.Linear(c.d_r, 1)
+        self.pool_in = nn.Linear(c.d_r, c.d_head)
+        self.pool_score_company = nn.Linear(c.d_head, 1)
+        self.pool_in_company = nn.Linear(c.d_head, c.d_head)
+        self.judgment_head = DescribedHead(c.d_text, c.d_head, c.n_folds)
+        self.judgment_head_company = DescribedHead(c.d_text, c.d_head, c.n_folds)
         self.companies = list(companies)
         # Starting codes are small and dense so every atom gets a gradient; the
         # L1 term then makes them sparse. A zero code would starve the atoms.
@@ -419,6 +432,34 @@ class C3Model(nn.Module):
         self._read(out, y, opps, desc, bank, bank_emb, "company", company,
                    self.reader_company, self.compiler_company, self.conduct_head)
         out.alpha = alpha
+        out.conduct_x = y
+
+    def judge(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
+              desc: dict[str, Any] | None = None) -> torch.Tensor:
+        """Logits [len(subjects), A] for a judgment asked about two lines, a
+        group of lines or the whole deal. A pair is (i, j); a group or the deal
+        is its lines. A company question needs ``model(..., company=...)``."""
+        o = self.schema.by_key()[key]
+        desc = desc if desc is not None else self.describe()
+        if o.universal:
+            x, score, proj, head = out.r, self.pool_score, self.pool_in, self.judgment_head
+        else:
+            if out.conduct_x is None:
+                raise ValueError(f"{key} is a company question: run the model with company=")
+            x, score, proj, head = out.conduct_x, self.pool_score_company, self.pool_in_company, \
+                self.judgment_head_company
+        rows = []
+        for lines in subjects:
+            idx = torch.tensor(lines, device=x.device, dtype=torch.long)
+            if o.size == PAIR:
+                a, b = x[idx[0]], x[idx[1]]
+                rows.append(self.pair_in(torch.cat([a + b, (a - b).abs(), a * b], -1)))
+            else:
+                xs = x[idx]
+                w = score(xs).softmax(0)
+                rows.append(proj((w * xs).sum(0)))
+        logits, _ = head(torch.stack(rows), desc[key][0].unsqueeze(0), [desc[key][1]])
+        return logits[0]
 
     def _context(self, context: dict[str, list], n: int, dev) -> torch.Tensor:
         """Stage and geo slots. Each is a value or null; in training a value is

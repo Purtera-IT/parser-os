@@ -38,7 +38,8 @@ from pathlib import Path
 from typing import Any
 
 from .notes import drop_meta, mask_verdict, split_note
-from .schema import ABSENT, BINARY, CLASS, NUMBER, PRESENCE, RELATION, Schema
+from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
+                     RELATION, Schema)
 
 IGNORE = -100
 
@@ -69,6 +70,9 @@ class DealExample:
     company_policy: str = ""
     edges: list[tuple[str, str, str]] = field(default_factory=list)
     outcome: dict[str, float] = field(default_factory=dict)
+    #: The judgment tabs' verdicts as the training blob stores them (head,
+    #: target, text, verdict, reason, note, labeler); resolved in featurize.
+    judgments: list[dict[str, Any]] = field(default_factory=list)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -86,7 +90,8 @@ class DealExample:
             deal_id=str(d["deal_id"]), atoms=atoms, company=str(d.get("company", "")),
             company_policy=str(d.get("company_policy", "")),
             edges=[(str(e["src"]), str(e["dst"]), str(e["relation"])) for e in d.get("edges", [])],
-            outcome={k: float(v) for k, v in (d.get("outcome") or {}).items()})
+            outcome={k: float(v) for k, v in (d.get("outcome") or {}).items()},
+            judgments=[j for j in d.get("judgments") or [] if isinstance(j, dict)])
 
     @staticmethod
     def load(path: str | Path) -> "DealExample":
@@ -133,7 +138,8 @@ class DealExample:
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
         return DealExample.from_dict({"deal_id": deal_id, "company": company,
-                                      "atoms": rows, "edges": edges})
+                                      "atoms": rows, "edges": edges,
+                                      "judgments": blob.get("judgments") or []})
 
 
 def _time(v: Any) -> float:
@@ -202,6 +208,9 @@ class Batch:
     weights: list[float] = field(default_factory=list)
     hint_lines: list[list[int]] = field(default_factory=list)
     entities: list[list[str]] = field(default_factory=list)
+    #: Judgment-tab verdicts about two lines, a group of lines or the whole
+    #: deal (line verdicts are in ``targets``).
+    judged: list["Judged"] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -211,6 +220,16 @@ class Batch:
 
     def __len__(self) -> int:
         return len(self.texts)
+
+
+@dataclass(frozen=True)
+class Judged:
+    """One judgment-tab verdict about more than one line."""
+    key: str                     # "jdg:conflict"
+    size: str                    # PAIR | GROUP | DEAL
+    lines: tuple[int, ...]       # the two lines, the group's lines, or every line
+    answer: int                  # class index
+    note: str = ""               # the labeler's reason and note, for the teacher
 
 
 def _field_value(label: dict[str, Any], source: str, name: str) -> Any:
@@ -332,6 +351,72 @@ def field_note_targets(schema: Schema) -> dict[str, str]:
     return out
 
 
+#: Labelers that are not people: drafts written for a person to accept
+#: (same markers as app.learning.human_labels.NOT_A_PERSON).
+NOT_A_PERSON = ("(assistant)", "(bot)", "(model)")
+
+
+def _is_a_person(labeler: Any) -> bool:
+    v = str(labeler or "").strip().lower()
+    return bool(v) and not any(m in v for m in NOT_A_PERSON)
+
+
+def _norm_text(text: Any) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
+
+
+class _Lines:
+    """Find a deal's lines from what a judgment stores about its subject: an
+    atom id (rehashed by every re-parse) or, failing that, the atom's text."""
+
+    def __init__(self, atoms: list[Atom]):
+        self.atoms = atoms
+        self.by_id = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
+        self.by_text: dict[str, int] = {}
+        for i, a in enumerate(atoms):
+            self.by_text.setdefault(_norm_text(a.text), i)
+
+    def find(self, ref: Any, text: Any = "") -> int | None:
+        ref = ref if isinstance(ref, dict) else {}
+        if isinstance(ref.get("evidence"), dict):
+            ref = ref["evidence"]                 # a site card: its first mention
+        i = self.by_id.get(str(ref.get("atomId") or ref.get("atom_id") or ""))
+        if i is None:
+            i = self.by_text.get(_norm_text(ref.get("text") or text)) if (ref.get("text") or text) else None
+        return i
+
+    def group(self, i: int) -> tuple[int, ...]:
+        """The lines of line i's table or sheet: same document and section."""
+        a = self.atoms[i]
+        return tuple(j for j, b in enumerate(self.atoms)
+                     if b.doc_id == a.doc_id and (not a.section or b.section == a.section))
+
+    def document(self, artifact_id: str) -> tuple[int, ...]:
+        return tuple(j for j, b in enumerate(self.atoms) if artifact_id and b.doc_id == artifact_id)
+
+
+def _judged_lines(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...] | None:
+    """The lines a verdict is about, or None when they are not in this deal."""
+    t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    parts = [p.strip() for p in str(j.get("text") or "").split("||")]
+    if size == DEAL:
+        return tuple(range(len(lines.atoms))) or None
+    if size == PAIR:
+        a, b = lines.find(t.get("a"), parts[0]), lines.find(t.get("b"), parts[-1] if len(parts) > 1 else "")
+        return (a, b) if a is not None and b is not None and a != b else None
+    if size == GROUP:
+        doc = t.get("document") if isinstance(t.get("document"), dict) else None
+        if doc is not None:
+            return lines.document(str(doc.get("artifactId") or "")) or None
+        i = lines.find(t.get("a"))
+        return lines.group(i) if i is not None else None
+    key = str(j.get("target_key") or "")
+    ref = (t.get("a") or t.get("source") or t.get("site")
+           or {"atomId": key.split(":", 1)[1] if key.startswith(("atom:", "site:")) else ""})
+    i = lines.find(ref, parts[-1])
+    return (i,) if i is not None else None
+
+
 def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = False) -> Batch:
     """Split one deal into model inputs and per-opportunity targets.
 
@@ -355,9 +440,12 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     targets: dict[str, list[int]] = {}
     numbers_target: dict[str, list[float | None]] = {}
     for opp in schema.opportunities:
-        if opp.kind == RELATION:
+        if opp.kind == RELATION or opp.size != LINE:
             continue
         col = [IGNORE] * n
+        if opp.source == "judgment":
+            targets[opp.key] = col               # filled from the judgment tabs below
+            continue
         nums: list[float | None] = [None] * n
         for i, a in enumerate(atoms):
             if not a.label:
@@ -380,6 +468,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             numbers_target[opp.key] = nums
 
     edges: dict[str, list[tuple[int, int]]] = {}
+    edges_ok = {o.field for o in schema.select(kind=RELATION)}
     for src, dst, rel in deal.edges:
         if src in index and dst in index:
             edges.setdefault(rel, []).append((index[src], index[dst]))
@@ -440,6 +529,49 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                                   for r in refs} - {None}))
         entities.append(_as_list(lb.get("entity_keys")))
 
+    # Judgment tabs. A verdict about one line is that line's target (an alias
+    # fills an existing question only where the card left it blank); a verdict
+    # about two lines, a group or the deal is kept whole. The labeler's reason
+    # and note go with it, for the teacher.
+    by_key = schema.by_key()
+    judged: list[Judged] = []
+    lines = _Lines(atoms)
+    for j in deal.judgments:
+        if not _is_a_person(j.get("labeler")):
+            continue
+        head, verdict = str(j.get("head") or ""), str(j.get("verdict") or "").strip()
+        if head in schema.judgment_aliases:
+            key, vmap = schema.judgment_aliases[head]
+            verdict = vmap.get(verdict, "")
+        else:
+            key = f"jdg:{head}"
+        opp = by_key.get(key)
+        if opp is None or not verdict:
+            continue
+        ix = opp.index(verdict)
+        idx = _judged_lines(j, opp.size, lines)
+        if ix is None or idx is None:
+            continue
+        note = drop_meta(" ".join(str(x).strip() for x in (j.get("reason"), j.get("note")) if x))
+        if opp.size == LINE:
+            i = idx[0]
+            if excluded(deal.atoms[i].label):
+                continue                           # set aside: trains nothing
+            if targets[key][i] == IGNORE:
+                targets[key][i] = ix
+                if note:
+                    field_notes[i].setdefault(key, mask_verdict(note) if opp.universal else note)
+            continue
+        judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
+                             note=mask_verdict(note) if opp.universal else note))
+        if head == "conflict" and verdict in ("contradicts", "supports") and verdict in edges_ok:
+            pair = (max(idx), min(idx))            # the later line points back
+            if pair not in edges.setdefault(verdict, []):
+                edges[verdict].append(pair)
+        if head == "site" and verdict == "same_site":
+            for i in idx:
+                entities[i] = [*entities[i], f"site:judged:{j.get('target_key') or idx}"]
+
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
     return Batch(
@@ -453,7 +585,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
-        field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities)
+        field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities,
+        judged=judged)
 
 
 def _as_list(v: Any) -> list[str]:
