@@ -1906,6 +1906,64 @@ def _adds_a_sentence(fuller: str, contained: str) -> bool:
     return any(w.islower() for w in words)
 
 
+def _merged_past_its_end(sentence: Any, merged: Any) -> bool:
+    """Is ``sentence`` a complete sentence that ``merged`` states without its
+    full stop and then runs on past?
+
+    Live 000132: a SOW sentence ended at a manual line break with no full
+    stop, and the next line opened with a label of its own ("Label: ...").
+    The two lines came out as one atom, which keyed with the clean copy of
+    the sentence stated earlier in the scope and outranked it on type, so
+    the clean sentence was folded into the run-on. A complete
+    sentence never folds into a longer atom that only holds it merged with
+    something else. (When the longer atom keeps the full stop and goes on --
+    010180's paragraph and its first sentence -- that is the same sentence
+    plus more, and ``_not_at_the_cost_of_the_words`` handles it.)
+    """
+    s = _norm_for_containment(sentence)
+    m = re.match(r"^(.*?\w)[.!?][\"'\u201d\u2019)]*$", s)
+    if not m:
+        return False
+    core = m.group(1)
+    # Case kept for the test below: a run-on goes on with a NEW line (a
+    # capital, "Label: ..."), while "... pantry and a server room" is one
+    # sentence that simply says more.
+    raw = re.sub(r"\s+", " ", str(getattr(merged, "raw_text", None) or getattr(merged, "text", None) or "")).strip()
+    w = raw.lower()
+    if len(w) != len(raw):
+        return False
+    i = w.find(core)
+    while i >= 0:
+        rest = raw[i + len(core):]
+        if rest[:1] == " " and rest[1:2].isupper() and re.search(r"[a-z]{2}", rest):
+            return True
+        i = w.find(core, i + 1)
+    return False
+
+
+def _the_complete_sentence(winner: Any, members: list[Any]) -> Any:
+    """The copy that closes the sentence, when the winner is the same words
+    cut off before its full stop.
+
+    A sentence that ended at a manual line break, with no full stop, is the
+    same fact as its copy elsewhere that closes with one, and which copy
+    stood used to follow the type each draft happened to give it: 000132's
+    two drafts, byte-identical there, kept different copies. The complete
+    sentence is the cleaner text in both.
+    """
+    w = _norm_for_containment(winner)
+    if not w or re.search(r"[.!?][\"'\u201d\u2019)]*$", w):
+        return winner
+    closed = [
+        m for m in members
+        if m is not winner
+        and re.fullmatch(re.escape(w) + r"[.!?][\"'\u201d\u2019)]*", _norm_for_containment(m))
+    ]
+    if not closed:
+        return winner
+    return max(closed, key=lambda a: (_cross_type_priority(a), _rank(a)))
+
+
 def _not_at_the_cost_of_the_address(winner: Any, members: list[Any]) -> Any:
     """Never trade a contact's email address for a type.
 
@@ -2158,6 +2216,7 @@ def _resolve_cross_type_group(members: list[Any], pool: list[Any] | None = None)
     kept: set[int] = set()
     pool = pool or members
     winner = max(pool, key=lambda a: (_cross_type_priority(a), _rank(a)))
+    winner = _the_complete_sentence(winner, pool)
     winner = _not_at_the_cost_of_the_words(winner, pool)
     winner = _not_at_the_cost_of_the_address(winner, pool)
     # Only a member of a DIFFERENT type is a lossy retyping of the winner's
@@ -2187,6 +2246,9 @@ def _resolve_cross_type_group(members: list[Any], pool: list[Any] | None = None)
             kept.add(id(member))
             continue
         if _checkbox_states_differ(winner, member):
+            kept.add(id(member))
+            continue
+        if _merged_past_its_end(member, winner) or _merged_past_its_end(winner, member):
             kept.add(id(member))
             continue
         # A retyping may not take a FIGURE with it. The group key strips

@@ -633,7 +633,8 @@ class DocxParser(BaseParser):
                 if city_list:
                     atoms.extend(city_list)
                     continue
-            clauses = [] if (is_heading or has_placeholder) else split_clauses(text)
+            # A manual line break (w:br) reads as "\n" in paragraph.text.
+            clauses = [] if (is_heading or has_placeholder) else split_clauses(text, hard_breaks=True)
             units = clauses or [text]
             for s_idx, unit in enumerate(units):
                 _first = len(atoms)
