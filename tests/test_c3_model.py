@@ -88,7 +88,8 @@ def test_split_note_matches_the_ingest():
     except Exception:  # pragma: no cover - app deps missing locally
         pytest.skip("app.learning.human_labels not importable here")
     for note in ["[EXCLUDE_FROM_TRAINING: old manual Deal Kit]\nWHY line\n[purtera] ignore: x",
-                 "Plain WHY only.", "WHY\n  [purtera] reject: seller promise", ""]:
+                 "Plain WHY only.", "WHY\n  [purtera] reject: seller promise", "",
+                 "WHY\n[purtera] keep: x\n[parser] SHOULD SPLIT: two sites in one atom"]:
         assert split_note(note) == ingest_split(note)
 
 

@@ -30,8 +30,13 @@ MASK = "[MASK]"
 
 
 def split_note(note: str, company: str = "purtera") -> tuple[str, str]:
-    """(universal WHY, company policy) from one stored note."""
-    text = str(note or "").strip()
+    """(universal WHY, company policy) from one stored note.
+
+    The closing ``[parser]`` line is about the parse, not the deal: dropped.
+    """
+    text = "\n".join(
+        ln for ln in str(note or "").splitlines() if not ln.lstrip().lower().startswith("[parser]")
+    ).strip()
     head = text.lstrip()
     if head.lstrip("[").upper().startswith(EXCLUDE_NOTE_PREFIX):
         end = head.find("]") if head.startswith("[") else -1

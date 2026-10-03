@@ -178,3 +178,31 @@ def test_report_counts_per_deal():
     r = report["d1"]
     assert r["rows"] == 2 and r["rows_changed"] == 1 and len(sql) == 1
     assert r["rows_per_head"]["content.frame"] == 1
+
+
+def test_a_parser_remark_belongs_on_the_last_parser_line():
+    ok = "Four racks set the crew.\n[purtera] keep: two techs.\n[parser] SHOULD SPLIT: two sites in one atom"
+    assert not _checks(_row(note=ok)) & {"parser_line_not_last", "parser_remark_outside_line"}
+    assert "parser_remark_outside_line" in _checks(_row(note="Four racks. SHOULD MERGE with the next line."))
+    assert "parser_remark_outside_line" in _checks(_row(note="The parser cut this sentence."))
+    assert "parser_remark_outside_line" not in _checks(_row(note='Quoted: "the parser" is their word.'))
+    misplaced = "[parser] SHOULD MERGE\nFour racks.\n[purtera] keep: two techs."
+    assert "parser_line_not_last" in _checks(_row(note=misplaced))
+    twice = "Four racks.\n[parser] SHOULD MERGE\n[parser] page 2"
+    assert "parser_line_not_last" in _checks(_row(note=twice))
+
+
+def test_the_duplicate_marker_opens_the_note():
+    ok = "DUPLICATE of parser atom lbl_1: same line.\nFour racks."
+    assert not _checks(_row(note=ok)) & {"duplicate_marker_misplaced", "parser_remark_outside_line"}
+    after_exclude = "[EXCLUDE_FROM_TRAINING: old manual Deal Kit]\nDUPLICATE of parser atom lbl_1\nWHY"
+    assert "duplicate_marker_misplaced" not in _checks(_row(note=after_exclude))
+    assert "duplicate_marker_misplaced" in _checks(_row(note="Four racks.\nDUPLICATE of parser atom lbl_1"))
+    assert "duplicate_marker_misplaced" in _checks(_row(note="Four racks.\n[parser] DUPLICATE of parser atom lbl_1"))
+
+
+def test_a_duplicate_marker_in_other_words_is_flagged():
+    other = "DUPLICATE: this line is now an atom from the parser.\nFour racks."
+    assert "duplicate_marker_unmatched" in _checks(_row(note=other))
+    ok = "EXCLUDE_FROM_TRAINING: old manual Deal Kit.\nDUPLICATE of parser atom lbl_1"
+    assert not _checks(_row(note=ok)) & {"duplicate_marker_unmatched", "duplicate_marker_misplaced"}

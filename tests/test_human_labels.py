@@ -414,3 +414,13 @@ def test_values_deal_threads_already_write_are_accepted():
         assert _reads_rows({"co_reason": code}) == [("reads:co_reason", code)]
     for cls in ("page_chrome", "template_instruction", "cross_reference"):
         assert _reads_rows({"noise_class": cls}) == [("reads:noise_class", cls)]
+
+
+def test_the_parser_line_never_reaches_training():
+    from app.learning.human_labels import split_note, strip_parser_lines
+
+    note = "Four racks set the crew.\n[purtera] keep: two techs.\n[parser] SHOULD SPLIT: two sites in one atom"
+    assert split_note(note) == ("Four racks set the crew.", "keep: two techs.")
+    assert strip_parser_lines(note) == "Four racks set the crew.\n[purtera] keep: two techs."
+    assert strip_parser_lines("Plain WHY.") == "Plain WHY."
+    assert split_note("WHY only\n[parser] page 3 cut") == ("WHY only", "")
