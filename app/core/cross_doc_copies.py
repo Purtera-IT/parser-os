@@ -615,6 +615,20 @@ def ensure_own_copies(
             if k:
                 own_texts.setdefault(str(getattr(a, "artifact_id", "") or ""), []).append(k)
     dropped_by_doc: dict[str, list[Any]] = {}
+    from app.core.suppression_ledger import SURVIVOR_KEY as _SURV
+
+    standing_ids = {str(getattr(a, "id", "") or "") for a in kept}
+
+    def _shown_elsewhere(d: Any, wid: str) -> bool:
+        # A fold whose recorded survivor is ANOTHER atom that stands already
+        # shows its line there; taking it back as a copy of ``w`` emitted it
+        # twice (010353: the SOW's bare onsite-contact person, folded into the
+        # SOW step that names them, came back live as a copy of the intake's
+        # contact line, which had picked up its ref in a refused fold).
+        sv = _value(d).get(_SURV)
+        sid = str(sv.get("atom_id") or "") if isinstance(sv, dict) else ""
+        return bool(sid) and sid != wid and sid in standing_ids
+
     for d in dropped:
         if not is_cross_doc_copy(d) and not _synthesized(d):
             dropped_by_doc.setdefault(str(getattr(d, "artifact_id", "") or ""), []).append(d)
@@ -654,7 +668,7 @@ def ensure_own_copies(
                 for d in dropped_by_doc.get(aid, ()):
                     if id(d) in restored_ids or not ({_ref_key(r) for r in d.source_refs or []} & ref_keys):
                         continue
-                    if _is_metadata_atom(d) or is_metadata_line(_value(d).get("context")):
+                    if _is_metadata_atom(d) or is_metadata_line(_value(d).get("context")) or _shown_elsewhere(d, wid):
                         continue
                     dv = _value(d)
                     dv = dict(dv) if isinstance(getattr(d, "value", None), dict) else {}
@@ -912,6 +926,16 @@ def drop_unheld_copies(
         w = by_id.get(str(dup.get("atom_id") or ""))
         if isinstance(v, dict):
             v.pop("duplicate_of", None)
+        # Read off the document's own header or author metadata: removed on
+        # purpose, never folded. Recorded as a FOLD it named no survivor (the
+        # canonical's words differ) and the end-of-compile ledger check put
+        # it back (010353: the note author's name as a stakeholder).
+        from app.core.suppression_ledger import mark_dropped_not_folded
+
+        mark_dropped_not_folded(
+            c, "read off its document's header or author metadata; the document's text does not hold the line"
+            + (f" (the record is {dup.get('atom_id')})" if dup.get("atom_id") else ""),
+        )
         if w is not None and isinstance(getattr(w, "value", None), dict):
             docs = [d for d in (w.value.get("also_in_documents") or []) if d != aid]
             if docs:

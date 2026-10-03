@@ -20,6 +20,7 @@ import hashlib as _hashlib
 import os
 
 from app.core.label_key import label_key as _label_key
+from app.core.suppression_ledger import DROPPED_NOT_FOLDED_KEY, suppression_kind
 import re
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
@@ -395,6 +396,14 @@ def _rule_decisions_total() -> int:
         return 0
 
 
+def _drop_reason(atom: Any) -> str:
+    v = getattr(atom, "value", None)
+    if not isinstance(v, dict):
+        return ""
+    sup = v.get("_suppression") if isinstance(v.get("_suppression"), dict) else {}
+    return str(sup.get("drop_reason") or v.get(DROPPED_NOT_FOLDED_KEY) or "")
+
+
 def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[dict]:
     """The atoms the compile dropped, with the stage that dropped them.
 
@@ -431,6 +440,19 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
     for atom in kept:
         survivors.setdefault(norm(atom), atom)
         kept_by_id.setdefault(str(getattr(atom, "id", "") or ""), atom)
+    # ``kept`` leaves out a document's cross-document copy (it is listed under
+    # its own document), but a fold can survive in one: then the row said
+    # ``survivor: null`` and read as "vanished" (010087: the v2 contacts row).
+    # Every atom of the result can be a survivor; a copy also names its
+    # canonical atom.
+    for atom in list(getattr(compile_result, "atoms", None) or []):
+        survivors.setdefault(norm(atom), atom)
+        kept_by_id.setdefault(str(getattr(atom, "id", "") or ""), atom)
+
+    def _copy_of(atom: Any) -> str:
+        v = getattr(atom, "value", None)
+        dup = v.get("duplicate_of") if isinstance(v, dict) else None
+        return str(dup.get("atom_id") or "") if isinstance(dup, dict) else ""
 
     def _recorded_survivor(atom) -> Any:
         # The fold records the atom it went into (cross_doc_copies.SURVIVOR_KEY):
@@ -467,6 +489,11 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
             "stage": stage,
             "reason": str(((getattr(atom, "value", None) or {}).get("_suppression") or {}).get("reason") or "")
             if isinstance(getattr(atom, "value", None), dict) else "",
+            # FOLD (names a survivor) or DROP (removed on purpose, with why):
+            # the ledger records it (suppression_ledger.DROP_STAGES); the row
+            # carried neither, so a reader could not tell them apart.
+            "kind": suppression_kind(atom, stage),
+            "drop_reason": _drop_reason(atom),
             # Who made it, and a key that survives a reparse. Without the key a
             # label is tied to this compile: `label_key` is
             # sha256(deal | filename | page | text), three quarters location
@@ -484,6 +511,7 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
             "survivor": None if survivor is None else {
                 "id": str(getattr(survivor, "id", "") or ""),
                 "text": (getattr(survivor, "raw_text", "") or getattr(survivor, "text", "") or "")[:2000],
+                **({"copy_of": _copy_of(survivor)} if _copy_of(survivor) else {}),
             },
         })
     return out
@@ -3658,9 +3686,14 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         except (TypeError, ValueError):
             return default
 
-    def _line(loc: dict) -> int | None:
+    def _num(x: Any, default: int = 0) -> int | float:
+        if isinstance(x, float) and x == x:
+            return x
+        return _int(x, default)
+
+    def _line(loc: dict) -> int | float | None:
         line = loc.get("line_start") if loc.get("line_start") is not None else loc.get("line")
-        return _int(line) if line is not None else None
+        return _num(line) if line is not None else None
 
     def _thread(a: Any) -> dict:
         v = getattr(a, "value", None)
@@ -3718,7 +3751,9 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         # A docx atom carries block_index, its body element's position, so
         # paragraphs, tables and content controls interleave; it wins.
         if loc.get("block_index") is not None:
-            blk = (0, _int(loc.get("block_index")), 0)
+            # A PDF heading sits at the half slot before the line it leads
+            # (n - 0.5); truncating it to an int tied it with the line before.
+            blk = (0, _num(loc.get("block_index")), 0)
         elif loc.get("paragraph_index") is not None:
             blk = (0, _int(loc.get("paragraph_index")), 0)
         elif loc.get("table_index") is not None:
