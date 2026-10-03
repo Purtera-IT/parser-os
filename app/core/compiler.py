@@ -3414,20 +3414,12 @@ def compile_project(
             _kept_copies, _refused = drop_unheld_copies(held_copies, atoms, _doc_lines)
             if _refused:
                 held_copies[:] = _kept_copies
-                # Folded onto a canonical atom that stands: that is its survivor.
-                from app.core.suppression_ledger import SURVIVOR_KEY as _SURV
-
-                for _r in _refused:
-                    _dv = _r.value if isinstance(getattr(_r, "value", None), dict) else None
-                    _dup = (_dv or {}).get("duplicate_of") or {}
-                    if _dv is not None and _dup.get("atom_id"):
-                        _dv[_SURV] = {"atom_id": _dup.get("atom_id"), "artifact_id": _dup.get("artifact_id"),
-                                      "stage": "own_copy_gate"}
+                # Each refused copy is marked a drop (drop_unheld_copies).
                 merge_suppressed(
                     suppressed_atoms,
                     capture_suppressed(
                         _refused, [], stage="own_copy_gate",
-                        reason="folded onto another document's atom; this document's text does not hold the line",
+                        reason="a copy read off its document's header or author metadata; the text does not hold the line",
                     ),
                 )
                 warnings.append(f"INFO: own_copy_gate refused {len(_refused)} copy(ies) their document does not hold")
@@ -3481,6 +3473,15 @@ def compile_project(
             )
     except Exception as exc:  # never fail a compile over the ledger check
         warnings.append(f"WARNING: settle_ledger failed: {type(exc).__name__}: {exc}")
+
+    # No compile emits two atoms with one id. Every stage keys by id (or by the
+    # object), so a duplicate looks like one atom to all of them; this is the
+    # one place it is checked. Raises under SOWSMITH_STRICT_INVARIANTS (the test
+    # suite); in production it warns and drops only a repeat of the same object.
+    from app.core.atom_id_invariant import enforce_unique_atom_ids
+
+    atoms, _dup_id_warnings = enforce_unique_atom_ids(atoms)
+    warnings.extend(_dup_id_warnings)
 
     # Relationship talk is typed as what it is now that every stage has run:
     # small_talk, the labeler's reject type, not deal_metadata (010087).
