@@ -6,6 +6,9 @@ Forward pass for one deal (one sequence of atoms in time order)::
         ─ DealGraph, FORESIGHT mask (line i attends only to lines that entered
           no later than it) + structural biases (same document, same section)
         ─ h_i
+        ─ ASKED LAYERS (lattice.py, optional): one slot per question space per
+          line, each attending back over the deal for its own question; base
+          slots never read the company slot
            ├─ CONTENT      z_c = P_c(h_i)            company adversary (gradient reversal)
            ├─ CONSEQUENCE  q_i ~ mixture(h_i)        trained toward the EMA hindsight
            │                                         encoder that sees the whole deal
@@ -40,6 +43,7 @@ from torch.nn import functional as F
 
 from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
+from .lattice import AskedLattice, company_description, space_descriptions
 from .operators import ReasonCompiler, apply_reasons
 from .schema import NUMBER, PAIR, RELATION, Schema
 from .text import HashingEncoder, TagEmbedding
@@ -91,12 +95,16 @@ class C3Config:
     #: operators, clause slots). Off: v6 reads explanations with the
     #: language-model brain (brain.py); v5 stays as an ablation baseline.
     legacy_reasons: bool = False
+    #: Asked layers (lattice.py) after the deal graph: one slot per question
+    #: space per line, each looking back over the deal for its own question.
+    #: 0 keeps the plain trunk.
+    asked_layers: int = 0
 
     @staticmethod
     def design() -> "C3Config":
         """The sizes the design docs name (needs a GPU and HFEncoder)."""
         return C3Config(d_text=1024, d=1024, n_layers=6, n_heads=16, d_r=256, d_q=256,
-                        q_components=8, d_head=256, n_policy_atoms=24)
+                        q_components=8, d_head=256, n_policy_atoms=24, asked_layers=2)
 
 
 class GradReverse(torch.autograd.Function):
@@ -196,6 +204,9 @@ class C3Output:
     reason_index: dict[str, list[int]] = field(default_factory=dict)      # layer -> bank indices
     changes: torch.Tensor | None = None                                # [N, slots, 3] what each line changes
     pointers: torch.Tensor | None = None                               # [N, N+1] log p(reason rests on j); last = itself
+    slots: torch.Tensor | None = None                                  # [N, S, d] asked slots, one per space
+    company_slot: torch.Tensor | None = None                           # [N, 1, d] read by conduct only
+    citations: torch.Tensor | None = None                              # [N, S, N] where each slot looked
     conduct_x: torch.Tensor | None = None                              # [N, d_head] the company layer's lines
 
     @property
@@ -231,6 +242,10 @@ class C3Model(nn.Module):
         self.flip_proj = nn.Linear(c.d_text, c.d_r)
 
         spaces = sorted({o.space for o in schema.opportunities if o.universal})
+        self.lattice = (AskedLattice(c.d, c.d_text, spaces, c.asked_layers, c.n_heads, c.dropout)
+                        if c.asked_layers else None)
+        self.slot_in = nn.ModuleDict({s: nn.Linear(c.d, c.d_head) for s in spaces}) if c.asked_layers else None
+        self.company_slot_in = nn.Linear(c.d, c.d_head) if c.asked_layers else None
         self.space_in = nn.ModuleDict({s: nn.Linear(c.d_r + (c.d_q if s == "consequence" else 0),
                                                     c.d_head) for s in spaces})
         self.heads = nn.ModuleDict({s: DescribedHead(c.d_text, c.d_head, c.n_folds) for s in spaces})
@@ -339,6 +354,8 @@ class C3Model(nn.Module):
                        r=r, residual=residual)
 
         desc = desc if desc is not None else self.describe()
+        if self.lattice is not None:
+            self._ask(out, inp, desc, company)
         if bank_emb is None and bank is not None and len(bank):
             bank_emb = self.text([e.text for e in bank.items])
         self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
@@ -378,6 +395,8 @@ class C3Model(nn.Module):
                 continue
             x = r if space != "consequence" else torch.cat([r, q_mean], -1)
             x = self.space_in[space](x)
+            if out.slots is not None and self.slot_in is not None:
+                x = x + self.slot_in[space](out.slots[:, self.lattice.spaces.index(space)])
             logits, nums = head(x, torch.stack([desc[o.key][0] for o in opps]),
                                 [desc[o.key][1] for o in opps])
             for j, (o, lg) in enumerate(zip(opps, logits)):
@@ -425,6 +444,8 @@ class C3Model(nn.Module):
         low = torch.einsum("nd,mdk->nmk", x, self.atom_u)
         shift = torch.einsum("nmk,mkh->nmh", low, self.atom_v)                 # [N, M, H]
         y = self.conduct_base(x) + (alpha.view(1, -1, 1) * gate.unsqueeze(-1) * shift).sum(1)
+        if out.company_slot is not None:
+            y = y + self.company_slot_in(out.company_slot[:, 0])
         opps = self.schema.select(layer="company")
         opps = [o for o in opps if o.kind != RELATION]
         logits, nums = self.conduct_head(y, torch.stack([desc[o.key][0] for o in opps]),
@@ -464,6 +485,32 @@ class C3Model(nn.Module):
                 rows.append(proj((w * xs).sum(0)))
         logits, _ = head(torch.stack(rows), desc[key][0].unsqueeze(0), [desc[key][1]])
         return logits[0]
+
+    def _ask(self, out: C3Output, inp: dict[str, Any], desc: dict[str, Any],
+             company: str | None) -> None:
+        """Run the asked layers on h (lattice.py)."""
+        n, dev = out.h.shape[0], out.h.device
+        sd = space_descriptions(self.schema, desc)
+        space_desc = torch.stack([sd[s] for s in self.lattice.spaces])
+        allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev))
+        same_doc = torch.tensor(inp["same_doc"], dtype=torch.float32, device=dev)
+        same_sec = torch.tensor(inp["same_section"], dtype=torch.float32, device=dev)
+        cdesc = company_description(self.schema, desc) if company is not None else None
+        out.slots, out.company_slot, out.citations = self.lattice(
+            out.h, space_desc, allowed, same_doc, same_sec, cdesc)
+
+    @torch.no_grad()
+    def suppose(self, out: C3Output, lines: list[int], sentences: list[str],
+                desc: dict[str, Any] | None = None) -> dict[str, torch.Tensor]:
+        """What-if at run time, no language model: the universal answers for
+        ``lines`` if each ``sentences[n]`` held ("if the customer supplied
+        the mounts"). The sentence moves the line in rationale space through
+        ``flip_proj``, the move supercharge.teach_flip trains on WHY
+        sentences. Returns opportunity -> logits [len(lines), A]."""
+        from .losses import moved_heads  # noqa: PLC0415 (cycle)
+
+        move = self.flip_proj(self.text(sentences))
+        return moved_heads(self, out, lines, move, desc if desc is not None else self.describe()).logits
 
     def _context(self, context: dict[str, list], n: int, dev) -> torch.Tensor:
         """Stage and geo slots. Each is a value or null; in training a value is

@@ -157,7 +157,8 @@ def moved_heads(model: C3Model, out: C3Output, rows: list[int], move: torch.Tens
     r = out.r[rows] + move
     sub = C3Output(h=out.h[rows], z_c=out.z_c[rows], q_mu=out.q_mu[rows],
                    q_logvar=out.q_logvar[rows], q_logit=out.q_logit[rows], r=r,
-                   residual=out.residual[rows])
+                   residual=out.residual[rows],
+                   slots=out.slots[rows] if out.slots is not None else None)
     model.universal_heads(sub, r, out.q_mean[rows], desc)
     return sub
 
