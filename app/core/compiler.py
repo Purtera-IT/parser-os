@@ -3475,6 +3475,18 @@ def compile_project(
     except Exception as exc:  # never fail a compile over the ledger check
         warnings.append(f"WARNING: settle_ledger failed: {type(exc).__name__}: {exc}")
 
+    # One list folds as a unit or not at all: a list whose items folded onto
+    # another document one by one gets the folded ones back as its copies,
+    # so it never reads with holes in it (000132's quoted request).
+    try:
+        from app.core.list_whole import keep_lists_whole
+
+        atoms, suppressed_atoms, _whole = keep_lists_whole(atoms, suppressed_atoms)
+        if _whole:
+            warnings.append(f"INFO: list_kept_whole gave {len(_whole)} folded list item(s) back as copies")
+    except Exception as exc:  # never fail a compile over a list
+        warnings.append(f"WARNING: list_kept_whole failed: {type(exc).__name__}: {exc}")
+
     # No compile emits two atoms with one id. Every stage keys by id (or by the
     # object), so a duplicate looks like one atom to all of them; this is the
     # one place it is checked. Raises under SOWSMITH_STRICT_INVARIANTS (the test
