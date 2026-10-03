@@ -227,13 +227,18 @@ def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: Explanati
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None) -> tuple[torch.Tensor, dict[str, float]]:
-    """``bank``: explanations to read. Default: this deal's WHYs and company
-    lines (each line masked from its own), plus ``rules``. In real training
+    """``bank``: explanations for the v5 reader to read. Default: none, unless
+    ``rules`` are given or ``C3Config.legacy_reasons`` is set; then this
+    deal's WHYs and company lines (each line masked from its own), plus
+    ``rules``. In real training
     the bank should hold other deals' explanations too, which is what the
     model will have at inference."""
     w = w or LossWeights()
     desc = model.describe()
-    if bank is None:
+    # v6: reading explanations is the brain's job (brain.py, brain_loss).
+    # The v5 bank (reader votes, compiled operators, rule cards, clause
+    # slots) runs only when asked for, as a baseline to beat.
+    if bank is None and (rules is not None or model.cfg.legacy_reasons):
         bank = ExplanationBank.from_batch(batch, model.schema)
     if rules is not None:
         bank = bank.extend(rules.items)
@@ -255,7 +260,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["claims"] = claims_loss(out, batch, bank)
     parts["rule_links"] = rule_link_loss(out, batch, bank)
     parts["why_echo"] = why_echo_loss(model, out, batch)
-    if w.clause_use:
+    if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
         y = torch.full((len(batch),), model.companies.index(batch.company), device=out.r.device)
@@ -263,3 +268,87 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["policy_l1"] = out.alpha.abs().sum() if out.alpha is not None else out.r.new_zeros(())
     total = sum(getattr(w, k) * v for k, v in parts.items())
     return total, {k: float(v.detach()) if torch.is_tensor(v) else float(v) for k, v in parts.items()}
+
+
+# ---------------------------------------------------------------- v6: the brain
+@dataclass
+class BrainWeights:
+    direct: float = 1.0        # the label, answered from the bare page
+    reasoned: float = 1.0      # the label, answered with the human's WHY on the page
+    rationale: float = 1.0     # write the human's WHY, token by token
+    distill: float = 0.5       # the direct answer moves toward what the reasoning concludes
+    consolidate: float = 0.5   # notes written into weights must act as notes on the page
+    numbers: float = 0.2
+
+
+def _answer_ce(out, batch: Batch, keys) -> torch.Tensor:
+    total, terms = None, 0
+    for k in keys:
+        if k not in out.logits:
+            continue
+        y = torch.tensor(batch.targets[k], device=out.logits[k].device)
+        if (y != IGNORE).any():
+            ce = F.cross_entropy(out.logits[k], y, ignore_index=IGNORE)
+            total = ce if total is None else total + ce
+            terms += 1
+    if total is None:
+        return next(iter(out.logits.values())).new_zeros(())
+    return total / terms
+
+
+def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
+               graph: torch.Tensor | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+    """Every v6 term for one deal (brain.py has the table). Notes come from
+    the deal's other lines; the reasoned pass and the rationale use each
+    line's own WHY, which the direct pass never sees."""
+    from .brain import notes_from_deal  # noqa: PLC0415 (keeps losses importable without the brain)
+    from .consolidate import context_distillation_loss  # noqa: PLC0415
+
+    w = w or BrainWeights()
+    desc = brain.describe()
+    keys = [k for k in batch.targets]
+    notes, cnotes = notes_from_deal(batch)
+    company = batch.company or None
+    parts: dict[str, torch.Tensor] = {}
+
+    direct = brain(batch, company=company, notes=notes, company_notes=cnotes, graph=graph, desc=desc)
+    reasoned = brain(batch, company=company, why=batch.why, notes=notes, company_notes=cnotes,
+                     graph=graph, desc=desc)
+    parts["direct"] = _answer_ce(direct, batch, keys)
+    parts["reasoned"] = _answer_ce(reasoned, batch, keys)
+    parts["rationale"] = brain.rationale_loss(batch, notes, graph)
+
+    has_why = torch.tensor([bool(t) for t in batch.why], device=parts["direct"].device)
+    if has_why.any():
+        parts["distill"] = torch.stack([
+            F.kl_div(direct.logits[k][has_why].log_softmax(-1),
+                     reasoned.logits[k][has_why].detach().log_softmax(-1),
+                     log_target=True, reduction="batchmean") for k in direct.logits]).mean()
+    else:
+        parts["distill"] = parts["direct"].new_zeros(())
+
+    # Context distillation: the deal's notes, once on the page (teacher) and
+    # once written into weights with the page bare (student).
+    uni = sorted({t for ns in notes for t in ns})
+    com = sorted({t for ns in cnotes for t in ns})
+    if uni or com:
+        with torch.no_grad():
+            teacher = brain(batch, company=company, notes=[uni] * len(batch),
+                            company_notes=[com] * len(batch), graph=graph, desc=desc)
+        student = brain(batch, company=company, graph=graph, desc=desc,
+                        deltas=brain.memory_universal(brain.lm, uni),
+                        company_deltas=brain.memory_company(brain.lm, com))
+        parts["consolidate"] = context_distillation_loss(teacher.logits, student.logits)
+    else:
+        parts["consolidate"] = parts["direct"].new_zeros(())
+
+    num = parts["direct"].new_zeros(())
+    for k, pred in direct.numbers.items():
+        vals = batch.numbers_target.get(k, [])
+        m = torch.tensor([v is not None for v in vals], device=pred.device, dtype=torch.bool)
+        if m.any():
+            t = torch.tensor([v or 0.0 for v in vals], device=pred.device)
+            num = num + F.smooth_l1_loss(pred[m], torch.log1p(t[m]))
+    parts["numbers"] = num
+    total = sum(getattr(w, k) * v for k, v in parts.items())
+    return total, {k: float(v.detach()) for k, v in parts.items()}

@@ -41,12 +41,11 @@ bit-identical under any company text (tests/test_c3_brain.py).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
-
 import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .consolidate import ParagraphMemory
 from .data import IGNORE, Batch
 from .lm import LMBase
 from .schema import NUMBER, RELATION, Schema
@@ -103,6 +102,9 @@ class Brain(nn.Module):
         # front of the page, so structure the text does not show (same
         # section, time order, hindsight-trained consequence) reaches the LM.
         self.graph = nn.Linear(d_graph, n_prefix * lm.dim) if d_graph else None
+        # Paragraphs compiled into weights (consolidate.py), one per layer.
+        self.memory_universal = ParagraphMemory(lm)
+        self.memory_company = ParagraphMemory(lm)
         self.opps = {
             layer: [o for o in schema.select(layer=layer) if o.kind != RELATION]
             for layer in ("universal", "company")
@@ -252,5 +254,3 @@ def _concat(a, b):
     return [(torch.cat([x[0], y[0]], 0), torch.cat([x[1], y[1]], 1)) for x, y in zip(a, b)]
 
 
-def brain_targets(batch: Batch, key: str, device: Any) -> torch.Tensor:
-    return torch.tensor(batch.targets[key], device=device)

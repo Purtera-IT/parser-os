@@ -87,6 +87,10 @@ class C3Config:
     dropout: float = 0.1
     context_dropout: float = 0.4
     ema: float = 0.996
+    #: v5 explanation bank on by default in c3_loss (reader votes, compiled
+    #: operators, clause slots). Off: v6 reads explanations with the
+    #: language-model brain (brain.py); v5 stays as an ablation baseline.
+    legacy_reasons: bool = False
 
     @staticmethod
     def design() -> "C3Config":
