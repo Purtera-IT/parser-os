@@ -1320,7 +1320,7 @@
       "key": "remote_miles",
       "label": "How far from the nearest metro",
       "values": "the distance, as written or measured",
-      "desc": "The travel distance that makes a site remote, e.g. \"85 miles from Denver\".",
+      "desc": "Distance from the site to the nearest metro area above a set size, e.g. \"85 miles from Denver\". Never distance from a company's own techs or offices.",
       "layer": "universal"
     },
     {
@@ -1412,6 +1412,13 @@
       "label": "Our labor-hours estimate",
       "values": "the hours",
       "desc": "Our estimate where the text states no hours (hours_stated=false).",
+      "layer": "company"
+    },
+    {
+      "key": "co_tech_base_miles",
+      "label": "How far from our nearest tech base",
+      "values": "the distance, as written or measured",
+      "desc": "Travel distance from Purtera's nearest tech base or contractor pool to the site.",
       "layer": "company"
     },
     {
