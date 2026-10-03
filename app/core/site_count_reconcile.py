@@ -35,10 +35,30 @@ _COUNT_NEAR_SITE = re.compile(
     r"(?<![\d.,$])"
     r"\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b"
     r"(?![\d.,])"
-    r"(?:\s+\w+){0,3}?\s+"
+    r"((?:\s+\w+){0,3}?)\s+"
     r"(sites?|locations?|timeclocks?|time\s+clocks?|schools?|buildings?|stores?)\b",
     re.I,
 )
+
+# "Provide 8 hours of on site support", "est 3 hrs per site": the number counts
+# hours (or visits, technicians, days) and "site" is the place they happen,
+# not what is being counted. A unit noun between the number and "site", or an
+# "on site" / "per site" adverbial, means the number is not a site count.
+# ("on-site" and "onsite" never reach here: the noun must follow whitespace.)
+_NOT_SITE_UNIT = re.compile(
+    r"^(?:hours?|hrs?|minutes?|mins?|days?|weeks?|months?|visits?|trips?|"
+    r"technicians?|techs?|engineers?|people|persons?|staff|workers?|installers?)$",
+    re.I,
+)
+_RATE_OR_ADVERB_BEFORE_NOUN = {"on", "per", "each"}
+
+
+def _quantifies_something_else(gap: str) -> bool:
+    words = gap.split()
+    if any(_NOT_SITE_UNIT.match(w) for w in words):
+        return True
+    return bool(words) and words[-1].lower() in _RATE_OR_ADVERB_BEFORE_NOUN
+
 
 _WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
@@ -67,6 +87,8 @@ def stated_site_counts(atoms: list[Any]) -> list[tuple[int, str]]:
         if not text:
             continue
         for m in _COUNT_NEAR_SITE.finditer(text):
+            if _quantifies_something_else(m.group(2)):
+                continue
             n = _as_int(m.group(1))
             if n is not None:
                 out.append((n, text.strip()[:240]))
