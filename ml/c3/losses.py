@@ -42,6 +42,10 @@ class LossWeights:
     entities: float = 0.2          # entity_keys: lines naming the same entity pull together
     judgments: float = 1.0         # judgment tabs about two lines, a group or the deal
     negatives: float = 0.3         # answers known wrong (the parser's type a person overruled)
+    flips: float = 0.5             # "if X, this would be Y": the line moved by X must answer Y
+    flip_size: float = 0.05        # ...and the move must stay small, so the boundary sits close
+    near_misses: float = 0.5       # lines that read alike but answer differently stay apart
+    near_miss_margin: float = 1.0
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -145,6 +149,63 @@ def negative_loss(out: C3Output, batch: Batch) -> torch.Tensor:
             if bad:
                 total = total - torch.log1p(-p[i, bad].sum().clamp(max=1 - 1e-6))
                 terms += 1
+    return total / max(terms, 1)
+
+
+def moved_heads(model: C3Model, out: C3Output, rows: list[int], move: torch.Tensor,
+                desc) -> C3Output:
+    """The universal heads on lines ``rows`` with r moved by ``move``: what the
+    heads would say if each line were a little different."""
+    r = out.r[rows] + move
+    sub = C3Output(h=out.h[rows], z_c=out.z_c[rows], q_mu=out.q_mu[rows],
+                   q_logvar=out.q_logvar[rows], q_logit=out.q_logit[rows], r=r,
+                   residual=out.residual[rows])
+    model.universal_heads(sub, r, out.q_mean[rows], desc)
+    return sub
+
+
+def flip_loss(model: C3Model, out: C3Output, batch: Batch, desc
+              ) -> tuple[torch.Tensor, torch.Tensor, C3Output | None, torch.Tensor | None]:
+    """The near-miss contrasts a labeler wrote into WHYs.
+
+    For "if X, this would be Y" on line i: the line moved by X (the
+    condition's text through ``flip_proj``) must answer Y on that head, or
+    at least not its gold answer when Y is unstated, while line i itself
+    keeps its gold answer (the ordinary head loss). The move is kept small
+    (``size``), so the only way to satisfy both is a boundary right next to
+    the line, along the direction X names: the small difference that flips
+    the answer. Returns (flip, size, the moved heads' output, the moves)."""
+    fl = [f for f in batch.flips if f.key in out.logits]
+    zero = out.r.new_zeros(())
+    if not fl:
+        return zero, zero, None, None
+    move = model.flip_proj(model.text([f.condition for f in fl]))
+    sub = moved_heads(model, out, [f.line for f in fl], move, desc)
+    total, terms = zero, 0
+    for n, f in enumerate(fl):
+        lg = sub.logits[f.key][n]
+        if f.answer is not None:
+            total = total + F.cross_entropy(lg.unsqueeze(0), torch.tensor([f.answer], device=lg.device))
+        else:
+            gold = batch.targets[f.key][f.line]
+            total = total - torch.log1p(-lg.softmax(-1)[gold].clamp(max=1 - 1e-6))
+        terms += 1
+    size = (move.pow(2).sum(-1) / out.r[[f.line for f in fl]].detach().pow(2).sum(-1).clamp(min=1e-6)).mean()
+    return total / terms, size, sub, move
+
+
+def near_miss_loss(out: C3Output, batch: Batch, margin: float = 1.0) -> torch.Tensor:
+    """Lines that read almost alike but were labeled differently: each must
+    prefer its own answer over its twin's by ``margin`` (in logits), so the
+    heads learn the small difference instead of averaging the two."""
+    total, terms = out.r.new_zeros(()), 0
+    for i, j, key in batch.near_misses:
+        lg = out.logits.get(key)
+        if lg is None:
+            continue
+        yi, yj = batch.targets[key][i], batch.targets[key][j]
+        total = total + F.relu(margin - (lg[i, yi] - lg[i, yj])) + F.relu(margin - (lg[j, yj] - lg[j, yi]))
+        terms += 2
     return total / max(terms, 1)
 
 
@@ -350,6 +411,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["entities"] = entity_loss(out, batch)
     parts["judgments"] = judgment_loss(model, out, batch, desc)
     parts["negatives"] = negative_loss(out, batch)
+    parts["flips"], parts["flip_size"], _, _ = flip_loss(model, out, batch, desc)
+    parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
@@ -368,6 +431,7 @@ class BrainWeights:
     rationale: float = 1.0     # write the human's WHY, token by token
     distill: float = 0.5       # the direct answer moves toward what the reasoning concludes
     consolidate: float = 0.5   # notes written into weights must act as notes on the page
+    flip: float = 0.5          # with a WHY's "if X" assumed, answer what it says the line would be
     numbers: float = 0.2
 
 
@@ -433,6 +497,20 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
         parts["consolidate"] = context_distillation_loss(teacher.logits, student.logits)
     else:
         parts["consolidate"] = parts["direct"].new_zeros(())
+
+    parts["flip"] = parts["direct"].new_zeros(())
+    fl = [f for f in batch.flips if f.key in direct.logits]
+    if fl:
+        flipped = brain.flip_read(batch, why, fl, notes, desc, graph)
+        terms = []
+        for n, f in enumerate(fl):
+            lg = flipped.logits[f.key][n]
+            if f.answer is not None:
+                terms.append(F.cross_entropy(lg.unsqueeze(0), torch.tensor([f.answer], device=lg.device)))
+            else:
+                p_gold = lg.softmax(-1)[batch.targets[f.key][f.line]]
+                terms.append(-torch.log1p(-p_gold.clamp(max=1 - 1e-6)))
+        parts["flip"] = torch.stack(terms).mean()
 
     num = parts["direct"].new_zeros(())
     for k, pred in direct.numbers.items():

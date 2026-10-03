@@ -32,9 +32,19 @@ term                what it does                                           why i
 ``teach_words``     which words of the line carry the reason (qty, size,   the heads learn
                     model number) and which the WHY passes over (a price   which facts count;
                     it calls irrelevant), as a weight per word             the rest is noise
+``teach_flip``      a WHY's "if X, this would be Y": the teacher answers    the heads learn
+                    the case with X assumed; the heads, with the line      where the boundary
+                    moved by X, match it (the label alone gives Y; the     sits next to each
+                    teacher says how sure, and what moves with it)         line, so near
+                                                                           misses split
 ==================  =====================================================  ==================
 
-The last two are read from the teacher, not parsed: the teacher's
+Two more terms live in losses.py because they need no teacher:
+``flip_loss`` (the moved line must answer Y, and the move stays small) and
+``near_miss_loss`` (lines that read alike but were labeled differently must
+each prefer their own answer by a margin).
+
+``teach_pointers`` and ``teach_words`` are read from the teacher, not parsed: the teacher's
 likelihood of the WHY is traced back to the page (``Brain.grounding``), so
 "QTY 4 = 4 units of mount work" puts weight on the 4 and the QTY column, and
 "the prices are irrelevant" leaves the price with almost none, because that
@@ -64,6 +74,7 @@ class TeachWeights:
     unlabeled: float = 0.3
     pointers: float = 0.5
     words: float = 0.5
+    flips: float = 0.5
     temperature: float = 2.0
 
 
@@ -77,6 +88,7 @@ class TeacherView:
     labeled: torch.Tensor                # [N] bool
     pointers: torch.Tensor | None = None  # [N, N+1] what each WHY rests on (last = itself)
     words: list[torch.Tensor | None] | None = None  # per line: weight on each of its words
+    flipped: dict[str, torch.Tensor] | None = None  # flip pass, row n = batch.flips[n] [F, A]
 
 
 @torch.no_grad()
@@ -95,6 +107,8 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     m = told.mask.unsqueeze(-1).to(told.hidden.dtype)
     emb = (told.hidden * m).sum(1) / m.sum(1).clamp(min=1)
     pointers, words = teacher.grounding(batch) if grounding else (None, None)
+    flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc).logits
+               if batch.flips else None)
     teacher.train(was)
     dev = emb.device
     if pointers is not None:
@@ -106,7 +120,7 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
                 pointers[i, js] = 1.0 / len(js)
     return TeacherView(told.logits, noted.logits, emb,
                        torch.tensor([bool(t) for t in why], device=dev),
-                       torch.tensor(batch.labeled, device=dev), pointers, words)
+                       torch.tensor(batch.labeled, device=dev), pointers, words, flipped)
 
 
 def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float) -> torch.Tensor:
@@ -116,14 +130,18 @@ def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float) -> torch.Tensor:
 
 def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
                      w: TeachWeights | None = None,
-                     texts: list[str] | None = None) -> dict[str, torch.Tensor]:
-    """The three teaching terms for one deal. ``out`` is the heads' own
-    forward pass (no teacher inside it); ``view`` is detached."""
+                     texts: list[str] | None = None,
+                     batch: Batch | None = None, desc=None) -> dict[str, torch.Tensor]:
+    """The teaching terms for one deal. ``out`` is the heads' own forward pass
+    (no teacher inside it); ``view`` is detached. ``batch`` (with its flips)
+    turns on ``teach_flip``."""
     w = w or TeachWeights()
     zero = out.r.new_zeros(())
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
-             "teach_pointers": zero, "teach_words": zero}
+             "teach_pointers": zero, "teach_words": zero, "teach_flip": zero}
+    if batch is not None and view.flipped is not None and batch.flips:
+        parts["teach_flip"] = teach_flip(model, out, view, batch, w.temperature, desc)
     if not keys:
         return parts
     why = view.has_why
@@ -162,11 +180,29 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     return parts
 
 
+def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
+               t: float, desc=None) -> torch.Tensor:
+    """``teach_flip``: the heads, with the line moved by the flip's condition
+    (losses.flip_loss), match the teacher's answer to the changed case. The
+    label says only what the flipped answer is; the teacher says how sure,
+    and what else would move with it, on every head of the flipped line."""
+    from .losses import moved_heads  # noqa: PLC0415 (cycle)
+
+    fl = list(batch.flips)
+    move = model.flip_proj(model.text([f.condition for f in fl]))
+    sub = moved_heads(model, out, [f.line for f in fl], move,
+                      desc if desc is not None else model.describe())
+    keys = [k for k in view.flipped if k in sub.logits]
+    if not keys:
+        return out.r.new_zeros(())
+    return torch.stack([_kl(sub.logits[k], view.flipped[k], t) for k in keys]).mean()
+
+
 def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> torch.Tensor:
     w = w or TeachWeights()
     return (w.heads * parts["teach_heads"] + w.geometry * parts["teach_geometry"]
             + w.unlabeled * parts["teach_unlabeled"] + w.pointers * parts["teach_pointers"]
-            + w.words * parts["teach_words"])
+            + w.words * parts["teach_words"] + w.flips * parts.get("teach_flip", 0.0))
 
 
 def mask_labels(batch: Batch, keep: set[int]) -> Batch:
@@ -195,4 +231,6 @@ def mask_labels(batch: Batch, keep: set[int]) -> Batch:
         # not a line label and stays.
         judged=[j for j in batch.judged if j.size != "pair" or set(j.lines) <= keep],
         negatives={k: [x if i in keep else [] for i, x in enumerate(v)] for k, v in batch.negatives.items()},
+        flips=[f for f in batch.flips if f.line in keep],
+        near_misses=[p for p in batch.near_misses if p[0] in keep and p[1] in keep],
     )

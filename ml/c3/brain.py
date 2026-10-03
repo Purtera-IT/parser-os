@@ -188,6 +188,24 @@ class Brain(nn.Module):
             out.attention.update(cout.attention)
         return out
 
+    # ------------------------------------------------------------ flips
+    def flip_read(self, batch: Batch, why: list[str | None], flips: list,
+                  notes: list[list[str]] | None = None, desc=None,
+                  graph: torch.Tensor | None = None) -> BrainOutput:
+        """The flip pass: for each near-miss contrast a labeler wrote ("if X,
+        this would be Y"), the reasoned page with X assumed. Row n of every
+        output is flip n. The page never states Y: the teacher has to apply
+        the rule in the WHY to the changed case, which is what it then
+        teaches the heads (supercharge.teach_flip)."""
+        desc = desc if desc is not None else self.describe()
+        notes = notes or [[] for _ in range(len(batch))]
+        pages = [self.page(batch, f.line, notes[f.line])
+                 + (f"Why: {why[f.line]}\n" if why[f.line] else "")
+                 + f"Suppose instead: {f.condition}\nAnswer:" for f in flips]
+        g = graph[[f.line for f in flips]] if graph is not None else None
+        out, _, _, _ = self.read(pages, "universal", desc, g)
+        return out
+
     # ------------------------------------------------------------ the WHY
     def rationale_loss(self, batch: Batch, notes: list[list[str]] | None = None,
                        graph: torch.Tensor | None = None) -> torch.Tensor:

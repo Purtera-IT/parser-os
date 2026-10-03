@@ -87,6 +87,63 @@ def mask_verdict(text: str) -> str:
     return _VERDICT_RE.sub(MASK, str(text or ""))
 
 
+# ---------------------------------------------------------------- flips
+
+@dataclass(frozen=True)
+class Flip:
+    """One near-miss contrast a labeler wrote into a WHY: "if the customer
+    supplied the mounts, this would be a customer task". ``condition`` is
+    what would have to differ; ``then`` is what the line would be instead
+    (empty for "unless ...", which only says the answer would change)."""
+    condition: str
+    then: str
+    text: str
+
+
+_SENT = re.compile(r"(?<=[.!?;])\s+|\n+")
+_SUBJ = r"(?:(?:this|it|that|the line|the row|this line|this row|the answer)\s+)?"
+_VERB = r"(?:would|'d)\s+(?:instead\s+)?(?:be|become|count as|read as|go to|fall under|have been|turn into)?\s*"
+_IF_THEN = re.compile(rf"\b(?:if|had|were)\s+(?P<cond>.+?),?\s+(?:then\s+)?{_SUBJ}{_VERB}(?P<then>.+)$", re.I)
+_THEN_IF = re.compile(rf"\b{_SUBJ}{_VERB}(?P<then>.+?)\s+(?:if|had)\s+(?P<cond>.+)$", re.I)
+_UNLESS = re.compile(r"\bunless\s+(?P<cond>.+)$", re.I)
+#: Words a WHY quotes from a document ("'Unless separately agreed' leaves a
+#: door open") are the document's, not the labeler's contrast.
+_QUOTED = re.compile(r"[\"\u201c][^\"\u201d]{0,300}[\"\u201d]|(?<!\w)['\u2018][^'\u2019]{0,300}['\u2019](?!\w)")
+_CUT = re.compile(r"(?:\s+(?:because|since|as|so)\s+|,\s*not\s+|\s+(?:rather than|instead of)\s+).*$", re.I)
+
+
+def extract_flips(why: str) -> list[Flip]:
+    """The counterfactual sentences in a WHY, as (condition, then).
+
+    This reads the labeler's own sentence shape, like ``extract_programs``
+    reads their arithmetic: it builds training targets from what a person
+    wrote and never runs at inference. A sentence with "if ... would" (or
+    "would ... if") is a flip; "unless ..." is a flip whose new answer is
+    unstated. Anything else is left alone, so a missed flip costs a target,
+    never a wrong one."""
+    out: list[Flip] = []
+    for sent in _SENT.split(str(why or "")):
+        s = _QUOTED.sub(" ", sent).strip().rstrip(".!;")
+        if not s:
+            continue
+        m = _IF_THEN.search(s) if re.search(r"\bwould\b|'d\b", s, re.I) else None
+        if m and m.start("then") > m.end("cond"):
+            out.append(Flip(_clean(m["cond"]), _clean(_CUT.sub("", m["then"])), s))
+            continue
+        m = _THEN_IF.search(s)
+        if m:
+            out.append(Flip(_clean(m["cond"]), _clean(_CUT.sub("", m["then"])), s))
+            continue
+        m = _UNLESS.search(s)
+        if m:
+            out.append(Flip(_clean(m["cond"]), "", s))
+    return [f for f in out if f.condition]
+
+
+def _clean(t: str) -> str:
+    return re.sub(r"\s+", " ", t).strip(" ,.;:")
+
+
 # ---------------------------------------------------------------- programs
 
 _NUM = r"\$?\d[\d,]*(?:\.\d+)?"

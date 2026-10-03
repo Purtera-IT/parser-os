@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .notes import drop_meta, mask_verdict, split_note
+from .notes import drop_meta, extract_flips, mask_verdict, split_note
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
 
@@ -286,6 +286,12 @@ class Batch:
     #: Answers known to be wrong for a line, by opportunity: the parser's type
     #: when a person picked another, or a type an older row ruled out.
     negatives: dict[str, list[list[int]]] = field(default_factory=dict)
+    #: Near-miss contrasts a labeler wrote ("if X, this would be Y"), one per
+    #: (line, opportunity) they move.
+    flips: list["FlipTarget"] = field(default_factory=list)
+    #: Labeled lines that read almost alike but got different answers:
+    #: (i, j, opportunity), i < j.
+    near_misses: list[tuple[int, int, str]] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -305,6 +311,106 @@ class Judged:
     lines: tuple[int, ...]       # the two lines, the group's lines, or every line
     answer: int                  # class index
     note: str = ""               # the labeler's reason and note, for the teacher
+
+
+@dataclass(frozen=True)
+class FlipTarget:
+    """A flip resolved against the schema: on line ``line``, if ``condition``
+    held, opportunity ``key`` would answer ``answer`` (a class index), or just
+    not its gold answer when ``answer`` is None."""
+    line: int
+    key: str
+    answer: int | None
+    condition: str
+
+
+def _words(t: str) -> str:
+    return " " + re.sub(r"[^a-z0-9]+", " ", str(t).lower().replace("_", " ")).strip() + " "
+
+
+def resolve_flips(schema: Schema, why_raw: list[str], targets: dict[str, list[int]]
+                  ) -> list[FlipTarget]:
+    """Turn each WHY's flip sentences into targets.
+
+    The new answer is the registered answer the "then" part names (its value,
+    underscores read as spaces, three letters or more), on an opportunity the
+    line has a gold answer for and where it differs from that gold. A flip
+    that names no such answer ("unless ...", or words that are not a
+    registered value) still says the type would change: it becomes "not the
+    gold type". A flip on a line with no gold anywhere teaches nothing."""
+    opps = [o for o in schema.opportunities
+            if o.universal and o.kind in (CLASS, PRESENCE) and o.key in targets]
+    out: list[FlipTarget] = []
+    for i, why in enumerate(why_raw):
+        if not why:
+            continue
+        for f in extract_flips(why):
+            then = _words(f.then)
+            found: list[FlipTarget] = []
+            for o in opps:
+                gold = targets[o.key][i]
+                if gold == IGNORE:
+                    continue
+                for a_i, a in enumerate(o.answers):
+                    name = _words(a.value).strip()
+                    if a_i != gold and len(name) >= 3 and not a.value.startswith("_") \
+                            and f" {name} " in then:
+                        found.append(FlipTarget(i, o.key, a_i, f.condition))
+                        break
+            if not found and targets.get("col:label_type", [IGNORE] * (i + 1))[i] != IGNORE:
+                found.append(FlipTarget(i, "col:label_type", None, f.condition))
+            out += found
+    return out
+
+
+def _shingles(t: str, n: int = 3) -> set[str]:
+    w = _words(t).strip()
+    return {w[k:k + n] for k in range(max(1, len(w) - n + 1))}
+
+
+def find_near_misses(texts: list[str], targets: dict[str, list[int]], labeled: list[bool],
+                     schema: Schema, threshold: float = 0.6, per_line: int = 3,
+                     common: int = 200) -> list[tuple[int, int, str]]:
+    """Pairs of labeled lines whose text is nearly the same (character
+    trigram Jaccard >= ``threshold``) but whose gold answers differ on a
+    line-size universal opportunity (the type first). Each line keeps its
+    ``per_line`` closest such partners. Candidates come from an inverted
+    index over trigrams, skipping trigrams in more than ``common`` lines, so
+    a 2,000-line deal stays cheap."""
+    idx = [i for i, x in enumerate(labeled) if x and texts[i].strip()]
+    sh = {i: _shingles(texts[i]) for i in idx}
+    inv: dict[str, list[int]] = {}
+    for i in idx:
+        for g in sh[i]:
+            inv.setdefault(g, []).append(i)
+    keys = ["col:label_type"] + [o.key for o in schema.select(layer="universal")
+                                 if o.size == LINE and o.kind in (CLASS, PRESENCE)
+                                 and o.key != "col:label_type" and o.key in targets]
+    keys = [k for k in keys if k in targets]
+    best: dict[int, list[tuple[float, int, str]]] = {}
+    for i in idx:
+        shared: dict[int, int] = {}
+        for g in sh[i]:
+            js = inv[g]
+            if len(js) > common:
+                continue
+            for j in js:
+                if j > i:
+                    shared[j] = shared.get(j, 0) + 1
+        for j, c in shared.items():
+            jac = c / (len(sh[i]) + len(sh[j]) - c)
+            if jac < threshold:
+                continue
+            key = next((k for k in keys if IGNORE not in (targets[k][i], targets[k][j])
+                        and targets[k][i] != targets[k][j]), None)
+            if key:
+                best.setdefault(i, []).append((jac, j, key))
+                best.setdefault(j, []).append((jac, i, key))
+    pairs: set[tuple[int, int, str]] = set()
+    for i, cands in best.items():
+        for _, j, key in sorted(cands, reverse=True)[:per_line]:
+            pairs.add((min(i, j), max(i, j), key))
+    return sorted(pairs)
 
 
 def _field_value(label: dict[str, Any], source: str, name: str) -> Any:
@@ -569,12 +675,14 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 edges[rel].append(pair)
 
     why: list[str | None] = []
+    why_raw: list[str] = []
     policy: list[str | None] = []
     for a in atoms:
         note = (a.label or {}).get("note") or ""
         u, p = split_note(note, company)
         u, p = drop_meta(u), drop_meta(p)
         why.append(mask_verdict(u) if u else None)
+        why_raw.append(u if a.label is not None and not excluded(a.label) else "")
         policy.append(p or None)
 
     rule_links: list[tuple[int, str, int]] = []
@@ -739,7 +847,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
         field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities,
-        judged=judged, negatives=negatives)
+        judged=judged, negatives=negatives,
+        flips=resolve_flips(schema, why_raw, targets),
+        near_misses=find_near_misses([a.text for a in atoms], targets,
+                                     [a.label is not None and not excluded(a.label) for a in atoms],
+                                     schema))
 
 
 def _as_list(v: Any) -> list[str]:
@@ -775,5 +887,5 @@ def realized_changes(outcome: dict[str, float], tol: float = 0.02) -> dict[str, 
     return out
 
 
-__all__ = ["Atom", "Batch", "DealExample", "featurize", "number_tokens", "IGNORE",
+__all__ = ["Atom", "Batch", "DealExample", "FlipTarget", "featurize", "find_near_misses", "resolve_flips", "number_tokens", "IGNORE",
            "CONTEXT_SLOTS", "ABSENT", "BINARY", "CLASS", "NUMBER", "PRESENCE"]
