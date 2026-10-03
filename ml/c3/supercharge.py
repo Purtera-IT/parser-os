@@ -194,4 +194,5 @@ def mask_labels(batch: Batch, keep: set[int]) -> Batch:
         # Pair verdicts follow their lines; a group's or the deal's verdict is
         # not a line label and stays.
         judged=[j for j in batch.judged if j.size != "pair" or set(j.lines) <= keep],
+        negatives={k: [x if i in keep else [] for i, x in enumerate(v)] for k, v in batch.negatives.items()},
     )

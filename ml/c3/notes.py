@@ -64,14 +64,23 @@ def split_note(note: str, company: str = "purtera") -> tuple[str, str]:
 PARSER_TAG = "[parser]"
 
 
+#: Where a labeler accepted a model's draft, the page records it in the text
+#: ("Accepted from claude-code (assistant)'s proposal: ...", "From ... (assistant)'s
+#: proposal: ..."). The words that follow are the person's to keep; the
+#: marker is bookkeeping a model must not learn to write.
+_PROVENANCE_RE = re.compile(r"(?:accepted\s+)?from\s+[^:\n]{0,80}\((?:assistant|bot|model)\)'s\s+proposal:\s*",
+                            re.IGNORECASE)
+
+
 def drop_meta(text: str) -> str:
-    """``text`` up to, not including, its ``[parser]`` line."""
+    """``text`` up to, not including, its ``[parser]`` line, without the
+    page's machine-draft markers."""
     keep = []
     for line in str(text or "").splitlines():
         if line.lstrip().lower().startswith(PARSER_TAG):
             break
         keep.append(line)
-    return "\n".join(keep).strip()
+    return _PROVENANCE_RE.sub("", "\n".join(keep)).strip()
 
 
 def mask_verdict(text: str) -> str:

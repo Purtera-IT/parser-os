@@ -73,12 +73,18 @@ class DealExample:
     #: The judgment tabs' verdicts as the training blob stores them (head,
     #: target, text, verdict, reason, note, labeler); resolved in featurize.
     judgments: list[dict[str, Any]] = field(default_factory=list)
+    #: Why a labeler drew a link, by (src key, dst key, relation).
+    edge_notes: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    #: Links from a line to a whole document ("the file this line announces"):
+    #: (src key, document id).
+    doc_pointers: list[tuple[str, str]] = field(default_factory=list)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
         atoms = [Atom(key=str(a["key"]), text=str(a.get("text", "")),
                       entered_at=_time(a.get("entered_at")),
-                      doc_id=str(a.get("doc_id", "")), doc_kind=str(a.get("doc_kind", "")),
+                      doc_id=str(a.get("doc_id") or a.get("artifact_id") or ""),
+                      doc_kind=str(a.get("doc_kind", "")),
                       section=str(a.get("section", "")), order=int(a.get("order", i)),
                       speaker_role=str(a.get("speaker_role", "")),
                       speaker_side=str(a.get("speaker_side", "")), label=a.get("label"),
@@ -91,7 +97,10 @@ class DealExample:
             company_policy=str(d.get("company_policy", "")),
             edges=[(str(e["src"]), str(e["dst"]), str(e["relation"])) for e in d.get("edges", [])],
             outcome={k: float(v) for k, v in (d.get("outcome") or {}).items()},
-            judgments=[j for j in d.get("judgments") or [] if isinstance(j, dict)])
+            judgments=[j for j in d.get("judgments") or [] if isinstance(j, dict)],
+            edge_notes={(str(e["src"]), str(e["dst"]), str(e["relation"])): str(e["note"])
+                        for e in d.get("edges", []) if e.get("note")},
+            doc_pointers=[(str(p[0]), str(p[1])) for p in d.get("doc_pointers", [])])
 
     @staticmethod
     def load(path: str | Path) -> "DealExample":
@@ -137,9 +146,72 @@ class DealExample:
                          "speaker_side": lb.get("speaker_side", "")})
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
+        linked, doc_pointers = _blob_links(blob.get("links") or [], rows)
+        edges += linked
         return DealExample.from_dict({"deal_id": deal_id, "company": company,
-                                      "atoms": rows, "edges": edges,
+                                      "atoms": rows, "edges": edges, "doc_pointers": doc_pointers,
                                       "judgments": blob.get("judgments") or []})
+
+
+#: A relation the model reads only from the later line back to the earlier
+#: one (model.CAUSAL_RELATIONS) whose direction a labeler does not mean:
+#: either line's card can draw a contradiction.
+_LATER_FIRST = ("contradicts",)
+#: A link note that says nothing (the card's default).
+_EMPTY_LINK_NOTES = ("drawn while labelling the whole deal", "drawn while labelling", "")
+
+
+def _blob_links(links: list[Any], rows: list[dict[str, Any]]
+                ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+    """The evidence links the labeling page stores at the top of the training
+    blob (``doc.links``: from_key, from_text, from_head, to_label_key,
+    to_atom_id, to_text, relation, note, labeler), as edges between lines.
+
+    The from side is the card the link was drawn on (its label_key; a
+    Questions card has a gap key, so its text is used); the to side is
+    resolved by label_key, then atom id, then text. An ``answers`` link always
+    runs answer -> question (a Questions card draws it the other way round),
+    and a contradiction runs later line -> earlier.
+    Model-written drafts never train. The labeler's note goes with the edge.
+    A link whose ends are not in this parse (an older parse's keys) is dropped.
+    A link to a whole document (to_kind text, an artifact and no line) is
+    returned as a document pointer. Text matching ignores which artifact a
+    line came from, so links drawn on an earlier parse of the same file still
+    resolve."""
+    by_key = {str(r.get("key")): r for r in rows if r.get("key")}
+    by_id = {str(r.get("atom_id") or r.get("id")): r for r in rows if r.get("atom_id") or r.get("id")}
+    by_text: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        by_text.setdefault(_norm_text(r.get("text")), r)
+
+    def find(key: Any, atom_id: Any, text: Any) -> dict[str, Any] | None:
+        return (by_key.get(str(key or "")) or by_id.get(str(atom_id or ""))
+                or (by_text.get(_norm_text(text)) if str(text or "").strip() else None))
+
+    out, doc_pointers = [], []
+    for k in links:
+        if not isinstance(k, dict) or not _is_a_person(k.get("labeler")):
+            continue
+        rel = str(k.get("relation") or "")
+        a = find(k.get("from_key"), k.get("from_atom_id"), k.get("from_text"))
+        b = find(k.get("to_label_key"), k.get("to_atom_id"), k.get("to_text"))
+        if a is not None and b is None and k.get("to_artifact_id") and not k.get("to_label_key") \
+                and not k.get("to_atom_id") and str(k.get("to_kind") or "") == "text":
+            doc_pointers.append((str(a["key"]), str(k["to_artifact_id"])))
+            continue
+        if not rel or a is None or b is None or a is b:
+            continue
+        if rel == "answers" and str(k.get("from_head") or "") == "gap":
+            a, b = b, a                              # question card: question -> answer
+        if rel in _LATER_FIRST and (_time(a.get("entered_at")), a.get("order", 0)) < \
+                (_time(b.get("entered_at")), b.get("order", 0)):
+            a, b = b, a
+        note = str(k.get("note") or "").strip()     # line breaks kept: the [company] line
+        edge = {"src": a["key"], "dst": b["key"], "relation": rel}
+        if " ".join(note.split()).lower() not in _EMPTY_LINK_NOTES:
+            edge["note"] = note
+        out.append(edge)
+    return out, doc_pointers
 
 
 def _time(v: Any) -> float:
@@ -211,6 +283,9 @@ class Batch:
     #: Judgment-tab verdicts about two lines, a group of lines or the whole
     #: deal (line verdicts are in ``targets``).
     judged: list["Judged"] = field(default_factory=list)
+    #: Answers known to be wrong for a line, by opportunity: the parser's type
+    #: when a person picked another, or a type an older row ruled out.
+    negatives: dict[str, list[list[int]]] = field(default_factory=dict)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -365,6 +440,22 @@ def _norm_text(text: Any) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
 
 
+def _by_ref_text(by_text: dict[str, int], text: Any) -> int | None:
+    """The line a pointer's text names. The page sometimes prefixes the text
+    with where it came from ("<file tail>: <the line>"), so the part after
+    the first ": " is tried too; a heading path ("A > B") names its last
+    heading."""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    j = by_text.get(_norm_text(t))
+    if j is None and ": " in t:
+        j = by_text.get(_norm_text(t.split(": ", 1)[1]))
+    if j is None and re.search(r"\s[>›]\s", t):           # a heading path: its last heading
+        j = by_text.get(_norm_text(re.split(r"\s[>›]\s", t)[-1]))
+    return j
+
+
 class _Lines:
     """Find a deal's lines from what a judgment stores about its subject: an
     atom id (rehashed by every re-parse) or, failing that, the atom's text."""
@@ -469,9 +560,13 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
 
     edges: dict[str, list[tuple[int, int]]] = {}
     edges_ok = {o.field for o in schema.select(kind=RELATION)}
+    # A link touching a row set aside trains nothing (as in app.learning.human_labels).
+    aside = {a.key for a in deal.atoms if excluded(a.label)}
     for src, dst, rel in deal.edges:
-        if src in index and dst in index:
-            edges.setdefault(rel, []).append((index[src], index[dst]))
+        if src in index and dst in index and not {src, dst} & aside:
+            pair = (index[src], index[dst])
+            if pair not in edges.setdefault(rel, []):
+                edges[rel].append(pair)
 
     why: list[str | None] = []
     policy: list[str | None] = []
@@ -502,6 +597,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     hint_lines: list[list[int]] = []
     entities: list[list[str]] = []
     by_atom = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
+    by_text: dict[str, int] = {}
+    for i, a in enumerate(atoms):
+        by_text.setdefault(_norm_text(a.text), i)
     for i, a in enumerate(atoms):
         lb = a.label or {}
         reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
@@ -525,15 +623,49 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         field_notes.append(notes)
         weights.append(TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))
         refs = [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)]
-        hint_lines.append(sorted({by_atom.get(str(r.get("atomId")), index.get(str(r.get("atomId"))))
-                                  for r in refs} - {None}))
+        # A ref names a line by atom id, or (on most real rows) only by the
+        # text the labeler pointed at; a heading points at its heading line
+        # when the deal has one (a list header is an atom). Its own words and
+        # a document type are not another line, so they point nowhere.
+        found = set()
+        for r in refs:
+            j = by_atom.get(str(r.get("atomId")), index.get(str(r.get("atomId"))))
+            if j is None and str(r.get("hint") or "") != "own_words" \
+                    and str(r.get("kind") or "") != "doc_type":
+                j = _by_ref_text(by_text, r.get("text"))
+            if j is not None and j != i:
+                found.add(j)
+        hint_lines.append(sorted(found))
         entities.append(_as_list(lb.get("entity_keys")))
+
+    # The parser's guess, where a person picked another type, is a type the
+    # line is known not to be ("Parser's right" is the agreement, already the
+    # target). Older rows store the ruled-out type in `rejected` instead.
+    by_key_all = schema.by_key()
+    type_opp = by_key_all.get("col:label_type")
+    negatives: dict[str, list[list[int]]] = {}
+    if type_opp is not None:
+        col = [[] for _ in range(n)]
+        for i, a in enumerate(atoms):
+            lb = a.label
+            if not lb or not _is_a_person(lb.get("labeler") or "person"):
+                continue
+            typ = str(lb.get("label_type") or "")
+            ruled = {str(lb.get("parser_type") or "")}
+            if not _rejected_flag(lb):
+                ruled.add(str(lb.get("rejected") or "").strip())
+            for t in ruled - {"", typ}:
+                ix = type_opp.index(t)
+                if ix is not None and t != ABSENT:
+                    col[i].append(ix)
+        if any(col):
+            negatives[type_opp.key] = col
 
     # Judgment tabs. A verdict about one line is that line's target (an alias
     # fills an existing question only where the card left it blank); a verdict
     # about two lines, a group or the deal is kept whole. The labeler's reason
     # and note go with it, for the teacher.
-    by_key = schema.by_key()
+    by_key = by_key_all
     judged: list[Judged] = []
     lines = _Lines(atoms)
     for j in deal.judgments:
@@ -572,6 +704,27 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             for i in idx:
                 entities[i] = [*entities[i], f"site:judged:{j.get('target_key') or idx}"]
 
+    # A line that points at a whole document points at every line of it.
+    for src, doc in deal.doc_pointers:
+        i = index.get(src)
+        if i is not None and src not in aside:
+            hint_lines[i] = sorted(set(hint_lines[i]) | {j for j, a in enumerate(atoms)
+                                                         if a.doc_id == doc and j != i})
+
+    # Why a link was drawn: the teacher reads it as the WHY of that relation
+    # on the line the link starts from (a [purtera] part goes to the company).
+    for (src, dst, rel), note in deal.edge_notes.items():
+        i, k = index.get(src), f"rel:{rel}"
+        if i is None or dst not in index or k not in by_key or {src, dst} & aside:
+            continue
+        u, p = split_note(note, company)
+        u, p = drop_meta(u), drop_meta(p)
+        if u:
+            prev = field_notes[i].get(k)
+            field_notes[i][k] = f"{prev} {mask_verdict(u)}" if prev else mask_verdict(u)
+        if p:
+            policy[i] = " ".join(x for x in (policy[i], p) if x)
+
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
     return Batch(
@@ -586,7 +739,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
         field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities,
-        judged=judged)
+        judged=judged, negatives=negatives)
 
 
 def _as_list(v: Any) -> list[str]:
