@@ -1,0 +1,13 @@
+[
+  {"id": "site_count_change", "layer": "universal",
+   "text": "When a later line says the number of sites changed, every earlier statement of the old site count is no longer current, and every quantity worked out from the old count has to be worked out again.",
+   "opportunity": "read:superseded", "answer": "true"},
+  {"id": "question_then_answer", "layer": "universal",
+   "text": "A line that asks the customer whether something exists at the site is a question still waiting on an answer until a later line from the customer says it.",
+   "opportunity": "col:wants", "answer": "confirm-with-customer"},
+  {"id": "sellers_dont_own_delivery", "layer": "company", "company": "purtera",
+   "text": "When a seller promises to send a quote or a document, that promise creates no delivery work for our team, so the line is rejected as a seller promise; the promise still exists for the seller.",
+   "opportunity": "read:co_reason", "answer": "seller_promise"},
+  {"id": "two_techs_over_55", "layer": "company", "company": "purtera",
+   "text": "A display larger than 55 inches is mounted by two technicians, because one person cannot lift and level it safely. The display size and quantity on the line decide the crew."}
+]

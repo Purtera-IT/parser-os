@@ -1,0 +1,3 @@
+torch>=2.2
+# optional: the pretrained encoder the design names (text.HFEncoder)
+# transformers>=4.48
