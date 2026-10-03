@@ -20,6 +20,7 @@ import hashlib as _hashlib
 import os
 
 from app.core.label_key import label_key as _label_key
+from app.core.suppression_ledger import DROPPED_NOT_FOLDED_KEY, suppression_kind
 import re
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
@@ -395,6 +396,14 @@ def _rule_decisions_total() -> int:
         return 0
 
 
+def _drop_reason(atom: Any) -> str:
+    v = getattr(atom, "value", None)
+    if not isinstance(v, dict):
+        return ""
+    sup = v.get("_suppression") if isinstance(v.get("_suppression"), dict) else {}
+    return str(sup.get("drop_reason") or v.get(DROPPED_NOT_FOLDED_KEY) or "")
+
+
 def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[dict]:
     """The atoms the compile dropped, with the stage that dropped them.
 
@@ -467,6 +476,11 @@ def _suppressed_for_review(compile_result: "CompileResult", kept: list) -> list[
             "stage": stage,
             "reason": str(((getattr(atom, "value", None) or {}).get("_suppression") or {}).get("reason") or "")
             if isinstance(getattr(atom, "value", None), dict) else "",
+            # FOLD (names a survivor) or DROP (removed on purpose, with why):
+            # the ledger records it (suppression_ledger.DROP_STAGES); the row
+            # carried neither, so a reader could not tell them apart.
+            "kind": suppression_kind(atom, stage),
+            "drop_reason": _drop_reason(atom),
             # Who made it, and a key that survives a reparse. Without the key a
             # label is tied to this compile: `label_key` is
             # sha256(deal | filename | page | text), three quarters location

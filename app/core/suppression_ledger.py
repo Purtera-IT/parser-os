@@ -55,6 +55,7 @@ DROP_STAGES = frozenset({
     "noise_suppression",
     "drawing_pairs",
     "substance_gate",
+    "own_copy_gate",              # a copy read off a header / author line
 })
 
 

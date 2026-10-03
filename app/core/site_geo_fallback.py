@@ -582,6 +582,18 @@ def enrich_site_geo(atoms: list[Any]) -> int:
     return filled
 
 
+def _note_also_stated(site: Any, atom: Any) -> None:
+    """Record on a minted fallback ``site`` another atom stating its address."""
+    v = getattr(site, "value", None)
+    aid = str(getattr(atom, "id", "") or "")
+    if not isinstance(v, dict) or not aid:
+        return
+    rows = list(v.get("address_also_stated_in") or [])
+    if aid not in {r.get("atom_id") for r in rows}:
+        rows.append({"atom_id": aid, "artifact_id": str(getattr(atom, "artifact_id", "") or "")})
+        v["address_also_stated_in"] = rows
+
+
 def geo_fallback_sites(
     atoms: list[Any], *, project_id: str
 ) -> list[EvidenceAtom]:
@@ -594,6 +606,7 @@ def geo_fallback_sites(
         return []
 
     seen_keys = _existing_address_keys(atoms)
+    minted: dict[str, Any] = {}
     out: list[EvidenceAtom] = []
     for atom in atoms:
         text = getattr(atom, "raw_text", None) or getattr(atom, "text", None) or ""
@@ -610,6 +623,12 @@ def geo_fallback_sites(
                 "zip": parsed_item.zip,
             }
             addr_key = normalized_address_key(dedup_fields)
+            if addr_key and addr_key in minted and minted[addr_key][1] is not atom:
+                # The same address stated again (010353: the intake's Job site
+                # line, its dispatch brief and the JSON brief): no second site,
+                # and the one minted names every line that stated it.
+                _note_also_stated(minted[addr_key][0], atom)
+                continue
             if not addr_key or addr_key in seen_keys:
                 continue
             from app.core.vendor_site_ban import is_purtera_vendor_address
@@ -674,6 +693,7 @@ def geo_fallback_sites(
                     parser_version="site_geo_fallback_v2",
                 )
             )
+            minted[addr_key] = (out[-1], atom)
             if len(out) >= _MAX_FALLBACK_SITES:
                 return out
     return out
