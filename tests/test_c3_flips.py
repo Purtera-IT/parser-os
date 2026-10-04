@@ -179,3 +179,24 @@ def test_a_near_miss_link_adds_lines_alike_in_meaning_not_wording(schema):
     b = featurize(deal, schema)
     assert (2, 3, "col:label_type") in b.near_misses
     assert "rel:near_miss" in schema.by_key()
+
+
+def test_a_draft_why_nobody_saved_counts_less(schema):
+    import dataclasses
+
+    from ml.c3.data import DRAFT_WHY_WEIGHT
+    from ml.c3.losses import why_echo_loss
+
+    drafted = [dict(lb, reads_set={"why_author": "machine_draft"}) if lb["label_key"] == "k1" else lb
+               for lb in LABELS]
+    b = featurize(DealExample.from_training_blob({"labels": drafted}, ATOMS, deal_id="synthetic-draft"), schema)
+    assert 0 < DRAFT_WHY_WEIGHT < 1
+    assert b.why_weights[0] == DRAFT_WHY_WEIGHT and b.why_weights[1:] == [1.0] * 4
+    # The answers keep their full weight; only the WHY's terms scale.
+    assert b.weights[0] == 1.0
+    torch.manual_seed(0)
+    model = C3Model(schema, SMALL)
+    out = model(b.inputs())
+    full = why_echo_loss(model, out, dataclasses.replace(b, why_weights=[1.0] * len(b)))
+    less = why_echo_loss(model, out, b)
+    assert not torch.isclose(full, less)

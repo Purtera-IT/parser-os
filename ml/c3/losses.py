@@ -53,6 +53,13 @@ def row_weights(batch: Batch, device) -> torch.Tensor:
     return torch.tensor(w, device=device, dtype=torch.float32)
 
 
+def why_row_weights(batch: Batch, device) -> torch.Tensor:
+    """Per-line weight of the WHY: 1.0, or DRAFT_WHY_WEIGHT for a model's
+    draft nobody saved (data.why_weight)."""
+    w = batch.why_weights if len(batch.why_weights) == len(batch) else [1.0] * len(batch)
+    return torch.tensor(w, device=device, dtype=torch.float32)
+
+
 def weighted_ce(logits: torch.Tensor, y: torch.Tensor, rw: torch.Tensor) -> torch.Tensor:
     """Cross-entropy averaged with row weights over the lines with a label."""
     m = y != IGNORE
@@ -231,7 +238,9 @@ def why_losses(model: C3Model, out: C3Output, batch: Batch, desc, w: LossWeights
     r = F.normalize(out.r[idx], dim=-1)
     sim = r @ F.normalize(why, dim=-1).T / tau
     target = torch.arange(len(idx), device=sim.device)
-    align = 0.5 * (F.cross_entropy(sim, target) + F.cross_entropy(sim.T, target))
+    ww = why_row_weights(batch, sim.device)[idx]
+    align = 0.5 * ((F.cross_entropy(sim, target, reduction="none") * ww).sum()
+                   + (F.cross_entropy(sim.T, target, reduction="none") * ww).sum()) / ww.sum()
 
     stand_in = out.r.clone()
     stand_in[idx] = why + model.res_up(out.residual[idx])
@@ -240,11 +249,12 @@ def why_losses(model: C3Model, out: C3Output, batch: Batch, desc, w: LossWeights
     model.universal_heads(sub, stand_in, out.q_mean, desc)
     keep = torch.zeros(len(batch), dtype=torch.bool, device=sim.device)
     keep[idx] = True
+    rw = why_row_weights(batch, sim.device)
     suff, terms = out.r.new_zeros(()), 0
     for key, lg in sub.logits.items():
         y = torch.tensor(batch.targets[key], device=sim.device).masked_fill(~keep, IGNORE)
         if (y != IGNORE).any():
-            suff = suff + F.cross_entropy(lg, y, ignore_index=IGNORE)
+            suff = suff + weighted_ce(lg, y, rw)
             terms += 1
     return align, suff / max(terms, 1)
 
@@ -307,7 +317,8 @@ def why_echo_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
     if not idx:
         return out.r.new_zeros(())
     target = model.text([batch.why[i] for i in idx]).detach()
-    return (1 - F.cosine_similarity(model.r_to_text(out.r[idx]), target, -1)).mean()
+    ww = why_row_weights(batch, out.r.device)[idx]
+    return ((1 - F.cosine_similarity(model.r_to_text(out.r[idx]), target, -1)) * ww).sum() / ww.sum()
 
 
 def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: ExplanationBank,
