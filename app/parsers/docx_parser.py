@@ -1529,6 +1529,19 @@ class DocxParser(BaseParser):
                 )
             current_blocks = []
 
+        # Open headings, outermost first: (level, text, style-named).
+        open_heads: list[tuple[int, str, bool]] = []
+
+        def _sibling_of(text: str) -> tuple[int, str, bool] | None:
+            """The open heading whose typed sequence ``text`` continues ("C."
+            after "B.", "3." after "2."), as in ``_build_section_index``."""
+            if not _LEAD_ENUM_RE.match(text):
+                return None
+            for h in reversed(open_heads):
+                if _LEAD_ENUM_RE.match(h[1]):
+                    return h if _continues_enumeration(h[1], text) else None
+            return None
+
         for paragraph in _all_paragraphs(document):
             text = (paragraph.text or "").strip()
             style_name = (paragraph.style.name or "").lower() if paragraph.style else ""
@@ -1537,16 +1550,34 @@ class DocxParser(BaseParser):
             # Only when the name declines: a localised or template heading
             # style carries w:outlineLvl but not the substring "heading".
             outline = None if (is_heading or is_list) else self._outline_level(paragraph)
+            level = None
             if (is_heading or outline is not None) and text:
-                flush_section()
-                current_heading = text
                 if is_heading:
                     # Heading 1 -> level 2, Heading 2 -> level 3, etc.
                     m = re.search(r"\d+", style_name)
                     level = (int(m.group()) + 1) if m else 2
                 else:
                     level = outline + 2  # outlineLvl 0 == Heading 1 == level 2
+                sib = _sibling_of(text)
+                # ENUMERATED SIBLINGS: a line that continues an open heading's
+                # typed sequence is its peer, whatever depth its own outline
+                # level says. Two style-named headings keep the author's outline.
+                if sib is not None and sib[0] < level and not (is_heading and sib[2]):
+                    level = sib[0]
+            elif text and not is_list and not self._paragraph_is_list_item(paragraph):
+                # The same sequence's lead line with no outline level at all
+                # (000132's "C." and "E." between outlined "B.", "D.", "F.")
+                # still heads its group when it reads as a heading.
+                sib = _sibling_of(text)
+                if sib is not None and (self._is_bold_subheading(paragraph) or self._is_caps_heading(paragraph)):
+                    level = sib[0]
+            if level is not None:
+                flush_section()
+                current_heading = text
                 current_level = max(2, min(level, 6))
+                while open_heads and open_heads[-1][0] >= level:
+                    open_heads.pop()
+                open_heads.append((level, text, is_heading))
                 continue
             if not text:
                 continue
