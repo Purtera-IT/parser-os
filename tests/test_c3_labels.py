@@ -171,3 +171,22 @@ def test_hint_refs_and_entity_keys_teach_the_heads(schema, batch):
     assert m.cite_q.weight.grad.abs().sum() > 0 and m.rationale[0].weight.grad.abs().sum() > 0
     _, parts = c3_loss(C3Model(schema, SMALL), batch, LossWeights(clause_use=0.0))
     assert parts["pointers"] > 0 and parts["entities"] > 0
+
+
+def test_the_persons_row_wins_over_a_draft_labelers_on_one_line(schema):
+    person = {"label_key": "k7", "label_type": "_keep", "labeler": "dev@x.com",
+              "note": "Crew plan for the install: 2 techs, 1 day.", "reads_set": {"crew_size": "2"}}
+    draft = {**person, "labeler": "claude@x.com (assistant)", "note": "A thinner draft.",
+             "reads_set": {"crew_size": "3"}}
+    missed = BLOB["labels"][[lb["label_key"] for lb in BLOB["labels"]].index("k9")]
+    blob = {"labels": [person, draft, missed, {**missed, "labeler": "claude@x.com (assistant)",
+                                                "note": "Draft copy of the Missed row."}]}
+    deal = DealExample.from_training_blob(blob, ATOMS, deal_id="synthetic-two-labelers")
+    by_key = {a.key: a for a in deal.atoms}
+    assert by_key["k7"].label["note"] == person["note"]
+    # The Missed line appears once, with the person's row.
+    assert [a.key for a in deal.atoms].count("k9") == 1
+    assert by_key["k9"].label["note"] == missed["note"]
+    # With no person row, the draft still stands.
+    alone = DealExample.from_training_blob({"labels": [draft]}, ATOMS, deal_id="synthetic-draft-only")
+    assert {a.key: a for a in alone.atoms}["k7"].label["note"] == "A thinner draft."
