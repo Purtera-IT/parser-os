@@ -64,7 +64,7 @@ reading and relation in `atom_types.json` belongs to exactly one head.
 | content.document | content | universal | doc_kind, sow_fill, sow_section, derivation, unreliable_part, points_at_artifact |
 | content.deal | content | universal | deal answers, router and deal-scope judgments |
 | structure.formation | content | universal | admission, rule, suppression, document and sheet judgments |
-| beliefs.tracker | beliefs | universal | superseded · same_as, contradicts · conflict and site judgments |
+| beliefs.tracker | beliefs | universal | superseded · same_as, contradicts, near_miss · conflict and site judgments |
 | consequence.work | consequence | universal | commitment, task_owner_role, triggered_task, trigger_event, fires_task, blocked_on, urgency, expansion · blocked_by, triggered_by |
 | consequence.questions | consequence | universal | needs_artifact, chase · answers · the Questions card |
 | consequence.outcome | consequence | universal | weight_tier · sow_coverage, train_for |
@@ -100,7 +100,10 @@ hours, crew, rates, dates, parties and roles, scope items, materials, access
 constraints, billing basis. A two-layer recurrent transformer over claims in
 time order keeps the current value per slot. `same_as` is a quotient over
 claims (same slot, same value); `contradicts` and `superseded` are same slot,
-different value, later time. An **absence head** predicts "empty now, filled
+different value, later time. `near_miss` joins two lines that look alike and
+answer differently; training adds each such link to the look-alike near misses
+that character trigrams find, so lines alike in meaning but not in wording are
+held apart too. An **absence head** predicts "empty now, filled
 later" per slot from `q_i`: the unasked question, learned with no labels.
 
 **Link geometry.** `governs` is box containment (transitive by

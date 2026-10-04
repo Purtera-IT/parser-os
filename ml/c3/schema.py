@@ -9,7 +9,7 @@ or the company's verdict. Every opportunity belongs to exactly one head of
   for the work...?"),
 * the reading's ``label`` and ``desc`` from ``app/core/atom_types.json``,
 * one description per answer it allows (a type's ``desc``, an ``about`` or
-  ``wants`` option's ``desc``, an enumerated value spelled out).
+  ``wants`` option's ``desc``, a closed-list reading's ``value_desc``).
 
 This module turns those two JSON files into a ``Schema``: the list of
 opportunities, each with its description text and its answer descriptions.
@@ -297,11 +297,13 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 continue
             kind, values = _value_kind(r.get("values", ""))
             subject = scrub(r.get("label", rk), universal) or _spell(rk)
+            # Each closed-list answer's own written description (value_desc).
+            value_docs = {str(v): scrub(d, universal) for v, d in (r.get("value_desc") or {}).items()}
             opps.append(Opportunity(
                 key=f"read:{rk}", field=rk, source="read", kind=kind,
                 description=" ".join(x for x in (
                     lead(h, universal), f"{subject}.", scrub(r.get("desc", ""), universal)) if x),
-                answers=_answers(kind, values, subject), **base))
+                answers=_answers(kind, values, subject, value_docs), **base))
             if rk == "train_for":
                 # Which parser a Deal Kit line trains is our own routing rule
                 # (the Deal Kit is our pricing workbook), so it lives in the
@@ -309,7 +311,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 opps.append(Opportunity(
                     key="read:co_deal_kit_route", field="co_deal_kit_route", source="read", kind=kind,
                     description=f"{lead(h, False)} Which parser one of our own Deal Kit lines trains.",
-                    answers=_answers(kind, values, subject),
+                    answers=_answers(kind, values, subject, value_docs),
                     **{**base, "layer": "company"}))
 
         for rel in h.get("relations", []):

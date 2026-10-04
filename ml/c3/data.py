@@ -35,7 +35,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .notes import drop_meta, mask_verdict, sentences, split_note
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
@@ -352,7 +352,8 @@ def _shingles(t: str, n: int = 3) -> set[str]:
 
 def look_alikes(texts: list[str], targets: dict[str, list[int]], labeled: list[bool],
                 schema: Schema, threshold: float = 0.6, per_line: int = 3,
-                common: int = 200) -> tuple[list[tuple[int, int, str]], list[tuple[int, int]]]:
+                common: int = 200, linked: Iterable[tuple[int, int]] = ()
+                ) -> tuple[list[tuple[int, int, str]], list[tuple[int, int]]]:
     """Pairs of labeled lines whose text is nearly the same (character
     trigram Jaccard >= ``threshold``), split two ways:
 
@@ -360,6 +361,10 @@ def look_alikes(texts: list[str], targets: dict[str, list[int]], labeled: list[b
       (the type first), as (i, j, opportunity);
     * twins: both have a gold type and every opportunity both answered
       agrees, as (i, j): the wording differs where the answer does not care.
+
+    ``linked``: pairs a labeler joined with a ``near_miss`` link. They are
+    near misses whatever their wording, which covers lines alike in meaning
+    but not in characters, when both are labeled and an answer differs.
 
     Each line keeps its ``per_line`` closest partners of each kind.
     Candidates come from an inverted index over trigrams, skipping trigrams
@@ -400,6 +405,13 @@ def look_alikes(texts: list[str], targets: dict[str, list[int]], labeled: list[b
     pairs: set[tuple[int, int, str]] = set()
     for i, cands in near.items():
         for _, j, key in sorted(cands, reverse=True)[:per_line]:
+            pairs.add((min(i, j), max(i, j), key))
+    for i, j in linked:
+        if i == j or not (labeled[i] and labeled[j]):
+            continue
+        both = [k for k in keys if IGNORE not in (targets[k][i], targets[k][j])]
+        key = next((k for k in both if targets[k][i] != targets[k][j]), None)
+        if key:
             pairs.add((min(i, j), max(i, j), key))
     twins: set[tuple[int, int]] = set()
     for i, cands in same.items():
@@ -837,7 +849,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
                for slot in CONTEXT_SLOTS}
     alike = look_alikes([a.text for a in atoms], targets,
-                        [a.label is not None and not excluded(a.label) for a in atoms], schema)
+                        [a.label is not None and not excluded(a.label) for a in atoms], schema,
+                        linked=edges.get("near_miss", []))
     return Batch(
         deal_id=deal.deal_id, company=company, company_policy=deal.company_policy,
         texts=[a.text for a in atoms], numbers=[number_tokens(a.text) for a in atoms],
