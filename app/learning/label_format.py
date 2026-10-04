@@ -102,6 +102,11 @@ PARSER_REMARK = re.compile(r"\bshould\s+(?:split|merge)\b|\bparser\b|\bmis-?pars
 DUPLICATE_MARKER = re.compile(r"^\s*(?:\[parser\]\s*)?duplicate of parser atom", re.I)
 #: The marker may also follow the EXCLUDE reason on the EXCLUDE line itself.
 DUPLICATE_AFTER_EXCLUDE = re.compile(r"\bduplicate of parser atom", re.I)
+#: A sentence saying what would have to differ for the answer to change (the
+#: WHY recipe's flip: "if the customer supplied the mounts, this would be a
+#: customer task"). Training never looks for these words: the teacher reads
+#: every WHY sentence by meaning. This only reminds the labeler to write one.
+FLIP_WORDS = re.compile(r"\b(?:if|unless|were|would|had|otherwise|instead|rather than|only when)\b", re.I)
 _QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|'[^'\n]{3,}'")
 
 
@@ -205,6 +210,14 @@ def format_checks(row: dict[str, Any]) -> list[dict[str, str]]:
     if POLICY_WORDS.search(_QUOTED.sub("", universal)):
         add("policy_words_in_why", "rationale.why",
             f"The WHY names a verdict or one of our systems; move that part to the {marker} line.")
+    why_text = "\n".join(ln for ln in universal.splitlines() if not DUPLICATE_MARKER.match(ln)).strip()
+    set_aside = (re.match(r"\s*\[?EXCLUDE_FROM_TRAINING", note, re.I) is not None
+                 or str(row.get("weight_tier") or "").strip().lower() == "exclude" or bool(dup_at))
+    if why_text and ltype and ltype not in NOISE_TYPES and not set_aside \
+            and not FLIP_WORDS.search(_QUOTED.sub("", why_text)):
+        add("why_without_flip", "rationale.why",
+            "The WHY has no flip: say what would have to differ for the answer to change "
+            "(\"if X, this would be Y\"). Training supposes each WHY sentence; a flip teaches the boundary.")
     if (row.get("coarse") == "site" or ltype.endswith("site")) and str(row.get("rejected") or "") == "true":
         add("site_rejected", "conduct.action", "A site is never rejected.")
     for k, v in reads.items():

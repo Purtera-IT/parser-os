@@ -62,7 +62,7 @@ def test_checks():
     # a policy reject parked on _keep during the backfill is a fact, not noise
     parked = _row(label_type="_keep", reads_set={"universal_type": "bom_line", "co_action": "reject",
                                                  "co_reason": "hw_price_not_ours"},
-                  note="Unit price of the display.\n[purtera] reject: the partner prices hardware.")
+                  note="Unit price of the display; it would be a labor rate if it priced the mounting.\n[purtera] reject: the partner prices hardware.")
     assert _checks(parked) == set()
     assert {"reason_missing", "policy_line_missing"} <= _checks(_row(reads_set={"co_action": "reject"}))
     assert "policy_words_in_why" in _checks(_row(note="Matches the Deal Kit billing."))
@@ -214,3 +214,19 @@ def test_a_duplicate_marker_in_other_words_is_flagged():
     assert "duplicate_marker_unmatched" in _checks(_row(note=other))
     ok = "EXCLUDE_FROM_TRAINING: old manual Deal Kit.\nDUPLICATE of parser atom lbl_1"
     assert not _checks(_row(note=ok)) & {"duplicate_marker_unmatched", "duplicate_marker_misplaced"}
+
+
+def test_a_kept_fact_whose_why_has_no_flip_is_flagged():
+    flat = "Four racks on the second floor set the crew at two techs."
+    assert "why_without_flip" in _checks(_row(note=flat))
+    flip = flat + " If the racks were already mounted, this would be a cabling line, not an install."
+    assert "why_without_flip" not in _checks(_row(note=flip))
+    # A flip only inside a quote is the line's words, not the labeler's.
+    assert "why_without_flip" in _checks(_row(note='They wrote "if needed". Four racks set the crew.'))
+    # The rule line does not count, and noise, excluded and duplicate rows take no flip.
+    assert "why_without_flip" in _checks(_row(note=flat + "\n[purtera] keep: if two techs, quote two."))
+    assert "why_without_flip" not in _checks(_row(label_type="_keep", note=flat,
+                                                   reads_set={"noise_class": "greeting_thanks"}))
+    assert "why_without_flip" not in _checks(_row(note="EXCLUDE_FROM_TRAINING: old manual Deal Kit\n" + flat))
+    assert "why_without_flip" not in _checks(_row(note="DUPLICATE of parser atom lbl_1\n" + flat))
+    assert "why_without_flip" not in _checks(_row(note=None))
