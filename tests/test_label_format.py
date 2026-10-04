@@ -230,3 +230,12 @@ def test_a_kept_fact_whose_why_has_no_flip_is_flagged():
     assert "why_without_flip" not in _checks(_row(note="EXCLUDE_FROM_TRAINING: old manual Deal Kit\n" + flat))
     assert "why_without_flip" not in _checks(_row(note="DUPLICATE of parser atom lbl_1\n" + flat))
     assert "why_without_flip" not in _checks(_row(note=None))
+
+
+def test_apostrophes_are_not_quotes_so_the_flip_between_them_counts():
+    # Two possessives on one line once read as a quoted span and hid the flip.
+    note = ("The draft's scope names four racks; if they were mounted already, the customer's "
+            "crew does the cabling only.")
+    assert "why_without_flip" not in _checks(_row(note=note))
+    # A real single-quoted phrase is still the line's words, not the labeler's.
+    assert "why_without_flip" in _checks(_row(note="They wrote 'only if needed'. Four racks set the crew."))
