@@ -318,7 +318,16 @@ def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
     keys = [k for k in view.flipped if k in sub.logits]
     if not keys:
         return zero, size
-    return torch.stack([_kl(sub.logits[k], view.flipped[k], t) for k in keys]).mean(), size
+    # A supposition from a draft WHY nobody saved counts DRAFT_WHY_WEIGHT.
+    from .losses import why_row_weights  # noqa: PLC0415 (cycle)
+    ww = why_row_weights(batch, out.r.device)[rows]
+
+    def kl_rows(s: torch.Tensor, tch: torch.Tensor) -> torch.Tensor:
+        per = F.kl_div((s / t).log_softmax(-1), (tch / t).log_softmax(-1),
+                       log_target=True, reduction="none").sum(-1) * t * t
+        return (per * ww).sum() / ww.sum()
+
+    return torch.stack([kl_rows(sub.logits[k], view.flipped[k]) for k in keys]).mean(), size
 
 
 def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> torch.Tensor:

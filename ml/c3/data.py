@@ -278,6 +278,9 @@ class Batch:
     #: from (hint_refs), and the entities a line names (entity_keys).
     field_notes: list[dict[str, str]] = field(default_factory=list)
     weights: list[float] = field(default_factory=list)
+    #: How much each line's WHY counts (``why_weight``): 1.0, or
+    #: ``DRAFT_WHY_WEIGHT`` for a draft nobody saved.
+    why_weights: list[float] = field(default_factory=list)
     hint_lines: list[list[int]] = field(default_factory=list)
     entities: list[list[str]] = field(default_factory=list)
     #: Judgment-tab verdicts about two lines, a group of lines or the whole
@@ -430,6 +433,21 @@ def _field_value(label: dict[str, Any], source: str, name: str) -> Any:
     if source == "column":
         return label.get(name)
     return (label.get("reads_set") or {}).get(name)
+
+
+#: How much a WHY counts when a model drafted it and no person has saved it
+#: yet (``why_author: machine_draft``), against 1.0 for a WHY a person wrote,
+#: edited or accepted. Drafts still teach (the user's call, 2026-10-04), but
+#: less: every term that reads the WHY (alignment, sufficiency, echo,
+#: suppositions) scales the line by this. Answers are not affected.
+DRAFT_WHY_WEIGHT = 0.5
+
+
+def why_weight(label: dict[str, Any] | None) -> float:
+    """``DRAFT_WHY_WEIGHT`` for a WHY nobody has saved, else 1.0."""
+    reads = (label or {}).get("reads_set")
+    author = str((reads if isinstance(reads, dict) else {}).get("why_author") or "").strip().lower()
+    return DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
 
 
 #: Row weights by ``weight_tier`` (same values as app.learning.human_labels).
@@ -862,7 +880,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
-        field_notes=field_notes, weights=weights, hint_lines=hint_lines, entities=entities,
+        field_notes=field_notes, weights=weights, why_weights=[why_weight(a.label) for a in atoms],
+        hint_lines=hint_lines, entities=entities,
         judged=judged, negatives=negatives,
         flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1])
 
@@ -900,5 +919,5 @@ def realized_changes(outcome: dict[str, float], tol: float = 0.02) -> dict[str, 
     return out
 
 
-__all__ = ["Atom", "Batch", "DealExample", "FlipTarget", "featurize", "find_near_misses", "look_alikes", "suppositions", "number_tokens", "IGNORE",
+__all__ = ["Atom", "Batch", "DRAFT_WHY_WEIGHT", "DealExample", "FlipTarget", "featurize", "find_near_misses", "look_alikes", "suppositions", "number_tokens", "IGNORE",
            "CONTEXT_SLOTS", "ABSENT", "BINARY", "CLASS", "NUMBER", "PRESENCE"]
