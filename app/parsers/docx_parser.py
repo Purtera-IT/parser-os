@@ -84,6 +84,78 @@ def _row_texts_once(row) -> list[str]:
     return out
 
 
+def _kv_is_label(cell) -> bool:
+    """A short field label: ends with ":" or every text run is bold."""
+    t = " ".join((cell.text or "").split())
+    if not t or len(t) > 40 or len(t.split()) > 5 or t.endswith((".", "!", "?")):
+        return False
+    if t.endswith(":"):
+        return True
+    runs = [r for p in cell.paragraphs for r in p.runs if (r.text or "").strip()]
+    return bool(runs) and all(r.bold for r in runs)
+
+
+def _key_value_grid(table) -> list[tuple[int, int, str, str]] | None:
+    """Read a LABEL | VALUE cover table as the fields it holds, or None.
+
+    A SOW cover table sets each field's label in column 0 ("Project Name:"),
+    its value in column 1, and may carry a third column of cells that each
+    span several rows (``w:vMerge``) and label themselves ("Requested By
+    (Sales):" over a name, a phone and an email). Such a grid has no header
+    row. Read row by row, every row came out as one atom "Project Name: |
+    <name> | Requested By (Sales): <name> <phone> <email>", the spanning cell
+    repeated on every row it covers (000132; the PDF twin is #320).
+
+    Returns ``(row, col, label, value)`` per field, the side cell once at the
+    row it starts on. It is a grid only when every column-0 cell is a short
+    label, no column-1 cell is one, and each column-2 cell spans rows and
+    opens with a label line; a header row ("Phase | Start") sets its value
+    column as a label too, so it never matches.
+    """
+    rows = list(table.rows)
+    if len(rows) < 2:
+        return None
+    grid = [list(r.cells) for r in rows]
+    ncols = len(grid[0])
+    if ncols not in (2, 3) or any(len(g) != ncols for g in grid):
+        return None
+    if any(g[0]._tc is g[1]._tc for g in grid):
+        return None
+    if not all(_kv_is_label(g[0]) for g in grid):
+        return None
+    values = [(g[1].text or "").strip() for g in grid]
+    if not values[0] or sum(1 for v in values if v) < 0.5 * len(values):
+        return None
+    if any(v and _kv_is_label(g[1]) for v, g in zip(values, grid)):
+        return None
+    side_start: set[int] = set()
+    if ncols == 3:
+        spans = False
+        for i, g in enumerate(grid):
+            text = (g[2].text or "").strip()
+            if i > 0 and g[2]._tc is grid[i - 1][2]._tc:
+                spans = True
+                continue
+            if not text:
+                continue
+            first = text.split("\n", 1)[0].strip()
+            if not (first.endswith(":") and len(first) <= 40):
+                return None
+            side_start.add(i)
+        if not spans:
+            return None
+    out: list[tuple[int, int, str, str]] = []
+    for i, g in enumerate(grid):
+        label = " ".join((g[0].text or "").split())
+        if values[i]:
+            out.append((i, 0, label, values[i]))
+        if i in side_start:
+            text = (g[2].text or "").strip()
+            first, _, rest = text.partition("\n")
+            out.append((i, 2, first.strip(), rest.strip()))
+    return out
+
+
 def _cells_by_column(header_cells, cell_texts) -> dict:
     """Map a table row's cells onto its column names WITHOUT losing any.
 
@@ -748,6 +820,63 @@ class DocxParser(BaseParser):
                         _property_site_rows.append((_cells, table_idx, _r_idx))
             except Exception:  # never let a site read break the parse
                 pass
+
+            try:
+                _kv_fields = _key_value_grid(table)
+            except Exception:  # never let the cover-table read break the parse
+                _kv_fields = None
+            if _kv_fields:
+                # A label | value grid: each field is one fact, read as its
+                # own label/value pair (contacts too), never a header-bound row.
+                for _f_row, _f_col, _label, _value in _kv_fields:
+                    _property_contact_rows.append({"0": _label, "1": _value})
+                    _property_quantity_rows.append({"0": _label, "1": _value})
+                    _sep = "\n" if _f_col else " "
+                    _text = f"{_label}{_sep}{_value}" if _label.endswith(":") else f"{_label}:{_sep}{_value}"
+                    _text = _text.strip()
+                    _kv_id = stable_id("atm", artifact_id, "docx_row", table_idx, _f_row, _f_col, _text)
+                    _kv_loc = {
+                        "table_index": table_idx,
+                        "row": _f_row,
+                        "cell": _f_col,
+                        "key_value": True,
+                        "extraction": "docx_table_row_v1",
+                        "section_path": list(table_section.get(table_idx, [])),
+                        "lead_in": getattr(self, "_table_lead_in", {}).get(table_idx, []),
+                    }
+                    atoms.append(EvidenceAtom(
+                        id=_kv_id,
+                        project_id=project_id,
+                        artifact_id=artifact_id,
+                        atom_type=AtomType.scope_item,
+                        raw_text=_text,
+                        normalized_text=_text.lower(),
+                        value={
+                            "kind": "table_row",
+                            "columns": [_label],
+                            "cells": {_label: _value},
+                            "key_value": True,
+                        },
+                        entity_keys=[],
+                        source_refs=[SourceRef(
+                            id=stable_id("src", _kv_id),
+                            artifact_id=artifact_id,
+                            artifact_type=ArtifactType.docx,
+                            filename=path.name,
+                            locator=_kv_loc,
+                            extraction_method="docx_table_row_v1",
+                            parser_version=self.parser_version,
+                        )],
+                        receipts=[],
+                        authority_class=AuthorityClass.contractual_scope,
+                        confidence=0.85,
+                        confidence_raw=0.85,
+                        calibrated_confidence=0.85,
+                        review_status=ReviewStatus.auto_accepted,
+                        review_flags=[],
+                        parser_version=self.parser_version,
+                    ))
+                continue
 
             try:
                 for _row_cells in table.rows:
