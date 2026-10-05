@@ -56,3 +56,10 @@ def test_the_heads_read_the_answer_descriptions():
     overview = {a.value: a.description for a in by_key["read:sow_section"].answers}["overview"]
     assert "executive summary" in overview
     assert "rel:near_miss" in by_key and "answers differently" in by_key["rel:near_miss"].description
+
+
+def test_sow_fill_answers_include_template_applies():
+    by_key = load_schema().by_key()
+    answers = {a.value: a.description for a in by_key["read:sow_fill"].answers}
+    assert [v for v in answers if v != "_absent"] == ["filled", "template", "template_applies"]
+    assert "real term for this deal" in answers["template_applies"]
