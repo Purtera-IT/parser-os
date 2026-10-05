@@ -224,6 +224,20 @@ def _mint_physical_site(
     )
     atom_id = stable_id("atm", artifact_id or project_id, "physical_site", slug, reason)
     src_refs = list(getattr(source_atom, "source_refs", None) or []) if source_atom else []
+    # A checkbox grid row ("Delphos, OH: Support", one atom for the label
+    # cell and its checkbox cells): the site is the label cell alone -- its
+    # text and its cell, never the row's ticked options.
+    _anchor_val = getattr(source_atom, "value", None) if source_atom else None
+    if isinstance(_anchor_val, dict) and _anchor_val.get("checkbox_row") and _anchor_val.get("subject"):
+        anchor_text = str(_anchor_val["subject"])
+        _ci = _anchor_val.get("site_cell")
+        src_refs = [
+            r.model_copy(update={"locator": {
+                **{k: v for k, v in (r.locator or {}).items() if k not in ("cells", "row_key")},
+                **({"cells": [_ci]} if isinstance(_ci, int) else {}),
+            }})
+            for r in src_refs
+        ]
     if not src_refs:
         src_refs = [
             SourceRef(

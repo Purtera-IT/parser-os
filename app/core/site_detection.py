@@ -442,6 +442,11 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
                     if s.lower() in _GENERIC_PLACEHOLDERS:
                         continue
                     _record(s, atom, tier=0)
+        elif val.get("checkbox_row") and isinstance(val.get("site"), str) and val["site"].strip():
+            # A checkbox grid row under a site column ("Delphos, OH: Support")
+            # is one atom; its site cell is value.site, read from the column
+            # as the per-cell site_attribute atoms it replaced carried it.
+            _record(val["site"].strip(), atom, tier=0)
         elif atype_str in ("site_allocation", "site_attribute", "site_access_window",
                            "site_access_restriction", "site_room_mix",
                            "site_infrastructure", "site_implementation_note",
