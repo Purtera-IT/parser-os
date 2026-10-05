@@ -2114,6 +2114,10 @@ def _atom_cell_locator(atom: Any) -> str:
         if table is None:
             continue
         art = getattr(atom, "artifact_id", "") or ""
+        # A label | value grid's row holds separate fields (the row's own
+        # field and a side cell spanning rows): each field is its own cell.
+        if loc.get("key_value") and loc.get("cell") is not None:
+            return f"{art}:{table}:r{row}:c{loc['cell']}"
         return f"{art}:{table}:r{row}"
     return ""
 
