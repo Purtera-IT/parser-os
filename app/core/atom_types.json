@@ -1302,12 +1302,13 @@
     {
       "key": "sow_fill",
       "label": "Filled in or still the template",
-      "values": "filled | template",
-      "desc": "On a SOW line: the deal's own words (filled) or the template's placeholder text left as is (template).",
+      "values": "filled | template | template_applies",
+      "desc": "On a SOW line: the deal's own words (filled), the template's placeholder text left as is (template), or standard template wording that still sets a real term for this deal (template_applies).",
       "layer": "universal",
       "value_desc": {
         "filled": "The SOW line carries this deal's own facts: names, counts, dates or sites written for this job.",
-        "template": "The SOW line is the template's placeholder or boilerplate left as it was, not written for this deal."
+        "template": "The SOW line is the template's placeholder or boilerplate left as it was, not written for this deal.",
+        "template_applies": "The SOW line is standard template wording, but it still sets a real term for this deal, such as a rate uplift, a minimum or a cancellation fee."
       }
     },
     {
