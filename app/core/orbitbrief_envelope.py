@@ -3947,16 +3947,22 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
 
 
 def _tie_checkbox_cells_to_site(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Name, on each table checkbox cell, the KEPT atom for its row's site cell.
+    """Name, on each table checkbox row, the KEPT atom for its row's site.
 
-    A site list ("Location | ☐ Assessment … | ☑ Support …") yields one
-    checkbox atom per cell, and every row's boxes can read the same; only the
-    row says which site they belong to. The parser stamps the row key and the
-    row atom's id, but the site the envelope keeps for that row may be another
-    atom read from the same row (a physical_site). Resolved here, on the
-    projected copies, from the shared ``table_index`` / ``row`` locator:
+    A checkbox grid ("Location | ☐ Assessment … | ☑ Support …") is one atom
+    per row ("Delphos, OH: Support", ``structured.checkbox_row``), and a
+    site roster's tick boxes one ``checkbox_selection`` atom per row; every
+    row's boxes can read the same, so only the row says which site they
+    belong to. The site the envelope keeps for that row may be another atom
+    read from the same row (a physical_site). Resolved here, on the projected
+    copies, from the shared ``table_index`` / ``row`` locator:
     ``structured.site_atom_id``. Nothing else changes.
     """
+    def _is_cb(st: dict[str, Any]) -> bool:
+        return bool(st.get("row_key")) and (
+            st.get("kind") == "checkbox_selection" or bool(st.get("checkbox_row"))
+        )
+
     by_row: dict[tuple, list[dict[str, Any]]] = {}
     for r in rows:
         loc = r.get("locator") or {}
@@ -3967,13 +3973,14 @@ def _tie_checkbox_cells_to_site(rows: list[dict[str, Any]]) -> list[dict[str, An
         by_row.setdefault((r.get("artifact_id"), loc["table_index"], loc["row"]), []).append(r)
     for r in rows:
         st = r.get("structured") or {}
-        if st.get("kind") != "checkbox_selection" or not st.get("row_key"):
+        if not _is_cb(st):
             continue
         loc = r.get("locator") or {}
         peers = by_row.get((r.get("artifact_id"), loc.get("table_index"), loc.get("row"))) or []
         pick = (
             next((p for p in peers if p.get("atom_type") == "physical_site"), None)
             or next((p for p in peers if p.get("id") == st.get("row_atom_id")), None)
+            or (r if st.get("checkbox_row") else None)
             or (peers[0] if peers else None)
         )
         if pick is not None:

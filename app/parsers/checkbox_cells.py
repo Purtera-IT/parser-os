@@ -84,6 +84,51 @@ def checkbox_value(text: str, *, column: str = "", subject: str = "") -> dict[st
     }
 
 
+#: A grid row of checkbox cells is ONE atom ("Delphos, OH: Support"): its
+#: label cell, then the ticked options. The unticked options are never atoms
+#: and never in the text; with this off they stay on the row atom as
+#: structure (``not_selected``, and ``options`` with ``checked: False``), so a
+#: requested service the document left unticked can still be flagged. Turn it
+#: on to drop them fully: the row atom then names only the ticked options and
+#: keeps no raw checkbox cell text.
+DROP_UNTICKED_FULLY = False
+
+#: The text after the label when no box in the row is ticked.
+NONE_SELECTED = "(none selected)"
+
+
+def checkbox_row_text(label: str, selected: list[str]) -> str:
+    """A checkbox grid row's atom text: ``"<label>: <ticked>, <ticked>"``,
+    or ``"<label>: (none selected)"`` when nothing is ticked."""
+    label = " ".join(str(label or "").split())
+    return f"{label}: {', '.join(selected) if selected else NONE_SELECTED}"
+
+
+def checkbox_row_value(
+    cells: list[tuple[int, str, str]], *, label: str, label_column: str = "",
+) -> dict[str, Any]:
+    """The checkbox fields of a grid row's ONE atom, from its checkbox cells
+    ``[(grid column, column header, cell text), ...]`` in row order: every
+    option with the column header (and cell) it came from."""
+    options: list[dict[str, Any]] = []
+    for ci, col, text in cells:
+        for checked, opt in checkbox_options(text) or []:
+            options.append({"label": opt, "checked": checked, "column": (col or "").strip(), "cell": ci})
+    if DROP_UNTICKED_FULLY:
+        options = [o for o in options if o["checked"]]
+    out: dict[str, Any] = {
+        "checkbox_row": True,
+        "subject": label,
+        "label_column": (label_column or "").strip(),
+        "selected": [o["label"] for o in options if o["checked"]],
+        "options": options,
+        "option_columns": list(dict.fromkeys(o["column"] for o in options)),
+    }
+    if not DROP_UNTICKED_FULLY:
+        out["not_selected"] = [o["label"] for o in options if not o["checked"]]
+    return out
+
+
 def looks_like_site_column(header: str) -> bool:
     return bool(_SITE_HEADER_RE.search(header or ""))
 
@@ -127,4 +172,49 @@ def checkbox_atom(
     )
 
 
-__all__ = ["checkbox_atom", "checkbox_options", "checkbox_value", "is_checkbox_cell", "looks_like_site_column"]
+def checkbox_row_atom(
+    *, project_id: str, artifact_id: str, artifact_type: Any, filename: str,
+    label: str, cells: list[tuple[int | None, str, str]], locator: dict[str, Any],
+    extraction_method: str, parser_version: str, entity_keys: list[str] | None = None,
+    authority_class: Any = None,
+) -> Any:
+    """ONE atom for a site-roster row's checkbox cells (the roster's
+    physical_site atom is the row's own atom): ``"<label>: <ticked>, ..."``,
+    typed ``site_attribute``, the options under ``value`` (see
+    :func:`checkbox_row_value`)."""
+    from app.core.ids import stable_id
+    from app.core.schemas import (
+        AtomType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef,
+    )
+
+    value = {"kind": "checkbox_selection", "site": label,
+             **checkbox_row_value(list(cells), label=label)}  # type: ignore[arg-type]
+    raw = checkbox_row_text(label, value["selected"])
+    aid = stable_id("atm", artifact_id, "checkbox_row", str(sorted(locator.items(), key=str)), raw)
+    return EvidenceAtom(
+        id=aid,
+        project_id=project_id,
+        artifact_id=artifact_id,
+        atom_type=AtomType.site_attribute,
+        raw_text=raw,
+        normalized_text=raw.lower(),
+        value=value,
+        entity_keys=sorted(set(entity_keys or [])),
+        source_refs=[SourceRef(
+            id=stable_id("src", aid), artifact_id=artifact_id, artifact_type=artifact_type,
+            filename=filename, locator={**locator, "extraction": extraction_method},
+            extraction_method=extraction_method, parser_version=parser_version,
+        )],
+        receipts=[],
+        authority_class=authority_class or AuthorityClass.contractual_scope,
+        confidence=0.8,
+        review_status=ReviewStatus.needs_review,
+        review_flags=["checkbox_row"],
+        parser_version=parser_version,
+    )
+
+
+__all__ = [
+    "DROP_UNTICKED_FULLY", "NONE_SELECTED", "checkbox_atom", "checkbox_row_atom", "checkbox_options", "checkbox_row_text",
+    "checkbox_row_value", "checkbox_value", "is_checkbox_cell", "looks_like_site_column",
+]

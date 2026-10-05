@@ -1,9 +1,10 @@
 """Deal 000132: a site list's checkbox column, and the site-count gap.
 
 1. "Delphos, OH | ☐ Assessment ☐ Configuration…" -- a service-type checkbox
-   cell was glued onto the site name. Checkbox cells are their own atoms
-   (service-type facts) beside the site's name/address atom, in docx and
-   xlsx site tables.
+   cell was glued onto the site name. In an xlsx site table checkbox cells
+   are their own atoms beside the site's name/address atom; in a docx table
+   the row is ONE atom, the site first and then only the ticked options
+   ("Delphos, OH: Installation"), the options as structure on it.
 2. "Customer documents declare 6 locations; 3 identified" beside four live
    sites: the gap counted site: keys on physical_site atoms, the site list
    counts what build_site_readiness lists. They now agree.
@@ -54,6 +55,26 @@ def _assert_split(atoms):
         assert "Installation" in v["selected"] or "Configuration" in v["selected"]
 
 
+def _row_atoms(atoms):
+    return [a for a in atoms if a.atom_type != AtomType.raw_table_row
+            and isinstance(a.value, dict) and a.value.get("checkbox_row")]
+
+
+def _assert_docx_rows(atoms):
+    """One atom per docx row: site first, then the ticked options."""
+    assert not [a for a in atoms if "☐" in a.raw_text or "☒" in a.raw_text]
+    rows = _row_atoms(atoms)
+    for name, cb in CB.items():
+        mine = [a for a in rows if a.raw_text.startswith(name)]
+        assert len(mine) == 1, (name, [a.raw_text for a in rows])
+        v = mine[0].value
+        ticked = [l for c, l in checkbox_options(cb) if c]
+        assert v["selected"] == ticked
+        assert v["not_selected"] == [l for c, l in checkbox_options(cb) if not c]
+        assert mine[0].raw_text.endswith(": " + ", ".join(ticked))
+    return rows
+
+
 def test_checkbox_cell_reader():
     assert checkbox_options(CB["Delphos, OH"]) == [
         (False, "Assessment"), (False, "Configuration"), (True, "Installation"), (False, "Decommission")]
@@ -71,11 +92,8 @@ def test_docx_site_name_table(tmp_path: Path):
         r[0].text, r[1].text = name, cb
     doc.save(tmp_path / "SOW v2.docx")
     atoms = _atoms(DocxParser().parse_artifact("p", "a", tmp_path / "SOW v2.docx"))
-    _assert_split(atoms)
-    rows = [a for a in atoms if a.atom_type == AtomType.scope_item and a.raw_text in CB]
-    assert sorted(a.raw_text for a in rows) == sorted(CB)
-    cbs = [a for a in atoms if a.raw_text in CB.values()]
-    assert all(a.atom_type == AtomType.site_attribute for a in cbs)
+    rows = _assert_docx_rows(atoms)
+    assert all(a.atom_type == AtomType.scope_item and a.value["site"] in CB for a in rows)
 
 
 def test_docx_roster_table(tmp_path: Path):
@@ -88,14 +106,10 @@ def test_docx_roster_table(tmp_path: Path):
         r[0].text, r[1].text, r[2].text = name, ADDR[name], cb
     doc.save(tmp_path / "SOW v2.docx")
     atoms = _atoms(DocxParser().parse_artifact("p", "a", tmp_path / "SOW v2.docx"))
-    _assert_split(atoms)
+    _assert_docx_rows(atoms)  # one checkbox row atom per site row, never per cell
     sites = [a for a in atoms if a.atom_type == AtomType.physical_site
              and a.source_refs[0].extraction_method == "docx_site_roster_v1"]
     assert len(sites) == 4 and not [a for a in sites if "Service Type" in a.raw_text]
-    for s in sites:
-        name = s.value["facility_name"]
-        (cb,) = [a for a in atoms if a.raw_text == CB[name]]  # one atom per cell
-        assert set(cb.entity_keys) == set(s.entity_keys)
 
 
 def test_xlsx_roster_sheet(tmp_path: Path):
