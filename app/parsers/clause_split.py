@@ -162,6 +162,14 @@ def split_clauses(text: str, *, min_chars: int = 160, hard_breaks: bool = False)
         return units
 
     joined = " ".join(raw.split())
+    # Fields typed as lines of one paragraph, each line opening with its own
+    # label ("Billing Type: T&M" <w:br/> "Minimum Per Visit: 4 hours"): one
+    # atom per field, however short. Length and the short-sentence merge are
+    # for prose; a field is a fact on its own.
+    if hard_breaks and len(lines) >= 2:
+        segs = _hard_break_segments(lines)
+        if len(segs) >= 2 and all(_LABEL_LINE_RE.match(s) for s in segs):
+            return [u for s in segs for u in _merge_dependent(sentences(s))]
     if hard_breaks and len(lines) >= 2:
         parts = [p for seg in _hard_break_segments(lines) for p in sentences(seg)]
     else:
