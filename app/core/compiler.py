@@ -175,11 +175,12 @@ _SPREADSHEET_TYPES = frozenset({"xlsx", "xls", "xlsm", "csv", "tsv"})
 
 
 def _is_heading_atom(atom: Any) -> bool:
-    """A structure atom a parser kept for a heading that leads child lines."""
+    """A structure atom a parser kept for a heading that leads child lines,
+    or for the header row of a checkbox grid (docx) that governs its rows."""
     refs = list(getattr(atom, "source_refs", None) or [])
     loc = getattr(refs[0], "locator", None) if refs else None
     val = getattr(atom, "value", None)
-    return (isinstance(loc, dict) and loc.get("block_kind") == "heading"
+    return (isinstance(loc, dict) and loc.get("block_kind") in ("heading", "table_header")
             and isinstance(val, dict) and bool(val.get("structure")))
 
 

@@ -176,26 +176,26 @@ def checkbox_row_atom(
     *, project_id: str, artifact_id: str, artifact_type: Any, filename: str,
     label: str, cells: list[tuple[int | None, str, str]], locator: dict[str, Any],
     extraction_method: str, parser_version: str, entity_keys: list[str] | None = None,
-    authority_class: Any = None,
+    authority_class: Any = None, label_column: str = "", site_row: bool = True,
 ) -> Any:
-    """ONE atom for a site-roster row's checkbox cells (the roster's
-    physical_site atom is the row's own atom): ``"<label>: <ticked>, ..."``,
-    typed ``site_attribute``, the options under ``value`` (see
-    :func:`checkbox_row_value`)."""
+    """ONE atom for a table row's checkbox cells, read after the row's own
+    label (site) atom: ``"<label>: <ticked>, ..."``, typed ``site_attribute``
+    when the row is a site (else ``scope_item``), as the per-cell atoms it
+    replaces were; the options under ``value`` (see :func:`checkbox_row_value`)."""
     from app.core.ids import stable_id
     from app.core.schemas import (
         AtomType, AuthorityClass, EvidenceAtom, ReviewStatus, SourceRef,
     )
 
     value = {"kind": "checkbox_selection", "site": label,
-             **checkbox_row_value(list(cells), label=label)}  # type: ignore[arg-type]
+             **checkbox_row_value(list(cells), label=label, label_column=label_column)}  # type: ignore[arg-type]
     raw = checkbox_row_text(label, value["selected"])
     aid = stable_id("atm", artifact_id, "checkbox_row", str(sorted(locator.items(), key=str)), raw)
     return EvidenceAtom(
         id=aid,
         project_id=project_id,
         artifact_id=artifact_id,
-        atom_type=AtomType.site_attribute,
+        atom_type=AtomType.site_attribute if site_row else AtomType.scope_item,
         raw_text=raw,
         normalized_text=raw.lower(),
         value=value,
