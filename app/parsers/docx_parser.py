@@ -1010,6 +1010,16 @@ class DocxParser(BaseParser):
                 ] if row_idx > 0 or not active_header else []
                 _cb_texts = {t for _i, t in _cb_cells}
                 _plain_cells = [t for t in cell_texts if t not in _cb_texts]
+                # Emitted AFTER the row's own atom (below): the row's name or
+                # site cell reads first, then the boxes ticked for it. Appended
+                # here, a "Location | ☐ … | ☐ … | ☑ …" row read as three
+                # anonymous checkbox lines and then the site (000132), and six
+                # rows of identical boxes had nothing tying each to its site.
+                _pending_cb: list[Any] = []
+                _plain_idx = [
+                    i for i, c in enumerate(row_cells.cells)
+                    if c.text.strip() and c.text.strip() not in _cb_texts
+                ]
                 if _cb_cells and _plain_cells:
                     row_text = " | ".join(_plain_cells)
                     _subject = _plain_cells[0]
@@ -1019,7 +1029,7 @@ class DocxParser(BaseParser):
                         if _ct in _seen_cb:  # a merged cell repeats its text
                             continue
                         _seen_cb.add(_ct)
-                        atoms.append(checkbox_atom(
+                        _pending_cb.append(checkbox_atom(
                             project_id=project_id, artifact_id=artifact_id,
                             artifact_type=ArtifactType.docx, filename=path.name, text=_ct,
                             column=(active_header[_ci] if _ci < len(active_header) else ""),
@@ -1124,6 +1134,27 @@ class DocxParser(BaseParser):
                         parser_version=self.parser_version,
                     )
                 )
+                if _pending_cb:
+                    # Tie each checkbox cell to its row's name cell: the same
+                    # row key the row atom carries, the cell it was read from
+                    # and the row atom's id. Added after the id is minted, so
+                    # existing checkbox ids do not move.
+                    _site_ci = _plain_idx[0] if _plain_idx else None
+                    _row_key = f"t{table_idx} r{row_idx}"
+                    row_src.locator["cells"] = list(_plain_idx)
+                    for _cb in _pending_cb:
+                        _cb.value.update({
+                            "row_key": _row_key,
+                            "site_cell": _site_ci,
+                            "site_column": (
+                                active_header[_site_ci]
+                                if _site_ci is not None and _site_ci < len(active_header) else ""
+                            ),
+                            "row_atom_id": row_atom_id,
+                        })
+                        if _cb.source_refs:
+                            _cb.source_refs[0].locator.update({"row_key": _row_key, "site_cell": _site_ci})
+                    atoms.extend(_pending_cb)
 
         # The same block written as a FORM in body paragraphs rather than a
         # table: "Site Address: 15733 US-224, Findlay, OH" with the ZIP in its

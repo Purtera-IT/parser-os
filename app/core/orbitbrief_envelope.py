@@ -1141,7 +1141,9 @@ def build_orbitbrief_envelope(
         # email's quoted history oldest first, then page and line. The audit
         # view was reading the newest reply first and could not tell what
         # answered what (live 010300).
-        "atoms": [_compact_atom(a) for a in _in_reading_order(atoms, documents)],
+        "atoms": _tie_checkbox_cells_to_site(
+            [_compact_atom(a) for a in _in_reading_order(atoms, documents)]
+        ),
         "packets": [_compact_packet(p) for p in packets],
         "entities": [_compact_entity(e, atoms_by_artifact, atoms) for e in entities],
         "edges": [_compact_edge(edge) for edge in edges],
@@ -3942,6 +3944,41 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
                 emitted.get(id(a), 10**9), str(getattr(a, "id", "")))
 
     return sorted(atoms, key=key)
+
+
+def _tie_checkbox_cells_to_site(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Name, on each table checkbox cell, the KEPT atom for its row's site cell.
+
+    A site list ("Location | ☐ Assessment … | ☑ Support …") yields one
+    checkbox atom per cell, and every row's boxes can read the same; only the
+    row says which site they belong to. The parser stamps the row key and the
+    row atom's id, but the site the envelope keeps for that row may be another
+    atom read from the same row (a physical_site). Resolved here, on the
+    projected copies, from the shared ``table_index`` / ``row`` locator:
+    ``structured.site_atom_id``. Nothing else changes.
+    """
+    by_row: dict[tuple, list[dict[str, Any]]] = {}
+    for r in rows:
+        loc = r.get("locator") or {}
+        if loc.get("table_index") is None or loc.get("row") is None:
+            continue
+        if (r.get("structured") or {}).get("kind") == "checkbox_selection":
+            continue
+        by_row.setdefault((r.get("artifact_id"), loc["table_index"], loc["row"]), []).append(r)
+    for r in rows:
+        st = r.get("structured") or {}
+        if st.get("kind") != "checkbox_selection" or not st.get("row_key"):
+            continue
+        loc = r.get("locator") or {}
+        peers = by_row.get((r.get("artifact_id"), loc.get("table_index"), loc.get("row"))) or []
+        pick = (
+            next((p for p in peers if p.get("atom_type") == "physical_site"), None)
+            or next((p for p in peers if p.get("id") == st.get("row_atom_id")), None)
+            or (peers[0] if peers else None)
+        )
+        if pick is not None:
+            st["site_atom_id"] = pick.get("id")
+    return rows
 
 
 def _compact_atom(atom: EvidenceAtom) -> dict[str, Any]:
