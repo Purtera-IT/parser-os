@@ -118,3 +118,53 @@ def test_continues_enumeration():
     assert not _continues_enumeration("A. Scope", "1. Fees")
     assert not _continues_enumeration("B. Scope", "A. Fees")
     assert not _continues_enumeration("a) Scope", "B. Fees")
+
+
+# The document view (``structured.json`` / ``structured.md``, the envelope's
+# per-document projection) walks the paragraphs on its own. It opened sections
+# only on outlined lines, so "C." and "E." were plain lines inside B's and D's
+# sections there even after the atoms' section paths were fixed.
+
+def _outline(path):
+    import docx as _docx
+    sd = DocxParser()._build_structured_doc(filename="sow.docx", document=_docx.Document(str(path)))
+    return [(o["level"], o["heading"], o["block_count"]) for o in sd["pages"][0]["outline"]]
+
+
+def test_document_view_lettered_lead_lines_are_siblings(tmp_path):
+    path = tmp_path / "sow.docx"
+    _build(path)
+    groups = [o for o in _outline(path) if o[1].endswith(tuple(f"Support Group {x}" for x in LETTERS))]
+    assert [g[1] for g in groups] == [f"{x}. Support Group {x}" for x in LETTERS]
+    assert {g[0] for g in groups} == {5}  # outlineLvl 3 -> level 5, every peer
+    assert all(g[2] == 2 for g in groups), groups  # each holds only its own two lines
+
+
+def test_document_view_numbered_peer_with_deeper_outline_is_sibling(tmp_path):
+    doc = Document()
+    _add_num(doc, 15)
+    doc.add_heading("Project Scope", level=1)
+    _lead(doc, "1. Network Tasks", 2)
+    _bullet(doc, _child("A", 1), 15)
+    _lead(doc, "2. Server Tasks", 3)
+    _bullet(doc, _child("B", 1), 15)
+    path = tmp_path / "num.docx"
+    doc.save(path)
+    levels = {h: lv for lv, h, _ in _outline(path)}
+    assert levels["1. Network Tasks"] == levels["2. Server Tasks"] == 4
+
+
+def test_document_view_keeps_other_family_nested_and_body_lines_plain(tmp_path):
+    doc = Document()
+    _add_num(doc, 15)
+    doc.add_heading("Project Scope", level=1)
+    _lead(doc, "A. Support Group A", 3)
+    _lead(doc, "1. Network Tasks", 4)
+    _bullet(doc, _child("A", 1), 15)
+    # Not bold, and a sentence: body text that happens to start with "B.".
+    doc.add_paragraph("B. The provider will also report on these tasks every month.")
+    path = tmp_path / "mixed.docx"
+    doc.save(path)
+    out = _outline(path)
+    assert [(lv, h) for lv, h, _ in out if h[:2] in ("A.", "1.", "B.")] == [
+        (5, "A. Support Group A"), (6, "1. Network Tasks")]
