@@ -44,10 +44,17 @@ def _col_matches(header: str, patterns: tuple[str, ...]) -> bool:
     scrambling room rows into requirement atoms. Patterns are normalized the same
     way as the header so multi-word and punctuated patterns ("requirement id",
     "sv-") still match their tokens.
+
+    A "$" in a pattern ("unit $") is part of the signal: normalizing drops it,
+    which left the bare word "unit" and matched "Unit Type" (a description
+    column) as the unit-cost column. Such a pattern only matches a header that
+    carries a "$" too.
     """
     h = _norm_col(header)
     for p in patterns:
         pn = _norm_col(p)
+        if "$" in p and "$" not in header:
+            continue
         if pn and re.search(r"\b" + re.escape(pn) + r"\b", h):
             return True
     return False
@@ -97,7 +104,7 @@ _SCHEMAS: list[tuple[str, tuple[tuple[str, ...], ...], int]] = [
         (
             ("sku", "part no", "part number", "model", "item id", "hw-", "sw-", "catalog"),
             ("qty", "quantity", "count", "units"),
-            ("unit cost", "unit price", "list price", "each", "unit $"),
+            ("unit cost", "unit price", "unit rate", "list price", "each", "unit $"),
         ),
         2,
     ),
@@ -450,7 +457,14 @@ def emit_atoms_for_schema(
         description = _find_col_value(row_dict, ("description", "product", "name", "part desc"))
         sku = _find_col_value(row_dict, ("sku", "part no", "part number", "model", "catalog"))
         qty_raw = _find_col_value(row_dict, ("qty", "quantity", "count", "units", "ea"))
-        unit_cost_raw = _find_col_value(row_dict, ("unit cost", "unit price", "list price", "each", "unit $"))
+        unit_cost_raw = _find_col_value(
+            row_dict, ("unit cost", "unit price", "unit rate", "list price", "each", "unit $")
+        ) or next(
+            # A column named just "Rate" / "Price" is the unit cost too; whole
+            # name only, so "Total Price" / "Tax Rate" never read as it.
+            ((v or "").strip() for c, v in row_dict.items() if _norm_col(c) in ("rate", "price")),
+            "",
+        )
         site_alloc_raw = _find_col_value(row_dict, ("site allocation", "site split", "per site", "allocation"))
         category = _find_col_value(row_dict, ("category", "type", "class"))
 
