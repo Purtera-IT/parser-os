@@ -95,6 +95,17 @@ def test_docx_header_cells_are_field_names_not_atoms(tmp_path):
     p = tmp_path / "010353 SOW.docx"
     _sow(p)
     atoms = DocxParser().parse_artifact("p", "a", p)
+    # A header row is read once, as its table's header pointer (r13), never
+    # as a data row: the caption row ("Stated Rate") not at all.
+    pointers = [a for a in atoms if a.source_refs[0].locator.get("block_kind") == "table_header"]
+    assert [a.raw_text for a in pointers] == [
+        "Role | Business Hours | After Hours", "Role | Business Hours | After Hours", "Name | Title | Email"]
+    # Every row of each table names its own pointer.
+    for a in atoms:
+        loc = a.source_refs[0].locator
+        if a not in pointers and loc.get("table_index") is not None:
+            assert loc["header_atom_id"] == pointers[loc["table_index"]].id, a.raw_text
+    atoms = [a for a in atoms if a not in pointers]
     texts = [a.raw_text for a in atoms]
     for header in ("Stated Rate", "Business Hours", "After Hours"):
         assert not any(header in t for t in texts), texts
