@@ -4428,6 +4428,18 @@ def _enrich_table_atoms(
                 sheet=_sheet,
             )
             if schema_atoms:
+                # The table's header pointer governs the typed row too. On the
+                # locator, not the value: value-support edges compare values
+                # across documents, and two drafts' copies of one row sit
+                # under two different header pointers.
+                _hdr_link = None
+                for _r in (getattr(atom, "source_refs", None) or [])[:1]:
+                    _hdr_link = (getattr(_r, "locator", None) or {}).get("header_atom_id")
+                if _hdr_link:
+                    for _sa in schema_atoms:
+                        for _r in (getattr(_sa, "source_refs", None) or [])[:1]:
+                            if isinstance(getattr(_r, "locator", None), dict):
+                                _r.locator["header_atom_id"] = _hdr_link
                 new_atoms.extend(schema_atoms)
                 emitted += len(schema_atoms)
         except Exception:
