@@ -438,6 +438,30 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         at = _atype(atom)
         return "_generic" if at in _GENERIC_TYPES else at
 
+    # The same words twice in ONE email message are two lines (a "5:00-6:00
+    # PM" slot under each of three days), never a repeat. Each is keyed by how
+    # many times its words already came up in its message, so a later
+    # message's (a quote's) n-th copy still folds onto the n-th line.
+    def _message_line(atom) -> tuple | None:
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        if not isinstance(loc, dict) or loc.get("message_index") is None:
+            return None
+        return (loc.get("message_index"), loc.get("line_start"))
+
+    occurrence: dict[int, int] = {}
+    for art_atoms in by_artifact.values():
+        lines_of: dict[tuple, dict] = {}
+        placed = [(m, a) for a in art_atoms if (m := _message_line(a)) is not None]
+        for (mi, line), atom in sorted(placed, key=lambda p: (str(p[0][0]), p[0][1] if isinstance(p[0][1], int) else -1)):
+            # Its own words, not a normalized key: a person's header and
+            # signature lines normalize alike and are still one person.
+            norm = " ".join((getattr(atom, "raw_text", "") or "").split()).lower()
+            # Two atoms off the SAME line (a header's sender read twice) are
+            # one line and share its count.
+            seen_lines = lines_of.setdefault((mi, _dedup_type(atom), norm), {})
+            occurrence[id(atom)] = seen_lines.setdefault(line, len(seen_lines))
+
     for aid, art_atoms in by_artifact.items():
         # v50.1: dedupe key INCLUDES atom_type so a raw_table_row and
         # a bom_line sourced from the SAME table row both survive —
@@ -450,7 +474,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             if not norm:
                 unique.append(atom)
                 continue
-            norm_key = (_dedup_type(atom), norm.strip().lower(), _identity(atom))
+            norm_key = (_dedup_type(atom), norm.strip().lower(), _identity(atom), occurrence.get(id(atom), 0))
             if norm_key not in seen_normalized:
                 seen_normalized[norm_key] = atom
                 unique.append(atom)
@@ -495,7 +519,9 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         ):
             atype = _atype(atom)
             rt = getattr(atom, "raw_text", "") or ""
-            if len(rt) < 50 or atype not in fuzzy_dedup_types:
+            if len(rt) < 50 or atype not in fuzzy_dedup_types or occurrence.get(id(atom), 0):
+                # (A repeat of a line earlier in its own message is its own
+                # line: see ``occurrence`` above.)
                 final.append(atom)
                 continue
             norm = (getattr(atom, "normalized_text", None) or rt).strip().lower()
