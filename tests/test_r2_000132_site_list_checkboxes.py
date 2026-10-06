@@ -3,8 +3,9 @@
 1. "Delphos, OH | ☐ Assessment ☐ Configuration…" -- a service-type checkbox
    cell was glued onto the site name. In an xlsx site table checkbox cells
    are their own atoms beside the site's name/address atom; in a docx table
-   the row is ONE atom, the site first and then only the ticked options
-   ("Delphos, OH: Installation"), the options as structure on it.
+   the site cell is its own atom and the row's boxes are ONE atom after it,
+   the site first and then only the ticked options ("Springfield, IL:
+   Installation"), the options as structure on it.
 2. "Customer documents declare 6 locations; 3 identified" beside four live
    sites: the gap counted site: keys on physical_site atoms, the site list
    counts what build_site_readiness lists. They now agree.
@@ -93,7 +94,10 @@ def test_docx_site_name_table(tmp_path: Path):
     doc.save(tmp_path / "SOW v2.docx")
     atoms = _atoms(DocxParser().parse_artifact("p", "a", tmp_path / "SOW v2.docx"))
     rows = _assert_docx_rows(atoms)
-    assert all(a.atom_type == AtomType.scope_item and a.value["site"] in CB for a in rows)
+    assert all(a.atom_type == AtomType.site_attribute and a.value["site"] in CB for a in rows)
+    # The site cell stays its own atom, in its own words.
+    labels = [a for a in atoms if a.atom_type == AtomType.scope_item and a.raw_text in CB]
+    assert sorted(a.raw_text for a in labels) == sorted(CB)
 
 
 def test_docx_roster_table(tmp_path: Path):

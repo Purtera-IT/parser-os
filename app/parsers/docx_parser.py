@@ -933,6 +933,8 @@ class DocxParser(BaseParser):
             active_header = list(header_cells)
             _titled_block = len(header_cells) >= 2 and len(set(header_cells)) <= 1
             _seen_data = False
+            _hdr_rows = [0]
+            _grid_header_done = False
             # A block caption ("The Buyer" over "Signature: | Name: | Date:")
             # names the fields beneath it: it rides on their section path.
             _caption = header_cells[0] if _titled_block and is_caption_row(table_rows, 0) else None
@@ -948,6 +950,7 @@ class DocxParser(BaseParser):
                 if not _seen_data and not _titled_block:
                     if row_idx > 0 and is_header_only_row(table_rows, row_idx):
                         active_header = merge_header(active_header, table_rows[row_idx])
+                        _hdr_rows.append(row_idx)
                         continue
                     if is_banner_row(table_rows, row_idx):
                         continue
@@ -1001,15 +1004,23 @@ class DocxParser(BaseParser):
                 if row_idx > 0:
                     row_text = bind_lone_cell(_pos_cells, active_header) or row_text
                 # A grid row of checkbox cells ("Delphos, OH | ☐ Assessment … |
-                # ☑ Support …") is ONE atom, owned by its label cell: the label
-                # first, then only the ticked options ("Delphos, OH: Support").
-                # One atom per checkbox cell read "☐ Assessment ☐ Configuration
-                # …" three times a row, six rows alike, with nothing in the text
-                # tying each to its site (000132). Unticked options are never
-                # in the text; they ride on the row atom as structure (see
-                # checkbox_cells.DROP_UNTICKED_FULLY).
+                # ☑ Support …") reads as two atoms, in order: the row's label
+                # (site) cell, exactly as before the checkbox cells were split
+                # off -- same id, text and value, so the site it names and any
+                # label saved on it stay put -- and then ONE atom for the row's
+                # boxes: the label first, then only the ticked options
+                # ("Springfield, IL: Support"). One atom per checkbox cell read
+                # "☐ Assessment ☐ Configuration …" three times a row, six rows
+                # alike, with nothing in the text tying each to its site
+                # (000132). Unticked options are never in the text; they ride
+                # on the row atom as structure (checkbox_cells.DROP_UNTICKED_FULLY).
+                # Folding the label into the row atom instead ("Springfield, IL:
+                # Support" as the site) lost the table's own site line: a label
+                # keyed on it moved to another "Springfield, IL" line, and the row
+                # stood in for the site in dedup, where it outranked the email
+                # sites it used to copy (000132, R12).
                 from app.parsers.checkbox_cells import (
-                    DROP_UNTICKED_FULLY, checkbox_row_text, checkbox_row_value,
+                    DROP_UNTICKED_FULLY, checkbox_row_atom,
                     is_checkbox_cell, looks_like_site_column,
                 )
 
@@ -1020,9 +1031,6 @@ class DocxParser(BaseParser):
                 _cb_texts = {t for _i, t in _cb_cells}
                 _plain_cells = [t for t in cell_texts if t not in _cb_texts]
                 _cb_row: dict[str, Any] | None = None
-                # The row atom's id is minted from its label text, as before
-                # the merge: the id (and any saved label on it) stays put.
-                _row_id_text = row_text
                 if _cb_cells and _plain_cells:
                     _seen_tc: set[int] = set()
                     _plain_idx: list[int] = []
@@ -1038,25 +1046,80 @@ class DocxParser(BaseParser):
                             _cb_list.append((_ci, active_header[_ci] if _ci < len(active_header) else "", _ct))
                         else:
                             _plain_idx.append(_ci)
-                    _label = " | ".join(_plain_cells)
-                    _row_id_text = _label
+                    row_text = " | ".join(_plain_cells)
                     _site_ci = _plain_idx[0] if _plain_idx else None
                     _label_col = (
                         active_header[_site_ci]
                         if _site_ci is not None and _site_ci < len(active_header) else ""
                     )
-                    _cb_row = checkbox_row_value(_cb_list, label=_label, label_column=_label_col)
-                    _cb_row.update({
+                    _cb_row = {
+                        "label": row_text,
+                        "cells": _cb_list,
+                        "label_column": _label_col,
                         "row_key": f"t{table_idx} r{row_idx}",
                         "site_cell": _site_ci,
                         "site_column": _label_col,
                         "site_row": bool(active_header) and looks_like_site_column(active_header[0]),
                         "heading": (list(_sp)[-1] if _sp else ""),
                         "checkbox_cells": [ci for ci, _h, _t in _cb_list],
-                    })
-                    if _cb_row["site_row"]:
-                        _cb_row["site"] = _label
-                    row_text = checkbox_row_text(_label, _cb_row["selected"])
+                        # The label cell(s), as the row atom named them before.
+                        "label_cells": [
+                            i for i, c in enumerate(row_cells.cells)
+                            if c.text.strip() and c.text.strip() not in _cb_texts
+                        ],
+                    }
+                if _cb_row and active_header and not _grid_header_done:
+                    # A checkbox grid's header row ("Location(s) | Service(s)")
+                    # is a pointer atom of its own, read before the first row:
+                    # it names the columns every row atom of the grid is read
+                    # under (each row names it as header_atom_id). Other
+                    # tables' header rows stay no atom.
+                    _grid_header_done = True
+                    _hr = _hdr_rows[-1]
+                    _hcells: list[int] = []
+                    _htexts: list[str] = []
+                    _seen_htc: set[int] = set()
+                    for _ci, _c in enumerate(table.rows[_hr].cells):
+                        if id(_c._tc) in _seen_htc:
+                            continue
+                        _seen_htc.add(id(_c._tc))
+                        if _c.text.strip():
+                            _hcells.append(_ci)
+                            _htexts.append(" ".join(_c.text.split()))
+                    _htext = " | ".join(dict.fromkeys(_htexts))
+                    if _htext:
+                        from app.core.deal_chatter import CHATTER_FLAG
+
+                        _hid = stable_id("atm", artifact_id, "docx_table_header", table_idx, _hr, _htext)
+                        atoms.append(EvidenceAtom(
+                            id=_hid,
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            atom_type=AtomType.deal_metadata,
+                            raw_text=_htext,
+                            normalized_text=normalize_text(_htext),
+                            value={"text": _htext, "kind": "table_header", "structure": True,
+                                   "chatter": True, "rejected_by": "table_header",
+                                   "columns": list(active_header)},
+                            entity_keys=[],
+                            source_refs=[SourceRef(
+                                id=stable_id("src", _hid),
+                                artifact_id=artifact_id,
+                                artifact_type=ArtifactType.docx,
+                                filename=path.name,
+                                locator={"table_index": table_idx, "row": _hr, "cells": _hcells,
+                                         "header_rows": list(_hdr_rows),
+                                         "section_path": list(_sp), "block_kind": "table_header",
+                                         "extraction": "docx_table_header_v1"},
+                                extraction_method="docx_table_header_v1",
+                                parser_version=self.parser_version,
+                            )],
+                            authority_class=AuthorityClass.contractual_scope,
+                            confidence=0.1,
+                            review_status=ReviewStatus.needs_review,
+                            review_flags=[CHATTER_FLAG, "table_header"],
+                            parser_version=self.parser_version,
+                        ))
                 # v49.2: emit a raw_table_row atom alongside the legacy
                 # row blob. The centralized _enrich_table_atoms() in
                 # entity_extraction will classify all raw_table_row
@@ -1104,7 +1167,7 @@ class DocxParser(BaseParser):
                 # a scope_item (the classifier path is for prose).
                 row_atom_id = stable_id(
                     "atm", artifact_id, "docx_row",
-                    table_idx, row_idx, _row_id_text
+                    table_idx, row_idx, row_text
                 )
                 row_src = SourceRef(
                     id=stable_id("src", row_atom_id),
@@ -1138,7 +1201,7 @@ class DocxParser(BaseParser):
                                 # A merged cell: each value under its own column.
                                 else {k: v for k, v in _cells_by_column(active_header, _once).items() if v}
                             ),
-                            **({"checkbox_cells_split": True, **_cb_row} if _cb_row else {}),
+                            **({"checkbox_cells_split": True} if _cb_row else {}),
                         },
                         entity_keys=[],
                         source_refs=[row_src],
@@ -1153,13 +1216,36 @@ class DocxParser(BaseParser):
                     )
                 )
                 if _cb_row:
-                    # The whole row: label cell and every checkbox cell, so a
-                    # table highlighter selecting by row + cells lights it all.
-                    row_src.locator["cells"] = sorted(set(_plain_idx) | set(_cb_row["checkbox_cells"]))
-                    row_src.locator["row_key"] = _cb_row["row_key"]
+                    # The label atom names its label cell(s); the row atom
+                    # after it names the whole row (label and every checkbox
+                    # cell), so a table highlighter selecting by row + cells
+                    # lights it all.
+                    row_src.locator["cells"] = list(_cb_row["label_cells"])
                     if DROP_UNTICKED_FULLY:
                         _vals = atoms[-1].value
                         _vals["cells"] = {k: v for k, v in _vals["cells"].items() if v not in _cb_texts}
+                    _grid = checkbox_row_atom(
+                        project_id=project_id, artifact_id=artifact_id,
+                        artifact_type=ArtifactType.docx, filename=path.name,
+                        label=_cb_row["label"], cells=_cb_row["cells"],
+                        label_column=_cb_row["label_column"],
+                        locator={
+                            "table_index": table_idx, "row": row_idx,
+                            "cells": sorted(set(_cb_row["label_cells"]) | set(_cb_row["checkbox_cells"])),
+                            "row_key": _cb_row["row_key"], "site_cell": _cb_row["site_cell"],
+                            "section_path": list(_sp),
+                        },
+                        extraction_method="docx_checkbox_grid_row_v1",
+                        parser_version=self.parser_version, site_row=_cb_row["site_row"],
+                    )
+                    _grid.value.update({
+                        k: _cb_row[k] for k in (
+                            "row_key", "site_cell", "site_column", "site_row", "heading", "checkbox_cells",
+                        )
+                    })
+                    # The label atom just emitted is this row's site cell.
+                    _grid.value["row_atom_id"] = row_atom_id
+                    atoms.append(_grid)
 
         # The same block written as a FORM in body paragraphs rather than a
         # table: "Site Address: 15733 US-224, Findlay, OH" with the ZIP in its
@@ -1444,31 +1530,55 @@ class DocxParser(BaseParser):
         atoms = _dedupe_repeated_text(atoms)
         _mark_unfilled_placeholders(atoms, _placeholders)
         # A low-confidence roster also falls through to the per-row emitter
-        # ("duplicate coverage beats silent data loss"); its checkbox cells
-        # are then minted twice at the same table cell. Keep one.
-        # Since a checkbox grid row is one atom, the per-row emitter's row
-        # atom already holds the roster's checkbox row: keep that one.
+        # ("duplicate coverage beats silent data loss"); its checkbox row is
+        # then minted twice at the same table row. Keep the per-row emitter's
+        # (it names the row's cells).
         def _tr(a: Any) -> tuple:
             loc = a.source_refs[0].locator if a.source_refs else {}
             return (loc.get("table_index"), loc.get("row"))
 
-        _grid_rows = {
-            _tr(a) for a in atoms
-            if isinstance(a.value, dict) and a.value.get("checkbox_row")
-            and "checkbox_row" not in (a.review_flags or [])
-        }
+        def _is_grid_row(a: Any) -> bool:
+            return bool(a.source_refs) and a.source_refs[0].extraction_method == "docx_checkbox_grid_row_v1"
+
+        _grid_rows = {_tr(a) for a in atoms if _is_grid_row(a)}
         _cb_seen: set[tuple] = set()
         _deduped: list[Any] = []
         for a in atoms:
-            if "checkbox_row" in (a.review_flags or []) and _tr(a) in _grid_rows:
+            _flags = a.review_flags or []
+            if "checkbox_row" in _flags and not _is_grid_row(a) and _tr(a) in _grid_rows:
                 continue
-            if "checkbox_cell" in (a.review_flags or []) or "checkbox_row" in (a.review_flags or []):
+            if "checkbox_cell" in _flags or "checkbox_row" in _flags:
                 k = (*_tr(a), a.raw_text)
                 if k in _cb_seen:
                     continue
                 _cb_seen.add(k)
             _deduped.append(a)
         atoms = _deduped
+        # A grid row names the pointer atoms that govern it: its table's
+        # header row ("Location(s) | Service(s)", header_atom_id) and the
+        # heading it sits under ("Site Locations",
+        # heading_atom_id).
+        _heads = {
+            tuple(a.source_refs[0].locator.get("section_path") or []): a.id
+            for a in atoms
+            if a.source_refs and a.source_refs[0].locator.get("block_kind") == "heading"
+            and a.source_refs[0].locator.get("table_index") is None
+        }
+        _table_heads = {
+            a.source_refs[0].locator.get("table_index"): a.id
+            for a in atoms
+            if a.source_refs and a.source_refs[0].locator.get("block_kind") == "table_header"
+        }
+        for a in atoms:
+            _l = a.source_refs[0].locator if a.source_refs else {}
+            if _is_grid_row(a) or _l.get("block_kind") == "table_header":
+                _gid = _heads.get(tuple(_l.get("section_path") or []))
+                if _gid:
+                    a.value["heading_atom_id"] = _gid
+            if _is_grid_row(a):
+                _tid = _table_heads.get(_l.get("table_index"))
+                if _tid:
+                    a.value["header_atom_id"] = _tid
         _stamp_reading_order(atoms, para_order, table_order)
 
         # A table row joined into one atom ("Boston | 1 Main St | 4") is in
@@ -2862,7 +2972,7 @@ class DocxParser(BaseParser):
                     path = para_section.get(idx2) or []
                 if path[: len(own)] != own:
                     break
-                if path == own and structure_kind.get(idx2) == "section_heading":
+                if kind2 == "p" and path == own and structure_kind.get(idx2) == "section_heading":
                     break  # a sibling heading with the same title
                 if kind2 == "t" or structure_kind.get(idx2) != "section_heading":
                     led.add(idx)
