@@ -168,8 +168,9 @@ def test_grid_heading_and_header_row_are_pointer_atoms_the_rows_name(tmp_path):
     for row in range(1, len(SITES) + 2):
         v = _row_atom(atoms, row).value
         assert v["header_atom_id"] == hr.id and v["heading_atom_id"] == h.id
-    # An ordinary table's header row stays no atom.
-    assert not [a for a in atoms if a.raw_text.startswith("Item")]
+    # An ordinary table's header row is a pointer too (r13), never a row.
+    items = [a for a in atoms if a.raw_text.startswith("Item")]
+    assert items and all(_loc(a)["block_kind"] == "table_header" for a in items)
 
 
 def test_header_and_heading_are_held_out_of_dedup_like_headings():

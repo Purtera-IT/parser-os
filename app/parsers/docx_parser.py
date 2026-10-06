@@ -412,7 +412,14 @@ def _dedupe_repeated_text(atoms: list[Any]) -> list[Any]:
     return out
 
 
-def _stamp_reading_order(atoms: list[Any], para_order: dict[int, int], table_order: dict[int, int]) -> None:
+#: Row atoms a table's header pointer governs (they carry header_atom_id).
+_HEADER_GOVERNED_ROWS = frozenset({"docx_table_row_v1", "raw_table_row_v49_2"})
+
+
+def _stamp_reading_order(
+    atoms: list[Any], para_order: dict[int, int], table_order: dict[int, int],
+    between: frozenset[str] | set[str] = frozenset(),
+) -> None:
     """Give every docx atom a document-order locator.
 
     The parser already emits atoms in body order (``_body_key``), but nothing
@@ -435,9 +442,17 @@ def _stamp_reading_order(atoms: list[Any], para_order: dict[int, int], table_ord
         walk instead of falling back to ``row`` (which put row 3 of a table
         after every paragraph), and ``label_key`` / the UI still see no page.
     Existing values are never overwritten.
+
+    An atom in ``between`` (a table's header pointer) takes no position of its
+    own: it reads half a step before the next atom, so every other atom keeps
+    the ``line_start`` it had before the pointer existed -- the walk keys a
+    repeated line by it, and a saved label must not move.
     """
     tail = max([*para_order.values(), *table_order.values(), -1]) + 1
-    for pos, atom in enumerate(atoms):
+    pos = -1
+    for atom in atoms:
+        if getattr(atom, "id", None) not in between:
+            pos += 1
         refs = getattr(atom, "source_refs", None) or []
         if not refs:
             continue
@@ -453,8 +468,9 @@ def _stamp_reading_order(atoms: list[Any], para_order: dict[int, int], table_ord
             block = tail
         loc.setdefault("block_index", block)
         if loc.get("line_start") is None:
-            loc["line_start"] = pos
-            loc["line_end"] = pos
+            at = pos + 0.5 if getattr(atom, "id", None) in between else pos
+            loc["line_start"] = at
+            loc["line_end"] = at
         loc.setdefault("page", None)
 
 
@@ -761,6 +777,9 @@ class DocxParser(BaseParser):
         # never fires, so the row went to the LLM, which typed 3 of 10 SOWs'
         # clock rows as bom_line and left 7 as scope_item. Read them by shape.
         _property_quantity_rows: list[dict] = []
+        # Header pointers of plain (non-grid) tables: they read between two
+        # positions instead of taking one (_stamp_reading_order).
+        _between_ids: set[str] = set()
 
         for table_idx, table in enumerate(_all_tables(document)):
             # Build a column/rows view of the table for the site_roster
@@ -935,6 +954,10 @@ class DocxParser(BaseParser):
             _seen_data = False
             _hdr_rows = [0]
             _grid_header_done = False
+            # Set once a row is read as the table's column names (row 0 of
+            # pure labels, or a header-only row under it): that row is no atom
+            # of its own, so a pointer atom stands in for it (below).
+            _hdr_consumed = False
             # A block caption ("The Buyer" over "Signature: | Name: | Date:")
             # names the fields beneath it: it rides on their section path.
             _caption = header_cells[0] if _titled_block and is_caption_row(table_rows, 0) else None
@@ -951,6 +974,7 @@ class DocxParser(BaseParser):
                     if row_idx > 0 and is_header_only_row(table_rows, row_idx):
                         active_header = merge_header(active_header, table_rows[row_idx])
                         _hdr_rows.append(row_idx)
+                        _hdr_consumed = True
                         continue
                     if is_banner_row(table_rows, row_idx):
                         continue
@@ -969,6 +993,7 @@ class DocxParser(BaseParser):
                     and all(len(c) <= 30 for c in _grid_texts)
                     and not any(re.search(r"[\d@$]", c) for c in _grid_texts)
                 ):
+                    _hdr_consumed = True
                     continue
                 # R1: a property row whose VALUE cells are all blank is an empty
                 # form field, not scope. Under a merged header (every header
@@ -1068,12 +1093,18 @@ class DocxParser(BaseParser):
                             if c.text.strip() and c.text.strip() not in _cb_texts
                         ],
                     }
-                if _cb_row and active_header and not _grid_header_done:
-                    # A checkbox grid's header row ("Location(s) | Service(s)")
-                    # is a pointer atom of its own, read before the first row:
-                    # it names the columns every row atom of the grid is read
-                    # under (each row names it as header_atom_id). Other
-                    # tables' header rows stay no atom.
+                if (
+                    active_header and not _grid_header_done
+                    and (_cb_row or (_hdr_consumed and not _titled_block))
+                ):
+                    # A table's header row ("Location(s) | Service(s)", "Unit
+                    # Type | Unit Rate | Qty | Subtotal") is a pointer atom of
+                    # its own, read before the first row: it names the columns
+                    # every row atom of the table is read under (each row names
+                    # it as header_atom_id). Without it a row read "$920.00 |
+                    # 312" with nothing on the page saying what the numbers
+                    # are. A merged title row (one text across the row) is a
+                    # caption, not column names: no pointer.
                     _grid_header_done = True
                     _hr = _hdr_rows[-1]
                     _hcells: list[int] = []
@@ -1091,6 +1122,8 @@ class DocxParser(BaseParser):
                         from app.core.deal_chatter import CHATTER_FLAG
 
                         _hid = stable_id("atm", artifact_id, "docx_table_header", table_idx, _hr, _htext)
+                        if not _cb_row:
+                            _between_ids.add(_hid)
                         atoms.append(EvidenceAtom(
                             id=_hid,
                             project_id=project_id,
@@ -1579,7 +1612,17 @@ class DocxParser(BaseParser):
                 _tid = _table_heads.get(_l.get("table_index"))
                 if _tid:
                     a.value["header_atom_id"] = _tid
-        _stamp_reading_order(atoms, para_order, table_order)
+            # Every other row atom of a table with a header pointer names it
+            # too -- the row's own atom and the raw row the schema registry
+            # types (which hands the link on to the typed atom). On the
+            # locator, so the row's value stays as it was: value-support
+            # edges compare values across documents, and two drafts' copies
+            # of one row sit under two different pointers.
+            elif a.source_refs and a.source_refs[0].extraction_method in _HEADER_GOVERNED_ROWS:
+                _tid = _table_heads.get(_l.get("table_index"))
+                if _tid:
+                    _l["header_atom_id"] = _tid
+        _stamp_reading_order(atoms, para_order, table_order, _between_ids)
 
         # A table row joined into one atom ("Boston | 1 Main St | 4") is in
         # no single cell: name the cells, so the source pane marks each one.

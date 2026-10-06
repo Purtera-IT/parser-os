@@ -154,6 +154,16 @@ def _scope_summary(atoms: list[Any], documents: list[dict], deal_name: str = "")
                     return str(a[k]).strip()
         return ""
 
+    def _is_table_header(a) -> bool:
+        # A table's column-header pointer ("Qty | Unit Rate | Subtotal") names
+        # columns; it says nothing about the work.
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        if loc is None and isinstance(a, dict):
+            loc = a.get("locator")
+        return isinstance(loc, dict) and loc.get("block_kind") == "table_header"
+
+    atoms = [a for a in atoms if not _is_table_header(a)]
     # Scope-of-work atoms only; BOM/pricing rows dominate the parse and misroute.
     scope_atoms = [a for a in atoms if _atype(a) not in _NOISE_TYPES]
     if len(scope_atoms) < 5:  # guard: thin scope -> fall back to all atoms
