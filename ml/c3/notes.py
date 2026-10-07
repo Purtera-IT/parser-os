@@ -84,6 +84,27 @@ def without_opener(note: str) -> str:
     return _OPENER_RE.sub("", str(note or ""), count=1)
 
 
+#: A reason that is a code from the page's picker (kept, wrong_shape,
+#: duplicate, ...): one token. Anything longer is the labeler's sentence.
+_REASON_CODE_RE = re.compile(r"[A-Za-z0-9_\-]{1,40}")
+
+
+def judgment_note(reason: str, note: str, company: str = "purtera") -> tuple[str, str]:
+    """(universal WHY, company policy) of one judgment, as ``split_note`` and
+    ``drop_meta`` give them for an atom's note.
+
+    A short-code ``reason`` is the verdict's class, not an argument, and is
+    left out; a sentence written in the reason field is kept, ahead of the
+    note. Accepted-proposal openers are dropped from the start of every line
+    first, so a ``[<company>]`` line one opened is still found."""
+    reason = str(reason or "").strip()
+    parts = [reason] if reason and not _REASON_CODE_RE.fullmatch(reason) else []
+    parts.append(str(note or ""))
+    text = "\n".join(without_opener(ln) for ln in "\n".join(parts).splitlines())
+    u, p = split_note(text, company)
+    return drop_meta(without_opener(u)), drop_meta(p)
+
+
 def drop_meta(text: str) -> str:
     """``text`` up to, not including, its ``[parser]`` line, without the
     page's machine-draft markers."""
