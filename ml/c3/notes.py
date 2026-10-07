@@ -72,6 +72,18 @@ _PROVENANCE_RE = re.compile(r"(?:accepted\s+)?from\s+[^:\n]{0,80}\((?:assistant|
                             re.IGNORECASE)
 
 
+#: The same marker at the very start of a note, matched by shape for any
+#: drafter ("Accepted [in bulk] from <x>'s proposal:", or the bare opener when
+#: the draft had no WHY). Read past before looking for the exclusion marker.
+_OPENER_RE = re.compile(r"^\s*(?:accepted(?:\s+[a-z]+){0,3}?\s+)?from\s+[^:\n]{1,80}['\u2019]s\s+proposal"
+                        r"(?:[ \t]*:[ \t]*|[ \t]*$)", re.IGNORECASE)
+
+
+def without_opener(note: str) -> str:
+    """``note`` without a leading accepted-proposal opener."""
+    return _OPENER_RE.sub("", str(note or ""), count=1)
+
+
 def drop_meta(text: str) -> str:
     """``text`` up to, not including, its ``[parser]`` line, without the
     page's machine-draft markers."""

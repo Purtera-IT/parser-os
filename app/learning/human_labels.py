@@ -227,7 +227,10 @@ def train_for(row: dict[str, Any]) -> set[str] | None:
 def _marked_excluded(row: dict[str, Any]) -> bool:
     # "[EXCLUDE_FROM_TRAINING: old manual Deal Kit]" is the bracketed form the
     # note grammar writes (portable-labels.md b); the bare prefix is older.
-    note = str(row.get("note") or "").lstrip().lstrip("[").upper()
+    # An accepted draft's note opens with "Accepted [in bulk] from <x>'s
+    # proposal:", which pushed the marker off the start: read past it.
+    note = _PROPOSAL_PREFIX_RE.sub("", str(row.get("note") or "").lstrip(), count=1)
+    note = note.lstrip().lstrip("[").upper()
     if note.startswith(EXCLUDE_NOTE_PREFIX):
         return True
     if str(row.get("weight_tier") or "").strip().lower() == "exclude":
