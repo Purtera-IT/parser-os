@@ -157,3 +157,20 @@ def test_heads_train_and_the_base_ignores_the_company(schema, batch):
         assert not torch.equal(m.judge(a, "jdg:tier", everyone), m.judge(b, "jdg:tier", everyone))
         with pytest.raises(ValueError):
             m.judge(m(inp), "jdg:tier", everyone)
+
+
+def test_a_model_drafted_judgment_note_counts_draft_weight(schema):
+    """why_author on a judgment row scales its note like an atom label's WHY;
+    the verdict itself still trains in full."""
+    from ml.c3.data import DRAFT_WHY_WEIGHT, why_weight
+
+    pair = {"a": {"atomId": "at-k3"}, "b": {"atomId": "at-k4"}}
+    rows = [_j("conflict", "contradicts", pair, note="Both windows cannot hold.", why_author="machine_draft")]
+    b = featurize(DealExample.from_training_blob({**BLOB, "judgments": rows}, ATOMS, deal_id="synthetic-jdraft"), schema)
+    (j,) = [x for x in b.judged if x.key == "jdg:conflict"]
+    assert j.why_weight == DRAFT_WHY_WEIGHT
+    assert j.answer == schema.by_key()["jdg:conflict"].index("contradicts")
+    # A person's note, an accepted draft and a row from before the column count in full.
+    for author in ("person", "accepted_draft", "edited_draft", None):
+        assert why_weight({"why_author": author}) == 1.0
+    assert why_weight({"reads_set": {"why_author": "machine_draft"}}) == DRAFT_WHY_WEIGHT
