@@ -808,8 +808,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     judged: list[Judged] = []
     lines = _Lines(atoms)
     for j in deal.judgments:
-        if not _is_a_person(j.get("labeler")):
-            continue
+        if not _is_a_person(j.get("labeler")) or excluded(j):
+            continue                               # a verdict itself set aside
         head, verdict = str(j.get("head") or ""), str(j.get("verdict") or "").strip()
         if head in schema.judgment_aliases:
             key, vmap = schema.judgment_aliases[head]
@@ -823,6 +823,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         idx = _judged_lines(j, opp.size, lines)
         if ix is None or idx is None:
             continue
+        if opp.size == PAIR and any(excluded(deal.atoms[i].label) for i in idx):
+            continue                               # a pair touching a row set aside, as links
         note = drop_meta(" ".join(str(x).strip() for x in (j.get("reason"), j.get("note")) if x))
         if opp.size == LINE:
             i = idx[0]
