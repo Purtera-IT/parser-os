@@ -2275,6 +2275,10 @@ class DocxParser(BaseParser):
                     "Vendor scope of work", "Services the provider performs",
                     "Installation and configuration tasks",
                     "Deliverables the vendor provides", "Provider responsibilities",
+                    # A list of the customer's places is not a section of
+                    # customer duties: without these, the word "Customer"
+                    # alone pulled location headings up to the threshold.
+                    "Customer locations", "Customer sites",
                 ],
                 threshold=0.50,
                 lexical_fallback=lambda t: bool(cls._SUBSECTION_BLOCK_RE.search(t)),

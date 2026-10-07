@@ -518,3 +518,36 @@ def test_a_drafted_judgment_note_trains_both_halves_at_the_draft_weight():
     assert w == {"rationale:gap": 0.5, "rationale:policy:purtera": 0.5}
     rows = _judged(f"{_WHY}\n[purtera] {_POLICY}")
     assert {r["weight"] for r in rows if r["relation"].startswith("rationale:")} == {1.0}
+
+
+def test_hours_card_trains_the_base_only_on_stated_hours():
+    """User ruling: estimates and Deal-Kit-derived hours are not base training.
+
+    They, and every older verdict saved with no basis, train Purtera's
+    co_hours_estimate reading (company layer) instead. Nothing is dropped."""
+    from app.learning.multitask_table import tasks_for
+
+    j = lambda key, text, verdict: {"head": "hours", "target_key": key, "text": text, "verdict": verdict,
+                                    "labeler": "a@purtera-it.com"}
+    report = IngestReport()
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        j("a1", "Technician on site, 8 hours", "hours=8;basis=stated"),
+        j("a2", "Install the wall mounts", "unstated"),
+        j("a3", "Pull 24 drops at 2 h per drop", "hours=2;per=drop;qty=24;basis=stated"),
+        j("a4", "Swap the access points", "hours=3;per=AP"),           # older: no basis
+        j("a5", "Swap the switches", "hours=4;basis=estimate"),
+        j("a6", "Rack the core switch", "hours=1.5;role=L2;basis=deal_kit"),
+        j("a7", "Mount the displays", "8"),                            # outside the grammar
+    ]}, report=report)
+    base = sorted(r["label"] for r in rows if r["relation"] == "task_hours")
+    assert base == ["hours=2;per=drop;qty=24", "hours=8", "unstated"]
+    co = [r for r in rows if r["relation"] == "reads:co_hours_estimate"]
+    assert {r["label"] for r in co} == {"present"} and len(co) == 3
+    values = sorted(r["label"] for r in rows if r["relation"] == "reads_value:co_hours_estimate")
+    assert values == ["hours=1.5;role=L2", "hours=3;per=AP", "hours=4"]
+    bases = sorted(json.loads(r["provenance"])["basis"] for r in co)
+    assert bases == ["deal_kit", "estimate", "none (saved before the card asked)"]
+    # The company reading trains the Purtera profile only, never the base.
+    assert "reads:co_hours_estimate" in tasks_for("purtera")
+    assert "reads:co_hours_estimate" not in tasks_for("base")
+    assert any("outside the card grammar" in k for k in report.skipped)
