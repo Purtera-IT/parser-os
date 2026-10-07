@@ -63,3 +63,18 @@ def test_c3_excluded_reads_past_the_opener():
         assert excluded({"note": note}), note
     assert not excluded({"note": "Accepted in bulk from claude-code (assistant)'s proposal: a real argument."})
     assert not excluded({"note": "Accepted in bulk from claude-code (assistant)'s proposal"})
+
+
+def test_a_marked_judgment_on_any_head_makes_no_row():
+    from app.learning.human_labels import _judgment_rows
+
+    heads = [("gap", "valid"), ("conflict", "unrelated"), ("document_job", "this_deal"),
+             ("suppression", "should_have_been_kept")]
+    for note in NOTES + ["[EXCLUDE_FROM_TRAINING: old manual Deal Kit] A hand-built line."]:
+        js = [{"labeler": PERSON, "head": h, "verdict": v, "target_key": f"{h}:abc",
+               "text": "A judged line that is long enough", "note": note} for h, v in heads]
+        assert rows_for_deal({"deal_id": "999002", "labels": [], "judgments": js}) == [], note
+        # And in _judgment_rows itself, whatever ran before it.
+        report = IngestReport()
+        assert _judgment_rows({"judgments": js}, "999002", "train", report) == []
+        assert report.skipped["judgment marked excluded from training"] == len(heads)

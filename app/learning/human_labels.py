@@ -522,7 +522,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
         out = out[:n_before] + made
         if dropout_seed is not None:
             out.extend(_dropout_rows(made, lb, dropout_seed, deal_id))
-    out.extend(_judgment_rows(doc, deal_id, split, report))
+    out.extend(_judgment_rows(doc, deal_id, split, report, parser))
     out.extend(_question_rows(doc, labels, deal_id, split, report))
     out.extend(_link_rows(doc, deal_id, split, report))
     if parser == QUOTE_PARSER:
@@ -1105,7 +1105,8 @@ def _translate_judgment(head: str, verdict: str) -> tuple[str, str]:
     return target, verdicts.get(verdict, verdict)
 
 
-def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
+def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport,
+                   parser: str = QUOTE_PARSER) -> list[dict[str, Any]]:
     """Conflict / site / site_role / gap / document_job verdicts -> one row each,
     under the relation that head decides (pm_feedback.HEAD_REGISTRY), so the
     edge, site, gap and document heads get human gold -- they had none."""
@@ -1117,6 +1118,13 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
             continue
         if not _is_a_person(j.get("labeler")):
             report.skip("labeler is not a person")
+            continue
+        # `_without_excluded` already drops these before this point; checked
+        # here too so a marked verdict (an old manual Deal Kit row, also behind
+        # an accepted-proposal opener) can never become base gold if that
+        # filter changes. The marker speaks only for the quote parser.
+        if parser == QUOTE_PARSER and _marked_excluded(j):
+            report.skip("judgment marked excluded from training")
             continue
         head = str(j.get("head") or "")
         verdict = str(j.get("verdict") or "").strip()
