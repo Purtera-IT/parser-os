@@ -739,7 +739,36 @@ def dedup_quoted_history(
             ti = 10**6
         return (ti, i)
 
-    seen_quoted: dict[str, set[str]] = {}
+    # The same words twice in ONE message are two lines (a "5:00-6:00 PM"
+    # slot under each of three days), never a repeat: a quoted line is keyed
+    # by its words AND how many times they already came up in its own
+    # message of its own file, so the n-th copy in a reply folds onto the
+    # n-th line of the earliest quote, and never onto a sibling line.
+    occurrence: dict[int, int] = {}
+    _occ_lines: dict[tuple, dict] = {}
+
+    def _line_start(atom: EvidenceAtom) -> int | None:
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        line = loc.get("line_start") if isinstance(loc, dict) else None
+        return line if isinstance(line, int) else None
+
+    for atom in sorted(atoms, key=lambda a: (_line_start(a) is None, _line_start(a) or 0)):
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if _thread_of(atom) is None or not v.get("quoted"):
+            continue
+        msg = (_thread_of(atom) or {}).get("message")
+        mi = msg.get("index") if isinstance(msg, dict) else None
+        if mi is None:
+            mi = v.get("message_index")
+        slot = (str(getattr(atom, "artifact_id", "") or ""), mi, _norm_key(atom),
+                " ".join((getattr(atom, "raw_text", "") or "").split()).lower())
+        line = _line_start(atom)
+        # Two atoms off the SAME line are one line and share its count.
+        seen_lines = _occ_lines.setdefault(slot, {})
+        occurrence[id(atom)] = seen_lines.setdefault(line if line is not None else id(atom), len(seen_lines))
+
+    seen_quoted: dict[str, set[tuple[str, int]]] = {}
     seen_headers: dict[str, set[tuple[str, str]]] = {}
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
@@ -774,12 +803,13 @@ def dedup_quoted_history(
             dropped.append(atom)
             continue
         seen = seen_quoted.setdefault(tid, set())
-        if key in seen:  # duplicate quoted copy across replies
-            note_folded_into(atom, survivor_of.get(("q", tid, key)))
+        nth = (key, occurrence.get(id(atom), 0))
+        if nth in seen:  # duplicate quoted copy across replies
+            note_folded_into(atom, survivor_of.get(("q", tid, nth)))
             dropped.append(atom)
             continue
-        seen.add(key)
-        survivor_of.setdefault(("q", tid, key), atom)
+        seen.add(nth)
+        survivor_of.setdefault(("q", tid, nth), atom)
         kept.append(atom)
 
     gone = {id(a) for a in dropped}
