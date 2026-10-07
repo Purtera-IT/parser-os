@@ -416,6 +416,8 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "bom_owner": "bom_owner",
     # The commercial shape finished kits gave a request like this one.
     "commercial": "commercial_terms",
+    # What a commercial-term line says (the Terms tab), read off the line.
+    "term": "commercial_term_read",
     # A place the documents name: a job site, or only a mention.
     "geo_mention": "geo_mention_role",
 }

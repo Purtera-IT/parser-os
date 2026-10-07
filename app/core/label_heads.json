@@ -137,7 +137,7 @@
       "relations": [],
       "judgments": [
         "norm",
-        "commercial",
+        "term",
         "terminology"
       ],
       "tasks": []
@@ -521,7 +521,9 @@
         "co_tech_base_miles"
       ],
       "relations": [],
-      "judgments": [],
+      "judgments": [
+        "commercial"
+      ],
       "tasks": []
     },
     {
