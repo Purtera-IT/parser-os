@@ -1061,10 +1061,34 @@ def _translate_judgment(head: str, verdict: str) -> tuple[str, str]:
     return target, verdicts.get(verdict, verdict)
 
 
+#: The atom types the labeling page shows on the Terms tab. A `commercial`
+#: card was served on the first four (Platform-infra buildJudgments,
+#: COMMERCIAL_TYPES); pricing_assumption is a term kind of the same grammar.
+#: None of them is a request line, which is the only line a kit shape is
+#: taught on (commercial_terms.stamp_commercial_terms reads task atoms).
+TERM_LINE_TYPES = frozenset({
+    "payment_term", "contract_term", "change_order_rule", "commercial_total", "pricing_assumption",
+})
+
+
+def _judged_atom_type(j: dict[str, Any]) -> str:
+    """The atom type of the line a judgment was made on, as the card carried it.
+
+    The judgment row's ``target`` is the card the labeler saw
+    (atom_label_judgments.target, written from buildJudgments' candidate);
+    an atom card's ``a`` is atomSummary, whose ``atomType`` is the parser's
+    type for the line. Empty when the row does not carry one -- the line's
+    type is never guessed from its text."""
+    target = j.get("target") if isinstance(j.get("target"), dict) else {}
+    summary = target.get("a") if isinstance(target.get("a"), dict) else {}
+    return str(summary.get("atomType") or "").strip()
+
+
 def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
     """Conflict / site / site_role / gap / document_job verdicts -> one row each,
     under the relation that head decides (pm_feedback.HEAD_REGISTRY), so the
     edge, site, gap and document heads get human gold -- they had none."""
+    from app.core.commercial_term_read import canonical_term_verdict
     from app.core.pm_feedback import HEAD_REGISTRY
 
     rows: list[dict[str, Any]] = []
@@ -1114,6 +1138,22 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
             continue
         if spec.candidates and verdict not in spec.candidates:
             report.skip(f"judgment verdict outside {j.get('head')}'s classes")
+            continue
+        # The Terms tab's two questions (app.core.commercial_term_read).
+        # `term` is what the line says, in a grammar: a verdict outside it
+        # teaches nothing, and the one that parses is stored canonically so two
+        # spellings of one reading are one label. `commercial` is the shape of
+        # a KIT, taught on the request; asked of a payment term or a contract
+        # term its answer is a reading of that line under the wrong relation.
+        if head == "term":
+            canonical = canonical_term_verdict(verdict)
+            if canonical is None:
+                report.skip("term verdict does not parse (kind=<payment_term|contract_term|"
+                            "change_order_rule|pricing_assumption|commercial_total|not_a_term>;key=value...)")
+                continue
+            verdict = canonical
+        elif head == "commercial" and _judged_atom_type(j) in TERM_LINE_TYPES:
+            report.skip("commercial verdict on a term line: re-answer under term")
             continue
         prov = {
             "source": "purpulse_atom_labeler",

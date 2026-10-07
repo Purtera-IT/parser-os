@@ -138,6 +138,7 @@
       "judgments": [
         "norm",
         "commercial",
+        "term",
         "terminology"
       ],
       "tasks": []
