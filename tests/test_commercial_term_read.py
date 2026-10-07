@@ -115,15 +115,21 @@ def test_term_head_is_its_own_extract_head():
         assert _threshold_for("term", scope) == _threshold_for("commercial", scope)
 
 
-def test_term_sits_beside_commercial_in_a_universal_head():
+def test_term_sits_in_a_universal_head_and_commercial_in_the_company_one():
+    """`term` is what a line says (universal); `commercial` is OUR kit shape,
+    which #394 moved to the company head conduct.constants."""
     import json
     from pathlib import Path
 
     heads = json.loads((Path(__file__).resolve().parents[1] / "app/core/label_heads.json").read_text())
     owner = [h for h in heads["heads"] if "term" in h.get("judgments", [])]
     assert len(owner) == 1
-    assert "commercial" in owner[0]["judgments"]
+    assert owner[0]["key"] == "content.claims"
+    assert owner[0]["judgments"] == ["norm", "term", "terminology"]
     assert owner[0]["layer"] == "universal"
+    kit = [h for h in heads["heads"] if "commercial" in h.get("judgments", [])]
+    assert [h["key"] for h in kit] == ["conduct.constants"]
+    assert kit[0]["layer"] == "company"
 
 
 # ── mirror ───────────────────────────────────────────────────────────────────

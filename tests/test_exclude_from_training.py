@@ -114,3 +114,44 @@ def test_delivery_export_is_facts_only():
     assert "12 displays" in text
     for gone in ("Thanks so much", "good weekend", "lift is available", "PO lands"):
         assert gone not in text, gone
+
+
+def test_judgments_keyed_by_kind_and_id_on_an_excluded_atom_are_dropped():
+    """Judgment keys are `<kind>:<id>`; the excluded label carries the bare id.
+
+    Before, only a judgment whose own note started with the marker was dropped,
+    so every verdict on an old manual Deal Kit row trained."""
+    gone = _label("lbl_gone", "Old manual Deal Kit total line", note="EXCLUDE_FROM_TRAINING: manual")
+    other = _label("lbl_other", "Install 12 displays in the lobby")
+
+    def jd(head, verdict, key, text, **kw):
+        return {"labeler": PERSON, "head": head, "verdict": verdict, "target_key": key, "text": text, **kw}
+
+    judgments = [
+        jd("suppression", "should_have_been_kept", "atom:a_lbl_gone", "Old manual Deal Kit judged by atom id"),
+        jd("site", "same_site", "site:a_lbl_gone", "Old manual Deal Kit judged as a site"),
+        jd("suppression", "correctly_dropped", "sup:lbl_gone", "Old manual Deal Kit judged by label key"),
+        jd("conflict", "unrelated", "xdoc:0123abcd", "Old manual Deal Kit judged in a pair",
+           target={"a": {"atomId": "a_lbl_keep"}, "b": {"atomId": "a_lbl_gone"}}),
+        jd("gap", "valid", "gap:4567cdef", "Old manual Deal Kit judged as a gap source",
+           target={"source": {"atomId": "a_lbl_gone"}}),
+        # Unrelated atoms and hashed keys still train.
+        jd("suppression", "should_have_been_kept", "atom:a_lbl_other", "A kept atom judged by atom id"),
+        jd("gap", "valid", "gap:atom:a_lbl_gone", "A gap key that only looks like an atom key"),
+    ]
+    report = IngestReport()
+    rows = rows_for_deal(_doc(KEEP, gone, other, judgments=judgments), report)
+    text = _texts(rows)
+    assert "Old manual Deal Kit" not in text
+    assert "A kept atom judged by atom id" in text
+    assert "A gap key that only looks like an atom key" in text
+    assert report.skipped["judgment touches an atom excluded from training"] == 5
+
+
+def test_delivery_export_keeps_judgments_on_its_own_facts_by_kind_and_id():
+    tag = {"train_for": ["delivery_parser"]}
+    fact = _label("lbl_fact", "Install 12 displays in the lobby", reads_set=tag)
+    j = {"labeler": PERSON, "head": "suppression", "verdict": "should_have_been_kept",
+         "target_key": "atom:a_lbl_fact", "text": "Install 12 displays, judged"}
+    rows = rows_for_deal(_doc(fact, judgments=[j]), parser=DELIVERY_PARSER)
+    assert "judged" in _texts(rows)

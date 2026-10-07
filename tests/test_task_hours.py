@@ -112,3 +112,30 @@ def test_a_quantity_without_a_unit_or_below_one_is_ignored():
     assert parse_hours_verdict("hours=16;per=camera;qty=0") == {"hours": 16.0, "per": "camera"}
     assert parse_hours_verdict("hours=16;per=camera;qty=x") == {"hours": 16.0, "per": "camera"}
     assert encode_hours_verdict(16, per="camera", qty=0) == "hours=16;per=camera"
+
+
+# ---- the atom labeler's `hours` card: only hours the line STATES ------------
+
+def test_card_grammar_takes_unstated_or_a_number_with_a_basis():
+    from app.core.task_hours import hours_judgment_basis, hours_judgment_problem
+
+    assert hours_judgment_problem("unstated") is None
+    for v in ("hours=8;basis=stated", "hours=8;basis=estimate", "hours=8;basis=deal_kit",
+              "hours=2;per=drop;qty=24;role=L2;basis=stated"):
+        assert hours_judgment_problem(v) is None, v
+    assert "needs a basis" in hours_judgment_problem("hours=8")
+    assert "not one of" in hours_judgment_problem("hours=8;basis=guess")
+    assert "unstated" in hours_judgment_problem("8")
+    # `unstated` is valid alone; beside a number it is a number with no basis.
+    assert "needs a basis" in hours_judgment_problem("unstated;hours=3")
+    assert hours_judgment_basis("hours=3") == ""
+    assert hours_judgment_basis("8") is None
+
+
+def test_card_verdicts_round_trip_and_unstated_never_stamps():
+    v = encode_hours_verdict(16, per="camera", qty=3, basis="stated")
+    assert v == "hours=16;per=camera;qty=3;basis=stated"
+    assert parse_hours_verdict(v) == {"hours": 16.0, "per": "camera", "qty": 3.0, "basis": "stated"}
+    # The kit's grammar is unchanged: no basis, no basis key.
+    assert encode_hours_verdict(3, per="cable drop") == "hours=3;per=cable drop"
+    assert parse_hours_verdict("unstated") is None
