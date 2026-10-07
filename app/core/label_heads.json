@@ -195,10 +195,12 @@
       "layer": "universal",
       "status": "label",
       "label": "Which atoms exist",
-      "question": "Should this text be an atom at all, and did the parser form it right?",
-      "output": "admission keep or drop; rule and suppression calls; document and sheet roles",
+      "question": "Should this text be an atom at all, did the parser form it right, and when it lost a line, why?",
+      "output": "admission keep or drop; on a hand-added (Missed) line, the miss cause; rule and suppression calls; document and sheet roles",
       "columns": [],
-      "reads": [],
+      "reads": [
+        "miss_cause"
+      ],
       "relations": [],
       "judgments": [
         "rule",

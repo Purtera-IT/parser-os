@@ -506,6 +506,10 @@ def is_deal_kit(doc_kind: str) -> bool:
     return "dealkit" in re.sub(r"[^a-z]", "", str(doc_kind or "").lower())
 
 
+#: Why the parser lost a hand-added line (app.learning.human_labels.MISS_CAUSE).
+MISS_CAUSE = "miss_cause"
+
+
 def _derived(label: dict[str, Any], universal_reads: frozenset[str] = frozenset(),
              deal_kit: bool = False) -> dict[str, Any]:
     """Fields the card records implicitly, made explicit for the heads:
@@ -521,6 +525,8 @@ def _derived(label: dict[str, Any], universal_reads: frozenset[str] = frozenset(
       ruled out (``rejected_reads``) is taught as absent, not left unknown.
       On a company reject a removed base reading may be our rule, so only
       company readings are taught absent there.
+    * ``miss_cause`` (base): trains only on a hand-added line; dropped from
+      any other row, so the cause head never reads a parser atom as a miss.
     * Deal Kit routing: which parser a Deal Kit line trains is our own rule,
       so on a Deal Kit line ``train_for`` moves to the Purtera layer's
       ``co_deal_kit_route`` and the base ``train_for`` head never sees it.
@@ -541,6 +547,12 @@ def _derived(label: dict[str, Any], universal_reads: frozenset[str] = frozenset(
         out["admission"] = "keep"
     removed = {str(k) for k in (label.get("reads_shown") or [])} - set(reads)
     removed |= {str(k) for k in (label.get("rejected_reads") or {})}
+    if origin != "labeler":
+        # Why the parser lost a line: asked only of a hand-added (Missed)
+        # line. A parser atom was not missed, so it teaches neither a cause
+        # nor its absence.
+        reads.pop(MISS_CAUSE, None)
+        removed.discard(MISS_CAUSE)
     for k in removed:
         if not (policy and k in universal_reads):
             reads.setdefault(k, ABSENT)
