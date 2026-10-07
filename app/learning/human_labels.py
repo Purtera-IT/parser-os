@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.core.atom_type_registry import KEEP, coarse_of, facet_of, load_registry
+from app.core.judgment_reasons import is_reason_code
 from app.learning.label_context import context_note, context_text, dropout_copy
 from app.learning.label_features import features_for
 from app.learning.span_ranker import best_locatable, pointer_kind
@@ -659,6 +660,29 @@ _DRAFT_WHY_WEIGHT = 0.5
 def _judgment_why_weight(j: dict[str, Any]) -> float:
     author = str(j.get("why_author") or "").strip().lower()
     return _DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
+
+
+#: The report counter for a judgment whose `reason` is not a code for its head.
+REASON_NOT_A_CODE = "judgment reason is not a code for its head: no reason row, text moved to the note"
+
+
+def _note_with_reason(note: Any, reason: str) -> str:
+    """The note with a free-text reason as the first sentence of its WHY.
+
+    Placed after a leading ``[EXCLUDE_FROM_TRAINING: ...]`` marker, so the
+    marker still opens the note, and left out when the note already says it
+    (a bulk accept once wrote the reason into the note). Whatever split the
+    note goes through then sends it where the WHY goes.
+    """
+    text = str(note or "").strip()
+    if " ".join(reason.split()).lower() in " ".join(text.split()).lower():
+        return text
+    marker = ""
+    if text.lstrip("[").lstrip().upper().startswith(EXCLUDE_NOTE_PREFIX):
+        # Bracketed, the marker ends at "]"; bare, it is the whole first line.
+        end = text.index("]") + 1 if text.startswith("[") and "]" in text else (text.find("\n") + 1 or len(text))
+        marker, text = text[:end].rstrip() + "\n", text[end:].lstrip()
+    return f"{marker}{reason}\n{text}".strip() if text else f"{marker}{reason}"
 
 
 
@@ -1389,6 +1413,14 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
         # about the wrong size of job, it can learn the rule -- and that the
         # same question is VALID on a rollout.
         reason = str(j.get("reason") or "").strip()
+        if reason and not is_reason_code(str(j.get("head") or ""), reason):
+            # Only a code listed for the head is a class (judgment_reasons.json).
+            # A sentence there is the labeler's WHY in the wrong column: as a
+            # class it is one example nobody else will ever give, so it moves
+            # to the front of the note and trains as rationale with the rest.
+            report.skip(REASON_NOT_A_CODE)
+            j = {**j, "note": _note_with_reason(j.get("note"), reason)}
+            reason = ""
         if reason:
             rows.append({
                 "relation": f"{spec.relation}_reason", "label": reason,
