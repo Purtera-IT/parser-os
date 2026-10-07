@@ -525,6 +525,19 @@ def _row_weight(lb: dict[str, Any]) -> float:
     return _TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0)
 
 
+#: What a judgment's note counts when a model wrote it and no person has saved
+#: it since (``why_author: machine_draft``, a column on the judgment row). The
+#: same value as ml.c3.data.DRAFT_WHY_WEIGHT for an atom label's WHY; only the
+#: rationale scales, the verdict trains at full weight, as an atom label's
+#: answers do. NULL / absent is a person (every row from before the column).
+_DRAFT_WHY_WEIGHT = 0.5
+
+
+def _judgment_why_weight(j: dict[str, Any]) -> float:
+    author = str(j.get("why_author") or "").strip().lower()
+    return _DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
+
+
 
 #: Notes the card writes on a labeler's behalf. They say when something was
 #: drawn, never why, and a rationale target built from one teaches the model to
@@ -1190,7 +1203,7 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
                     "teacher": HUMAN_TEACHER, "confidence": 1.0, "scope": "deal",
                     "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
                     "created_at": j.get("judged_at") or "", "split": split,
-                }, prov))
+                }, prov, _judgment_why_weight(j)))
         rows.append({
             "relation": spec.relation, "label": verdict, "raw_text": text, "masked_text": text,
             "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,
