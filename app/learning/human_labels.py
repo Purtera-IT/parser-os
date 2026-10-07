@@ -92,6 +92,15 @@ UNTRAINED_READS = frozenset(
     str(r.get("key")) for r in load_registry().get("reads") or []
     if r.get("layer") in UNTRAINED_LAYERS)
 
+#: Why the parser lost a line (a closed class, `reads_set.miss_cause`). Only a
+#: hand-added (Missed, origin "labeler") row carries it, and it trains only
+#: there: a parser atom was not missed. It stays on the row as history once a
+#: later parse produces the line; such a row ("DUPLICATE of parser atom ...")
+#: no longer trains as a fact, so the label API sends it in the blob's
+#: ``missed_history`` list and it trains the cause and nothing else.
+MISS_CAUSE = "miss_cause"
+
+
 #: A value renamed in the registry, read under its new name. `sow_section`
 #: said `purtera_responsibilities` before the universal layer forbade a company
 #: name in a universal value.
@@ -470,7 +479,8 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
     labels = _with_one_deal_summary(labels)
-    if not deal_id or not (labels or doc.get("judgments") or doc.get("links")):
+    if not deal_id or not (labels or doc.get("judgments") or doc.get("links")
+                           or doc.get("missed_history")):
         report.skip("deal file without deal_id or labels")
         return []
     is_eval = doc.get("purpose") == "eval" or any(lb.get("purpose") == "eval" for lb in labels)
@@ -551,6 +561,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
         out = out[:n_before] + made
         if dropout_seed is not None:
             out.extend(_dropout_rows(made, lb, dropout_seed, deal_id))
+    out.extend(_missed_history_rows(doc, deal_id, split, report, parser))
     out.extend(_judgment_rows(doc, deal_id, split, report, parser))
     out.extend(_question_rows(doc, labels, deal_id, split, report))
     out.extend(_link_rows(doc, deal_id, split, report))
@@ -559,6 +570,58 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
     report.rows += len(out)
     return out
 
+
+
+def _missed_history_rows(doc: dict[str, Any], deal_id: str, split: str,
+                         report: IngestReport, parser: str = QUOTE_PARSER) -> list[dict[str, Any]]:
+    """`reads:miss_cause` from hand-added rows a later parse made redundant.
+
+    Once the parser emits a line a person had to add by hand, the hand-added
+    row is a duplicate and stops training as a fact (the parser atom carries
+    the label). Its miss cause is still true of the parse that lost it -- and
+    a row that names both what was missed and that a parser change recovered
+    it is exactly the evidence the cause head needs. So it trains that one
+    class, served the context the line had, and nothing else.
+    """
+    rows: list[dict[str, Any]] = []
+    for lb in doc.get("missed_history") or []:
+        if not isinstance(lb, dict) or not _is_a_person(lb.get("labeler")):
+            continue
+        if str(lb.get("origin") or "labeler").strip().lower() != "labeler":
+            continue
+        if is_excluded_from_training(lb, parser):
+            report.skip("excluded from training")
+            continue
+        reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
+        cause = str(reads.get(MISS_CAUSE) or lb.get(MISS_CAUSE) or "").strip().lower()
+        if not cause:
+            continue
+        if cause not in CLOSED_READS.get(MISS_CAUSE, set()):
+            report.skip("miss_cause outside its values")
+            continue
+        text = context_text(f"reads:{MISS_CAUSE}", lb)
+        if len(text) < 3:
+            continue
+        prov = {
+            "source": lb.get("source") or "purpulse_atom_labeler",
+            "kind": "missed_history",
+            "label_key": lb.get("label_key"),
+            "compile_id": lb.get("compile_id"),
+            "duplicate_of": lb.get("duplicate_of"),
+            "labeler": lb.get("labeler") or "",
+            "purpose": lb.get("purpose") or "train",
+            "origin": "labeler",
+            **context_note(f"reads:{MISS_CAUSE}"),
+        }
+        rows.append({
+            "raw_text": text, "masked_text": text, "teacher": HUMAN_TEACHER,
+            "weight": 1.0, "confidence": 1.0, "scope": "deal", "scope_key": deal_id,
+            "deal_id": deal_id, "project_id": deal_id,
+            "created_at": lb.get("labeled_at") or "", "split": split,
+            "relation": f"reads:{MISS_CAUSE}", "label": cause, "label_kind": "judgment",
+            "provenance": json.dumps(prov, ensure_ascii=False),
+        })
+    return rows
 
 
 #: What a row is worth to a head. `retrain.py` has always passed `weight` into
@@ -833,18 +896,27 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     reads = lb.get("reads_set")
     if not isinstance(reads, dict):
         return rows
+    if origin != "labeler" and MISS_CAUSE in reads:
+        # Why the parser lost a line is a question only a hand-added line
+        # answers; on a parser atom there was no miss to explain.
+        report.skip("miss_cause on a row the parser made")
+        reads = {k: v for k, v in reads.items() if k != MISS_CAUSE}
     # Readings the labeler CONSIDERED and ruled out. The reading that nearly
     # fitted is the best negative there is -- "blocked_on is for a conditional
     # whose gate is a person; this one's gate is an outcome" teaches the
     # boundary in a way no positive example can, and until now there was
     # nowhere to put it, so it lived in prose and taught nothing.
     for key, why in (lb.get("rejected_reads") or {}).items():
+        if key == MISS_CAUSE and origin != "labeler":
+            continue
         rows.append(_axis_row(f"reads:{key}", ABSENT, lb, base, prov, "judgment",
                               {"considered_and_rejected": True,
                                "why_not": str(why or "")}))
 
     shown = {str(k) for k in (lb.get("reads_shown") or [])}
     for key in sorted(shown - {str(k) for k in reads}):
+        if key == MISS_CAUSE and origin != "labeler":
+            continue
         rows.append(_axis_row(f"reads:{key}", ABSENT, lb, base, prov, "judgment",
                               {"parser_proposed": True, "removed_by_human": True}))
     for key, value in reads.items():

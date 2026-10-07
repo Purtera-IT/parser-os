@@ -63,7 +63,7 @@ reading and relation in `atom_types.json` belongs to exactly one head.
 | content.claims | content | universal | entity_keys · job_scale, bom_role, scope_facet, option_selected, start_date, billing_type |
 | content.document | content | universal | doc_kind, sow_fill, sow_section, derivation, unreliable_part, points_at_artifact |
 | content.deal | content | universal | deal answers, router and deal-scope judgments |
-| structure.formation | content | universal | admission, rule, suppression, document and sheet judgments |
+| structure.formation | content | universal | admission, miss_cause (hand-added lines only), rule, suppression, document and sheet judgments |
 | beliefs.tracker | beliefs | universal | superseded · same_as, contradicts, near_miss · conflict and site judgments |
 | consequence.work | consequence | universal | commitment, task_owner_role, triggered_task, trigger_event, fires_task, blocked_on, urgency, expansion · blocked_by, triggered_by |
 | consequence.questions | consequence | universal | needs_artifact, chase · answers · the Questions card |
