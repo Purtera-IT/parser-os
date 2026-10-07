@@ -469,7 +469,18 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         # classification). Same goes for vendor_line_item vs bom_line.
         seen_normalized: dict[tuple, object] = {}
         unique: list = []
-        for atom in sorted(art_atoms, key=lambda a: getattr(a, "confidence", 0.0), reverse=True):
+        # The copy that survives is the EARLIEST message's (a signature every
+        # email repeats belongs to the first email that carried it), then the
+        # higher-confidence one. A line with no message date sorts last.
+        from datetime import date as _date
+
+        from app.core.email_threading import _message_day
+
+        def _survivor_rank(a) -> tuple:
+            day = _message_day(a) if isinstance(getattr(a, "value", None), dict) else None
+            return (day or _date.max, -float(getattr(a, "confidence", 0.0) or 0.0))
+
+        for atom in sorted(art_atoms, key=_survivor_rank):
             norm = getattr(atom, "normalized_text", None) or getattr(atom, "raw_text", "") or ""
             if not norm:
                 unique.append(atom)

@@ -590,12 +590,20 @@ def _minute_stamp(raw: str) -> str:
     2026 14:38:56 +0000"): the hour differs, the minute and the date (within
     a day) do not. ``YYYY-MM-DD|MM`` is matched with the date loosened below.
     """
+    dt = _sent_datetime(raw)
+    if dt is None:
+        return ""
+    return f"{dt.date().isoformat()}|{dt.minute:02d}"
+
+
+def _sent_datetime(raw: str):
+    """A send time as written (its zone dropped), or None."""
     from datetime import datetime
     from email.utils import parsedate_to_datetime
 
     raw = (raw or "").strip()
     if not raw:
-        return ""
+        return None
     dt = None
     try:
         dt = parsedate_to_datetime(raw)
@@ -613,8 +621,31 @@ def _minute_stamp(raw: str) -> str:
             except ValueError:
                 continue
     if dt is None:
-        return ""
-    return f"{dt.date().isoformat()}|{dt.minute:02d}"
+        return None
+    return dt.replace(tzinfo=None)
+
+
+def _message_day(atom: EvidenceAtom):
+    """The day the message a line belongs to was sent (a quote's own "Sent:",
+    an email's own date), or None."""
+    v = atom.value if isinstance(atom.value, dict) else {}
+    et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+    msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+    if v.get("quoted"):
+        raws = (msg.get("sent_at"), v.get("authored_at"))
+    else:
+        raws = (msg.get("sent_at"), v.get("authored_at"), et.get("date"))
+    for raw in raws:
+        dt = _sent_datetime(str(raw or ""))
+        if dt is not None:
+            return dt.date()
+    return None
+
+
+def _earlier_by_days(a, b) -> bool:
+    """``a`` is a whole day or more before ``b`` (a zone shift moves a date
+    by one at most, so a nearer pair is the same moment)."""
+    return a is not None and b is not None and (b - a).days > 1
 
 
 def _minute_stamps_around(raw: str) -> set[str]:
@@ -665,6 +696,9 @@ def dedup_quoted_history(
     # The atom each key, header or message names: the survivor a dropped
     # echo is folded into.
     survivor_of: dict[tuple, EvidenceAtom] = {}
+    # The day of the EARLIEST authored copy of each line: a quote of an older
+    # message is not an echo of a later message that says the same words.
+    authored_day: dict[tuple, Any] = {}
     for atom in atoms:
         et = _thread_of(atom)
         if et is None or _is_quoted(atom):
@@ -672,7 +706,11 @@ def dedup_quoted_history(
         key = _norm_key(atom)
         if len(key) >= _MIN_DEDUP_LEN:
             authored_keys.setdefault(et["thread_id"], set()).add(key)
-            survivor_of.setdefault(("k", et["thread_id"], key), atom)
+            day = _message_day(atom)
+            k = (et["thread_id"], key)
+            if ("k",) + k not in survivor_of or (day is not None and (authored_day.get(k) is None or day < authored_day[k])):
+                survivor_of[("k",) + k] = atom
+                authored_day[k] = day
 
     # 1b) The messages that exist in the thread as their OWN email, by sender
     # and the minute they were sent. A quoted "From: X | Sent: Y" routing
@@ -772,7 +810,17 @@ def dedup_quoted_history(
     seen_headers: dict[str, set[tuple[str, str]]] = {}
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
-    for _i, atom in sorted(enumerate(atoms), key=_file_rank):
+    # The earliest MESSAGE first, then the thread's file order: a line every
+    # message repeats (a signature) is owned by the first message that said
+    # it, wherever that message is quoted. 000132: a July signature folded
+    # onto the September copy of it, which carried no more than the July one.
+    from datetime import date as _date
+
+    def _walk_rank(item: tuple[int, EvidenceAtom]) -> tuple:
+        day = _message_day(item[1]) if _is_quoted(item[1]) else None
+        return (day or _date.max,) + _file_rank(item)
+
+    for _i, atom in sorted(enumerate(atoms), key=_walk_rank):
         et = _thread_of(atom)
         v = atom.value if isinstance(atom.value, dict) else {}
         if et is not None and v.get("kind") == "quoted_message_header":
@@ -795,8 +843,18 @@ def dedup_quoted_history(
             kept.append(atom)
             continue
         tid = et["thread_id"]
-        held = None if key in authored_keys.get(tid, ()) else _held_message_line(atom, key)
-        if key in authored_keys.get(tid, ()) or held is not None:
+        seen = seen_quoted.setdefault(tid, set())
+        nth = (key, occurrence.get(id(atom), 0))
+        authored = key in authored_keys.get(tid, ()) and not _earlier_by_days(
+            _message_day(atom), authored_day.get((tid, key)))
+        if authored and nth in seen:
+            # An older message's quote was kept as the earliest copy of these
+            # words; this later copy is that one's echo, not the email's.
+            note_folded_into(atom, survivor_of.get(("q", tid, nth)))
+            dropped.append(atom)
+            continue
+        held = None if authored else _held_message_line(atom, key)
+        if authored or held is not None:
             # echo of an authored original (in this thread, or the same
             # author's message held as a file under another thread)
             note_folded_into(atom, survivor_of.get(("k", tid, key)) or held)
@@ -909,15 +967,24 @@ def dedup_quoted_chatter(
     # under "From: Patrick Kelly" headers with no address (and under Gmail
     # "On ... wrote:" quotes with no author at all), which the per-message
     # key below could never resolve.
+    #
+    # The survivor is the EARLIEST copy by the day its message was sent: a
+    # quote of a July message keeps its signature line rather than folding
+    # it onto a September email's own copy (000132).
     authored_chrome: set[tuple[str, str]] = set()
+    chrome_day: dict[tuple[str, str], Any] = {}
     for atom in list(context) + list(chatter):
         v = atom.value if isinstance(atom.value, dict) else {}
         if v.get("quoted"):
             continue
         k = _key(atom)
         if k:
-            authored_chrome.add((_chrome_scope(atom), k))
-            survivor_of.setdefault(("c", _chrome_scope(atom), k), atom)
+            ck = (_chrome_scope(atom), k)
+            authored_chrome.add(ck)
+            day = _message_day(atom)
+            if ("c",) + ck not in survivor_of or (day is not None and (chrome_day.get(ck) is None or day < chrome_day[ck])):
+                survivor_of[("c",) + ck] = atom
+                chrome_day[ck] = day
     seen_chrome: set[tuple[str, str]] = set()
 
     # The messages the deal holds as their OWN email, by thread, sender and
@@ -939,7 +1006,14 @@ def dedup_quoted_chatter(
     seen: set[tuple[str, str, str, str]] = set()
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
-    for atom in chatter:
+    from datetime import date as _date
+
+    def _by_day(item: tuple[int, EvidenceAtom]) -> tuple:
+        v = item[1].value if isinstance(item[1].value, dict) else {}
+        day = _message_day(item[1]) if v.get("quoted") else None
+        return (day or _date.max, item[0])
+
+    for _i, atom in sorted(enumerate(chatter), key=_by_day):
         v = atom.value if isinstance(atom.value, dict) else {}
         if v.get("quoted") and str(v.get("reason") or "") == "quote_attribution":
             ident = _message_identity(atom)
@@ -951,8 +1025,12 @@ def dedup_quoted_chatter(
         if v.get("quoted") and str(v.get("reason") or "") in _SIGNATURE_CHROME_REASONS:
             k = _key(atom)
             ck = (_chrome_scope(atom), k)
-            if k and (ck in authored_chrome or ck in seen_chrome):
-                note_folded_into(atom, survivor_of.get(("c",) + ck) or survivor_of.get(("sc",) + ck))
+            # A quote of a message older (by a whole day) than every email
+            # that signs with these words is not a copy of those emails.
+            older = ck in authored_chrome and _earlier_by_days(_message_day(atom), chrome_day.get(ck))
+            if k and ((ck in authored_chrome and not older) or ck in seen_chrome):
+                # An older quote kept as the earliest copy outranks the email.
+                note_folded_into(atom, survivor_of.get(("sc",) + ck) or survivor_of.get(("c",) + ck))
                 dropped.append(atom)
                 continue
             if k:
@@ -975,6 +1053,8 @@ def dedup_quoted_chatter(
         seen.add(sig)
         survivor_of.setdefault(("s",) + sig, atom)
         kept.append(atom)
+    gone = {id(a) for a in dropped}
+    kept = [a for a in chatter if id(a) not in gone]
     return kept, dropped
 
 
