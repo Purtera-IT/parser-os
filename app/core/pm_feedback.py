@@ -213,6 +213,11 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # days. Taught by finished kits on the request line; nothing in the deal's
     # documents states it (commercial_terms).
     "commercial": HeadSpec("commercial_terms", "atom", "Commercial shape (billing, PM, travel)", mode="extract"),
+    # What a commercial-term LINE says (the Terms tab): which kind of term it
+    # is and the numbers it states -- "kind=payment_term;net_days=30". A
+    # different question from `commercial`, whose answer is the shape of a
+    # kit and is not in the line; see app.core.commercial_term_read.
+    "term": HeadSpec("commercial_term_read", "atom", "Commercial term on the line", mode="extract"),
     # A place the documents name: a job site, or only a mention (travel, a
     # signature, a reference customer). site_geo_fallback.geo_mention_sites.
     "geo_mention": HeadSpec("geo_mention_role", "atom", "Named place: job site or mention",
@@ -285,6 +290,7 @@ _HEAD_THRESHOLDS: dict[str, tuple[float, float]] = {
     "hours": (0.70, 0.76),
     "task_tier": (0.72, 0.78),
     "commercial": (0.70, 0.76),
+    "term": (0.70, 0.76),
     "bom_owner": (0.72, 0.78),
     # A document lesson names one thread. Two subjects of one deal can sit at
     # 0.7 of each other; a lesson must not reach the neighbouring thread.
