@@ -1074,6 +1074,61 @@ def _translate_judgment(head: str, verdict: str) -> tuple[str, str]:
     return target, verdicts.get(verdict, verdict)
 
 
+#: The `hours` card trains the base only on hours a line STATES (user ruling,
+#: 2026-10): an estimate, hours read off the Deal Kit, and every older verdict
+#: saved before the card asked for a basis are Purtera's numbers. They train
+#: the company reading the atom card already routes estimates to
+#: (`co_hours_estimate`, layer company: multitask_table.tasks_for("purtera")
+#: only), never `task_hours`. Nothing is deleted.
+_TASK_HOURS = "task_hours"
+_CO_HOURS = "co_hours_estimate"
+
+
+def _hours_judgment_rows(verdict: str, text: str, deal_id: str, split: str,
+                         created_at: Any, prov: dict[str, Any],
+                         report: IngestReport) -> list[dict[str, Any]] | None:
+    """Rows for an `hours` card verdict, or None to train it on task_hours.
+
+    Returns ``None`` with ``verdict`` trainable on the base (handled by the
+    caller), a list of company-layer rows, or ``[]`` when it is skipped."""
+    from app.core.task_hours import BASIS_STATED, UNSTATED, hours_judgment_basis
+
+    basis = hours_judgment_basis(verdict)
+    if basis is None:
+        report.skip("hours verdict outside the card grammar (hours=N;...;basis=..., or unstated)")
+        return []
+    if basis in (UNSTATED, BASIS_STATED):
+        return None
+    common = {
+        "raw_text": text, "masked_text": text, "teacher": HUMAN_TEACHER, "weight": 1.0,
+        "confidence": 1.0, "scope": "deal", "scope_key": deal_id, "deal_id": deal_id,
+        "project_id": deal_id, "created_at": created_at or "", "split": split,
+    }
+    p = json.dumps({**prov, "basis": basis or "none (saved before the card asked)",
+                    "company": DEFAULT_COMPANY, "value": verdict}, ensure_ascii=False)
+    return [
+        {**common, "relation": f"reads:{_CO_HOURS}", "label": PRESENT, "label_kind": "judgment",
+         "provenance": p},
+        {**common, "relation": f"reads_value:{_CO_HOURS}", "label": _hours_label(verdict),
+         "label_kind": "span", "provenance": p},
+    ]
+
+
+def _hours_label(verdict: str) -> str:
+    """An `hours` verdict in the kit's grammar, basis dropped (the relation says it).
+
+    ``unstated`` trains as itself: task_hours has no abstain class, so the
+    card's "this line states no hours" is the head's explicit no-value target,
+    as ``absent`` is for a reading."""
+    from app.core.task_hours import UNSTATED, encode_hours_verdict, parse_hours_verdict
+
+    if verdict.strip().lower() == UNSTATED:
+        return UNSTATED
+    parsed = parse_hours_verdict(verdict) or {}
+    return encode_hours_verdict(parsed["hours"], per=str(parsed.get("per") or ""),
+                                qty=parsed.get("qty"), role=str(parsed.get("role") or ""))
+
+
 def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
     """Conflict / site / site_role / gap / document_job verdicts -> one row each,
     under the relation that head decides (pm_feedback.HEAD_REGISTRY), so the
@@ -1128,6 +1183,16 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
         if spec.candidates and verdict not in spec.candidates:
             report.skip(f"judgment verdict outside {j.get('head')}'s classes")
             continue
+        if spec.relation == _TASK_HOURS:
+            co_rows = _hours_judgment_rows(verdict, text, deal_id, split, j.get("judged_at"), {
+                "source": "purpulse_atom_labeler", "head": j.get("head"),
+                "target_key": j.get("target_key"), "compile_id": j.get("compile_id"),
+                "labeler": j.get("labeler") or "", "purpose": j.get("purpose") or "train",
+            }, report)
+            if co_rows is not None:
+                rows.extend(co_rows)
+                continue
+            verdict = _hours_label(verdict)
         prov = {
             "source": "purpulse_atom_labeler",
             "head": j.get("head"),
