@@ -3,7 +3,8 @@ the right line (ml/c3/data.py ``_blob_links``), on invented rows.
 
 * a Dropped card's ``sup:<label_key>@line_start=...`` key names that exact
   copy, not the first line with the same words;
-* a Places card's ``site:<atom_id>`` key names that atom;
+* a Places card's ``site:<atom_id>`` key, and an hours or task-tier card's
+  ``atom:<atom_id>`` key, names that atom;
 * a conflict or site-pair card starts from its a side (its b side when the
   link points at the a side); a question card from its source line;
 * a question card with no line stays unresolved and is counted;
@@ -114,3 +115,9 @@ def test_pair_card_link_to_its_own_a_side_starts_from_b_not_a_self_link():
     deal = _deal([_link("edge_c1", "k_win1", rel="supports", head="conflict")], JUDGMENTS)
     assert deal.edges == [("k_win2", "k_win1", "supports")]
     assert deal.link_stats["self_links"] == 0
+
+
+def test_atom_card_key_names_its_atom_not_the_text_twin():
+    deal = _deal([_link("atom:at-k_drop", "k_other", rel="supports", head="hours", from_text=TWIN),
+                  _link("atom:at-k_drop", "k_orig", head="task_tier", from_text=TWIN)])
+    assert sorted(deal.edges) == [("k_drop", "k_orig", "same_as"), ("k_drop", "k_other", "supports")]

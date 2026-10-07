@@ -195,7 +195,8 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
 
     The from side is the card the link was drawn on: its label_key; a Dropped
     card's ``sup:<label_key>@...`` key names that exact copy and a Places
-    card's ``site:<atom_id>`` that atom (a dropped copy's text equals its
+    card's ``site:<atom_id>`` (and an hours or task-tier card's
+    ``atom:<atom_id>``) that atom (a dropped copy's text equals its
     original's, so text would find the wrong line); a conflict, site pair,
     Questions or site-role card (``judgments``) starts from its subject line,
     the a side (the b side when the link points at the a side itself);
@@ -230,8 +231,8 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
         r = None
         if key.startswith("sup:"):
             r = by_key.get(key[len("sup:"):].split("@", 1)[0])
-        elif key.startswith("site:"):
-            r = by_id.get(key[len("site:"):])
+        elif key.startswith(("site:", "atom:")):
+            r = by_id.get(key.split(":", 1)[1])
         elif key in cards:
             for ref in _card_refs(cards[key]):
                 r = find(None, ref.get("atomId") or ref.get("atom_id"), ref.get("text"))
