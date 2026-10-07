@@ -78,6 +78,10 @@ class DealExample:
     #: Links from a line to a whole document ("the file this line announces"):
     #: (src key, document id).
     doc_pointers: list[tuple[str, str]] = field(default_factory=list)
+    #: How the blob's evidence links fared (``_blob_links``): edges made,
+    #: document pointers, self-links and unresolved links dropped, links
+    #: anchored on a judgment card's line, card links with no line.
+    link_stats: dict[str, int] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -146,11 +150,15 @@ class DealExample:
                          "speaker_side": lb.get("speaker_side", "")})
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
-        linked, doc_pointers = _blob_links(blob.get("links") or [], rows)
+        link_stats: dict[str, int] = {}
+        linked, doc_pointers = _blob_links(blob.get("links") or [], rows,
+                                           judgments=blob.get("judgments") or [], stats=link_stats)
         edges += linked
-        return DealExample.from_dict({"deal_id": deal_id, "company": company,
+        deal = DealExample.from_dict({"deal_id": deal_id, "company": company,
                                       "atoms": rows, "edges": edges, "doc_pointers": doc_pointers,
                                       "judgments": blob.get("judgments") or []})
+        deal.link_stats = link_stats
+        return deal
 
 
 #: A relation the model reads only from the later line back to the earlier
@@ -159,16 +167,40 @@ class DealExample:
 _LATER_FIRST = ("contradicts",)
 #: A link note that says nothing (the card's default).
 _EMPTY_LINK_NOTES = ("drawn while labelling the whole deal", "drawn while labelling", "")
+#: Judgment cards a link can be drawn on whose key names no line: the link
+#: starts from the card's subject line (a conflict or site pair's a side, a
+#: question's source line, a site's first mention).
+_CARD_HEADS = ("conflict", "site", "gap", "site_role")
 
 
-def _blob_links(links: list[Any], rows: list[dict[str, Any]]
+def _card_refs(target: Any) -> list[dict[str, Any]]:
+    """The lines a judgment card stands on, as its target stores them: its a
+    side (or a question's source, a site's first mention), then its b side."""
+    t = target if isinstance(target, dict) else {}
+    refs = []
+    for ref in (t.get("a") or t.get("source") or t.get("site"), t.get("b")):
+        ref = ref if isinstance(ref, dict) else {}
+        if isinstance(ref.get("evidence"), dict):
+            ref = ref["evidence"]             # a site: its first mention
+        refs.append(ref)
+    return refs
+
+
+def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
+                judgments: Iterable[Any] = (), stats: dict[str, int] | None = None
                 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
     """The evidence links the labeling page stores at the top of the training
     blob (``doc.links``: from_key, from_text, from_head, to_label_key,
     to_atom_id, to_text, relation, note, labeler), as edges between lines.
 
-    The from side is the card the link was drawn on (its label_key; a
-    Questions card has a gap key, so its text is used); the to side is
+    The from side is the card the link was drawn on: its label_key; a Dropped
+    card's ``sup:<label_key>@...`` key names that exact copy and a Places
+    card's ``site:<atom_id>`` (and an hours or task-tier card's
+    ``atom:<atom_id>``) that atom (a dropped copy's text equals its
+    original's, so text would find the wrong line); a conflict, site pair,
+    Questions or site-role card (``judgments``) starts from its subject line,
+    the a side (the b side when the link points at the a side itself);
+    otherwise its text is used. The to side is
     resolved by label_key, then atom id, then text. An ``answers`` link always
     runs answer -> question (a Questions card draws it the other way round),
     and a contradiction runs later line -> earlier.
@@ -177,7 +209,12 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]]
     A link to a whole document (to_kind text, an artifact and no line) is
     returned as a document pointer. Text matching ignores which artifact a
     line came from, so links drawn on an earlier parse of the same file still
-    resolve."""
+    resolve. ``stats`` counts what happened to each person's link."""
+    stats = stats if stats is not None else {}
+    for c in ("edges", "doc_pointers", "self_links", "unresolved", "card_anchored", "card_no_line"):
+        stats.setdefault(c, 0)
+    cards = {str(j.get("target_key")): j.get("target") for j in judgments
+             if isinstance(j, dict) and j.get("target_key") and str(j.get("head") or "") in _CARD_HEADS}
     by_key = {str(r.get("key")): r for r in rows if r.get("key")}
     by_id = {str(r.get("atom_id") or r.get("id")): r for r in rows if r.get("atom_id") or r.get("id")}
     by_text: dict[str, dict[str, Any]] = {}
@@ -188,18 +225,42 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]]
         return (by_key.get(str(key or "")) or by_id.get(str(atom_id or ""))
                 or (by_text.get(_norm_text(text)) if str(text or "").strip() else None))
 
+    def find_from(k: dict[str, Any], to: dict[str, Any] | None) -> tuple[dict[str, Any] | None, bool]:
+        """The line a link starts from, and whether its key is a judgment card's."""
+        key = str(k.get("from_key") or "")
+        r = None
+        if key.startswith("sup:"):
+            r = by_key.get(key[len("sup:"):].split("@", 1)[0])
+        elif key.startswith(("site:", "atom:")):
+            r = by_id.get(key.split(":", 1)[1])
+        elif key in cards:
+            for ref in _card_refs(cards[key]):
+                r = find(None, ref.get("atomId") or ref.get("atom_id"), ref.get("text"))
+                if r is not None and r is not to:
+                    stats["card_anchored"] += 1
+                    return r, True
+            r = None
+        return (r or find(key, k.get("from_atom_id"), k.get("from_text"))), key in cards
+
     out, doc_pointers = [], []
     for k in links:
         if not isinstance(k, dict) or not _is_a_person(k.get("labeler")):
             continue
         rel = str(k.get("relation") or "")
-        a = find(k.get("from_key"), k.get("from_atom_id"), k.get("from_text"))
         b = find(k.get("to_label_key"), k.get("to_atom_id"), k.get("to_text"))
+        a, on_card = find_from(k, b)
         if a is not None and b is None and k.get("to_artifact_id") and not k.get("to_label_key") \
                 and not k.get("to_atom_id") and str(k.get("to_kind") or "") == "text":
             doc_pointers.append((str(a["key"]), str(k["to_artifact_id"])))
+            stats["doc_pointers"] += 1
             continue
-        if not rel or a is None or b is None or a is b:
+        if a is None and on_card:
+            stats["card_no_line"] += 1          # e.g. a generated question with no source line
+        if not rel or a is None or b is None:
+            stats["unresolved"] += 1
+            continue
+        if a is b:
+            stats["self_links"] += 1
             continue
         if rel == "answers" and str(k.get("from_head") or "") == "gap":
             a, b = b, a                              # question card: question -> answer
@@ -211,6 +272,7 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]]
         if " ".join(note.split()).lower() not in _EMPTY_LINK_NOTES:
             edge["note"] = note
         out.append(edge)
+        stats["edges"] += 1
     return out, doc_pointers
 
 
