@@ -110,6 +110,30 @@ def test_judgments_become_rows_for_their_own_heads():
     assert all(r["teacher"] == "human" for r in rows)
 
 
+def test_a_model_drafted_judgment_note_trains_at_draft_weight():
+    """why_author: machine_draft scales the judgment's rationale, as it does an
+    atom label's WHY in ml/c3; the verdict keeps its full weight. A row with no
+    why_author (every row from before the column) is a person's."""
+    from ml.c3.data import DRAFT_WHY_WEIGHT
+
+    note = "The two windows cannot both hold for the same crew on site."
+
+    def rows(**kw):
+        out = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+            {"head": "conflict", "target_key": "e1", "text": "Saturday only || weekdays after 6pm",
+             "verdict": "contradicts", "note": note, "labeler": "a@purtera-it.com", **kw}]})
+        return ({r["relation"]: r["weight"] for r in out if r["label_kind"] == "rationale"},
+                {r["label"]: r["weight"] for r in out if r["relation"] == "edge_relation"})
+
+    why, verdict = rows(why_author="machine_draft")
+    assert why == {"rationale:conflict": DRAFT_WHY_WEIGHT}
+    assert verdict == {"contradicts": 1.0}
+    for author in ({}, {"why_author": None}, {"why_author": "person"}, {"why_author": "accepted_draft"}):
+        why, verdict = rows(**author)
+        assert why == {"rationale:conflict": 1.0}, author
+        assert verdict == {"contradicts": 1.0}
+
+
 def test_the_dropped_stage_teaches_the_admission_head():
     """Judging what the compile threw away is the `admission` question.
 
