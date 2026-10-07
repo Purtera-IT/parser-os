@@ -143,3 +143,12 @@ def test_every_registered_relation_trains_the_edge_head():
 
     assert set(_LINK_TO_EDGE) == {r["key"] for r in REG["relations"]}
     assert _LINK_TO_EDGE["derived_from"] == "derived_from"
+
+
+def test_the_deal_kit_shape_judgment_is_company_layer():
+    """`commercial` is the shape of OUR kit -- billing type, PM/PC hours, travel
+    days (relation commercial_terms). Nothing in a deal's documents states it,
+    so it is Purtera's constant, not a universal claim, and never trains the base."""
+    key = head_of_judgment("commercial")
+    assert key == "conduct.constants"
+    assert head(key)["layer"] == "company"
