@@ -23,6 +23,23 @@ A per-unit lesson carries the kit's numbers, not a rounded rate. 010043's kit
 priced 16 h for 3 cameras; taught as ``hours=5.33;per=camera`` the compile
 stamped 15.99 h on the same three cameras. Taught as ``hours=16;per=camera;
 qty=3`` the rate is 16/3 at full precision and the total is the kit's 16.
+
+The atom labeler's `hours` card asks a narrower question: what hours does THIS
+LINE STATE? Estimates are not base training -- the Deal Kit has its own models
+for those -- so a card verdict carries where its number came from:
+
+    unstated                            the line states no hours
+    hours=8;basis=stated                the line itself says 8 hours
+    hours=2;per=drop;qty=24;basis=stated
+    hours=6;basis=estimate              our estimate -- company layer only
+    hours=6;basis=deal_kit              read off the Deal Kit -- company layer only
+
+``hours_judgment_problem`` is the card's grammar. Only ``basis=stated`` (and
+``unstated``) train the base head; human_labels routes the rest, and every
+older verdict with no basis, to Purtera's ``co_hours_estimate``.
+``parse_hours_verdict`` stays the kit's grammar and reads a card verdict too
+(the basis rides along as a key); ``unstated`` parses to None, so it never
+stamps hours.
 """
 
 from __future__ import annotations
@@ -32,11 +49,19 @@ from typing import Any
 
 RELATION = "task_hours"
 
+#: The card verdict for a line that states no hours -- the head's "no value".
+UNSTATED = "unstated"
+#: Where a card verdict's number came from. Only ``stated`` trains the base:
+#: an estimate, or hours read off the Deal Kit, train the company layer.
+BASIS_STATED = "stated"
+BASES = (BASIS_STATED, "estimate", "deal_kit")
+
 _NUM_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])")
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
 
-def encode_hours_verdict(hours: float, *, per: str = "", qty: float | None = None, role: str = "") -> str:
+def encode_hours_verdict(hours: float, *, per: str = "", qty: float | None = None, role: str = "",
+                         basis: str = "") -> str:
     parts = [f"hours={float(hours):g}"]
     if per.strip():
         parts.append(f"per={per.strip()}")
@@ -44,6 +69,8 @@ def encode_hours_verdict(hours: float, *, per: str = "", qty: float | None = Non
             parts.append(f"qty={float(qty):g}")
     if role.strip():
         parts.append(f"role={role.strip()}")
+    if basis.strip():
+        parts.append(f"basis={basis.strip()}")
     return ";".join(parts)
 
 
@@ -69,6 +96,38 @@ def parse_hours_verdict(verdict: str) -> dict[str, Any] | None:
     else:
         out.pop("qty", None)
     return out
+
+
+def hours_judgment_basis(verdict: str) -> str | None:
+    """Where a labeling-card `hours` verdict's number came from.
+
+    ``unstated`` for a line that states no hours; ``stated`` / ``estimate`` /
+    ``deal_kit`` from the verdict's basis; ``""`` for a number saved before the
+    card asked (an older verdict); None when the verdict does not parse."""
+    v = str(verdict or "").strip()
+    if v.lower() == UNSTATED:
+        return UNSTATED
+    parsed = parse_hours_verdict(v)
+    if parsed is None:
+        return None
+    return str(parsed.get("basis") or "").strip().lower()
+
+
+def hours_judgment_problem(verdict: str) -> str | None:
+    """Why a NEW labeling-card `hours` verdict is refused, or None when valid.
+
+    Valid: ``unstated`` alone, or ``hours=N[;per=..][;qty=N][;role=..]`` with a
+    basis in BASES. Only ``basis=stated`` trains the base head; the mirror
+    (human_labels) routes the other two to the company layer."""
+    basis = hours_judgment_basis(verdict)
+    if basis is None:
+        return ("hours takes `unstated`, or hours=N[;per=<unit>][;qty=N][;role=<role>];basis=<"
+                + "|".join(BASES) + "> -- e.g. hours=3;per=cable drop;basis=stated")
+    if basis == UNSTATED or basis in BASES:
+        return None
+    if not basis:
+        return "hours needs a basis: basis=" + "|".join(BASES) + " (only hours the line states train the base)"
+    return f"basis={basis} is not one of " + ", ".join(BASES)
 
 
 def _stem(word: str) -> str:
@@ -197,4 +256,7 @@ def estimate_task_hours(atoms: list[Any], *, store: Any = None) -> int:
     return stamped
 
 
-__all__ = ["RELATION", "encode_hours_verdict", "parse_hours_verdict", "quantity_for_unit", "estimate_task_hours"]
+__all__ = [
+    "RELATION", "UNSTATED", "BASIS_STATED", "BASES", "encode_hours_verdict", "parse_hours_verdict",
+    "hours_judgment_basis", "hours_judgment_problem", "quantity_for_unit", "estimate_task_hours",
+]

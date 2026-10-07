@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from .notes import drop_meta, mask_verdict, sentences, split_note
+from .notes import drop_meta, judgment_note, mask_verdict, sentences, split_note, without_opener
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
 
@@ -318,6 +318,7 @@ class Judged:
     answer: int                  # class index
     note: str = ""               # the labeler's reason and note, for the teacher
     why_weight: float = 1.0      # DRAFT_WHY_WEIGHT when a model wrote the note
+    policy: str = ""             # the note's [<company>] part: the company layer only
 
 
 @dataclass(frozen=True)
@@ -466,7 +467,9 @@ def excluded(label: dict[str, Any] | None) -> bool:
     The line stays in the deal as context for the others."""
     if not label:
         return False
-    note = str(label.get("note") or "").lstrip().lstrip("[").upper()
+    # An accepted draft's note opens with "Accepted [in bulk] from <x>'s
+    # proposal:", which pushed the marker off the start: read past it.
+    note = without_opener(str(label.get("note") or "").lstrip()).lstrip().lstrip("[").upper()
     reads = label.get("reads_set") if isinstance(label.get("reads_set"), dict) else {}
     return (note.startswith(EXCLUDE_NOTE_PREFIX)
             or str(label.get("weight_tier") or "").strip().lower() == "exclude"
@@ -829,7 +832,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             continue
         if opp.size == PAIR and any(excluded(deal.atoms[i].label) for i in idx):
             continue                               # a pair touching a row set aside, as links
-        note = drop_meta(" ".join(str(x).strip() for x in (j.get("reason"), j.get("note")) if x))
+        # The note splits as an atom's or a link's does: the universal WHY is
+        # the teacher's, a [purtera] line goes to the company layer only.
+        note, pol = judgment_note(j.get("reason"), j.get("note"), company)
         if opp.size == LINE:
             i = idx[0]
             if excluded(deal.atoms[i].label):
@@ -838,10 +843,18 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 targets[key][i] = ix
                 if note:
                     field_notes[i].setdefault(key, mask_verdict(note) if opp.universal else note)
+                if pol:
+                    policy[i] = " ".join(x for x in (policy[i], pol) if x)
             continue
+        if pol and opp.size == PAIR:
+            # About both lines, as a link's company part is about its line.
+            for i in idx:
+                policy[i] = " ".join(x for x in (policy[i], pol) if x)
+        # A group or deal verdict keeps its company part on itself: copied to
+        # every line of a sheet or deal it would repeat one rule hundreds of times.
         judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
                              note=mask_verdict(note) if opp.universal else note,
-                             why_weight=why_weight(j)))
+                             why_weight=why_weight(j), policy=pol))
         if head == "conflict" and verdict in ("contradicts", "supports") and verdict in edges_ok:
             pair = (max(idx), min(idx))            # the later line points back
             if pair not in edges.setdefault(verdict, []):

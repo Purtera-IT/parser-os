@@ -256,6 +256,30 @@ def _looks_like_email_header(text: str) -> bool:
     return bool(_EMAIL_HEADER_RE.match(text or ""))
 
 
+_HEADER_KINDS = frozenset({"email_header", "quoted_message_header"})
+
+
+def _is_header_or_metadata_atom(atom: EvidenceAtom) -> bool:
+    """True for atoms that describe a document rather than say something in it.
+
+    A ``deal_metadata`` atom, or any atom the parser marked as an email
+    header (``kind`` on its value or on a source locator). Such an atom
+    inherits device/site keys from words in a subject line, so an exclusion
+    sharing those keys with it is a coincidence of vocabulary, never an
+    exclusion that applies. Decided by type and locator, never by text.
+    """
+    if atom.atom_type.value == "deal_metadata":
+        return True
+    value = atom.value if isinstance(atom.value, dict) else {}
+    if value.get("kind") in _HEADER_KINDS:
+        return True
+    for ref in atom.source_refs or []:
+        locator = getattr(ref, "locator", None) or {}
+        if isinstance(locator, dict) and locator.get("kind") in _HEADER_KINDS:
+            return True
+    return False
+
+
 def _meaningful_shared_keys(a: EvidenceAtom, b: EvidenceAtom) -> set[str]:
     """Shared entity keys excluding 'unknown' sentinels.
 
@@ -1077,7 +1101,7 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
     for ex in exclusions:
         # Suppress mis-typed email-header atoms ("To: Nick <...>"): they are not
         # exclusions and otherwise fan out across every shared contact key.
-        if _looks_like_email_header(ex.raw_text or ""):
+        if _looks_like_email_header(ex.raw_text or "") or _is_header_or_metadata_atom(ex):
             continue
         ex_keys = {k for k in ex.entity_keys if not _is_unknown_entity_key(k)}
         if not ex_keys:
@@ -1093,6 +1117,11 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         for idx in sorted(target_idx_set):
             target = ordered[idx]
             if target.id == ex.id:
+                continue
+            # A header line (From/Subject/Date) or other deal metadata is
+            # not scope an exclusion can apply to; its keys come from the
+            # subject's words.
+            if _is_header_or_metadata_atom(target):
                 continue
             shared_keys = ex_keys.intersection(set(target.entity_keys))
             # An exclusion only meaningfully applies through a SCOPING key
@@ -1551,6 +1580,8 @@ def build_edges(project_id: str, atoms: list[EvidenceAtom], entities: list[Entit
         if candidate.proposed_edge_type == EdgeType.contradicts:
             continue
         if candidate.proposed_edge_type == EdgeType.excludes:
+            if _is_header_or_metadata_atom(from_atom) or _is_header_or_metadata_atom(to_atom):
+                continue
             _shared = {
                 k for k in set(from_atom.entity_keys) & set(to_atom.entity_keys)
                 if not _is_unknown_entity_key(k)

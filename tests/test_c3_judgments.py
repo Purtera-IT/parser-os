@@ -123,7 +123,9 @@ def test_pair_group_and_deal_verdicts(schema, batch):
     got = {j.key: j for j in batch.judged}
     sat, wkd = _i(batch, "Saturday"), _i(batch, "weekdays")
     assert set(got["jdg:conflict"].lines) == {sat, wkd}
-    assert got["jdg:conflict"].note.startswith("different_window")
+    # A reason code is the verdict's class, not part of the WHY.
+    assert got["jdg:conflict"].note.startswith("Saturday only")
+    assert "different_window" not in got["jdg:conflict"].note
     assert set(got["jdg:site"].lines) == {_i(batch, "Install is"), _i(batch, "Elm St.")}
     assert set(got["jdg:document_job"].lines) == {wkd}
     assert set(got["jdg:sheet"].lines) == {_i(batch, "Mount 4"), _i(batch, "Rooms:")}
