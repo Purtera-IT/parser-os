@@ -188,6 +188,17 @@ def _ref_key(ref: Any) -> tuple:
     return (str(getattr(ref, "id", "") or ""), str(getattr(ref, "filename", "") or ""), loc_key)
 
 
+def _line_of(ref: Any) -> tuple | None:
+    """Where a ref sits in its document: page/sheet, message, line, row.
+    ``None`` when its locator places it nowhere."""
+    loc = getattr(ref, "locator", None) or {}
+    if not isinstance(loc, Mapping):
+        return None
+    key = tuple(loc.get(k) for k in ("page", "sheet", "table", "table_index", "message_index",
+                                     "line_start", "line", "row"))
+    return key if any(v is not None for v in key[5:]) else None
+
+
 #: A leading list marker: a bullet glyph ("- ", "* ", "• ") or an
 #: ordinal ("1. ", "2) ", "(3) "). Needs whitespace after it, so "1.5 hours",
 #: "-48V" and "*required" are left alone.
@@ -602,6 +613,11 @@ def ensure_own_copies(
     for a in list(kept) + list(copies):
         aid = str(getattr(a, "artifact_id", "") or "")
         held_by_doc.setdefault((aid, _type_of(a)), []).append(_text_key(a))
+        if "kept_over_site_dedup" in (getattr(a, "review_flags", None) or []):
+            # A site the site dedup kept for its words (retyped, its refs
+            # merged onto the site it matched) still holds its site line: a
+            # physical_site copy beside it showed the line twice (000132).
+            held_by_doc.setdefault((aid, "physical_site"), []).append(_text_key(a))
         dup = _value(a).get("duplicate_of")
         if isinstance(dup, dict) and dup.get("atom_id"):
             copy_of.add((aid, str(dup["atom_id"])))
@@ -634,6 +650,32 @@ def ensure_own_copies(
             dropped_by_doc.setdefault(str(getattr(d, "artifact_id", "") or ""), []).append(d)
     restored_ids: set[int] = set()
     out: list[Any] = []
+
+    def _restore(d: Any, aid: str, w: Any) -> None:
+        """``d``, ``aid``'s own atom folded into ``w``, back as its copy."""
+        wid = str(getattr(w, "id", "") or "")
+        dv = _value(d)
+        dv = dict(dv) if isinstance(getattr(d, "value", None), dict) else {}
+        dv.pop("_suppression", None)
+        dv["duplicate_of"] = {"atom_id": wid, "artifact_id": str(getattr(w, "artifact_id", "") or ""), "stage": stage}
+        d.value = dv
+        d.review_flags = [
+            f for f in (getattr(d, "review_flags", None) or [])
+            if not str(f).startswith("suppressed:")
+        ] + [COPY_FLAG]
+        restored_ids.add(id(d))
+        out.append(d)
+        copy_of.add((aid, wid))
+        if isinstance(getattr(w, "value", None), dict):
+            docs = list(w.value.get("also_in_documents") or [])
+            if aid not in docs:
+                w.value["also_in_documents"] = docs + [aid]
+            cn = [x for x in w.value.get(CITED_NOT_HELD_KEY) or [] if x != aid]
+            if cn:
+                w.value[CITED_NOT_HELD_KEY] = cn
+            else:
+                w.value.pop(CITED_NOT_HELD_KEY, None)
+
     for w in kept:
         if is_cross_doc_copy(w) or _synthesized(w):
             continue
@@ -670,28 +712,24 @@ def ensure_own_copies(
                         continue
                     if _is_metadata_atom(d) or is_metadata_line(_value(d).get("context")) or _shown_elsewhere(d, wid):
                         continue
-                    dv = _value(d)
-                    dv = dict(dv) if isinstance(getattr(d, "value", None), dict) else {}
-                    dv.pop("_suppression", None)
-                    dv["duplicate_of"] = {"atom_id": wid, "artifact_id": own, "stage": stage}
-                    d.value = dv
-                    d.review_flags = [
-                        f for f in (getattr(d, "review_flags", None) or [])
-                        if not str(f).startswith("suppressed:")
-                    ] + [COPY_FLAG]
-                    restored_ids.add(id(d))
-                    out.append(d)
-                    copy_of.add((aid, wid))
-                    if isinstance(getattr(w, "value", None), dict):
-                        docs = list(w.value.get("also_in_documents") or [])
-                        if aid not in docs:
-                            w.value["also_in_documents"] = docs + [aid]
-                        cn = [x for x in w.value.get(CITED_NOT_HELD_KEY) or [] if x != aid]
-                        if cn:
-                            w.value[CITED_NOT_HELD_KEY] = cn
-                        else:
-                            w.value.pop(CITED_NOT_HELD_KEY, None)
+                    _restore(d, aid, w)
                     break
+                continue
+            # The document's OWN atom of this line (same place, same words),
+            # folded away, comes back as its copy rather than a new one minted
+            # beside it: the new copy stood next to the folded atom's row and
+            # the line showed twice (000132: a quoted city list). Its own
+            # type first; a survivor retyped later still names that line.
+            ref_lines = {_line_of(r) for r in refs} - {None}
+            own_lines = [
+                d for d in dropped_by_doc.get(aid, ())
+                if id(d) not in restored_ids and _jaccard_same(words, _text_key(d))
+                and ref_lines & {_line_of(r) for r in d.source_refs or []}
+            ]
+            own_atom = next((d for d in own_lines if _type_of(d) == wtype), None) or next(iter(own_lines), None)
+            if own_atom is not None:
+                _restore(own_atom, aid, w)
+                held_by_doc.setdefault((aid, wtype), []).append(words)
                 continue
             from app.core.ids import stable_id
 
