@@ -317,6 +317,7 @@ class Judged:
     lines: tuple[int, ...]       # the two lines, the group's lines, or every line
     answer: int                  # class index
     note: str = ""               # the labeler's reason and note, for the teacher
+    why_weight: float = 1.0      # DRAFT_WHY_WEIGHT when a model wrote the note
 
 
 @dataclass(frozen=True)
@@ -444,9 +445,12 @@ DRAFT_WHY_WEIGHT = 0.5
 
 
 def why_weight(label: dict[str, Any] | None) -> float:
-    """``DRAFT_WHY_WEIGHT`` for a WHY nobody has saved, else 1.0."""
-    reads = (label or {}).get("reads_set")
-    author = str((reads if isinstance(reads, dict) else {}).get("why_author") or "").strip().lower()
+    """``DRAFT_WHY_WEIGHT`` for a WHY nobody has saved, else 1.0. An atom label
+    keeps ``why_author`` in ``reads_set``; a judgment row has it as a field."""
+    label = label or {}
+    reads = label.get("reads_set")
+    author = str((reads if isinstance(reads, dict) else {}).get("why_author")
+                 or label.get("why_author") or "").strip().lower()
     return DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
 
 
@@ -836,7 +840,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                     field_notes[i].setdefault(key, mask_verdict(note) if opp.universal else note)
             continue
         judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
-                             note=mask_verdict(note) if opp.universal else note))
+                             note=mask_verdict(note) if opp.universal else note,
+                             why_weight=why_weight(j)))
         if head == "conflict" and verdict in ("contradicts", "supports") and verdict in edges_ok:
             pair = (max(idx), min(idx))            # the later line points back
             if pair not in edges.setdefault(verdict, []):
