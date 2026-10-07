@@ -349,6 +349,13 @@ def is_delivery_fact(row: dict[str, Any]) -> bool:
     return not (isinstance(reads, dict) and reads.get("trigger_event"))
 
 
+#: The judgment-key kinds whose remainder is an atom's own id or label key
+#: (Platform-infra atom-labeling-judgments.js). The other kinds (gap, pair,
+#: xdoc, table, sheet, geo, rule, doc, deal, role, edge) are hashes or
+#: other objects and never name an atom by itself.
+_JUDGMENT_ATOM_KEY_KINDS = frozenset({"atom", "site", "sup"})
+
+
 def _without_excluded(doc: dict[str, Any], report: IngestReport,
                       parser: str = QUOTE_PARSER) -> dict[str, Any]:
     """The deal file minus labels excluded for ``parser``, and minus every
@@ -375,9 +382,31 @@ def _without_excluded(doc: dict[str, Any], report: IngestReport,
         report.skip(why)
 
     def refs(x: dict[str, Any]) -> list[str]:
-        return [str(r) for r in (x.get("from_key"), x.get("from_atom_id"), x.get("to_key"),
-                                 x.get("to_atom_id"), x.get("target_key"), x.get("label_key"),
-                                 x.get("atom_id")) if r]
+        raw = [x.get("from_key"), x.get("from_atom_id"), x.get("to_key"),
+               x.get("to_atom_id"), x.get("target_key"), x.get("label_key"), x.get("atom_id")]
+        # A judgment names its subject as `<kind>:<id>` (`atom:<atom id>`,
+        # `site:<atom id>`, `sup:<label key>`), which never equals the bare id
+        # a label carries; and a pair or site card stores the atoms it judged
+        # in `target`. Both are read, or a verdict on an excluded atom trains.
+        out = []
+        for r in raw:
+            if not r:
+                continue
+            r = str(r)
+            out.append(r)
+            kind, sep, rest = r.partition(":")
+            if sep and rest and kind in _JUDGMENT_ATOM_KEY_KINDS:
+                out.append(rest)
+        target = x.get("target")
+        if isinstance(target, dict):
+            for part in ("a", "b", "source", "site"):
+                ref = target.get(part)
+                if isinstance(ref, dict) and isinstance(ref.get("evidence"), dict):
+                    ref = ref["evidence"]
+                if isinstance(ref, dict):
+                    out.extend(str(v) for v in (ref.get("atomId"), ref.get("atom_id"),
+                                                ref.get("labelKey"), ref.get("label_key")) if v)
+        return out
 
     def touches(x: dict[str, Any]) -> bool:
         if parser == QUOTE_PARSER:
