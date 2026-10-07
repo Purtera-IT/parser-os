@@ -199,6 +199,79 @@ def _index(items: list[Any]) -> dict[str, Any]:
     return out
 
 
+def _index_all(items: list[Any]) -> dict[str, list[Any]]:
+    """Every mail line of a document per text key, in document order.
+
+    ``_index`` keeps the FIRST line with given words; a message that holds
+    the same words twice (a pasted request and a restated list of it) has a
+    second one, and that is the one another list's copy may belong to."""
+    out: dict[str, list[Any]] = {}
+    for a in items:
+        if not _foldable(a) or not _is_email_atom(a) or _is_note_atom(a):
+            continue
+        out.setdefault(_key(a), []).append(a)
+    return out
+
+
+def _place(atom: Any) -> tuple[str, float]:
+    """Message and line a mail line was read from."""
+    v = _value(atom)
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else None
+    loc = loc if isinstance(loc, dict) else {}
+    msg = v.get("message_index", loc.get("message_index"))
+    line = loc.get("line_start", v.get("line"))
+    try:
+        line = float(line)
+    except (TypeError, ValueError):
+        line = float("nan")
+    return ("" if msg is None else str(msg)), line
+
+
+def _twins_in_one_place(pairs: dict[int, Any], candidates: list[Any], all_by_key: dict[str, list[Any]]) -> dict[int, Any]:
+    """A note's lines pair with ONE run of the mail, not with the first copy
+    of each line's words.
+
+    The same words can sit twice in one message: 000132's June email carries
+    the customer's request and, a few lines below, the seller's restated list,
+    and six of the restated items repeat request items word for word. Paired
+    by first copy, those six went to the request, so the note that IS the
+    restated list folded its heading and the three items only it has, and its
+    other six items stayed: a heading folded away from its own list. Each
+    line whose words the mail holds more than once takes the copy nearest the
+    lines this note pairs with unambiguously, in the same message.
+    """
+    anchors: dict[str, list[float]] = {}
+    for a in candidates:
+        twin = pairs.get(id(a))
+        if twin is None or len(all_by_key.get(_key(a), ())) != 1:
+            continue
+        msg, line = _place(twin)
+        if line == line:  # not NaN
+            anchors.setdefault(msg, []).append(line)
+    if not anchors:
+        return pairs
+    out = dict(pairs)
+    for a in candidates:
+        twin = pairs.get(id(a))
+        options = all_by_key.get(_key(a), ())
+        if twin is None or len(options) < 2 or not any(o is twin for o in options):
+            continue
+
+        def _distance(o: Any) -> float:
+            msg, line = _place(o)
+            lines = anchors.get(msg)
+            if not lines or line != line:
+                return float("inf")
+            mid = sorted(lines)[len(lines) // 2]
+            return abs(line - mid)
+
+        best = min(options, key=_distance)
+        if _distance(best) != float("inf"):
+            out[id(a)] = best
+    return out
+
+
 def _parse_date(raw: Any):
     """A timestamp as an aware datetime, or None. Notes write ISO, mail headers
     write RFC 2822, a quoted "Sent:" line writes prose."""
@@ -332,6 +405,7 @@ def collapse_pasted_note_duplicates(
         for doc, items in by_doc.items()
         if ORIGINALITY.get(kinds[doc], 0) > 0
     }
+    originals_all = {doc: _index_all(by_doc[doc]) for doc in originals}
 
     folded: set[int] = set()
     dropped: list[Any] = []
@@ -369,6 +443,7 @@ def collapse_pasted_note_duplicates(
                 a.value = v
             continue
 
+        best_pairs = _twins_in_one_place(best_pairs, candidates, originals_all.get(best, {}))
         twins = [t for t in best_pairs.values() if t is not None]
         if _note_is_the_original(items, twins, note_doc=doc, mail_doc=best, doc_order=doc_order):
             # The mail quoted the note. The note is the source: it keeps every

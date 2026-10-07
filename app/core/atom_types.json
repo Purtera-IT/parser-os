@@ -1515,6 +1515,25 @@
       }
     },
     {
+      "key": "miss_cause",
+      "label": "Why the parser lost the line",
+      "values": "glued_paragraph | table_cell_glued | table_row_dropped | heading_as_section | checkbox_cell | folded_copy | pasted_quote | split_mid_sentence | spreadsheet_cell | other",
+      "desc": "Only on a line added by hand (a Missed row, origin labeler): what the parse did that left the line with no atom of its own. It stays on the row as history after a later parse produces the line.",
+      "layer": "universal",
+      "value_desc": {
+        "glued_paragraph": "A fact sentence sat inside a paragraph the parser cut as a whole (a greeting or chatter paragraph), so the fact went with it.",
+        "table_cell_glued": "A table cell's parts ran together, or the cell was read with no atom of its own.",
+        "table_row_dropped": "A table row produced no atom, or only a fragment of one.",
+        "heading_as_section": "A heading was used only as the section path of the lines under it and never became a line.",
+        "checkbox_cell": "A grid's tick-box cell was read as decoration.",
+        "folded_copy": "A dedup fold removed the only copy of the line under its own parent.",
+        "pasted_quote": "A line pasted or quoted from another source was dropped as a repeat, though it was the earliest copy or said something new.",
+        "split_mid_sentence": "A sentence was cut in two, and one half has no atom.",
+        "spreadsheet_cell": "A spreadsheet cell or row produced no atom.",
+        "other": "None of the above; the note says what happened."
+      }
+    },
+    {
       "key": "superseded",
       "label": "A real fact later replaced",
       "values": "true/false",

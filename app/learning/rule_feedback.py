@@ -88,7 +88,8 @@ def truth_from_labels(labels: Iterable[dict[str, Any]]) -> dict[str, bool]:
 _JUDGED_LABEL = {"should_fire": 1, "should_not_fire": 0}
 
 
-def rows_from_judgments(judgments: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def rows_from_judgments(judgments: Iterable[dict[str, Any]],
+                        report: Any = None) -> list[dict[str, Any]]:
     """A person's verdict on a rule decision, in the shape the trainer reads.
 
     THE ROW IS ALREADY COMPLETE. The labelling card is built from the rule's own
@@ -108,10 +109,21 @@ def rows_from_judgments(judgments: Iterable[dict[str, Any]]) -> list[dict[str, A
     negative.
 
     A verdict outside the two the stage offers is dropped rather than guessed.
+
+    A rule card set aside from training (its note opens with the
+    EXCLUDE_FROM_TRAINING marker, or any other mark ``human_labels`` reads as
+    excluded) is dropped too, and counted on ``report`` (an
+    ``IngestReport``) when one is given.
     """
+    from app.learning.human_labels import _marked_excluded
+
     rows: list[dict[str, Any]] = []
     for j in judgments or ():
         if not isinstance(j, dict) or str(j.get("head") or "") != "rule":
+            continue
+        if _marked_excluded(j):
+            if report is not None:
+                report.skip("rule judgment excluded from training")
             continue
         label = _JUDGED_LABEL.get(str(j.get("verdict") or "").strip())
         if label is None:
@@ -195,9 +207,10 @@ def write_labelled(rows: Iterable[dict[str, Any]], path: Path) -> int:
     return len(rows)
 
 
-def judged_index(judgments: Iterable[dict[str, Any]]) -> dict[tuple[str, str], int]:
+def judged_index(judgments: Iterable[dict[str, Any]],
+                 report: Any = None) -> dict[tuple[str, str], int]:
     """(rule, text) -> label, for `join` to prefer over its own inference."""
-    return {(r["rule"], r["text"]): r["label"] for r in rows_from_judgments(judgments)}
+    return {(r["rule"], r["text"]): r["label"] for r in rows_from_judgments(judgments, report)}
 
 
 __all__ = ["LOG_PATH_ENV", "log_path", "read_decisions", "truth_from_labels",
