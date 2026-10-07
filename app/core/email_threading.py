@@ -631,7 +631,7 @@ def _minute_stamps_around(raw: str) -> set[str]:
 
 
 def dedup_quoted_history(
-    atoms: list[EvidenceAtom], *, project_id: str = ""
+    atoms: list[EvidenceAtom], *, project_id: str = "", context: list[EvidenceAtom] = ()
 ) -> tuple[list[EvidenceAtom], list[EvidenceAtom]]:
     """Drop a QUOTED line in a reply when the same content already exists in the
     thread as authored (non-quoted) text or an earlier quoted copy.
@@ -649,7 +649,34 @@ def dedup_quoted_history(
     * Per-thread scoped — a quote only collapses against its OWN conversation,
       never across deals or unrelated threads.
     * Order-preserving for the kept list.
+
+    ``context`` are lines an earlier stage already settled as copies (a mail
+    line the pasted-note dedup made a copy of the note it repeats). They are
+    still lines of their message, so they count here exactly where they sit:
+    a later quote of one folds onto it (and through it onto the note), and
+    the n-th copy of some words counts them. They are never kept or dropped
+    by this stage. Without them, 000132's earliest quote of a list had
+    vanished from the walk, so a later reply's copy became the survivor
+    beside it, and a pasted request's item folded onto the restated list's
+    item with the same words.
     """
+    _context_ids = {id(a) for a in context}
+    _by_id = {str(getattr(a, "id", "") or ""): a for a in atoms}
+
+    def _settled(atom: EvidenceAtom) -> EvidenceAtom:
+        """The line a context atom already names (the note line it is a copy
+        of, or was folded into), when that line is here; else itself."""
+        from app.core.suppression_ledger import SURVIVOR_KEY
+
+        v = atom.value if isinstance(atom.value, dict) else {}
+        for ref in (v.get("duplicate_of"), v.get(SURVIVOR_KEY)):
+            if isinstance(ref, dict) and str(ref.get("atom_id") or "") in _by_id:
+                return _by_id[str(ref["atom_id"])]
+        return atom
+
+    if context:
+        atoms = _with_context(list(atoms), list(context))
+
     def _thread_of(atom: EvidenceAtom):
         v = atom.value if isinstance(atom.value, dict) else {}
         et = v.get("email_thread")
@@ -775,6 +802,19 @@ def dedup_quoted_history(
     for _i, atom in sorted(enumerate(atoms), key=_file_rank):
         et = _thread_of(atom)
         v = atom.value if isinstance(atom.value, dict) else {}
+        if id(atom) in _context_ids:
+            # A settled copy: it holds its place for the lines after it,
+            # and this stage neither keeps nor drops it.
+            if et is not None and _is_quoted(atom) and v.get("kind") != "quoted_message_header":
+                key = _norm_key(atom)
+                tid = et["thread_id"]
+                if len(key) >= _MIN_DEDUP_LEN and key not in authored_keys.get(tid, ()):
+                    nth = (key, occurrence.get(id(atom), 0))
+                    seen = seen_quoted.setdefault(tid, set())
+                    if nth not in seen:
+                        seen.add(nth)
+                        survivor_of.setdefault(("q", tid, nth), _settled(atom))
+            continue
         if et is not None and v.get("kind") == "quoted_message_header":
             tid = et["thread_id"]
             key = (_address(str(v.get("sender") or "")), _minute_stamp(str(v.get("sent_at") or "")))
@@ -812,9 +852,46 @@ def dedup_quoted_history(
         survivor_of.setdefault(("q", tid, nth), atom)
         kept.append(atom)
 
-    gone = {id(a) for a in dropped}
+    gone = {id(a) for a in dropped} | _context_ids
     kept = [a for a in atoms if id(a) not in gone]
     return kept, dropped
+
+
+def _with_context(atoms: list[EvidenceAtom], context: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """``atoms`` with each context line put back where it sits in its file:
+    before the first line of the same file that comes after it."""
+    def _pos(atom: EvidenceAtom) -> tuple[float, float]:
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        loc = loc if isinstance(loc, dict) else {}
+        try:
+            line = float(loc.get("line_start"))
+        except (TypeError, ValueError):
+            line = float("inf")
+        try:
+            sent = float(loc.get("sentence_index") or 0)
+        except (TypeError, ValueError):
+            sent = 0.0
+        return (line, sent)
+
+    after: dict[int, list[EvidenceAtom]] = {}
+    tail: list[EvidenceAtom] = []
+    for c in context:
+        aid, pos = str(getattr(c, "artifact_id", "") or ""), _pos(c)
+        slot = None
+        for i, a in enumerate(atoms):
+            if str(getattr(a, "artifact_id", "") or "") == aid and _pos(a) > pos:
+                slot = i
+                break
+        if slot is None:
+            tail.append(c)
+        else:
+            after.setdefault(slot, []).append(c)
+    out: list[EvidenceAtom] = []
+    for i, a in enumerate(atoms):
+        out.extend(after.get(i, ()))
+        out.append(a)
+    return out + tail
 
 
 def _name_identity(author: str) -> str:

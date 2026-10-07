@@ -1406,6 +1406,7 @@ def compile_project(
             warnings.append(f"INFO: {stage_name} kept {len(restored)} atom(s) it had folded into nothing that stands")
         return after, list(copies) + more
 
+    _paste_removed: list = []
     with telemetry.stage("pasted_note_dedup", input_count=len(atoms)) as stage:
         try:
             from app.core.pasted_note_dedup import collapse_pasted_note_duplicates
@@ -1417,6 +1418,8 @@ def compile_project(
             atoms, _pasted = collapse_pasted_note_duplicates(atoms, doc_order=_doc_order)
             _paste_copies = _hold_copies(before_paste, atoms, "pasted_note_dedup")
             atoms, _paste_copies = _settle_folds(before_paste, atoms, _paste_copies, "pasted_note_dedup")
+            _left = {id(a) for a in atoms}
+            _paste_removed = [a for a in before_paste if id(a) not in _left]
             # Gate on the LIST, not on the helper's report. The two disagreed
             # on live 010237: three atoms left and `_pasted` was empty, so
             # nothing reached the ledger. What was removed is the only thing
@@ -1455,12 +1458,17 @@ def compile_project(
 
             before_qh_atoms = list(atoms)
             _take_folds()
+            # The lines pasted_note_dedup took out (folded onto a note, or
+            # held as its copy) are still lines of their messages: a later
+            # quote of one folds onto it (and so onto the note it repeats)
+            # instead of becoming a second survivor beside it.
             atoms, dropped_qh = dedup_quoted_history(
-                atoms, project_id=resolved_project_id
+                atoms, project_id=resolved_project_id, context=_paste_removed
             )
             # A quoted echo is the quoted message's line: it stays suppressed
             # naming that line, never becomes the reply's copy.
-            atoms, _ = _settle_folds(before_qh_atoms, atoms, [], "quoted_history_dedup", make_copies=False)
+            atoms, _ = _settle_folds(before_qh_atoms, atoms, list(held_copies), "quoted_history_dedup",
+                                     make_copies=False)
             if len(atoms) < len(before_qh_atoms):
                 merge_suppressed(
                     suppressed_atoms,
