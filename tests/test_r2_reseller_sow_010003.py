@@ -97,15 +97,22 @@ def _write_long_chain(d: Path, *, with_address: bool) -> None:
 @pytest.mark.parametrize("with_address", [True, False])
 def test_quoted_signature_lines_are_one_atom_per_authored_message(tmp_path: Path, with_address: bool) -> None:
     from app.core.compiler import compile_project
+    from app.core.email_threading import _message_day
 
     _write_long_chain(tmp_path, with_address=with_address)
     r = compile_project(tmp_path, project_id="p", allow_errors=True, use_cache=False)
-    # Patrick authored two of the four emails in the deal, Sarah two.
-    for line in ("Patrick Kelly", "770.769.7311", "Sarah Halpern", "212.555.0199", "Facilities Director"):
+    # Patrick authored two of the four emails in the deal, Sarah two. Each
+    # authored email keeps its own signature; of the quoted copies only the
+    # earliest-dated survives (Patrick's July 6 message, Sarah's July 7), and
+    # every later quoted copy folds onto it.
+    for line, day in (("Patrick Kelly", "07-06"), ("770.769.7311", "07-06"), ("Sarah Halpern", "07-07"),
+                      ("212.555.0199", "07-07"), ("Facilities Director", "07-07")):
         hits = [a for a in r.atoms if a.raw_text == line]
-        assert len(hits) == 2, (line, len(hits))
+        assert len(hits) == 3, (line, len(hits))
         assert all("chatter" in a.review_flags for a in hits)
-        assert all(not (a.value or {}).get("quoted") for a in hits), line
+        quoted = [a for a in hits if (a.value or {}).get("quoted")]
+        assert len(quoted) == 1, line
+        assert str(_message_day(quoted[0])).endswith(day), line
     # The copies are recorded, not lost.
     assert [a for a in r.suppressed_atoms if a.raw_text == "770.769.7311"]
 
