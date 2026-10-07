@@ -195,6 +195,25 @@ class TestAJudgmentIsAWholeTrainingRow:
         j["target"] = _json.dumps(j["target"])
         assert rows_from_judgments([j])[0]["label"] == 1
 
+    def test_a_rule_card_set_aside_does_not_train_the_threshold(self):
+        from app.learning.human_labels import IngestReport
+        from app.learning.rule_feedback import judged_index, rows_from_judgments
+
+        for note in ("EXCLUDE_FROM_TRAINING: old manual Deal Kit row.",
+                     "[EXCLUDE_FROM_TRAINING: old manual Deal Kit] the rule was right here.",
+                     "  exclude_from_training: lower case, leading space"):
+            j = {**self._judgment("should_not_fire", fired=False), "note": note}
+            report = IngestReport()
+            assert rows_from_judgments([j, self._judgment("should_fire")], report) == \
+                rows_from_judgments([self._judgment("should_fire")]), note
+            assert report.skipped["rule judgment excluded from training"] == 1
+            assert judged_index([j]) == {}
+        # Other marks human_labels reads as excluded, and a note that only
+        # mentions the marker later, behave as they do there.
+        assert rows_from_judgments([{**self._judgment("should_fire"), "weight_tier": "exclude"}]) == []
+        kept = {**self._judgment("should_fire"), "note": "Kept; not EXCLUDE_FROM_TRAINING."}
+        assert len(rows_from_judgments([kept])) == 1
+
     def test_a_person_overrules_the_inference(self):
         """`join` labels a decision by what became of the atom. A judgment says
         it directly, and where both exist the direct statement wins."""

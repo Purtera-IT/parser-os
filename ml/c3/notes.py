@@ -72,6 +72,39 @@ _PROVENANCE_RE = re.compile(r"(?:accepted\s+)?from\s+[^:\n]{0,80}\((?:assistant|
                             re.IGNORECASE)
 
 
+#: The same marker at the very start of a note, matched by shape for any
+#: drafter ("Accepted [in bulk] from <x>'s proposal:", or the bare opener when
+#: the draft had no WHY). Read past before looking for the exclusion marker.
+_OPENER_RE = re.compile(r"^\s*(?:accepted(?:\s+[a-z]+){0,3}?\s+)?from\s+[^:\n]{1,80}['\u2019]s\s+proposal"
+                        r"(?:[ \t]*:[ \t]*|[ \t]*$)", re.IGNORECASE)
+
+
+def without_opener(note: str) -> str:
+    """``note`` without a leading accepted-proposal opener."""
+    return _OPENER_RE.sub("", str(note or ""), count=1)
+
+
+#: A reason that is a code from the page's picker (kept, wrong_shape,
+#: duplicate, ...): one token. Anything longer is the labeler's sentence.
+_REASON_CODE_RE = re.compile(r"[A-Za-z0-9_\-]{1,40}")
+
+
+def judgment_note(reason: str, note: str, company: str = "purtera") -> tuple[str, str]:
+    """(universal WHY, company policy) of one judgment, as ``split_note`` and
+    ``drop_meta`` give them for an atom's note.
+
+    A short-code ``reason`` is the verdict's class, not an argument, and is
+    left out; a sentence written in the reason field is kept, ahead of the
+    note. Accepted-proposal openers are dropped from the start of every line
+    first, so a ``[<company>]`` line one opened is still found."""
+    reason = str(reason or "").strip()
+    parts = [reason] if reason and not _REASON_CODE_RE.fullmatch(reason) else []
+    parts.append(str(note or ""))
+    text = "\n".join(without_opener(ln) for ln in "\n".join(parts).splitlines())
+    u, p = split_note(text, company)
+    return drop_meta(without_opener(u)), drop_meta(p)
+
+
 def drop_meta(text: str) -> str:
     """``text`` up to, not including, its ``[parser]`` line, without the
     page's machine-draft markers."""
