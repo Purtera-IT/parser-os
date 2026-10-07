@@ -297,6 +297,20 @@
         "value": "overturned",
         "desc": "The parser's value had the right shape but the wrong figure or term."
       }
+    ],
+    "term": [
+      {
+        "value": "kept",
+        "desc": "The parser's reading of the term line was right."
+      },
+      {
+        "value": "wrong_shape",
+        "desc": "The parser gave something the head cannot use, such as no known kind or a bare phrase (\"net 30\")."
+      },
+      {
+        "value": "overturned",
+        "desc": "The parser's reading had a known kind but the wrong kind, number or setting."
+      }
     ]
   }
 }
