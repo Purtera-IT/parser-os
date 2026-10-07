@@ -72,6 +72,8 @@ def main() -> int:
           f"deal_answers={rep.deal_answers} -> {a.out}")
     for why, n in sorted(rep.skipped.items(), key=lambda kv: -kv[1]):
         print(f"  skipped {n}: {why}")
+    for why, n in sorted(rep.off_list.items(), key=lambda kv: -kv[1]):
+        print(f"  off-list {n}: {why}")
     return 0
 
 

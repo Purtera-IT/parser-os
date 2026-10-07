@@ -28,6 +28,7 @@ from app.core.atom_type_registry import KEEP, coarse_of, facet_of, load_registry
 from app.learning.label_context import context_note, context_text, dropout_copy
 from app.learning.label_features import features_for
 from app.learning.span_ranker import best_locatable, pointer_kind
+from app.core import label_vocab
 
 #: Same representation as typed_atom_classifier.DECIDE_TEXT_VERSION (v2).
 DECIDE_TEXT_VERSION = 2
@@ -125,9 +126,38 @@ class IngestReport:
     rows: int = 0
     deal_answers: int = 0
     skipped: dict[str, int] = field(default_factory=dict)
+    #: Values outside a closed vocabulary (app/core/label_vocab.json), and the
+    #: one-to-one renames applied. The row still trains: named, not dropped.
+    off_list: dict[str, int] = field(default_factory=dict)
 
     def skip(self, why: str) -> None:
         self.skipped[why] = self.skipped.get(why, 0) + 1
+
+    def off(self, why: str) -> None:
+        self.off_list[why] = self.off_list.get(why, 0) + 1
+
+
+def _vocab_entity_keys(lb: dict[str, Any], report: IngestReport) -> list[str]:
+    """The row's entity keys in canonical spelling, and its off-list values counted.
+
+    Only a one-to-one alias is renamed (``org:x`` -> ``party:x``). A key off
+    the list stays as written. ``scope_category`` (a phrase reading, trained
+    as presence) is counted the same way and never changed here.
+    """
+    for k in _as_list(lb.get("entity_keys")):
+        c = label_vocab.entity_tag(k)
+        if c.status == label_vocab.ALIAS:
+            report.off(f"entity key renamed: {c.label}")
+        elif c.status == label_vocab.OFF_LIST:
+            report.off(f"entity key off the list: {c.label}")
+    reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
+    if reads.get("scope_category") not in (None, "", []):
+        c = label_vocab.scope_category(reads["scope_category"])
+        if c.status == label_vocab.ALIAS:
+            report.off(f"scope_category respelled: {c.label}")
+        elif c.status == label_vocab.OFF_LIST:
+            report.off(f"scope_category off the list: {c.label}")
+    return label_vocab.canonical_keys(_as_list(lb.get("entity_keys")))
 
 
 
@@ -467,7 +497,7 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
             "page": lb.get("page"),
             "neighbors_above": _as_list(lb.get("neighbors_above"))[:3],
             "neighbors_below": _as_list(lb.get("neighbors_below"))[:3],
-            "entity_keys": _as_list(lb.get("entity_keys")),
+            "entity_keys": _vocab_entity_keys(lb, report),
             "note": strip_parser_lines(lb.get("note") or ""),
             "labeler": lb.get("labeler") or "",
             "purpose": lb.get("purpose") or "train",
