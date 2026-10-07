@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.core.atom_type_registry import KEEP, coarse_of, facet_of, load_registry
+from app.core.judgment_reasons import is_reason_code
 from app.learning.label_context import context_note, context_text, dropout_copy
 from app.learning.label_features import features_for
 from app.learning.span_ranker import best_locatable, pointer_kind
@@ -92,6 +93,15 @@ UNTRAINED_LAYERS = frozenset({"meta", "staging"})
 UNTRAINED_READS = frozenset(
     str(r.get("key")) for r in load_registry().get("reads") or []
     if r.get("layer") in UNTRAINED_LAYERS)
+
+#: Why the parser lost a line (a closed class, `reads_set.miss_cause`). Only a
+#: hand-added (Missed, origin "labeler") row carries it, and it trains only
+#: there: a parser atom was not missed. It stays on the row as history once a
+#: later parse produces the line; such a row ("DUPLICATE of parser atom ...")
+#: no longer trains as a fact, so the label API sends it in the blob's
+#: ``missed_history`` list and it trains the cause and nothing else.
+MISS_CAUSE = "miss_cause"
+
 
 #: A value renamed in the registry, read under its new name. `sow_section`
 #: said `purtera_responsibilities` before the universal layer forbade a company
@@ -257,7 +267,10 @@ def train_for(row: dict[str, Any]) -> set[str] | None:
 def _marked_excluded(row: dict[str, Any]) -> bool:
     # "[EXCLUDE_FROM_TRAINING: old manual Deal Kit]" is the bracketed form the
     # note grammar writes (portable-labels.md b); the bare prefix is older.
-    note = str(row.get("note") or "").lstrip().lstrip("[").upper()
+    # An accepted draft's note opens with "Accepted [in bulk] from <x>'s
+    # proposal:", which pushed the marker off the start: read past it.
+    note = _PROPOSAL_PREFIX_RE.sub("", str(row.get("note") or "").lstrip(), count=1)
+    note = note.lstrip().lstrip("[").upper()
     if note.startswith(EXCLUDE_NOTE_PREFIX):
         return True
     if str(row.get("weight_tier") or "").strip().lower() == "exclude":
@@ -325,6 +338,34 @@ def split_note(note: str, company: str = DEFAULT_COMPANY) -> tuple[str, str]:
     return "\n".join(universal).strip(), "\n".join(policy).strip()
 
 
+#: Where a labeler accepted a drafted note, the labelling page writes the
+#: draft's provenance into the note ("Accepted from <someone>'s proposal: ...",
+#: "Accepted in bulk from <someone>'s proposal: ...", "From <someone>'s
+#: proposal: ...", or the bare prefix when the draft had no WHY). That is
+#: bookkeeping about who drafted the words, not an argument about the line;
+#: a model taught it learns to open every WHY with it. Matched by shape,
+#: never by name.
+_PROPOSAL_PREFIX_RE = re.compile(
+    r"^[ \t]*(?:accepted(?:\s+[a-z]+){0,3}?\s+)?from\s+[^:\n]{1,80}['\u2019]s\s+proposal"
+    r"(?:[ \t]*:[ \t]*|[ \t]*$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def split_judgment_note(note: str, company: str = DEFAULT_COMPANY) -> tuple[str, str]:
+    """``split_note`` for a judgment-tab note, without the proposal prefix.
+
+    Judgment notes follow the same grammar as atom notes (an optional
+    exclusion marker, the universal WHY, a ``[<company>]`` policy line, a
+    closing ``[parser]`` line), and are also where an accepted draft carries
+    its "Accepted from ...'s proposal:" prefix. The prefix is dropped before
+    the split (so a ``[<company>]`` line it opened is still found) and again
+    after it (where it followed a bracketed exclusion marker on one line).
+    """
+    why, policy = split_note(_PROPOSAL_PREFIX_RE.sub("", str(note or "")), company)
+    return _PROPOSAL_PREFIX_RE.sub("", why).strip(), _PROPOSAL_PREFIX_RE.sub("", policy).strip()
+
+
 def is_excluded_from_training(row: dict[str, Any], parser: str = QUOTE_PARSER) -> bool:
     named = train_for(row)
     if parser == QUOTE_PARSER:
@@ -346,6 +387,13 @@ def is_delivery_fact(row: dict[str, Any]) -> bool:
         return False
     reads = row.get("reads_set")
     return not (isinstance(reads, dict) and reads.get("trigger_event"))
+
+
+#: The judgment-key kinds whose remainder is an atom's own id or label key
+#: (Platform-infra atom-labeling-judgments.js). The other kinds (gap, pair,
+#: xdoc, table, sheet, geo, rule, doc, deal, role, edge) are hashes or
+#: other objects and never name an atom by itself.
+_JUDGMENT_ATOM_KEY_KINDS = frozenset({"atom", "site", "sup"})
 
 
 def _without_excluded(doc: dict[str, Any], report: IngestReport,
@@ -374,9 +422,31 @@ def _without_excluded(doc: dict[str, Any], report: IngestReport,
         report.skip(why)
 
     def refs(x: dict[str, Any]) -> list[str]:
-        return [str(r) for r in (x.get("from_key"), x.get("from_atom_id"), x.get("to_key"),
-                                 x.get("to_atom_id"), x.get("target_key"), x.get("label_key"),
-                                 x.get("atom_id")) if r]
+        raw = [x.get("from_key"), x.get("from_atom_id"), x.get("to_key"),
+               x.get("to_atom_id"), x.get("target_key"), x.get("label_key"), x.get("atom_id")]
+        # A judgment names its subject as `<kind>:<id>` (`atom:<atom id>`,
+        # `site:<atom id>`, `sup:<label key>`), which never equals the bare id
+        # a label carries; and a pair or site card stores the atoms it judged
+        # in `target`. Both are read, or a verdict on an excluded atom trains.
+        out = []
+        for r in raw:
+            if not r:
+                continue
+            r = str(r)
+            out.append(r)
+            kind, sep, rest = r.partition(":")
+            if sep and rest and kind in _JUDGMENT_ATOM_KEY_KINDS:
+                out.append(rest)
+        target = x.get("target")
+        if isinstance(target, dict):
+            for part in ("a", "b", "source", "site"):
+                ref = target.get(part)
+                if isinstance(ref, dict) and isinstance(ref.get("evidence"), dict):
+                    ref = ref["evidence"]
+                if isinstance(ref, dict):
+                    out.extend(str(v) for v in (ref.get("atomId"), ref.get("atom_id"),
+                                                ref.get("labelKey"), ref.get("label_key")) if v)
+        return out
 
     def touches(x: dict[str, Any]) -> bool:
         if parser == QUOTE_PARSER:
@@ -440,7 +510,8 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
     deal_id = str(doc.get("deal_id") or "").strip()
     labels = [lb for lb in doc.get("labels") or [] if isinstance(lb, dict)]
     labels = _with_one_deal_summary(labels)
-    if not deal_id or not (labels or doc.get("judgments") or doc.get("links")):
+    if not deal_id or not (labels or doc.get("judgments") or doc.get("links")
+                           or doc.get("missed_history")):
         report.skip("deal file without deal_id or labels")
         return []
     is_eval = doc.get("purpose") == "eval" or any(lb.get("purpose") == "eval" for lb in labels)
@@ -521,7 +592,8 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
         out = out[:n_before] + made
         if dropout_seed is not None:
             out.extend(_dropout_rows(made, lb, dropout_seed, deal_id))
-    out.extend(_judgment_rows(doc, deal_id, split, report))
+    out.extend(_missed_history_rows(doc, deal_id, split, report, parser))
+    out.extend(_judgment_rows(doc, deal_id, split, report, parser))
     out.extend(_question_rows(doc, labels, deal_id, split, report))
     out.extend(_link_rows(doc, deal_id, split, report))
     if parser == QUOTE_PARSER:
@@ -529,6 +601,58 @@ def rows_for_deal(doc: dict[str, Any], report: IngestReport | None = None,
     report.rows += len(out)
     return out
 
+
+
+def _missed_history_rows(doc: dict[str, Any], deal_id: str, split: str,
+                         report: IngestReport, parser: str = QUOTE_PARSER) -> list[dict[str, Any]]:
+    """`reads:miss_cause` from hand-added rows a later parse made redundant.
+
+    Once the parser emits a line a person had to add by hand, the hand-added
+    row is a duplicate and stops training as a fact (the parser atom carries
+    the label). Its miss cause is still true of the parse that lost it -- and
+    a row that names both what was missed and that a parser change recovered
+    it is exactly the evidence the cause head needs. So it trains that one
+    class, served the context the line had, and nothing else.
+    """
+    rows: list[dict[str, Any]] = []
+    for lb in doc.get("missed_history") or []:
+        if not isinstance(lb, dict) or not _is_a_person(lb.get("labeler")):
+            continue
+        if str(lb.get("origin") or "labeler").strip().lower() != "labeler":
+            continue
+        if is_excluded_from_training(lb, parser):
+            report.skip("excluded from training")
+            continue
+        reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
+        cause = str(reads.get(MISS_CAUSE) or lb.get(MISS_CAUSE) or "").strip().lower()
+        if not cause:
+            continue
+        if cause not in CLOSED_READS.get(MISS_CAUSE, set()):
+            report.skip("miss_cause outside its values")
+            continue
+        text = context_text(f"reads:{MISS_CAUSE}", lb)
+        if len(text) < 3:
+            continue
+        prov = {
+            "source": lb.get("source") or "purpulse_atom_labeler",
+            "kind": "missed_history",
+            "label_key": lb.get("label_key"),
+            "compile_id": lb.get("compile_id"),
+            "duplicate_of": lb.get("duplicate_of"),
+            "labeler": lb.get("labeler") or "",
+            "purpose": lb.get("purpose") or "train",
+            "origin": "labeler",
+            **context_note(f"reads:{MISS_CAUSE}"),
+        }
+        rows.append({
+            "raw_text": text, "masked_text": text, "teacher": HUMAN_TEACHER,
+            "weight": 1.0, "confidence": 1.0, "scope": "deal", "scope_key": deal_id,
+            "deal_id": deal_id, "project_id": deal_id,
+            "created_at": lb.get("labeled_at") or "", "split": split,
+            "relation": f"reads:{MISS_CAUSE}", "label": cause, "label_kind": "judgment",
+            "provenance": json.dumps(prov, ensure_ascii=False),
+        })
+    return rows
 
 
 #: What a row is worth to a head. `retrain.py` has always passed `weight` into
@@ -566,6 +690,29 @@ _DRAFT_WHY_WEIGHT = 0.5
 def _judgment_why_weight(j: dict[str, Any]) -> float:
     author = str(j.get("why_author") or "").strip().lower()
     return _DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
+
+
+#: The report counter for a judgment whose `reason` is not a code for its head.
+REASON_NOT_A_CODE = "judgment reason is not a code for its head: no reason row, text moved to the note"
+
+
+def _note_with_reason(note: Any, reason: str) -> str:
+    """The note with a free-text reason as the first sentence of its WHY.
+
+    Placed after a leading ``[EXCLUDE_FROM_TRAINING: ...]`` marker, so the
+    marker still opens the note, and left out when the note already says it
+    (a bulk accept once wrote the reason into the note). Whatever split the
+    note goes through then sends it where the WHY goes.
+    """
+    text = str(note or "").strip()
+    if " ".join(reason.split()).lower() in " ".join(text.split()).lower():
+        return text
+    marker = ""
+    if text.lstrip("[").lstrip().upper().startswith(EXCLUDE_NOTE_PREFIX):
+        # Bracketed, the marker ends at "]"; bare, it is the whole first line.
+        end = text.index("]") + 1 if text.startswith("[") and "]" in text else (text.find("\n") + 1 or len(text))
+        marker, text = text[:end].rstrip() + "\n", text[end:].lstrip()
+    return f"{marker}{reason}\n{text}".strip() if text else f"{marker}{reason}"
 
 
 
@@ -803,18 +950,27 @@ def _axis_rows(lb: dict[str, Any], base: dict[str, Any], prov: dict[str, Any],
     reads = lb.get("reads_set")
     if not isinstance(reads, dict):
         return rows
+    if origin != "labeler" and MISS_CAUSE in reads:
+        # Why the parser lost a line is a question only a hand-added line
+        # answers; on a parser atom there was no miss to explain.
+        report.skip("miss_cause on a row the parser made")
+        reads = {k: v for k, v in reads.items() if k != MISS_CAUSE}
     # Readings the labeler CONSIDERED and ruled out. The reading that nearly
     # fitted is the best negative there is -- "blocked_on is for a conditional
     # whose gate is a person; this one's gate is an outcome" teaches the
     # boundary in a way no positive example can, and until now there was
     # nowhere to put it, so it lived in prose and taught nothing.
     for key, why in (lb.get("rejected_reads") or {}).items():
+        if key == MISS_CAUSE and origin != "labeler":
+            continue
         rows.append(_axis_row(f"reads:{key}", ABSENT, lb, base, prov, "judgment",
                               {"considered_and_rejected": True,
                                "why_not": str(why or "")}))
 
     shown = {str(k) for k in (lb.get("reads_shown") or [])}
     for key in sorted(shown - {str(k) for k in reads}):
+        if key == MISS_CAUSE and origin != "labeler":
+            continue
         rows.append(_axis_row(f"reads:{key}", ABSENT, lb, base, prov, "judgment",
                               {"parser_proposed": True, "removed_by_human": True}))
     for key, value in reads.items():
@@ -1104,10 +1260,90 @@ def _translate_judgment(head: str, verdict: str) -> tuple[str, str]:
     return target, verdicts.get(verdict, verdict)
 
 
-def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport) -> list[dict[str, Any]]:
+#: The atom types the labeling page shows on the Terms tab. A `commercial`
+#: card was served on the first four (Platform-infra buildJudgments,
+#: COMMERCIAL_TYPES); pricing_assumption is a term kind of the same grammar.
+#: None of them is a request line, which is the only line a kit shape is
+#: taught on (commercial_terms.stamp_commercial_terms reads task atoms).
+TERM_LINE_TYPES = frozenset({
+    "payment_term", "contract_term", "change_order_rule", "commercial_total", "pricing_assumption",
+})
+
+
+def _judged_atom_type(j: dict[str, Any]) -> str:
+    """The atom type of the line a judgment was made on, as the card carried it.
+
+    The judgment row's ``target`` is the card the labeler saw
+    (atom_label_judgments.target, written from buildJudgments' candidate);
+    an atom card's ``a`` is atomSummary, whose ``atomType`` is the parser's
+    type for the line. Empty when the row does not carry one -- the line's
+    type is never guessed from its text."""
+    target = j.get("target") if isinstance(j.get("target"), dict) else {}
+    summary = target.get("a") if isinstance(target.get("a"), dict) else {}
+    return str(summary.get("atomType") or "").strip()
+
+
+#: The `hours` card trains the base only on hours a line STATES (user ruling,
+#: 2026-10): an estimate, hours read off the Deal Kit, and every older verdict
+#: saved before the card asked for a basis are Purtera's numbers. They train
+#: the company reading the atom card already routes estimates to
+#: (`co_hours_estimate`, layer company: multitask_table.tasks_for("purtera")
+#: only), never `task_hours`. Nothing is deleted.
+_TASK_HOURS = "task_hours"
+_CO_HOURS = "co_hours_estimate"
+
+
+def _hours_judgment_rows(verdict: str, text: str, deal_id: str, split: str,
+                         created_at: Any, prov: dict[str, Any],
+                         report: IngestReport) -> list[dict[str, Any]] | None:
+    """Rows for an `hours` card verdict, or None to train it on task_hours.
+
+    Returns ``None`` with ``verdict`` trainable on the base (handled by the
+    caller), a list of company-layer rows, or ``[]`` when it is skipped."""
+    from app.core.task_hours import BASIS_STATED, UNSTATED, hours_judgment_basis
+
+    basis = hours_judgment_basis(verdict)
+    if basis is None:
+        report.skip("hours verdict outside the card grammar (hours=N;...;basis=..., or unstated)")
+        return []
+    if basis in (UNSTATED, BASIS_STATED):
+        return None
+    common = {
+        "raw_text": text, "masked_text": text, "teacher": HUMAN_TEACHER, "weight": 1.0,
+        "confidence": 1.0, "scope": "deal", "scope_key": deal_id, "deal_id": deal_id,
+        "project_id": deal_id, "created_at": created_at or "", "split": split,
+    }
+    p = json.dumps({**prov, "basis": basis or "none (saved before the card asked)",
+                    "company": DEFAULT_COMPANY, "value": verdict}, ensure_ascii=False)
+    return [
+        {**common, "relation": f"reads:{_CO_HOURS}", "label": PRESENT, "label_kind": "judgment",
+         "provenance": p},
+        {**common, "relation": f"reads_value:{_CO_HOURS}", "label": _hours_label(verdict),
+         "label_kind": "span", "provenance": p},
+    ]
+
+
+def _hours_label(verdict: str) -> str:
+    """An `hours` verdict in the kit's grammar, basis dropped (the relation says it).
+
+    ``unstated`` trains as itself: task_hours has no abstain class, so the
+    card's "this line states no hours" is the head's explicit no-value target,
+    as ``absent`` is for a reading."""
+    from app.core.task_hours import UNSTATED, encode_hours_verdict, parse_hours_verdict
+
+    if verdict.strip().lower() == UNSTATED:
+        return UNSTATED
+    parsed = parse_hours_verdict(verdict) or {}
+    return encode_hours_verdict(parsed["hours"], per=str(parsed.get("per") or ""),
+                                qty=parsed.get("qty"), role=str(parsed.get("role") or ""))
+
+
+def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: IngestReport,
+                   parser: str = QUOTE_PARSER) -> list[dict[str, Any]]:
     """Conflict / site / site_role / gap / document_job verdicts -> one row each,
     under the relation that head decides (pm_feedback.HEAD_REGISTRY), so the
     edge, site, gap and document heads get human gold -- they had none."""
+    from app.core.commercial_term_read import canonical_term_verdict
     from app.core.pm_feedback import HEAD_REGISTRY
 
     rows: list[dict[str, Any]] = []
@@ -1116,6 +1352,13 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
             continue
         if not _is_a_person(j.get("labeler")):
             report.skip("labeler is not a person")
+            continue
+        # `_without_excluded` already drops these before this point; checked
+        # here too so a marked verdict (an old manual Deal Kit row, also behind
+        # an accepted-proposal opener) can never become base gold if that
+        # filter changes. The marker speaks only for the quote parser.
+        if parser == QUOTE_PARSER and _marked_excluded(j):
+            report.skip("judgment marked excluded from training")
             continue
         head = str(j.get("head") or "")
         verdict = str(j.get("verdict") or "").strip()
@@ -1158,6 +1401,32 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
         if spec.candidates and verdict not in spec.candidates:
             report.skip(f"judgment verdict outside {j.get('head')}'s classes")
             continue
+        # The Terms tab's two questions (app.core.commercial_term_read).
+        # `term` is what the line says, in a grammar: a verdict outside it
+        # teaches nothing, and the one that parses is stored canonically so two
+        # spellings of one reading are one label. `commercial` is the shape of
+        # a KIT, taught on the request; asked of a payment term or a contract
+        # term its answer is a reading of that line under the wrong relation.
+        if head == "term":
+            canonical = canonical_term_verdict(verdict)
+            if canonical is None:
+                report.skip("term verdict does not parse (kind=<payment_term|contract_term|"
+                            "change_order_rule|pricing_assumption|commercial_total|not_a_term>;key=value...)")
+                continue
+            verdict = canonical
+        elif head == "commercial" and _judged_atom_type(j) in TERM_LINE_TYPES:
+            report.skip("commercial verdict on a term line: re-answer under term")
+            continue
+        if spec.relation == _TASK_HOURS:
+            co_rows = _hours_judgment_rows(verdict, text, deal_id, split, j.get("judged_at"), {
+                "source": "purpulse_atom_labeler", "head": j.get("head"),
+                "target_key": j.get("target_key"), "compile_id": j.get("compile_id"),
+                "labeler": j.get("labeler") or "", "purpose": j.get("purpose") or "train",
+            }, report)
+            if co_rows is not None:
+                rows.extend(co_rows)
+                continue
+            verdict = _hours_label(verdict)
         prov = {
             "source": "purpulse_atom_labeler",
             "head": j.get("head"),
@@ -1174,6 +1443,14 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
         # about the wrong size of job, it can learn the rule -- and that the
         # same question is VALID on a rollout.
         reason = str(j.get("reason") or "").strip()
+        if reason and not is_reason_code(str(j.get("head") or ""), reason):
+            # Only a code listed for the head is a class (judgment_reasons.json).
+            # A sentence there is the labeler's WHY in the wrong column: as a
+            # class it is one example nobody else will ever give, so it moves
+            # to the front of the note and trains as rationale with the rest.
+            report.skip(REASON_NOT_A_CODE)
+            j = {**j, "note": _note_with_reason(j.get("note"), reason)}
+            reason = ""
         if reason:
             rows.append({
                 "relation": f"{spec.relation}_reason", "label": reason,
@@ -1184,16 +1461,27 @@ def _judgment_rows(doc: dict[str, Any], deal_id: str, split: str, report: Ingest
                 "created_at": j.get("judged_at") or "", "split": split,
                 "provenance": json.dumps({**prov, "verdict": verdict}, ensure_ascii=False),
             })
-        jnote = str(j.get("note") or "").strip()
-        if len(jnote) >= 40:
-            rows.append(_rationale_row(
-                str(j.get("head") or "judgment"),
-                f"{text}\nVERDICT: {verdict}" + (f" ({reason})" if reason else ""),
-                jnote, {
-                    "teacher": HUMAN_TEACHER, "confidence": 1.0, "scope": "deal",
-                    "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
-                    "created_at": j.get("judged_at") or "", "split": split,
-                }, prov, _judgment_why_weight(j)))
+        # The note is split the way an atom note is: the universal WHY trains
+        # the base (`rationale:<head>`), a `[purtera]` line trains only that
+        # company's profile (`rationale:policy:purtera`). Whole, a company's
+        # rule and the page's "Accepted from ...'s proposal:" bookkeeping
+        # trained the base.
+        company = company_of(j)
+        why, policy_why = split_judgment_note(str(j.get("note") or ""), company)
+        jprompt = f"{text}\nVERDICT: {verdict}" + (f" ({reason})" if reason else "")
+        jbase = {
+            "teacher": HUMAN_TEACHER, "confidence": 1.0, "scope": "deal",
+            "scope_key": deal_id, "deal_id": deal_id, "project_id": deal_id,
+            "created_at": j.get("judged_at") or "", "split": split,
+        }
+        # A model-drafted note trains each half at the draft weight.
+        why_weight = _judgment_why_weight(j)
+        if len(why) >= 40:
+            rows.append(_rationale_row(str(j.get("head") or "judgment"), jprompt, why, jbase, prov,
+                                       why_weight))
+        if len(policy_why) >= 24:
+            rows.append(_rationale_row(f"policy:{company}", jprompt, policy_why, jbase, prov,
+                                       why_weight))
         rows.append({
             "relation": spec.relation, "label": verdict, "raw_text": text, "masked_text": text,
             "label_kind": "judgment", "teacher": HUMAN_TEACHER, "weight": 1.0, "confidence": 1.0,

@@ -166,7 +166,8 @@
     "rule": "The rule runs before atoms exist, so this model never sees its input; it stays in the parser.",
     "router": "No fixed vocabulary yet.",
     "norm": "The answer is free text; a later PR can give it to the teacher.",
-    "commercial": "The answer is free text; a later PR can give it to the teacher.",
+    "commercial": "Purtera's Deal Kit shape (billing, PM/PC hours, travel days): company layer (conduct.constants), never the base. The answer is free text.",
+    "term": "The answer is key=value (app.core.commercial_term_read); a later PR can give it to the teacher.",
     "terminology": "The answer is free text; a later PR can give it to the teacher.",
     "hours": "Task hours: a later PR can map it onto the labor hours number."
   }

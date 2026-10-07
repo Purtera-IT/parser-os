@@ -203,12 +203,21 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     # TV mount published the CDW rep's email-signature address as a second site.
     # How long a unit of work takes, taught from a finished Deal Kit. Extract
     # head: the verdict carries the hours ("hours=3;per=cable drop"); see
-    # app.core.task_hours.
+    # app.core.task_hours. The atom labeler's card asks a narrower question --
+    # where its number came from -- `basis=stated|estimate|deal_kit`, or
+    # `unstated` (task_hours.hours_judgment_problem); see _check_card_verdict.
+    # Only stated hours train the base; human_labels routes the rest to
+    # Purtera's co_hours_estimate.
     "hours":     HeadSpec("task_hours", "atom", "Task hours", mode="extract"),
     # The shape of the kit a request got: billing type, PM/PC hours, travel
     # days. Taught by finished kits on the request line; nothing in the deal's
     # documents states it (commercial_terms).
     "commercial": HeadSpec("commercial_terms", "atom", "Commercial shape (billing, PM, travel)", mode="extract"),
+    # What a commercial-term LINE says (the Terms tab): which kind of term it
+    # is and the numbers it states -- "kind=payment_term;net_days=30". A
+    # different question from `commercial`, whose answer is the shape of a
+    # kit and is not in the line; see app.core.commercial_term_read.
+    "term": HeadSpec("commercial_term_read", "atom", "Commercial term on the line", mode="extract"),
     # A place the documents name: a job site, or only a mention (travel, a
     # signature, a reference customer). site_geo_fallback.geo_mention_sites.
     "geo_mention": HeadSpec("geo_mention_role", "atom", "Named place: job site or mention",
@@ -281,6 +290,7 @@ _HEAD_THRESHOLDS: dict[str, tuple[float, float]] = {
     "hours": (0.70, 0.76),
     "task_tier": (0.72, 0.78),
     "commercial": (0.70, 0.76),
+    "term": (0.70, 0.76),
     "bom_owner": (0.72, 0.78),
     # A document lesson names one thread. Two subjects of one deal can sit at
     # 0.7 of each other; a lesson must not reach the neighbouring thread.
@@ -320,6 +330,26 @@ def _cid(head: str, deal_id: str, target_id: str, new_value: str, scope: str = S
     return f"pm_{head}_{h}"
 
 
+def _check_card_verdict(head: str, new_value: str, payload: dict[str, Any]) -> None:
+    """Refuse an atom-labeler `hours` verdict outside the card's grammar.
+
+    Deal Kit lessons post the same head with the kit's numbers and no basis --
+    that is the Deal Kit's own model and is left alone. Only the labeling card
+    (relations.source == "atom_labeler") is held to its grammar: `unstated`, or
+    a number with `basis=stated|estimate|deal_kit`, so the retrain can tell
+    stated hours (base) from estimates (company layer)."""
+    if head != "hours":
+        return
+    rel = payload.get("relations") or {}
+    if not isinstance(rel, dict) or rel.get("source") != "atom_labeler":
+        return
+    from app.core.task_hours import hours_judgment_problem
+
+    problem = hours_judgment_problem(new_value)
+    if problem:
+        raise ValueError(problem)
+
+
 def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
     """Map the universal PM-correction payload → a Correction row. Pure (no I/O).
 
@@ -351,6 +381,7 @@ def pm_correction_to_correction(payload: dict[str, Any]) -> Correction:
     text = (payload.get("text") or "").strip()
     if not text:
         raise ValueError("PM correction needs `text` (the exemplar to learn from)")
+    _check_card_verdict(head, new_value, payload)
     scope = SCOPE_GLOBAL if payload.get("scope") == "global" else SCOPE_DEAL
     exemplar = (text if not payload.get("context")
                 else f"{text}\n[ctx] {payload['context']}")

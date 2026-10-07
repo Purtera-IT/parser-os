@@ -4353,6 +4353,11 @@ def _section_path_context(atom: Any) -> str:
     return ""
 
 
+#: Locator keys that place a table row in its document (page, block, line).
+#: A schema-typed atom copies them from the raw row it was read out of.
+_SCHEMA_ROW_PLACE_KEYS = ("page", "block_index", "line_start", "line_end")
+
+
 def _enrich_table_atoms(
     atom_list: list[Any],
     *,
@@ -4433,13 +4438,28 @@ def _enrich_table_atoms(
                 # across documents, and two drafts' copies of one row sit
                 # under two different header pointers.
                 _hdr_link = None
+                _src_loc: dict[str, Any] = {}
                 for _r in (getattr(atom, "source_refs", None) or [])[:1]:
-                    _hdr_link = (getattr(_r, "locator", None) or {}).get("header_atom_id")
-                if _hdr_link:
-                    for _sa in schema_atoms:
-                        for _r in (getattr(_sa, "source_refs", None) or [])[:1]:
-                            if isinstance(getattr(_r, "locator", None), dict):
-                                _r.locator["header_atom_id"] = _hdr_link
+                    _src_loc = getattr(_r, "locator", None) or {}
+                    _hdr_link = _src_loc.get("header_atom_id")
+                # Where the row sits in its document. The typed atom is
+                # appended after every parser atom, so without the source
+                # row's place it has none: a reading-order sort then falls
+                # back to its bare row number and files the whole table after
+                # the page header and footer at the end of the document.
+                _place = {
+                    _k: _src_loc[_k]
+                    for _k in _SCHEMA_ROW_PLACE_KEYS
+                    if isinstance(_src_loc, dict) and _k in _src_loc
+                }
+                for _sa in schema_atoms:
+                    for _r in (getattr(_sa, "source_refs", None) or [])[:1]:
+                        if not isinstance(getattr(_r, "locator", None), dict):
+                            continue
+                        if _hdr_link:
+                            _r.locator["header_atom_id"] = _hdr_link
+                        for _k, _v in _place.items():
+                            _r.locator.setdefault(_k, _v)
                 new_atoms.extend(schema_atoms)
                 emitted += len(schema_atoms)
         except Exception:
