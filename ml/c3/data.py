@@ -674,6 +674,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     """
     import dataclasses
 
+    from .vocab import canonical_keys
+
     universal_reads = frozenset(o.field for o in schema.opportunities
                                 if o.source == "read" and o.universal)
     atoms = [dataclasses.replace(a, label=None) if excluded(a.label)
@@ -794,7 +796,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             if j is not None and j != i:
                 found.add(j)
         hint_lines.append(sorted(found))
-        entities.append(_as_list(lb.get("entity_keys")))
+        # One spelling per entity (app/core/label_vocab.json): org:x and party:x pull together.
+        entities.append(canonical_keys(_as_list(lb.get("entity_keys"))))
 
     # The parser's guess, where a person picked another type, is a type the
     # line is known not to be ("Parser's right" is the agreement, already the
