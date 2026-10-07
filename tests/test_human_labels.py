@@ -424,3 +424,65 @@ def test_the_parser_line_never_reaches_training():
     assert strip_parser_lines(note) == "Four racks set the crew.\n[purtera] keep: two techs."
     assert strip_parser_lines("Plain WHY.") == "Plain WHY."
     assert split_note("WHY only\n[parser] page 3 cut") == ("WHY only", "")
+
+
+# --- judgment notes split like atom notes ------------------------------------
+
+from app.learning.human_labels import split_judgment_note  # noqa: E402
+
+_WHY = "The question asks for a site contact the intake form never collected, so it is real."
+_POLICY = "keep: we always confirm the on-site contact before scheduling a crew."
+
+
+def _judged(note, **extra):
+    return rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        {"head": "gap", "target_key": "g1", "text": "Who is the on-site contact?",
+         "verdict": "valid", "labeler": "someone@example.com", "note": note, **extra},
+    ]})
+
+
+def _rationales(rows):
+    return {r["relation"]: r["label"] for r in rows if r["relation"].startswith("rationale:")}
+
+
+def test_a_judgment_note_trains_its_company_line_only_on_the_profile():
+    by = _rationales(_judged(f"{_WHY}\n[purtera] {_POLICY}\n[parser] SHOULD SPLIT: two questions in one."))
+    assert by["rationale:gap"] == _WHY
+    assert by["rationale:policy:purtera"] == _POLICY
+    assert "[purtera]" not in " ".join(by.values()) and "SHOULD SPLIT" not in " ".join(by.values())
+
+
+def test_a_judgment_note_loses_the_accepted_proposal_prefix():
+    for prefix in ("Accepted from claude-code (assistant)'s proposal: ",
+                   "From Some Reviewer's proposal:",
+                   "Accepted in bulk from claude-code (assistant)'s proposal: ",
+                   "accepted from a.person@example.com’s proposal:  "):
+        by = _rationales(_judged(f"{prefix}{_WHY}\n[purtera] {_POLICY}"))
+        assert by["rationale:gap"] == _WHY, prefix
+        assert by["rationale:policy:purtera"] == _POLICY
+    # The prefix alone on its line, and a [purtera] line it opened.
+    assert split_judgment_note(f"Accepted from X's proposal:\n{_WHY}") == (_WHY, "")
+    # Bulk accept of a draft with no WHY writes the prefix alone, no colon.
+    assert split_judgment_note("Accepted in bulk from X (assistant)'s proposal") == ("", "")
+    assert split_judgment_note(f"Accepted from X's proposal: [purtera] {_POLICY}") == ("", _POLICY)
+    # Mid-sentence it is the labeler's words, not the page's prefix.
+    mid = "We kept it, as the from-the-field team's proposal: said, because the site is real."
+    assert split_judgment_note(mid) == (mid, "")
+
+
+def test_a_judgment_note_loses_its_exclusion_marker():
+    for marker in ("EXCLUDE_FROM_TRAINING: old manual Deal Kit.\n",
+                   "[EXCLUDE_FROM_TRAINING: old manual Deal Kit] "):
+        why, policy = split_judgment_note(f"{marker}Accepted from X's proposal: {_WHY}")
+        assert (why, policy) == (_WHY, ""), marker
+
+
+def test_the_minimum_length_applies_to_each_half():
+    # A long note whose universal half is short trains no base rationale.
+    by = _rationales(_judged(f"Real question.\n[purtera] {_POLICY}"))
+    assert "rationale:gap" not in by and by["rationale:policy:purtera"] == _POLICY
+    by = _rationales(_judged(f"{_WHY}\n[purtera] ok"))
+    assert by["rationale:gap"] == _WHY and "rationale:policy:purtera" not in by
+    # The prefix does not count towards the length.
+    by = _rationales(_judged("Accepted from claude-code (assistant)'s proposal: Too short."))
+    assert "rationale:gap" not in by
