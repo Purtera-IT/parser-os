@@ -123,7 +123,9 @@ def test_pair_group_and_deal_verdicts(schema, batch):
     got = {j.key: j for j in batch.judged}
     sat, wkd = _i(batch, "Saturday"), _i(batch, "weekdays")
     assert set(got["jdg:conflict"].lines) == {sat, wkd}
-    assert got["jdg:conflict"].note.startswith("different_window")
+    # A reason code is the verdict's class, not part of the WHY.
+    assert got["jdg:conflict"].note.startswith("Saturday only")
+    assert "different_window" not in got["jdg:conflict"].note
     assert set(got["jdg:site"].lines) == {_i(batch, "Install is"), _i(batch, "Elm St.")}
     assert set(got["jdg:document_job"].lines) == {wkd}
     assert set(got["jdg:sheet"].lines) == {_i(batch, "Mount 4"), _i(batch, "Rooms:")}
@@ -157,3 +159,43 @@ def test_heads_train_and_the_base_ignores_the_company(schema, batch):
         assert not torch.equal(m.judge(a, "jdg:tier", everyone), m.judge(b, "jdg:tier", everyone))
         with pytest.raises(ValueError):
             m.judge(m(inp), "jdg:tier", everyone)
+
+
+def test_verdicts_on_a_row_set_aside_train_nothing(schema):
+    """An old manual Deal Kit row is excluded on its card; every verdict about
+    it is set aside too, whether or not the verdict's own note says so."""
+    blob = {"labels": [
+        {"label_key": "k3", "label_type": "schedule", "about": "deal", "reads_set": {},
+         "note": "EXCLUDE_FROM_TRAINING: old manual Deal Kit."},
+    ]}
+    judgments = [
+        _j("conflict", "contradicts", {"a": {"atomId": "at-k3"}, "b": {"atomId": "at-k4"}}),
+        _j("suppression", "should_have_been_kept", {}, text=ATOMS[2]["text"], target_key="atom:at-k3"),
+        # Marked on the verdict itself, about a line nobody excluded.
+        _j("site_role", "vendor_or_billing_address", {"site": {"evidence": {"atomId": "at-k2"}}},
+           note="EXCLUDE_FROM_TRAINING: old manual Deal Kit."),
+        _j("gap", "valid", {"source": {"atomId": "at-k6"}}),
+    ]
+    b = featurize(DealExample.from_training_blob({**blob, "judgments": judgments}, ATOMS,
+                                                 deal_id="synthetic-excluded"), schema)
+    assert not [j for j in b.judged if j.key == "jdg:conflict"]
+    assert b.targets["col:admission"][_i(b, "Saturday")] == IGNORE
+    assert b.targets["jdg:site_role"][_i(b, "head office")] == IGNORE
+    assert b.targets["jdg:gap"][_i(b, "Rooms:")] == schema.by_key()["jdg:gap"].index("valid")
+
+
+def test_a_model_drafted_judgment_note_counts_draft_weight(schema):
+    """why_author on a judgment row scales its note like an atom label's WHY;
+    the verdict itself still trains in full."""
+    from ml.c3.data import DRAFT_WHY_WEIGHT, why_weight
+
+    pair = {"a": {"atomId": "at-k3"}, "b": {"atomId": "at-k4"}}
+    rows = [_j("conflict", "contradicts", pair, note="Both windows cannot hold.", why_author="machine_draft")]
+    b = featurize(DealExample.from_training_blob({**BLOB, "judgments": rows}, ATOMS, deal_id="synthetic-jdraft"), schema)
+    (j,) = [x for x in b.judged if x.key == "jdg:conflict"]
+    assert j.why_weight == DRAFT_WHY_WEIGHT
+    assert j.answer == schema.by_key()["jdg:conflict"].index("contradicts")
+    # A person's note, an accepted draft and a row from before the column count in full.
+    for author in ("person", "accepted_draft", "edited_draft", None):
+        assert why_weight({"why_author": author}) == 1.0
+    assert why_weight({"reads_set": {"why_author": "machine_draft"}}) == DRAFT_WHY_WEIGHT

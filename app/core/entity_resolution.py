@@ -343,6 +343,51 @@ def _surface(atom) -> str:
 
 
 
+def _section(atom) -> tuple:
+    """The heading chain an atom sits under inside its document.
+
+    Identical words under two different headings are two statements, not a
+    repeat: a sentence under "Project Scope" and the same sentence as a
+    "Service Model" field are each the document saying it about a different
+    thing. The collapse folds a repeat only inside one section.
+
+    Empty when the parser gave no heading (a recall pass re-reading the page);
+    such a copy is the same span and may fold against any section.
+    """
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        path = loc.get("section_path")
+        if path is None:
+            path = loc.get("section")
+        if isinstance(path, str):
+            path = [path]
+        return tuple(
+            " ".join(str(p).split()).lower() for p in (path or []) if str(p or "").strip()
+        )
+    except Exception:
+        return ()
+
+
+def _is_quoted(atom) -> bool:
+    """A quoted copy (an email echo) folds as before, whatever its section."""
+    try:
+        val = getattr(atom, "value", None)
+        if isinstance(val, dict) and val.get("quoted"):
+            return True
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        return bool(loc.get("quoted"))
+    except Exception:
+        return False
+
+
+def _same_parent(a, b) -> bool:
+    """May ``b`` fold onto ``a``: same section, or one side has none/is quoted."""
+    sa, sb = _section(a), _section(b)
+    return not sa or not sb or sa == sb or _is_quoted(a) or _is_quoted(b)
+
+
 #: Fields that say WHICH THING an atom is about, as opposed to where it sat.
 #:
 #: Deliberately excludes positional keys like sheet and row: those differ for
@@ -403,7 +448,9 @@ def collapse_duplicate_atoms(atoms: list) -> list:
       2. raw_text SequenceMatcher similarity > 0.92 AND same artifact_id.
 
     Keep the higher-confidence copy. Intra-doc only — cross-doc repetition
-    is intentional evidence corroboration.
+    is intentional evidence corroboration. Within one document a copy folds
+    only onto one under the SAME section (heading chain); identical text under
+    a different heading is its own fact (see `_section`).
     """
     if not atoms:
         return atoms
@@ -467,7 +514,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
         # a bom_line sourced from the SAME table row both survive —
         # they represent different facets of the data (raw vs typed
         # classification). Same goes for vendor_line_item vs bom_line.
-        seen_normalized: dict[tuple, object] = {}
+        seen_normalized: dict[tuple, list] = {}
         unique: list = []
         for atom in sorted(art_atoms, key=lambda a: getattr(a, "confidence", 0.0), reverse=True):
             norm = getattr(atom, "normalized_text", None) or getattr(atom, "raw_text", "") or ""
@@ -475,11 +522,15 @@ def collapse_duplicate_atoms(atoms: list) -> list:
                 unique.append(atom)
                 continue
             norm_key = (_dedup_type(atom), norm.strip().lower(), _identity(atom), occurrence.get(id(atom), 0))
-            if norm_key not in seen_normalized:
-                seen_normalized[norm_key] = atom
+            kept = seen_normalized.setdefault(norm_key, [])
+            # Same words under another heading are another fact: fold only
+            # onto a survivor from the same section.
+            owner = next((k for k in kept if _same_parent(k, atom)), None)
+            if owner is None:
+                kept.append(atom)
                 unique.append(atom)
             else:
-                note_folded_into(atom, seen_normalized[norm_key])
+                note_folded_into(atom, owner)
         # Second pass: fuzzy dedup on long prose only (≥50 chars).
         # Structured rows (physical_site, BOM, site_allocation, tasks, etc.)
         # have semantic keys and should not pay the O(n²) SequenceMatcher
@@ -553,12 +604,21 @@ def collapse_duplicate_atoms(atoms: list) -> list:
                 if _rf_process is not None:
                     # One C call over all reps; returns None if none clear 92.
                     hit = _rf_process.extractOne(rt500, reps, scorer=fuzz.ratio, score_cutoff=92.0)
+                    if hit is not None and not _same_parent(owners[hit[2]], atom):
+                        # The best match sits under another heading; look for
+                        # one in this atom's own section before giving up.
+                        hit = next(
+                            (h for h in _rf_process.extract(
+                                rt500, reps, scorer=fuzz.ratio, score_cutoff=92.0, limit=None)
+                             if _same_parent(owners[h[2]], atom)),
+                            None,
+                        )
                     if hit is not None:
                         is_dup = True
                         note_folded_into(atom, owners[hit[2]])
                 else:  # pragma: no cover - difflib fallback when rapidfuzz absent
                     for i, ext in enumerate(reps):
-                        if SequenceMatcher(None, rt500, ext).ratio() > 0.92:
+                        if _same_parent(owners[i], atom) and SequenceMatcher(None, rt500, ext).ratio() > 0.92:
                             is_dup = True
                             note_folded_into(atom, owners[i])
                             break

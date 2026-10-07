@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from .notes import drop_meta, mask_verdict, sentences, split_note
+from .notes import drop_meta, judgment_note, mask_verdict, sentences, split_note, without_opener
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
 
@@ -317,6 +317,8 @@ class Judged:
     lines: tuple[int, ...]       # the two lines, the group's lines, or every line
     answer: int                  # class index
     note: str = ""               # the labeler's reason and note, for the teacher
+    why_weight: float = 1.0      # DRAFT_WHY_WEIGHT when a model wrote the note
+    policy: str = ""             # the note's [<company>] part: the company layer only
 
 
 @dataclass(frozen=True)
@@ -444,9 +446,12 @@ DRAFT_WHY_WEIGHT = 0.5
 
 
 def why_weight(label: dict[str, Any] | None) -> float:
-    """``DRAFT_WHY_WEIGHT`` for a WHY nobody has saved, else 1.0."""
-    reads = (label or {}).get("reads_set")
-    author = str((reads if isinstance(reads, dict) else {}).get("why_author") or "").strip().lower()
+    """``DRAFT_WHY_WEIGHT`` for a WHY nobody has saved, else 1.0. An atom label
+    keeps ``why_author`` in ``reads_set``; a judgment row has it as a field."""
+    label = label or {}
+    reads = label.get("reads_set")
+    author = str((reads if isinstance(reads, dict) else {}).get("why_author")
+                 or label.get("why_author") or "").strip().lower()
     return DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
 
 
@@ -462,7 +467,9 @@ def excluded(label: dict[str, Any] | None) -> bool:
     The line stays in the deal as context for the others."""
     if not label:
         return False
-    note = str(label.get("note") or "").lstrip().lstrip("[").upper()
+    # An accepted draft's note opens with "Accepted [in bulk] from <x>'s
+    # proposal:", which pushed the marker off the start: read past it.
+    note = without_opener(str(label.get("note") or "").lstrip()).lstrip().lstrip("[").upper()
     reads = label.get("reads_set") if isinstance(label.get("reads_set"), dict) else {}
     return (note.startswith(EXCLUDE_NOTE_PREFIX)
             or str(label.get("weight_tier") or "").strip().lower() == "exclude"
@@ -502,6 +509,10 @@ def is_deal_kit(doc_kind: str) -> bool:
     return "dealkit" in re.sub(r"[^a-z]", "", str(doc_kind or "").lower())
 
 
+#: Why the parser lost a hand-added line (app.learning.human_labels.MISS_CAUSE).
+MISS_CAUSE = "miss_cause"
+
+
 def _derived(label: dict[str, Any], universal_reads: frozenset[str] = frozenset(),
              deal_kit: bool = False) -> dict[str, Any]:
     """Fields the card records implicitly, made explicit for the heads:
@@ -517,6 +528,8 @@ def _derived(label: dict[str, Any], universal_reads: frozenset[str] = frozenset(
       ruled out (``rejected_reads``) is taught as absent, not left unknown.
       On a company reject a removed base reading may be our rule, so only
       company readings are taught absent there.
+    * ``miss_cause`` (base): trains only on a hand-added line; dropped from
+      any other row, so the cause head never reads a parser atom as a miss.
     * Deal Kit routing: which parser a Deal Kit line trains is our own rule,
       so on a Deal Kit line ``train_for`` moves to the Purtera layer's
       ``co_deal_kit_route`` and the base ``train_for`` head never sees it.
@@ -537,6 +550,12 @@ def _derived(label: dict[str, Any], universal_reads: frozenset[str] = frozenset(
         out["admission"] = "keep"
     removed = {str(k) for k in (label.get("reads_shown") or [])} - set(reads)
     removed |= {str(k) for k in (label.get("rejected_reads") or {})}
+    if origin != "labeler":
+        # Why the parser lost a line: asked only of a hand-added (Missed)
+        # line. A parser atom was not missed, so it teaches neither a cause
+        # nor its absence.
+        reads.pop(MISS_CAUSE, None)
+        removed.discard(MISS_CAUSE)
     for k in removed:
         if not (policy and k in universal_reads):
             reads.setdefault(k, ABSENT)
@@ -654,6 +673,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     "absent". Columns (label_type, about...) are always taught when present.
     """
     import dataclasses
+
+    from .vocab import canonical_keys
 
     universal_reads = frozenset(o.field for o in schema.opportunities
                                 if o.source == "read" and o.universal)
@@ -775,7 +796,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             if j is not None and j != i:
                 found.add(j)
         hint_lines.append(sorted(found))
-        entities.append(_as_list(lb.get("entity_keys")))
+        # One spelling per entity (app/core/label_vocab.json): org:x and party:x pull together.
+        entities.append(canonical_keys(_as_list(lb.get("entity_keys"))))
 
     # The parser's guess, where a person picked another type, is a type the
     # line is known not to be ("Parser's right" is the agreement, already the
@@ -808,8 +830,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     judged: list[Judged] = []
     lines = _Lines(atoms)
     for j in deal.judgments:
-        if not _is_a_person(j.get("labeler")):
-            continue
+        if not _is_a_person(j.get("labeler")) or excluded(j):
+            continue                               # a verdict itself set aside
         head, verdict = str(j.get("head") or ""), str(j.get("verdict") or "").strip()
         if head in schema.judgment_aliases:
             key, vmap = schema.judgment_aliases[head]
@@ -823,7 +845,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         idx = _judged_lines(j, opp.size, lines)
         if ix is None or idx is None:
             continue
-        note = drop_meta(" ".join(str(x).strip() for x in (j.get("reason"), j.get("note")) if x))
+        if opp.size == PAIR and any(excluded(deal.atoms[i].label) for i in idx):
+            continue                               # a pair touching a row set aside, as links
+        # The note splits as an atom's or a link's does: the universal WHY is
+        # the teacher's, a [purtera] line goes to the company layer only.
+        note, pol = judgment_note(j.get("reason"), j.get("note"), company)
         if opp.size == LINE:
             i = idx[0]
             if excluded(deal.atoms[i].label):
@@ -832,9 +858,18 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 targets[key][i] = ix
                 if note:
                     field_notes[i].setdefault(key, mask_verdict(note) if opp.universal else note)
+                if pol:
+                    policy[i] = " ".join(x for x in (policy[i], pol) if x)
             continue
+        if pol and opp.size == PAIR:
+            # About both lines, as a link's company part is about its line.
+            for i in idx:
+                policy[i] = " ".join(x for x in (policy[i], pol) if x)
+        # A group or deal verdict keeps its company part on itself: copied to
+        # every line of a sheet or deal it would repeat one rule hundreds of times.
         judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
-                             note=mask_verdict(note) if opp.universal else note))
+                             note=mask_verdict(note) if opp.universal else note,
+                             why_weight=why_weight(j), policy=pol))
         if head == "conflict" and verdict in ("contradicts", "supports") and verdict in edges_ok:
             pair = (max(idx), min(idx))            # the later line points back
             if pair not in edges.setdefault(verdict, []):

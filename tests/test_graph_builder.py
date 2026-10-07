@@ -471,3 +471,41 @@ def test_semantic_edges_include_metadata_and_no_contradictions() -> None:
     assert semantic_edges
     assert all("method=" in edge.reason.lower() for edge in semantic_edges)
     assert all(edge.edge_type != EdgeType.contradicts for edge in semantic_edges)
+
+
+def test_exclusion_never_targets_email_header_or_deal_metadata() -> None:
+    # A forwarded email's header line inherits device keys from its subject
+    # words; an out-of-scope clause sharing those keys must not "exclude" it.
+    exclusion = _atom(
+        "ex_hdr",
+        atom_type=AtomType.exclusion,
+        authority=AuthorityClass.vendor_quote,
+        entity_keys=["device:firewall", "device:server"],
+        text="Firewall and server replacement is out of scope",
+    )
+    header = _atom(
+        "hdr1",
+        atom_type=AtomType.deal_metadata,
+        authority=AuthorityClass.customer_current_authored,
+        entity_keys=["device:firewall", "device:server"],
+        text="From: a@example.com | Subject: Fw: firewall and server refresh | Date: today",
+        value_extra={"kind": "email_header"},
+    )
+    quoted_header = _atom(
+        "hdr2",
+        atom_type=AtomType.scope_item,
+        authority=AuthorityClass.quoted_old_email,
+        entity_keys=["device:firewall", "device:server"],
+        text="From: b@example.com | Subject: firewall and server",
+        value_extra={"kind": "quoted_message_header"},
+    )
+    scope = _atom(
+        "sc_fw",
+        atom_type=AtomType.scope_item,
+        authority=AuthorityClass.approved_site_roster,
+        entity_keys=["device:firewall"],
+        text="Replace firewall",
+    )
+    edges = build_edges("proj_1", [exclusion, header, quoted_header, scope], [])
+    targets = {e.to_atom_id for e in edges if e.edge_type == EdgeType.excludes}
+    assert targets == {"sc_fw"}

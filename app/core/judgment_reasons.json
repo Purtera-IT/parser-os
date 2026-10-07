@@ -1,0 +1,316 @@
+{
+  "version": "2026-10-07",
+  "doc": "THE closed list of reason codes for each judgment head (atom_label_judgments.reason). A reason is one short code from its head's list, or empty; never a sentence. The WHY goes in the note. parser-os trains `<relation>_reason` only on a listed code (human_labels._judgment_rows), and moves any other reason text to the front of the note's WHY. Platform-infra vendors this file as azure-function-api/shared/judgment-reasons.json and checks every save against it, saving a sentence into the note rather than the reason. The parser's own reason on a card (a conflict's edge rule, a facility's deterministic_fallback) is provenance shown on the card, not a judgment reason, and is not listed. Sources: judgment-cards-common skill section 4, and the money, places-and-pairs, rules, dropped and questions skills.",
+  "heads": {
+    "conflict": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      },
+      {
+        "value": "duplicate",
+        "desc": "The two lines say the same words: a copy, not a conflict."
+      },
+      {
+        "value": "not_applicable",
+        "desc": "A pairing with no bearing on this job, such as an exclusion and an email header."
+      }
+    ],
+    "site": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      },
+      {
+        "value": "duplicate",
+        "desc": "The two entries are copies of the same site line."
+      }
+    ],
+    "site_role": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "gap": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "answered",
+        "desc": "Something in the deal already answers the question."
+      },
+      {
+        "value": "premature",
+        "desc": "A real question, but not one to ask at this stage of the deal."
+      },
+      {
+        "value": "subsumed",
+        "desc": "Another question on the deal already covers this one."
+      },
+      {
+        "value": "duplicate",
+        "desc": "The same question asked again in the same or other words."
+      },
+      {
+        "value": "not_applicable",
+        "desc": "Does not apply to this kind of job (a cutover date on a support contract)."
+      },
+      {
+        "value": "small_talk",
+        "desc": "Pleasantry or status chatter, not a question about the work."
+      },
+      {
+        "value": "template_text",
+        "desc": "Boilerplate from a template, not a question this deal raised."
+      }
+    ],
+    "document_job": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      },
+      {
+        "value": "duplicate",
+        "desc": "A copy of another document on the deal."
+      }
+    ],
+    "rule": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "suppression": [
+      {
+        "value": "kept",
+        "desc": "The drop was right: the parser's call stands."
+      },
+      {
+        "value": "duplicate",
+        "desc": "A correct fold: the line is a copy of the survivor."
+      },
+      {
+        "value": "overturned",
+        "desc": "The line should have been kept: the drop was wrong."
+      }
+    ],
+    "bom_owner": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "facility": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "task_tier": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "roster": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "billing_type": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "hardware_scope": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "materials_scope": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "expenses_scope": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "travel_scope": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "tier": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "geo_mention": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "sheet": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "facet": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "image": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "overturned",
+        "desc": "The verdict goes against the parser's call or value."
+      }
+    ],
+    "norm": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "wrong_shape",
+        "desc": "The parser gave something the head cannot use, such as a bare word or a value with no unit."
+      },
+      {
+        "value": "overturned",
+        "desc": "The parser's value had the right shape but the wrong figure or term."
+      }
+    ],
+    "hours": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "wrong_shape",
+        "desc": "The parser gave something the head cannot use, such as a bare word or a value with no unit."
+      },
+      {
+        "value": "overturned",
+        "desc": "The parser's value had the right shape but the wrong figure or term."
+      }
+    ],
+    "commercial": [
+      {
+        "value": "kept",
+        "desc": "The parser's call or value was right."
+      },
+      {
+        "value": "wrong_shape",
+        "desc": "The parser gave something the head cannot use, such as a bare word (\"revenue\", \"contract length\")."
+      },
+      {
+        "value": "overturned",
+        "desc": "The parser's value had the right shape but the wrong figure or term."
+      }
+    ],
+    "term": [
+      {
+        "value": "kept",
+        "desc": "The parser's reading of the term line was right."
+      },
+      {
+        "value": "wrong_shape",
+        "desc": "The parser gave something the head cannot use, such as no known kind or a bare phrase (\"net 30\")."
+      },
+      {
+        "value": "overturned",
+        "desc": "The parser's reading had a known kind but the wrong kind, number or setting."
+      }
+    ]
+  }
+}

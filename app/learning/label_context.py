@@ -73,6 +73,9 @@ HEAD_CONTEXT: dict[str, tuple[str, ...]] = {
     "reads:introduces_party": ("from",),
     "reads:commitment": ("from",),
     "reads:small_talk": ("from", "below"),
+    # Why the parser lost a hand-added line: where it sat decides it -- a
+    # table, a heading over lines, a paragraph of chatter, a sheet.
+    "reads:miss_cause": V2_PARTS + ("doc", "above", "below"),
 }
 
 #: `policy:<company>` -- what a company does with the line. Its rules turn on

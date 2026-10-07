@@ -110,6 +110,30 @@ def test_judgments_become_rows_for_their_own_heads():
     assert all(r["teacher"] == "human" for r in rows)
 
 
+def test_a_model_drafted_judgment_note_trains_at_draft_weight():
+    """why_author: machine_draft scales the judgment's rationale, as it does an
+    atom label's WHY in ml/c3; the verdict keeps its full weight. A row with no
+    why_author (every row from before the column) is a person's."""
+    from ml.c3.data import DRAFT_WHY_WEIGHT
+
+    note = "The two windows cannot both hold for the same crew on site."
+
+    def rows(**kw):
+        out = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+            {"head": "conflict", "target_key": "e1", "text": "Saturday only || weekdays after 6pm",
+             "verdict": "contradicts", "note": note, "labeler": "a@purtera-it.com", **kw}]})
+        return ({r["relation"]: r["weight"] for r in out if r["label_kind"] == "rationale"},
+                {r["label"]: r["weight"] for r in out if r["relation"] == "edge_relation"})
+
+    why, verdict = rows(why_author="machine_draft")
+    assert why == {"rationale:conflict": DRAFT_WHY_WEIGHT}
+    assert verdict == {"contradicts": 1.0}
+    for author in ({}, {"why_author": None}, {"why_author": "person"}, {"why_author": "accepted_draft"}):
+        why, verdict = rows(**author)
+        assert why == {"rationale:conflict": 1.0}, author
+        assert verdict == {"contradicts": 1.0}
+
+
 def test_the_dropped_stage_teaches_the_admission_head():
     """Judging what the compile threw away is the `admission` question.
 
@@ -424,3 +448,106 @@ def test_the_parser_line_never_reaches_training():
     assert strip_parser_lines(note) == "Four racks set the crew.\n[purtera] keep: two techs."
     assert strip_parser_lines("Plain WHY.") == "Plain WHY."
     assert split_note("WHY only\n[parser] page 3 cut") == ("WHY only", "")
+
+
+# --- judgment notes split like atom notes ------------------------------------
+
+from app.learning.human_labels import split_judgment_note  # noqa: E402
+
+_WHY = "The question asks for a site contact the intake form never collected, so it is real."
+_POLICY = "keep: we always confirm the on-site contact before scheduling a crew."
+
+
+def _judged(note, **extra):
+    return rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        {"head": "gap", "target_key": "g1", "text": "Who is the on-site contact?",
+         "verdict": "valid", "labeler": "someone@example.com", "note": note, **extra},
+    ]})
+
+
+def _rationales(rows):
+    return {r["relation"]: r["label"] for r in rows if r["relation"].startswith("rationale:")}
+
+
+def test_a_judgment_note_trains_its_company_line_only_on_the_profile():
+    by = _rationales(_judged(f"{_WHY}\n[purtera] {_POLICY}\n[parser] SHOULD SPLIT: two questions in one."))
+    assert by["rationale:gap"] == _WHY
+    assert by["rationale:policy:purtera"] == _POLICY
+    assert "[purtera]" not in " ".join(by.values()) and "SHOULD SPLIT" not in " ".join(by.values())
+
+
+def test_a_judgment_note_loses_the_accepted_proposal_prefix():
+    for prefix in ("Accepted from claude-code (assistant)'s proposal: ",
+                   "From Some Reviewer's proposal:",
+                   "Accepted in bulk from claude-code (assistant)'s proposal: ",
+                   "accepted from a.person@example.com’s proposal:  "):
+        by = _rationales(_judged(f"{prefix}{_WHY}\n[purtera] {_POLICY}"))
+        assert by["rationale:gap"] == _WHY, prefix
+        assert by["rationale:policy:purtera"] == _POLICY
+    # The prefix alone on its line, and a [purtera] line it opened.
+    assert split_judgment_note(f"Accepted from X's proposal:\n{_WHY}") == (_WHY, "")
+    # Bulk accept of a draft with no WHY writes the prefix alone, no colon.
+    assert split_judgment_note("Accepted in bulk from X (assistant)'s proposal") == ("", "")
+    assert split_judgment_note(f"Accepted from X's proposal: [purtera] {_POLICY}") == ("", _POLICY)
+    # Mid-sentence it is the labeler's words, not the page's prefix.
+    mid = "We kept it, as the from-the-field team's proposal: said, because the site is real."
+    assert split_judgment_note(mid) == (mid, "")
+
+
+def test_a_judgment_note_loses_its_exclusion_marker():
+    for marker in ("EXCLUDE_FROM_TRAINING: old manual Deal Kit.\n",
+                   "[EXCLUDE_FROM_TRAINING: old manual Deal Kit] "):
+        why, policy = split_judgment_note(f"{marker}Accepted from X's proposal: {_WHY}")
+        assert (why, policy) == (_WHY, ""), marker
+
+
+def test_the_minimum_length_applies_to_each_half():
+    # A long note whose universal half is short trains no base rationale.
+    by = _rationales(_judged(f"Real question.\n[purtera] {_POLICY}"))
+    assert "rationale:gap" not in by and by["rationale:policy:purtera"] == _POLICY
+    by = _rationales(_judged(f"{_WHY}\n[purtera] ok"))
+    assert by["rationale:gap"] == _WHY and "rationale:policy:purtera" not in by
+    # The prefix does not count towards the length.
+    by = _rationales(_judged("Accepted from claude-code (assistant)'s proposal: Too short."))
+    assert "rationale:gap" not in by
+
+
+def test_a_drafted_judgment_note_trains_both_halves_at_the_draft_weight():
+    rows = _judged(f"{_WHY}\n[purtera] {_POLICY}", why_author="machine_draft")
+    w = {r["relation"]: r["weight"] for r in rows if r["relation"].startswith("rationale:")}
+    assert w == {"rationale:gap": 0.5, "rationale:policy:purtera": 0.5}
+    rows = _judged(f"{_WHY}\n[purtera] {_POLICY}")
+    assert {r["weight"] for r in rows if r["relation"].startswith("rationale:")} == {1.0}
+
+
+def test_hours_card_trains_the_base_only_on_stated_hours():
+    """User ruling: estimates and Deal-Kit-derived hours are not base training.
+
+    They, and every older verdict saved with no basis, train Purtera's
+    co_hours_estimate reading (company layer) instead. Nothing is dropped."""
+    from app.learning.multitask_table import tasks_for
+
+    j = lambda key, text, verdict: {"head": "hours", "target_key": key, "text": text, "verdict": verdict,
+                                    "labeler": "a@purtera-it.com"}
+    report = IngestReport()
+    rows = rows_for_deal({"deal_id": "d1", "labels": [], "judgments": [
+        j("a1", "Technician on site, 8 hours", "hours=8;basis=stated"),
+        j("a2", "Install the wall mounts", "unstated"),
+        j("a3", "Pull 24 drops at 2 h per drop", "hours=2;per=drop;qty=24;basis=stated"),
+        j("a4", "Swap the access points", "hours=3;per=AP"),           # older: no basis
+        j("a5", "Swap the switches", "hours=4;basis=estimate"),
+        j("a6", "Rack the core switch", "hours=1.5;role=L2;basis=deal_kit"),
+        j("a7", "Mount the displays", "8"),                            # outside the grammar
+    ]}, report=report)
+    base = sorted(r["label"] for r in rows if r["relation"] == "task_hours")
+    assert base == ["hours=2;per=drop;qty=24", "hours=8", "unstated"]
+    co = [r for r in rows if r["relation"] == "reads:co_hours_estimate"]
+    assert {r["label"] for r in co} == {"present"} and len(co) == 3
+    values = sorted(r["label"] for r in rows if r["relation"] == "reads_value:co_hours_estimate")
+    assert values == ["hours=1.5;role=L2", "hours=3;per=AP", "hours=4"]
+    bases = sorted(json.loads(r["provenance"])["basis"] for r in co)
+    assert bases == ["deal_kit", "estimate", "none (saved before the card asked)"]
+    # The company reading trains the Purtera profile only, never the base.
+    assert "reads:co_hours_estimate" in tasks_for("purtera")
+    assert "reads:co_hours_estimate" not in tasks_for("base")
+    assert any("outside the card grammar" in k for k in report.skipped)
