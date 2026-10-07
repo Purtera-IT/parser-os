@@ -395,6 +395,30 @@ def _numbers(text: str) -> tuple:
     return _fold.figures_in_order(text)
 
 
+def _section(atom) -> tuple:
+    """The section of its document a line sits under (its parent).
+
+    The same sentence under two sections of one document is two lines, never
+    a repeat: 000132's SOW states one sentence in its scope section and again
+    inside a field of a later section (the reason that field gives), and
+    folding the second into the first lost the field's reason. Read off the
+    line's own locator (or its value); a line with no section path has the
+    empty one.
+    """
+    try:
+        refs = getattr(atom, "source_refs", None) or []
+        loc = (getattr(refs[0], "locator", None) or {}) if refs else {}
+        sp = loc.get("section_path") if isinstance(loc, dict) else None
+        if not sp:
+            v = getattr(atom, "value", None)
+            sp = v.get("section_path") if isinstance(v, dict) else None
+        if isinstance(sp, (list, tuple)):
+            return tuple(" ".join(str(x).split()).lower() for x in sp)
+    except Exception:
+        pass
+    return ()
+
+
 def collapse_duplicate_atoms(atoms: list) -> list:
     """v48 — collapse near-duplicate atoms emitted by repeated doc sections.
 
@@ -474,7 +498,10 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             if not norm:
                 unique.append(atom)
                 continue
-            norm_key = (_dedup_type(atom), norm.strip().lower(), _identity(atom), occurrence.get(id(atom), 0))
+            # Its section is in the key: the same words under another
+            # section of the document are another line (see ``_section``).
+            norm_key = (_dedup_type(atom), norm.strip().lower(), _identity(atom), occurrence.get(id(atom), 0),
+                        _section(atom))
             if norm_key not in seen_normalized:
                 seen_normalized[norm_key] = atom
                 unique.append(atom)
@@ -544,7 +571,7 @@ def collapse_duplicate_atoms(atoms: list) -> list:
             #
             # A number in procurement prose is a quantity, a date, a price or a
             # part. It is the fact, not the noise around it.
-            bucket_key = (atype, " ".join(norm.split()[:8]), _numbers(rt))
+            bucket_key = (atype, " ".join(norm.split()[:8]), _numbers(rt), _section(atom))
             reps = fuzzy_buckets.setdefault(bucket_key, [])
             owners = rep_atoms.setdefault(bucket_key, [])
             rt500 = rt[:500]
