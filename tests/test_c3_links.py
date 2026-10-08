@@ -9,7 +9,8 @@
 * a hint_ref that names a line only by its text (or "<file tail>: <text>") points at that line;
 * the parser's guess a person overruled is a known-wrong type;
 * a heading pointer finds the heading line; a link to a whole document points
-  at its lines; links from an older parse resolve by text or drop quietly;
+  at its lines; a highlighted span (no key) is found by its text, and keys
+  from an older parse drop quietly;
   machine-draft markers are stripped;
 * drafts written by a model, and links touching a row set aside, never train.
 """
@@ -62,6 +63,9 @@ LABELS = [
      "note": "Missed by the parser: frame material."},
 ]
 PM = "pm@example.com"
+# The Questions card the first link is drawn on: its source line is the question.
+JUDGMENTS = [{"head": "gap", "target_key": "gap:abc", "verdict": "valid", "labeler": PM,
+              "target": {"source": {"atomId": "at-k1", "text": ATOMS[0]["text"]}}}]
 LINKS = [
     # Drawn on the Questions card: question -> answer; must become answer -> question.
     {"from_head": "gap", "from_key": "gap:abc", "from_text": ATOMS[0]["text"], "to_atom_id": "at-k3",
@@ -96,7 +100,8 @@ def schema():
 
 @pytest.fixture(scope="module")
 def batch(schema):
-    deal = DealExample.from_training_blob({"labels": LABELS, "links": LINKS}, ATOMS, deal_id="synthetic-links")
+    deal = DealExample.from_training_blob({"labels": LABELS, "links": LINKS, "judgments": JUDGMENTS},
+                                          ATOMS, deal_id="synthetic-links")
     return featurize(deal, schema)
 
 
