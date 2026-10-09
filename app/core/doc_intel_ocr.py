@@ -21,6 +21,7 @@ Pricing reference (F0 free tier): 500 pages/month free. S0: ~$1.50/1k pages.
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -90,7 +91,49 @@ def _inside(polygon: list[float], box: tuple[float, float, float, float]) -> boo
     return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
 
 
+#: Mixed into the cache key so a drawing's polygon read never collides with the
+#: plain-text read of the same bytes in ``_ocr_chain``: same image, two answers.
+_POLYGON_CACHE_TAG = b"doc_intel_polygons\x00"
+
+
 def read_lines_with_polygons(image_bytes: bytes) -> list[dict[str, Any]]:
+    """``_read_lines_with_polygons_uncached``, read once per image, ever.
+
+    The plain-text chain has had a persistent, blob-mirrored cache since
+    2026-09-29; this path did not, so every compile of a deal with a linked
+    drawing paid Document Intelligence again for a picture it had already
+    read, and could read it differently. Same cache, same rules: keyed on the
+    bytes, a miss (``[]``) is never stored, and any cache failure falls
+    through to a live read.
+    """
+    if not doc_intel_available() or not image_bytes:
+        return []
+    cache = None
+    try:
+        from app.core.ocr_cache import get_cache
+
+        cache = get_cache()
+        hit = cache.get(_POLYGON_CACHE_TAG + image_bytes) if cache is not None else None
+        if hit is not None:
+            lines = json.loads(hit["text"])
+            if isinstance(lines, list):
+                return lines
+    except Exception:  # a cache problem must never cost the reading
+        pass
+    lines = _read_lines_with_polygons_uncached(image_bytes)
+    if lines and cache is not None:
+        try:
+            cache.put(
+                _POLYGON_CACHE_TAG + image_bytes,
+                {"text": json.dumps(lines), "backend": "azure_doc_intel_polygons",
+                 "confidence": 0.92},
+            )
+        except Exception:
+            pass
+    return lines
+
+
+def _read_lines_with_polygons_uncached(image_bytes: bytes) -> list[dict[str, Any]]:
     """Every text line on an image WITH its pixel polygon.
 
     ``extract_text_from_image_bytes`` throws the geometry away, which is fine
