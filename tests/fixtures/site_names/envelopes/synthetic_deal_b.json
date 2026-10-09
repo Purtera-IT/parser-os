@@ -1,0 +1,6 @@
+{"deal_id": "SYN-B", "atoms": [
+ {"id": "b1", "artifact_id": "docC", "atom_type": "physical_site", "text": "77 Fake Blvd, Capital City",
+  "structured": {"name": "Capital City Office", "city": "Capital City"}},
+ {"id": "b2", "artifact_id": "docC", "atom_type": "physical_site", "text": "site_id: X-1 | facility: North Depot | address: 5 Road",
+  "structured": {"name": "North Depot"}}
+]}

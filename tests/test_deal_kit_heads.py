@@ -37,22 +37,13 @@ def test_site_facility_head_uses_city_office_for_address_backed_site() -> None:
             "aliases": ["gecko robotics pittsburgh office workshop"],
         }
     )
-    # The CITY, verbatim — not "Pittsburgh Office".
-    #
-    # This test used to pin the composed form. Composing the word "Office"
-    # invents a name that is in no document, which is what the base-health
-    # `fabricated_names` invariant counts ("Zero, permanently"): 371 of 858
-    # fabricated names in a 140-envelope sample, and for 367 of them the bare
-    # city IS in the source text. `city_office` is still a verdict the HEAD may
-    # predict once a PM teaches it — a name a person chose is a judgement; a
-    # name this rule invented is a fabrication.
+    # Neither "Pittsburgh Office" (composed, PUR-22) nor the bare city (a real
+    # string read from the wrong field, PUR-49): the alias a document wrote.
     decision = decide_site_facility_label(atom)
-    assert decision.facility_name == "Pittsburgh"
+    assert decision.facility_name == "gecko robotics pittsburgh office workshop"
     atoms, n = annotate_site_facility_labels([atom], project_id="deal-1")
     assert n == 1
-    assert atoms[0].value["facility_name"] == "Pittsburgh"
-    assert atoms[0].value["name"] == "Pittsburgh"
-    assert atoms[0].value["display_name"] == "Pittsburgh"
+    assert atoms[0].value["name_source"]["rule"] == "rule:alias_verbatim"
 
 
 class _QuoteTask:

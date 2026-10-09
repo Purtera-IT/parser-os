@@ -1,0 +1,11 @@
+{"deal_id": "SYN-A", "atoms": [
+ {"id": "a1", "artifact_id": "docA", "atom_type": "physical_site", "text": "625 W. Example St, Springfield, IL 60000",
+  "structured": {"name": "Springfield Office", "city": "Springfield", "street_address": "625 W. Example St",
+                 "facility_label": {"source": "deterministic_fallback", "label": "city_office"}}},
+ {"id": "a2", "artifact_id": "docA", "atom_type": "physical_site", "text": "10 Main Rd, Shelbyville, IL 60001",
+  "structured": {"name": "Shelbyville", "city": "Shelbyville", "street_address": "10 Main Rd"}},
+ {"id": "a3", "artifact_id": "docB", "atom_type": "physical_site", "text": "Riverside Clinic, 4 Oak Ave",
+  "structured": {"name": "Riverside Clinic", "name_source": {"rule": "rule:facility_name_field", "verbatim": true}}},
+ {"id": "a4", "artifact_id": "docB", "atom_type": "physical_site", "text": "1 Elm Dr, Ogdenville",
+  "structured": {"name": null, "city": "Ogdenville", "name_source": {"rule": "rule:abstain", "abstain_reason": "no_document_names_site"}}}
+]}
