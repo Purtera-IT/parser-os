@@ -62,7 +62,9 @@ def test_checks():
     # a policy reject parked on _keep during the backfill is a fact, not noise
     parked = _row(label_type="_keep", reads_set={"universal_type": "bom_line", "co_action": "reject",
                                                  "co_reason": "hw_price_not_ours"},
-                  note="Unit price of the display; it would be a labor rate if it priced the mounting.\n[purtera] reject: the partner prices hardware.")
+                  note="Unit price of the display; it would be a labor rate if it priced the mounting. "
+                       "Unlike the install line below, it prices a thing; the brand does not matter.\n"
+                       "[purtera] reject: the partner prices hardware.")
     assert _checks(parked) == set()
     assert {"reason_missing", "policy_line_missing"} <= _checks(_row(reads_set={"co_action": "reject"}))
     assert "policy_words_in_why" in _checks(_row(note="Matches the Deal Kit billing."))
@@ -230,3 +232,38 @@ def test_a_kept_fact_whose_why_has_no_flip_is_flagged():
     assert "why_without_flip" not in _checks(_row(note="EXCLUDE_FROM_TRAINING: old manual Deal Kit\n" + flat))
     assert "why_without_flip" not in _checks(_row(note="DUPLICATE of parser atom lbl_1\n" + flat))
     assert "why_without_flip" not in _checks(_row(note=None))
+
+
+def test_policy_label_opening_a_why_is_flagged():
+    note = "POLICY (contact_from_crm): a signature line naming the customer's site lead."
+    assert "policy_words_in_why" in _checks(_row(label_type="stakeholder", note=note))
+    assert "policy_words_in_why" not in _checks(_row(note="The customer's travel policy covers mileage."))
+
+
+def test_a_leading_why_label_is_flagged():
+    assert "why_prefix" in _checks(_row(note="WHY: four racks set the crew."))
+    assert "why_prefix" in _checks(_row(note="DUPLICATE of parser atom lbl_1\nWhy: four racks set the crew."))
+    assert "why_prefix" not in _checks(_row(note="Four racks set the crew; why it matters is the lift."))
+
+
+def test_recipe_near_miss_and_what_does_not_matter():
+    flat = "Four racks set the crew at two techs; if they were mounted, this would be cabling."
+    got = _checks(_row(note=flat))
+    assert {"why_without_near_miss", "why_without_irrelevant"} <= got
+    full = flat + " Unlike the line above, which only counts racks, it fixes the crew. The rack brand does not matter."
+    assert not _checks(_row(note=full)) & {"why_without_near_miss", "why_without_irrelevant"}
+    # A near miss only inside a quote is the line's words; set-aside and noise rows take none.
+    assert "why_without_near_miss" in _checks(_row(note=flat + ' They wrote "unlike last time". Brand is irrelevant.'))
+    assert "why_without_near_miss" not in _checks(_row(note="EXCLUDE_FROM_TRAINING: old manual Deal Kit\n" + flat))
+    assert "why_without_near_miss" not in _checks(_row(label_type="small_talk", note=flat,
+                                                       reads_set={"noise_class": "greeting_thanks"}))
+
+
+def test_tier_text_belongs_on_site_rows_only():
+    tier = "Findlay sits in a micropolitan CBSA under the OMB delineation, so small_town."
+    assert "tier_off_site" in _checks(_row(label_type="site_attribute", note=tier))
+    assert "tier_off_site" in _checks(_row(label_type="entity", reads_set={"co_action": "keep",
+                                                                           "location_tier": ["major_metro"]}))
+    assert "tier_off_site" not in _checks(_row(label_type="physical_site", note=tier,
+                                               reads_set={"co_action": "keep", "location_tier": ["small_town"]}))
+    assert "tier_off_site" not in _checks(_row(note="A rural road crossing; the quote says it."))
