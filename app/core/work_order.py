@@ -43,6 +43,7 @@ Off by default; ``SOWSMITH_WORK_ORDER=1`` turns it on.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -126,12 +127,46 @@ def _filename(atom: Any) -> str:
     return str(getattr(atom, "artifact_id", "") or "?")
 
 
+def _locator_key(atom: Any) -> tuple:
+    """Where in its document an atom sits, as a totally ordered tuple.
+
+    Upstream extractors run in thread pools, so the order atoms arrive in is not
+    guaranteed between compiles. Reading order is recovered from the source
+    locator (page/line/row/char offsets) and the atom id breaks every tie, so the
+    same set of atoms always yields the same document body.
+    """
+    parts: list[tuple] = []
+    refs = getattr(atom, "source_refs", None) or []
+    if refs:
+        ref = refs[0]
+        loc = getattr(ref, "locator", None)
+        if loc is None and isinstance(ref, dict):
+            loc = ref.get("locator")
+        if isinstance(loc, dict):
+            for k in sorted(loc):
+                v = loc[k]
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    parts.append((k, 1, 0.0, str(v)))
+                else:
+                    parts.append((k, 0, float(v), ""))
+    return (tuple(parts), str(getattr(atom, "id", "") or ""), _text(atom))
+
+
 def group_by_document(atoms: list[Any]) -> dict[str, list[Any]]:
-    """Atoms bucketed by the document they came from, order preserved."""
+    """Atoms bucketed by the document they came from, in a stable order.
+
+    Buckets are keyed by filename and iterate in filename order; atoms inside a
+    bucket are sorted by :func:`_locator_key`. Neither depends on input order.
+    """
     by: dict[str, list[Any]] = {}
     for a in atoms:
         by.setdefault(_filename(a), []).append(a)
-    return by
+    return {fn: sorted(by[fn], key=_locator_key) for fn in sorted(by)}
+
+
+def rank_documents(by_doc: dict[str, list[Any]], top_n: int) -> list[tuple[str, list[Any]]]:
+    """Largest documents first; the filename breaks ties so truncation is stable."""
+    return sorted(by_doc.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:top_n]
 
 
 def _body(doc_atoms: list[Any], limit: int) -> str:
@@ -174,14 +209,93 @@ def judge_document(
 
 
 def _parse_work_order(raw: str) -> dict:
-    m = re.search(r"\{[\s\S]*\}", raw or "")
-    if not m:
-        return {}
+    """The first JSON object in the reply that looks like a work order.
+
+    A greedy ``{...}`` regex spans from the first brace to the LAST one, so a
+    reply with two objects, or prose containing a brace after the JSON, failed to
+    parse and silently minted nothing on that run only. Decode object by object.
+    """
+    text = raw or ""
+    dec = json.JSONDecoder()
+    first: dict | None = None
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _ = dec.raw_decode(text, m.start())
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if "work_lines" in obj:
+            return obj
+        if first is None:
+            first = obj
+    return first or {}
+
+
+# ── extraction cache ─────────────────────────────────────────────────
+# Mirrors the vision cache in app.core.llm_client: with
+# ``SOWSMITH_WORK_ORDER_CACHE_DB`` set, the extraction reply is stored under
+# sha256(model + prompt + max_tokens) so identical inputs replay identically.
+# Default-off; any cache error falls through to a live call.
+_CACHE_CONN = None
+_CACHE_PATH = None
+
+
+def _cache_conn():
+    global _CACHE_CONN, _CACHE_PATH
+    path = os.environ.get("SOWSMITH_WORK_ORDER_CACHE_DB")
+    if not path:
+        return None
+    if _CACHE_CONN is not None and _CACHE_PATH == path:
+        return _CACHE_CONN
     try:
-        obj = json.loads(m.group(0))
+        import sqlite3
+
+        conn = sqlite3.connect(path, check_same_thread=False)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS work_order_cache "
+            "(k TEXT PRIMARY KEY, model TEXT, reply TEXT)"
+        )
+        conn.commit()
+        _CACHE_CONN, _CACHE_PATH = conn, path
+        return conn
     except Exception:
-        return {}
-    return obj if isinstance(obj, dict) else {}
+        return None
+
+
+def cache_key(model: str, prompt: str, max_tokens: int) -> str:
+    h = hashlib.sha256()
+    for part in (model or "", prompt or "", str(int(max_tokens))):
+        h.update(part.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+def _cache_get(key: str) -> str | None:
+    conn = _cache_conn()
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT reply FROM work_order_cache WHERE k=?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _cache_put(key: str, model: str, reply: str) -> None:
+    conn = _cache_conn()
+    if conn is None or not reply:
+        return
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO work_order_cache (k, model, reply) VALUES (?,?,?)",
+            (key, model, reply),
+        )
+        conn.commit()
+    except Exception:
+        pass
 
 
 def extract_work_order(deal_name: str, kept: list[tuple[str, str]]) -> dict:
@@ -191,13 +305,21 @@ def extract_work_order(deal_name: str, kept: list[tuple[str, str]]) -> dict:
     per_doc = _env_int("SOWSMITH_WORK_ORDER_DOC_CHARS", 2600)
     total = _env_int("SOWSMITH_WORK_ORDER_TOTAL_CHARS", 14000)
     body = "\n\n".join(f"[{fn[:60]}] {tx[:per_doc]}" for fn, tx in kept)[:total]
+    prompt = WORK_ORDER_PROMPT.format(deal=deal_name[:70], body=body)
+    max_tokens = _env_int("SOWSMITH_WORK_ORDER_MAX_TOKENS", 700)
     try:
         from app.core import llm_client
 
-        raw = llm_client.complete(
-            WORK_ORDER_PROMPT.format(deal=deal_name[:70], body=body),
-            max_tokens=_env_int("SOWSMITH_WORK_ORDER_MAX_TOKENS", 700),
-        ) or ""
+        model = llm_client.teacher_model()
+        key = cache_key(model, prompt, max_tokens)
+        raw = _cache_get(key)
+        if raw is None:
+            raw = llm_client.complete(
+                prompt,
+                max_tokens=max_tokens,
+                seed=_env_int("SOWSMITH_WORK_ORDER_SEED", 0),
+            ) or ""
+            _cache_put(key, model, raw)
     except Exception as exc:  # pragma: no cover
         logger.warning("work_order extraction failed: %s", exc)
         return {}
@@ -252,7 +374,12 @@ def pick_support(line_text: str, candidates: list[Any]) -> Any | None:
         have = _tokens(t)
         overlap = len(want & have) / len(want) if want else 0.0
         key = (round(overlap, 3), _authority_rank(a), -len(t))
-        if key > best_key:
+        # Ties go to the smaller atom id, not to whichever came first.
+        if key > best_key or (
+            key == best_key
+            and best is not None
+            and str(getattr(a, "id", "")) < str(getattr(best, "id", ""))
+        ):
             best, best_key = a, key
     return best
 
@@ -278,10 +405,17 @@ def mint_work_line_atoms(
     }
     site_count = work_order.get("site_count")
     added: list[Any] = []
-    for line in lines:
-        if not isinstance(line, dict):
-            continue
-        label = _line_label(line)
+    # Output order (and which duplicate wins dedup) must not follow the order the
+    # model happened to list lines in: sort by normalized label, then content.
+    labelled = sorted(
+        (
+            (_line_label(line), line)
+            for line in lines
+            if isinstance(line, dict)
+        ),
+        key=lambda lp: (lp[0].lower(), json.dumps(lp[1], sort_keys=True, default=str)),
+    )
+    for label, line in labelled:
         if not label:
             continue
         key = label.lower()
@@ -373,7 +507,7 @@ def apply_work_order(
     by_doc = group_by_document(atoms)
     top_n = _env_int("SOWSMITH_WORK_ORDER_MAX_DOCS", 12)
     body_chars = _env_int("SOWSMITH_WORK_ORDER_JUDGE_CHARS", 1800)
-    ranked = sorted(by_doc.items(), key=lambda kv: -len(kv[1]))[:top_n]
+    ranked = rank_documents(by_doc, top_n)
 
     kept: list[tuple[str, str]] = []
     support_pool: list[Any] = []
@@ -412,7 +546,55 @@ def apply_work_order(
     return atoms, minted, report
 
 
+def work_line_labels(atoms: list[Any]) -> list[str]:
+    """The minted work lines of a compile, normalized and sorted."""
+    return sorted(
+        {
+            re.sub(r"\s+", " ", _text(a).lower()).strip()
+            for a in atoms
+            if (getattr(a, "value", None) or {}).get("backfill_reason") == "work_order"
+        }
+    )
+
+
+def work_line_agreement(runs: list[list[str]]) -> float:
+    """How much N runs of the same deal agree on its work lines, in [0, 1].
+
+    Mean pairwise Jaccard over the normalized label sets. 1.0 means every run
+    produced the same lines; fewer than two runs, or runs that all produced
+    nothing, count as full agreement.
+    """
+    sets = [{re.sub(r"\s+", " ", str(x).lower()).strip() for x in r} for r in runs]
+    if len(sets) < 2:
+        return 1.0
+    total, pairs = 0.0, 0
+    for i in range(len(sets)):
+        for j in range(i + 1, len(sets)):
+            union = sets[i] | sets[j]
+            total += (len(sets[i] & sets[j]) / len(union)) if union else 1.0
+            pairs += 1
+    return total / pairs
+
+
+def deal_agreement(deal_id: str, runs: list[list[str]]) -> dict[str, Any]:
+    """Per-deal scorecard row: agreement plus the lines every run / some run saw."""
+    sets = [{re.sub(r"\s+", " ", str(x).lower()).strip() for x in r} for r in runs]
+    common = set.intersection(*sets) if sets else set()
+    union = set.union(*sets) if sets else set()
+    return {
+        "deal_id": deal_id,
+        "runs": len(runs),
+        "agreement": round(work_line_agreement(runs), 4),
+        "stable_lines": sorted(common),
+        "unstable_lines": sorted(union - common),
+    }
+
+
 __all__ = [
+    "deal_agreement",
+    "rank_documents",
+    "work_line_agreement",
+    "work_line_labels",
     "RELATION",
     "CANDIDATES",
     "apply_work_order",
