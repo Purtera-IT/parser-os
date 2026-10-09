@@ -1,0 +1,7746 @@
+{
+ "synthetic": true,
+ "source": "scripts/make_synthetic_division_labels.py",
+ "examples": [
+  {
+   "id": "syn-cable-0301",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull cable drops",
+      "object": "cable drop",
+      "count": 4,
+      "unit": "drop"
+     },
+     {
+      "work": "terminate cable drops",
+      "object": "cable drop",
+      "count": 2,
+      "unit": "drop"
+     },
+     {
+      "work": "certify cable drops",
+      "object": "cable drop",
+      "count": 4,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0086",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0287",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install patch panels",
+      "object": "patch panel",
+      "count": 150,
+      "unit": "run"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0169",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "image monitors",
+      "object": "monitor",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "refresh user profiles",
+      "object": "user profile",
+      "count": 60,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0054",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image user profiles",
+      "object": "user profile",
+      "count": 24,
+      "unit": "seat"
+     },
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0073",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount routers",
+      "object": "router",
+      "count": 24,
+      "unit": "unit"
+     },
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0203",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move printers",
+      "object": "printer",
+      "count": 12,
+      "unit": "move"
+     },
+     {
+      "work": "relocate desk phones",
+      "object": "desk phone",
+      "count": 1,
+      "unit": "user"
+     },
+     {
+      "work": "disconnect workstations",
+      "object": "workstation",
+      "count": 1,
+      "unit": "move"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0011",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 2,
+      "unit": "ap"
+     },
+     {
+      "work": "replace network switchs",
+      "object": "network switch",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0337",
+   "division": "palletize",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount projectors",
+      "object": "projector",
+      "count": 24,
+      "unit": "room"
+     },
+     {
+      "work": "palletize cartons",
+      "object": "carton",
+      "count": 24,
+      "unit": "carton"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": true
+   }
+  },
+  {
+   "id": "syn-netlv-0292",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull patch panels",
+      "object": "patch panel",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0217",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add desk phones",
+      "object": "desk phone",
+      "count": 24,
+      "unit": "user"
+     },
+     {
+      "work": "move cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 150,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0009",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0128",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0076",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "ap"
+     },
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0004",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace wireless controllers",
+      "object": "wireless controller",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0058",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "replace console servers",
+      "object": "console server",
+      "count": 60,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0052",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 12,
+      "unit": "ap"
+     },
+     {
+      "work": "mount wireless controllers",
+      "object": "wireless controller",
+      "count": 2,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0209",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect desk phones",
+      "object": "desk phone",
+      "count": 2,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0330",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate cable trays",
+      "object": "cable tray",
+      "count": 150,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0093",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage routers",
+      "object": "router",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0145",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image laptops",
+      "object": "laptop",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "migrate docking stations",
+      "object": "docking station",
+      "count": 150,
+      "unit": "seat"
+     },
+     {
+      "work": "refresh monitors",
+      "object": "monitor",
+      "count": 12,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0331",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "label cat6 cables",
+      "object": "cat6 cable",
+      "count": 24,
+      "unit": "foot"
+     },
+     {
+      "work": "terminate cable drops",
+      "object": "cable drop",
+      "count": 2,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0325",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull fiber runs",
+      "object": "fiber run",
+      "count": 4,
+      "unit": "foot"
+     },
+     {
+      "work": "dress cable drops",
+      "object": "cable drop",
+      "count": 8,
+      "unit": "run"
+     },
+     {
+      "work": "pull cable trays",
+      "object": "cable tray",
+      "count": 1,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0208",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move workstations",
+      "object": "workstation",
+      "count": 12,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0151",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 150,
+      "unit": "user"
+     },
+     {
+      "work": "migrate user profiles",
+      "object": "user profile",
+      "count": 12,
+      "unit": "user"
+     },
+     {
+      "work": "deploy user profiles",
+      "object": "user profile",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0161",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate user profiles",
+      "object": "user profile",
+      "count": 24,
+      "unit": "seat"
+     },
+     {
+      "work": "deploy desktops",
+      "object": "desktop",
+      "count": 24,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0065",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount firewalls",
+      "object": "firewall",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0071",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace network switchs",
+      "object": "network switch",
+      "count": 60,
+      "unit": "device"
+     },
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "install access points",
+      "object": "access point",
+      "count": 4,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0316",
+   "division": "Staff Aug",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide field technicians",
+      "object": "field technician",
+      "count": 8,
+      "unit": "week"
+     },
+     {
+      "work": "stage hardware kits",
+      "object": "hardware kit",
+      "count": 1,
+      "unit": "carton"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0062",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "stage access points",
+      "object": "access point",
+      "count": 1,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0335",
+   "division": "palletize",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage cartons",
+      "object": "carton",
+      "count": 12,
+      "unit": "pallet"
+     },
+     {
+      "work": "shrink wrap hardware kits",
+      "object": "hardware kit",
+      "count": 2,
+      "unit": "pallet"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0180",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image laptops",
+      "object": "laptop",
+      "count": 150,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0116",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 4,
+      "unit": "ap"
+     },
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0103",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "unit"
+     },
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 150,
+      "unit": "unit"
+     },
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0289",
+   "division": "Network/LV",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission security cameras",
+      "object": "security camera",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "install access points",
+      "object": "access point",
+      "count": 150,
+      "unit": "run"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0284",
+   "division": "Network/LV",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image docking stations",
+      "object": "docking station",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "pull access points",
+      "object": "access point",
+      "count": 2,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0167",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh user profiles",
+      "object": "user profile",
+      "count": 1,
+      "unit": "user"
+     },
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "image laptops",
+      "object": "laptop",
+      "count": 2,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0298",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate cat6 cables",
+      "object": "cat6 cable",
+      "count": 60,
+      "unit": "foot"
+     },
+     {
+      "work": "certify cat6 cables",
+      "object": "cat6 cable",
+      "count": 2,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0257",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "aim ip cameras",
+      "object": "ip camera",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "aim security cameras",
+      "object": "security camera",
+      "count": 8,
+      "unit": "camera"
+     },
+     {
+      "work": "install camera mounts",
+      "object": "camera mount",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0196",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 150,
+      "unit": "user"
+     },
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 24,
+      "unit": "desk"
+     },
+     {
+      "work": "add printers",
+      "object": "printer",
+      "count": 2,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0216",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate printers",
+      "object": "printer",
+      "count": 12,
+      "unit": "move"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0277",
+   "division": "Network/LV",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "drop"
+     },
+     {
+      "work": "staff field technicians",
+      "object": "field technician",
+      "count": 4,
+      "unit": "resource"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0271",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount displays",
+      "object": "display",
+      "count": 4,
+      "unit": "display"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0205",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 24,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0341",
+   "division": "palletize",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "ship hardware kits",
+      "object": "hardware kit",
+      "count": 12,
+      "unit": "pallet"
+     },
+     {
+      "work": "receive pallets",
+      "object": "pallet",
+      "count": 60,
+      "unit": "pallet"
+     },
+     {
+      "work": "stage shipments",
+      "object": "shipment",
+      "count": 150,
+      "unit": "carton"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0250",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "aim camera mounts",
+      "object": "camera mount",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "aim security cameras",
+      "object": "security camera",
+      "count": 24,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0171",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh user profiles",
+      "object": "user profile",
+      "count": 4,
+      "unit": "seat"
+     },
+     {
+      "work": "deploy docking stations",
+      "object": "docking station",
+      "count": 4,
+      "unit": "user"
+     },
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0008",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "ap"
+     },
+     {
+      "work": "install ip cameras",
+      "object": "ip camera",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0252",
+   "division": "Camera Install",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "aim nvrs",
+      "object": "nvr",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "pull fiber runs",
+      "object": "fiber run",
+      "count": 60,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0068",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "ap"
+     },
+     {
+      "work": "replace wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0276",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate low voltage drops",
+      "object": "low voltage drop",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0045",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "stage access points",
+      "object": "access point",
+      "count": 60,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0108",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0326",
+   "division": "Cabling",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "certify cat6 cables",
+      "object": "cat6 cable",
+      "count": 12,
+      "unit": "run"
+     },
+     {
+      "work": "relocate printers",
+      "object": "printer",
+      "count": 24,
+      "unit": "move"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0099",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 8,
+      "unit": "ap"
+     },
+     {
+      "work": "mount firewalls",
+      "object": "firewall",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0034",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "ap"
+     },
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0027",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 8,
+      "unit": "ap"
+     },
+     {
+      "work": "mount network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0094",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install routers",
+      "object": "router",
+      "count": 24,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0077",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0243",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount security cameras",
+      "object": "security camera",
+      "count": 60,
+      "unit": "camera"
+     },
+     {
+      "work": "install camera mounts",
+      "object": "camera mount",
+      "count": 8,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0248",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount nvrs",
+      "object": "nvr",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0070",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0138",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh docking stations",
+      "object": "docking station",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0297",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 60,
+      "unit": "drop"
+     },
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 24,
+      "unit": "drop"
+     },
+     {
+      "work": "label jacks",
+      "object": "jack",
+      "count": 8,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0191",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 60,
+      "unit": "desk"
+     },
+     {
+      "work": "dispatch field technicians",
+      "object": "field technician",
+      "count": 12,
+      "unit": "week"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0106",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 2,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0225",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect desk phones",
+      "object": "desk phone",
+      "count": 4,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0314",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide help desk analysts",
+      "object": "help desk analyst",
+      "count": 8,
+      "unit": "resource"
+     },
+     {
+      "work": "provide help desk analysts",
+      "object": "help desk analyst",
+      "count": 60,
+      "unit": "week"
+     },
+     {
+      "work": "dispatch onsite resources",
+      "object": "onsite resource",
+      "count": 12,
+      "unit": "week"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0313",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide onsite resources",
+      "object": "onsite resource",
+      "count": 12,
+      "unit": "hour"
+     },
+     {
+      "work": "staff onsite resources",
+      "object": "onsite resource",
+      "count": 24,
+      "unit": "resource"
+     },
+     {
+      "work": "dispatch field technicians",
+      "object": "field technician",
+      "count": 2,
+      "unit": "resource"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0029",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0074",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission displays",
+      "object": "display",
+      "count": 1,
+      "unit": "room"
+     },
+     {
+      "work": "replace network switchs",
+      "object": "network switch",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0340",
+   "division": "palletize",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "receive pallets",
+      "object": "pallet",
+      "count": 60,
+      "unit": "carton"
+     },
+     {
+      "work": "pull cable drops",
+      "object": "cable drop",
+      "count": 150,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": true
+   }
+  },
+  {
+   "id": "syn-cam-0245",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount camera mounts",
+      "object": "camera mount",
+      "count": 150,
+      "unit": "camera"
+     },
+     {
+      "work": "mount nvrs",
+      "object": "nvr",
+      "count": 2,
+      "unit": "camera"
+     },
+     {
+      "work": "aim camera mounts",
+      "object": "camera mount",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0061",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure routers",
+      "object": "router",
+      "count": 60,
+      "unit": "device"
+     },
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 60,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0078",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "mount routers",
+      "object": "router",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0210",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add desk phones",
+      "object": "desk phone",
+      "count": 150,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0185",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate laptops",
+      "object": "laptop",
+      "count": 2,
+      "unit": "user"
+     },
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 150,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0327",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull cable trays",
+      "object": "cable tray",
+      "count": 1,
+      "unit": "run"
+     },
+     {
+      "work": "terminate cable drops",
+      "object": "cable drop",
+      "count": 8,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0300",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull cable trays",
+      "object": "cable tray",
+      "count": 4,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0323",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide field technicians",
+      "object": "field technician",
+      "count": 150,
+      "unit": "week"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0021",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount routers",
+      "object": "router",
+      "count": 1,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0123",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0024",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "unit"
+     },
+     {
+      "work": "configure routers",
+      "object": "router",
+      "count": 2,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0121",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0100",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "ap"
+     },
+     {
+      "work": "stage routers",
+      "object": "router",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0223",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 60,
+      "unit": "desk"
+     },
+     {
+      "work": "disconnect desk phones",
+      "object": "desk phone",
+      "count": 150,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0044",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0339",
+   "division": "palletize",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "palletize cartons",
+      "object": "carton",
+      "count": 150,
+      "unit": "carton"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0307",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 24,
+      "unit": "drop"
+     },
+     {
+      "work": "certify fiber runs",
+      "object": "fiber run",
+      "count": 1,
+      "unit": "run"
+     },
+     {
+      "work": "certify jacks",
+      "object": "jack",
+      "count": 24,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0214",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 60,
+      "unit": "move"
+     },
+     {
+      "work": "move workstations",
+      "object": "workstation",
+      "count": 150,
+      "unit": "move"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0190",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "aim camera mounts",
+      "object": "camera mount",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "relocate desk phones",
+      "object": "desk phone",
+      "count": 150,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0055",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0097",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 8,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0165",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate laptops",
+      "object": "laptop",
+      "count": 8,
+      "unit": "seat"
+     },
+     {
+      "work": "deploy laptops",
+      "object": "laptop",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0131",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 60,
+      "unit": "ap"
+     },
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0187",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move workstations",
+      "object": "workstation",
+      "count": 2,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0304",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 150,
+      "unit": "drop"
+     },
+     {
+      "work": "terminate cat6 cables",
+      "object": "cat6 cable",
+      "count": 4,
+      "unit": "run"
+     },
+     {
+      "work": "certify fiber runs",
+      "object": "fiber run",
+      "count": 60,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0177",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0110",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "mount network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0230",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 150,
+      "unit": "desk"
+     },
+     {
+      "work": "move printers",
+      "object": "printer",
+      "count": 12,
+      "unit": "user"
+     },
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 8,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0309",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "label cat6 cables",
+      "object": "cat6 cable",
+      "count": 4,
+      "unit": "drop"
+     },
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 4,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0283",
+   "division": "Network/LV",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure low voltage drops",
+      "object": "low voltage drop",
+      "count": 60,
+      "unit": "drop"
+     },
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 60,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0329",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "certify cable trays",
+      "object": "cable tray",
+      "count": 60,
+      "unit": "run"
+     },
+     {
+      "work": "certify cable trays",
+      "object": "cable tray",
+      "count": 1,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0006",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install data drops",
+      "object": "data drop",
+      "count": 1,
+      "unit": "run"
+     },
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0035",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure access points",
+      "object": "access point",
+      "count": 8,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0266",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission conference room speakers",
+      "object": "conference room speaker",
+      "count": 8,
+      "unit": "display"
+     },
+     {
+      "work": "commission video bars",
+      "object": "video bar",
+      "count": 1,
+      "unit": "room"
+     },
+     {
+      "work": "mount displays",
+      "object": "display",
+      "count": 24,
+      "unit": "room"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0278",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "pull access points",
+      "object": "access point",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0038",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure access points",
+      "object": "access point",
+      "count": 12,
+      "unit": "unit"
+     },
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0254",
+   "division": "Camera Install",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount ip cameras",
+      "object": "ip camera",
+      "count": 4,
+      "unit": "camera"
+     },
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 24,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0315",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "dispatch field technicians",
+      "object": "field technician",
+      "count": 60,
+      "unit": "hour"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0048",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0338",
+   "division": "palletize",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "ship shipments",
+      "object": "shipment",
+      "count": 12,
+      "unit": "pallet"
+     },
+     {
+      "work": "shrink wrap shipments",
+      "object": "shipment",
+      "count": 12,
+      "unit": "pallet"
+     },
+     {
+      "work": "shrink wrap hardware kits",
+      "object": "hardware kit",
+      "count": 4,
+      "unit": "pallet"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": true
+   }
+  },
+  {
+   "id": "syn-net-0022",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0113",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "install access points",
+      "object": "access point",
+      "count": 4,
+      "unit": "unit"
+     },
+     {
+      "work": "configure access points",
+      "object": "access point",
+      "count": 2,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0164",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate laptops",
+      "object": "laptop",
+      "count": 60,
+      "unit": "seat"
+     },
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "deploy user profiles",
+      "object": "user profile",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0075",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install wireless controllers",
+      "object": "wireless controller",
+      "count": 8,
+      "unit": "ap"
+     },
+     {
+      "work": "mount network switchs",
+      "object": "network switch",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0172",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate desktops",
+      "object": "desktop",
+      "count": 60,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0267",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission video bars",
+      "object": "video bar",
+      "count": 60,
+      "unit": "display"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0218",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add desk phones",
+      "object": "desk phone",
+      "count": 24,
+      "unit": "desk"
+     },
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 60,
+      "unit": "move"
+     },
+     {
+      "work": "add printers",
+      "object": "printer",
+      "count": 24,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0181",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0259",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission conference room speakers",
+      "object": "conference room speaker",
+      "count": 8,
+      "unit": "room"
+     },
+     {
+      "work": "mount displays",
+      "object": "display",
+      "count": 24,
+      "unit": "room"
+     },
+     {
+      "work": "install displays",
+      "object": "display",
+      "count": 1,
+      "unit": "display"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0088",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "stage routers",
+      "object": "router",
+      "count": 60,
+      "unit": "unit"
+     },
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0125",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install patch panels",
+      "object": "patch panel",
+      "count": 4,
+      "unit": "drop"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0221",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 12,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0215",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add workstations",
+      "object": "workstation",
+      "count": 2,
+      "unit": "move"
+     },
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 2,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0334",
+   "division": "palletize",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "palletize cartons",
+      "object": "carton",
+      "count": 12,
+      "unit": "carton"
+     },
+     {
+      "work": "shrink wrap pallets",
+      "object": "pallet",
+      "count": 150,
+      "unit": "pallet"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0294",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate fiber runs",
+      "object": "fiber run",
+      "count": 1,
+      "unit": "run"
+     },
+     {
+      "work": "terminate cable drops",
+      "object": "cable drop",
+      "count": 150,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0117",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 150,
+      "unit": "device"
+     },
+     {
+      "work": "disconnect workstations",
+      "object": "workstation",
+      "count": 24,
+      "unit": "move"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0156",
+   "division": "EUC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh docking stations",
+      "object": "docking station",
+      "count": 24,
+      "unit": "user"
+     },
+     {
+      "work": "mount displays",
+      "object": "display",
+      "count": 60,
+      "unit": "display"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0119",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0019",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "ap"
+     },
+     {
+      "work": "replace routers",
+      "object": "router",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0197",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate printers",
+      "object": "printer",
+      "count": 4,
+      "unit": "move"
+     },
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 24,
+      "unit": "user"
+     },
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 1,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0091",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install displays",
+      "object": "display",
+      "count": 2,
+      "unit": "display"
+     },
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0176",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate desktops",
+      "object": "desktop",
+      "count": 8,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0237",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission camera mounts",
+      "object": "camera mount",
+      "count": 150,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0154",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh user profiles",
+      "object": "user profile",
+      "count": 12,
+      "unit": "user"
+     },
+     {
+      "work": "image laptops",
+      "object": "laptop",
+      "count": 8,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0063",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "configure routers",
+      "object": "router",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0170",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy laptops",
+      "object": "laptop",
+      "count": 1,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0317",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "staff field technicians",
+      "object": "field technician",
+      "count": 150,
+      "unit": "hour"
+     },
+     {
+      "work": "provide field technicians",
+      "object": "field technician",
+      "count": 60,
+      "unit": "resource"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0233",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate printers",
+      "object": "printer",
+      "count": 4,
+      "unit": "user"
+     },
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 2,
+      "unit": "move"
+     },
+     {
+      "work": "change cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 12,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0032",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0275",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount video bars",
+      "object": "video bar",
+      "count": 1,
+      "unit": "room"
+     },
+     {
+      "work": "calibrate displays",
+      "object": "display",
+      "count": 2,
+      "unit": "display"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0295",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "certify cable trays",
+      "object": "cable tray",
+      "count": 8,
+      "unit": "run"
+     },
+     {
+      "work": "dress jacks",
+      "object": "jack",
+      "count": 2,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0002",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage routers",
+      "object": "router",
+      "count": 4,
+      "unit": "ap"
+     },
+     {
+      "work": "stage firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0152",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate monitors",
+      "object": "monitor",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "refresh laptops",
+      "object": "laptop",
+      "count": 24,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0189",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 8,
+      "unit": "user"
+     },
+     {
+      "work": "move workstations",
+      "object": "workstation",
+      "count": 4,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0143",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image user profiles",
+      "object": "user profile",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "deploy desktops",
+      "object": "desktop",
+      "count": 60,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0306",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate cable drops",
+      "object": "cable drop",
+      "count": 60,
+      "unit": "foot"
+     },
+     {
+      "work": "certify jacks",
+      "object": "jack",
+      "count": 2,
+      "unit": "foot"
+     },
+     {
+      "work": "pull cable drops",
+      "object": "cable drop",
+      "count": 60,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0269",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install conference room speakers",
+      "object": "conference room speaker",
+      "count": 8,
+      "unit": "room"
+     },
+     {
+      "work": "install displays",
+      "object": "display",
+      "count": 150,
+      "unit": "display"
+     },
+     {
+      "work": "install video bars",
+      "object": "video bar",
+      "count": 150,
+      "unit": "room"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0227",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add workstations",
+      "object": "workstation",
+      "count": 1,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0084",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 4,
+      "unit": "ap"
+     },
+     {
+      "work": "replace network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0318",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide help desk analysts",
+      "object": "help desk analyst",
+      "count": 2,
+      "unit": "hour"
+     },
+     {
+      "work": "provide field technicians",
+      "object": "field technician",
+      "count": 4,
+      "unit": "resource"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0102",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0132",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "ship cartons",
+      "object": "carton",
+      "count": 24,
+      "unit": "carton"
+     },
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0136",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount network switchs",
+      "object": "network switch",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0253",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount security cameras",
+      "object": "security camera",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0067",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure access points",
+      "object": "access point",
+      "count": 150,
+      "unit": "device"
+     },
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 60,
+      "unit": "unit"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0003",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0166",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate docking stations",
+      "object": "docking station",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0030",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 60,
+      "unit": "unit"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0001",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure routers",
+      "object": "router",
+      "count": 8,
+      "unit": "ap"
+     },
+     {
+      "work": "aim camera mounts",
+      "object": "camera mount",
+      "count": 60,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0206",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install projectors",
+      "object": "projector",
+      "count": 24,
+      "unit": "display"
+     },
+     {
+      "work": "disconnect desk phones",
+      "object": "desk phone",
+      "count": 1,
+      "unit": "move"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0141",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh user profiles",
+      "object": "user profile",
+      "count": 24,
+      "unit": "seat"
+     },
+     {
+      "work": "migrate desktops",
+      "object": "desktop",
+      "count": 8,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0312",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide field technicians",
+      "object": "field technician",
+      "count": 8,
+      "unit": "hour"
+     },
+     {
+      "work": "dispatch help desk analysts",
+      "object": "help desk analyst",
+      "count": 150,
+      "unit": "resource"
+     },
+     {
+      "work": "staff field technicians",
+      "object": "field technician",
+      "count": 150,
+      "unit": "hour"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0104",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0098",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "ap"
+     },
+     {
+      "work": "dispatch help desk analysts",
+      "object": "help desk analyst",
+      "count": 8,
+      "unit": "resource"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0238",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount camera mounts",
+      "object": "camera mount",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "commission security cameras",
+      "object": "security camera",
+      "count": 8,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0261",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install conference room speakers",
+      "object": "conference room speaker",
+      "count": 1,
+      "unit": "display"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0020",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "unit"
+     },
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "unit"
+     },
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0066",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace wireless controllers",
+      "object": "wireless controller",
+      "count": 8,
+      "unit": "ap"
+     },
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 60,
+      "unit": "unit"
+     },
+     {
+      "work": "replace wireless controllers",
+      "object": "wireless controller",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0140",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0303",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "dress fiber runs",
+      "object": "fiber run",
+      "count": 12,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0204",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add desk phones",
+      "object": "desk phone",
+      "count": 4,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0178",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image laptops",
+      "object": "laptop",
+      "count": 150,
+      "unit": "seat"
+     },
+     {
+      "work": "image user profiles",
+      "object": "user profile",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "refresh laptops",
+      "object": "laptop",
+      "count": 60,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0251",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install camera mounts",
+      "object": "camera mount",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "commission camera mounts",
+      "object": "camera mount",
+      "count": 24,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0081",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 2,
+      "unit": "unit"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0016",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0272",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install conference room speakers",
+      "object": "conference room speaker",
+      "count": 12,
+      "unit": "display"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0192",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 12,
+      "unit": "desk"
+     },
+     {
+      "work": "disconnect desk phones",
+      "object": "desk phone",
+      "count": 4,
+      "unit": "desk"
+     },
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 8,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0041",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "ap"
+     },
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0007",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 1,
+      "unit": "unit"
+     },
+     {
+      "work": "mount network switchs",
+      "object": "network switch",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0332",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate cat6 cables",
+      "object": "cat6 cable",
+      "count": 8,
+      "unit": "drop"
+     },
+     {
+      "work": "certify cable trays",
+      "object": "cable tray",
+      "count": 8,
+      "unit": "foot"
+     },
+     {
+      "work": "label cable trays",
+      "object": "cable tray",
+      "count": 2,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0288",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure low voltage drops",
+      "object": "low voltage drop",
+      "count": 4,
+      "unit": "run"
+     },
+     {
+      "work": "terminate low voltage drops",
+      "object": "low voltage drop",
+      "count": 1,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0239",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount ip cameras",
+      "object": "ip camera",
+      "count": 150,
+      "unit": "device"
+     },
+     {
+      "work": "install ip cameras",
+      "object": "ip camera",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "commission security cameras",
+      "object": "security camera",
+      "count": 24,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0184",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy docking stations",
+      "object": "docking station",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0126",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0226",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install ip cameras",
+      "object": "ip camera",
+      "count": 150,
+      "unit": "device"
+     },
+     {
+      "work": "add workstations",
+      "object": "workstation",
+      "count": 2,
+      "unit": "move"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0263",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install conference room speakers",
+      "object": "conference room speaker",
+      "count": 150,
+      "unit": "room"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0212",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 24,
+      "unit": "move"
+     },
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 1,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0279",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate patch panels",
+      "object": "patch panel",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0157",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy desktops",
+      "object": "desktop",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "deploy desktops",
+      "object": "desktop",
+      "count": 150,
+      "unit": "seat"
+     },
+     {
+      "work": "migrate laptops",
+      "object": "laptop",
+      "count": 150,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0296",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull cable drops",
+      "object": "cable drop",
+      "count": 24,
+      "unit": "run"
+     },
+     {
+      "work": "terminate cable drops",
+      "object": "cable drop",
+      "count": 60,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0268",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount conference room speakers",
+      "object": "conference room speaker",
+      "count": 60,
+      "unit": "display"
+     },
+     {
+      "work": "commission touch panels",
+      "object": "touch panel",
+      "count": 8,
+      "unit": "room"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0142",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh user profiles",
+      "object": "user profile",
+      "count": 60,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0193",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add printers",
+      "object": "printer",
+      "count": 150,
+      "unit": "move"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0137",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0320",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide field technicians",
+      "object": "field technician",
+      "count": 2,
+      "unit": "hour"
+     },
+     {
+      "work": "staff help desk analysts",
+      "object": "help desk analyst",
+      "count": 150,
+      "unit": "resource"
+     },
+     {
+      "work": "provide field technicians",
+      "object": "field technician",
+      "count": 1,
+      "unit": "week"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0265",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "calibrate displays",
+      "object": "display",
+      "count": 8,
+      "unit": "room"
+     },
+     {
+      "work": "commission displays",
+      "object": "display",
+      "count": 12,
+      "unit": "room"
+     },
+     {
+      "work": "calibrate conference room speakers",
+      "object": "conference room speaker",
+      "count": 60,
+      "unit": "room"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0133",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0129",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "ap"
+     },
+     {
+      "work": "install routers",
+      "object": "router",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0135",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "device"
+     },
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0056",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "ap"
+     },
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0036",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0139",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "refresh laptops",
+      "object": "laptop",
+      "count": 60,
+      "unit": "user"
+     },
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 2,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0107",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure access points",
+      "object": "access point",
+      "count": 4,
+      "unit": "ap"
+     },
+     {
+      "work": "configure routers",
+      "object": "router",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0014",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 4,
+      "unit": "ap"
+     },
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 60,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0096",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh laptops",
+      "object": "laptop",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0000",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "mount wireless controllers",
+      "object": "wireless controller",
+      "count": 60,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0111",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 24,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0242",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount nvrs",
+      "object": "nvr",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0085",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy docking stations",
+      "object": "docking station",
+      "count": 4,
+      "unit": "seat"
+     },
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0013",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount routers",
+      "object": "router",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "configure access points",
+      "object": "access point",
+      "count": 4,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0158",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh laptops",
+      "object": "laptop",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "migrate user profiles",
+      "object": "user profile",
+      "count": 60,
+      "unit": "seat"
+     },
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 24,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0260",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install video bars",
+      "object": "video bar",
+      "count": 8,
+      "unit": "display"
+     },
+     {
+      "work": "calibrate projectors",
+      "object": "projector",
+      "count": 1,
+      "unit": "display"
+     },
+     {
+      "work": "calibrate displays",
+      "object": "display",
+      "count": 12,
+      "unit": "room"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0235",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount camera mounts",
+      "object": "camera mount",
+      "count": 4,
+      "unit": "camera"
+     },
+     {
+      "work": "aim nvrs",
+      "object": "nvr",
+      "count": 1,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0127",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 60,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0232",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change desk phones",
+      "object": "desk phone",
+      "count": 12,
+      "unit": "move"
+     },
+     {
+      "work": "disconnect desk phones",
+      "object": "desk phone",
+      "count": 2,
+      "unit": "user"
+     },
+     {
+      "work": "move cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 150,
+      "unit": "move"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0194",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 150,
+      "unit": "user"
+     },
+     {
+      "work": "mount displays",
+      "object": "display",
+      "count": 150,
+      "unit": "room"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0240",
+   "division": "Camera Install",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change desk phones",
+      "object": "desk phone",
+      "count": 150,
+      "unit": "move"
+     },
+     {
+      "work": "mount nvrs",
+      "object": "nvr",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0328",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull cable drops",
+      "object": "cable drop",
+      "count": 12,
+      "unit": "foot"
+     },
+     {
+      "work": "pull cable drops",
+      "object": "cable drop",
+      "count": 24,
+      "unit": "run"
+     },
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 2,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0219",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change desk phones",
+      "object": "desk phone",
+      "count": 1,
+      "unit": "desk"
+     },
+     {
+      "work": "change desk phones",
+      "object": "desk phone",
+      "count": 150,
+      "unit": "move"
+     },
+     {
+      "work": "move printers",
+      "object": "printer",
+      "count": 24,
+      "unit": "move"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0149",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 8,
+      "unit": "user"
+     },
+     {
+      "work": "deploy desktops",
+      "object": "desktop",
+      "count": 2,
+      "unit": "seat"
+     },
+     {
+      "work": "image user profiles",
+      "object": "user profile",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0241",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount nvrs",
+      "object": "nvr",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "install camera mounts",
+      "object": "camera mount",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "commission camera mounts",
+      "object": "camera mount",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0155",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image docking stations",
+      "object": "docking station",
+      "count": 12,
+      "unit": "seat"
+     },
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 8,
+      "unit": "seat"
+     },
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 2,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0234",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "aim camera mounts",
+      "object": "camera mount",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "install security cameras",
+      "object": "security camera",
+      "count": 60,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0273",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "calibrate video bars",
+      "object": "video bar",
+      "count": 2,
+      "unit": "room"
+     },
+     {
+      "work": "mount conference room speakers",
+      "object": "conference room speaker",
+      "count": 1,
+      "unit": "room"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0005",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 24,
+      "unit": "unit"
+     },
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0324",
+   "division": "Cabling",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull cable trays",
+      "object": "cable tray",
+      "count": 4,
+      "unit": "run"
+     },
+     {
+      "work": "terminate cable trays",
+      "object": "cable tray",
+      "count": 24,
+      "unit": "foot"
+     },
+     {
+      "work": "label jacks",
+      "object": "jack",
+      "count": 24,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0322",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "dispatch help desk analysts",
+      "object": "help desk analyst",
+      "count": 2,
+      "unit": "hour"
+     },
+     {
+      "work": "provide onsite resources",
+      "object": "onsite resource",
+      "count": 150,
+      "unit": "resource"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0305",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "certify fiber runs",
+      "object": "fiber run",
+      "count": 12,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0302",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "dress cat6 cables",
+      "object": "cat6 cable",
+      "count": 60,
+      "unit": "run"
+     },
+     {
+      "work": "certify cable trays",
+      "object": "cable tray",
+      "count": 12,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0291",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 60,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0033",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 60,
+      "unit": "user"
+     },
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0083",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0159",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy docking stations",
+      "object": "docking station",
+      "count": 150,
+      "unit": "seat"
+     },
+     {
+      "work": "migrate desktops",
+      "object": "desktop",
+      "count": 4,
+      "unit": "user"
+     },
+     {
+      "work": "migrate monitors",
+      "object": "monitor",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0114",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0213",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull cable drops",
+      "object": "cable drop",
+      "count": 60,
+      "unit": "drop"
+     },
+     {
+      "work": "relocate printers",
+      "object": "printer",
+      "count": 4,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0053",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install routers",
+      "object": "router",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0037",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0025",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "unit"
+     },
+     {
+      "work": "deploy laptops",
+      "object": "laptop",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0175",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0018",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0080",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 1,
+      "unit": "unit"
+     },
+     {
+      "work": "mount network switchs",
+      "object": "network switch",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0255",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install camera mounts",
+      "object": "camera mount",
+      "count": 8,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0059",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "unit"
+     },
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 60,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0229",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move desk phones",
+      "object": "desk phone",
+      "count": 12,
+      "unit": "user"
+     },
+     {
+      "work": "relocate cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 4,
+      "unit": "user"
+     },
+     {
+      "work": "change desk phones",
+      "object": "desk phone",
+      "count": 2,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0148",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0109",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "ap"
+     },
+     {
+      "work": "install access points",
+      "object": "access point",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0247",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission nvrs",
+      "object": "nvr",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0201",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission conference room speakers",
+      "object": "conference room speaker",
+      "count": 2,
+      "unit": "display"
+     },
+     {
+      "work": "disconnect workstations",
+      "object": "workstation",
+      "count": 2,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0224",
+   "division": "IMAC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 12,
+      "unit": "user"
+     },
+     {
+      "work": "disconnect workstations",
+      "object": "workstation",
+      "count": 2,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0120",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace routers",
+      "object": "router",
+      "count": 60,
+      "unit": "device"
+     },
+     {
+      "work": "terminate cat6 cables",
+      "object": "cat6 cable",
+      "count": 2,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0051",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "unit"
+     },
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0236",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install security cameras",
+      "object": "security camera",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "aim security cameras",
+      "object": "security camera",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "aim nvrs",
+      "object": "nvr",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0042",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add desk phones",
+      "object": "desk phone",
+      "count": 1,
+      "unit": "desk"
+     },
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0286",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate data drops",
+      "object": "data drop",
+      "count": 60,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0280",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install low voltage drops",
+      "object": "low voltage drop",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "pull access points",
+      "object": "access point",
+      "count": 4,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0274",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "calibrate displays",
+      "object": "display",
+      "count": 12,
+      "unit": "room"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0183",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate user profiles",
+      "object": "user profile",
+      "count": 4,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0153",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 150,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0124",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "ap"
+     },
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 60,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0147",
+   "division": "EUC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh laptops",
+      "object": "laptop",
+      "count": 24,
+      "unit": "user"
+     },
+     {
+      "work": "ship pallets",
+      "object": "pallet",
+      "count": 1,
+      "unit": "pallet"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0222",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 1,
+      "unit": "desk"
+     },
+     {
+      "work": "move cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 2,
+      "unit": "move"
+     },
+     {
+      "work": "add printers",
+      "object": "printer",
+      "count": 150,
+      "unit": "move"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0118",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 1,
+      "unit": "ap"
+     },
+     {
+      "work": "mount wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "unit"
+     },
+     {
+      "work": "install routers",
+      "object": "router",
+      "count": 12,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0162",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh docking stations",
+      "object": "docking station",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0188",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 4,
+      "unit": "move"
+     },
+     {
+      "work": "add workstations",
+      "object": "workstation",
+      "count": 2,
+      "unit": "user"
+     },
+     {
+      "work": "change cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 60,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0017",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 2,
+      "unit": "ap"
+     },
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0090",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 24,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0336",
+   "division": "palletize",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "shrink wrap shipments",
+      "object": "shipment",
+      "count": 2,
+      "unit": "carton"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0186",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate desk phones",
+      "object": "desk phone",
+      "count": 1,
+      "unit": "desk"
+     },
+     {
+      "work": "change cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 4,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0311",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate fiber runs",
+      "object": "fiber run",
+      "count": 1,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0082",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage firewalls",
+      "object": "firewall",
+      "count": 1,
+      "unit": "ap"
+     },
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0064",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount routers",
+      "object": "router",
+      "count": 60,
+      "unit": "ap"
+     },
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 2,
+      "unit": "ap"
+     },
+     {
+      "work": "stage routers",
+      "object": "router",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0072",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage access points",
+      "object": "access point",
+      "count": 12,
+      "unit": "ap"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 150,
+      "unit": "ap"
+     },
+     {
+      "work": "mount access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0079",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 60,
+      "unit": "unit"
+     },
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0122",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 1,
+      "unit": "unit"
+     },
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0069",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "device"
+     },
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0089",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace routers",
+      "object": "router",
+      "count": 60,
+      "unit": "unit"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 24,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0310",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 150,
+      "unit": "run"
+     },
+     {
+      "work": "label fiber runs",
+      "object": "fiber run",
+      "count": 4,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0246",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount security cameras",
+      "object": "security camera",
+      "count": 12,
+      "unit": "camera"
+     },
+     {
+      "work": "install camera mounts",
+      "object": "camera mount",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0060",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "ap"
+     },
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 60,
+      "unit": "ap"
+     },
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0087",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount network switchs",
+      "object": "network switch",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 1,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0281",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "pull patch panels",
+      "object": "patch panel",
+      "count": 1,
+      "unit": "run"
+     },
+     {
+      "work": "install access points",
+      "object": "access point",
+      "count": 8,
+      "unit": "run"
+     },
+     {
+      "work": "install patch panels",
+      "object": "patch panel",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0040",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0050",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace console servers",
+      "object": "console server",
+      "count": 12,
+      "unit": "ap"
+     },
+     {
+      "work": "configure console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-pallet-0333",
+   "division": "palletize",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "receive shipments",
+      "object": "shipment",
+      "count": 150,
+      "unit": "pallet"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": true
+   }
+  },
+  {
+   "id": "syn-imac-0207",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 2,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0182",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate monitors",
+      "object": "monitor",
+      "count": 60,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0115",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage access points",
+      "object": "access point",
+      "count": 60,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0039",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount routers",
+      "object": "router",
+      "count": 60,
+      "unit": "device"
+     },
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0211",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move desk phones",
+      "object": "desk phone",
+      "count": 8,
+      "unit": "desk"
+     },
+     {
+      "work": "disconnect workstations",
+      "object": "workstation",
+      "count": 1,
+      "unit": "move"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0256",
+   "division": "Camera Install",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission security cameras",
+      "object": "security camera",
+      "count": 4,
+      "unit": "camera"
+     },
+     {
+      "work": "replace console servers",
+      "object": "console server",
+      "count": 60,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0228",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 12,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0015",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount firewalls",
+      "object": "firewall",
+      "count": 60,
+      "unit": "ap"
+     },
+     {
+      "work": "configure firewalls",
+      "object": "firewall",
+      "count": 2,
+      "unit": "unit"
+     },
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 2,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0023",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install access points",
+      "object": "access point",
+      "count": 2,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0220",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "add cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 150,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0101",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace network switchs",
+      "object": "network switch",
+      "count": 1,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0105",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install console servers",
+      "object": "console server",
+      "count": 24,
+      "unit": "ap"
+     },
+     {
+      "work": "replace wireless controllers",
+      "object": "wireless controller",
+      "count": 8,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0168",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "migrate laptops",
+      "object": "laptop",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0028",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage firewalls",
+      "object": "firewall",
+      "count": 2,
+      "unit": "ap"
+     },
+     {
+      "work": "install wireless controllers",
+      "object": "wireless controller",
+      "count": 8,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0231",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change printers",
+      "object": "printer",
+      "count": 8,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0321",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "staff help desk analysts",
+      "object": "help desk analyst",
+      "count": 12,
+      "unit": "hour"
+     },
+     {
+      "work": "staff help desk analysts",
+      "object": "help desk analyst",
+      "count": 150,
+      "unit": "week"
+     },
+     {
+      "work": "staff field technicians",
+      "object": "field technician",
+      "count": 150,
+      "unit": "resource"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0092",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage firewalls",
+      "object": "firewall",
+      "count": 8,
+      "unit": "unit"
+     },
+     {
+      "work": "stage console servers",
+      "object": "console server",
+      "count": 150,
+      "unit": "device"
+     },
+     {
+      "work": "mount firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0130",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace routers",
+      "object": "router",
+      "count": 8,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-staff-0319",
+   "division": "Staff Aug",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "provide onsite resources",
+      "object": "onsite resource",
+      "count": 4,
+      "unit": "resource"
+     },
+     {
+      "work": "dispatch onsite resources",
+      "object": "onsite resource",
+      "count": 2,
+      "unit": "week"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0026",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount wireless controllers",
+      "object": "wireless controller",
+      "count": 4,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0179",
+   "division": "EUC",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 60,
+      "unit": "user"
+     },
+     {
+      "work": "label cable drops",
+      "object": "cable drop",
+      "count": 24,
+      "unit": "run"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0199",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "disconnect cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 150,
+      "unit": "user"
+     },
+     {
+      "work": "add cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 24,
+      "unit": "move"
+     },
+     {
+      "work": "relocate desk phones",
+      "object": "desk phone",
+      "count": 1,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0258",
+   "division": "AV",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install video bars",
+      "object": "video bar",
+      "count": 24,
+      "unit": "room"
+     },
+     {
+      "work": "stage hardware kits",
+      "object": "hardware kit",
+      "count": 1,
+      "unit": "pallet"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0112",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure wireless controllers",
+      "object": "wireless controller",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0163",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh laptops",
+      "object": "laptop",
+      "count": 1,
+      "unit": "user"
+     },
+     {
+      "work": "refresh monitors",
+      "object": "monitor",
+      "count": 12,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0134",
+   "division": "Networking",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "unit"
+     },
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 150,
+      "unit": "unit"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0308",
+   "division": "Cable",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "certify jacks",
+      "object": "jack",
+      "count": 1,
+      "unit": "foot"
+     },
+     {
+      "work": "ship cartons",
+      "object": "carton",
+      "count": 24,
+      "unit": "carton"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0160",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy monitors",
+      "object": "monitor",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "refresh monitors",
+      "object": "monitor",
+      "count": 24,
+      "unit": "user"
+     },
+     {
+      "work": "migrate desktops",
+      "object": "desktop",
+      "count": 8,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0043",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install wireless controllers",
+      "object": "wireless controller",
+      "count": 24,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0047",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount console servers",
+      "object": "console server",
+      "count": 4,
+      "unit": "unit"
+     },
+     {
+      "work": "stage wireless controllers",
+      "object": "wireless controller",
+      "count": 1,
+      "unit": "unit"
+     },
+     {
+      "work": "configure access points",
+      "object": "access point",
+      "count": 12,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0146",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image laptops",
+      "object": "laptop",
+      "count": 60,
+      "unit": "seat"
+     },
+     {
+      "work": "migrate docking stations",
+      "object": "docking station",
+      "count": 150,
+      "unit": "device"
+     },
+     {
+      "work": "migrate monitors",
+      "object": "monitor",
+      "count": 12,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0290",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 12,
+      "unit": "run"
+     },
+     {
+      "work": "terminate network switchs",
+      "object": "network switch",
+      "count": 12,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0049",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install firewalls",
+      "object": "firewall",
+      "count": 12,
+      "unit": "device"
+     },
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 60,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0262",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "mount displays",
+      "object": "display",
+      "count": 12,
+      "unit": "display"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0282",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "terminate access points",
+      "object": "access point",
+      "count": 1,
+      "unit": "drop"
+     },
+     {
+      "work": "pull access points",
+      "object": "access point",
+      "count": 4,
+      "unit": "drop"
+     },
+     {
+      "work": "install patch panels",
+      "object": "patch panel",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0249",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "commission camera mounts",
+      "object": "camera mount",
+      "count": 24,
+      "unit": "camera"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0200",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move printers",
+      "object": "printer",
+      "count": 4,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0285",
+   "division": "Network/LV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "install access points",
+      "object": "access point",
+      "count": 24,
+      "unit": "run"
+     },
+     {
+      "work": "terminate access points",
+      "object": "access point",
+      "count": 2,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cable-0299",
+   "division": "Cable",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "certify jacks",
+      "object": "jack",
+      "count": 4,
+      "unit": "run"
+     },
+     {
+      "work": "certify cat6 cables",
+      "object": "cat6 cable",
+      "count": 8,
+      "unit": "foot"
+     },
+     {
+      "work": "label cable trays",
+      "object": "cable tray",
+      "count": 150,
+      "unit": "foot"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0144",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy docking stations",
+      "object": "docking station",
+      "count": 2,
+      "unit": "user"
+     },
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 2,
+      "unit": "device"
+     },
+     {
+      "work": "image desktops",
+      "object": "desktop",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0173",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "deploy laptops",
+      "object": "laptop",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "image monitors",
+      "object": "monitor",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "deploy user profiles",
+      "object": "user profile",
+      "count": 12,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0270",
+   "division": "AV",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "calibrate video bars",
+      "object": "video bar",
+      "count": 1,
+      "unit": "display"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0012",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "install network switchs",
+      "object": "network switch",
+      "count": 150,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0046",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage firewalls",
+      "object": "firewall",
+      "count": 24,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0202",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 24,
+      "unit": "desk"
+     },
+     {
+      "work": "add desk phones",
+      "object": "desk phone",
+      "count": 8,
+      "unit": "user"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0150",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 60,
+      "unit": "user"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0057",
+   "division": "Network",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 8,
+      "unit": "drop"
+     },
+     {
+      "work": "stage routers",
+      "object": "router",
+      "count": 2,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-av-0264",
+   "division": "AV",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "stage network switchs",
+      "object": "network switch",
+      "count": 2,
+      "unit": "unit"
+     },
+     {
+      "work": "calibrate projectors",
+      "object": "projector",
+      "count": 150,
+      "unit": "room"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0195",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "change workstations",
+      "object": "workstation",
+      "count": 8,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0031",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "configure network switchs",
+      "object": "network switch",
+      "count": 1,
+      "unit": "ap"
+     },
+     {
+      "work": "configure routers",
+      "object": "router",
+      "count": 1,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-cam-0244",
+   "division": "Camera Install",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "aim security cameras",
+      "object": "security camera",
+      "count": 4,
+      "unit": "device"
+     },
+     {
+      "work": "mount camera mounts",
+      "object": "camera mount",
+      "count": 24,
+      "unit": "device"
+     },
+     {
+      "work": "mount ip cameras",
+      "object": "ip camera",
+      "count": 8,
+      "unit": "device"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0010",
+   "division": "Network",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "replace access points",
+      "object": "access point",
+      "count": 1,
+      "unit": "ap"
+     },
+     {
+      "work": "replace routers",
+      "object": "router",
+      "count": 1,
+      "unit": "unit"
+     },
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 4,
+      "unit": "device"
+     }
+    ],
+    "after_hours": true,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-netlv-0293",
+   "division": "Network/LV",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "relocate workstations",
+      "object": "workstation",
+      "count": 150,
+      "unit": "move"
+     },
+     {
+      "work": "configure data drops",
+      "object": "data drop",
+      "count": 4,
+      "unit": "drop"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-euc-0174",
+   "division": "EUC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "image monitors",
+      "object": "monitor",
+      "count": 60,
+      "unit": "user"
+     },
+     {
+      "work": "deploy docking stations",
+      "object": "docking station",
+      "count": 8,
+      "unit": "device"
+     },
+     {
+      "work": "refresh desktops",
+      "object": "desktop",
+      "count": 8,
+      "unit": "seat"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-net-0095",
+   "division": "Networking",
+   "ambiguous": true,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "calibrate displays",
+      "object": "display",
+      "count": 150,
+      "unit": "room"
+     },
+     {
+      "work": "replace firewalls",
+      "object": "firewall",
+      "count": 2,
+      "unit": "ap"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  },
+  {
+   "id": "syn-imac-0198",
+   "division": "IMAC",
+   "ambiguous": false,
+   "work_order": {
+    "work_lines": [
+     {
+      "work": "move cubicle equipments",
+      "object": "cubicle equipment",
+      "count": 60,
+      "unit": "move"
+     },
+     {
+      "work": "move desk phones",
+      "object": "desk phone",
+      "count": 24,
+      "unit": "desk"
+     },
+     {
+      "work": "change desk phones",
+      "object": "desk phone",
+      "count": 1,
+      "unit": "desk"
+     }
+    ],
+    "after_hours": false,
+    "no_onsite_hands": false
+   }
+  }
+ ]
+}
