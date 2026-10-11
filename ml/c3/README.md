@@ -197,8 +197,12 @@ Extra ablations:
 ## 5. v6 (current): the long labels teach the heads in training
 
 The product is the heads above. At run time nothing else runs: no WHY, no
-language model, no text generation. The WHY paragraphs do their work in
-training, as privileged information:
+language model, no text generation, and no gold links. The model proposes
+its own links from the atoms and takes one foresight-safe hop over them
+before the heads decide (`link_mix`, zero until the decision loss opens it).
+A gold edge teaches the right target; a labeled line with no edge teaches
+abstain, and that "no link" mass does not borrow another atom.
+The WHY paragraphs do their work in training, as privileged information:
 
 | File | What it does |
 |---|---|
@@ -319,13 +323,29 @@ card rationale, missing vision inputs and dense-attention budget overflow.
 The 4,096-atom ceiling is a guard against accidental quadratic allocation,
 not a GPU capacity guarantee. Do not truncate long deals to pass it.
 
-Remaining upgrades before a complete rich-label corpus release include
-question-subject conditioning/state and fields, Values normalization,
-verified separate pre-atom Rules exports, Deal-answer targets, spatial/pixel inputs,
-and relation-preserving long-deal training. Multi-deal checkpoint/resume,
-per-head/deal evaluation, calibration, export and shadow-serving gates must
-also be verified. The synthetic efficiency harness is an experiment, not
-that production training pipeline.
+Question reason codes, structured Values (hours, terms, kit shape), open
+strings, Deal service and site-count, pixel and table-geometry inputs, and
+relation-preserving long-deal windows now have targets and losses. See
+`python -m ml.c3.coverage` for the surface table. Norm and terminology strings
+are exact teacher-token targets plus a unique in-line span; they are not a
+student string decoder. Rules remain a separate export. `ml.c3.gates.train`
+refuses to start. The base experiment is a separate loop,
+`python -m ml.c3.loop --train <deal.json> --holdout <deal.json> --checkpoint <path>`,
+which on an H100 trains the design model in bf16. The line encoder
+(ModernBERT-large) stays frozen. The teacher defaults to
+`Qwen/Qwen2.5-7B-Instruct`, with its body frozen and a low-rank slot trained,
+and reads long deals in row slices. The student schedule is lines, links,
+pair and group cards, numbers, deal answers, then the link gate, then blank
+cells filled by the teacher. AdamW with a cosine schedule is the H100 optimizer. After the link gate
+opens, the teacher is shown the deal graph the student built, then a light
+boundary pass runs, then only questions seen many times may fill a blank line.
+The teacher does not invent new line text. `--tiny` is the CPU stand-in, not the base. A labeling export with `labels` and `atoms` in one
+file is joined on the way in. A deal past the atom budget is windowed without
+dropping edges. `--tiny` is the CPU stand-in, not the base. The holdout is
+scored once and is not used to stop or tune. That loop does not flip
+`READY_FOR_TRAINING`. `READY_FOR_TRAINING` is false until a frozen audited corpus,
+an untouched holdout, a certified pretrained budget and a separate Rules
+evaluation exist. Synthetic tests do not measure learned accuracy.
 
 Rules preparation has an explicit separate caller:
 `python -m app.learning.rule_feedback --manifest /outside/repo/rules-split.json
@@ -369,7 +389,8 @@ instead of silently clipping text. Real-model budget configuration and long-deal
 context preparation still need validation before release. The default legacy clause/compiler
 loss is off; explicit opt-in is retained for ablation tests.
 
-Training readiness remains blocked by unsupported free-text Values/Deal targets,
-remaining question dispositions, vision/table inputs, scalable long-deal evidence,
-the frozen audited corpus and real pretrained teacher/trainer/export evaluation.
-Neither these synthetic tests nor saved raw JSON certify that every tab is trained.
+Training readiness remains blocked by the frozen audited corpus, the untouched
+holdout, pretrained-budget certification, separate Rules evaluation, and the
+missing student decoder for normalized strings that are not spans.
+`READY_FOR_TRAINING` is false. Neither synthetic tests nor saved raw JSON
+certify learned accuracy or that every release gate has passed.

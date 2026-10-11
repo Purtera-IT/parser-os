@@ -28,6 +28,7 @@ the head and answer descriptions so they live in the LM's own space), and
 """
 from __future__ import annotations
 
+import math
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -44,11 +45,20 @@ class LoRALinear(nn.Module):
     adapter set, the output is exactly ``base(x)``.
     """
 
-    def __init__(self, base: nn.Linear, scale: float = 1.0):
+    def __init__(self, base: nn.Linear, scale: float = 1.0, rank: int = 0):
         super().__init__()
         self.base = base
         self.scale = scale
         self.delta: tuple[torch.Tensor, torch.Tensor] | None = None
+        # Persistent low rank, zero at the start so the layer still matches
+        # ``base`` until training moves it. Rank 0 leaves the layer unchanged.
+        if rank > 0:
+            self.A = nn.Parameter(torch.empty(rank, base.in_features))
+            self.B = nn.Parameter(torch.zeros(base.out_features, rank))
+            nn.init.kaiming_uniform_(self.A, a=math.sqrt(5))
+        else:
+            self.register_parameter("A", None)
+            self.register_parameter("B", None)
 
     @property
     def in_features(self) -> int:
@@ -60,10 +70,16 @@ class LoRALinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.base(x)
+        if self.A is not None and self.B is not None:
+            # The base may be bfloat16 on the H100 while these slots stay float,
+            # so the addition does not crash on the dtype.
+            a = self.A.to(dtype=x.dtype)
+            b = self.B.to(dtype=x.dtype)
+            y = y + self.scale * (x @ a.T) @ b.T
         if self.delta is None:
             return y
         a, b = self.delta                        # A [r, in], B [out, r]
-        return y + self.scale * (x @ a.T) @ b.T
+        return y + self.scale * (x @ a.to(dtype=x.dtype).T) @ b.to(dtype=x.dtype).T
 
 
 class LMBase(nn.Module):
@@ -200,19 +216,21 @@ class HFCausalLM(LMBase):
     """
 
     def __init__(self, name: str, targets: tuple[str, ...] = ("q_proj", "v_proj"),
-                 max_len: int = 1024):
+                 max_len: int = 1024, trainable_rank: int = 0,
+                 dtype: torch.dtype | None = None):
         super().__init__()
         from transformers import AutoModelForCausalLM, AutoTokenizer  # optional dependency
 
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(name)
+        kwargs = {"torch_dtype": dtype} if dtype is not None else {}
+        self.model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
         self.dim, self.max_len = self.model.config.hidden_size, max_len
         for parent in list(self.model.modules()):
             for child_name, child in list(parent.named_children()):
                 if child_name in targets and isinstance(child, nn.Linear):
-                    setattr(parent, child_name, LoRALinear(child))
+                    setattr(parent, child_name, LoRALinear(child, rank=trainable_rank))
 
     def token_count(self, text: str) -> int:
         return len(self.tokenizer(str(text), truncation=False)["input_ids"])

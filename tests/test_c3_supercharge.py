@@ -124,6 +124,36 @@ def test_pointers_and_words_reach_the_heads(schema, batch):
     assert torch.isinf(s[torch.triu(torch.ones_like(s, dtype=torch.bool))]).all()
 
 
+def test_every_head_the_student_emits_is_in_the_teacher_pass(schema, batch):
+    """Supercharge covers class logits, numeric heads, and saved judgment cards."""
+    torch.manual_seed(0)
+    m = C3Model(schema, SMALL)
+    m.train()
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
+    view = teacher_view(teacher, batch, "purtera")
+    out = m(batch.inputs(), company="purtera")
+    assert set(out.logits) <= set(view.told)
+    assert set(out.numbers) <= set(view.told_numbers)
+    assert out.numbers
+    parts = supercharge_loss(m, out, view, texts=batch.texts, batch=batch)
+    assert parts["teach_heads"] > 0 and parts["teach_numbers"] > 0
+    parts["teach_numbers"].backward()
+    heads = [*m.heads.values(), m.conduct_head]
+    assert any(h.number.weight.grad is not None and h.number.weight.grad.abs().sum() > 0
+               for h in heads)
+
+
+def test_a_saved_mark_is_not_overwritten_by_the_paragraph():
+    from ml.c3.supercharge import rows_the_paragraph_may_teach
+
+    class Saved:
+        multi_targets: dict = {}
+        targets = {"col:label_type": [3, IGNORE]}
+
+    why = torch.tensor([True, True])
+    assert rows_the_paragraph_may_teach(Saved(), "col:label_type", why).tolist() == [False, True]
+
+
 def test_parser_feedback_never_reaches_training(batch):
     from ml.c3.notes import drop_meta
 

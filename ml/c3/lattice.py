@@ -114,11 +114,16 @@ class AskedLayer(nn.Module):
 
     def forward(self, base, company, h, allowed, same_doc, same_sec, chunk):
         base, company = self.talk(base, company)
-        k = base.shape[1]
-        both = base if company is None else torch.cat([base, company], 1)
-        both, cites = self.look(both, h, allowed, same_doc, same_sec, chunk)
-        both = both + self.drop(self.mlp(self.ln_s(both)))
-        return both[:, :k], (both[:, k:] if company is not None else None), cites[:, :k]
+        # Base slots are looked up alone. Batching the company slot into the
+        # same attention call changes base scores by a rounding, which would
+        # make universal answers depend on whether a company was passed.
+        base, cites = self.look(base, h, allowed, same_doc, same_sec, chunk)
+        base = base + self.drop(self.mlp(self.ln_s(base)))
+        if company is None:
+            return base, None, cites
+        company, _ = self.look(company, h, allowed, same_doc, same_sec, chunk)
+        company = company + self.drop(self.mlp(self.ln_s(company)))
+        return base, company, cites
 
 
 class AskedLattice(nn.Module):

@@ -17,7 +17,10 @@ from typing import Any
 
 from .data import (DealExample, _Lines, _derived, _is_a_person, _judged_lines,
                    excluded, field_note_targets, is_deal_kit, select_labels, judgment_query, judgment_subject, question_field_targets)
+from .notes import _REASON_CODE_RE
 from .schema import CAUSAL_RELATIONS, LINE, NUMBER, PAIR, RELATION, Schema, load_schema
+from .values import (DEAL_SERVICES, LITERAL_HEADS, TERM_LINE_TYPES, hours_judgment_basis,
+                     judged_atom_type, parse_commercial_verdict, parse_term_verdict, site_count)
 
 
 def digest(value: Any) -> str:
@@ -177,10 +180,44 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
             key, mapping = schema.judgment_aliases[head]
             verdict = mapping.get(verdict, "")
         opp = by_key.get(key)
+        reason = str(j.get("reason") or "").strip()
+        if reason:
+            if reason in schema.reason_codes.get(head, ()):
+                target(f"jdg:{head}:reason", reason)
+                account(f"jdg:{head}:reason", "direct")
+            elif _REASON_CODE_RE.fullmatch(reason):
+                blockers[f"unconsumed_reason:{head}"] += 1
+            else:
+                account(f"jdg:{head}:reason", "rationale")
+        if head in ("hours", "term", "commercial") or head in LITERAL_HEADS:
+            if not _extract_consumed(head, verdict, j):
+                blockers[f"unconsumed_tab:{head}"] += 1
+                account(key, "deferred")
+            else:
+                idx = judgment_subject(j, LINE, lines)
+                if idx is None:
+                    blockers[f"unresolved_occurrence:{head}"] += 1
+                elif any(excluded(deal.atoms[i].label) for i in idx):
+                    counts["cards_on_excluded_lines"] += 1
+                else:
+                    account(key, "literal" if head in LITERAL_HEADS else "direct")
+                    classes.setdefault(key, Counter())["consumed"] += 1
+                    targets[key] += 1
+            continue
         if opp is None:
             if head == "rule":
                 blockers["separate_rule_export_required"] += 1
                 account(key, "external_pending")
+            elif _extract_consumed(head, verdict, j):
+                idx = judgment_subject(j, LINE, lines)
+                if idx is None:
+                    blockers[f"unresolved_occurrence:{head}"] += 1
+                elif any(excluded(deal.atoms[i].label) for i in idx):
+                    counts["cards_on_excluded_lines"] += 1
+                else:
+                    account(key, "literal" if head in LITERAL_HEADS else "direct")
+                    classes.setdefault(key, Counter())["consumed"] += 1
+                    targets[key] += 1
             else:
                 blockers[f"unconsumed_tab:{head}"] += 1
                 account(key, "deferred")
@@ -204,6 +241,10 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
         used[identity] = ix
         target(key, verdict)
         account(key, "direct")
+        if head == "image" and not any(any(deal.atoms[i].pixels) for i in idx):
+            blockers["vision_input_not_implemented"] += 1
+        if head in ("roster", "sheet") and not any(any(deal.atoms[i].geometry) for i in idx):
+            blockers["table_geometry_missing"] += 1
         consumed = set()
         if judgment_query(j):
             try:
@@ -215,9 +256,8 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
                 blockers[f"unknown_card_field_value:{head}"] += 1
         if any(v not in (None, "", []) and k not in consumed for k, v in (j.get("fields") or {}).items()):
             blockers[f"unconsumed_card_fields:{head}"] += 1
-    for name in ("deal_answers", "missed_history"):
-        if blob.get(name):
-            blockers[f"unconsumed_{name}"] += 1
+    _audit_deal_answers(blob, blockers, targets, classes, fields)
+    _audit_missed_history(blob, schema, blockers, targets, classes)
     relations = {o.field for o in schema.opportunities if o.kind == RELATION}
     for src, dst, relation in deal.edges:
         if relation not in relations:
@@ -228,14 +268,117 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
     for code in ("unresolved", "card_no_line", "self_links"):
         if deal.link_stats.get(code):
             blockers[f"evidence_{code}"] += deal.link_stats[code]
-    if targets.get("jdg:image"):
-        blockers["vision_input_not_implemented"] += 1
+    _check_featurize(blockers, deal, schema, max_atoms)
     return {"deal_id": deal_id, "ready": not blockers, "counts": dict(counts),
             "blockers": dict(sorted(blockers.items())), "targets": dict(sorted(targets.items())),
             "classes": {k: dict(v) for k, v in sorted(classes.items())},
             "field_accounting": {k: dict(v) for k, v in sorted(fields.items())},
             "snapshot_sha256": digest({"blob": blob, "atoms": atoms}),
             "schema_sha256": digest([asdict(o) for o in schema.opportunities])}
+
+
+def _extract_consumed(head: str, verdict: str, judgment: dict[str, Any]) -> bool:
+    if head == "hours":
+        basis = hours_judgment_basis(verdict)
+        return basis in ("", "unstated", "stated", "estimate", "deal_kit")
+    if head == "term":
+        return parse_term_verdict(verdict) is not None
+    if head == "commercial":
+        return judged_atom_type(judgment) not in TERM_LINE_TYPES and parse_commercial_verdict(verdict) is not None
+    return head in LITERAL_HEADS and bool(str(verdict).strip())
+
+
+def _audit_deal_answers(blob: dict[str, Any], blockers: Counter[str], targets: Counter[str],
+                        classes: dict[str, Counter[str]], fields: dict[str, Counter[str]]) -> None:
+    known = {"labeler", "primary_service", "declared_site_count", "note", "purpose",
+             "answered_at", "deal_id"}
+    for ans in blob.get("deal_answers") or []:
+        if not isinstance(ans, dict):
+            continue
+        for name, value in ans.items():
+            if value in (None, "", [], {}) or name in known:
+                continue
+            blockers[f"unconsumed_deal_answer_field:{name}"] += 1
+            fields.setdefault(f"deal:{name}", Counter())["deferred"] += 1
+        if not _is_a_person(ans.get("labeler")):
+            continue
+        if str(ans.get("purpose") or "train") in ("eval", "holdout"):
+            fields.setdefault("deal:primary_service", Counter())["metadata"] += 1
+            continue
+        service = str(ans.get("primary_service") or "").strip()
+        if service:
+            if service not in DEAL_SERVICES:
+                blockers["unknown_deal_service"] += 1
+            else:
+                targets["deal:primary_service"] += 1
+                classes.setdefault("deal:primary_service", Counter())[service] += 1
+                fields.setdefault("deal:primary_service", Counter())["direct"] += 1
+        if "declared_site_count" in ans and ans.get("declared_site_count") not in (None, ""):
+            if site_count(ans.get("declared_site_count")) is None:
+                blockers["invalid_declared_site_count"] += 1
+            else:
+                targets["deal:declared_site_count"] += 1
+                classes.setdefault("deal:declared_site_count", Counter())["number"] += 1
+                fields.setdefault("deal:declared_site_count", Counter())["direct"] += 1
+        if str(ans.get("note") or "").strip():
+            fields.setdefault("deal:note", Counter())["rationale"] += 1
+
+
+def _audit_missed_history(blob: dict[str, Any], schema: Schema, blockers: Counter[str],
+                          targets: Counter[str], classes: dict[str, Counter[str]]) -> None:
+    opp = schema.of_field("read", "miss_cause")
+    for row in blob.get("missed_history") or []:
+        if not isinstance(row, dict) or not _is_a_person(row.get("labeler")):
+            continue
+        if str(row.get("origin") or "labeler").strip().lower() != "labeler":
+            continue
+        reads = row.get("reads_set") if isinstance(row.get("reads_set"), dict) else {}
+        cause = str(reads.get("miss_cause") or row.get("miss_cause") or "").strip()
+        if not str(row.get("text") or "").strip() or opp is None or opp.index(cause) is None:
+            blockers["unconsumed_missed_history"] += 1
+            continue
+        targets["read:miss_cause"] += 1
+        classes.setdefault("read:miss_cause", Counter())[cause] += 1
+
+
+def _failure_code(exc: ValueError) -> str:
+    text = str(exc)
+    prefixes = (
+        ("Unparsed hours", "unparsed_hours"),
+        ("Unparsed term", "unparsed_term"),
+        ("Unparsed commercial", "unparsed_commercial"),
+        ("Unparsed norm", "unparsed_norm"),
+        ("Unparsed terminology", "unparsed_terminology"),
+        ("Unresolved ", "unresolved_extract_evidence"),
+        ("Unconsumed deal answer", "unconsumed_deal_answers"),
+        ("Unconsumed question field", "unconsumed_card_fields"),
+        ("Unknown deal primary_service", "unknown_deal_service"),
+        ("Unknown miss_cause", "unknown_miss_cause"),
+        ("missed_history row", "incomplete_missed_history"),
+        ("commercial verdict on a term", "commercial_on_term_line"),
+        ("Invalid declared_site_count", "invalid_site_count"),
+        ("Conflicting declared_site_count", "conflicting_site_count"),
+        ("Conflicting deal primary_service", "conflicting_deal_service"),
+    )
+    for prefix, code in prefixes:
+        if text.startswith(prefix):
+            return code
+    return "supervision_rejected"
+
+
+def _check_featurize(blockers: Counter[str], deal: DealExample, schema: Schema,
+                     max_atoms: int) -> None:
+    """A saved row that featurize cannot turn into a target stays blocked.
+
+    The exception text is not copied into the report: a verdict can be
+    customer text.
+    """
+    from .data import featurize
+
+    try:
+        featurize(deal, schema, max_atoms=max_atoms)
+    except ValueError as exc:
+        blockers[_failure_code(exc)] += 1
 
 
 def main() -> int:

@@ -151,6 +151,14 @@ class DealEncoder(nn.Module):
         self.tags = TagEmbedding(cfg.d)
         self.nums = TagEmbedding(cfg.d)
         self.time = nn.Linear(2, cfg.d)
+        # Zero-initialized so missing pixels and geometry leave every existing
+        # activation unchanged. Nonzero inputs still receive gradients.
+        self.pixels = nn.Linear(8 * 8 * 3, cfg.d)
+        self.geometry = nn.Linear(8, cfg.d)
+        nn.init.zeros_(self.pixels.weight)
+        nn.init.zeros_(self.pixels.bias)
+        nn.init.zeros_(self.geometry.weight)
+        nn.init.zeros_(self.geometry.bias)
         self.ln = nn.LayerNorm(cfg.d)
         self.blocks = nn.ModuleList(GraphBlock(cfg.d, cfg.n_heads, cfg.dropout)
                                     for _ in range(cfg.n_layers))
@@ -163,8 +171,16 @@ class DealEncoder(nn.Module):
         days = (t - t.min()).clamp(min=0) / 86400.0
         rank = torch.arange(len(t), device=dev, dtype=torch.float32) / max(1, len(t) - 1)
         time = torch.stack([torch.log1p(days), rank], -1)
+        n = len(inp["texts"])
+        pixels = inp.get("pixels")
+        geometry = inp.get("geometry")
+        pix = (torch.zeros(n, self.pixels.in_features, device=dev) if not pixels
+               else torch.tensor(pixels, dtype=torch.float32, device=dev))
+        geo = (torch.zeros(n, self.geometry.in_features, device=dev) if not geometry
+               else torch.tensor(geometry, dtype=torch.float32, device=dev))
         return self.ln(self.lift(self.text(inp["texts"])) + self.tags(tags)
-                       + self.nums(inp["numbers"]) + self.time(time))
+                       + self.nums(inp["numbers"]) + self.time(time)
+                       + self.pixels(pix) + self.geometry(geo))
 
     def forward(self, inp: dict[str, Any], *, hindsight: bool = False) -> torch.Tensor:
         x = self.embed_atoms(inp)
@@ -192,6 +208,7 @@ class C3Output:
     logits: dict[str, torch.Tensor] = field(default_factory=dict)      # opportunity -> [N, A]
     numbers: dict[str, torch.Tensor] = field(default_factory=dict)     # opportunity -> [N]
     relations: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N, N]
+    link_none: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N] abstain logit
     governs: torch.Tensor | None = None                                # [N, N] log P(j ⊂ i)
     absence: torch.Tensor | None = None                                # [N, slots] logits
     company_logits: torch.Tensor | None = None                         # adversary
@@ -222,6 +239,7 @@ class C3Model(nn.Module):
         c = self.cfg
         self.text = text or HashingEncoder(c.d_text)
         self.encoder = DealEncoder(c, self.text)
+        self._frozen_desc = None
         self.teacher = None                    # built lazily by hindsight_targets()
         self.teacher_proj = None
 
@@ -250,6 +268,12 @@ class C3Model(nn.Module):
         self.heads = nn.ModuleDict({s: DescribedHead(c.d_text, c.d_head, c.n_folds) for s in spaces})
         self.relation_head = DescribedRelation(c.d_text, c.d_head, c.n_folds)
         self.rel_in = nn.Linear(c.d_r, c.d_head)
+        # One hop over the links this model just proposed. Zero at init, so a
+        # fresh model matches the no-link decision; the decision loss opens it.
+        # Gold edges never enter. Foresight: a line cannot read a later line.
+        self.link_mix = nn.Linear(c.d_r, c.d_r)
+        nn.init.zeros_(self.link_mix.weight)
+        nn.init.zeros_(self.link_mix.bias)
         self.box = nn.Linear(c.d_r, 2 * c.box_dim)
         self.absence = nn.Linear(c.d_q + c.d_r, len(CLAIM_SLOTS))
 
@@ -297,6 +321,9 @@ class C3Model(nn.Module):
         self.judgment_note = nn.Linear(c.d_text, c.d_head)
         self.judgment_head = DescribedHead(c.d_text, c.d_head, c.n_folds)
         self.judgment_head_company = DescribedHead(c.d_text, c.d_head, c.n_folds)
+        self.deal_number = nn.Linear(c.d_r, 1)
+        nn.init.zeros_(self.deal_number.weight)
+        nn.init.zeros_(self.deal_number.bias)
         self.companies = list(companies)
         # Starting codes are small and dense so every atom gets a gradient; the
         # L1 term then makes them sparse. A zero code would starve the atoms.
@@ -305,16 +332,42 @@ class C3Model(nn.Module):
                                        nn.Linear(c.d // 2, max(2, len(companies))))
 
     # ------------------------------------------------------------ schema text
+    def train(self, mode: bool = True):
+        super().train(mode)
+        # A frozen pretrained encoder stays in eval so its dropout does not
+        # move the line features between steps.
+        body = getattr(self.text, "model", None)
+        if body is not None and all(not p.requires_grad for p in body.parameters()):
+            body.eval()
+        return self
+
+    def _encoder_frozen(self) -> bool:
+        body = getattr(self.text, "model", None)
+        return body is not None and all(not p.requires_grad for p in body.parameters())
+
     def describe(self) -> dict[str, Any]:
-        """Encode every opportunity and answer description (re-run each step:
-        the encoder trains, so the descriptions move with it)."""
+        """Encode every opportunity and answer description.
+
+        A trainable encoder is re-run each step, because the descriptions
+        move with it. A frozen pretrained encoder is read once.
+        """
+        frozen = self._encoder_frozen()
+        if frozen and self._frozen_desc is not None:
+            return self._frozen_desc
         opps = [o for o in self.schema.opportunities]
         texts = self.schema.texts()
-        emb = self.text(texts)
+        if frozen:
+            self.text.eval()
+            with torch.no_grad():
+                emb = self.text(texts).float()
+        else:
+            emb = self.text(texts)
         out, i = {}, 0
         for o in opps:
             out[o.key] = (emb[i], emb[i + 1:i + 1 + len(o.answers)])
             i += 1 + len(o.answers)
+        if frozen:
+            self._frozen_desc = out
         return out
 
     def add_company(self, name: str, policy_text: str = "") -> int:
@@ -359,20 +412,28 @@ class C3Model(nn.Module):
             self._ask(out, inp, desc, company)
         if bank_emb is None and bank is not None and len(bank):
             bank_emb = self.text([e.text for e in bank.items])
-        self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
 
-        # Links: described pair scores, boxes for governs.
+        # Propose links from the atoms, then let that proposal move the line
+        # the heads read. The scores stay the pre-hop proposal so the loss
+        # trains the link itself, and the hop is what makes the link matter.
         rels = [o for o in self.schema.select(kind=RELATION) if o.field != "governs"]
         if rels:
             x = self.rel_in(r)
-            scores = self.relation_head(x, torch.stack([desc[o.key][0] for o in rels]))
+            scores, nones = self.relation_head(x, torch.stack([desc[o.key][0] for o in rels]))
             t = torch.arange(n, device=h.device)
-            for o, s in zip(rels, scores):
+            for o, s, z in zip(rels, scores, nones):
                 if CAUSAL_RELATIONS.get(o.field):
                     s = s.masked_fill(t.view(-1, 1) < t.view(1, -1), float("-inf"))
                 out.relations[o.field] = s.masked_fill(torch.eye(n, dtype=torch.bool,
                                                                  device=h.device), float("-inf"))
+                out.link_none[o.field] = z
         out.governs = self._box_containment(r)
+        proposed = dict(out.relations)
+        if out.governs is not None:
+            proposed["governs"] = out.governs
+        r = self._apply_links(r, proposed, out.link_none)
+        out.r = r
+        self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
         out.absence = self.absence(torch.cat([q_mean, r], -1))
         out.changes = self.changes_head(torch.cat([q_mean, r], -1)).view(n, len(CHANGE_SLOTS), 3)
         out.company_logits = self.adversary(GradReverse.apply(z_c, adv_lambda))
@@ -381,6 +442,37 @@ class C3Model(nn.Module):
         if company is not None:
             self.conduct(out, company, q_mean, desc, bank, bank_emb)
         return out
+
+    def _apply_links(self, r: torch.Tensor, relations: dict[str, torch.Tensor],
+                     link_none: dict[str, torch.Tensor] | None = None) -> torch.Tensor:
+        """Each line reads earlier lines in proportion to the links it proposed.
+
+        An abstain logit takes the mass of "do not link," and that mass is not
+        a message. ``link_mix`` is zero at initialization, so this adds nothing
+        until the decision loss opens it.
+        """
+        if not relations:
+            return r
+        n = r.shape[0]
+        allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=r.device), diagonal=-1)
+        link_none = link_none or {}
+        msgs = []
+        for name, scores in relations.items():
+            finite = torch.isfinite(scores) & allowed
+            logits = scores.masked_fill(~finite, float("-inf"))
+            none = link_none.get(name)
+            if none is not None:
+                logits = torch.cat([logits, none.unsqueeze(1)], -1)
+            weights = torch.nan_to_num(logits.softmax(-1), nan=0.0)[:, :n]
+            # The line that draws the link reads what it points at.
+            msgs.append(weights @ r)
+            if CAUSAL_RELATIONS.get(name):
+                # An answer is a later line pointing at an earlier question.
+                # Hand that later line back, so the question is classified
+                # with the answer that points at it. The encoder still cannot
+                # read a future line unless the model itself drew this link.
+                msgs.append(weights.transpose(0, 1) @ r)
+        return r + self.link_mix(torch.stack(msgs).mean(0))
 
     def universal_heads(self, out: C3Output, r: torch.Tensor, q_mean: torch.Tensor,
                         desc: dict[str, Any], bank: ExplanationBank | None = None,

@@ -76,12 +76,14 @@ class HashingEncoder(nn.Module):
 class HFEncoder(nn.Module):
     """A pretrained encoder, mean-pooled. ``pip install transformers`` first."""
 
-    def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256):
+    def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256,
+                 dtype: torch.dtype | None = None):
         super().__init__()
         from transformers import AutoModel, AutoTokenizer  # optional dependency
 
         self.tok = AutoTokenizer.from_pretrained(name)
-        self.model = AutoModel.from_pretrained(name)
+        kwargs = {"torch_dtype": dtype} if dtype is not None else {}
+        self.model = AutoModel.from_pretrained(name, **kwargs)
         self.dim = self.model.config.hidden_size
         self.max_length = max_length
 

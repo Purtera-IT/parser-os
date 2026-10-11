@@ -74,15 +74,17 @@ def test_missing_suppressed_occurrence_cannot_become_unique_survivor():
 def test_deferred_tabs_fields_and_modalities_block_readiness_without_text_output():
     secret = "PRIVATE_SOURCE_TEXT_123"
     blob = {"labels": [label("a", reads_set={"unregistered_read": secret})],
-            "deal_answers": [{"answer": secret}],
+            "deal_answers": [{"answer": secret, "labeler": "reviewer@example.com"}],
             "judgments": [{"head": "norm", "target_key": "atom:at-a", "text": secret,
                            "verdict": secret, "labeler": "reviewer@example.com"}]}
     deal = DealExample.from_training_blob(blob, [atom("a")], deal_id="synthetic")
     assert deal.source_supervision["deal_answers"] == blob["deal_answers"]
     report = audit_contract(blob, [atom("a")], load_schema(), deal_id="synthetic")
     assert not report["ready"]
-    assert {"unconsumed_tab:norm", "unconsumed_deal_answers",
+    assert {"unconsumed_deal_answer_field:answer",
             "unconsumed_read:unregistered_read"} <= report["blockers"].keys()
+    assert "unconsumed_tab:norm" not in report["blockers"]
+    assert report["classes"]["jdg:norm"] == {"consumed": 1}
     assert secret not in json.dumps(report)
 
 

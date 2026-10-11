@@ -45,6 +45,8 @@ class LossWeights:
     negatives: float = 0.3         # answers known wrong (the parser's type a person overruled)
     near_misses: float = 0.5       # lines that read alike but answer differently stay apart
     near_miss_margin: float = 1.0
+    literals: float = 0.4          # unique in-line spans of open value strings
+    deal_numbers: float = 0.2      # deal-answer site count
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
 
 
@@ -149,10 +151,12 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
 
 
 def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
-                  desc: dict | None = None) -> torch.Tensor:
+                  desc: dict | None = None, *,
+                  sizes: tuple[str, ...] | None = None) -> torch.Tensor:
     """Cross-entropy on each judgment-tab verdict about two lines, a group of
     lines or the whole deal, one batch per question. Company questions train
-    only when the company layer ran."""
+    only when the company layer ran. ``sizes`` limits the pass to those card
+    sizes; None keeps every card."""
     by: dict[str, list] = {}
     for j in batch.judged:
         by.setdefault(j.key, []).append(j)
@@ -161,6 +165,8 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
     for key, js in by.items():
         o = opps.get(key)
         if o is None or (not o.universal and out.conduct_x is None):
+            continue
+        if sizes is not None and o.size not in sizes:
             continue
         logits = model.judge(out, key, [j.lines for j in js], desc, queries=[j.query for j in js])
         y = torch.tensor([j.answer for j in js], device=logits.device)
@@ -177,7 +183,8 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
     return total / max(terms, 1)
 
 
-def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
+def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch, *,
+                            sizes: tuple[str, ...] | None = None) -> torch.Tensor:
     """Privileged card WHY alignment. Notes never enter task inference inputs.
 
     This is a paragraph embedding loss, not a substitute for the pretrained
@@ -189,7 +196,10 @@ def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch) -> torc
             by.setdefault(j.key, []).append(j)
     total, terms = out.r.new_zeros(()), 0
     for key, js in by.items():
-        if not model.schema.by_key()[key].universal and out.conduct_x is None:
+        o = model.schema.by_key()[key]
+        if sizes is not None and o.size not in sizes:
+            continue
+        if not o.universal and out.conduct_x is None:
             continue
         features = model.judgment_features(out, key, [j.lines for j in js], [j.query for j in js])
         # No WHY gradients flow into the source encoder via the target branch.
@@ -199,6 +209,40 @@ def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch) -> torc
         total = total + (loss * weights).sum() / weights.sum().clamp(min=1e-6)
         terms += 1
     return total / max(terms, 1)
+
+
+def literal_span_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
+    """Put pointer mass on the unique word span of a saved open string.
+
+    A value that is not a unique span of its line is not assigned a guessed
+    location; the teacher token loss still sees the exact string.
+    """
+    grouped: dict[int, set[int]] = {}
+    for item in batch.literals:
+        if item.words:
+            grouped.setdefault(item.line, set()).update(item.words)
+    if not grouped:
+        return out.r.new_zeros(())
+    weights = model.word_weights(out, batch.texts)
+    total, terms = out.r.new_zeros(()), 0
+    for i, gold in grouped.items():
+        logp = weights[i]
+        if logp is None:
+            continue
+        idx = [w for w in gold if w < logp.shape[0]]
+        if not idx:
+            continue
+        total = total - torch.logsumexp(logp[idx], 0)
+        terms += 1
+    return total / max(terms, 1)
+
+
+def deal_number_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
+    count = batch.deal_numbers.get("declared_site_count")
+    if count is None:
+        return out.r.new_zeros(())
+    pred = model.deal_number(out.r.mean(0)).squeeze(-1)
+    return F.smooth_l1_loss(pred, torch.log1p(pred.new_tensor(float(count))))
 
 
 def negative_loss(out: C3Output, batch: Batch) -> torch.Tensor:
@@ -245,17 +289,42 @@ def near_miss_loss(out: C3Output, batch: Batch, margin: float = 1.0) -> torch.Te
 
 
 def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
-    """For each source with a gold edge: softmax over every allowed target."""
+    """Gold edges pick their target. A labeled line with no such edge picks no link.
+
+    Other lines in the row are the "not this one" choices. Abstain is the last
+    class when the model has a no-link score. Unlabeled lines are left alone:
+    a missing card is not a lesson that nothing connects.
+    """
     total, terms = out.r.new_zeros(()), 0
+    labeled = {i for i, on in enumerate(batch.labeled) if on}
+    gold: dict[str, dict[int, list[int]]] = {}
     for rel, pairs in batch.edges.items():
+        for src, dst in pairs:
+            gold.setdefault(rel, {}).setdefault(src, []).append(dst)
+    rels = set(out.relations) | set(gold)
+    for rel in rels:
         s = out.relations.get(rel)
         if s is None:
             continue
-        for src, dst in pairs:
+        none = out.link_none.get(rel)
+        by_src = gold.get(rel, {})
+        for src, dsts in by_src.items():
             row = s[src]
-            if torch.isfinite(row[dst]):
-                total = total - row.log_softmax(-1)[dst]
-                terms += 1
+            if none is not None:
+                row = torch.cat([row, none[src].view(1)])
+            logp = row.log_softmax(-1)
+            for dst in dsts:
+                if torch.isfinite(s[src, dst]):
+                    total = total - logp[dst]
+                    terms += 1
+        if none is None:
+            continue
+        for src in labeled:
+            if src in by_src:
+                continue
+            row = torch.cat([s[src], none[src].view(1)])
+            total = total - row.log_softmax(-1)[-1]
+            terms += 1
     return total / max(terms, 1)
 
 
@@ -410,7 +479,8 @@ def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: Explanati
 
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
-            rules: ExplanationBank | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+            rules: ExplanationBank | None = None,
+            judgment_sizes: tuple[str, ...] | None = None) -> tuple[torch.Tensor, dict[str, float]]:
     """``bank``: explanations for the v5 reader to read. Default: none, unless
     ``rules`` are given or ``C3Config.legacy_reasons`` is set; then this
     deal's WHYs and company lines (each line masked from its own), plus
@@ -446,8 +516,10 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["why_echo"] = why_echo_loss(model, out, batch)
     parts["pointers"] = pointer_loss(out, batch)
     parts["entities"] = entity_loss(out, batch)
-    parts["judgments"] = judgment_loss(model, out, batch, desc)
-    parts["judgment_rationale"] = judgment_rationale_loss(model, out, batch)
+    parts["judgments"] = judgment_loss(model, out, batch, desc, sizes=judgment_sizes)
+    parts["judgment_rationale"] = judgment_rationale_loss(model, out, batch, sizes=judgment_sizes)
+    parts["literals"] = literal_span_loss(model, out, batch)
+    parts["deal_numbers"] = deal_number_loss(model, out, batch)
     parts["negatives"] = negative_loss(out, batch)
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.clause_use and bank is not None:
@@ -468,6 +540,7 @@ class BrainWeights:
     card_direct: float = 1.0   # separate card subjects/evidence
     card_reasoned: float = 1.0 # full card WHY used by training-only teacher
     rationale: float = 1.0     # write the human's WHY, token by token
+    values: float = 1.0        # exact saved value strings, token by token
     distill: float = 0.5       # the direct answer moves toward what the reasoning concludes
     consolidate: float = 0.5   # notes written into weights must act as notes on the page
     flip: float = 0.5          # with a look-alike line supposed, answer what that line was labeled
@@ -530,6 +603,7 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     parts["direct"] = _answer_ce(direct, batch, keys)
     parts["reasoned"] = _answer_ce(reasoned, batch, keys)
     parts["rationale"] = brain.rationale_loss(batch, notes, graph)
+    parts["values"] = brain.value_loss(batch)
     for name, with_why in (("card_direct", False), ("card_reasoned", True)):
         predictions = brain.card_logits(batch, with_why=with_why, desc=desc)
         grouped = {}

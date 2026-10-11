@@ -16,10 +16,13 @@ What the heads get from it, per labeled line with a WHY:
 ==================  =====================================================  ==================
 term                what it does                                           why it saves labels
 ==================  =====================================================  ==================
-``teach_heads``     every head matches the teacher's answer on that line,  one paragraph
-                    including heads the human left blank (a WHY that says  teaches many heads,
-                    "the crew doubles" also tells the changes head and     not just the one
-                    the crew reading)                                       field it was for
+``teach_heads``     every class head matches the teacher's answer on     one paragraph
+                    that line, including heads the human left blank (a     teaches many heads,
+                    WHY that says "the crew doubles" also tells the        not just the one
+                    changes head and the crew reading)                     field it was for
+``teach_numbers``   every numeric head matches the teacher's log1p        hours, term slots
+                    reading on that line                                   and kit hours move
+                                                                           with the same WHY
 ``teach_geometry``  lines the teacher sees as alike *for the reason* are   the reason, not the
                     alike in the heads' latent (relational distillation    surface words, sets
                     of the pairwise similarities)                          who is near whom
@@ -81,6 +84,7 @@ from .model import C3Model, C3Output
 class TeachWeights:
     heads: float = 1.0
     judgments: float = 1.0
+    numbers: float = 0.2
     geometry: float = 0.5
     # Opt in after teacher calibration/warmup, not from an untrained teacher.
     unlabeled: float = 0.0
@@ -91,6 +95,17 @@ class TeachWeights:
     flip_size: float = 0.05     # the sentence moves the line only a little
     rewrites: float = 0.5
     temperature: float = 2.0
+
+    @classmethod
+    def for_base(cls) -> "TeachWeights":
+        """First usable version.
+
+        The person's mark is the lesson wherever they made one. The paragraph
+        fills only the questions they left blank. Nothing is copied onto lines
+        nobody labeled, and the helper does not rewrite lines or imagine a
+        different sentence. Card verdicts stay the person's.
+        """
+        return cls(flips=0.0, rewrites=0.0, unlabeled=0.0, judgments=0.0)
 
 
 @dataclass(frozen=True)
@@ -117,11 +132,13 @@ class TeacherView:
     rewritten: dict[str, torch.Tensor] | None = None  # target per rewrite, row n = rewrites[n] [R, A]
     card_logits: dict[str, torch.Tensor] = field(default_factory=dict)
     card_subjects: dict[str, tuple] = field(default_factory=dict)
+    told_numbers: dict[str, torch.Tensor] = field(default_factory=dict)
 
 
 @torch.no_grad()
 def teacher_view(teacher, batch: Batch, company: str | None = None,
-                 grounding: bool = True, rewrites: list[Rewrite] | None = None) -> TeacherView:
+                 grounding: bool = True, rewrites: list[Rewrite] | None = None,
+                 graph=None) -> TeacherView:
     from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
 
     was = teacher.training
@@ -129,16 +146,17 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     desc = teacher.describe()
     notes, cnotes = notes_from_deal(batch)
     why = told_why(batch, teacher.schema)
-    told = teacher(batch, company=company, why=why, desc=desc,
+    told = teacher(batch, company=company, why=why, desc=desc, graph=graph,
                    company_notes=company_field_notes(batch, teacher.schema))
-    noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc)
+    noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc,
+                    graph=graph)
     m = told.mask.unsqueeze(-1).to(told.hidden.dtype)
     emb = (told.hidden * m).sum(1) / m.sum(1).clamp(min=1)
     pointers, words = teacher.grounding(batch) if grounding else (None, None)
-    flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc).logits
+    flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc, graph).logits
                if batch.flips else None)
     kept, rewritten = read_rewrites(teacher, batch, rewrites or [], why, told.logits, desc)
-    card_logits = teacher.card_logits(batch, with_why=True, desc=desc)
+    card_logits = teacher.card_logits(batch, with_why=True, desc=desc, graph=graph)
     grouped = {}
     for j in batch.judged:
         grouped.setdefault(j.key, []).append(j)
@@ -156,7 +174,7 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     return TeacherView(told.logits, noted.logits, emb,
                        torch.tensor([bool(t) for t in why], device=dev),
                        torch.tensor(batch.labeled, device=dev), pointers, words, flipped,
-                       kept, rewritten, card_logits, card_subjects)
+                       kept, rewritten, card_logits, card_subjects, told.numbers)
 
 
 def with_texts(batch: Batch, repl: dict[int, str]) -> Batch:
@@ -250,6 +268,26 @@ def teach_rewrites(model: C3Model, batch: Batch, view: TeacherView, t: float) ->
     return torch.stack(terms).mean() if terms else zero
 
 
+def rows_the_paragraph_may_teach(batch: Batch | None, key: str, has_why: torch.Tensor) -> torch.Tensor:
+    """Lines where a paragraph may teach ``key``.
+
+    A saved mark already teaches that cell. The paragraph teaches the same
+    line's blank questions, which is how one note covers many heads.
+    """
+    if batch is None:
+        return has_why
+    if key in batch.multi_targets:
+        unmarked = [choice is None for choice in batch.multi_targets[key]]
+    else:
+        gold = batch.targets.get(key)
+        if not gold:
+            return has_why
+        unmarked = [y == IGNORE for y in gold]
+    if len(unmarked) != int(has_why.shape[0]):
+        return has_why
+    return has_why & torch.tensor(unmarked, device=has_why.device)
+
+
 def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float, multiple: bool = False) -> torch.Tensor:
     if multiple:
         p = (teacher / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
@@ -262,7 +300,8 @@ def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float, multiple: bool =
 def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
                      w: TeachWeights | None = None,
                      texts: list[str] | None = None,
-                     batch: Batch | None = None, desc=None) -> dict[str, torch.Tensor]:
+                     batch: Batch | None = None, desc=None,
+                     unlabeled_keys: set[str] | None = None) -> dict[str, torch.Tensor]:
     """The teaching terms for one deal. ``out`` is the heads' own forward pass
     (no teacher inside it); ``view`` is detached. ``batch`` (with its flips)
     turns on ``teach_flip``."""
@@ -271,7 +310,7 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
              "teach_pointers": zero, "teach_words": zero, "teach_flip": zero, "teach_flip_size": zero,
-             "teach_rewrites": zero, "teach_judgments": zero}
+             "teach_rewrites": zero, "teach_judgments": zero, "teach_numbers": zero}
     if batch is not None and view.flipped is not None and batch.flips:
         parts["teach_flip"], parts["teach_flip_size"] = teach_flip(model, out, view, batch,
                                                                    w.temperature, desc)
@@ -300,9 +339,27 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
         return parts
     why = view.has_why
     if why.any():
-        parts["teach_heads"] = torch.stack(
-            [_kl(out.logits[k][why], view.told[k][why], w.temperature,
-                 model.schema.by_key()[k].multiple) for k in keys]).mean()
+        taught = []
+        for key in keys:
+            rows = rows_the_paragraph_may_teach(batch, key, why)
+            if rows.any():
+                taught.append(_kl(out.logits[key][rows], view.told[key][rows], w.temperature,
+                                  model.schema.by_key()[key].multiple))
+        if taught:
+            parts["teach_heads"] = torch.stack(taught).mean()
+        number_terms = []
+        for key, teacher_num in view.told_numbers.items():
+            student = out.numbers.get(key)
+            if student is None or student.shape != teacher_num.shape:
+                continue
+            rows = why
+            vals = batch.numbers_target.get(key) if batch is not None else None
+            if vals is not None and len(vals) == int(why.shape[0]):
+                rows = why & torch.tensor([v is None for v in vals], device=why.device)
+            if rows.any():
+                number_terms.append(F.smooth_l1_loss(student[rows], teacher_num.detach()[rows]))
+        if number_terms:
+            parts["teach_numbers"] = torch.stack(number_terms).mean()
     if int(why.sum()) > 2:
         s = F.normalize(out.r[why], dim=-1)
         t = F.normalize(view.embedding[why], dim=-1)
@@ -317,6 +374,8 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
         if not 0.5 < w.unlabeled_min_confidence <= 1.0:
             raise ValueError("Unlabeled confidence threshold must be in (0.5, 1]")
         for k in keys:
+            if unlabeled_keys is not None and k not in unlabeled_keys:
+                continue
             multiple = model.schema.by_key()[k].multiple
             teacher = view.noted[k].detach()
             p = teacher.sigmoid() if multiple else teacher.softmax(-1)
@@ -392,7 +451,8 @@ def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> t
             + w.words * parts["teach_words"] + w.flips * parts.get("teach_flip", 0.0)
             + w.flip_size * parts.get("teach_flip_size", 0.0)
             + w.rewrites * parts.get("teach_rewrites", 0.0)
-            + w.judgments * parts.get("teach_judgments", 0.0))
+            + w.judgments * parts.get("teach_judgments", 0.0)
+            + w.numbers * parts.get("teach_numbers", 0.0))
 
 
 def mask_labels(batch: Batch, keep: set[int]) -> Batch:

@@ -28,10 +28,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from .values import (BILLING_TYPES, COMMERCIAL_NUMBERS, DEAL_SERVICES, TERM_ENUMS,
+                     TERM_KINDS, TERM_NUMBERS)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HEADS_PATH = REPO_ROOT / "app" / "core" / "label_heads.json"
 TYPES_PATH = REPO_ROOT / "app" / "core" / "atom_types.json"
 JUDGMENTS_PATH = Path(__file__).resolve().parent / "judgment_heads.json"
+REASONS_PATH = REPO_ROOT / "app" / "core" / "judgment_reasons.json"
 
 #: Words a universal description must not carry (project instructions, note
 #: grammar). A sentence holding one is dropped from a universal opportunity's
@@ -112,6 +116,10 @@ class Schema:
     #: Judgment tabs that ask an existing line question in other words:
     #: judgment head -> (opportunity key, verdict -> that question's answer).
     judgment_aliases: dict[str, tuple[str, dict[str, str]]] = field(default_factory=dict)
+    #: Closed reason codes per labeling surface. A sentence is not a code.
+    reason_codes: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Judgment surfaces whose verdict is a string, not a closed class.
+    literal_judgments: tuple[str, ...] = ("norm", "terminology")
 
     def by_key(self) -> dict[str, Opportunity]:
         return {o.key: o for o in self.opportunities}
@@ -228,6 +236,70 @@ def guidance_template(schema: Schema) -> dict[str, Any]:
             for o in schema.opportunities if o.kind != RELATION}
 
 
+def _add_extract_and_reason_opportunities(opps: list[Opportunity], homes: dict[str, dict[str, Any]],
+                                         aliases: dict[str, tuple[str, dict[str, str]]],
+                                         reason_heads: dict[str, list[dict[str, Any]]]) -> None:
+    """Closed extract slots and reason codes. Free-text verdicts stay literals."""
+
+    def home(name: str) -> dict[str, Any]:
+        return dict(homes.get(name) or {"head": name, "space": "content", "layer": "universal"})
+
+    deal = {"head": "deal.answers", "space": "content", "layer": "universal"}
+    service_docs = {v: f"Primary service: {_spell(v)}." for v in DEAL_SERVICES}
+    opps.append(Opportunity(
+        key="deal:primary_service", field="primary_service", source="judgment", kind=CLASS, size=DEAL,
+        description="What primary service is this job?",
+        answers=_answers(CLASS, service_docs, "primary service", service_docs), **deal))
+
+    term = home("term")
+    kind_docs = {k: f"Term kind: {_spell(k)}." for k in TERM_KINDS}
+    opps.append(Opportunity(
+        key="jdg:term", field="term_kind", source="judgment", kind=CLASS, size=LINE,
+        description="What kind of commercial term does this line state?",
+        answers=_answers(CLASS, kind_docs, "term kind", kind_docs), **term))
+    for key, allowed in TERM_ENUMS.items():
+        docs = {v: f"{_spell(key)}: {_spell(v)}." for v in allowed}
+        opps.append(Opportunity(
+            key=f"jdg:term:{key}", field=key, source="judgment", kind=CLASS, size=LINE,
+            description=f"The {_spell(key)} this term states.",
+            answers=_answers(CLASS, docs, key, docs), **term))
+    for key in TERM_NUMBERS:
+        opps.append(Opportunity(
+            key=f"jdg:term:{key}", field=key, source="judgment", kind=NUMBER, size=LINE,
+            description=f"The {_spell(key)} this term states.",
+            answers=_answers(NUMBER, [], key, {}), **term))
+
+    commercial = home("commercial")
+    billing_docs = {v: f"Kit billing: {_spell(v)}." for v in BILLING_TYPES}
+    opps.append(Opportunity(
+        key="jdg:commercial", field="commercial_billing", source="judgment", kind=CLASS, size=LINE,
+        description="What billing shape did the finished kit give this request?",
+        answers=_answers(CLASS, billing_docs, "billing", billing_docs), **commercial))
+    for key in COMMERCIAL_NUMBERS:
+        opps.append(Opportunity(
+            key=f"jdg:commercial:{key}", field=key, source="judgment", kind=NUMBER, size=LINE,
+            description=f"The kit's {_spell(key)}.",
+            answers=_answers(NUMBER, [], key, {}), **commercial))
+
+    by_key = {o.key: o for o in opps}
+    for name, items in reason_heads.items():
+        if name == "rule" or not items:
+            continue
+        parent = by_key.get(f"jdg:{name}")
+        if parent is None and name in aliases:
+            parent = by_key.get(aliases[name][0])
+        base = home(name)
+        if parent is not None:
+            base = {"head": parent.head, "space": parent.space, "layer": parent.layer}
+        universal = base["layer"] == "universal"
+        docs = {str(item["value"]): scrub(str(item.get("desc") or ""), universal) for item in items}
+        opps.append(Opportunity(
+            key=f"jdg:{name}:reason", field=f"{name}_reason", source="judgment", kind=CLASS,
+            size=parent.size if parent is not None else LINE,
+            description=f"Why was the { _spell(name) } verdict chosen?",
+            answers=_answers(CLASS, docs, f"{name} reason", docs), **base))
+
+
 def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 guidance: str | Path | dict[str, Any] | None = None,
                 judgments_path: Path = JUDGMENTS_PATH) -> Schema:
@@ -244,6 +316,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
 
     opps: list[Opportunity] = []
     note_fields: list[str] = []
+    homes: dict[str, dict[str, Any]] = {}
     for h in heads["heads"]:
         if h.get("layer") not in ("universal", "company"):
             continue                      # meta: bookkeeping, never trained
@@ -328,9 +401,10 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
             # A judgment tab's question, at the size it is asked (one line, two
             # lines, a document or the whole deal), in the layer of the head
             # that lists it. Its text comes from judgment_heads.json.
+            homes[name] = base
             j = judgments.get(name)
             if j is None:
-                continue                  # not trained (judgment_heads.json says why)
+                continue                  # extract / literal surfaces added below
             if "alias" in j:
                 aliases[name] = (j["alias"]["target"], dict(j["alias"]["map"]))
                 continue
@@ -342,8 +416,12 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     lead(h, universal), scrub(j.get("question", ""), universal)) if x),
                 answers=_answers(CLASS, docs, subject, docs), **base))
 
+    reasons = json.loads(REASONS_PATH.read_text(encoding="utf-8")).get("heads") or {}
+    reason_codes = {str(name): tuple(str(item["value"]) for item in items)
+                    for name, items in reasons.items()}
+    _add_extract_and_reason_opportunities(opps, homes, aliases, reasons)
     schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")),
-                    note_fields=note_fields, judgment_aliases=aliases)
+                    note_fields=note_fields, judgment_aliases=aliases, reason_codes=reason_codes)
     if guidance is not None:
         if not isinstance(guidance, dict):
             guidance = json.loads(Path(guidance).read_text(encoding="utf-8"))
