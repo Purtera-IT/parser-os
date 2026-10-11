@@ -81,7 +81,9 @@ from .model import C3Model, C3Output
 class TeachWeights:
     heads: float = 1.0
     geometry: float = 0.5
-    unlabeled: float = 0.3
+    # Opt in after teacher calibration/warmup, not from an untrained teacher.
+    unlabeled: float = 0.0
+    unlabeled_min_confidence: float = 0.9
     pointers: float = 0.5
     words: float = 0.5
     flips: float = 0.5
@@ -200,7 +202,10 @@ def read_rewrites(teacher, batch: Batch, rewrites: list[Rewrite], why: list[str 
     keep: list[int] = []
     for n, r in enumerate(rewrites):
         k = "col:label_type" if "col:label_type" in keys else keys[0]
-        if not r.same or int(read.logits[k][n].argmax()) == int(told[k][r.line].argmax()):
+        multiple = teacher.schema.by_key()[k].multiple
+        agrees = (torch.equal(read.logits[k][n] > 0, told[k][r.line] > 0) if multiple
+                  else int(read.logits[k][n].argmax()) == int(told[k][r.line].argmax()))
+        if not r.same or agrees:
             keep.append(n)
     if not keep:
         return [], None
@@ -231,13 +236,17 @@ def teach_rewrites(model: C3Model, batch: Batch, view: TeacherView, t: float) ->
         b = with_texts(batch, {view.rewrites[n].line: view.rewrites[n].text for n in g})
         out = model(b.inputs())
         lines = [view.rewrites[n].line for n in g]
-        terms += [_kl(out.logits[k][lines], view.rewritten[k][g], t)
+        terms += [_kl(out.logits[k][lines], view.rewritten[k][g], t, model.schema.by_key()[k].multiple)
                   for k in view.rewritten if k in out.logits]
     return torch.stack(terms).mean() if terms else zero
 
 
-def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float) -> torch.Tensor:
-    return F.kl_div((student / t).log_softmax(-1), (teacher / t).log_softmax(-1),
+def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float, multiple: bool = False) -> torch.Tensor:
+    if multiple:
+        p = (teacher / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+        return (F.binary_cross_entropy_with_logits(student / t, p)
+                - F.binary_cross_entropy(p, p)) * t * t
+    return F.kl_div((student / t).log_softmax(-1), (teacher.detach() / t).log_softmax(-1),
                     log_target=True, reduction="batchmean") * t * t
 
 
@@ -264,7 +273,8 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     why = view.has_why
     if why.any():
         parts["teach_heads"] = torch.stack(
-            [_kl(out.logits[k][why], view.told[k][why], w.temperature) for k in keys]).mean()
+            [_kl(out.logits[k][why], view.told[k][why], w.temperature,
+                 model.schema.by_key()[k].multiple) for k in keys]).mean()
     if int(why.sum()) > 2:
         s = F.normalize(out.r[why], dim=-1)
         t = F.normalize(view.embedding[why], dim=-1)
@@ -274,9 +284,20 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
         parts["teach_geometry"] = F.kl_div(ss.log_softmax(-1), tt.log_softmax(-1),
                                            log_target=True, reduction="batchmean")
     rest = ~view.labeled
-    if rest.any():
-        parts["teach_unlabeled"] = torch.stack(
-            [_kl(out.logits[k][rest], view.noted[k][rest], w.temperature) for k in keys]).mean()
+    if rest.any() and w.unlabeled > 0:
+        terms = []
+        if not 0.5 < w.unlabeled_min_confidence <= 1.0:
+            raise ValueError("Unlabeled confidence threshold must be in (0.5, 1]")
+        for k in keys:
+            multiple = model.schema.by_key()[k].multiple
+            teacher = view.noted[k].detach()
+            p = teacher.sigmoid() if multiple else teacher.softmax(-1)
+            confidence = torch.maximum(p, 1 - p).amin(-1) if multiple else p.amax(-1)
+            eligible = rest & (confidence >= w.unlabeled_min_confidence)
+            if eligible.any():
+                terms.append(_kl(out.logits[k][eligible], teacher[eligible], w.temperature, multiple))
+        if terms:
+            parts["teach_unlabeled"] = torch.stack(terms).mean()
     if view.pointers is not None and out.pointers is not None and why.any():
         # The heads see only earlier lines: the teacher's weight on later
         # lines is dropped and the rest renormalized.
@@ -322,12 +343,18 @@ def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
     from .losses import why_row_weights  # noqa: PLC0415 (cycle)
     ww = why_row_weights(batch, out.r.device)[rows]
 
-    def kl_rows(s: torch.Tensor, tch: torch.Tensor) -> torch.Tensor:
+    def kl_rows(s: torch.Tensor, tch: torch.Tensor, multiple: bool) -> torch.Tensor:
+        if multiple:
+            p = (tch / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+            per = (F.binary_cross_entropy_with_logits(s / t, p, reduction="none")
+                   - F.binary_cross_entropy(p, p, reduction="none")).mean(-1) * t * t
+            return (per * ww).sum() / ww.sum()
         per = F.kl_div((s / t).log_softmax(-1), (tch / t).log_softmax(-1),
                        log_target=True, reduction="none").sum(-1) * t * t
         return (per * ww).sum() / ww.sum()
 
-    return torch.stack([kl_rows(sub.logits[k], view.flipped[k]) for k in keys]).mean(), size
+    return torch.stack([kl_rows(sub.logits[k], view.flipped[k], model.schema.by_key()[k].multiple)
+                        for k in keys]).mean(), size
 
 
 def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> torch.Tensor:
@@ -350,6 +377,8 @@ def mask_labels(batch: Batch, keep: set[int]) -> Batch:
     return dataclasses.replace(
         batch,
         targets={k: col(v) for k, v in batch.targets.items()},
+        multi_targets={k: [x if i in keep else None for i, x in enumerate(v)]
+                       for k, v in batch.multi_targets.items()},
         numbers_target={k: [x if i in keep else None for i, x in enumerate(v)]
                         for k, v in batch.numbers_target.items()},
         edges={r: [(s, d) for s, d in ps if s in keep] for r, ps in batch.edges.items()},

@@ -277,3 +277,52 @@ So the components aren't new; the combination and the fold mechanism likely
 are. Whether it *helps* is an empirical question that D1 to D4 answer. If D4
 shows no drop, the words aren't doing the work, and the claim should be
 dropped.
+# Supervision preflight
+
+Before a real corpus run, audit each frozen export with
+`python -m ml.c3.readiness --blob /outside/repo/blob.json --atoms
+/outside/repo/atoms.json --deal-id <id> --split-manifest
+/outside/repo/split.json --output /outside/repo/report.json` (one shell line).
+Exit 2 means blocked; exit 0 means the supplied contract and split checks
+passed. This does **not** certify model quality, source-audit completion,
+live-card coverage, GPU capacity, or production deployment readiness. Reports
+contain categorical counts and hashes, not customer source text.
+
+The split manifest has nonempty `train`, `validation`, and `holdout` lists.
+Every entry has `deal_id`, `snapshot_sha256`, `audit_status: "verified"`, and
+`source_groups` identifying shared source documents or related job versions.
+Set `holdout_used_for_tuning: false` only when it is true. The final holdout
+must not be used in teacher training, note retrieval, calibration or tuning.
+Freeze all source snapshots and schema/model/tokenizer revisions before a
+run; validate each snapshot hash against the manifest rather than treating
+the existence of a manifest as proof of a frozen corpus.
+
+The loader now selects named human labels before assistant mirrors and
+rejects conflicting saved labels. Equal text is an occurrence fallback only
+when unique; suppression keys resolve their precise dropped occurrence.
+Retired-card links are filtered by author, **head and key**, so an excluded
+hours card cannot erase a live task card sharing that key.
+
+Multi-select hints and parser routing train independent sigmoid answers in
+the heads, teacher, rationale-sufficiency and distillation paths. Scalar gold
+targets remain unknown for these opportunities. The diagnostic efficiency
+metric scores exact selected sets rather than their first member. Missing
+selections remain unknown; they are not invented negative labels. Unlabeled
+distillation is off by default and requires explicit warmup/calibration
+enablement plus a confidence gate.
+
+`DealExample.source_supervision` preserves the selected labels, raw cards,
+links, Deal answers and missed history as a training-only packet. It is not
+a model input or a claim that every field has an implemented loss. Preflight
+blocks deferred fields/tabs, ambiguous occurrences, colliding targets or
+card rationale, missing vision inputs and dense-attention budget overflow.
+The 4,096-atom ceiling is a guard against accidental quadratic allocation,
+not a GPU capacity guarantee. Do not truncate long deals to pass it.
+
+Remaining upgrades before a complete rich-label corpus release include
+question-subject conditioning/state and fields, Values normalization,
+separate pre-atom Rules ingestion, Deal-answer targets, spatial/pixel inputs,
+and relation-preserving long-deal training. Multi-deal checkpoint/resume,
+per-head/deal evaluation, calibration, export and shadow-serving gates must
+also be verified. The synthetic efficiency harness is an experiment, not
+that production training pipeline.

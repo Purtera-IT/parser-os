@@ -82,6 +82,8 @@ class DealExample:
     #: document pointers, self-links and unresolved links dropped, links
     #: anchored on a judgment card's line, card links with no line.
     link_stats: dict[str, int] = field(default_factory=dict)
+    # Lossless training-only source packet. Never returned by Batch.inputs().
+    source_supervision: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -96,6 +98,10 @@ class DealExample:
                  for i, a in enumerate(d["atoms"])]
         # Time order is the deal's order: ties keep document order.
         atoms.sort(key=lambda a: (a.entered_at, a.order))
+        keys = [a.key for a in atoms]
+        ids = [a.atom_id for a in atoms if a.atom_id]
+        if len(set(keys)) != len(keys) or len(set(ids)) != len(ids):
+            raise ValueError("Duplicate source occurrence identifiers in training input")
         return DealExample(
             deal_id=str(d["deal_id"]), atoms=atoms, company=str(d.get("company", "")),
             company_policy=str(d.get("company_policy", "")),
@@ -104,7 +110,11 @@ class DealExample:
             judgments=[j for j in d.get("judgments") or [] if isinstance(j, dict)],
             edge_notes={(str(e["src"]), str(e["dst"]), str(e["relation"])): str(e["note"])
                         for e in d.get("edges", []) if e.get("note")},
-            doc_pointers=[(str(p[0]), str(p[1])) for p in d.get("doc_pointers", [])])
+            doc_pointers=[(str(p[0]), str(p[1])) for p in d.get("doc_pointers", [])],
+            source_supervision=d.get("source_supervision") or {
+                "judgments": d.get("judgments") or [],
+                "deal_answers": d.get("deal_answers") or [],
+                "missed_history": d.get("missed_history") or []})
 
     @staticmethod
     def load(path: str | Path) -> "DealExample":
@@ -120,7 +130,7 @@ class DealExample:
         labeling page uses. Relations come from each label's ``links`` list
         when the blob has one (``{"relation", "to"}``).
         """
-        labels = {lb["label_key"]: lb for lb in blob.get("labels", [])}
+        labels = select_labels(blob.get("labels", []))
         rows, edges = [], []
         for a in atoms:
             row = dict(a)
@@ -136,7 +146,7 @@ class DealExample:
         # lines from their own text, or the base never learns what the parser
         # misses.
         seen = {a.get("label_key") for a in atoms}
-        for lb in blob.get("labels", []):
+        for lb in labels.values():
             if lb.get("label_key") in seen or not str(lb.get("text") or "").strip():
                 continue
             if str(lb.get("origin") or "").strip().lower() != "labeler":
@@ -158,6 +168,14 @@ class DealExample:
                                       "atoms": rows, "edges": edges, "doc_pointers": doc_pointers,
                                       "judgments": blob.get("judgments") or []})
         deal.link_stats = link_stats
+        # Keep deferred fields and tab targets inspectable instead of claiming
+        # that storing a row means the model has a loss for it.
+        import copy
+        deal.source_supervision = copy.deepcopy({
+            "labels": list(labels.values()), "judgments": blob.get("judgments") or [],
+            "links": blob.get("links") or [], "deal_answers": blob.get("deal_answers") or [],
+            "missed_history": blob.get("missed_history") or [],
+        })
         return deal
 
 
@@ -213,38 +231,51 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
     stats = stats if stats is not None else {}
     for c in ("edges", "doc_pointers", "self_links", "unresolved", "card_anchored", "card_no_line"):
         stats.setdefault(c, 0)
-    cards = {str(j.get("target_key")): j.get("target") for j in judgments
-             if isinstance(j, dict) and j.get("target_key") and str(j.get("head") or "") in _CARD_HEADS}
+    judgments = list(judgments)
+    retired_cards = {(str(j.get("labeler")), str(j.get("head")), str(j.get("target_key")))
+                     for j in judgments if isinstance(j, dict) and excluded(j)}
+    cards = {(str(j.get("head")), str(j.get("target_key"))): j.get("target") for j in judgments
+             if isinstance(j, dict) and _is_a_person(j.get("labeler")) and j.get("target_key")
+             and str(j.get("head") or "") in _CARD_HEADS}
     by_key = {str(r.get("key")): r for r in rows if r.get("key")}
     by_id = {str(r.get("atom_id") or r.get("id")): r for r in rows if r.get("atom_id") or r.get("id")}
-    by_text: dict[str, dict[str, Any]] = {}
+    by_text: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        by_text.setdefault(_norm_text(r.get("text")), r)
+        by_text.setdefault(_norm_text(r.get("text")), []).append(r)
 
     def find(key: Any, atom_id: Any, text: Any) -> dict[str, Any] | None:
-        return (by_key.get(str(key or "")) or by_id.get(str(atom_id or ""))
-                or (by_text.get(_norm_text(text)) if str(text or "").strip() else None))
+        exact = by_key.get(str(key or "")) or by_id.get(str(atom_id or ""))
+        if exact is not None:
+            return exact
+        matches = by_text.get(_norm_text(text), []) if str(text or "").strip() else []
+        # A repeated signature or suppressed copy is not its surviving original.
+        return matches[0] if len(matches) == 1 else None
 
     def find_from(k: dict[str, Any], to: dict[str, Any] | None) -> tuple[dict[str, Any] | None, bool]:
         """The line a link starts from, and whether its key is a judgment card's."""
         key = str(k.get("from_key") or "")
+        card_key = (str(k.get("from_head") or ""), key)
         r = None
         if key.startswith("sup:"):
             r = by_key.get(key[len("sup:"):].split("@", 1)[0])
+            return r, False  # absent dropped occurrence must not become its original
         elif key.startswith(("site:", "atom:")):
             r = by_id.get(key.split(":", 1)[1])
-        elif key in cards:
-            for ref in _card_refs(cards[key]):
+        elif card_key in cards:
+            for ref in _card_refs(cards[card_key]):
                 r = find(None, ref.get("atomId") or ref.get("atom_id"), ref.get("text"))
                 if r is not None and r is not to:
                     stats["card_anchored"] += 1
                     return r, True
             r = None
-        return (r or find(key, k.get("from_atom_id"), k.get("from_text"))), key in cards
+        return (r or find(key, k.get("from_atom_id"), k.get("from_text"))), card_key in cards
 
     out, doc_pointers = [], []
     for k in links:
         if not isinstance(k, dict) or not _is_a_person(k.get("labeler")):
+            continue
+        if (str(k.get("labeler")), str(k.get("from_head")), str(k.get("from_key"))) in retired_cards:
+            stats["retired_card_links"] = stats.get("retired_card_links", 0) + 1
             continue
         rel = str(k.get("relation") or "")
         b = find(k.get("to_label_key"), k.get("to_atom_id"), k.get("to_text"))
@@ -360,6 +391,9 @@ class Batch:
     #: Labeled lines that read almost alike and got the same answers: (i, j),
     #: i < j. A difference in wording that the answer ignores.
     twins: list[tuple[int, int]] = field(default_factory=list)
+    # None is unknown; a tuple is the complete saved selection. Kept out of
+    # scalar targets so CE/argmax cannot quietly teach only its first answer.
+    multi_targets: dict[str, list[tuple[int, ...] | None]] = field(default_factory=dict)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -654,6 +688,33 @@ def _is_a_person(labeler: Any) -> bool:
     return bool(v) and not any(m in v for m in NOT_A_PERSON)
 
 
+def select_labels(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Person-first labels, independent of export order.
+
+    Conflicting saved rows require adjudication. A timestamp or assistant
+    mirror must never silently choose a person's training answer. Anonymous
+    legacy exports are supported only when no named person exists.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("label_key"):
+            raise ValueError("Every training label requires a label_key")
+        grouped.setdefault(str(row["label_key"]), []).append(row)
+    selected = {}
+    metadata = {"id", "labeler", "created_at", "updated_at", "saved_at"}
+    for key, candidates in grouped.items():
+        people = [r for r in candidates if _is_a_person(r.get("labeler"))]
+        eligible = people or [r for r in candidates if not r.get("labeler")]
+        if not eligible:
+            continue  # assistant proposals are not accepted ground truth
+        signatures = {json.dumps({k: v for k, v in r.items() if k not in metadata},
+                                 sort_keys=True, default=str) for r in eligible}
+        if len(signatures) > 1:
+            raise ValueError(f"Conflicting saved labels for {key}; adjudication required")
+        selected[key] = min(eligible, key=lambda r: str(r.get("id") or ""))
+    return selected
+
+
 def _norm_text(text: Any) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
 
@@ -681,17 +742,24 @@ class _Lines:
     def __init__(self, atoms: list[Atom]):
         self.atoms = atoms
         self.by_id = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
-        self.by_text: dict[str, int] = {}
+        self.by_key = {a.key: i for i, a in enumerate(atoms)}
+        self.by_text: dict[str, list[int]] = {}
         for i, a in enumerate(atoms):
-            self.by_text.setdefault(_norm_text(a.text), i)
+            self.by_text.setdefault(_norm_text(a.text), []).append(i)
 
     def find(self, ref: Any, text: Any = "") -> int | None:
         ref = ref if isinstance(ref, dict) else {}
         if isinstance(ref.get("evidence"), dict):
             ref = ref["evidence"]                 # a site card: its first mention
-        i = self.by_id.get(str(ref.get("atomId") or ref.get("atom_id") or ""))
+        i = self.by_key.get(str(ref.get("label_key") or ref.get("labelKey") or ""))
         if i is None:
-            i = self.by_text.get(_norm_text(ref.get("text") or text)) if (ref.get("text") or text) else None
+            i = self.by_id.get(str(ref.get("atomId") or ref.get("atom_id") or ""))
+        if i is None:
+            matches = self.by_text.get(_norm_text(ref.get("text") or text), [])
+            doc = ref.get("artifactId") or ref.get("artifact_id") or ref.get("doc_id")
+            if doc:
+                matches = [j for j in matches if self.atoms[j].doc_id == str(doc)]
+            i = matches[0] if len(matches) == 1 else None
         return i
 
     def group(self, i: int) -> tuple[int, ...]:
@@ -720,13 +788,18 @@ def _judged_lines(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...
         i = lines.find(t.get("a"))
         return lines.group(i) if i is not None else None
     key = str(j.get("target_key") or "")
+    if key.startswith("sup:"):
+        i = lines.by_key.get(key[4:].split("@", 1)[0])
+        # Suppression keys name an occurrence. Never fall back to equal text.
+        return (i,) if i is not None else None
     ref = (t.get("a") or t.get("source") or t.get("site")
            or {"atomId": key.split(":", 1)[1] if key.startswith(("atom:", "site:")) else ""})
     i = lines.find(ref, parts[-1])
     return (i,) if i is not None else None
 
 
-def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = False) -> Batch:
+def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = False,
+              max_atoms: int | None = 4096) -> Batch:
     """Split one deal into model inputs and per-opportunity targets.
 
     ``absent_is_negative``: whether a reading missing from a labeled card is
@@ -735,6 +808,10 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     "absent". Columns (label_type, about...) are always taught when present.
     """
     import dataclasses
+
+    if max_atoms is not None and len(deal.atoms) > max_atoms:
+        raise ValueError("Deal exceeds dense attention budget; relation-preserving chunking "
+                         "is required before training (do not truncate the source)")
 
     from .vocab import canonical_keys
 
@@ -750,6 +827,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
 
     targets: dict[str, list[int]] = {}
     numbers_target: dict[str, list[float | None]] = {}
+    multi_targets: dict[str, list[tuple[int, ...] | None]] = {}
     for opp in schema.opportunities:
         if opp.kind == RELATION or opp.size != LINE:
             continue
@@ -758,23 +836,37 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             targets[opp.key] = col               # filled from the judgment tabs below
             continue
         nums: list[float | None] = [None] * n
+        selections: list[tuple[int, ...] | None] = [None] * n
         for i, a in enumerate(atoms):
             if not a.label:
                 continue
             v = _field_value(a.label, opp.source, opp.field)
             if v in (None, "", []) and not absent_is_negative:
                 continue
-            if isinstance(v, list):          # train_for: a set; teach its first member
-                v = v[0] if v else None
+            if opp.multiple:
+                values = v if isinstance(v, list) else [v]
+                indexes = [opp.index(value) for value in values]
+                if any(ix is None for ix in indexes):
+                    raise ValueError(f"Unknown selected answer for {opp.key} on {a.key}")
+                selections[i] = tuple(sorted(set(indexes)))
+                continue
+            if isinstance(v, list):
+                raise ValueError(f"Unexpected multi-value target for {opp.key} on {a.key}")
             ix = opp.index(v)
             if ix is not None:
                 col[i] = ix
-            if opp.kind == NUMBER and v not in (None, ""):
+            if opp.kind == NUMBER and v not in (None, "", ABSENT):
                 try:
-                    nums[i] = float(str(v).replace(",", "").split()[0])
-                except ValueError:
-                    pass
+                    import math
+                    number = float(str(v).replace(",", "").split()[0])
+                    if not math.isfinite(number) or number < 0:
+                        raise ValueError()
+                    nums[i] = number
+                except (ValueError, IndexError):
+                    raise ValueError(f"Invalid numeric target for {opp.key} on {a.key}") from None
         targets[opp.key] = col
+        if opp.multiple:
+            multi_targets[opp.key] = selections
         if opp.kind == NUMBER:
             numbers_target[opp.key] = nums
 
@@ -820,8 +912,14 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     entities: list[list[str]] = []
     by_atom = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
     by_text: dict[str, int] = {}
+    repeated_text: set[str] = set()
     for i, a in enumerate(atoms):
-        by_text.setdefault(_norm_text(a.text), i)
+        text_key = _norm_text(a.text)
+        if text_key in by_text:
+            repeated_text.add(text_key)
+        by_text.setdefault(text_key, i)
+    for text_key in repeated_text:
+        by_text.pop(text_key)
     for i, a in enumerate(atoms):
         lb = a.label or {}
         reads = lb.get("reads_set") if isinstance(lb.get("reads_set"), dict) else {}
@@ -980,7 +1078,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         field_notes=field_notes, weights=weights, why_weights=[why_weight(a.label) for a in atoms],
         hint_lines=hint_lines, entities=entities,
         judged=judged, negatives=negatives,
-        flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1])
+        flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1],
+        multi_targets=multi_targets)
 
 
 def _as_list(v: Any) -> list[str]:

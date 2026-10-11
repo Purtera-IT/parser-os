@@ -61,8 +61,9 @@ def test_teaching_reaches_the_heads_and_never_the_teacher(schema, batch):
     view = teacher_view(teacher, sub, "purtera")
     out = m(sub.inputs(), company="purtera")
     parts = supercharge_loss(m, out, view)
-    for k in ("teach_heads", "teach_geometry", "teach_unlabeled"):
+    for k in ("teach_heads", "teach_geometry"):
         assert parts[k] > 0, k
+    assert parts["teach_unlabeled"] == 0  # warmup/calibration must explicitly enable it
     sum(parts.values()).backward()
     assert m.heads["content"].proto.weight.grad.abs().sum() > 0
     assert m.rationale[0].weight.grad.abs().sum() > 0

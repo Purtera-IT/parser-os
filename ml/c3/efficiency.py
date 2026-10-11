@@ -72,6 +72,13 @@ def heads_accuracy(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[f
             continue
         pred = out.logits[o.key].argmax(-1)
         for i in eval_ids:
+            if o.multiple:
+                y_set = batch.multi_targets[o.key][i]
+                if y_set is not None:
+                    predicted = tuple((out.logits[o.key][i] > 0).nonzero().flatten().tolist())
+                    hit += int(predicted == y_set)
+                    total += 1
+                continue
             y = batch.targets[o.key][i]
             if y != IGNORE:
                 hit += int(pred[i] == y)

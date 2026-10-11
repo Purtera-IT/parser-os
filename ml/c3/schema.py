@@ -47,6 +47,7 @@ BINARY = "binary"        # true / false
 NUMBER = "number"        # a number the text states (crew_size, labor_hours)
 PRESENCE = "presence"    # a phrase is present or not (commitment, urgency)
 RELATION = "relation"    # an edge to another line
+CAUSAL_RELATIONS = {"answers": 1, "derived_from": 1, "contradicts": 1}
 
 #: What one answer is about. Line questions are asked of every line; the
 #: judgment tabs also ask about two lines, a group of lines (a document, a
@@ -76,6 +77,7 @@ class Opportunity:
     description: str         # the question the labeler is asked, in full
     answers: tuple[Answer, ...] = ()
     size: str = LINE         # LINE | PAIR | GROUP | DEAL
+    multiple: bool = False   # independent selected answers, not a first-member class
 
     @property
     def universal(self) -> bool:
@@ -267,11 +269,11 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     answers=_answers(CLASS, docs, col, docs), **base))
             elif col == "hints":
                 # "What told you?": which part of the context decided the label
-                # (the card's context-hint chips; a list, its first member taught).
+                # The context-hint chips permit several simultaneous answers.
                 docs = {c["key"]: scrub(f"{c.get('label', '')}. {c.get('desc', '')}", universal)
                         for c in types.get("context_hints", [])}
                 opps.append(Opportunity(
-                    key="col:hints", field="hints", source="column", kind=CLASS,
+                    key="col:hints", field="hints", source="column", kind=CLASS, multiple=True,
                     description=f"{lead(h, universal)} Which part of the context decided it.",
                     answers=_answers(CLASS, docs, "what told you", docs), **base))
             # entity_keys, weight_tier, hint_refs, note, rejected: spans, weights
@@ -300,7 +302,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
             # Each closed-list answer's own written description (value_desc).
             value_docs = {str(v): scrub(d, universal) for v, d in (r.get("value_desc") or {}).items()}
             opps.append(Opportunity(
-                key=f"read:{rk}", field=rk, source="read", kind=kind,
+                key=f"read:{rk}", field=rk, source="read", kind=kind, multiple=rk == "train_for",
                 description=" ".join(x for x in (
                     lead(h, universal), f"{subject}.", scrub(r.get("desc", ""), universal)) if x),
                 answers=_answers(kind, values, subject, value_docs), **base))
@@ -309,7 +311,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 # (the Deal Kit is our pricing workbook), so it lives in the
                 # company layer; data._derived moves it there per line.
                 opps.append(Opportunity(
-                    key="read:co_deal_kit_route", field="co_deal_kit_route", source="read", kind=kind,
+                    key="read:co_deal_kit_route", field="co_deal_kit_route", source="read", kind=kind, multiple=True,
                     description=f"{lead(h, False)} Which parser one of our own Deal Kit lines trains.",
                     answers=_answers(kind, values, subject, value_docs),
                     **{**base, "layer": "company"}))

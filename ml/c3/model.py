@@ -45,7 +45,7 @@ from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
 from .lattice import AskedLattice, company_description, space_descriptions
 from .operators import ReasonCompiler, apply_reasons
-from .schema import NUMBER, PAIR, RELATION, Schema
+from .schema import CAUSAL_RELATIONS, NUMBER, PAIR, RELATION, Schema
 from .text import HashingEncoder, TagEmbedding
 
 #: The claim slots the belief tracker and the absence head work over, with the
@@ -65,7 +65,6 @@ CLAIM_SLOTS: dict[str, tuple[str, ...]] = {
 
 #: Relations whose source must enter the deal no earlier than its target
 #: (the answer comes after the question; a derived total after its inputs).
-CAUSAL_RELATIONS = {"answers": 1, "derived_from": 1, "contradicts": 1}
 
 #: What a line can change, per the WHY grammar ("what it changes in hours,
 #: crew, sites, tasks or price"), plus the schedule. Directions: down, none, up.

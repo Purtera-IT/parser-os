@@ -67,6 +67,33 @@ def weighted_ce(logits: torch.Tensor, y: torch.Tensor, rw: torch.Tensor) -> torc
     return (ce * rw * m).sum() / (rw * m).sum().clamp(min=1e-6)
 
 
+def answer_loss(logits: torch.Tensor, batch: Batch, key: str, rw: torch.Tensor,
+                keep: torch.Tensor | None = None) -> torch.Tensor:
+    """Saved sets use independent sigmoid answers; unknown rows teach nothing."""
+    if key not in batch.multi_targets:
+        y = torch.tensor(batch.targets[key], device=logits.device)
+        if keep is not None:
+            y = y.masked_fill(~keep, IGNORE)
+        return weighted_ce(logits, y, rw)
+    values = batch.multi_targets[key]
+    mask = torch.tensor([v is not None for v in values], device=logits.device)
+    if keep is not None:
+        mask = mask & keep
+    if not mask.any():
+        return logits.sum() * 0
+    target = torch.zeros_like(logits)
+    for i, ids in enumerate(values):
+        if ids:
+            target[i, list(ids)] = 1
+    per = F.binary_cross_entropy_with_logits(logits, target, reduction="none").mean(-1)
+    return (per * rw * mask).sum() / (rw * mask).sum().clamp(min=1e-6)
+
+
+def has_answers(batch: Batch, key: str) -> bool:
+    return (any(v is not None for v in batch.multi_targets[key]) if key in batch.multi_targets
+            else any(v != IGNORE for v in batch.targets[key]))
+
+
 def pointer_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     """hint_refs name the lines a decision came from: the pointer head puts
     its mass on the earlier ones (the heads see only the past)."""
@@ -108,9 +135,8 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
     for opp in model.schema.select(layer=layer):
         if opp.key not in out.logits:
             continue
-        y = torch.tensor(batch.targets[opp.key], device=dev)
-        if (y != IGNORE).any():
-            ce = ce + w.space.get(opp.space, 1.0) * weighted_ce(out.logits[opp.key], y, rw)
+        if has_answers(batch, opp.key):
+            ce = ce + w.space.get(opp.space, 1.0) * answer_loss(out.logits[opp.key], batch, opp.key, rw)
             terms += 1
         if opp.kind == NUMBER and opp.key in out.numbers:
             vals = batch.numbers_target.get(opp.key, [])
@@ -252,9 +278,8 @@ def why_losses(model: C3Model, out: C3Output, batch: Batch, desc, w: LossWeights
     rw = why_row_weights(batch, sim.device)
     suff, terms = out.r.new_zeros(()), 0
     for key, lg in sub.logits.items():
-        y = torch.tensor(batch.targets[key], device=sim.device).masked_fill(~keep, IGNORE)
-        if (y != IGNORE).any():
-            suff = suff + weighted_ce(lg, y, rw)
+        if has_answers(batch, key):
+            suff = suff + answer_loss(lg, batch, key, rw, keep)
             terms += 1
     return align, suff / max(terms, 1)
 
@@ -303,9 +328,8 @@ def explanation_only_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     another line's reasoning (its own WHY is masked) to this line."""
     total, terms = out.r.new_zeros(()), 0
     for key, votes in out.explained.items():
-        y = torch.tensor(batch.targets[key], device=votes.device)
-        if (y != IGNORE).any():
-            total = total + F.cross_entropy(votes, y, ignore_index=IGNORE)
+        if has_answers(batch, key):
+            total = total + answer_loss(votes, batch, key, votes.new_ones(len(batch)))
             terms += 1
     return total / max(terms, 1)
 
@@ -419,9 +443,8 @@ def _answer_ce(out, batch: Batch, keys) -> torch.Tensor:
     for k in keys:
         if k not in out.logits:
             continue
-        y = torch.tensor(batch.targets[k], device=out.logits[k].device)
-        if (y != IGNORE).any():
-            ce = F.cross_entropy(out.logits[k], y, ignore_index=IGNORE)
+        if has_answers(batch, k):
+            ce = answer_loss(out.logits[k], batch, k, out.logits[k].new_ones(len(batch)))
             total = ce if total is None else total + ce
             terms += 1
     if total is None:
@@ -454,6 +477,7 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     line's own WHY, which the direct pass never sees."""
     from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
     from .consolidate import context_distillation_loss  # noqa: PLC0415
+    from .supercharge import _kl  # noqa: PLC0415
 
     w = w or BrainWeights()
     desc = brain.describe()
@@ -474,9 +498,8 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     has_why = torch.tensor([bool(t) for t in why], device=parts["direct"].device)
     if has_why.any():
         parts["distill"] = torch.stack([
-            F.kl_div(direct.logits[k][has_why].log_softmax(-1),
-                     reasoned.logits[k][has_why].detach().log_softmax(-1),
-                     log_target=True, reduction="batchmean") for k in direct.logits]).mean()
+            _kl(direct.logits[k][has_why], reasoned.logits[k][has_why].detach(), 1.0,
+                brain.schema.by_key()[k].multiple) for k in direct.logits]).mean()
     else:
         parts["distill"] = parts["direct"].new_zeros(())
 
@@ -491,7 +514,8 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
         student = brain(batch, company=company, graph=graph, desc=desc,
                         deltas=brain.memory_universal(brain.lm, uni),
                         company_deltas=brain.memory_company(brain.lm, com))
-        parts["consolidate"] = context_distillation_loss(teacher.logits, student.logits)
+        parts["consolidate"] = context_distillation_loss(teacher.logits, student.logits,
+            multiple={o.key for o in brain.schema.opportunities if o.multiple})
     else:
         parts["consolidate"] = parts["direct"].new_zeros(())
 
