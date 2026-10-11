@@ -47,6 +47,8 @@ def validate_split(manifest: dict[str, Any]) -> list[str]:
                 errors.append("missing_snapshot_hash")
             if row.get("audit_status") != "verified":
                 errors.append("unverified_deal")
+            if not isinstance(row.get("source_groups"), list) or not row["source_groups"]:
+                errors.append("missing_source_groups")
             # Related versions / duplicate source documents travel together.
             for group in row.get("source_groups", []):
                 if group in groups and groups[group] != split:
@@ -176,8 +178,12 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
             verdict = mapping.get(verdict, "")
         opp = by_key.get(key)
         if opp is None:
-            blockers[f"unconsumed_tab:{head}"] += 1
-            account(key, "deferred")
+            if head == "rule":
+                blockers["separate_rule_export_required"] += 1
+                account(key, "external_pending")
+            else:
+                blockers[f"unconsumed_tab:{head}"] += 1
+                account(key, "deferred")
             continue
         ix, idx = opp.index(verdict), _judged_lines(j, opp.size, lines)
         if ix is None:

@@ -321,8 +321,21 @@ not a GPU capacity guarantee. Do not truncate long deals to pass it.
 
 Remaining upgrades before a complete rich-label corpus release include
 question-subject conditioning/state and fields, Values normalization,
-separate pre-atom Rules ingestion, Deal-answer targets, spatial/pixel inputs,
+verified separate pre-atom Rules exports, Deal-answer targets, spatial/pixel inputs,
 and relation-preserving long-deal training. Multi-deal checkpoint/resume,
 per-head/deal evaluation, calibration, export and shadow-serving gates must
 also be verified. The synthetic efficiency harness is an experiment, not
 that production training pipeline.
+
+Rules preparation has an explicit separate caller:
+`python -m app.learning.rule_feedback --manifest /outside/repo/rules-split.json
+--output /outside/repo/rules.jsonl` (one shell line). Its manifest has the
+same three verified deal partitions and untouched-holdout certification;
+training entries additionally carry `blob_path` and a byte-level
+`blob_sha256`. This exporter opens **only** the training blobs, rejects
+evaluation-purpose sources and conflicting saved verdicts, filters
+assistant proposals/excluded cards, and publishes the JSONL atomically with
+private permissions. The existing semantic-rule trainer reads this shape
+through `SOWSMITH_RULE_LOG`; exporting does not invoke that trainer. A
+separate rule export/evaluation is still required before calling the whole
+corpus ready: the C3 preflight cannot certify an external learner's artifact.
