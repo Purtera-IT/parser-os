@@ -407,7 +407,7 @@ class Batch:
 
 @dataclass(frozen=True)
 class Judged:
-    """One judgment-tab verdict about more than one line."""
+    """A distinct card subject, including source-conditioned Questions."""
     key: str                     # "jdg:conflict"
     size: str                    # PAIR | GROUP | DEAL
     lines: tuple[int, ...]       # the two lines, the group's lines, or every line
@@ -415,6 +415,17 @@ class Judged:
     note: str = ""               # the labeler's reason and note, for the teacher
     why_weight: float = 1.0      # DRAFT_WHY_WEIGHT when a model wrote the note
     policy: str = ""             # the note's [<company>] part: the company layer only
+    query: str = ""              # source question, never its verdict or expert WHY
+    subject_key: str = ""        # distinct card identity even on the same source line
+    answers: tuple[int, ...] | None = None # set-valued card fields
+
+
+def judgment_identity(batch: Batch, judgment: Judged) -> tuple:
+    """Bind teacher targets to source, question and privileged annotation."""
+    return (judgment.subject_key, judgment.key, judgment.lines, judgment.query,
+            judgment.answer, judgment.answers, judgment.note, judgment.policy,
+            judgment.why_weight, tuple(batch.texts[i] for i in judgment.lines),
+            batch.company, batch.company_policy)
 
 
 @dataclass(frozen=True)
@@ -798,6 +809,55 @@ def _judged_lines(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...
     return (i,) if i is not None else None
 
 
+def judgment_query(j: dict[str, Any]) -> str:
+    """Only Questions have a separate source query; no target fields enter it."""
+    if j.get("head") not in ("gap", "question_answered"):
+        return ""
+    t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    return str(t.get("text") or j.get("text") or "").strip()
+
+
+def question_field_targets(j: dict[str, Any], schema: Schema) -> list[tuple[str, tuple[int, ...]]]:
+    """Registry-backed card fields only; blank means unknown, never negative."""
+    if not judgment_query(j):
+        return []
+    out = []
+    fields = j.get("fields") or {}
+    if not isinstance(fields, dict):
+        raise ValueError("Question fields must be a mapping")
+    for name, value in fields.items():
+        if name not in ("deal_stage", "needed_by", "intake_gap") or value in (None, "", []):
+            continue
+        opp = schema.of_field("read", name)
+        if opp is None:
+            raise ValueError(f"Question field lacks a consumer: {name}")
+        if opp.multiple and not isinstance(value, (str, list, tuple)):
+            raise ValueError(f"Question answer set must be a list or string: {name}")
+        values = _as_list(value) if opp.multiple else [value]
+        if not opp.multiple and isinstance(value, list):
+            raise ValueError(f"Question field is not set-valued: {name}")
+        if opp.kind == BINARY and any(not isinstance(v, bool) and str(v).lower() not in ("true", "false") for v in values):
+            raise ValueError(f"Unknown question field value: {name}")
+        indexes = [opp.index(v) for v in values]
+        if any(i is None for i in indexes):
+            raise ValueError(f"Unknown question field value: {name}")
+        out.append((opp.key, tuple(sorted(set(indexes)))))
+    return out
+
+
+def judgment_subject(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...] | None:
+    idx = _judged_lines(j, size, lines)
+    if idx is not None or not judgment_query(j):
+        return idx
+    t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    # An unanchored question can read the deal. A stale named anchor cannot.
+    if any(t.get(k) for k in ("a", "source", "site")):
+        return None
+    if str(j.get("target_key") or "").startswith(("atom:", "site:", "sup:")):
+        return None
+    return tuple(i for i, a in enumerate(lines.atoms) if not excluded(a.label)) or None
+
+
 def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = False,
               max_atoms: int | None = 4096) -> Batch:
     """Split one deal into model inputs and per-opportunity targets.
@@ -1002,7 +1062,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         if opp is None or not verdict:
             continue
         ix = opp.index(verdict)
-        idx = _judged_lines(j, opp.size, lines)
+        idx = judgment_subject(j, opp.size, lines)
         if ix is None or idx is None:
             continue
         if opp.size == PAIR and any(excluded(deal.atoms[i].label) for i in idx):
@@ -1010,6 +1070,24 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         # The note splits as an atom's or a link's does: the universal WHY is
         # the teacher's, a [purtera] line goes to the company layer only.
         note, pol = judgment_note(j.get("reason"), j.get("note"), company)
+        query = judgment_query(j)
+        if query:
+            # The question is the subject, not the source line's class. Keep
+            # every card and paragraph, including questions without an anchor.
+            if any(excluded(deal.atoms[i].label) for i in idx):
+                continue
+            judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
+                                 note=mask_verdict(note) if opp.universal else note,
+                                 why_weight=why_weight(j), policy=pol, query=query,
+                                 subject_key=str(j.get("target_key") or j.get("id") or query)))
+            for field_key, answers in question_field_targets(j, schema):
+                field_opp = by_key[field_key]
+                judged.append(Judged(key=field_key, size=LINE, lines=idx, answer=answers[0],
+                                     answers=answers if field_opp.multiple else None,
+                                     note=mask_verdict(note) if field_opp.universal else " ".join(x for x in (note, pol) if x),
+                                     why_weight=why_weight(j), query=query,
+                                     subject_key=str(j.get("target_key") or j.get("id") or query)))
+            continue
         if opp.size == LINE:
             i = idx[0]
             if excluded(deal.atoms[i].label):

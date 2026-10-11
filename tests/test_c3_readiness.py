@@ -207,7 +207,7 @@ def test_teacher_and_heads_train_multi_selection_without_scalar_gold():
     loss, _ = head_losses(model, out, batch, LossWeights(), "universal")
     assert torch.isfinite(loss)
     loss.backward()
-    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 1024), context_lines=2)
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
     loss, parts = brain_loss(teacher, batch, BrainWeights(consolidate=0))
     assert torch.isfinite(loss) and parts["direct"] > 0 and parts["reasoned"] > 0
     loss.backward()

@@ -24,9 +24,9 @@ python -m ml.c3.card --deal ml/c3/fixtures/synthetic_deal.json --params
 
 | Step | File | What happens |
 |---|---|---|
-| Schema | `schema.py` | Every head in label_heads.json becomes a list of **labeling opportunities**: `col:label_type`, `read:sow_coverage`, `rel:answers`… Each carries the head's question, the reading's description and one description per answer. Universal descriptions are scrubbed of company words. 80 opportunities today. |
+| Schema | `schema.py` | Every head in label_heads.json becomes a list of **labeling opportunities**: `col:label_type`, `read:sow_coverage`, `rel:answers`… Each carries the head's question, the reading's description and one description per answer. Universal descriptions are scrubbed of company words. Registry-derived opportunities; count with the pinned schema. |
 | Contract | `data.py` | One JSON per deal: atoms (text, entered_at, doc, section, speaker role and side), each with an optional label (`label_type`, `about`, `wants`, `reads_set`, `note`), edges, and an optional outcome. `from_training_blob` joins the real blob's labels onto atom rows by `label_key`. |
-| Split | `data.featurize` | **Inputs:** the line, number-magnitude tokens, doc kind, role/side, time, same-document and same-section structure. **Targets:** every label field. The only label fields that are also inputs are the stage and geo context slots, dropped to null at random. A test relabels every atom and checks the outputs do not move. |
+| Split | `data.featurize` | **Inputs:** the line, number-magnitude tokens, doc kind, role/side, time, same-document and same-section structure. **Targets:** fields with implemented consumers. Other saved supervision is retained and blocked by preflight until consumed. The only label fields that are also inputs are the stage and geo context slots, dropped to null at random. A test relabels every atom and checks the outputs do not move. |
 | Note | `notes.py` | `split_note` (same grammar as the ingest; a test checks they agree) gives the universal WHY and the company line. The WHY is verdict-masked before encoding. `extract_programs` turns "2 techs x 8 hours = 16 hours" into an executable program, kept only if it reproduces its own stated number. |
 
 A missing reading on a labeled card is **unknown, not negative**, by default
@@ -339,3 +339,37 @@ private permissions. The existing semantic-rule trainer reads this shape
 through `SOWSMITH_RULE_LOG`; exporting does not invoke that trainer. A
 separate rule export/evaluation is still required before calling the whole
 corpus ready: the C3 preflight cannot certify an external learner's artifact.
+
+## Source-conditioned card supervision
+
+Questions with source query text are separate subjects in `Batch.judged`.
+Two questions sharing one evidence line retain independent answers and WHYs.
+An unanchored question reads non-excluded deal evidence; a stale named anchor
+is rejected rather than replaced by arbitrary equal text. Legacy query-less
+line cards keep their existing line-target behavior.
+
+`model.judge(..., queries=[...])` combines learned source-query embeddings
+with evidence representations. Saved answers, fields and expert notes do not
+enter that inference API. Card fields `deal_stage`, `needed_by` and `intake_gap`
+train their registry heads on the same subject; `needed_by` is a set trained
+with sigmoid BCE. Unknown values fail; blanks remain unknown. Company intake
+heads require the company pass, while the universal stage head remains separate.
+
+Card explanations have an explicit privileged embedding-alignment loss.
+The training-only teacher also reads each card's evidence/query directly and
+with its complete WHY, supervised by card-specific target losses. Its detached
+reasoned logits reach the student through `teach_judgments`; subject identity
+binds those targets to source text, question and expert annotation. These tests
+verify wiring and gradients, not pretrained semantic quality.
+
+Expert paragraph token loss now respects paragraph-quality weights and rejects
+over-budget pages. Card teacher pages also reject over-budget source/WHY text.
+Teacher tokenization and encoder paragraph/token readers also reject overflow
+instead of silently clipping text. Real-model budget configuration and long-deal
+context preparation still need validation before release. The default legacy clause/compiler
+loss is off; explicit opt-in is retained for ablation tests.
+
+Training readiness remains blocked by unsupported free-text Values/Deal targets,
+remaining question dispositions, vision/table inputs, scalable long-deal evidence,
+the frozen audited corpus and real pretrained teacher/trainer/export evaluation.
+Neither these synthetic tests nor saved raw JSON certify that every tab is trained.

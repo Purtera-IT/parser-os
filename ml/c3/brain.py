@@ -188,6 +188,38 @@ class Brain(nn.Module):
             out.attention.update(cout.attention)
         return out
 
+    def card_page(self, batch: Batch, judgment, *, with_why: bool = False) -> str:
+        """Source evidence and source question, isolated from saved target fields."""
+        o = self.schema.by_key()[judgment.key]
+        text = "Evidence:\n" + "\n".join(f"[{i}] {batch.texts[i]}" for i in judgment.lines)
+        if judgment.query:
+            text += "\nQuestion: " + judgment.query
+        if not o.universal:
+            text += "\nCompany policy: " + (batch.company_policy or "")
+        if with_why:
+            text += "\nWhy: " + judgment.note
+            if not o.universal and judgment.policy:
+                text += "\nCompany reasoning: " + judgment.policy
+        return text + "\nAnswer:"
+
+    def card_logits(self, batch: Batch, *, with_why: bool = False, desc=None):
+        """Per-card teacher heads, preserving distinct questions sharing evidence."""
+        desc = desc if desc is not None else self.describe()
+        by = {}
+        for j in batch.judged:
+            by.setdefault(j.key, []).append(j)
+        result = {}
+        for key, js in by.items():
+            pages = [self.card_page(batch, j, with_why=with_why) for j in js]
+            if any(self.lm.token_count(t) > self.lm.max_len for t in pages):
+                raise ValueError("Card source/WHY exceeds teacher context budget; do not truncate")
+            ids, mask = self.lm.tokenize(pages)
+            h, _ = self.lm(ids, mask)
+            reader = self.reader_universal if self.schema.by_key()[key].universal else self.reader_company
+            logits, _, _ = reader(h, mask, desc[key][0].unsqueeze(0), [desc[key][1]])
+            result[key] = logits[0]
+        return result
+
     # ------------------------------------------------------------ flips
     def flip_read(self, batch: Batch, why: list[str | None], flips: list,
                   notes: list[list[str]] | None = None, desc=None,
@@ -218,6 +250,9 @@ class Brain(nn.Module):
         notes = notes or [[] for _ in range(len(batch))]
         heads = [self.page(batch, i, notes[i]) + "Why: " for i in idx]
         fulls = [h + batch.why[i] for h, i in zip(heads, idx)]
+        if any(self.lm.token_count(t) > self.lm.max_len for t in fulls):
+            raise ValueError("Expert WHY exceeds teacher context budget; increase the budget "
+                             "or prepare source context explicitly, never truncate the WHY")
         _, hmask = self.lm.tokenize(heads)
         ids, mask = self.lm.tokenize(fulls)
         prefix = None
@@ -228,8 +263,15 @@ class Brain(nn.Module):
         pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
         on_why = (pos >= start.view(-1, 1)) & mask & (pos > 0)
         tgt = ids.masked_fill(~on_why, IGNORE)[:, 1:]
-        return F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]), tgt.reshape(-1),
-                               ignore_index=IGNORE)
+        token_loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]),
+                                     tgt.reshape(-1), ignore_index=IGNORE, reduction="none")
+        token_loss = token_loss.view_as(tgt)
+        valid = tgt != IGNORE
+        if not valid.any(1).all():
+            raise ValueError("Expert WHY has no supervised tokens")
+        row_loss = token_loss.sum(1) / valid.sum(1).clamp(min=1)
+        weights = row_loss.new_tensor([batch.why_weights[i] if batch.why_weights else 1.0 for i in idx])
+        return (row_loss * weights).sum() / weights.sum().clamp(min=1e-6)
 
     # ------------------------------------------------------------ grounding
     def grounded_page(self, batch: Batch, i: int, window: int = 12

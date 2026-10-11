@@ -53,7 +53,7 @@ def test_teaching_reaches_the_heads_and_never_the_teacher(schema, batch):
     torch.manual_seed(0)
     m = C3Model(schema, SMALL)
     m.train()
-    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 1024), context_lines=2)
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
     view = teacher_view(teacher, batch, "purtera")
     assert teacher.training                                 # mode restored
     keep = {i for i, w in enumerate(batch.why) if w}

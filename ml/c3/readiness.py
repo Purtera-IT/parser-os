@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 from .data import (DealExample, _Lines, _derived, _is_a_person, _judged_lines,
-                   excluded, field_note_targets, is_deal_kit, select_labels)
+                   excluded, field_note_targets, is_deal_kit, select_labels, judgment_query, judgment_subject, question_field_targets)
 from .schema import CAUSAL_RELATIONS, LINE, NUMBER, PAIR, RELATION, Schema, load_schema
 
 
@@ -185,7 +185,7 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
                 blockers[f"unconsumed_tab:{head}"] += 1
                 account(key, "deferred")
             continue
-        ix, idx = opp.index(verdict), _judged_lines(j, opp.size, lines)
+        ix, idx = opp.index(verdict), judgment_subject(j, opp.size, lines)
         if ix is None:
             blockers[f"unknown_verdict:{head}"] += 1
             continue
@@ -195,7 +195,7 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
         if any(excluded(deal.atoms[i].label) for i in idx) and opp.size in (LINE, PAIR):
             counts["cards_on_excluded_lines"] += 1
             continue
-        identity = (key, idx)
+        identity = (key, idx, judgment_query(j), str(j.get("target_key") or "")) if judgment_query(j) else (key, idx)
         if identity in used:
             # Equal answers still lose card-specific rationale in the current
             # line-target consumer. Flag rather than silently count it twice.
@@ -204,7 +204,16 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
         used[identity] = ix
         target(key, verdict)
         account(key, "direct")
-        if j.get("fields"):
+        consumed = set()
+        if judgment_query(j):
+            try:
+                for field_key, indexes in question_field_targets(j, schema):
+                    consumed.add(by_key[field_key].field)
+                    target(field_key, "set" if by_key[field_key].multiple else by_key[field_key].answers[indexes[0]].value)
+                    account(f"card:{by_key[field_key].field}", "direct")
+            except ValueError:
+                blockers[f"unknown_card_field_value:{head}"] += 1
+        if any(v not in (None, "", []) and k not in consumed for k, v in (j.get("fields") or {}).items()):
             blockers[f"unconsumed_card_fields:{head}"] += 1
     for name in ("deal_answers", "missed_history"):
         if blob.get(name):

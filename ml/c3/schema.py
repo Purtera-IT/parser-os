@@ -302,7 +302,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
             # Each closed-list answer's own written description (value_desc).
             value_docs = {str(v): scrub(d, universal) for v, d in (r.get("value_desc") or {}).items()}
             opps.append(Opportunity(
-                key=f"read:{rk}", field=rk, source="read", kind=kind, multiple=rk == "train_for",
+                key=f"read:{rk}", field=rk, source="read", kind=kind, multiple=rk in ("train_for", "needed_by"),
                 description=" ".join(x for x in (
                     lead(h, universal), f"{subject}.", scrub(r.get("desc", ""), universal)) if x),
                 answers=_answers(kind, values, subject, value_docs), **base))

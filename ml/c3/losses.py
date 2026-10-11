@@ -37,10 +37,11 @@ class LossWeights:
     claims: float = 0.3            # a WHY's compiled claim matches its line's changes
     rule_links: float = 0.5        # follows_rule / exception_to supervise a rule's region
     why_echo: float = 0.2          # r_to_text(r_i) lands on the encoded WHY (ask.py)
-    clause_use: float = 0.1        # removing any non-statement clause must change the output
+    clause_use: float = 0.0        # legacy clause/compiler ablation; opt in explicitly
     pointers: float = 0.3          # hint_refs: the lines a decision came from
     entities: float = 0.2          # entity_keys: lines naming the same entity pull together
     judgments: float = 1.0         # judgment tabs about two lines, a group or the deal
+    judgment_rationale: float = 0.2 # privileged card paragraphs align card representations
     negatives: float = 0.3         # answers known wrong (the parser's type a person overruled)
     near_misses: float = 0.5       # lines that read alike but answer differently stay apart
     near_miss_margin: float = 1.0
@@ -161,9 +162,41 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
         o = opps.get(key)
         if o is None or (not o.universal and out.conduct_x is None):
             continue
-        logits = model.judge(out, key, [j.lines for j in js], desc)
+        logits = model.judge(out, key, [j.lines for j in js], desc, queries=[j.query for j in js])
         y = torch.tensor([j.answer for j in js], device=logits.device)
-        total = total + F.cross_entropy(logits, y)
+        if o.multiple:
+            truth = torch.zeros_like(logits)
+            for i, j in enumerate(js):
+                if j.answers is None:
+                    raise ValueError("Set-valued judgment needs its complete answer set")
+                truth[i, list(j.answers)] = 1
+            total = total + F.binary_cross_entropy_with_logits(logits, truth)
+        else:
+            total = total + F.cross_entropy(logits, y)
+        terms += 1
+    return total / max(terms, 1)
+
+
+def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
+    """Privileged card WHY alignment. Notes never enter task inference inputs.
+
+    This is a paragraph embedding loss, not a substitute for the pretrained
+    teacher's reasoning/grounding objectives or free-text output consumers.
+    """
+    by: dict[str, list] = {}
+    for j in batch.judged:
+        if j.note and j.why_weight > 0:
+            by.setdefault(j.key, []).append(j)
+    total, terms = out.r.new_zeros(()), 0
+    for key, js in by.items():
+        if not model.schema.by_key()[key].universal and out.conduct_x is None:
+            continue
+        features = model.judgment_features(out, key, [j.lines for j in js], [j.query for j in js])
+        # No WHY gradients flow into the source encoder via the target branch.
+        notes = model.judgment_note(model.text([j.note for j in js]).detach())
+        loss = 1 - F.cosine_similarity(features, notes, dim=-1)
+        weights = loss.new_tensor([j.why_weight for j in js])
+        total = total + (loss * weights).sum() / weights.sum().clamp(min=1e-6)
         terms += 1
     return total / max(terms, 1)
 
@@ -414,6 +447,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["pointers"] = pointer_loss(out, batch)
     parts["entities"] = entity_loss(out, batch)
     parts["judgments"] = judgment_loss(model, out, batch, desc)
+    parts["judgment_rationale"] = judgment_rationale_loss(model, out, batch)
     parts["negatives"] = negative_loss(out, batch)
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.clause_use and bank is not None:
@@ -431,6 +465,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
 class BrainWeights:
     direct: float = 1.0        # the label, answered from the bare page
     reasoned: float = 1.0      # the label, answered with the human's WHY on the page
+    card_direct: float = 1.0   # separate card subjects/evidence
+    card_reasoned: float = 1.0 # full card WHY used by training-only teacher
     rationale: float = 1.0     # write the human's WHY, token by token
     distill: float = 0.5       # the direct answer moves toward what the reasoning concludes
     consolidate: float = 0.5   # notes written into weights must act as notes on the page
@@ -494,6 +530,25 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     parts["direct"] = _answer_ce(direct, batch, keys)
     parts["reasoned"] = _answer_ce(reasoned, batch, keys)
     parts["rationale"] = brain.rationale_loss(batch, notes, graph)
+    for name, with_why in (("card_direct", False), ("card_reasoned", True)):
+        predictions = brain.card_logits(batch, with_why=with_why, desc=desc)
+        grouped = {}
+        for j in batch.judged:
+            grouped.setdefault(j.key, []).append(j)
+        terms = []
+        for key, logits in predictions.items():
+            js = grouped[key]
+            if brain.schema.by_key()[key].multiple:
+                truth = torch.zeros_like(logits)
+                for i, j in enumerate(js):
+                    truth[i, list(j.answers)] = 1
+                per_row = F.binary_cross_entropy_with_logits(logits, truth, reduction="none").mean(-1)
+            else:
+                truth = torch.tensor([j.answer for j in js], device=logits.device)
+                per_row = F.cross_entropy(logits, truth, reduction="none")
+            weights = per_row.new_tensor([j.why_weight if with_why else 1.0 for j in js])
+            terms.append((per_row * weights).sum() / weights.sum().clamp(min=1e-6))
+        parts[name] = torch.stack(terms).mean() if terms else parts["direct"].new_zeros(())
 
     has_why = torch.tensor([bool(t) for t in why], device=parts["direct"].device)
     if has_why.any():

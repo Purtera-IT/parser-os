@@ -293,6 +293,8 @@ class C3Model(nn.Module):
         self.pool_in = nn.Linear(c.d_r, c.d_head)
         self.pool_score_company = nn.Linear(c.d_head, 1)
         self.pool_in_company = nn.Linear(c.d_head, c.d_head)
+        self.judgment_query = nn.Linear(c.d_text, c.d_head)
+        self.judgment_note = nn.Linear(c.d_text, c.d_head)
         self.judgment_head = DescribedHead(c.d_text, c.d_head, c.n_folds)
         self.judgment_head_company = DescribedHead(c.d_text, c.d_head, c.n_folds)
         self.companies = list(companies)
@@ -458,13 +460,14 @@ class C3Model(nn.Module):
         out.alpha = alpha
         out.conduct_x = y
 
-    def judge(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
-              desc: dict[str, Any] | None = None) -> torch.Tensor:
+    def judgment_features(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
+                          queries: list[str] | None = None) -> torch.Tensor:
         """Logits [len(subjects), A] for a judgment asked about two lines, a
         group of lines or the whole deal. A pair is (i, j); a group or the deal
         is its lines. A company question needs ``model(..., company=...)``."""
         o = self.schema.by_key()[key]
-        desc = desc if desc is not None else self.describe()
+        if queries is not None and len(queries) != len(subjects):
+            raise ValueError("One source query is required per judgment subject")
         if o.universal:
             x, score, proj, head = out.r, self.pool_score, self.pool_in, self.judgment_head
         else:
@@ -482,7 +485,21 @@ class C3Model(nn.Module):
                 xs = x[idx]
                 w = score(xs).softmax(0)
                 rows.append(proj((w * xs).sum(0)))
-        logits, _ = head(torch.stack(rows), desc[key][0].unsqueeze(0), [desc[key][1]])
+        features = torch.stack(rows)
+        if queries is not None:
+            # Empty queries preserve the old pair/group/deal computation.
+            mask = features.new_tensor([bool(q) for q in queries]).unsqueeze(1)
+            features = features + mask * self.judgment_query(self.text(queries))
+        return features
+
+    def judge(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
+              desc: dict[str, Any] | None = None, *, queries: list[str] | None = None
+              ) -> torch.Tensor:
+        o = self.schema.by_key()[key]
+        desc = desc if desc is not None else self.describe()
+        features = self.judgment_features(out, key, subjects, queries)
+        head = self.judgment_head if o.universal else self.judgment_head_company
+        logits, _ = head(features, desc[key][0].unsqueeze(0), [desc[key][1]])
         return logits[0]
 
     def _ask(self, out: C3Output, inp: dict[str, Any], desc: dict[str, Any],

@@ -167,7 +167,7 @@ def _train_teacher(schema: Schema, batch: Batch, seed: int, steps: int, lr: floa
 def run_curve(deal: DealExample, schema: Schema | None = None, budgets=(2, 4, 6), seeds=(0,),
               steps: int = 30, teacher_steps: int = 10, cfg: C3Config = SMALL,
               lr: float = 3e-3,
-              make_lm: Callable[[], torch.nn.Module] = lambda: TinyCausalLM(32, 1, 2, 1024),
+              make_lm: Callable[[], torch.nn.Module] = lambda: TinyCausalLM(32, 1, 2, 4096),
               rewrites: bool = False) -> list[Row]:
     schema = schema or load_schema()
     full = featurize(deal, schema)

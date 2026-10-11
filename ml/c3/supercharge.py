@@ -73,13 +73,14 @@ from dataclasses import dataclass, field
 import torch
 from torch.nn import functional as F
 
-from .data import IGNORE, Batch, number_tokens
+from .data import IGNORE, Batch, judgment_identity, number_tokens
 from .model import C3Model, C3Output
 
 
 @dataclass
 class TeachWeights:
     heads: float = 1.0
+    judgments: float = 1.0
     geometry: float = 0.5
     # Opt in after teacher calibration/warmup, not from an untrained teacher.
     unlabeled: float = 0.0
@@ -114,6 +115,8 @@ class TeacherView:
     flipped: dict[str, torch.Tensor] | None = None  # supposition pass, row n = batch.flips[n] [F, A]
     rewrites: list[Rewrite] = field(default_factory=list)   # kept after the round trip
     rewritten: dict[str, torch.Tensor] | None = None  # target per rewrite, row n = rewrites[n] [R, A]
+    card_logits: dict[str, torch.Tensor] = field(default_factory=dict)
+    card_subjects: dict[str, tuple] = field(default_factory=dict)
 
 
 @torch.no_grad()
@@ -135,6 +138,12 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc).logits
                if batch.flips else None)
     kept, rewritten = read_rewrites(teacher, batch, rewrites or [], why, told.logits, desc)
+    card_logits = teacher.card_logits(batch, with_why=True, desc=desc)
+    grouped = {}
+    for j in batch.judged:
+        grouped.setdefault(j.key, []).append(j)
+    card_subjects = {key: tuple(judgment_identity(batch, j) for j in js)
+                     for key, js in grouped.items()}
     teacher.train(was)
     dev = emb.device
     if pointers is not None:
@@ -147,7 +156,7 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     return TeacherView(told.logits, noted.logits, emb,
                        torch.tensor([bool(t) for t in why], device=dev),
                        torch.tensor(batch.labeled, device=dev), pointers, words, flipped,
-                       kept, rewritten)
+                       kept, rewritten, card_logits, card_subjects)
 
 
 def with_texts(batch: Batch, repl: dict[int, str]) -> Batch:
@@ -262,12 +271,31 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
              "teach_pointers": zero, "teach_words": zero, "teach_flip": zero, "teach_flip_size": zero,
-             "teach_rewrites": zero}
+             "teach_rewrites": zero, "teach_judgments": zero}
     if batch is not None and view.flipped is not None and batch.flips:
         parts["teach_flip"], parts["teach_flip_size"] = teach_flip(model, out, view, batch,
                                                                    w.temperature, desc)
     if batch is not None and view.rewrites:
         parts["teach_rewrites"] = teach_rewrites(model, batch, view, w.temperature)
+    if batch is not None and view.card_logits:
+        grouped = {}
+        for j in batch.judged:
+            grouped.setdefault(j.key, []).append(j)
+        terms = []
+        for key, teacher_logits in view.card_logits.items():
+            js = grouped.get(key, [])
+            identity = tuple(judgment_identity(batch, j) for j in js)
+            if identity != view.card_subjects.get(key):
+                raise ValueError("Teacher card subjects do not match this batch")
+            o = model.schema.by_key()[key]
+            if not o.universal and out.conduct_x is None:
+                continue
+            logits = model.judge(out, key, [j.lines for j in js], desc, queries=[j.query for j in js])
+            weights = logits.new_tensor([j.why_weight for j in js])
+            losses = torch.stack([_kl(logits[i:i+1], teacher_logits[i:i+1], w.temperature, o.multiple)
+                                  for i in range(len(js))])
+            terms.append((losses * weights).sum() / weights.sum().clamp(min=1e-6))
+        parts["teach_judgments"] = torch.stack(terms).mean() if terms else zero
     if not keys:
         return parts
     why = view.has_why
@@ -363,7 +391,8 @@ def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> t
             + w.unlabeled * parts["teach_unlabeled"] + w.pointers * parts["teach_pointers"]
             + w.words * parts["teach_words"] + w.flips * parts.get("teach_flip", 0.0)
             + w.flip_size * parts.get("teach_flip_size", 0.0)
-            + w.rewrites * parts.get("teach_rewrites", 0.0))
+            + w.rewrites * parts.get("teach_rewrites", 0.0)
+            + w.judgments * parts.get("teach_judgments", 0.0))
 
 
 def mask_labels(batch: Batch, keep: set[int]) -> Batch:
