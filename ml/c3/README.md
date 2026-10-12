@@ -343,7 +343,18 @@ The teacher does not invent new line text. `--tiny` is the CPU stand-in, not the
 file is joined on the way in. A deal past the atom budget is windowed without
 dropping edges. `--tiny` is the CPU stand-in, not the base. The holdout is
 scored once and is not used to stop or tune. That loop does not flip
-`READY_FOR_TRAINING`. `READY_FOR_TRAINING` is false until a frozen audited corpus,
+`READY_FOR_TRAINING`. The deal kit is a second model:
+`python -m ml.c3.kit --train <kit json> --holdout <kit json>`. `--tiny` is the
+CPU check. The live run is the H100: ModernBERT-large stays frozen, and a
+slot reader trains on top. Every atom from before the kit was attached is a
+token. When one atom is decided, every other atom stays in the attention,
+tagged as evidence, the same fact, a lookalike, a sibling, or by its section.
+A section the tab filled teaches the atoms left off it. A section left empty
+teaches nothing. A reason sentence is stored and is not an input. A site the
+tab kept is also a `job_site` mark for the atom model's site head. Billing
+reads each present section once, plus the other training kits. The kits
+`000051`, `010095`, `010164`, `010253`, and `010287` are the holdout and
+never train. The run does not flip `READY_FOR_TRAINING`. `READY_FOR_TRAINING` is false until a frozen audited corpus,
 an untouched holdout, a certified pretrained budget and a separate Rules
 evaluation exist. Synthetic tests do not measure learned accuracy.
 
