@@ -13,8 +13,11 @@ the old code grew 1,956 MB over 1,000 rows; it now holds the sheet's values
 once and grows by single-digit megabytes.
 
 These tests replay a deal of 010264's size and shape in a fresh interpreter and
-hold the peak, and the growth over the second half, to fixed ceilings. A leak
-of even 10 KB per item fails them.
+hold the peak, and the growth over the second half, to fixed ceilings. Some
+growth is the output itself: every atom keeps its receipts (a pydantic model
+with its locator and snippet), 46 MB per 8,000 items on Python 3.13 and 121 MB
+on CI's 3.12. The ceilings sit above that and fifty times below the old leak,
+so anything leaking more than ~40 KB per item fails them.
 """
 from __future__ import annotations
 
@@ -38,11 +41,11 @@ REPO = Path(__file__).resolve().parents[1]
 ITEMS = 16_001
 #: The prod parser worker had 4 GB and dev 8 GB when 010264 was killed. The
 #: whole replay of a deal this size must fit with room to spare for every other
-#: stage, so it gets a small fraction of the smallest of them.
-PEAK_GROWTH_CEILING_MB = 400
+#: stage, so it gets at most a fifth of the smallest of them.
+PEAK_GROWTH_CEILING_MB = 800
 #: The second 8,000 items may not cost more memory than this. The old code
 #: spent ~14 GB on them.
-SECOND_HALF_CEILING_MB = 80
+SECOND_HALF_CEILING_MB = 300
 
 _SCRIPT = textwrap.dedent(
     r'''
