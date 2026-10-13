@@ -120,7 +120,16 @@ class DealExample:
         labeling page uses. Relations come from each label's ``links`` list
         when the blob has one (``{"relation", "to"}``).
         """
-        labels = {lb["label_key"]: lb for lb in blob.get("labels", [])}
+        # Two labelers on one line: the person's row wins over a draft
+        # labeler's ("... (assistant)"), whatever the blob order. Training
+        # copies written before the mirror drops those rows still hold both.
+        labels: dict[str, dict[str, Any]] = {}
+        for lb in blob.get("labels", []):
+            held = labels.get(lb["label_key"])
+            # A row with no labeler predates the field and is a person's.
+            if held is None or _is_a_person(lb.get("labeler") or "person") \
+                    or not _is_a_person(held.get("labeler") or "person"):
+                labels[lb["label_key"]] = lb
         rows, edges = [], []
         for a in atoms:
             row = dict(a)
@@ -136,7 +145,7 @@ class DealExample:
         # lines from their own text, or the base never learns what the parser
         # misses.
         seen = {a.get("label_key") for a in atoms}
-        for lb in blob.get("labels", []):
+        for lb in labels.values():
             if lb.get("label_key") in seen or not str(lb.get("text") or "").strip():
                 continue
             if str(lb.get("origin") or "").strip().lower() != "labeler":
