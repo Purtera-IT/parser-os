@@ -112,6 +112,40 @@ class LMBase(nn.Module):
         """Untruncated count needed to certify complete expert supervision."""
         raise NotImplementedError
 
+    def encode(self, text: str, first: bool) -> list[int]:
+        """Token ids of ``text``; ``first`` adds the start token, if any."""
+        raise NotImplementedError
+
+    @property
+    def pad_id(self) -> int:
+        raise NotImplementedError
+
+    def tokenize_pairs(self, heads: list[str], tails: list[str]
+                       ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Each head then its tail, encoded apart and joined, right-padded.
+
+        Returns ids, mask and each row's first tail position. Encoding the
+        tail on its own keeps every one of its tokens out of the head, even
+        where a joint encoding would merge the two at the seam.
+        """
+        seqs, start = [], []
+        for h, t in zip(heads, tails):
+            a, b = self.encode(h, True), self.encode(t, False)
+            if not b:
+                raise ValueError("Supervised text encodes to no tokens")
+            if len(a) + len(b) > self.max_len:
+                raise ValueError("Teacher text exceeds context budget; explicit context preparation is required")
+            seqs.append(a + b)
+            start.append(len(a))
+        width = max(len(q) for q in seqs)
+        ids = torch.full((len(seqs), width), self.pad_id, dtype=torch.long)
+        mask = torch.zeros((len(seqs), width), dtype=torch.bool)
+        for i, q in enumerate(seqs):
+            ids[i, :len(q)] = torch.tensor(q)
+            mask[i, :len(q)] = True
+        dev = next(self.parameters()).device
+        return ids.to(dev), mask.to(dev), torch.tensor(start, device=dev)
+
     def forward(self, ids: torch.Tensor, mask: torch.Tensor,
                 prefix: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
@@ -186,6 +220,13 @@ class TinyCausalLM(LMBase):
     def token_count(self, text: str) -> int:
         return 1 + len(str(text).encode("utf-8"))
 
+    def encode(self, text: str, first: bool) -> list[int]:
+        return ([self.BOS] if first else []) + list(str(text).encode("utf-8"))
+
+    @property
+    def pad_id(self) -> int:
+        return self.PAD
+
     def tokenize(self, texts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         if any(self.token_count(t) > self.max_len for t in texts):
             raise ValueError("Teacher text exceeds context budget; explicit context preparation is required")
@@ -250,6 +291,13 @@ class HFCausalLM(LMBase):
 
     def token_count(self, text: str) -> int:
         return len(self.tokenizer(str(text), truncation=False)["input_ids"])
+
+    def encode(self, text: str, first: bool) -> list[int]:
+        return self.tokenizer(str(text), add_special_tokens=first, truncation=False)["input_ids"]
+
+    @property
+    def pad_id(self) -> int:
+        return self.tokenizer.pad_token_id
 
     def tokenize(self, texts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         if any(self.token_count(t) > self.max_len for t in texts):

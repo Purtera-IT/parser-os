@@ -240,3 +240,37 @@ def test_base_loop_runs_with_the_teacher_loss_in_pieces(tmp_path):
     )
     assert result.ready_for_training is False
     assert hold.deal_id in result.holdout_scores
+
+
+def test_value_loss_skips_a_piece_with_no_value_lines_and_supervises_every_value_token():
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    brain = Brain(schema, TinyCausalLM(32, 1, 2, 4096))
+    valued = {item.line for item in train.literals if str(item.text or "").strip()}
+    bare = [i for i in range(len(train)) if i not in valued]
+    assert valued and bare
+    zero = brain.value_loss(train, rows=bare[:2], deal_level=False)
+    assert float(zero) == 0.0 and not zero.requires_grad
+    assert float(brain.value_loss(train, rows=sorted(valued & set(range(len(train))))).detach()) > 0
+
+    ids, mask, start = brain.lm.tokenize_pairs(["Line one\nValue:", "x\nValue:"], [" 12 cameras", " abc"])
+    assert start.tolist() == [1 + len("Line one\nValue:"), 1 + len("x\nValue:")]
+    assert mask.sum(1).tolist() == [int(start[0]) + len(" 12 cameras"), int(start[1]) + len(" abc")]
+
+
+def test_value_loss_counts_values_that_encode_to_nothing():
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+
+    class Mute(TinyCausalLM):
+        def encode(self, text, first):
+            return super().encode(text, first) if first else []
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    brain = Brain(schema, Mute(32, 1, 2, 4096))
+    with pytest.raises(ValueError, match="encodes to no tokens"):
+        brain.value_loss(train)

@@ -324,18 +324,16 @@ class Brain(nn.Module):
         if not idx:
             return next(self.parameters()).new_zeros(())
         notes = notes or [[] for _ in range(len(batch))]
-        heads = [self.page(batch, i, notes[i]) + "Why: " for i in idx]
-        fulls = [h + batch.why[i] for h, i in zip(heads, idx)]
-        if any(self.lm.token_count(t) > self.lm.max_len for t in fulls):
+        heads = [self.page(batch, i, notes[i]) + "Why:" for i in idx]
+        tails = [" " + batch.why[i] for i in idx]
+        if any(self.lm.token_count(h + t) > self.lm.max_len for h, t in zip(heads, tails)):
             raise ValueError("Expert WHY exceeds teacher context budget; increase the budget "
                              "or prepare source context explicitly, never truncate the WHY")
-        _, hmask = self.lm.tokenize(heads)
-        ids, mask = self.lm.tokenize(fulls)
+        ids, mask, start = self.lm.tokenize_pairs(heads, tails)
         prefix = None
         if self.graph is not None and graph is not None:
             prefix = self.graph(graph[idx]).view(len(idx), self.n_prefix, self.lm.dim)
-        _, logits = self._lm_rows(ids, mask, prefix)
-        start = hmask.sum(1)                                           # first WHY token
+        _, logits = self._lm_rows(ids, mask, prefix)                  # start: first WHY token
         pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
         on_why = (pos >= start.view(-1, 1)) & mask & (pos > 0)
         tgt = ids.masked_fill(~on_why, IGNORE)[:, 1:]
@@ -355,26 +353,25 @@ class Brain(nn.Module):
         ``rows`` limits the line values to those lines; ``deal_level`` keeps
         the deal's own values (line -1)."""
         keep = None if rows is None else set(rows)
-        rows = [(item.line, item.text) for item in batch.literals if item.text
+        rows = [(item.line, str(item.text).strip()) for item in batch.literals if str(item.text or "").strip()
                 and ((item.line < 0 and deal_level) or (item.line >= 0 and (keep is None or item.line in keep)))]
         if not rows:
             return next(self.parameters()).new_zeros(())
-        heads = ["Deal\nValue: " if i < 0 else batch.texts[i] + "\nValue: " for i, _ in rows]
-        fulls = [head + text for head, (_, text) in zip(heads, rows)]
-        if any(self.lm.token_count(text) > self.lm.max_len for text in fulls):
+        heads = ["Deal\nValue:" if i < 0 else batch.texts[i] + "\nValue:" for i, _ in rows]
+        tails = [" " + text for _, text in rows]
+        if any(self.lm.token_count(h + t) > self.lm.max_len for h, t in zip(heads, tails)):
             raise ValueError("Saved value exceeds teacher context budget; do not truncate it")
-        _, hmask = self.lm.tokenize(heads)
-        ids, mask = self.lm.tokenize(fulls)
+        ids, mask, start = self.lm.tokenize_pairs(heads, tails)
         _, logits = self._lm_rows(ids, mask)
-        start = hmask.sum(1)
         pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
         on_value = (pos >= start.view(-1, 1)) & mask & (pos > 0)
         tgt = ids.masked_fill(~on_value, IGNORE)[:, 1:]
         token_loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]),
                                      tgt.reshape(-1), ignore_index=IGNORE, reduction="none").view_as(tgt)
         valid = tgt != IGNORE
-        if not valid.any():
-            raise ValueError("Saved value has no supervised tokens")
+        lost = int((~valid.any(1)).sum())
+        if lost:
+            raise ValueError(f"{lost} of {len(rows)} saved values have no supervised tokens")
         return token_loss[valid].mean()
 
     # ------------------------------------------------------------ grounding
