@@ -215,6 +215,13 @@ PROGRESS_EVERY = 25
 # piece is what one backward holds (checkpointed: about 0.2 MB a token).
 TEACHER_CALL_TOKENS = 32768
 TEACHER_PIECE_TOKENS = 131072
+# What one teacher step teaches of a part: lines, cards, flips. A fresh
+# sample each step (seeded); a part of 8,192 lines would otherwise take hours.
+TEACHER_CAPS = (256, 128, 32)
+# Lines per part whose WHY the teacher's lesson view grounds (a forward and
+# backward through the 7B each); the rest of the view still covers every line.
+VIEW_GROUND_ROWS = 128
+PIECE_PROGRESS_EVERY = 8
 
 
 def _progress(stage: str, done: int, total: int, started: float) -> None:
@@ -263,6 +270,47 @@ def _steady_teacher(teacher: Brain) -> None:
     config = getattr(inner, "config", None)
     if config is not None:
         config.use_cache = False
+
+
+def _teacher_part(teacher: Brain, batch: Batch, weights, *, device: str, scale: float,
+                  size: int, budget: int, caps: tuple[int, int, int], rng: random.Random | None,
+                  graph: torch.Tensor | None = None, label: str = "teacher") -> torch.Tensor:
+    """One part's teacher loss, backward done, piece by piece.
+
+    The schema descriptions are embedded once: each piece reads detached
+    copies, their gradients add up, and one backward through the embedding
+    pass at the end gives the exact gradient a single pass would."""
+    started = time.time()
+    with _autocast(device):
+        full = teacher.describe()
+    keys = list(full)
+    leaves = {k: tuple(t.detach().requires_grad_(t.requires_grad) for t in full[k]) for k in keys}
+    context = teacher_context(teacher, batch)
+    pieces = teacher_chunks(teacher, batch, size, budget, caps=caps, rng=rng)
+    loss, tokens = None, 0
+    for n, part in enumerate(pieces, 1):
+        with _autocast(device):
+            piece, _ = brain_loss(teacher, batch, weights, graph=graph, rows=part.rows,
+                                  judged=part.cards, flips=part.flips, extras=part.extras,
+                                  desc=leaves, context=context)
+            piece = piece * (scale * part.scale)
+        _finite(piece, label)
+        if piece.requires_grad:
+            piece.backward()
+        loss = piece.detach() if loss is None else loss + piece.detach()
+        tokens += part.tokens
+        if n % PIECE_PROGRESS_EVERY == 0 or n == len(pieces):
+            print(f"progress {label} {batch.deal_id} piece {n}/{len(pieces)} "
+                  f"{tokens} tok {time.time() - started:.0f}s", flush=True)
+    outs, grads = [], []
+    for k in keys:
+        for t, leaf in zip(full[k], leaves[k]):
+            if leaf.grad is not None and t.requires_grad:
+                outs.append(t)
+                grads.append(leaf.grad)
+    if outs:
+        torch.autograd.backward(outs, grads)
+    return loss
 
 
 def _optimizer(params, lr: float, adamw: bool) -> torch.optim.Optimizer:
@@ -374,7 +422,7 @@ def _deal_graph(model: C3Model, teacher: Brain, batch: Batch, device: str):
 def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
                 device: str, lr: float, adamw: bool, rng: random.Random,
                 scale: dict[str, float] | None = None, chunk: int = 0,
-                piece_tokens: int = 0) -> None:
+                piece_tokens: int = 0, caps: tuple[int, int, int] = (0, 0, 0)) -> None:
     """Teach the frozen language model to read the student's deal graph.
 
     Only the small projection trains. The pretrained body does not move.
@@ -396,18 +444,10 @@ def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
         for batch in order:
             graph = _deal_graph(model, teacher, batch, device)
             opt.zero_grad()
-            context = teacher_context(teacher, batch)
-            loss = None
-            for part in teacher_chunks(teacher, batch, chunk, piece_tokens):
-                with _autocast(device):
-                    piece, _ = brain_loss(teacher, batch, weights, graph=graph, rows=part.rows,
-                                          judged=part.cards, flips=part.flips, extras=part.extras,
-                                          context=context)
-                    piece = piece * ((scale or {}).get(batch.deal_id, 1.0) * part.scale)
-                _finite(piece, "bind")
-                if piece.requires_grad:
-                    piece.backward()
-                loss = piece.detach() if loss is None else loss + piece.detach()
+            loss = _teacher_part(teacher, batch, weights, device=device,
+                                 scale=(scale or {}).get(batch.deal_id, 1.0), size=chunk,
+                                 budget=piece_tokens, caps=caps, rng=rng if any(caps) else None,
+                                 graph=graph, label="bind")
             torch.nn.utils.clip_grad_norm_([p for p in teacher.graph.parameters() if p.grad is not None], 1.0)
             opt.step()
             losses.append(float(loss.detach()))
@@ -537,6 +577,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              read_chunk: int = 0,
              teacher_rows_per_step: int = 0,
              teacher_piece_tokens: int = 0,
+             teacher_caps: tuple[int, int, int] = (0, 0, 0),
+             view_ground_rows: int = 0,
              call_tokens: int = 0,
              deal_graph: bool = False,
              validation: list[Batch] | None = None,
@@ -586,19 +628,10 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         for batch in order:
             # One part's loss, a piece at a time: each piece's graph is freed
             # by its own backward, so memory holds one piece, not the part.
-            # The schema descriptions are re-read per piece for the same reason.
             teacher_opt.zero_grad()
-            context = teacher_context(teacher, batch)
-            loss = None
-            for part in teacher_chunks(teacher, batch, teacher_rows_per_step, teacher_piece_tokens):
-                with _autocast(device):
-                    piece, _ = brain_loss(teacher, batch, teacher_w, rows=part.rows, judged=part.cards,
-                                          flips=part.flips, extras=part.extras, context=context)
-                    piece = piece * (scale[batch.deal_id] * part.scale)
-                _finite(piece, "teacher")
-                if piece.requires_grad:
-                    piece.backward()
-                loss = piece.detach() if loss is None else loss + piece.detach()
+            loss = _teacher_part(teacher, batch, teacher_w, device=device, scale=scale[batch.deal_id],
+                                 size=teacher_rows_per_step, budget=teacher_piece_tokens,
+                                 caps=teacher_caps, rng=rng if any(teacher_caps) else None)
             torch.nn.utils.clip_grad_norm_([p for p in teacher.parameters() if p.grad is not None], 1.0)
             teacher_opt.step()
             if teacher_sched is not None:
@@ -636,6 +669,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     completed = 0
     schema_sha = digest([asdict(o) for o in schema.opportunities]) if checkpoint else ""
     for stage in student_stages:
+        fresh = False
         if stage == "open_links":
             _freeze_link_gate(model, True)
             opt.add_param_group({
@@ -646,7 +680,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             })
         if stage == "bind":
             _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng, scale,
-                        chunk=teacher_rows_per_step, piece_tokens=teacher_piece_tokens)
+                        chunk=teacher_rows_per_step, piece_tokens=teacher_piece_tokens,
+                        caps=teacher_caps)
             continue
         weights, sizes = gold_weights("deal" if stage in ("open_links",) or stage in lesson_stages else stage)
         use_teacher = stage in lesson_stages
@@ -655,13 +690,23 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         stage_losses: list[float] = []
         started, done = time.time(), 0
         for _ in range(steps):
-            if use_teacher and (views is None or teacher.graph is not None):
-                views = {}
-                for batch in train:
+            # The teacher's view is read once per lesson stage (it follows the
+            # student's deal graph from stage to stage, not step to step).
+            if use_teacher and (views is None or (teacher.graph is not None and not fresh)):
+                views, fresh = {}, True
+                seen_at = time.time()
+                for k, batch in enumerate(train, 1):
                     graph = _deal_graph(model, teacher, batch, device)
+                    ground = None
+                    if view_ground_rows:
+                        told = [i for i in range(len(batch)) if batch.why[i]]
+                        ground = (sorted(rng.sample(told, view_ground_rows))
+                                  if len(told) > view_ground_rows else told)
                     with _autocast(device):
                         views[batch.deal_id] = teacher_view(
-                            teacher, batch, batch.company or None, graph=graph)
+                            teacher, batch, batch.company or None, graph=graph, ground_rows=ground)
+                    print(f"progress view {stage} {k}/{len(train)} parts "
+                          f"{time.time() - seen_at:.0f}s", flush=True)
             order = train[:]
             rng.shuffle(order)
             for batch in order:
@@ -859,7 +904,8 @@ def main() -> None:
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=8, read_chunk=16,
             call_tokens=TEACHER_CALL_TOKENS, teacher_rows_per_step=32,
-            teacher_piece_tokens=TEACHER_PIECE_TOKENS, deal_graph=True,
+            teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=TEACHER_CAPS,
+            view_ground_rows=VIEW_GROUND_ROWS, deal_graph=True,
             validation=validation, encoder_lr=args.encoder_lr if released else None,
             score_holdout=args.score_holdout)
     print("train", " ".join(result.train_ids))

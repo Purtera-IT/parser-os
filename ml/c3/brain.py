@@ -419,7 +419,7 @@ class Brain(nn.Module):
         why = (len(text), len(text) + len(batch.why[i] or ""))
         return text + (batch.why[i] or ""), spans, why
 
-    def grounding(self, batch: Batch, window: int = 12
+    def grounding(self, batch: Batch, window: int = 12, rows: list[int] | None = None
                   ) -> tuple[torch.Tensor, list[torch.Tensor | None]]:
         """What each WHY rests on, read from the teacher itself, not parsed.
 
@@ -431,7 +431,8 @@ class Brain(nn.Module):
         column = rests on the line itself). Summed per word of the line, it
         says which facts were cited and which were passed over, such as a
         price the WHY calls irrelevant (``words``: one distribution per line
-        over text.word_spans). Rows without a WHY are zero / None.
+        over text.word_spans). Rows without a WHY are zero / None; so are
+        rows left out of ``rows``, when given.
         """
         from .text import word_spans  # noqa: PLC0415
 
@@ -441,7 +442,7 @@ class Brain(nn.Module):
         words: list[torch.Tensor | None] = [None] * n
         was = self.training
         self.eval()
-        for i in range(n):
+        for i in (range(n) if rows is None else rows):
             if not batch.why[i]:
                 continue
             text, spans, (ws, we) = self.grounded_page(batch, i, window)

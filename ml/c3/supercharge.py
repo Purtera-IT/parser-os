@@ -138,7 +138,7 @@ class TeacherView:
 @torch.no_grad()
 def teacher_view(teacher, batch: Batch, company: str | None = None,
                  grounding: bool = True, rewrites: list[Rewrite] | None = None,
-                 graph=None) -> TeacherView:
+                 graph=None, ground_rows: list[int] | None = None) -> TeacherView:
     from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
 
     was = teacher.training
@@ -151,7 +151,7 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc,
                     graph=graph)
     emb = told.pooled
-    pointers, words = teacher.grounding(batch) if grounding else (None, None)
+    pointers, words = teacher.grounding(batch, rows=ground_rows) if grounding else (None, None)
     flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc, graph).logits
                if batch.flips else None)
     kept, rewritten = read_rewrites(teacher, batch, rewrites or [], why, told.logits, desc)

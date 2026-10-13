@@ -396,6 +396,55 @@ def test_every_stage_steps_under_the_pods_bf16_autocast(monkeypatch, tmp_path, e
         checkpoint=str(tmp_path / "base.pt"), adamw=True, freeze_teacher=True,
         deal_graph=True, page_batch=2, read_chunk=2, call_tokens=2048,
         teacher_rows_per_step=4, teacher_piece_tokens=4000, encoder_lr=encoder_lr,
+        teacher_caps=(5, 3, 2), view_ground_rows=3,
         validation=[check], score_holdout=False,
     )
     assert result.ready_for_training is False
+
+
+def test_desc_once_per_part_gives_the_same_gradient_as_per_piece():
+    import torch
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.loop import _teacher_part
+    from ml.c3.losses import BrainWeights, brain_loss, teacher_chunks, teacher_context
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    torch.manual_seed(0)
+    a = Brain(schema, TinyCausalLM(32, 1, 2, 4096), page_batch=2)
+    b = Brain(schema, TinyCausalLM(32, 1, 2, 4096), page_batch=2)
+    b.load_state_dict(a.state_dict())
+    a.eval()
+    b.eval()
+    w = BrainWeights(consolidate=0.0, flip=0.0)
+    _teacher_part(a, train, w, device="cpu", scale=1.0, size=4, budget=4000, caps=(0, 0, 0), rng=None)
+    context = teacher_context(b, train)
+    for part in teacher_chunks(b, train, 4, 4000):
+        loss, _ = brain_loss(b, train, w, rows=part.rows, judged=part.cards, flips=part.flips,
+                             extras=part.extras, context=context)
+        (loss * part.scale).backward()
+    ga = {n: p.grad for n, p in a.named_parameters() if p.grad is not None}
+    gb = {n: p.grad for n, p in b.named_parameters() if p.grad is not None}
+    assert ga.keys() == gb.keys() and ga
+    assert max(float((ga[k] - gb[k]).abs().max()) for k in ga) < 1e-4
+
+
+def test_teacher_caps_sample_a_fresh_bounded_slice_each_step():
+    import random
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.losses import teacher_chunks
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    brain = Brain(schema, TinyCausalLM(32, 1, 2, 4096))
+    rng = random.Random(0)
+    first = teacher_chunks(brain, train, 4, 4000, caps=(3, 2, 1), rng=rng)
+    second = teacher_chunks(brain, train, 4, 4000, caps=(3, 2, 1), rng=rng)
+    for pieces in (first, second):
+        assert sum(len(p.rows) for p in pieces) <= 3
+        assert sum(len(p.cards) for p in pieces) <= 2
+        assert sum(len(p.flips) for p in pieces) <= 1
+    assert ([r for p in first for r in p.rows] != [r for p in second for r in p.rows]
+            or len(train) <= 3)

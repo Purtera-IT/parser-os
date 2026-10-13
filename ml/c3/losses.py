@@ -662,26 +662,40 @@ def _pack(items: list, cost: list[int], size: int, budget: int) -> list[list]:
     return groups
 
 
-def teacher_chunks(brain, batch: Batch, size: int, budget: int = 0) -> list[Piece]:
+def teacher_chunks(brain, batch: Batch, size: int, budget: int = 0, *,
+                   caps: tuple[int, int, int] = (0, 0, 0), rng=None) -> list[Piece]:
     """A part's teacher loss in pieces of at most ``size`` lines, cards or
     flips and about ``budget`` grad tokens each. ``size`` and ``budget`` 0 is
-    one piece holding everything. Deal-level values ride the first piece."""
+    one piece holding everything. Deal-level values ride the first piece.
+
+    ``caps`` (lines, cards, flips; 0 is all) with ``rng`` teach a fresh random
+    sample of the part each step, so a step costs the same on any part and
+    the steps together cover it."""
     from .brain import told_why  # noqa: PLC0415
 
     why = told_why(batch, brain.schema)
     sup, _ = supposed_twins(batch)
-    if size <= 0 and budget <= 0:
-        return [Piece(None, list(batch.judged), list(range(len(sup))), True, 1.0, 0)]
     rows, _ = teacher_rows(batch, why)
     rows = list(range(len(batch))) if rows is None else rows
+    judged = list(batch.judged)
+    flip_ids = list(range(len(sup)))
+    if rng is not None:
+        def take(items, cap):
+            return sorted(rng.sample(items, cap)) if cap and len(items) > cap else items
+        rows = take(rows, caps[0])
+        picked = take(list(range(len(judged))), caps[1])
+        judged = [judged[k] for k in picked]
+        flip_ids = take(flip_ids, caps[2])
+    if size <= 0 and budget <= 0:
+        return [Piece(None if rng is None else rows, judged, flip_ids, True, 1.0, 0)]
     count = brain.lm.token_count
     row_cost = [ROW_PASSES * count(brain.page(batch, i) + _why_tail(why, i)) for i in rows]
-    card_cost = [CARD_PASSES * count(brain.card_page(batch, j, with_why=True)) for j in batch.judged]
-    flip_cost = [FLIP_PASSES * count(brain.page(batch, f.line) + _why_tail(why, f.line) + f.condition)
-                 for f in sup]
+    card_cost = [CARD_PASSES * count(brain.card_page(batch, j, with_why=True)) for j in judged]
+    flip_cost = [FLIP_PASSES * count(brain.page(batch, sup[k].line) + _why_tail(why, sup[k].line)
+                                     + sup[k].condition) for k in flip_ids]
     pieces: list[Piece] = []
-    for kind, items, cost in (("rows", rows, row_cost), ("cards", list(batch.judged), card_cost),
-                              ("flips", list(range(len(sup))), flip_cost)):
+    for kind, items, cost in (("rows", rows, row_cost), ("cards", judged, card_cost),
+                              ("flips", flip_ids, flip_cost)):
         groups = _pack(items, cost, size, budget)
         for g in groups:
             picked = [items[k] for k in g]
