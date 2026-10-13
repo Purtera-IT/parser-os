@@ -177,3 +177,45 @@ def test_a_link_from_a_rule_card_finds_its_line_through_the_card():
     }
     deal = DealExample.from_training_blob(blob, atoms, deal_id="synthetic")
     assert deal.edges == [("r", "n", "near_miss")]       # the copy in the linked file, not the other one
+
+
+def test_the_base_writes_one_file_per_deal_and_scores_the_holdout_once(tmp_path):
+    from ml.c3.gates import save_checkpoint
+    from ml.c3.loop import SMALL
+    from ml.c3.model import C3Model
+    from ml.c3.predict import read_deal
+    from ml.c3.readiness import digest
+    from dataclasses import asdict
+
+    schema = load_schema()
+    model = C3Model(schema, SMALL)
+    deal = _long_deal()
+    doc = read_deal(model, deal, schema, max_atoms=5)
+    bare = DealExample.from_training_blob({}, [atom(f"b{i}", t=i) for i in range(3)], deal_id="010997")
+    assert set(read_deal(model, bare, schema)["lines"]) == {"b0", "b1", "b2"}   # an unlabeled deal reads too
+    assert set(doc["lines"]) == {f"a{i}" for i in range(12)}          # every line, once
+    assert doc["lines"]["a0"]["text"] == "Line a0."                     # the words travel: prompts read them
+    reading = doc["lines"]["a0"]["reads"]["col:label_type"]
+    assert reading["answer"] in [a.value for a in schema.by_key()["col:label_type"].answers]
+    assert "jdg:billing_type" in doc["deal"]
+    assert all({"src", "dst", "relation", "p"} <= set(link) for link in doc["links"])
+    path = tmp_path / "run.pt"
+    save_checkpoint(str(path), model, step=1, schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+    assert path.exists()
+
+
+def test_a_deal_kit_file_is_rebuilt_on_the_base_read():
+    from ml.c3.kit import KitExample
+    from ml.c3.predict import kit_from_read
+
+    kit = {"deal_id": "010996", "atoms": [{"key": "s", "text": "Site A.", "type": "physical_site"},
+                                          {"key": "t", "text": "Mount cameras.", "type": "task"}],
+           "lines": [{"section": "sites", "atom_key": "s"}, {"section": "labor", "atom_key": "t", "hours": 4}]}
+    read = {"lines": {"s": {"reads": {"col:label_type": {"answer": "physical_site", "p": 0.9}}},
+                      "t": {"reads": {"col:label_type": {"answer": "deliverable", "p": 0.5}}}},
+            "links": [{"src": "t", "dst": "s", "relation": "supports", "p": 0.8}]}
+    out, stats = kit_from_read(kit, read)
+    assert stats == {"atoms": 2, "retyped": 1, "not_read": 0, "lines_unhosted": 1}
+    ex = KitExample.from_dict(out)                    # loads: no line points at a mistyped atom
+    assert [line.atom_key for line in ex.lines] == ["s", None]
+    assert ex.links == (("t", "s", "supports"),)

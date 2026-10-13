@@ -592,6 +592,9 @@ class Batch:
     link_elsewhere: dict[str, list[int]] = field(default_factory=dict)
     #: Saved answers that disagree and were not taught, for the labeler.
     notes: list[str] = field(default_factory=list)
+    #: Each row's line key (label_key, or a Dropped card's own key), so a
+    #: prediction can be written back to the line it is about. Never an input.
+    keys: list[str] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -1622,7 +1625,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         multi_targets=multi_targets, literals=literals, deal_numbers=deal_numbers,
         pixels=[a.pixels or _pixels(None) for a in atoms],
         geometry=[a.geometry or _geometry({}) for a in atoms],
-        link_elsewhere=_elsewhere_rows(elsewhere, index), notes=notes)
+        link_elsewhere=_elsewhere_rows(elsewhere, index), notes=notes,
+        keys=[a.key for a in atoms])
 
 
 def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:

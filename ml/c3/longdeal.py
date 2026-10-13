@@ -76,7 +76,10 @@ def _digest_rank(atom: Atom, i: int) -> tuple:
 
 
 def plan_long_deal(deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
-                   overlap: int = 32, context: int = PACK_CONTEXT) -> LongDealPlan:
+                   overlap: int = 32, context: int = PACK_CONTEXT,
+                   always_digest: bool = False) -> LongDealPlan:
+    """``always_digest``: build the digest even with nothing saved to teach on
+    it, so a prediction can read the whole-deal answers of a new deal."""
     if max_atoms < 2:
         raise ValueError("Atom budget must leave room for an evidence pair")
     if overlap < 0 or overlap >= max_atoms:
@@ -185,7 +188,7 @@ def plan_long_deal(deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
 
     digest: list[Batch] = []
     answers = list(deal.source_supervision.get("deal_answers") or [])
-    if whole or answers:
+    if whole or answers or always_digest:
         ranked = sorted((i for i, a in enumerate(atoms) if not excluded(a.label)),
                         key=lambda i: _digest_rank(atoms[i], i))[:max_atoms]
         subset = [_context_only(atoms[i]) for i in sorted(ranked)]

@@ -364,7 +364,14 @@ frozen line encoder's vectors are computed once and reused. `--max-atoms`
 sets the window (4,096 by default; 8,192 keeps most labeled deals whole and
 needs a bigger GPU). `--train-encoder-layers K` lets the encoder's top K
 blocks learn at `--encoder-lr`; keep it only if the validation deals say it
-beats the frozen encoder. That loop does
+beats the frozen encoder. The live runs leave the holdout alone; the winning
+checkpoint is scored once with `python -m ml.c3.predict --score`, which
+refuses a second time. `python -m ml.c3.predict --checkpoint <run.pt> --deal
+<deal.json> --output <read.json>` writes the base's read of any deal, labeled
+or not: each line's words and readings, the links it draws, the whole-deal
+answers and the lines it is unsure of. That file is what the Deal Kit, the
+SOW step and prompted models read; `--kit <kit.json> --kit-output <file>`
+rewrites a Deal Kit file so its atoms carry the base's types and links. That loop does
 not flip `READY_FOR_TRAINING`. The deal kit is a second model:
 `python -m ml.c3.kit --train <kit json> --holdout <kit json>`. `--tiny` is the
 CPU check. The live run is the H100: ModernBERT-large stays frozen, and a

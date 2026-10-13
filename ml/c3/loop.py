@@ -502,7 +502,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              deal_graph: bool = False,
              validation: list[Batch] | None = None,
              balance: bool = True,
-             encoder_lr: float | None = None) -> tuple[C3Model, BaseRun]:
+             encoder_lr: float | None = None,
+             score_holdout: bool = True) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
@@ -631,7 +632,10 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
     if checkpoint and completed:
         save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
-    scores = {batch.deal_id: _score_oneshot(model, batch, device) for batch in holdout}
+    # The live runs leave the holdout to `ml.c3.predict --score`, once, on the
+    # run the validation deals picked.
+    scores = ({batch.deal_id: _score_oneshot(model, batch, device) for batch in holdout}
+              if score_holdout else {})
     return model, BaseRun(
         train_ids=tuple(b.deal_id for b in train),
         holdout_ids=tuple(b.deal_id for b in holdout),
@@ -741,6 +745,9 @@ def main() -> None:
     parser.add_argument("--train-encoder-layers", type=int, default=0,
                         help="Release this many top blocks of the line encoder (0 keeps it frozen)")
     parser.add_argument("--encoder-lr", type=float, default=2e-5)
+    parser.add_argument("--score-holdout", action="store_true",
+                        help="Score the holdout here. Off for the live runs: the winner is scored "
+                             "once with `python -m ml.c3.predict --score`")
     args = parser.parse_args()
     require_live_teacher("" if args.tiny else args.teacher, args.tiny)
     schema = load_schema()
@@ -782,7 +789,8 @@ def main() -> None:
             checkpoint=args.checkpoint or None, model=student, device="cuda",
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=2, deal_graph=True,
-            validation=validation, encoder_lr=args.encoder_lr if released else None)
+            validation=validation, encoder_lr=args.encoder_lr if released else None,
+            score_holdout=args.score_holdout)
     print("train", " ".join(result.train_ids))
     print("holdout", " ".join(result.holdout_ids))
     print("validation", " ".join(result.validation_ids) or "(none)")
