@@ -7,6 +7,9 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 # The pod is disposable and its torch is the CUDA build we want, so install
 # next to it rather than in a venv that would hide it.
 export PIP_BREAK_SYSTEM_PACKAGES=1 PIP_ROOT_USER_ACTION=ignore
+# The repo's own dependencies (python-docx and the rest) for the test suite's
+# conftest. torch sits in an optional extra, so this keeps the image's torch.
+pip install -q -e .
 pip install -q "transformers>=4.48" pytest
 python -m pytest -q tests/test_c3_*.py
 python - <<'PY'
