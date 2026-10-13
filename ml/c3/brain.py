@@ -63,6 +63,10 @@ class BrainOutput:
     numbers: dict[str, torch.Tensor] = field(default_factory=dict)   # opportunity -> [N]
     attention: dict[str, torch.Tensor] = field(default_factory=dict) # layer -> [N, O, T] over the page
     hidden: torch.Tensor | None = None                                # [N, T, dim] universal pass
+    #: Mean of each page's hidden states [N, dim]. Always set; ``hidden``,
+    #: ``mask``, ``ids`` and ``attention`` are left empty when the pages were
+    #: read in chunks, since padding differs per chunk.
+    pooled: torch.Tensor | None = None
     mask: torch.Tensor | None = None
     ids: torch.Tensor | None = None
 
@@ -98,13 +102,17 @@ class HeadReader(nn.Module):
 class Brain(nn.Module):
     def __init__(self, schema: Schema, lm: LMBase, d_graph: int | None = None,
                  n_prefix: int = 2, context_lines: int = 6, d_att: int = 64,
-                 page_batch: int = 0):
+                 page_batch: int = 0, read_chunk: int = 0):
         super().__init__()
         self.schema, self.lm = schema, lm
         self.context_lines = context_lines
         # 0 runs every line of a deal in one language-model pass. A positive
         # width splits that pass so a large teacher fits next to the student.
         self.page_batch = page_batch
+        # Pages read (tokenized, through the LM and the readers) per chunk; 0
+        # reads them all at once. Without it an 8,192-line part holds every
+        # page's hidden states at once.
+        self.read_chunk = read_chunk
         self.reader_universal = HeadReader(lm.dim, d_att)
         self.reader_company = HeadReader(lm.dim, d_att)
         self.n_prefix = n_prefix
@@ -147,45 +155,77 @@ class Brain(nn.Module):
         return "\n".join(parts) + "\n"
 
     def _lm_rows(self, ids: torch.Tensor, mask: torch.Tensor,
-                 prefix: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+                 prefix: torch.Tensor | None = None, *, logits: bool = True):
         """One language-model pass, or several row-slices of the same padded page.
 
         Slicing the batch does not change a line's tokens or its mask. The
         slices share one width, so the hidden states concatenate on the row.
+        ``logits=False`` skips the vocabulary projection and returns
+        ``(hidden, None)``.
         """
+        def one(i, m, pre):
+            return self.lm(i, m, prefix=pre) if logits else (self.lm.hidden(i, m, prefix=pre), None)
+
         width = self.page_batch
         if not width or ids.shape[0] <= width:
-            return self.lm(ids, mask, prefix=prefix)
-        hidden, logits = [], []
+            return one(ids, mask, prefix)
+        hidden, lgs = [], []
         for start in range(0, ids.shape[0], width):
             stop = start + width
             part = None if prefix is None else prefix[start:stop]
-            h, lg = self.lm(ids[start:stop], mask[start:stop], prefix=part)
+            h, lg = one(ids[start:stop], mask[start:stop], part)
             hidden.append(h)
-            logits.append(lg)
-        return torch.cat(hidden, 0), torch.cat(logits, 0)
+            lgs.append(lg)
+        return torch.cat(hidden, 0), (torch.cat(lgs, 0) if logits else None)
 
     # ------------------------------------------------------------ reading
     def read(self, pages: list[str], layer: str, desc, graph: torch.Tensor | None = None,
-             deltas=None) -> tuple[BrainOutput, torch.Tensor, torch.Tensor, torch.Tensor]:
+             deltas=None) -> tuple[BrainOutput, torch.Tensor | None, torch.Tensor | None, None]:
+        """The heads' reading of each page. In chunks of ``read_chunk`` pages
+        when set (longest pages together, so padding stays small); the rows
+        come back in page order either way."""
+        width = self.read_chunk
+        if not width or len(pages) <= width:
+            return self._read(pages, layer, desc, graph, deltas, keep=True)
+        order = sorted(range(len(pages)), key=lambda i: len(pages[i]))
+        parts = []
+        for start in range(0, len(order), width):
+            rows = order[start:start + width]
+            g = graph[rows] if graph is not None else None
+            parts.append((rows, self._read([pages[i] for i in rows], layer, desc, g, deltas, keep=False)[0]))
+        back = torch.empty(len(pages), dtype=torch.long)
+        back[[i for rows, _ in parts for i in rows]] = torch.arange(len(pages))
+        back = back.to(parts[0][1].pooled.device)
+        out = BrainOutput(pooled=torch.cat([o.pooled for _, o in parts])[back])
+        for key in parts[0][1].logits:
+            out.logits[key] = torch.cat([o.logits[key] for _, o in parts])[back]
+        for key in parts[0][1].numbers:
+            out.numbers[key] = torch.cat([o.numbers[key] for _, o in parts])[back]
+        return out, None, None, None
+
+    def _read(self, pages, layer, desc, graph, deltas, *, keep: bool):
         ids, mask = self.lm.tokenize(pages)
         prefix = None
         if self.graph is not None and graph is not None:
             prefix = self.graph(graph).view(len(pages), self.n_prefix, self.lm.dim)
         with self.lm.adapted(deltas):
-            h, lm_logits = self._lm_rows(ids, mask, prefix)
+            h, _ = self._lm_rows(ids, mask, prefix, logits=False)
         opps = self.opps[layer]
         reader = self.reader_universal if layer == "universal" else self.reader_company
-        out = BrainOutput(hidden=h, mask=mask, ids=ids)
+        m = mask.unsqueeze(-1).to(h.dtype)
+        out = BrainOutput(pooled=(h * m).sum(1) / m.sum(1).clamp(min=1))
+        if keep:
+            out.hidden, out.mask, out.ids = h, mask, ids
         if opps:
             logits, nums, att = reader(h, mask, torch.stack([desc[o.key][0] for o in opps]),
                                        [desc[o.key][1] for o in opps])
-            out.attention[layer] = att
+            if keep:
+                out.attention[layer] = att
             for j, (o, lg) in enumerate(zip(opps, logits)):
                 out.logits[o.key] = lg
                 if o.kind == NUMBER:
                     out.numbers[o.key] = nums[:, j]
-        return out, ids, mask, lm_logits
+        return out, (ids if keep else None), (mask if keep else None), None
 
     def forward(self, batch: Batch, *, company: str | None = None,
                 why: list[str | None] | None = None,
@@ -248,7 +288,7 @@ class Brain(nn.Module):
                 pooled = torch.stack([
                     graph[list(j.lines)].mean(0) if j.lines else graph.mean(0) for j in js])
                 prefix = self.graph(pooled).view(len(js), self.n_prefix, self.lm.dim)
-            h, _ = self._lm_rows(ids, mask, prefix)
+            h, _ = self._lm_rows(ids, mask, prefix, logits=False)
             reader = self.reader_universal if self.schema.by_key()[key].universal else self.reader_company
             logits, _, _ = reader(h, mask, desc[key][0].unsqueeze(0), [desc[key][1]])
             result[key] = logits[0]
@@ -275,10 +315,12 @@ class Brain(nn.Module):
 
     # ------------------------------------------------------------ the WHY
     def rationale_loss(self, batch: Batch, notes: list[list[str]] | None = None,
-                       graph: torch.Tensor | None = None) -> torch.Tensor:
+                       graph: torch.Tensor | None = None,
+                       rows: list[int] | None = None) -> torch.Tensor:
         """Next-token loss on each human WHY, given the page: the LM learns to
-        write the reasoning an expert wrote for this line."""
-        idx = [i for i, w in enumerate(batch.why) if w]
+        write the reasoning an expert wrote for this line. ``rows`` limits it
+        to those lines."""
+        idx = [i for i in (range(len(batch)) if rows is None else rows) if batch.why[i]]
         if not idx:
             return next(self.parameters()).new_zeros(())
         notes = notes or [[] for _ in range(len(batch))]
@@ -307,9 +349,14 @@ class Brain(nn.Module):
         weights = row_loss.new_tensor([batch.why_weights[i] if batch.why_weights else 1.0 for i in idx])
         return (row_loss * weights).sum() / weights.sum().clamp(min=1e-6)
 
-    def value_loss(self, batch: Batch) -> torch.Tensor:
-        """Next-token loss on each exact saved value string. Nothing is clipped."""
-        rows = [(item.line, item.text) for item in batch.literals if item.text]
+    def value_loss(self, batch: Batch, rows: list[int] | None = None,
+                   deal_level: bool = True) -> torch.Tensor:
+        """Next-token loss on each exact saved value string. Nothing is clipped.
+        ``rows`` limits the line values to those lines; ``deal_level`` keeps
+        the deal's own values (line -1)."""
+        keep = None if rows is None else set(rows)
+        rows = [(item.line, item.text) for item in batch.literals if item.text
+                and ((item.line < 0 and deal_level) or (item.line >= 0 and (keep is None or item.line in keep)))]
         if not rows:
             return next(self.parameters()).new_zeros(())
         heads = ["Deal\nValue: " if i < 0 else batch.texts[i] + "\nValue: " for i, _ in rows]

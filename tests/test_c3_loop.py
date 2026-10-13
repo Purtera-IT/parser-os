@@ -210,3 +210,33 @@ def test_base_loop_trains_only_the_training_deals_and_opens_the_link_gate(tmp_pa
     assert b"Bayview" not in raw
     with pytest.raises(RuntimeError, match="READY_FOR_TRAINING is false"):
         release_train()
+
+
+def test_teacher_loss_in_pieces_covers_every_taught_line_and_card_once():
+    from ml.c3.brain import Brain, told_why
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.losses import teacher_chunks, teacher_rows
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    brain = Brain(schema, TinyCausalLM(32, 1, 2, 4096), page_batch=2, read_chunk=2)
+    rows, _ = teacher_rows(train, told_why(train, schema))
+    rows = list(range(len(train))) if rows is None else rows
+    pieces = teacher_chunks(brain, train, 2)
+    assert sorted(r for p in pieces for r in p[0]) == sorted(rows)
+    assert sum(len(p[1]) for p in pieces) == len(train.judged)
+    assert [p[2] for p in pieces].count(True) == 1
+    assert all(len(p[0]) <= 2 and len(p[1]) <= 2 for p in pieces)
+    assert teacher_chunks(brain, train, 0) == [(None, list(train.judged), True)]
+
+
+def test_base_loop_runs_with_the_teacher_loss_in_pieces(tmp_path):
+    schema = load_schema()
+    train, hold = _batches(schema)
+    _, result = run_base(
+        [train], [hold], schema,
+        Budget(teacher=1, lines=1, links=1, cards=1, numbers=1, deal=1, open_links=1, teach=1),
+        page_batch=2, read_chunk=2, teacher_rows_per_step=2,
+    )
+    assert result.ready_for_training is False
+    assert hold.deal_id in result.holdout_scores

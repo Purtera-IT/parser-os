@@ -150,8 +150,7 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
                    company_notes=company_field_notes(batch, teacher.schema))
     noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc,
                     graph=graph)
-    m = told.mask.unsqueeze(-1).to(told.hidden.dtype)
-    emb = (told.hidden * m).sum(1) / m.sum(1).clamp(min=1)
+    emb = told.pooled
     pointers, words = teacher.grounding(batch) if grounding else (None, None)
     flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc, graph).logits
                if batch.flips else None)

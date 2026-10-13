@@ -116,6 +116,12 @@ class LMBase(nn.Module):
                 prefix: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
 
+    def hidden(self, ids: torch.Tensor, mask: torch.Tensor,
+               prefix: torch.Tensor | None = None) -> torch.Tensor:
+        """Last hidden states only. A causal LM's vocabulary logits are
+        [pages, tokens, ~150k]; the heads never read them."""
+        return self(ids, mask, prefix=prefix)[0]
+
     def offsets(self, text: str) -> list[tuple[int, int]]:
         """Character span of each token of ``text`` as ``tokenize`` cuts it
         ((0, 0) for special tokens), so a token's weight can be traced back to
@@ -130,7 +136,7 @@ class LMBase(nn.Module):
         for start in range(0, len(order), self.EMBED_CHUNK):
             rows = order[start:start + self.EMBED_CHUNK]
             ids, mask = self.tokenize([texts[i] for i in rows])
-            h, _ = self(ids, mask)
+            h = self.hidden(ids, mask)
             m = mask.unsqueeze(-1).to(h.dtype)
             pooled = (h * m).sum(1) / m.sum(1).clamp(min=1)
             for k, i in enumerate(rows):
@@ -273,3 +279,16 @@ class HFCausalLM(LMBase):
         if prefix is not None:
             h, logits = h[:, prefix.shape[1]:], logits[:, prefix.shape[1]:]
         return h, logits
+
+    def hidden(self, ids: torch.Tensor, mask: torch.Tensor,
+               prefix: torch.Tensor | None = None) -> torch.Tensor:
+        body = getattr(self.model, "model", None)
+        if body is None:                          # not a *ForCausalLM wrapper
+            return super().hidden(ids, mask, prefix)
+        x = self.input_embeddings(ids)
+        if prefix is not None:
+            x = torch.cat([prefix.to(x.dtype), x], 1)
+            mask = torch.cat([torch.ones(prefix.shape[:2], dtype=torch.bool,
+                                         device=mask.device), mask], 1)
+        h = body(inputs_embeds=x, attention_mask=mask.long()).last_hidden_state
+        return h[:, prefix.shape[1]:] if prefix is not None else h

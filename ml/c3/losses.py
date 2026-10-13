@@ -605,47 +605,95 @@ def teacher_rows(batch: Batch, why: list[str | None]) -> tuple[list[int] | None,
     rows = [i for i in range(n) if keep[i]] or [0]
     if len(rows) == n:
         return None, batch
+    return rows, rows_slice(batch, rows)
+
+
+def rows_slice(batch: Batch, rows: list[int]) -> Batch:
+    """The targets of ``rows`` only, for scoring a reading of those lines."""
     pick = lambda vals: [vals[i] for i in rows]  # noqa: E731
-    return rows, replace(batch, texts=pick(batch.texts),
-                         targets={k: pick(v) for k, v in batch.targets.items()},
-                         multi_targets={k: pick(v) for k, v in batch.multi_targets.items()},
-                         numbers_target={k: pick(v) for k, v in batch.numbers_target.items()})
+    return replace(batch, texts=pick(batch.texts),
+                   targets={k: pick(v) for k, v in batch.targets.items()},
+                   multi_targets={k: pick(v) for k, v in batch.multi_targets.items()},
+                   numbers_target={k: pick(v) for k, v in batch.numbers_target.items()})
+
+
+def teacher_context(brain, batch: Batch) -> dict:
+    """What every chunk of a part's teacher loss shares: notes from the
+    deal's other lines and each line's WHY (both read the whole part)."""
+    from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
+
+    notes, cnotes = notes_from_deal(batch)
+    return {"notes": notes, "cnotes": cnotes, "why": told_why(batch, brain.schema),
+            "cfield": company_field_notes(batch, brain.schema)}
+
+
+def teacher_chunks(brain, batch: Batch, size: int) -> list[tuple[list[int] | None, list, bool]]:
+    """A part's teacher loss in pieces: ``(rows, cards, extras)`` per piece,
+    with at most ``size`` lines and ``size`` cards each. ``size`` 0 is one
+    piece. Deal-level terms (deal values, look-alike flips) ride the first."""
+    from .brain import told_why  # noqa: PLC0415
+
+    if size <= 0:
+        return [(None, list(batch.judged), True)]
+    rows, _ = teacher_rows(batch, told_why(batch, brain.schema))
+    rows = list(range(len(batch))) if rows is None else rows
+    # Long pages together, so a chunk pads to similar lengths.
+    rows = sorted(rows, key=lambda i: len(batch.texts[i]))
+    row_chunks = [sorted(rows[k:k + size]) for k in range(0, len(rows), size)]
+    card_chunks = [list(batch.judged[k:k + size]) for k in range(0, len(batch.judged), size)]
+    n = max(len(row_chunks), len(card_chunks), 1)
+    row_chunks += [[]] * (n - len(row_chunks))
+    card_chunks += [[]] * (n - len(card_chunks))
+    return [(r, c, k == 0) for k, (r, c) in enumerate(zip(row_chunks, card_chunks))]
 
 
 def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
-               graph: torch.Tensor | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+               graph: torch.Tensor | None = None, *, rows: list[int] | None = None,
+               judged: list | None = None, extras: bool = True, desc=None,
+               context: dict | None = None) -> tuple[torch.Tensor, dict[str, float]]:
     """Every v6 term for one deal (brain.py has the table). Notes come from
     the deal's other lines; the reasoned pass and the rationale use each
-    line's own WHY, which the direct pass never sees."""
-    from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
+    line's own WHY, which the direct pass never sees.
+
+    ``rows`` / ``judged`` / ``extras`` score one piece of the part
+    (``teacher_chunks``); ``desc`` and ``context`` let the pieces share the
+    description pass and the notes."""
     from .consolidate import context_distillation_loss  # noqa: PLC0415
     from .supercharge import _kl  # noqa: PLC0415
 
     w = w or BrainWeights()
-    desc = brain.describe()
+    desc = desc if desc is not None else brain.describe()
     keys = [k for k in batch.targets]
-    notes, cnotes = notes_from_deal(batch)
+    context = context or teacher_context(brain, batch)
+    notes, cnotes, why, cfield = context["notes"], context["cnotes"], context["why"], context["cfield"]
     company = batch.company or None
     parts: dict[str, torch.Tensor] = {}
+    zero = next(brain.parameters()).new_zeros(())
 
-    why = told_why(batch, brain.schema)
     # Only lines with something to teach get a page; the rest of the part is
     # still on those pages as earlier lines.
-    rows, taught = teacher_rows(batch, why)
-    direct = brain(batch, company=company, notes=notes, company_notes=cnotes, graph=graph, desc=desc,
-                   rows=rows)
-    cfield = company_field_notes(batch, brain.schema)
-    reasoned = brain(batch, company=company, why=why, notes=notes,
-                     company_notes=[c + f for c, f in zip(cnotes, cfield)], graph=graph, desc=desc,
-                     rows=rows)
-    parts["direct"] = _answer_ce(direct, taught, keys)
-    parts["reasoned"] = _answer_ce(reasoned, taught, keys)
-    parts["rationale"] = brain.rationale_loss(batch, notes, graph)
-    parts["values"] = brain.value_loss(batch)
+    if rows is None:
+        rows, taught = teacher_rows(batch, why)
+    else:
+        taught = rows_slice(batch, rows)
+    if rows == []:
+        direct = reasoned = None
+        parts["direct"] = parts["reasoned"] = zero
+    else:
+        direct = brain(batch, company=company, notes=notes, company_notes=cnotes, graph=graph,
+                       desc=desc, rows=rows)
+        reasoned = brain(batch, company=company, why=why, notes=notes,
+                         company_notes=[c + f for c, f in zip(cnotes, cfield)], graph=graph, desc=desc,
+                         rows=rows)
+        parts["direct"] = _answer_ce(direct, taught, keys)
+        parts["reasoned"] = _answer_ce(reasoned, taught, keys)
+    parts["rationale"] = brain.rationale_loss(batch, notes, graph, rows=rows)
+    parts["values"] = brain.value_loss(batch, rows=rows, deal_level=extras)
+    cards = batch if judged is None else replace(batch, judged=list(judged))
     for name, with_why in (("card_direct", False), ("card_reasoned", True)):
-        predictions = brain.card_logits(batch, with_why=with_why, desc=desc)
+        predictions = brain.card_logits(cards, with_why=with_why, desc=desc)
         grouped = {}
-        for j in batch.judged:
+        for j in cards.judged:
             grouped.setdefault(j.key, []).append(j)
         terms = []
         for key, logits in predictions.items():
@@ -660,11 +708,11 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
                 per_row = F.cross_entropy(logits, truth, reduction="none")
             weights = per_row.new_tensor([j.why_weight if with_why else 1.0 for j in js])
             terms.append((per_row * weights).sum() / weights.sum().clamp(min=1e-6))
-        parts[name] = torch.stack(terms).mean() if terms else parts["direct"].new_zeros(())
+        parts[name] = torch.stack(terms).mean() if terms else zero
 
     has_why = torch.tensor([bool(why[i]) for i in (rows if rows is not None else range(len(batch)))],
-                           device=parts["direct"].device)
-    if has_why.any():
+                           device=zero.device, dtype=torch.bool)
+    if direct is not None and has_why.any():
         parts["distill"] = torch.stack([
             _kl(direct.logits[k][has_why], reasoned.logits[k][has_why].detach(), 1.0,
                 brain.schema.by_key()[k].multiple) for k in direct.logits]).mean()
@@ -675,7 +723,7 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     # once written into weights with the page bare (student).
     uni = sorted({t for ns in notes for t in ns})
     com = sorted({t for ns in cnotes for t in ns})
-    if uni or com:
+    if (uni or com) and direct is not None:
         with torch.no_grad():
             teacher = brain(batch, company=company, notes=[uni] * len(batch),
                             company_notes=[com] * len(batch), graph=graph, desc=desc, rows=rows)
@@ -687,8 +735,8 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     else:
         parts["consolidate"] = parts["direct"].new_zeros(())
 
-    parts["flip"] = parts["direct"].new_zeros(())
-    sup, gold = supposed_twins(batch)
+    parts["flip"] = zero
+    sup, gold = supposed_twins(batch) if extras else ([], [])
     if sup:
         flipped = brain.flip_read(batch, why, sup, notes, desc, graph)
         terms = [F.cross_entropy(flipped.logits[k][n].unsqueeze(0),
@@ -697,8 +745,8 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
         if terms:
             parts["flip"] = torch.stack(terms).mean()
 
-    num = parts["direct"].new_zeros(())
-    for k, pred in direct.numbers.items():
+    num = zero
+    for k, pred in (direct.numbers.items() if direct is not None else ()):
         vals = taught.numbers_target.get(k, [])
         m = torch.tensor([v is not None for v in vals], device=pred.device, dtype=torch.bool)
         if m.any():
