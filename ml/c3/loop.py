@@ -630,6 +630,12 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             print(f"validation {stage} heads={len(pooled)} macro_exact={macro:.4f}", flush=True)
         if checkpoint and completed:
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
+            # Every stage keeps its own copy, so a later stage that makes
+            # validation worse costs a file pick, not a rerun.
+            save_checkpoint(f"{checkpoint}.{stage}", model, step=completed, schema_sha256=schema_sha)
+            if validation_scores:
+                Path(f"{checkpoint}.validation.json").write_text(
+                    json.dumps(validation_scores, indent=1, sort_keys=True), encoding="utf-8")
     if checkpoint and completed:
         save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
     # The live runs leave the holdout to `ml.c3.predict --score`, once, on the

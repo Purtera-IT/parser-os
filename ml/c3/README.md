@@ -364,7 +364,7 @@ frozen line encoder's vectors are computed once and reused. `--max-atoms`
 sets the window (4,096 by default; 8,192 keeps most labeled deals whole and
 needs a bigger GPU). `--train-encoder-layers K` lets the encoder's top K
 blocks learn at `--encoder-lr`; keep it only if the validation deals say it
-beats the frozen encoder. The live runs leave the holdout alone; the winning
+beats the frozen encoder. Each stage also writes `<checkpoint>.<stage>` and the validation scores so far to `<checkpoint>.validation.json`, so the best stage is a file to pick, not a rerun. The live runs leave the holdout alone; the winning
 checkpoint is scored once with `python -m ml.c3.predict --score`, which
 refuses a second time. `python -m ml.c3.predict --checkpoint <run.pt> --deal
 <deal.json> --output <read.json>` writes the base's read of any deal, labeled

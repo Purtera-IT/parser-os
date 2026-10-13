@@ -1400,6 +1400,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             literal = _open_literal(opp, v)
             if literal:
                 literals.append(LiteralTarget(i, opp.key, literal, word_indexes(a.text, literal)))
+            elif ix is None and v not in (None, "", ABSENT):
+                value_notes.append(f"{opp.key} on {a.key} has a value it doesn't offer; "
+                                   "that value is not taught")
             if opp.kind == NUMBER and v not in (None, "", ABSENT):
                 number = saved_number(v)
                 if number is None:
@@ -1449,6 +1452,12 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     # opportunity it explains (the teacher reads it as that head's WHY).
     by_note = field_note_targets(schema)
     opp_layer = {o.key: o.layer for o in schema.opportunities}
+    heads_by_field = {o.field: o.key for o in schema.opportunities if o.source in ("read", "column")}
+    unlisted_notes = {name: heads_by_field[name[:-len("_note")]]
+                      for a in atoms if a.label and isinstance(a.label.get("reads_set"), dict)
+                      for name in a.label["reads_set"]
+                      if name.endswith("_note") and name not in by_note
+                      and name[:-len("_note")] in heads_by_field}
     field_notes: list[dict[str, str]] = []
     weights: list[float] = []
     hint_lines: list[list[int]] = []
@@ -1471,6 +1480,13 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         for name, key in by_note.items():
             t = drop_meta(str(reads.get(name) or ""))
             if t:
+                notes[key] = mask_verdict(t) if opp_layer.get(key) == "universal" else t
+        for name, value in reads.items():
+            # A ``<field>_note`` the registry doesn't list yet (rate_note,
+            # wants_note) still explains its field when the field is a head.
+            key = unlisted_notes.get(name)
+            t = drop_meta(str(value or "")) if key else ""
+            if t and key not in notes:
                 notes[key] = mask_verdict(t) if opp_layer.get(key) == "universal" else t
         for key, why_not in (lb.get("rejected_reads") or {}).items():
             t = drop_meta(str(why_not or ""))

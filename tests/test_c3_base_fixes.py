@@ -255,3 +255,10 @@ def test_same_document_masks_are_tensors_built_without_a_python_square():
     batch = featurize(DealExample.from_training_blob({"labels": []}, atoms, deal_id="synthetic"), schema)
     assert batch.same_doc.tolist() == [[True, True, False], [True, True, False], [False, False, False]]
     assert batch.same_section.tolist() == [[True, False, False], [False, True, False], [False, False, True]]
+
+
+def test_a_field_note_the_registry_does_not_list_still_explains_its_field():
+    schema = load_schema()
+    blob = {"labels": [label("r", reads_set={"rate": "present", "rate_note": "The rate card sets the hourly rate."})]}
+    batch = featurize(DealExample.from_training_blob(blob, [atom("r")], deal_id="synthetic"), schema)
+    assert "read:rate" in batch.field_notes[0]

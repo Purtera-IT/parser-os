@@ -429,7 +429,10 @@ class C3Model(nn.Module):
         if rels:
             x = self.rel_in(r)
             scores, nones = self.relation_head(x, torch.stack([desc[o.key][0] for o in rels]))
-            t = torch.arange(n, device=h.device)
+            # A causal link points back in arrival time. A document arrives
+            # whole, so within one arrival a total may derive from the rows
+            # below it and an answer may sit above its question's line.
+            t = torch.tensor(inp["times"], dtype=torch.float64, device=h.device)
             for o, s, z in zip(rels, scores, nones):
                 if CAUSAL_RELATIONS.get(o.field):
                     s = s.masked_fill(t.view(-1, 1) < t.view(1, -1), float("-inf"))
