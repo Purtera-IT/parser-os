@@ -3,6 +3,10 @@ source "$(dirname "$0")/common.sh"
 cd "$REPO"
 nvidia-smi --query-gpu=name,memory.total --format=csv
 python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.device_count())"
+# RunPod's image has Debian's Python, which refuses a system-wide pip (PEP 668).
+# The pod is disposable and its torch is the CUDA build we want, so install
+# next to it rather than in a venv that would hide it.
+export PIP_BREAK_SYSTEM_PACKAGES=1 PIP_ROOT_USER_ACTION=ignore
 pip install -q "transformers>=4.48" pytest
 python -m pytest -q tests/test_c3_*.py
 python - <<'PY'
