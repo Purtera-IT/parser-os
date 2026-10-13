@@ -134,7 +134,9 @@ class GraphBlock(nn.Module):
                 same_doc: torch.Tensor, same_sec: torch.Tensor) -> torch.Tensor:
         n, d = x.shape
         q, k, v = self.qkv(self.ln1(x)).view(n, 3, self.h, d // self.h).permute(1, 2, 0, 3)
-        bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec)
+        # [heads, N, N] in the attention's own precision: at 8,192 lines a
+        # float32 bias alone is 4 GB a layer.
+        bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec).to(q.dtype)
         bias = bias.masked_fill(~allowed, float("-inf"))
         a = F.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         x = x + self.drop(self.out(a.transpose(0, 1).reshape(n, d)))

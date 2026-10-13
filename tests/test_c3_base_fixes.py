@@ -143,3 +143,37 @@ def test_long_deals_are_balanced_and_scores_pool_by_count():
     pooled = pool_scores([{"h": {"exact": 1.0, "n": 1.0}}, {"h": {"exact": 0.0, "n": 3.0}}])
     assert pooled["h"] == {"exact": 0.25, "n": 4.0}
     assert IGNORE < 0
+
+
+def test_window_size_is_a_setting_and_released_encoder_blocks_learn_slower(tmp_path):
+    import json
+
+    from ml.c3.loop import SMALL, _student_optimizer, load_split, release_encoder_top
+    from ml.c3.model import C3Model
+
+    schema = load_schema()
+    deal = _long_deal()
+    path = tmp_path / "deal.json"
+    path.write_text(json.dumps({"deal_id": deal.deal_id, "atoms": [atom(f"a{i}", t=i) for i in range(12)],
+                                "labels": [label(f"a{i}") for i in range(12)], "links": [], "judgments": []}))
+    assert len(load_split([str(path)], schema, max_atoms=5)[0]) > 1
+    assert len(load_split([str(path)], schema, max_atoms=64)[0]) == 1
+    model = C3Model(schema, SMALL)
+    assert release_encoder_top(model, 2) == 0            # a hashed encoder has no blocks to release
+    opt = _student_optimizer(model, 1e-3, True, 1e-5)
+    assert sorted(g["lr"] for g in opt.param_groups) == [1e-5, 1e-3]
+
+
+def test_a_link_from_a_rule_card_finds_its_line_through_the_card():
+    long = "The invoiced amount will equal the fees for each completed milestone, as listed in the table below."
+    atoms = [atom("r", long), atom("r2", long, t=1, doc_id="other"), atom("n", "Tasks outside this scope.", t=2)]
+    atoms[0]["doc_id"] = atoms[2]["doc_id"] = "sow"
+    blob = {
+        "judgments": [{"head": "rule", "target_key": "rule:lead_in:1", "labeler": PM, "text": long,
+                       "verdict": "should_not_fire"}],
+        # The page cut the card's text off mid-word.
+        "links": [{"from_head": "rule", "from_key": "rule:lead_in:1", "from_text": long[:60],
+                   "to_label_key": "n", "relation": "near_miss", "labeler": PM}],
+    }
+    deal = DealExample.from_training_blob(blob, atoms, deal_id="synthetic")
+    assert deal.edges == [("r", "n", "near_miss")]       # the copy in the linked file, not the other one

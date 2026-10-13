@@ -393,11 +393,16 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
              and str(j.get("head") or "") in _CARD_HEADS}
     by_key = {str(r.get("key")): r for r in rows if r.get("key")}
     by_id = {str(r.get("atom_id") or r.get("id")): r for r in rows if r.get("atom_id") or r.get("id")}
+    card_text = {str(j.get("target_key")): str(j.get("text") or "").split("||")[0].strip()
+                 for j in judgments if isinstance(j, dict) and _is_a_person(j.get("labeler"))
+                 and j.get("target_key") and str(j.get("text") or "").split("||")[0].strip()}
     sup_copies = {str(j.get("target_key")): _sup_is_copy(str(j.get("target_key") or ""), j.get("target"))
                   for j in judgments if isinstance(j, dict) and str(j.get("head") or "") == "suppression"}
     by_text: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         by_text.setdefault(_norm_text(r.get("text")), []).append(r)
+
+    norm_rows: list[str] = []
 
     def find(key: Any, atom_id: Any, text: Any) -> dict[str, Any] | None:
         exact = by_key.get(str(key or "")) or by_id.get(str(atom_id or ""))
@@ -405,7 +410,14 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
             return exact
         matches = by_text.get(_norm_text(text), []) if str(text or "").strip() else []
         # A repeated signature or suppressed copy is not its surviving original.
-        return matches[0] if len(matches) == 1 else None
+        if len(matches) == 1:
+            return matches[0]
+        if matches or not str(text or "").strip():
+            return None
+        if not norm_rows:
+            norm_rows.extend(_norm_text(r.get("text")) for r in rows)
+        i = _unique_prefix(norm_rows, text)
+        return rows[i] if i is not None else None
 
     def find_from(k: dict[str, Any], to: dict[str, Any] | None) -> tuple[dict[str, Any] | None, bool]:
         """The line a link starts from, and whether its key is a judgment card's."""
@@ -430,7 +442,19 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
                     stats["card_anchored"] += 1
                     return r, True
             r = None
-        return (r or find(key, k.get("from_atom_id"), k.get("from_text"))), card_key in cards
+        r = r or find(key, k.get("from_atom_id"), k.get("from_text"))
+        if r is None and key in card_text:
+            # The link keeps only the start of its card's text; the card
+            # itself (a rule card, for one) keeps the whole line. A line
+            # repeated in several files is the one in the file the link
+            # points into, when only one copy is there.
+            full = card_text[key]
+            r = find(None, None, full)
+            if r is None:
+                same = [x for x in by_text.get(_norm_text(full), [])
+                        if to is not None and x.get("doc_id") == to.get("doc_id")]
+                r = same[0] if len(same) == 1 else None
+        return r, card_key in cards
 
     out, doc_pointers = [], []
     for k in links:
@@ -910,6 +934,26 @@ def _norm_text(text: Any) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
 
 
+#: Shortest cut-off text (in characters, normalized) matched by its start.
+_PREFIX_MIN = 40
+
+
+def _cut_prefix(text: Any) -> str:
+    """A stored text cut off mid-word (the page keeps the first ~120
+    characters of a link's from_text): its whole words, normalized."""
+    words = _norm_text(text).split()
+    return " ".join(words[:-1]) if len(words) > 1 else ""
+
+
+def _unique_prefix(texts: list[str], text: Any) -> int | None:
+    """The one line whose text starts with a cut-off ``text``, or None."""
+    head = _cut_prefix(text)
+    if len(head) < _PREFIX_MIN:
+        return None
+    hits = [i for i, t in enumerate(texts) if t.startswith(head)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def _by_ref_text(by_text: dict[str, int], text: Any) -> int | None:
     """The line a pointer's text names. The page sometimes prefixes the text
     with where it came from ("<file tail>: <the line>"), so the part after
@@ -935,6 +979,7 @@ class _Lines:
         self.by_id = {a.atom_id: i for i, a in enumerate(atoms) if a.atom_id}
         self.by_key = {a.key: i for i, a in enumerate(atoms)}
         self.by_text: dict[str, list[int]] = {}
+        self._norm: list[str] | None = None
         for i, a in enumerate(atoms):
             self.by_text.setdefault(_norm_text(a.text), []).append(i)
 
@@ -951,6 +996,10 @@ class _Lines:
             if doc:
                 matches = [j for j in matches if self.atoms[j].doc_id == str(doc)]
             i = matches[0] if len(matches) == 1 else None
+            if i is None and not matches and not doc:
+                if self._norm is None:
+                    self._norm = [_norm_text(a.text) for a in self.atoms]
+                i = _unique_prefix(self._norm, ref.get("text") or text)
         return i
 
     def group(self, i: int) -> tuple[int, ...]:

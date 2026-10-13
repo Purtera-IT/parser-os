@@ -276,6 +276,46 @@ def hold_line_encoder(model: C3Model) -> bool:
     return True
 
 
+def release_encoder_top(model: C3Model, layers: int) -> int:
+    """Let the line encoder's top ``layers`` blocks (and its final norm) learn.
+
+    The rest stays frozen. Returns how many blocks were released. Whether this
+    beats a frozen encoder is a validation question, not a default.
+    """
+    body = getattr(model.text, "model", None)
+    if body is None or layers <= 0:
+        return 0
+    blocks = getattr(body, "layers", None)
+    if blocks is None:
+        blocks = getattr(getattr(body, "encoder", None), "layer", None)
+    if blocks is None:
+        raise RuntimeError("Cannot find the line encoder's blocks to release")
+    for block in list(blocks)[-layers:]:
+        for p in block.parameters():
+            p.requires_grad_(True)
+    for name in ("final_norm", "norm"):
+        norm = getattr(body, name, None)
+        if norm is not None:
+            for p in norm.parameters():
+                p.requires_grad_(True)
+    model._frozen_desc = None
+    return min(layers, len(blocks))
+
+
+def _student_optimizer(model: C3Model, lr: float, adamw: bool,
+                       encoder_lr: float | None) -> torch.optim.Optimizer:
+    """One group for the deal model and heads; a smaller rate for any released encoder blocks."""
+    text = {id(p) for p in model.text.parameters()}
+    released = [p for p in model.parameters() if p.requires_grad and id(p) in text]
+    if not released or encoder_lr is None:
+        return _optimizer(model.parameters(), lr, adamw)
+    rest = [p for p in model.parameters() if p.requires_grad and id(p) not in text]
+    groups = [{"params": rest, "lr": lr}, {"params": released, "lr": encoder_lr}]
+    if adamw:
+        return torch.optim.AdamW(groups, lr=lr, weight_decay=0.01)
+    return torch.optim.Adam(groups, lr=lr)
+
+
 def hold_teacher_body(teacher: Brain) -> None:
     """Keep the pretrained language model. Train its low-rank slots and the readers."""
     for p in teacher.lm.parameters():
@@ -461,7 +501,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              page_batch: int = 0,
              deal_graph: bool = False,
              validation: list[Batch] | None = None,
-             balance: bool = True) -> tuple[C3Model, BaseRun]:
+             balance: bool = True,
+             encoder_lr: float | None = None) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
@@ -523,7 +564,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     model = model or C3Model(schema, cfg)
     model.to(device)
     _freeze_link_gate(model, False)
-    opt = _optimizer(model.parameters(), lr, adamw)
+    opt = _student_optimizer(model, lr, adamw, encoder_lr)
     lesson_stages = {"teach", "flips", "spread"}
     student_stages = []
     for stage in ("lines", "links", "cards", "numbers", "deal", "open_links", "bind", "teach", "flips", "spread"):
@@ -643,11 +684,11 @@ def load_deal(path: str | Path) -> DealExample:
     return DealExample.from_dict(payload)
 
 
-def load_split(paths: list[str], schema: Schema) -> tuple[list[Batch], list[str]]:
+def load_split(paths: list[str], schema: Schema, max_atoms: int = 4096) -> tuple[list[Batch], list[str]]:
     batches: list[Batch] = []
     notes: list[str] = []
     for path in paths:
-        parts, part_notes = training_batches(load_deal(path), schema)
+        parts, part_notes = training_batches(load_deal(path), schema, max_atoms=max_atoms)
         batches.extend(parts)
         notes.extend(part_notes)
     return batches, notes
@@ -695,6 +736,11 @@ def main() -> None:
                         help="Pretrained causal LM for the training-only teacher")
     parser.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     parser.add_argument("--tiny", action="store_true", help="CPU stand-in. Not the base.")
+    parser.add_argument("--max-atoms", type=int, default=4096,
+                        help="Lines per window. A bigger GPU takes more, so fewer deals are cut")
+    parser.add_argument("--train-encoder-layers", type=int, default=0,
+                        help="Release this many top blocks of the line encoder (0 keeps it frozen)")
+    parser.add_argument("--encoder-lr", type=float, default=2e-5)
     args = parser.parse_args()
     require_live_teacher("" if args.tiny else args.teacher, args.tiny)
     schema = load_schema()
@@ -704,9 +750,9 @@ def main() -> None:
                     bind=0 if args.tiny else max(1, args.steps // 4),
                     flips=0 if args.tiny else max(1, args.steps // 4),
                     spread=0 if args.tiny else max(1, args.steps // 4))
-    train, train_notes = load_split(args.train, schema)
-    holdout, hold_notes = load_split(args.holdout, schema)
-    validation, val_notes = load_split(args.validation, schema)
+    train, train_notes = load_split(args.train, schema, args.max_atoms)
+    holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
+    validation, val_notes = load_split(args.validation, schema, args.max_atoms)
     for note in train_notes + hold_notes + val_notes:
         print("note", note)
     held = {source_deal_id(b.deal_id) for b in holdout}
@@ -726,6 +772,8 @@ def main() -> None:
         torch.set_float32_matmul_precision("high")
         print("model", "h100", args.encoder, args.teacher)
         student = live_student(schema, args.encoder).to("cuda")
+        released = release_encoder_top(student, args.train_encoder_layers)
+        print("encoder_blocks_training", released, flush=True)
         _, result = run_base(
             train, holdout, schema, budget, cfg=student.cfg,
             make_lm=lambda: HFCausalLM(
@@ -734,7 +782,7 @@ def main() -> None:
             checkpoint=args.checkpoint or None, model=student, device="cuda",
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=2, deal_graph=True,
-            validation=validation)
+            validation=validation, encoder_lr=args.encoder_lr if released else None)
     print("train", " ".join(result.train_ids))
     print("holdout", " ".join(result.holdout_ids))
     print("validation", " ".join(result.validation_ids) or "(none)")
