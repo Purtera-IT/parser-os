@@ -672,7 +672,9 @@ def live_student(schema: Schema, encoder_name: str) -> C3Model:
     from .text import HFEncoder
 
     cfg = C3Config.design()
-    text = HFEncoder(encoder_name, max_length=1024, dtype=torch.bfloat16)
+    # The longest saved lines run past 9,000 characters (about 2,300 tokens);
+    # ModernBERT reads 8,192.
+    text = HFEncoder(encoder_name, max_length=8192, dtype=torch.bfloat16)
     if int(text.dim) != cfg.d_text:
         raise ValueError(f"Encoder width {text.dim} does not match the design width {cfg.d_text}")
     model = C3Model(schema, cfg, text=text)
@@ -713,8 +715,9 @@ def main() -> None:
                          + ", ".join(i for i in LABEL_HOLDOUT if i not in held))
     if args.tiny:
         print("model", "tiny")
+        # Real deals have hundreds of lines: the stand-in reads them 8 pages at a time.
         _, result = run_base(train, holdout, schema, budget, checkpoint=args.checkpoint or None,
-                             validation=validation)
+                             validation=validation, page_batch=8)
     else:
         from .lm import HFCausalLM
 
@@ -727,7 +730,7 @@ def main() -> None:
             train, holdout, schema, budget, cfg=student.cfg,
             make_lm=lambda: HFCausalLM(
                 args.teacher, targets=("q_proj", "k_proj", "v_proj", "o_proj"),
-                max_len=4096, trainable_rank=32, dtype=torch.bfloat16),
+                max_len=8192, trainable_rank=32, dtype=torch.bfloat16),
             checkpoint=args.checkpoint or None, model=student, device="cuda",
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=2, deal_graph=True,

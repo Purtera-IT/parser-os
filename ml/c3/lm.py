@@ -85,6 +85,8 @@ class LoRALinear(nn.Module):
 class LMBase(nn.Module):
     dim: int
     max_len: int
+    #: Descriptions embedded per language-model pass.
+    EMBED_CHUNK = 32
 
     def adapters(self) -> list[LoRALinear]:
         return [m for m in self.modules() if isinstance(m, LoRALinear)]
@@ -121,11 +123,19 @@ class LMBase(nn.Module):
         raise NotImplementedError
 
     def embed(self, texts: list[str]) -> torch.Tensor:
-        """Mean-pooled hidden states [B, dim]."""
-        ids, mask = self.tokenize(texts)
-        h, _ = self(ids, mask)
-        m = mask.unsqueeze(-1).to(h.dtype)
-        return (h * m).sum(1) / m.sum(1).clamp(min=1)
+        """Mean-pooled hidden states [B, dim], in length-sorted chunks so the
+        schema's ~760 descriptions are never one padded batch."""
+        order = sorted(range(len(texts)), key=lambda i: len(str(texts[i])))
+        out: list[torch.Tensor | None] = [None] * len(texts)
+        for start in range(0, len(order), self.EMBED_CHUNK):
+            rows = order[start:start + self.EMBED_CHUNK]
+            ids, mask = self.tokenize([texts[i] for i in rows])
+            h, _ = self(ids, mask)
+            m = mask.unsqueeze(-1).to(h.dtype)
+            pooled = (h * m).sum(1) / m.sum(1).clamp(min=1)
+            for k, i in enumerate(rows):
+                out[i] = pooled[k]
+        return torch.stack(out)  # type: ignore[arg-type]
 
 
 class _Block(nn.Module):
