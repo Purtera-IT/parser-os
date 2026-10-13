@@ -539,12 +539,14 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
                   scale: float = 1.0) -> torch.Tensor:
     model.train()
     with _autocast(device):
-        loss, _ = c3_loss(model, batch, weights, judgment_sizes=sizes)
+        kept: dict = {}
+        loss, _ = c3_loss(model, batch, weights, judgment_sizes=sizes, keep=kept)
         if teacher is not None and view is not None:
-            out = model(batch.inputs(), company=batch.company or None)
+            # The lesson reads the same forward pass as the gold terms: a
+            # second trunk pass would double what backward holds.
             loss = loss + weighted(
-                supercharge_loss(model, out, view, texts=batch.texts, batch=batch,
-                                 unlabeled_keys=unlabeled_keys),
+                supercharge_loss(model, kept["out"], view, texts=batch.texts, batch=batch,
+                                 desc=kept["desc"], unlabeled_keys=unlabeled_keys),
                 lesson or TeachWeights.for_base())
         loss = loss * scale
     opt.zero_grad()
@@ -817,6 +819,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                             teacher, batch, batch.company or None, graph=graph, ground_rows=ground)
                     print(f"progress view {stage} {k}/{len(pool)} parts "
                           f"{time.time() - seen_at:.0f}s", flush=True)
+                # Part times below are the student's, not the views'.
+                started = time.time()
+                _LAST_PART.pop(stage, None)
             # A lesson trains on the parts it has a view of; the gold-only
             # stages already walked every part.
             order = [b for b in train if b.deal_id in views] if use_teacher and views else train[:]
@@ -1014,7 +1019,11 @@ def main() -> None:
     caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, VIEW_PARTS
     if args.smoke:
         mean = sum(len(b) for b in train) / len(train)
-        train = sorted(train, key=lambda b: abs(len(b) - mean))[:2]
+        near = sorted(train, key=lambda b: abs(len(b) - mean))
+        # C3_SMOKE_LARGEST=1: the largest part and one average part, to
+        # measure the memory peak the full run will reach.
+        train = ([max(train, key=len), near[0]] if os.environ.get("C3_SMOKE_LARGEST") == "1"
+                 else near[:2])
         validation = sorted(validation, key=len)[:1]
         budget = Budget(teacher=1, lines=2, links=1, cards=1, numbers=1, deal=1, open_links=1,
                         teach=1, bind=1)

@@ -313,6 +313,9 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     (no teacher inside it); ``view`` is detached. ``batch`` (with its flips)
     turns on ``teach_flip``."""
     w = w or TeachWeights()
+    # One encoding of the descriptions for every term: with a trainable
+    # encoder each describe() is a full pass kept for backward.
+    desc = desc if desc is not None else model.describe()
     zero = out.r.new_zeros(())
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,

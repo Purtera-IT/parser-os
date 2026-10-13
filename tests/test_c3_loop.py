@@ -536,3 +536,43 @@ def test_a_run_saves_its_teacher_and_a_later_run_reuses_it(tmp_path):
     _, result = run_base([train], [hold], schema, budget, checkpoint=str(tmp_path / "b.pt"),
                          teacher_from=str(saved))
     assert "teacher" not in result.stage_loss
+
+
+def test_a_lesson_step_runs_the_trunk_and_the_descriptions_once():
+    """With a trainable encoder every trunk pass and every describe() is held
+    for backward, so the lesson must reuse the gold terms' pass."""
+    from ml.c3.brain import Brain
+    from ml.c3.data import Judged
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.loop import _student_step
+    from ml.c3.losses import LossWeights
+    from ml.c3.model import C3Model
+    from ml.c3.supercharge import teacher_view
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    keys = [o.key for o in schema.opportunities if o.key.startswith("jdg:") and o.universal
+            and not o.multiple][:2]
+    cards = [Judged(k, "PAIR", (0, 1), 0, note="short reason", subject_key=f"s{n}")
+             for n, k in enumerate(keys)]
+    carded = replace(train, judged=cards)
+    view = teacher_view(Brain(schema, TinyCausalLM(32, 1, 2, 8192), context_lines=3),
+                        carded, grounding=False)
+    assert len(view.card_logits) == 2
+    model = C3Model(schema)
+    calls = {"describe": 0, "forward": 0}
+    describe, forward = model.describe, model.forward
+
+    def counted_describe():
+        calls["describe"] += 1
+        return describe()
+
+    def counted_forward(*a, **k):
+        calls["forward"] += 1
+        return forward(*a, **k)
+
+    model.describe, model.forward = counted_describe, counted_forward
+    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
+    loss = _student_step(model, opt, carded, LossWeights(), None, object(), view, "cpu")
+    assert torch.isfinite(loss)
+    assert calls == {"describe": 1, "forward": 1}

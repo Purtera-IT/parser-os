@@ -7,6 +7,7 @@ entry in the returned dict, so an ablation is "set its weight to 0".
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 import torch
 from torch.nn import functional as F
@@ -488,8 +489,13 @@ def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: Explanati
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None,
-            judgment_sizes: tuple[str, ...] | None = None) -> tuple[torch.Tensor, dict[str, float]]:
-    """``bank``: explanations for the v5 reader to read. Default: none, unless
+            judgment_sizes: tuple[str, ...] | None = None,
+            keep: dict[str, Any] | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+    """``keep``, when given, receives the forward pass (``out``) and the
+    encoded descriptions (``desc``), so a lesson on the same step reuses them
+    instead of running the trunk and the encoder again.
+
+    ``bank``: explanations for the v5 reader to read. Default: none, unless
     ``rules`` are given or ``C3Config.legacy_reasons`` is set; then this
     deal's WHYs and company lines (each line masked from its own), plus
     ``rules``. In real training
@@ -506,6 +512,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
         bank = bank.extend(rules.items)
     out = model(batch.inputs(), company=batch.company, desc=desc, adv_lambda=adv_lambda,
                 bank=bank)
+    if keep is not None:
+        keep["out"], keep["desc"] = out, desc
     parts: dict[str, torch.Tensor] = {}
     parts["heads"], parts["numbers"] = head_losses(model, out, batch, w, "universal")
     parts["conduct"], _ = head_losses(model, out, batch, w, "company")
