@@ -149,6 +149,30 @@ def pool_scores(rows: list[dict[str, dict[str, float]]]) -> dict[str, dict[str, 
     return {key: {"exact": hit[key] / n[key], "n": n[key]} for key in n if n[key]}
 
 
+def majority_baseline(train: list[Batch], validation: list[Batch]) -> dict[str, float]:
+    """Exact match on the validation deals of always answering each
+    single-answer question's most common training answer: the floor a
+    trained head has to clear."""
+    counts: dict[str, dict[int, int]] = {}
+    for b in train:
+        for key, ys in b.targets.items():
+            for y in ys:
+                if y != IGNORE:
+                    counts.setdefault(key, {})[y] = counts.setdefault(key, {}).get(y, 0) + 1
+    hit: dict[str, int] = {}
+    n: dict[str, int] = {}
+    for b in validation:
+        for key, ys in b.targets.items():
+            if key not in counts:
+                continue
+            top = max(counts[key], key=counts[key].get)
+            for y in ys:
+                if y != IGNORE:
+                    hit[key] = hit.get(key, 0) + int(y == top)
+                    n[key] = n.get(key, 0) + 1
+    return {key: hit[key] / n[key] for key in n}
+
+
 def heads_seen(train: list[Batch]) -> dict[str, int]:
     """How many saved marks each question has on the training deals."""
     counts: dict[str, int] = {}
@@ -309,7 +333,8 @@ def _teacher_part(teacher: Brain, batch: Batch, weights, *, device: str, scale: 
         tokens += part.tokens
         if n % PIECE_PROGRESS_EVERY == 0 or n == len(pieces):
             print(f"progress {label} {batch.deal_id} piece {n}/{len(pieces)} "
-                  f"{tokens} tok {time.time() - started:.0f}s", flush=True)
+                  f"{tokens} tok {time.time() - started:.0f}s loss {float(loss) / max(scale, 1e-9):.4f}",
+                  flush=True)
     outs, grads = [], []
     for k in keys:
         for t, leaf in zip(full[k], leaves[k]):
@@ -626,36 +651,41 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     teacher_updates = max(1, budget.teacher * len(train))
     teacher_sched = (torch.optim.lr_scheduler.CosineAnnealingLR(teacher_opt, T_max=teacher_updates)
                      if adamw else None)
-    teacher_w = BrainWeights(consolidate=0.0, flip=0.0)
     stage_loss: dict[str, float] = {}
-    teacher_losses: list[float] = []
-    started, done = time.time(), 0
-    for _ in range(budget.teacher):
-        teacher.train()
-        if freeze_teacher:
-            _steady_teacher(teacher)
-        order = train[:]
-        rng.shuffle(order)
-        for batch in order:
-            # One part's loss, a piece at a time: each piece's graph is freed
-            # by its own backward, so memory holds one piece, not the part.
-            teacher_opt.zero_grad()
-            loss = _teacher_part(teacher, batch, teacher_w, device=device, scale=scale[batch.deal_id],
-                                 size=teacher_rows_per_step, budget=teacher_piece_tokens,
-                                 caps=teacher_caps, rng=rng if any(teacher_caps) else None)
-            torch.nn.utils.clip_grad_norm_([p for p in teacher.parameters() if p.grad is not None], 1.0)
-            teacher_opt.step()
-            if teacher_sched is not None:
-                teacher_sched.step()
-            teacher_losses.append(float(loss.detach()))
-            done += 1
-            _progress("teacher", done, budget.teacher * len(train), started)
-    if teacher_losses:
-        stage_loss["teacher"] = sum(teacher_losses) / len(teacher_losses)
-        print(f"stage teacher loss {stage_loss['teacher']:.4f}", flush=True)
-    for p in teacher.parameters():
-        p.requires_grad_(False)
-    teacher.eval()
+
+    # The teacher trains when the first stage that reads it comes up (bind, or
+    # a lesson): the gold-only student stages do not need it, so their
+    # validation scores arrive within the first hour, not after the teacher.
+    def train_teacher() -> None:
+        teacher_w = BrainWeights(consolidate=0.0, flip=0.0)
+        teacher_losses: list[float] = []
+        started, done = time.time(), 0
+        for _ in range(budget.teacher):
+            teacher.train()
+            if freeze_teacher:
+                _steady_teacher(teacher)
+            order = train[:]
+            rng.shuffle(order)
+            for batch in order:
+                # One part's loss, a piece at a time: each piece's graph is freed
+                # by its own backward, so memory holds one piece, not the part.
+                teacher_opt.zero_grad()
+                loss = _teacher_part(teacher, batch, teacher_w, device=device, scale=scale[batch.deal_id],
+                                     size=teacher_rows_per_step, budget=teacher_piece_tokens,
+                                     caps=teacher_caps, rng=rng if any(teacher_caps) else None)
+                torch.nn.utils.clip_grad_norm_([p for p in teacher.parameters() if p.grad is not None], 1.0)
+                teacher_opt.step()
+                if teacher_sched is not None:
+                    teacher_sched.step()
+                teacher_losses.append(float(loss.detach()))
+                done += 1
+                _progress("teacher", done, budget.teacher * len(train), started)
+        if teacher_losses:
+            stage_loss["teacher"] = sum(teacher_losses) / len(teacher_losses)
+            print(f"stage teacher loss {stage_loss['teacher']:.4f}", flush=True)
+        for p in teacher.parameters():
+            p.requires_grad_(False)
+        teacher.eval()
 
     model = model or C3Model(schema, cfg)
     model.to(device)
@@ -679,8 +709,16 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     views = None
     completed = 0
     schema_sha = digest([asdict(o) for o in schema.opportunities]) if checkpoint else ""
+    baseline = majority_baseline(train, validation) if validation else {}
+    if baseline:
+        print(f"validation baseline single_heads={len(baseline)} "
+              f"majority={sum(baseline.values()) / len(baseline):.4f}", flush=True)
+    teacher_ready = False
     for stage in student_stages:
         fresh = False
+        if not teacher_ready and (stage == "bind" or stage in lesson_stages):
+            train_teacher()
+            teacher_ready = True
         if stage == "open_links":
             _freeze_link_gate(model, True)
             opt.add_param_group({
@@ -745,7 +783,13 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             pooled = pool_scores([_score_oneshot(model, b, device) for b in validation])
             validation_scores[stage] = pooled
             macro = sum(v["exact"] for v in pooled.values()) / max(1, len(pooled))
-            print(f"validation {stage} heads={len(pooled)} macro_exact={macro:.4f}", flush=True)
+            same = [k for k in baseline if k in pooled]
+            mine = sum(pooled[k]["exact"] for k in same) / max(1, len(same))
+            floor = sum(baseline[k] for k in same) / max(1, len(same))
+            beat = sum(pooled[k]["exact"] > baseline[k] for k in same)
+            print(f"validation {stage} heads={len(pooled)} macro_exact={macro:.4f} "
+                  f"single_heads={len(same)} macro={mine:.4f} majority={floor:.4f} "
+                  f"beat_majority={beat}/{len(same)}", flush=True)
         if checkpoint and completed:
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
             # Every stage keeps its own copy, so a later stage that makes
@@ -754,6 +798,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             if validation_scores:
                 Path(f"{checkpoint}.validation.json").write_text(
                     json.dumps(validation_scores, indent=1, sort_keys=True), encoding="utf-8")
+    if not teacher_ready:
+        train_teacher()
     if checkpoint and completed:
         save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
     # The live runs leave the holdout to `ml.c3.predict --score`, once, on the
