@@ -20,73 +20,111 @@ from app.core.segments import ArtifactSegment
 from app.core.schemas import EvidenceAtom, EvidenceReceipt, SourceRef
 
 
-# ────────────── workbook cache (insanity-perf) ──────────────
-# openpyxl ``load_workbook`` is the dominant cost in source_replay
-# when a project has many spreadsheet atoms. Each atom triggered an
-# independent load of the same .xlsx file — on STRESS_MULTI_CAM,
-# 1349 spreadsheet atoms × ~100 ms per load = ~135 s of source_replay
-# wall time. Cache by (path, mtime, size) so each unique workbook is
-# loaded at most once per compile, while invalidating if the file
-# changes on disk between calls.
-_WORKBOOK_CACHE: dict[tuple[str, float, int], Any] = {}
+# ────────────── spreadsheet row index (flat memory) ──────────────
+# openpyxl ``load_workbook`` is the dominant cost in source_replay when a
+# project has many spreadsheet atoms, so each workbook is read once per compile
+# (STRESS_MULTI_CAM: 1349 atoms x ~100 ms per load = ~135 s before caching).
+#
+# What is cached matters as much as caching it. This used to keep the full
+# openpyxl Workbook, and reading a row from a full Workbook CREATES a Cell
+# object for every column up to the sheet's ``max_column`` -- and keeps it. One
+# formatted cell far to the right (very common: a whole-row fill or border
+# reaching column XFD) makes ``max_column`` 16,384, so every row an atom
+# touched added ~16k permanent cells, about 2 MB. Deal 010264 (16,001 items)
+# grew ~1.75 GB per 1,000 items until the worker was killed for memory at
+# 8 GB, three times; a run on 40 GB peaked near 30 GB. Measured on a synthetic
+# copy of that shape: 1,956 MB of growth over 1,000 rows.
+#
+# So the cache holds only VALUES: each sheet is streamed once in read-only
+# mode, each row trimmed of its trailing empty cells, and the archive closed.
+# Memory is the size of the data in the file, read once, no matter how many
+# atoms point into it. Values are the ones ``load_workbook(data_only=True)``
+# returns (both modes use the same sheet parser), so receipts are unchanged.
+_SHEET_ROWS_CACHE: dict[tuple[str, float, int, str | None], "_SheetRows | None"] = {}
+_SHEET_ROWS_CACHE_MAX = 32
 
 
-def _load_workbook_cached(path: Path):
-    """Return a memoized workbook for ``path``. Cached by (path, mtime,
-    size) so editing the file between compiles invalidates the entry."""
+class _SheetRows:
+    """The values of one worksheet, row by row (1-based), and nothing else."""
+
+    __slots__ = ("rows",)
+
+    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+        self.rows = rows
+
+    @property
+    def max_row(self) -> int:
+        return len(self.rows)
+
+    def row(self, row_number: int) -> tuple[Any, ...]:
+        if 1 <= row_number <= len(self.rows):
+            return self.rows[row_number - 1]
+        return ()
+
+    def value(self, row_number: int, col_index: int) -> Any:
+        values = self.row(row_number)
+        return values[col_index - 1] if 1 <= col_index <= len(values) else None
+
+
+def _read_sheet_rows(path: Path, sheet: str | None) -> _SheetRows | None:
     try:
-        st = path.stat()
-        key = (str(path), st.st_mtime, st.st_size)
-    except FileNotFoundError:
-        return None
-    cached = _WORKBOOK_CACHE.get(key)
-    if cached is not None:
-        return cached
-    try:
-        wb = load_workbook(path, data_only=True)
+        wb = load_workbook(path, read_only=True, data_only=True)
     except Exception:
         return None
-    _WORKBOOK_CACHE[key] = wb
-    # Soft cap: keep the cache to ~16 distinct workbooks. Realistic
-    # projects compile <16 unique .xlsx files.
-    if len(_WORKBOOK_CACHE) > 16:
-        # Drop the oldest entry. dict preserves insertion order so the
-        # first key is the oldest.
-        oldest = next(iter(_WORKBOOK_CACHE))
+    try:
+        ws = wb[sheet] if isinstance(sheet, str) and sheet in wb.sheetnames else wb.active
+        if ws is None:
+            return None
+        # The <dimension> a file declares is often wrong, and a stray format
+        # out at XFD would pad EVERY row to 16,384 values while streaming.
+        # Without it each row is exactly as wide as its last written cell.
+        ws.reset_dimensions()
+        rows: list[tuple[Any, ...]] = []
+        last_with_cells = 0
+        for values in ws.iter_rows(values_only=True):
+            end = len(values)
+            while end and values[end - 1] is None:
+                end -= 1
+            rows.append(tuple(values[:end]) if end else ())
+            if values:
+                # A row with any cell, even an empty formatted one, counts toward
+                # max_row exactly as it does for a full workbook.
+                last_with_cells = len(rows)
+        del rows[last_with_cells:]
+        return _SheetRows(rows)
+    except Exception:
+        return None
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+
+def _sheet_rows_cached(path: Path, sheet: str | None) -> _SheetRows | None:
+    """The cached value index for ``sheet`` of ``path`` (the active sheet when
+    ``sheet`` is not one of its names). Keyed by (path, mtime, size, sheet) so
+    editing the file between compiles invalidates the entry."""
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    key = (str(path), st.st_mtime, st.st_size, sheet if isinstance(sheet, str) else None)
+    if key in _SHEET_ROWS_CACHE:
+        return _SHEET_ROWS_CACHE[key]
+    rows = _read_sheet_rows(path, sheet)
+    _SHEET_ROWS_CACHE[key] = rows
+    if len(_SHEET_ROWS_CACHE) > _SHEET_ROWS_CACHE_MAX:
+        oldest = next(iter(_SHEET_ROWS_CACHE))
         if oldest != key:
-            _WORKBOOK_CACHE.pop(oldest, None)
-            # An evicted workbook's worksheets may be GC'd and their id() reused;
-            # drop the memoized max_rows so a future worksheet can't read a stale
-            # value under a recycled id.
-            _MAXROW_CACHE.clear()
-    return wb
-
-
-# Memoized ``worksheet.max_row``. openpyxl recomputes ``max_row`` by scanning
-# the worksheet's *entire* cell set on every single access. source_replay
-# verifies one row per atom, calling ``max_row`` once per atom purely for an
-# out-of-range check — so a big sheet with many atoms made this O(atoms × cells)
-# (observed: a 39k-atom deal grinding for >8 min in ``max_row`` alone). The value
-# can't change during a read-only verification pass, so cache it per worksheet
-# identity. The workbook (and thus its worksheets) is held alive in
-# ``_WORKBOOK_CACHE`` while in use, so ``id()`` is stable for the cache lifetime;
-# we clear this alongside any workbook-cache eviction to avoid id reuse.
-_MAXROW_CACHE: dict[int, int] = {}
-
-
-def _cached_max_row(worksheet: Any) -> int:
-    """``worksheet.max_row`` computed at most once per worksheet (see note)."""
-    wid = id(worksheet)
-    mr = _MAXROW_CACHE.get(wid)
-    if mr is None:
-        mr = worksheet.max_row or 0
-        _MAXROW_CACHE[wid] = mr
-    return mr
+            _SHEET_ROWS_CACHE.pop(oldest, None)
+    return rows
 
 
 def clear_workbook_cache() -> None:  # pragma: no cover — used by tests
-    _WORKBOOK_CACHE.clear()
-    _MAXROW_CACHE.clear()
+    _SHEET_ROWS_CACHE.clear()
+    _replay_norm_cached.cache_clear()
+    _replay_norm_long_cached.cache_clear()
     # Every content cache in this module clears together. A test that resets one
     # and not the others gets a file it thinks it reloaded and did not, which is
     # the hardest kind of stale to notice.
@@ -217,8 +255,7 @@ def _whole_document_text_fallback(
     return None
 
 
-@lru_cache(maxsize=65536)
-def _replay_norm_cached(text: str) -> str:
+def _replay_norm_uncached(text: str) -> str:
     # ASCII CANNOT CHANGE under either step: NFKD leaves it alone and it
     # carries no combining marks. Skipping them there is not an optimisation
     # with a risk attached, it is the same answer reached without walking the
@@ -227,6 +264,21 @@ def _replay_norm_cached(text: str) -> str:
         text = unicodedata.normalize("NFKD", text)
         text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return normalize_text(text)
+
+
+#: Strings longer than this go to a small cache of their own. The big cache
+#: holds every string replay has seen, keyed by the string itself, so its memory
+#: is (entries x length). Atom texts and table rows are short; what is long is a
+#: snippet -- a line range of an email, a whole document body -- and an unbounded
+#: snippet in a 65,536-entry cache is gigabytes on a deal with many atoms. Short
+#: strings: at most 65,536 x 2 x 1 KB = 128 MB however large the deal.
+_REPLAY_NORM_SHORT_MAX = 1024
+
+_replay_norm_cached = lru_cache(maxsize=65536)(_replay_norm_uncached)
+# A document body is checked once per atom that points into it, so a few long
+# strings ARE reused heavily. Sixteen of them covers the documents one stretch of
+# atoms walks through without keeping every long snippet ever seen.
+_replay_norm_long_cached = lru_cache(maxsize=16)(_replay_norm_uncached)
 
 
 def _replay_norm(text: str) -> str:
@@ -245,7 +297,10 @@ def _replay_norm(text: str) -> str:
     million calls. It is a pure function of the string, so none of that work
     was buying a different answer.
     """
-    return _replay_norm_cached(text or "")
+    text = text or ""
+    if len(text) > _REPLAY_NORM_SHORT_MAX:
+        return _replay_norm_long_cached(text)
+    return _replay_norm_cached(text)
 
 VERIFIER_VERSION = "source_replay_v2"
 _STOP_WORDS = {
@@ -388,21 +443,16 @@ def _spreadsheet_full_row_text(
     suffix = path.suffix.lower()
     parts: list[str] = []
     if suffix == ".xlsx":
-        wb = _load_workbook_cached(path)
-        if wb is None:
+        sheet_rows = _sheet_rows_cached(path, sheet)
+        if sheet_rows is None:
             return ""
-        ws = (
-            wb[sheet]
-            if isinstance(sheet, str) and sheet in wb.sheetnames
-            else wb.active
-        )
-        max_row = ws.max_row or 0
+        max_row = sheet_rows.max_row
         if max_row and row_number > max_row:
             return ""
-        for cell in ws[row_number]:
-            if cell.value is None:
+        for value in sheet_rows.row(row_number):
+            if value is None:
                 continue
-            text = str(cell.value).strip()
+            text = str(value).strip()
             if text:
                 parts.append(text)
     else:
@@ -442,19 +492,17 @@ def _verify_spreadsheet_row(atom: EvidenceAtom, source_ref: SourceRef, path: Pat
     row_values: dict[str, str] = {}
     suffix = path.suffix.lower()
     if suffix == ".xlsx":
-        # Cached loader (insanity-perf). On STRESS_MULTI_CAM this
-        # alone cuts source_replay from ~135 s to ~3 s.
-        workbook = _load_workbook_cached(path)
-        if workbook is None:
+        # Read once per sheet, values only (see _SHEET_ROWS_CACHE).
+        sheet_rows = _sheet_rows_cached(path, sheet)
+        if sheet_rows is None:
             return _receipt(atom, source_ref, "failed", f"Spreadsheet file unreadable: {path}")
-        worksheet = workbook[sheet] if isinstance(sheet, str) and sheet in workbook.sheetnames else workbook.active
-        max_row = _cached_max_row(worksheet)
+        max_row = sheet_rows.max_row
         if max_row and row_number > max_row:
             return _receipt(atom, source_ref, "failed", f"Spreadsheet row {row_number} out of range")
         for key, col_letter in columns.items():
             try:
                 col_index = column_index_from_string(str(col_letter))
-                value = worksheet.cell(row=row_number, column=col_index).value
+                value = sheet_rows.value(row_number, col_index)
                 row_values[str(key)] = "" if value is None else str(value)
             except Exception:
                 continue
