@@ -87,6 +87,7 @@ class LMBase(nn.Module):
     max_len: int
     #: Descriptions embedded per language-model pass.
     EMBED_CHUNK = 32
+    EMBED_TOKENS = 32768      # padded tokens per embedding call
 
     def adapters(self) -> list[LoRALinear]:
         return [m for m in self.modules() if isinstance(m, LoRALinear)]
@@ -151,10 +152,15 @@ class LMBase(nn.Module):
         raise NotImplementedError
 
     def hidden(self, ids: torch.Tensor, mask: torch.Tensor,
-               prefix: torch.Tensor | None = None) -> torch.Tensor:
+               prefix: torch.Tensor | None = None,
+               inputs_embeds: torch.Tensor | None = None) -> torch.Tensor:
         """Last hidden states only. A causal LM's vocabulary logits are
         [pages, tokens, ~150k]; the heads never read them."""
-        return self(ids, mask, prefix=prefix)[0]
+        return self(ids, mask, prefix=prefix, inputs_embeds=inputs_embeds)[0]
+
+    def head(self, h: torch.Tensor) -> torch.Tensor:
+        """Vocabulary logits for the hidden states given, and only those."""
+        raise NotImplementedError
 
     def offsets(self, text: str) -> list[tuple[int, int]]:
         """Character span of each token of ``text`` as ``tokenize`` cuts it
@@ -165,10 +171,18 @@ class LMBase(nn.Module):
     def embed(self, texts: list[str]) -> torch.Tensor:
         """Mean-pooled hidden states [B, dim], in length-sorted chunks so the
         schema's ~760 descriptions are never one padded batch."""
-        order = sorted(range(len(texts)), key=lambda i: len(str(texts[i])))
+        size = [self.token_count(t) for t in texts]
+        order = sorted(range(len(texts)), key=lambda i: size[i])
         out: list[torch.Tensor | None] = [None] * len(texts)
-        for start in range(0, len(order), self.EMBED_CHUNK):
-            rows = order[start:start + self.EMBED_CHUNK]
+        calls, cur = [], []
+        for i in order:
+            if cur and (len(cur) >= self.EMBED_CHUNK or (len(cur) + 1) * size[i] > self.EMBED_TOKENS):
+                calls.append(cur)
+                cur = []
+            cur.append(i)
+        if cur:
+            calls.append(cur)
+        for rows in calls:
             ids, mask = self.tokenize([texts[i] for i in rows])
             h = self.hidden(ids, mask)
             m = mask.unsqueeze(-1).to(h.dtype)
@@ -216,6 +230,9 @@ class TinyCausalLM(LMBase):
         self.blocks = nn.ModuleList(_Block(dim, heads) for _ in range(layers))
         self.ln = nn.LayerNorm(dim)
         self.out = nn.Linear(dim, 258, bias=False)
+
+    def head(self, h: torch.Tensor) -> torch.Tensor:
+        return self.out(h)
 
     def token_count(self, text: str) -> int:
         return 1 + len(str(text).encode("utf-8"))
@@ -281,6 +298,8 @@ class HFCausalLM(LMBase):
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        # Pages are split and trimmed by their real length; that needs the pad on the right.
+        self.tokenizer.padding_side = "right"
         kwargs = {"torch_dtype": dtype} if dtype is not None else {}
         self.model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
         self.dim, self.max_len = self.model.config.hidden_size, max_len
@@ -328,12 +347,16 @@ class HFCausalLM(LMBase):
             h, logits = h[:, prefix.shape[1]:], logits[:, prefix.shape[1]:]
         return h, logits
 
+    def head(self, h: torch.Tensor) -> torch.Tensor:
+        return self.model.get_output_embeddings()(h)
+
     def hidden(self, ids: torch.Tensor, mask: torch.Tensor,
-               prefix: torch.Tensor | None = None) -> torch.Tensor:
+               prefix: torch.Tensor | None = None,
+               inputs_embeds: torch.Tensor | None = None) -> torch.Tensor:
         body = getattr(self.model, "model", None)
         if body is None:                          # not a *ForCausalLM wrapper
-            return super().hidden(ids, mask, prefix)
-        x = self.input_embeddings(ids)
+            return self(ids, mask, prefix=prefix, inputs_embeds=inputs_embeds)[0]
+        x = self.input_embeddings(ids) if inputs_embeds is None else inputs_embeds
         if prefix is not None:
             x = torch.cat([prefix.to(x.dtype), x], 1)
             mask = torch.cat([torch.ones(prefix.shape[:2], dtype=torch.bool,

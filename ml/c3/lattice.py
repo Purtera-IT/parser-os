@@ -45,6 +45,11 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
+
+
+# Same threshold as model.CHECKPOINT_LINES.
+CHECKPOINT_LINES = 512
 
 
 class _Attend(nn.Module):
@@ -101,15 +106,25 @@ class AskedLayer(nn.Module):
         n, s, d = slots.shape
         mem = self.ln_m(h)
         outs, cites = [], []
-        for a in range(0, n, chunk):
-            b = min(n, a + chunk)
-            q = self.ln_c(slots[a:b]).reshape(1, (b - a) * s, d)
+        def one(a: int, b: int, piece: torch.Tensor, mem: torch.Tensor):
+            q = self.ln_c(piece).reshape(1, (b - a) * s, d)
             bias = (self.w_doc.view(-1, 1, 1) * same_doc[a:b] + self.w_sec.view(-1, 1, 1) * same_sec[a:b])
             bias = bias.masked_fill(~allowed[a:b], float("-inf"))           # [H, b-a, N]
             bias = bias.repeat_interleave(s, 1).unsqueeze(0)                 # [1, H, (b-a)*S, N]
             y, att = self.deal_attn(q, mem.unsqueeze(0), bias)
-            outs.append(y.view(b - a, s, d))
-            cites.append(att[0].mean(0).view(b - a, s, n))
+            return y.view(b - a, s, d), att[0].mean(0).view(b - a, s, n)
+
+        # A chunk's [H, chunk x S, N] scores are recomputed in backward on a
+        # long part, not kept: kept, they grow with N squared.
+        light = n >= CHECKPOINT_LINES and torch.is_grad_enabled()
+        for a in range(0, n, chunk):
+            b = min(n, a + chunk)
+            if light:
+                y, c = checkpoint(one, a, b, slots[a:b], mem, use_reentrant=False)
+            else:
+                y, c = one(a, b, slots[a:b], mem)
+            outs.append(y)
+            cites.append(c)
         return slots + self.drop(torch.cat(outs)), torch.cat(cites)
 
     def forward(self, base, company, h, allowed, same_doc, same_sec, chunk):

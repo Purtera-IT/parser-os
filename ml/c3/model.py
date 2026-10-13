@@ -40,6 +40,7 @@ from typing import Any
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
@@ -201,8 +202,22 @@ class DealEncoder(nn.Module):
         allowed = (torch.ones(n, n, dtype=torch.bool, device=dev) if hindsight
                    else torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev)))
         for blk in self.blocks:
-            x = blk(x, allowed, same_doc, same_sec)
+            if _remember_less(n):
+                x = checkpoint(blk, x, allowed, same_doc, same_sec, use_reentrant=False)
+            else:
+                x = blk(x, allowed, same_doc, same_sec)
         return x
+
+
+# Long parts recompute their N x N work in backward instead of keeping it: at
+# 8,192 lines one graph block's attention bias is 2 GB, and the containment
+# boxes are [N, N, 32] per step. Same numbers, a fraction of the memory.
+CHECKPOINT_LINES = 512
+BOX_ROWS = 512
+
+
+def _remember_less(n: int) -> bool:
+    return n >= CHECKPOINT_LINES and torch.is_grad_enabled()
 
 
 @dataclass
@@ -677,10 +692,19 @@ class C3Model(nn.Module):
         governs is transitive by construction (v3 section 2.5)."""
         c, o = self.box(r).chunk(2, -1)
         lo, hi = c - F.softplus(o), c + F.softplus(o)
-        inter = F.softplus(torch.minimum(hi.unsqueeze(1), hi.unsqueeze(0))
-                           - torch.maximum(lo.unsqueeze(1), lo.unsqueeze(0)))
         child = F.softplus(hi - lo).unsqueeze(0)
-        score = (torch.log(inter + 1e-9) - torch.log(child + 1e-9)).sum(-1)   # [i parent, j child]
+
+        def rows(lo_i, hi_i):
+            inter = F.softplus(torch.minimum(hi_i.unsqueeze(1), hi.unsqueeze(0))
+                               - torch.maximum(lo_i.unsqueeze(1), lo.unsqueeze(0)))
+            return (torch.log(inter + 1e-9) - torch.log(child + 1e-9)).sum(-1)   # [i parent, j child]
+
+        n = r.shape[0]
+        if _remember_less(n):
+            score = torch.cat([checkpoint(rows, lo[a:a + BOX_ROWS], hi[a:a + BOX_ROWS], use_reentrant=False)
+                               for a in range(0, n, BOX_ROWS)])
+        else:
+            score = rows(lo, hi)
         return score.masked_fill(torch.eye(r.shape[0], dtype=torch.bool, device=r.device),
                                  float("-inf"))
 

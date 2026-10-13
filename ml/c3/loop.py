@@ -211,6 +211,10 @@ H100_TEACHER = "Qwen/Qwen2.5-7B-Instruct"
 
 #: A progress line every this many parts, so a long stage is never silent.
 PROGRESS_EVERY = 25
+# The live teacher's memory caps. A call is one pass through the 7B body; a
+# piece is what one backward holds (checkpointed: about 0.2 MB a token).
+TEACHER_CALL_TOKENS = 32768
+TEACHER_PIECE_TOKENS = 131072
 
 
 def _progress(stage: str, done: int, total: int, started: float) -> None:
@@ -310,6 +314,11 @@ def release_encoder_top(model: C3Model, layers: int) -> int:
         if norm is not None:
             for p in norm.parameters():
                 p.requires_grad_(True)
+    # The released blocks keep every line's activations for backward; at
+    # 8,192 lines that is the largest thing on the card. Recompute instead.
+    enable = getattr(body, "gradient_checkpointing_enable", None)
+    if enable is not None:
+        enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model._frozen_desc = None
     return min(layers, len(blocks))
 
@@ -358,7 +367,8 @@ def _deal_graph(model: C3Model, teacher: Brain, batch: Batch, device: str):
 
 def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
                 device: str, lr: float, adamw: bool, rng: random.Random,
-                scale: dict[str, float] | None = None, chunk: int = 0) -> None:
+                scale: dict[str, float] | None = None, chunk: int = 0,
+                piece_tokens: int = 0) -> None:
     """Teach the frozen language model to read the student's deal graph.
 
     Only the small projection trains. The pretrained body does not move.
@@ -381,13 +391,13 @@ def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
             graph = _deal_graph(model, teacher, batch, device)
             opt.zero_grad()
             context = teacher_context(teacher, batch)
-            chunks = teacher_chunks(teacher, batch, chunk)
             loss = None
-            for rows, cards, extras in chunks:
+            for part in teacher_chunks(teacher, batch, chunk, piece_tokens):
                 with _autocast(device):
-                    piece, _ = brain_loss(teacher, batch, weights, graph=graph, rows=rows,
-                                          judged=cards, extras=extras, context=context)
-                    piece = piece * ((scale or {}).get(batch.deal_id, 1.0) / len(chunks))
+                    piece, _ = brain_loss(teacher, batch, weights, graph=graph, rows=part.rows,
+                                          judged=part.cards, flips=part.flips, extras=part.extras,
+                                          context=context)
+                    piece = piece * ((scale or {}).get(batch.deal_id, 1.0) * part.scale)
                 _finite(piece, "bind")
                 if piece.requires_grad:
                     piece.backward()
@@ -520,6 +530,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              page_batch: int = 0,
              read_chunk: int = 0,
              teacher_rows_per_step: int = 0,
+             teacher_piece_tokens: int = 0,
+             call_tokens: int = 0,
              deal_graph: bool = False,
              validation: list[Batch] | None = None,
              balance: bool = True,
@@ -542,7 +554,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     torch.manual_seed(seed)
     rng = random.Random(seed)
     teacher = Brain(schema, make_lm(), context_lines=context_lines, page_batch=page_batch,
-                    read_chunk=read_chunk, d_graph=cfg.d_r if deal_graph else None)
+                    read_chunk=read_chunk, call_tokens=call_tokens, d_graph=cfg.d_r if deal_graph else None)
     if freeze_teacher:
         hold_teacher_body(teacher)
         _arm_teacher_memory(teacher)
@@ -571,13 +583,12 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             # The schema descriptions are re-read per piece for the same reason.
             teacher_opt.zero_grad()
             context = teacher_context(teacher, batch)
-            chunks = teacher_chunks(teacher, batch, teacher_rows_per_step)
             loss = None
-            for rows, cards, extras in chunks:
+            for part in teacher_chunks(teacher, batch, teacher_rows_per_step, teacher_piece_tokens):
                 with _autocast(device):
-                    piece, _ = brain_loss(teacher, batch, teacher_w, rows=rows, judged=cards,
-                                          extras=extras, context=context)
-                    piece = piece * (scale[batch.deal_id] / len(chunks))
+                    piece, _ = brain_loss(teacher, batch, teacher_w, rows=part.rows, judged=part.cards,
+                                          flips=part.flips, extras=part.extras, context=context)
+                    piece = piece * (scale[batch.deal_id] * part.scale)
                 _finite(piece, "teacher")
                 if piece.requires_grad:
                     piece.backward()
@@ -629,7 +640,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             })
         if stage == "bind":
             _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng, scale,
-                        chunk=teacher_rows_per_step)
+                        chunk=teacher_rows_per_step, piece_tokens=teacher_piece_tokens)
             continue
         weights, sizes = gold_weights("deal" if stage in ("open_links",) or stage in lesson_stages else stage)
         use_teacher = stage in lesson_stages
@@ -840,7 +851,8 @@ def main() -> None:
             checkpoint=args.checkpoint or None, model=student, device="cuda",
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=8, read_chunk=16,
-            teacher_rows_per_step=32, deal_graph=True,
+            call_tokens=TEACHER_CALL_TOKENS, teacher_rows_per_step=32,
+            teacher_piece_tokens=TEACHER_PIECE_TOKENS, deal_graph=True,
             validation=validation, encoder_lr=args.encoder_lr if released else None,
             score_holdout=args.score_holdout)
     print("train", " ".join(result.train_ids))

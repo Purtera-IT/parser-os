@@ -212,22 +212,82 @@ def test_base_loop_trains_only_the_training_deals_and_opens_the_link_gate(tmp_pa
         release_train()
 
 
-def test_teacher_loss_in_pieces_covers_every_taught_line_and_card_once():
+def test_teacher_loss_in_pieces_covers_every_taught_line_card_and_flip_once():
     from ml.c3.brain import Brain, told_why
     from ml.c3.lm import TinyCausalLM
-    from ml.c3.losses import teacher_chunks, teacher_rows
+    from ml.c3.losses import supposed_twins, teacher_chunks, teacher_rows
 
     schema = load_schema()
     train, _ = _batches(schema)
     brain = Brain(schema, TinyCausalLM(32, 1, 2, 4096), page_batch=2, read_chunk=2)
     rows, _ = teacher_rows(train, told_why(train, schema))
     rows = list(range(len(train))) if rows is None else rows
-    pieces = teacher_chunks(brain, train, 2)
-    assert sorted(r for p in pieces for r in p[0]) == sorted(rows)
-    assert sum(len(p[1]) for p in pieces) == len(train.judged)
-    assert [p[2] for p in pieces].count(True) == 1
-    assert all(len(p[0]) <= 2 and len(p[1]) <= 2 for p in pieces)
-    assert teacher_chunks(brain, train, 0) == [(None, list(train.judged), True)]
+    budget = 3000
+    pieces = teacher_chunks(brain, train, 4, budget)
+    assert sorted(r for p in pieces for r in p.rows) == sorted(rows)
+    assert sum(len(p.cards) for p in pieces) == len(train.judged)
+    assert sorted(f for p in pieces for f in p.flips) == list(range(len(supposed_twins(train)[0])))
+    assert [p.extras for p in pieces].count(True) == 1 and pieces[0].extras
+    for p in pieces:
+        kinds = [bool(p.rows), bool(p.cards), bool(p.flips)]
+        assert sum(kinds) <= 1                      # one kind of term per piece
+        size = len(p.rows) + len(p.cards) + len(p.flips)
+        assert size <= 4 and (p.tokens <= budget or size == 1)
+    for kind in ("rows", "cards", "flips"):
+        mine = [p for p in pieces if getattr(p, kind)]
+        if mine:
+            assert abs(sum(p.scale for p in mine) - 1.0) < 1e-9
+    whole = teacher_chunks(brain, train, 0)
+    assert len(whole) == 1 and whole[0].rows is None and whole[0].extras
+
+
+def test_every_teacher_pass_stays_under_the_call_cap():
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.losses import BrainWeights, brain_loss, teacher_chunks, teacher_context
+
+    calls: list[tuple[int, int]] = []
+
+    class Counting(TinyCausalLM):
+        def forward(self, ids, mask, prefix=None, inputs_embeds=None):
+            calls.append(tuple(ids.shape))
+            return super().forward(ids, mask, prefix=prefix, inputs_embeds=inputs_embeds)
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    cap = 2048
+    lm = Counting(32, 1, 2, 8192)
+    lm.EMBED_TOKENS = cap
+    brain = Brain(schema, lm, page_batch=8, read_chunk=4, call_tokens=cap)
+    context = teacher_context(brain, train)
+    for part in teacher_chunks(brain, train, 4, 4000):
+        loss, _ = brain_loss(brain, train, BrainWeights(), rows=part.rows, judged=part.cards,
+                             flips=part.flips, extras=part.extras, context=context)
+        if loss.requires_grad:
+            loss.backward()
+    assert calls
+    assert all(n * t <= cap or n == 1 for n, t in calls), max(calls, key=lambda c: c[0] * c[1])
+    assert any(n > 1 for n, _ in calls)
+
+
+def test_capped_calls_read_the_same_as_one_call():
+    import torch
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    torch.manual_seed(0)
+    one = Brain(schema, TinyCausalLM(32, 1, 2, 4096))
+    many = Brain(schema, TinyCausalLM(32, 1, 2, 4096), page_batch=3, call_tokens=1500)
+    many.load_state_dict(one.state_dict())
+    one.eval()
+    many.eval()
+    with torch.no_grad():
+        a, b = one(train), many(train)
+        assert max(float((a.logits[k] - b.logits[k]).abs().max()) for k in a.logits) < 1e-4
+        assert abs(float(one.value_loss(train)) - float(many.value_loss(train))) < 1e-4
+        assert abs(float(one.rationale_loss(train)) - float(many.rationale_loss(train))) < 1e-4
 
 
 def test_base_loop_runs_with_the_teacher_loss_in_pieces(tmp_path):
@@ -236,7 +296,8 @@ def test_base_loop_runs_with_the_teacher_loss_in_pieces(tmp_path):
     _, result = run_base(
         [train], [hold], schema,
         Budget(teacher=1, lines=1, links=1, cards=1, numbers=1, deal=1, open_links=1, teach=1),
-        page_batch=2, read_chunk=2, teacher_rows_per_step=2,
+        page_batch=2, read_chunk=2, teacher_rows_per_step=2, teacher_piece_tokens=3000,
+        call_tokens=2048,
     )
     assert result.ready_for_training is False
     assert hold.deal_id in result.holdout_scores
@@ -274,3 +335,32 @@ def test_value_loss_counts_values_that_encode_to_nothing():
     brain = Brain(schema, Mute(32, 1, 2, 4096))
     with pytest.raises(ValueError, match="encodes to no tokens"):
         brain.value_loss(train)
+
+
+def test_student_memory_savers_give_the_same_loss_and_gradients(monkeypatch):
+    import torch
+    import ml.c3.lattice as lattice
+    import ml.c3.model as model_mod
+    from ml.c3.losses import c3_loss
+    from ml.c3.model import C3Config, C3Model
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+
+    def run(light: bool):
+        monkeypatch.setattr(model_mod, "CHECKPOINT_LINES", 1 if light else 10**9)
+        monkeypatch.setattr(lattice, "CHECKPOINT_LINES", 1 if light else 10**9)
+        monkeypatch.setattr(model_mod, "BOX_ROWS", 3)
+        torch.manual_seed(0)
+        m = C3Model(schema, replace(C3Config(), asked_layers=1))
+        m.eval()                                     # no dropout; gradients still on
+        loss, _ = c3_loss(m, train)
+        loss.backward()
+        return float(loss.detach()), {n: p.grad.clone() for n, p in m.named_parameters()
+                                      if p.grad is not None}
+
+    a_loss, a_grad = run(False)
+    b_loss, b_grad = run(True)
+    assert abs(a_loss - b_loss) < 1e-5
+    assert a_grad.keys() == b_grad.keys()
+    assert max(float((a_grad[k] - b_grad[k]).abs().max()) for k in a_grad) < 1e-4

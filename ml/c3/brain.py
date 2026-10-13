@@ -102,7 +102,7 @@ class HeadReader(nn.Module):
 class Brain(nn.Module):
     def __init__(self, schema: Schema, lm: LMBase, d_graph: int | None = None,
                  n_prefix: int = 2, context_lines: int = 6, d_att: int = 64,
-                 page_batch: int = 0, read_chunk: int = 0):
+                 page_batch: int = 0, read_chunk: int = 0, call_tokens: int = 0):
         super().__init__()
         self.schema, self.lm = schema, lm
         self.context_lines = context_lines
@@ -113,6 +113,9 @@ class Brain(nn.Module):
         # reads them all at once. Without it an 8,192-line part holds every
         # page's hidden states at once.
         self.read_chunk = read_chunk
+        # Padded tokens per language-model call; 0 leaves only page_batch.
+        # Every teacher pass goes through _lm_rows, so this bounds them all.
+        self.call_tokens = call_tokens
         self.reader_universal = HeadReader(lm.dim, d_att)
         self.reader_company = HeadReader(lm.dim, d_att)
         self.n_prefix = n_prefix
@@ -156,27 +159,61 @@ class Brain(nn.Module):
 
     def _lm_rows(self, ids: torch.Tensor, mask: torch.Tensor,
                  prefix: torch.Tensor | None = None, *, logits: bool = True):
-        """One language-model pass, or several row-slices of the same padded page.
+        """One language-model pass over the rows, in calls of at most
+        ``page_batch`` rows and ``call_tokens`` padded tokens.
 
-        Slicing the batch does not change a line's tokens or its mask. The
-        slices share one width, so the hidden states concatenate on the row.
-        ``logits=False`` skips the vocabulary projection and returns
-        ``(hidden, None)``.
+        Rows go length-sorted into calls and each call is trimmed to its own
+        longest row (pads are on the right), so a short page never pays for a
+        long one. Rows come back in their order, padded to the full width.
+        ``logits=False`` skips the vocabulary projection: ``(hidden, None)``.
         """
         def one(i, m, pre):
             return self.lm(i, m, prefix=pre) if logits else (self.lm.hidden(i, m, prefix=pre), None)
 
-        width = self.page_batch
-        if not width or ids.shape[0] <= width:
+        n, width = ids.shape
+        cap_rows = self.page_batch or n
+        if n <= cap_rows and (not self.call_tokens or n * width <= self.call_tokens):
             return one(ids, mask, prefix)
-        hidden, lgs = [], []
-        for start in range(0, ids.shape[0], width):
-            stop = start + width
-            part = None if prefix is None else prefix[start:stop]
-            h, lg = one(ids[start:stop], mask[start:stop], part)
-            hidden.append(h)
-            lgs.append(lg)
-        return torch.cat(hidden, 0), (torch.cat(lgs, 0) if logits else None)
+        lengths = mask.sum(1).tolist()
+        order = sorted(range(n), key=lambda i: lengths[i])
+        calls, cur = [], []
+        for i in order:
+            longest = max(lengths[i], 1)
+            if cur and (len(cur) + 1 > cap_rows
+                        or (self.call_tokens and (len(cur) + 1) * longest > self.call_tokens)):
+                calls.append(cur)
+                cur = []
+            cur.append(i)
+        calls.append(cur)
+        hidden: list = [None] * n
+        lgs: list = [None] * n
+        for rows in calls:
+            w = max(max(lengths[i] for i in rows), 1)
+            sel = torch.tensor(rows, device=ids.device)
+            part = None if prefix is None else prefix[sel]
+            h, lg = one(ids[sel, :w], mask[sel, :w], part)
+            pad = width - w
+            if pad:
+                h = F.pad(h, (0, 0, 0, pad))
+                lg = F.pad(lg, (0, 0, 0, pad)) if lg is not None else None
+            for k, i in enumerate(rows):
+                hidden[i] = h[k]
+                lgs[i] = lg[k] if lg is not None else None
+        return torch.stack(hidden), (torch.stack(lgs) if logits else None)
+
+    def _token_loss(self, h: torch.Tensor, ids: torch.Tensor, mask: torch.Tensor,
+                    start: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Next-token loss on each row's tokens from ``start`` on: the
+        vocabulary projection runs only at those positions. Returns the loss
+        per supervised token and the row each token belongs to."""
+        pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
+        on = (pos >= start.view(-1, 1)) & mask & (pos > 0)
+        tgt_on = on[:, 1:]                        # target t+1 read from position t
+        row, col = tgt_on.nonzero(as_tuple=True)
+        if row.numel() == 0:
+            return h.new_zeros(0), row
+        logits = self.lm.head(h[:, :-1][row, col]).float()
+        return F.cross_entropy(logits, ids[:, 1:][row, col], reduction="none"), row
 
     # ------------------------------------------------------------ reading
     def read(self, pages: list[str], layer: str, desc, graph: torch.Tensor | None = None,
@@ -333,17 +370,12 @@ class Brain(nn.Module):
         prefix = None
         if self.graph is not None and graph is not None:
             prefix = self.graph(graph[idx]).view(len(idx), self.n_prefix, self.lm.dim)
-        _, logits = self._lm_rows(ids, mask, prefix)                  # start: first WHY token
-        pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
-        on_why = (pos >= start.view(-1, 1)) & mask & (pos > 0)
-        tgt = ids.masked_fill(~on_why, IGNORE)[:, 1:]
-        token_loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]),
-                                     tgt.reshape(-1), ignore_index=IGNORE, reduction="none")
-        token_loss = token_loss.view_as(tgt)
-        valid = tgt != IGNORE
-        if not valid.any(1).all():
-            raise ValueError("Expert WHY has no supervised tokens")
-        row_loss = token_loss.sum(1) / valid.sum(1).clamp(min=1)
+        h, _ = self._lm_rows(ids, mask, prefix, logits=False)         # start: first WHY token
+        token_loss, row = self._token_loss(h, ids, mask, start)
+        count = torch.bincount(row, minlength=len(idx))
+        if not bool((count > 0).all()):
+            raise ValueError(f"{int((count == 0).sum())} of {len(idx)} expert WHYs have no supervised tokens")
+        row_loss = torch.zeros(len(idx), device=h.device).index_add(0, row, token_loss) / count
         weights = row_loss.new_tensor([batch.why_weights[i] if batch.why_weights else 1.0 for i in idx])
         return (row_loss * weights).sum() / weights.sum().clamp(min=1e-6)
 
@@ -362,17 +394,12 @@ class Brain(nn.Module):
         if any(self.lm.token_count(h + t) > self.lm.max_len for h, t in zip(heads, tails)):
             raise ValueError("Saved value exceeds teacher context budget; do not truncate it")
         ids, mask, start = self.lm.tokenize_pairs(heads, tails)
-        _, logits = self._lm_rows(ids, mask)
-        pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
-        on_value = (pos >= start.view(-1, 1)) & mask & (pos > 0)
-        tgt = ids.masked_fill(~on_value, IGNORE)[:, 1:]
-        token_loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]),
-                                     tgt.reshape(-1), ignore_index=IGNORE, reduction="none").view_as(tgt)
-        valid = tgt != IGNORE
-        lost = int((~valid.any(1)).sum())
+        h, _ = self._lm_rows(ids, mask, logits=False)
+        token_loss, row = self._token_loss(h, ids, mask, start)
+        lost = len(rows) - int(torch.bincount(row, minlength=len(rows)).gt(0).sum())
         if lost:
             raise ValueError(f"{lost} of {len(rows)} saved values have no supervised tokens")
-        return token_loss[valid].mean()
+        return token_loss.mean()
 
     # ------------------------------------------------------------ grounding
     def grounded_page(self, batch: Batch, i: int, window: int = 12
@@ -422,9 +449,9 @@ class Brain(nn.Module):
             offs = self.lm.offsets(text)[: ids.shape[1]]
             emb = self.lm.input_embeddings(ids).detach().requires_grad_(True)
             with torch.enable_grad():
-                _, logits = self.lm(ids, mask, inputs_embeds=emb)
+                h = self.lm.hidden(ids, mask, inputs_embeds=emb)
                 start = next((t for t, (a, _) in enumerate(offs) if a >= ws and t > 0), len(offs))
-                lp = logits[0, start - 1:-1].log_softmax(-1)
+                lp = self.lm.head(h[0, start - 1:-1]).float().log_softmax(-1)
                 ll = lp.gather(-1, ids[0, start:].unsqueeze(-1)).sum()
                 (g,) = torch.autograd.grad(ll, emb)
             sal = (g * emb).sum(-1).abs()[0].detach()                     # [T]
@@ -454,8 +481,8 @@ class Brain(nn.Module):
         start = int(mask.sum())
         ids = ids[:, :start]
         for _ in range(max_new):
-            _, logits = self.lm(ids, torch.ones_like(ids, dtype=torch.bool))
-            nxt = logits[:, -1].argmax(-1, keepdim=True)
+            h = self.lm.hidden(ids, torch.ones_like(ids, dtype=torch.bool))
+            nxt = self.lm.head(h[:, -1]).argmax(-1, keepdim=True)
             ids = torch.cat([ids, nxt], 1)
             if ids.shape[1] >= self.lm.max_len:
                 break

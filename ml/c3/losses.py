@@ -627,37 +627,91 @@ def teacher_context(brain, batch: Batch) -> dict:
             "cfield": company_field_notes(batch, brain.schema)}
 
 
-def teacher_chunks(brain, batch: Batch, size: int) -> list[tuple[list[int] | None, list, bool]]:
-    """A part's teacher loss in pieces: ``(rows, cards, extras)`` per piece,
-    with at most ``size`` lines and ``size`` cards each. ``size`` 0 is one
-    piece. Deal-level terms (deal values, look-alike flips) ride the first."""
+# Grad passes a line costs in one piece: direct and reasoned, each on the
+# universal and the company page, plus its WHY and its value. A card costs
+# its direct and its reasoned page. A flip costs one page.
+ROW_PASSES, CARD_PASSES, FLIP_PASSES = 6, 2, 1
+
+
+@dataclass
+class Piece:
+    """One backward's worth of a part's teacher loss. A piece holds one kind
+    of term (lines, cards or flips); ``scale`` is 1 / pieces of its kind, so
+    every term weighs what it would on the whole part."""
+    rows: list[int]
+    cards: list
+    flips: list[int]
+    extras: bool
+    scale: float
+    tokens: int
+
+
+def _pack(items: list, cost: list[int], size: int, budget: int) -> list[list]:
+    """Greedy, cheapest first: at most ``size`` items and ``budget`` cost per
+    group; an item over the budget on its own goes alone."""
+    order = sorted(range(len(items)), key=lambda k: cost[k])
+    groups, cur, used = [], [], 0
+    for k in order:
+        if cur and ((size and len(cur) >= size) or (budget and used + cost[k] > budget)):
+            groups.append(cur)
+            cur, used = [], 0
+        cur.append(k)
+        used += cost[k]
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def teacher_chunks(brain, batch: Batch, size: int, budget: int = 0) -> list[Piece]:
+    """A part's teacher loss in pieces of at most ``size`` lines, cards or
+    flips and about ``budget`` grad tokens each. ``size`` and ``budget`` 0 is
+    one piece holding everything. Deal-level values ride the first piece."""
     from .brain import told_why  # noqa: PLC0415
 
-    if size <= 0:
-        return [(None, list(batch.judged), True)]
-    rows, _ = teacher_rows(batch, told_why(batch, brain.schema))
+    why = told_why(batch, brain.schema)
+    sup, _ = supposed_twins(batch)
+    if size <= 0 and budget <= 0:
+        return [Piece(None, list(batch.judged), list(range(len(sup))), True, 1.0, 0)]
+    rows, _ = teacher_rows(batch, why)
     rows = list(range(len(batch))) if rows is None else rows
-    # Long pages together, so a chunk pads to similar lengths.
-    rows = sorted(rows, key=lambda i: len(batch.texts[i]))
-    row_chunks = [sorted(rows[k:k + size]) for k in range(0, len(rows), size)]
-    card_chunks = [list(batch.judged[k:k + size]) for k in range(0, len(batch.judged), size)]
-    n = max(len(row_chunks), len(card_chunks), 1)
-    row_chunks += [[]] * (n - len(row_chunks))
-    card_chunks += [[]] * (n - len(card_chunks))
-    return [(r, c, k == 0) for k, (r, c) in enumerate(zip(row_chunks, card_chunks))]
+    count = brain.lm.token_count
+    row_cost = [ROW_PASSES * count(brain.page(batch, i) + _why_tail(why, i)) for i in rows]
+    card_cost = [CARD_PASSES * count(brain.card_page(batch, j, with_why=True)) for j in batch.judged]
+    flip_cost = [FLIP_PASSES * count(brain.page(batch, f.line) + _why_tail(why, f.line) + f.condition)
+                 for f in sup]
+    pieces: list[Piece] = []
+    for kind, items, cost in (("rows", rows, row_cost), ("cards", list(batch.judged), card_cost),
+                              ("flips", list(range(len(sup))), flip_cost)):
+        groups = _pack(items, cost, size, budget)
+        for g in groups:
+            picked = [items[k] for k in g]
+            pieces.append(Piece(
+                rows=sorted(picked) if kind == "rows" else [],
+                cards=picked if kind == "cards" else [],
+                flips=sorted(picked) if kind == "flips" else [],
+                extras=False, scale=1.0 / len(groups), tokens=sum(cost[k] for k in g)))
+    if not pieces:
+        pieces.append(Piece([], [], [], True, 1.0, 0))
+    pieces[0].extras = True
+    return pieces
+
+
+def _why_tail(why, i: int) -> str:
+    return f"Why: {why[i]}\n" if why[i] else ""
 
 
 def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
                graph: torch.Tensor | None = None, *, rows: list[int] | None = None,
                judged: list | None = None, extras: bool = True, desc=None,
-               context: dict | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+               context: dict | None = None,
+               flips: list[int] | None = None) -> tuple[torch.Tensor, dict[str, float]]:
     """Every v6 term for one deal (brain.py has the table). Notes come from
     the deal's other lines; the reasoned pass and the rationale use each
     line's own WHY, which the direct pass never sees.
 
-    ``rows`` / ``judged`` / ``extras`` score one piece of the part
-    (``teacher_chunks``); ``desc`` and ``context`` let the pieces share the
-    description pass and the notes."""
+    ``rows`` / ``judged`` / ``flips`` / ``extras`` score one piece of the
+    part (``teacher_chunks``); ``context`` lets the pieces share the notes.
+    A term weighted 0 is not computed."""
     from .consolidate import context_distillation_loss  # noqa: PLC0415
     from .supercharge import _kl  # noqa: PLC0415
 
@@ -723,7 +777,7 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     # once written into weights with the page bare (student).
     uni = sorted({t for ns in notes for t in ns})
     com = sorted({t for ns in cnotes for t in ns})
-    if (uni or com) and direct is not None:
+    if (uni or com) and direct is not None and w.consolidate:
         with torch.no_grad():
             teacher = brain(batch, company=company, notes=[uni] * len(batch),
                             company_notes=[com] * len(batch), graph=graph, desc=desc, rows=rows)
@@ -736,7 +790,9 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
         parts["consolidate"] = parts["direct"].new_zeros(())
 
     parts["flip"] = zero
-    sup, gold = supposed_twins(batch) if extras else ([], [])
+    sup, gold = supposed_twins(batch) if (w.flip and (extras or flips)) else ([], [])
+    if flips is not None and sup:
+        sup, gold = [sup[k] for k in flips], [gold[k] for k in flips]
     if sup:
         flipped = brain.flip_read(batch, why, sup, notes, desc, graph)
         terms = [F.cross_entropy(flipped.logits[k][n].unsqueeze(0),
