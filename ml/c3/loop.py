@@ -274,9 +274,15 @@ def _optimizer(params, lr: float, adamw: bool) -> torch.optim.Optimizer:
     return torch.optim.Adam(live, lr=lr)
 
 
+# Tests turn this on to run the CPU path under the pod's bf16 autocast.
+CPU_AUTOCAST = False
+
+
 def _autocast(device: str):
     if device.startswith("cuda"):
         return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    if CPU_AUTOCAST:
+        return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
     return nullcontext()
 
 
@@ -653,8 +659,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 views = {}
                 for batch in train:
                     graph = _deal_graph(model, teacher, batch, device)
-                    views[batch.deal_id] = teacher_view(
-                        teacher, batch, batch.company or None, graph=graph)
+                    with _autocast(device):
+                        views[batch.deal_id] = teacher_view(
+                            teacher, batch, batch.company or None, graph=graph)
             order = train[:]
             rng.shuffle(order)
             for batch in order:

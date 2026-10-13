@@ -287,11 +287,18 @@ def rows_the_paragraph_may_teach(batch: Batch | None, key: str, has_why: torch.T
     return has_why & torch.tensor(unmarked, device=has_why.device)
 
 
+def _bernoulli_entropy(p: torch.Tensor) -> torch.Tensor:
+    """H(p) per element, in float32. F.binary_cross_entropy(p, p) is the same
+    number but is refused under CUDA autocast."""
+    p = p.float()
+    return -(p * p.log() + (1 - p) * (1 - p).log())
+
+
 def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float, multiple: bool = False) -> torch.Tensor:
     if multiple:
-        p = (teacher / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
-        return (F.binary_cross_entropy_with_logits(student / t, p)
-                - F.binary_cross_entropy(p, p)) * t * t
+        p = (teacher.float() / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+        return (F.binary_cross_entropy_with_logits(student.float() / t, p)
+                - _bernoulli_entropy(p).mean()) * t * t
     return F.kl_div((student / t).log_softmax(-1), (teacher.detach() / t).log_softmax(-1),
                     log_target=True, reduction="batchmean") * t * t
 
@@ -431,9 +438,9 @@ def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
 
     def kl_rows(s: torch.Tensor, tch: torch.Tensor, multiple: bool) -> torch.Tensor:
         if multiple:
-            p = (tch / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
-            per = (F.binary_cross_entropy_with_logits(s / t, p, reduction="none")
-                   - F.binary_cross_entropy(p, p, reduction="none")).mean(-1) * t * t
+            p = (tch.float() / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+            per = (F.binary_cross_entropy_with_logits(s.float() / t, p, reduction="none")
+                   - _bernoulli_entropy(p)).mean(-1) * t * t
             return (per * ww).sum() / ww.sum()
         per = F.kl_div((s / t).log_softmax(-1), (tch / t).log_softmax(-1),
                        log_target=True, reduction="none").sum(-1) * t * t

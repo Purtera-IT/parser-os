@@ -364,3 +364,38 @@ def test_student_memory_savers_give_the_same_loss_and_gradients(monkeypatch):
     assert abs(a_loss - b_loss) < 1e-5
     assert a_grad.keys() == b_grad.keys()
     assert max(float((a_grad[k] - b_grad[k]).abs().max()) for k in a_grad) < 1e-4
+
+
+@pytest.mark.parametrize("encoder_lr", [None, 2e-5])
+def test_every_stage_steps_under_the_pods_bf16_autocast(monkeypatch, tmp_path, encoder_lr):
+    """One real optimizer step of every stage, teacher and student, under
+    bf16 autocast, the way the pod runs (A: frozen encoder; B: encoder lr).
+    CPU autocast allows ops CUDA autocast refuses, so those are made to
+    refuse here too."""
+    import torch
+    import torch.nn.functional as F
+    import ml.c3.loop as loop
+
+    real_bce = F.binary_cross_entropy
+
+    def cuda_rules(*args, **kwargs):
+        if torch.is_autocast_enabled("cpu"):
+            raise RuntimeError("binary_cross_entropy is unsafe to autocast")
+        return real_bce(*args, **kwargs)
+
+    monkeypatch.setattr(F, "binary_cross_entropy", cuda_rules)
+    monkeypatch.setattr(torch.nn.functional, "binary_cross_entropy", cuda_rules)
+    monkeypatch.setattr(loop, "CPU_AUTOCAST", True)
+    schema = load_schema()
+    train, hold = _batches(schema)
+    check = featurize(replace(DealExample.load(FIXTURE), deal_id="synthetic-validation"), schema)
+    _, result = run_base(
+        [train], [hold], schema,
+        Budget(teacher=1, lines=1, links=1, cards=1, numbers=1, deal=1, open_links=1,
+               bind=1, teach=1, flips=1, spread=1),
+        checkpoint=str(tmp_path / "base.pt"), adamw=True, freeze_teacher=True,
+        deal_graph=True, page_batch=2, read_chunk=2, call_tokens=2048,
+        teacher_rows_per_step=4, teacher_piece_tokens=4000, encoder_lr=encoder_lr,
+        validation=[check], score_holdout=False,
+    )
+    assert result.ready_for_training is False
