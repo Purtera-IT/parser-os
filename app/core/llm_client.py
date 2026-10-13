@@ -333,13 +333,13 @@ def pool_budget_seconds(default_per_call: int = _DEFAULT_API_TIMEOUT) -> int:
 
 
 def complete(prompt: str, *, max_tokens: int = 1024, model: str | None = None,
-             timeout: int | None = None) -> str:
+             timeout: int | None = None, seed: int | None = None) -> str:
     """One OpenAI-compatible ``/chat/completions`` text call. Returns the
     assistant text, or ``""`` on any failure (so callers degrade exactly as they
     do for a local Ollama miss). No-op (``""``) if no hosted teacher configured."""
     return _chat(
         [{"role": "user", "content": prompt}],
-        max_tokens=max_tokens, model=model, timeout=timeout,
+        max_tokens=max_tokens, model=model, timeout=timeout, seed=seed,
     )
 
 
@@ -420,7 +420,7 @@ def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
 
 def _chat(messages: list, *, max_tokens: int, model: str | None,
           timeout: int | None, base: str | None = None,
-          key: str | None = None) -> str:
+          key: str | None = None, seed: int | None = None) -> str:
     """Shared OpenAI-compatible chat-completions transport for text and vision:
     bounded retry on 429/5xx/transport errors, global concurrency semaphore,
     usage metering. Returns assistant text or ``""``.
@@ -442,6 +442,10 @@ def _chat(messages: list, *, max_tokens: int, model: str | None,
         "max_tokens": int(max_tokens),
         "stream": False,
     }
+    # A seed pins sampling on providers that honor it. Providers that reject it
+    # are handled by the same adaptive strip as ``temperature`` below.
+    if seed is not None:
+        payload["seed"] = int(seed)
     # Preemptively drop params this provider has already told us it rejects, so
     # we don't re-pay a failed round-trip on every call after the first.
     with _UNSUPPORTED_LOCK:
