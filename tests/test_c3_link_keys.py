@@ -8,7 +8,9 @@ the right line (ml/c3/data.py ``_blob_links``), on invented rows.
 * a conflict or site-pair card starts from its a side (its b side when the
   link points at the a side); a question card from its source line;
 * a question card with no line stays unresolved and is counted;
-* ordinary keys and text fallbacks resolve as before; no self-links.
+* ordinary keys resolve as before; a key this parse lacks is never matched
+  by its text across the deal (tests/test_c3_loader_rows.py has the heal);
+  no self-links.
 """
 from __future__ import annotations
 
@@ -46,9 +48,10 @@ JUDGMENTS = [
     {"head": "conflict", "target_key": "edge_c1", "verdict": "contradicts", "labeler": PM,
      "target": {"a": {"atomId": "at-k_win1", "text": ATOMS[5]["text"]},
                 "b": {"atomId": "at-k_win2", "text": ATOMS[6]["text"]}}},
-    # A site pair after a re-parse: the ids changed, the a side's text still matches.
+    # A site pair after a re-parse: the ids changed, the a side's text is one
+    # line of its own file (the card names the file), so it heals.
     {"head": "site", "target_key": "pair:p1", "verdict": "same_site", "labeler": PM,
-     "target": {"a": {"evidence": {"atomId": "old-id", "text": ATOMS[3]["text"]}},
+     "target": {"a": {"evidence": {"atomId": "old-id", "text": ATOMS[3]["text"], "artifactId": "email-1"}},
                 "b": {"evidence": {"atomId": "at-k_site2"}}}},
     {"head": "gap", "target_key": "gap:g1", "verdict": "valid", "labeler": PM,
      "target": {"source": {"atomId": "at-k_q"}}},
@@ -97,17 +100,18 @@ def test_question_card_with_no_line_is_counted_unresolved():
     assert deal.link_stats["unresolved"] == 1
 
 
-def test_ordinary_keys_and_text_fallback_unchanged():
+def test_ordinary_keys_resolve_and_stale_keys_never_match_text_across_the_deal():
     deal = _deal([
         _link("k_other", "k_orig", rel="supports"),
-        # An older parse's key: its text still finds the line.
+        # An older parse's key with no label row naming its file: its words
+        # elsewhere are another line, so it is dropped, not matched by text.
         _link("lbl_stale", "k_other", rel="context", from_text="Plan for three techs."),
-        # A text key whose text is the target's own: a self-link, dropped and counted.
         _link("lbl_stale2", "k_orig", from_text=TWIN),
     ], JUDGMENTS)
-    assert sorted(deal.edges) == [("k_ans", "k_other", "context"), ("k_other", "k_orig", "supports")]
-    assert deal.link_stats["self_links"] == 1
-    assert deal.link_stats["edges"] == 2
+    assert deal.edges == [("k_other", "k_orig", "supports")]
+    assert deal.link_stats["stale_key_dropped"] == 2
+    assert deal.link_stats["self_links"] == 0
+    assert deal.link_stats["edges"] == 1
     assert deal.link_stats["card_anchored"] == 0
 
 
