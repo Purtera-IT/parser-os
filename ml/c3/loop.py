@@ -255,6 +255,10 @@ VIEW_PARTS = 6
 # Parts per bind step.
 BIND_PARTS = 16
 PIECE_PROGRESS_EVERY = 8
+# Heads the base must get right before anything is built on it: what a line
+# is, and the sites, quantities and tasks it states. Printed on every
+# validation line.
+WATCH_HEADS = ("label_type", "site", "qty", "count", "task")
 
 
 _LAST_PART: dict[str, float] = {}
@@ -843,6 +847,12 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             print(f"validation {stage} heads={len(pooled)} macro_exact={macro:.4f} "
                   f"single_heads={len(same)} macro={mine:.4f} majority={floor:.4f} "
                   f"beat_majority={beat}/{len(same)}", flush=True)
+            watched = [k for k in sorted(pooled) if any(w in k for w in WATCH_HEADS)]
+            if watched:
+                print(f"validation {stage} watch " + " ".join(
+                    f"{k}={pooled[k]['exact']:.3f}"
+                    + (f"/maj{baseline[k]:.3f}" if k in baseline else "") + f"(n={int(pooled[k]['n'])})"
+                    for k in watched), flush=True)
         if checkpoint and completed:
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
             # Every stage keeps its own copy, so a later stage that makes
