@@ -116,7 +116,7 @@ class Atom:
     doc_id: str = ""
     doc_kind: str = ""
     section: str = ""
-    order: int = 0
+    order: float = 0
     speaker_role: str = ""
     speaker_side: str = ""
     label: dict[str, Any] | None = None
@@ -126,6 +126,13 @@ class Atom:
     pixel_present: bool = False
     geometry_present: bool = False
     history_only: bool = False
+    #: A Dropped card's own occurrence: a copy the parser folded into an
+    #: earlier line, or a line it set aside. It carries that card's verdict
+    #: and nothing else, so the line that survived keeps its own label.
+    dropped_copy: bool = False
+    #: Row weight for a line that carries no label of its own (a dropped
+    #: copy); a labeled row takes its weight_tier instead.
+    row_weight: float | None = None
 
 
 @dataclass
@@ -157,7 +164,7 @@ class DealExample:
                       entered_at=_time(a.get("entered_at")),
                       doc_id=str(a.get("doc_id") or a.get("artifact_id") or ""),
                       doc_kind=str(a.get("doc_kind", "")),
-                      section=str(a.get("section", "")), order=int(a.get("order", i)),
+                      section=str(a.get("section", "")), order=float(a.get("order", i)),
                       speaker_role=str(a.get("speaker_role", "")),
                       speaker_side=str(a.get("speaker_side", "")), label=a.get("label"),
                       atom_id=str(a.get("atom_id") or a.get("id") or ""),
@@ -165,7 +172,9 @@ class DealExample:
                       geometry=tuple(_geometry(a)),
                       pixel_present=a.get("image_pixels") not in (None, "", []),
                       geometry_present=_geometry_present(a),
-                      history_only=bool(a.get("history_only")))
+                      history_only=bool(a.get("history_only")),
+                      dropped_copy=bool(a.get("dropped_copy")),
+                      row_weight=(float(a["row_weight"]) if a.get("row_weight") is not None else None))
                  for i, a in enumerate(d["atoms"])]
         # Time order is the deal's order: ties keep document order.
         atoms.sort(key=lambda a: (a.entered_at, a.order))
@@ -250,6 +259,7 @@ class DealExample:
                          "doc_id": lb.get("doc_id", ""), "doc_kind": lb.get("doc_kind", ""),
                          "section": lb.get("section", ""), "order": lb.get("order", len(rows)),
                          "history_only": True})
+        rows.extend(dropped_copy_rows(blob.get("judgments") or [], rows))
         link_stats: dict[str, int] = {}
         linked, doc_pointers = _blob_links(blob.get("links") or [], rows,
                                            judgments=blob.get("judgments") or [], stats=link_stats)
@@ -267,6 +277,60 @@ class DealExample:
             "missed_history": blob.get("missed_history") or [],
         })
         return deal
+
+
+#: A dropped copy the parser was right to fold away teaches less than one it
+#: should have kept: tens of thousands of folded signatures and repeats would
+#: otherwise be most of the admission head's examples.
+DROPPED_COPY_WEIGHT = {"correctly_dropped": 0.3, "should_have_been_kept": 1.0}
+
+
+def _sup_is_copy(key: str, target: Any) -> bool:
+    """A Dropped card names a copy of a surviving line (a fold, or a second
+    occurrence at another position, ``sup:<key>@...``), or the set-aside
+    line itself (``sup:<key>``, no survivor): only the second is that atom."""
+    t = target if isinstance(target, dict) else {}
+    return "@" in key or bool(t.get("isFold")) or bool(t.get("survivor"))
+
+
+def dropped_copy_rows(judgments: Iterable[Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One line per Dropped card whose subject is a copy, not its survivor.
+
+    The copy shares its survivor's ``label_key`` (same file, page and text), so
+    resolving the card by that key would write "correctly dropped" onto the
+    line that was kept, and two copies of one line onto each other. Each copy
+    gets its own row, keyed by the card's full ``target_key``, placed just
+    after its survivor in the same document and section. It carries no label:
+    its card's verdict is its only target."""
+    by_key = {str(r.get("key")): r for r in rows if r.get("key")}
+    place = {str(r.get("key")): i for i, r in enumerate(rows) if r.get("key")}
+    out: list[dict[str, Any]] = []
+    made: set[str] = set()
+    for j in judgments:
+        if not isinstance(j, dict) or str(j.get("head") or "") != "suppression":
+            continue
+        if not _is_a_person(j.get("labeler")) or excluded(j):
+            continue
+        key = str(j.get("target_key") or "")
+        if not key.startswith("sup:") or key in made or key in by_key:
+            continue
+        target = j.get("target") if isinstance(j.get("target"), dict) else {}
+        if not _sup_is_copy(key, target):
+            continue
+        survivor = by_key.get(key[len("sup:"):].split("@", 1)[0])
+        text = str(target.get("text") or j.get("text") or "").strip()
+        if survivor is None or not text:
+            continue                     # resolves to nothing; featurize leaves the card unplaced
+        made.add(key)
+        verdict = str(j.get("verdict") or "").strip()
+        out.append({"key": key, "text": text, "atom_id": "",
+                    "entered_at": survivor.get("entered_at"), "doc_id": survivor.get("doc_id", ""),
+                    "doc_kind": survivor.get("doc_kind", ""), "section": survivor.get("section", ""),
+                    "order": float(survivor.get("order", place[str(survivor.get("key"))])) + 0.5,
+                    "speaker_role": survivor.get("speaker_role", ""),
+                    "speaker_side": survivor.get("speaker_side", ""),
+                    "dropped_copy": True, "row_weight": DROPPED_COPY_WEIGHT.get(verdict, 1.0)})
+    return out
 
 
 #: A relation the model reads only from the later line back to the earlier
@@ -329,6 +393,8 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
              and str(j.get("head") or "") in _CARD_HEADS}
     by_key = {str(r.get("key")): r for r in rows if r.get("key")}
     by_id = {str(r.get("atom_id") or r.get("id")): r for r in rows if r.get("atom_id") or r.get("id")}
+    sup_copies = {str(j.get("target_key")): _sup_is_copy(str(j.get("target_key") or ""), j.get("target"))
+                  for j in judgments if isinstance(j, dict) and str(j.get("head") or "") == "suppression"}
     by_text: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         by_text.setdefault(_norm_text(r.get("text")), []).append(r)
@@ -347,8 +413,14 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
         card_key = (str(k.get("from_head") or ""), key)
         r = None
         if key.startswith("sup:"):
-            r = by_key.get(key[len("sup:"):].split("@", 1)[0])
-            return r, False  # absent dropped occurrence must not become its original
+            # The Dropped card's own row (dropped_copy_rows), or the set-aside
+            # line itself. A copy with no row of its own must not become its
+            # survivor.
+            r = by_key.get(key)
+            if r is None:
+                base = by_key.get(key[len("sup:"):].split("@", 1)[0])
+                r = base if base is not None and not sup_copies.get(key) else None
+            return r, False
         elif key.startswith(("site:", "atom:")):
             r = by_id.get(key.split(":", 1)[1])
         elif card_key in cards:
@@ -490,6 +562,12 @@ class Batch:
     deal_numbers: dict[str, float] = field(default_factory=dict)
     pixels: list[tuple[float, ...]] = field(default_factory=list)
     geometry: list[tuple[float, ...]] = field(default_factory=list)
+    #: Lines of a long deal's window whose saved link of this relation points
+    #: at a line outside the window (taught in another part): the window must
+    #: not teach them "no link".
+    link_elsewhere: dict[str, list[int]] = field(default_factory=dict)
+    #: Saved answers that disagree and were not taught, for the labeler.
+    notes: list[str] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -902,8 +980,11 @@ def _judged_lines(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...
         return lines.group(i) if i is not None else None
     key = str(j.get("target_key") or "")
     if key.startswith("sup:"):
-        i = lines.by_key.get(key[4:].split("@", 1)[0])
-        # Suppression keys name an occurrence. Never fall back to equal text.
+        # Suppression keys name an occurrence: the card's own copy row, or the
+        # set-aside line itself. Never the survivor of a copy, never equal text.
+        i = lines.by_key.get(key)
+        if i is None and not _sup_is_copy(key, t):
+            i = lines.by_key.get(key[4:].split("@", 1)[0])
         return (i,) if i is not None else None
     ref = (t.get("a") or t.get("source") or t.get("site")
            or {"atomId": key.split(":", 1)[1] if key.startswith(("atom:", "site:")) else ""})
@@ -1156,8 +1237,12 @@ def _history_atom(atom: Atom) -> Atom:
 
 
 def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = False,
-              max_atoms: int | None = 4096) -> Batch:
+              max_atoms: int | None = 4096,
+              elsewhere: Iterable[tuple[str, str]] = ()) -> Batch:
     """Split one deal into model inputs and per-opportunity targets.
+
+    ``elsewhere``: (line key, relation) pairs whose saved link leaves this
+    part of a long deal; those lines are not taught "no link" here.
 
     ``absent_is_negative``: whether a reading missing from a labeled card is
     a negative example. Default False, matching multitask_table: a missing
@@ -1310,7 +1395,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             else:
                 notes.setdefault(k, f"not {key}: {mask_verdict(t) if opp_layer[k] == 'universal' else t}")
         field_notes.append(notes)
-        weights.append(TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))
+        weights.append(a.row_weight if a.row_weight is not None and not a.label
+                       else TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))
         refs = [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)]
         # A ref names a line by atom id, or (on most real rows) only by the
         # text the labeler pointed at; a heading points at its heading line
@@ -1357,6 +1443,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     # and note go with it, for the teacher.
     by_key = by_key_all
     judged: list[Judged] = []
+    notes: list[str] = []
     lines = _Lines(atoms)
     for j in deal.judgments:
         if not _is_a_person(j.get("labeler")) or excluded(j):
@@ -1404,7 +1491,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                         if pol:
                             policy[i] = " ".join(x for x in (policy[i], pol) if x)
                     elif not excluded(deal.atoms[i].label) and targets[key][i] != ix:
-                        raise ValueError(f"Conflicting saved verdict for {key}")
+                        # The line's own card already answers this question
+                        # and the judgment tab disagrees: the line card wins
+                        # (an alias only fills a blank), and the clash is
+                        # reported for the labeler to settle.
+                        notes.append(f"{surface} card on {deal.atoms[i].key} disagrees with the line's {key}")
                 else:
                     if pol and opp.size == PAIR:
                         for i in idx:
@@ -1459,7 +1550,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         if p:
             policy[i] = " ".join(x for x in (policy[i], p) if x)
 
-    context = {slot: [((a.label or {}).get("reads_set") or {}).get(slot) for a in atoms]
+    context = {slot: [_context_value(((a.label or {}).get("reads_set") or {}).get(slot)) for a in atoms]
                for slot in CONTEXT_SLOTS}
     alike = look_alikes([a.text for a in atoms], targets,
                         [a.label is not None and not excluded(a.label) for a in atoms], schema,
@@ -1481,7 +1572,23 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1],
         multi_targets=multi_targets, literals=literals, deal_numbers=deal_numbers,
         pixels=[a.pixels or _pixels(None) for a in atoms],
-        geometry=[a.geometry or _geometry({}) for a in atoms])
+        geometry=[a.geometry or _geometry({}) for a in atoms],
+        link_elsewhere=_elsewhere_rows(elsewhere, index), notes=notes)
+
+
+def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:
+    out: dict[str, set[int]] = {}
+    for key, rel in pairs:
+        if key in index:
+            out.setdefault(rel, set()).add(index[key])
+    return {rel: sorted(rows) for rel, rows in out.items()}
+
+
+def _context_value(v: Any) -> str | None:
+    """A context slot is one token: a multi-site line's tiers join into one."""
+    if isinstance(v, (list, tuple)):
+        v = "+".join(sorted({str(x) for x in v if str(x).strip()}))
+    return str(v) if v not in (None, "") else None
 
 
 def _as_list(v: Any) -> list[str]:

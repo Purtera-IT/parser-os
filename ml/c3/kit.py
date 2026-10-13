@@ -44,9 +44,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from .data import is_deal_kit
+from .holdout import KIT_HOLDOUT, refuse_fixed_holdout  # noqa: F401  (KIT_HOLDOUT is re-exported)
 from .text import HashingEncoder
-
-KIT_HOLDOUT = ("000051", "010095", "010164", "010253", "010287")
 
 SITE_TYPES = frozenset({"physical_site"})
 LABOR_TYPES = frozenset({"task"})
@@ -118,11 +117,12 @@ def atom_in_context(atom: dict[str, Any], *, attached_at: str | None) -> bool:
 
 
 def lock_kit_split(train_ids: Iterable[str], holdout_ids: Iterable[str] = ()) -> None:
-    """The fixed five, and any caller holdout, stay out of the training ids."""
+    """The fixed kits, the labeling holdout, and any caller holdout stay out of the training ids."""
     train = {str(i) for i in train_ids}
     blocked = set(KIT_HOLDOUT) | {str(i) for i in holdout_ids}
     if train & blocked:
         raise ValueError("Holdout kit is in the training set")
+    refuse_fixed_holdout(train)
 
 
 @dataclass(frozen=True)

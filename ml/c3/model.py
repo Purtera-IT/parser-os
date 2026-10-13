@@ -678,7 +678,11 @@ class C3Model(nn.Module):
         """The EMA teacher reads the WHOLE deal; its latent per line is what
         q_i (which saw only the past) is trained to predict."""
         if self.teacher is None:
-            self.teacher = copy.deepcopy(self.encoder).requires_grad_(False)
+            # A frozen line encoder is shared, not copied: EMA of a constant
+            # is the constant, and a second ModernBERT would only cost memory.
+            frozen_text = not any(p.requires_grad for p in self.text.parameters())
+            memo = {id(self.text): self.text} if frozen_text else {}
+            self.teacher = copy.deepcopy(self.encoder, memo).requires_grad_(False)
             self.teacher_proj = copy.deepcopy(self.q_target).requires_grad_(False)
         self.teacher.eval()
         return self.teacher_proj(self.teacher(inp, hindsight=True))
@@ -689,6 +693,8 @@ class C3Model(nn.Module):
             return
         m = self.cfg.ema
         for t, s in zip(self.teacher.parameters(), self.encoder.parameters()):
+            if t is s or not s.requires_grad:
+                continue                       # the shared or frozen line encoder
             t.mul_(m).add_(s.detach(), alpha=1 - m)
         for t, s in zip(self.teacher_proj.parameters(), self.q_target.parameters()):
             t.mul_(m).add_(s.detach(), alpha=1 - m)

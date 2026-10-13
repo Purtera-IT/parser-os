@@ -37,6 +37,7 @@ from .brain import Brain
 from .coverage import READY_FOR_TRAINING
 from .data import IGNORE, Batch, DealExample
 from .gates import save_checkpoint
+from .holdout import LABEL_HOLDOUT, refuse_fixed_holdout
 from .lm import TinyCausalLM
 from .losses import BrainWeights, LossWeights, brain_loss, c3_loss
 from .longdeal import plan_long_deal
@@ -85,6 +86,10 @@ class BaseRun:
     unlabeled_enabled: bool = False
     ready_for_training: bool = field(default_factory=lambda: READY_FOR_TRAINING)
     stage_loss: dict[str, float] = field(default_factory=dict)
+    #: One-shot scores on the validation deals after each student stage,
+    #: pooled over their parts. This is what chooses steps and thresholds.
+    validation_scores: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
+    validation_ids: tuple[str, ...] = ()
 
 
 def source_deal_id(deal_id: str) -> str:
@@ -94,17 +99,53 @@ def source_deal_id(deal_id: str) -> str:
 
 
 def lock_split(train: list[Batch], holdout: list[Batch]) -> tuple[list[Batch], list[Batch]]:
-    """Refuse a holdout deal that is also a training deal, including its windows."""
+    """Refuse a holdout deal that is also a training deal, including its windows,
+    and any fixed holdout (``holdout.FIXED_HOLDOUT``) in training."""
     if not train or not holdout:
         raise ValueError("The base needs both a training set and a holdout")
     train_ids = [b.deal_id for b in train]
     hold_ids = [b.deal_id for b in holdout]
     if len(train_ids) != len(set(train_ids)) or len(hold_ids) != len(set(hold_ids)):
         raise ValueError("Duplicate deal id in a split")
+    refuse_fixed_holdout(train_ids)
     shared = {source_deal_id(i) for i in train_ids} & {source_deal_id(i) for i in hold_ids}
     if shared:
         raise ValueError("Holdout deal is in the training set: " + ", ".join(sorted(shared)))
     return train, holdout
+
+
+def lock_validation(train: list[Batch], holdout: list[Batch], validation: list[Batch]) -> None:
+    """Validation deals are training deals' peers: never trained, never a holdout."""
+    if not validation:
+        return
+    ids = {source_deal_id(b.deal_id) for b in validation}
+    refuse_fixed_holdout(ids)
+    clash = ids & ({source_deal_id(b.deal_id) for b in train} | {source_deal_id(b.deal_id) for b in holdout})
+    if clash:
+        raise ValueError("Validation deal is also in training or the holdout: " + ", ".join(sorted(clash)))
+
+
+def part_scales(train: list[Batch]) -> dict[str, float]:
+    """Loss scale per part: a deal cut into k parts counts sqrt(k), not k.
+
+    One long deal would otherwise outvote the small ones by its length alone.
+    """
+    parts: dict[str, int] = {}
+    for b in train:
+        src = source_deal_id(b.deal_id)
+        parts[src] = parts.get(src, 0) + 1
+    return {b.deal_id: parts[source_deal_id(b.deal_id)] ** -0.5 for b in train}
+
+
+def pool_scores(rows: list[dict[str, dict[str, float]]]) -> dict[str, dict[str, float]]:
+    """Exact match pooled over parts or deals, weighted by how many were scored."""
+    hit: dict[str, float] = {}
+    n: dict[str, float] = {}
+    for row in rows:
+        for key, v in row.items():
+            hit[key] = hit.get(key, 0.0) + v["exact"] * v["n"]
+            n[key] = n.get(key, 0.0) + v["n"]
+    return {key: {"exact": hit[key] / n[key], "n": n[key]} for key in n if n[key]}
 
 
 def heads_seen(train: list[Batch]) -> dict[str, int]:
@@ -264,7 +305,8 @@ def _deal_graph(model: C3Model, teacher: Brain, batch: Batch, device: str):
 
 
 def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
-                device: str, lr: float, adamw: bool, rng: random.Random) -> None:
+                device: str, lr: float, adamw: bool, rng: random.Random,
+                scale: dict[str, float] | None = None) -> None:
     """Teach the frozen language model to read the student's deal graph.
 
     Only the small projection trains. The pretrained body does not move.
@@ -287,6 +329,7 @@ def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
             graph = _deal_graph(model, teacher, batch, device)
             with _autocast(device):
                 loss, _ = brain_loss(teacher, batch, weights, graph=graph)
+                loss = loss * (scale or {}).get(batch.deal_id, 1.0)
             _finite(loss, "bind")
             opt.zero_grad()
             loss.backward()
@@ -304,7 +347,8 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
                   weights: LossWeights, sizes: tuple[str, ...] | None,
                   teacher: Brain | None, view, device: str,
                   lesson: TeachWeights | None = None,
-                  unlabeled_keys: set[str] | None = None) -> torch.Tensor:
+                  unlabeled_keys: set[str] | None = None,
+                  scale: float = 1.0) -> torch.Tensor:
     model.train()
     with _autocast(device):
         loss, _ = c3_loss(model, batch, weights, judgment_sizes=sizes)
@@ -314,6 +358,7 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
                 supercharge_loss(model, out, view, texts=batch.texts, batch=batch,
                                  unlabeled_keys=unlabeled_keys),
                 lesson or TeachWeights.for_base())
+        loss = loss * scale
     opt.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.grad is not None], 1.0)
@@ -380,8 +425,9 @@ def _score_oneshot(model: C3Model, batch: Batch, device: str = "cpu") -> dict[st
             gold.setdefault(src, []).append(dst)
         hit = total = 0
         n = int(scores_row.shape[0])
+        away = set(batch.link_elsewhere.get(rel, ()))
         for src in labeled:
-            if src >= n:
+            if src >= n or (src in away and src not in gold):
                 continue
             row = scores_row[src]
             if none is not None:
@@ -413,7 +459,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              adamw: bool = False,
              freeze_teacher: bool = False,
              page_batch: int = 0,
-             deal_graph: bool = False) -> tuple[C3Model, BaseRun]:
+             deal_graph: bool = False,
+             validation: list[Batch] | None = None,
+             balance: bool = True) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
@@ -423,6 +471,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     if READY_FOR_TRAINING:
         raise RuntimeError("This loop must not be the path that flips the release flag")
     train, holdout = lock_split(train, holdout)
+    validation = list(validation or [])
+    lock_validation(train, holdout, validation)
+    scale = part_scales(train) if balance else {b.deal_id: 1.0 for b in train}
     schema = schema or load_schema()
     budget = budget or Budget()
     torch.manual_seed(seed)
@@ -453,6 +504,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         for batch in order:
             with _autocast(device):
                 loss, _ = brain_loss(teacher, batch, teacher_w)
+                loss = loss * scale[batch.deal_id]
             _finite(loss, "teacher")
             teacher_opt.zero_grad()
             loss.backward()
@@ -486,6 +538,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     sched = (torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, student_updates))
              if adamw else None)
     seen = heads_seen(train)
+    validation_scores: dict[str, dict[str, dict[str, float]]] = {}
     views = None
     completed = 0
     schema_sha = digest([asdict(o) for o in schema.opportunities]) if checkpoint else ""
@@ -499,7 +552,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 "weight_decay": 0.0,
             })
         if stage == "bind":
-            _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng)
+            _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng, scale)
             continue
         weights, sizes = gold_weights("deal" if stage in ("open_links",) or stage in lesson_stages else stage)
         use_teacher = stage in lesson_stages
@@ -519,7 +572,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 step_loss = _student_step(model, opt, batch, weights, sizes,
                                          teacher if use_teacher else None,
                                          views.get(batch.deal_id) if use_teacher and views else None,
-                                         device, lesson, allowed)
+                                         device, lesson, allowed, scale[batch.deal_id])
                 _finite(step_loss, stage)
                 stage_losses.append(float(step_loss.detach()))
                 completed += 1
@@ -528,6 +581,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if stage_losses:
             stage_loss[stage] = sum(stage_losses) / len(stage_losses)
             print(f"stage {stage} loss {stage_loss[stage]:.4f}", flush=True)
+        if validation:
+            pooled = pool_scores([_score_oneshot(model, b, device) for b in validation])
+            validation_scores[stage] = pooled
+            macro = sum(v["exact"] for v in pooled.values()) / max(1, len(pooled))
+            print(f"validation {stage} heads={len(pooled)} macro_exact={macro:.4f}", flush=True)
         if checkpoint and completed:
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
     if checkpoint and completed:
@@ -541,17 +599,18 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         holdout_scores=scores,
         unlabeled_enabled=budget.spread > 0,
         stage_loss=stage_loss,
+        validation_scores=validation_scores,
+        validation_ids=tuple(sorted({source_deal_id(b.deal_id) for b in validation})),
     )
 
 
 def training_batches(deal: DealExample, schema: Schema, *, max_atoms: int = 4096) -> tuple[list[Batch], list[str]]:
-    """One batch when the deal fits. Otherwise windows and bridges, never a truncated deal."""
-    overlap = min(32, max(0, max_atoms // 4))
+    """One batch when the deal fits. Otherwise windows, edge packs and a digest, never a truncated deal."""
+    overlap = min(256, max(0, max_atoms // 4))
     plan = plan_long_deal(deal, schema, max_atoms=max_atoms, overlap=overlap)
-    parts = list(plan.windows) + list(plan.bridges)
-    notes = list(plan.notes)
-    if not plan.complete:
-        notes.append(f"{deal.deal_id}: {plan.uncovered_judgments} whole-deal cards stay off the windows")
+    parts = plan.parts
+    notes = [f"{deal.deal_id}: {note}" for note in plan.notes]
+    notes += [f"{deal.deal_id}: {note}" for part in parts for note in part.notes]
     if len(parts) == 1:
         return parts, notes
     return [replace(part, deal_id=f"{deal.deal_id}#c3part{i}") for i, part in enumerate(parts)], notes
@@ -562,6 +621,11 @@ def load_deal(path: str | Path) -> DealExample:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("A training file must be one JSON object")
+    from .export import is_page_export
+
+    if is_page_export(payload):
+        raise ValueError("This is the labeling page's export. Convert it first: "
+                         "python -m ml.c3.export --page <file> --deal-id <deal> --output <training file>")
     labels = payload.get("labels")
     atoms = payload.get("atoms")
     if isinstance(labels, list) and isinstance(atoms, list):
@@ -621,6 +685,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Base loop. Does not release a model.")
     parser.add_argument("--train", nargs="+", required=True)
     parser.add_argument("--holdout", nargs="+", required=True)
+    parser.add_argument("--validation", nargs="*", default=[],
+                        help="Deals scored after every stage to choose steps; never trained")
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--checkpoint", default="")
     parser.add_argument("--teacher", default=H100_TEACHER,
@@ -638,11 +704,17 @@ def main() -> None:
                     spread=0 if args.tiny else max(1, args.steps // 4))
     train, train_notes = load_split(args.train, schema)
     holdout, hold_notes = load_split(args.holdout, schema)
-    for note in train_notes + hold_notes:
+    validation, val_notes = load_split(args.validation, schema)
+    for note in train_notes + hold_notes + val_notes:
         print("note", note)
+    held = {source_deal_id(b.deal_id) for b in holdout}
+    if not args.tiny and not set(LABEL_HOLDOUT) <= held:
+        raise SystemExit("The base scores the whole labeling holdout. Missing: "
+                         + ", ".join(i for i in LABEL_HOLDOUT if i not in held))
     if args.tiny:
         print("model", "tiny")
-        _, result = run_base(train, holdout, schema, budget, checkpoint=args.checkpoint or None)
+        _, result = run_base(train, holdout, schema, budget, checkpoint=args.checkpoint or None,
+                             validation=validation)
     else:
         from .lm import HFCausalLM
 
@@ -658,9 +730,11 @@ def main() -> None:
                 max_len=4096, trainable_rank=32, dtype=torch.bfloat16),
             checkpoint=args.checkpoint or None, model=student, device="cuda",
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
-            adamw=True, freeze_teacher=True, page_batch=2, deal_graph=True)
+            adamw=True, freeze_teacher=True, page_batch=2, deal_graph=True,
+            validation=validation)
     print("train", " ".join(result.train_ids))
     print("holdout", " ".join(result.holdout_ids))
+    print("validation", " ".join(result.validation_ids) or "(none)")
     print("holdout_used_for_tuning", result.holdout_used_for_tuning)
     print("ready_for_training", result.ready_for_training)
     measured = []

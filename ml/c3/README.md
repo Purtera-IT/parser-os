@@ -339,11 +339,29 @@ pair and group cards, numbers, deal answers, then the link gate, then blank
 cells filled by the teacher. AdamW with a cosine schedule is the H100 optimizer. After the link gate
 opens, the teacher is shown the deal graph the student built, then a light
 boundary pass runs, then only questions seen many times may fill a blank line.
-The teacher does not invent new line text. `--tiny` is the CPU stand-in, not the base. A labeling export with `labels` and `atoms` in one
-file is joined on the way in. A deal past the atom budget is windowed without
-dropping edges. `--tiny` is the CPU stand-in, not the base. The holdout is
-scored once and is not used to stop or tune. That loop does not flip
-`READY_FOR_TRAINING`. The deal kit is a second model:
+The teacher does not invent new line text. `--tiny` is the CPU stand-in, not the base.
+
+The labeling page's export becomes a training file with
+`python -m ml.c3.export --page <export.json> --deal-id <deal> --output <file>`
+(outside the repository; `--manifest` records its sha256). Every line gets the
+time it reached the deal. A Dropped card about a copy of a kept line gets its
+own line, so its verdict never lands on the line that was kept.
+
+A deal past the atom budget (`ml.c3.longdeal`) becomes overlapping windows,
+edge packs and one digest, never a truncated deal. Each line's labels train in
+one window only. A link no window holds whole trains in a pack of its two lines
+and their neighbours. Whole-deal cards and saved deal answers train on the
+digest: the deal's commercial documents first, then labeled lines, latest
+first. A long deal's parts are weighted so the deal counts sqrt(parts), not
+parts.
+
+`--validation <deal.json>...` scores those deals after every stage, which is
+how steps are chosen. The labeling holdout (`010172`, `010038`, `010387`,
+`010194`, in `ml.c3.holdout`) and the five kits never train in either run, and
+the H100 run refuses to start unless all four labeling holdouts are passed as
+`--holdout`. The holdout is scored once and is not used to stop or tune. A
+frozen line encoder's vectors are computed once and reused. That loop does
+not flip `READY_FOR_TRAINING`. The deal kit is a second model:
 `python -m ml.c3.kit --train <kit json> --holdout <kit json>`. `--tiny` is the
 CPU check. The live run is the H100: ModernBERT-large stays frozen, and a
 slot reader trains on top. Every atom from before the kit was attached is a

@@ -308,6 +308,7 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
             continue
         none = out.link_none.get(rel)
         by_src = gold.get(rel, {})
+        away = set(batch.link_elsewhere.get(rel, ()))
         for src, dsts in by_src.items():
             row = s[src]
             if none is not None:
@@ -320,7 +321,7 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
         if none is None:
             continue
         for src in labeled:
-            if src in by_src:
+            if src in by_src or src in away:
                 continue
             row = torch.cat([s[src], none[src].view(1)])
             total = total - row.log_softmax(-1)[-1]

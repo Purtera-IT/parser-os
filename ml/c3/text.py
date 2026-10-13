@@ -74,10 +74,17 @@ class HashingEncoder(nn.Module):
 
 
 class HFEncoder(nn.Module):
-    """A pretrained encoder, mean-pooled. ``pip install transformers`` first."""
+    """A pretrained encoder, mean-pooled. ``pip install transformers`` first.
+
+    Lines are encoded in length-sorted chunks of at most ``chunk_tokens``
+    padded tokens, so a 4,096-line window never becomes one padded batch.
+    While the body is frozen (no parameter requires grad) a line's vector
+    never changes, so it is computed once and kept (``cache``); the deal
+    graph and every head above it still train.
+    """
 
     def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256,
-                 dtype: torch.dtype | None = None):
+                 dtype: torch.dtype | None = None, chunk_tokens: int = 32768):
         super().__init__()
         from transformers import AutoModel, AutoTokenizer  # optional dependency
 
@@ -86,19 +93,51 @@ class HFEncoder(nn.Module):
         self.model = AutoModel.from_pretrained(name, **kwargs)
         self.dim = self.model.config.hidden_size
         self.max_length = max_length
+        self.chunk_tokens = chunk_tokens
+        self.cache: dict[str, torch.Tensor] = {}
+
+    def frozen(self) -> bool:
+        return not any(p.requires_grad for p in self.model.parameters())
+
+    def _ids(self, texts: list[str], budget: int) -> list[list[int]]:
+        ids = self.tok([str(t) for t in texts], truncation=False)["input_ids"]
+        if any(len(x) > budget for x in ids):
+            raise ValueError("Encoder paragraph exceeds token budget; do not truncate rich supervision")
+        return ids
+
+    def _encode(self, ids: list[list[int]]) -> torch.Tensor:
+        dev = next(self.model.parameters()).device
+        order = sorted(range(len(ids)), key=lambda i: len(ids[i]))
+        out: list[torch.Tensor | None] = [None] * len(ids)
+        start = 0
+        while start < len(order):
+            end = start + 1
+            while end < len(order) and len(ids[order[end]]) * (end + 1 - start) <= self.chunk_tokens:
+                end += 1
+            rows = order[start:end]
+            enc = self.tok.pad({"input_ids": [ids[i] for i in rows]}, return_tensors="pt").to(dev)
+            h = self.model(**enc).last_hidden_state
+            mask = enc["attention_mask"].unsqueeze(-1).to(h.dtype)
+            pooled = (h * mask).sum(1) / mask.sum(1).clamp(min=1)
+            for k, i in enumerate(rows):
+                out[i] = pooled[k]
+            start = end
+        return torch.stack(out)  # type: ignore[arg-type]
 
     def forward(self, texts: list[str]) -> torch.Tensor:
-        dev = next(self.model.parameters()).device
-        self._check_budget(texts, self.max_length)
-        enc = self.tok(list(texts), padding=True, truncation=False, return_tensors="pt").to(dev)
-        out = self.model(**enc).last_hidden_state
-        mask = enc["attention_mask"].unsqueeze(-1).to(out.dtype)
-        return (out * mask).sum(1) / mask.sum(1).clamp(min=1)
+        texts = [str(t) for t in texts]
+        if not self.frozen():
+            return self._encode(self._ids(texts, self.max_length))
+        todo = sorted({t for t in texts if t not in self.cache})
+        if todo:
+            with torch.no_grad():
+                vecs = self._encode(self._ids(todo, self.max_length))
+            for t, v in zip(todo, vecs):
+                self.cache[t] = v
+        return torch.stack([self.cache[t] for t in texts])
 
     def _check_budget(self, texts: list[str], budget: int) -> None:
-        lengths = [len(self.tok(str(t), truncation=False)["input_ids"]) for t in texts]
-        if any(n > budget for n in lengths):
-            raise ValueError("Encoder paragraph exceeds token budget; do not truncate rich supervision")
+        self._ids(texts, budget)
 
     def tokens(self, texts: list[str], max_len: int = 256) -> tuple[torch.Tensor, torch.Tensor]:
         dev = next(self.model.parameters()).device
