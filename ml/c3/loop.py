@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import random
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
@@ -206,6 +207,17 @@ def _freeze_link_gate(model: C3Model, trainable: bool) -> None:
 
 # A 7B teacher in bf16 fits beside ModernBERT-large and the student on an H100.
 H100_TEACHER = "Qwen/Qwen2.5-7B-Instruct"
+
+
+#: A progress line every this many parts, so a long stage is never silent.
+PROGRESS_EVERY = 25
+
+
+def _progress(stage: str, done: int, total: int, started: float) -> None:
+    if done % PROGRESS_EVERY == 0 or done == total:
+        rate = (time.time() - started) / max(done, 1)
+        print(f"progress {stage} {done}/{total} parts {rate:.1f}s/part "
+              f"eta {rate * (total - done) / 60:.0f} min", flush=True)
 
 
 def _finite(loss: torch.Tensor, stage: str) -> None:
@@ -537,6 +549,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     teacher_w = BrainWeights(consolidate=0.0, flip=0.0)
     stage_loss: dict[str, float] = {}
     teacher_losses: list[float] = []
+    started, done = time.time(), 0
     for _ in range(budget.teacher):
         teacher.train()
         if freeze_teacher:
@@ -555,6 +568,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             if teacher_sched is not None:
                 teacher_sched.step()
             teacher_losses.append(float(loss.detach()))
+            done += 1
+            _progress("teacher", done, budget.teacher * len(train), started)
     if teacher_losses:
         stage_loss["teacher"] = sum(teacher_losses) / len(teacher_losses)
         print(f"stage teacher loss {stage_loss['teacher']:.4f}", flush=True)
@@ -601,6 +616,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         lesson, allowed = _lesson(stage, seen) if use_teacher else (None, None)
         steps = budget.steps(stage)
         stage_losses: list[float] = []
+        started, done = time.time(), 0
         for _ in range(steps):
             if use_teacher and (views is None or teacher.graph is not None):
                 views = {}
@@ -618,6 +634,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 _finite(step_loss, stage)
                 stage_losses.append(float(step_loss.detach()))
                 completed += 1
+                done += 1
+                _progress(stage, done, steps * len(train), started)
                 if sched is not None:
                     sched.step()
         if stage_losses:
@@ -751,6 +769,9 @@ def main() -> None:
     parser.add_argument("--train-encoder-layers", type=int, default=0,
                         help="Release this many top blocks of the line encoder (0 keeps it frozen)")
     parser.add_argument("--encoder-lr", type=float, default=2e-5)
+    parser.add_argument("--limit-parts", type=int, default=0,
+                        help="Preflight only: train on the N largest parts, to measure memory and "
+                             "time per part without paying for a whole pass")
     parser.add_argument("--score-holdout", action="store_true",
                         help="Score the holdout here. Off for the live runs: the winner is scored "
                              "once with `python -m ml.c3.predict --score`")
@@ -766,6 +787,10 @@ def main() -> None:
     train, train_notes = load_split(args.train, schema, args.max_atoms)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
     validation, val_notes = load_split(args.validation, schema, args.max_atoms)
+    if args.limit_parts:
+        train = sorted(train, key=len, reverse=True)[:args.limit_parts]
+        print("preflight_parts", " ".join(f"{b.deal_id}:{len(b)}" for b in train), flush=True)
+    print("parts", f"train={len(train)} validation={len(validation)} holdout={len(holdout)}", flush=True)
     for note in train_notes + hold_notes + val_notes:
         print("note", note)
     held = {source_deal_id(b.deal_id) for b in holdout}
