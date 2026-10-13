@@ -496,3 +496,33 @@ def test_budget_check_reads_every_teacher_page_of_a_part():
     assert counts["parts"] == 1 and counts["pages"] >= 2 * len(train) and not bad
     tight_counts, tight_bad = check([train], schema, TinyCausalLM(32, 1, 2, 120))
     assert tight_counts["pages_fitted"] > 0 or tight_bad
+
+
+def test_the_trained_teacher_is_saved_and_loads_back(tmp_path):
+    import torch
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.loop import load_teacher, save_teacher
+
+    schema = load_schema()
+    torch.manual_seed(0)
+    a = Brain(schema, TinyCausalLM(32, 1, 2, 4096))
+    path = str(tmp_path / "base.pt.teacher")
+    save_teacher(path, a, "teacher")
+    torch.manual_seed(1)
+    b = Brain(schema, TinyCausalLM(32, 1, 2, 4096))
+    assert load_teacher(path, b) == "teacher"
+    for (n, p), (_, q) in zip(a.named_parameters(), b.named_parameters()):
+        assert torch.equal(p, q), n
+
+
+def test_a_run_saves_its_teacher_and_a_later_run_reuses_it(tmp_path):
+    schema = load_schema()
+    train, hold = _batches(schema)
+    budget = Budget(teacher=1, lines=1, links=0, cards=0, numbers=0, deal=0, open_links=0, teach=1)
+    run_base([train], [hold], schema, budget, checkpoint=str(tmp_path / "a.pt"))
+    saved = tmp_path / "a.pt.teacher"
+    assert saved.exists()
+    _, result = run_base([train], [hold], schema, budget, checkpoint=str(tmp_path / "b.pt"),
+                         teacher_from=str(saved))
+    assert "teacher" not in result.stage_loss

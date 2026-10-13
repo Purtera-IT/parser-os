@@ -346,6 +346,33 @@ def _teacher_part(teacher: Brain, batch: Batch, weights, *, device: str, scale: 
     return loss
 
 
+def teacher_state(teacher: Brain) -> dict[str, torch.Tensor]:
+    """What training changed on the teacher: its low-rank slots, readers,
+    paragraph memory and graph projection. The pretrained body is left out
+    (it never moves, and it is 15 GB)."""
+    return {name: p.detach().cpu().clone() for name, p in teacher.named_parameters()
+            if not name.startswith("lm.model.") or name.endswith((".A", ".B"))}
+
+
+def save_teacher(path: str, teacher: Brain, stage: str) -> None:
+    torch.save({"stage": stage, "state": teacher_state(teacher)}, path)
+    print(f"saved teacher {stage} {path}", flush=True)
+
+
+def load_teacher(path: str, teacher: Brain) -> str:
+    """Put a saved teacher's trained weights back. Every saved tensor must
+    land on the teacher; returns the stage it was saved after."""
+    saved = torch.load(path, map_location="cpu")
+    own = dict(teacher.named_parameters())
+    unknown = [k for k in saved["state"] if k not in own]
+    if unknown:
+        raise ValueError(f"Saved teacher does not match this teacher: {unknown[:3]}")
+    with torch.no_grad():
+        for k, v in saved["state"].items():
+            own[k].copy_(v.to(own[k].device, own[k].dtype))
+    return saved["stage"]
+
+
 def _optimizer(params, lr: float, adamw: bool) -> torch.optim.Optimizer:
     live = [p for p in params if p.requires_grad]
     if not live:
@@ -615,6 +642,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              teacher_caps: tuple[int, int, int] = (0, 0, 0),
              view_ground_rows: int = 0,
              view_parts: int = 0,
+             teacher_from: str | None = None,
              call_tokens: int = 0,
              deal_graph: bool = False,
              validation: list[Batch] | None = None,
@@ -657,6 +685,13 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     # a lesson): the gold-only student stages do not need it, so their
     # validation scores arrive within the first hour, not after the teacher.
     def train_teacher() -> None:
+        if teacher_from:
+            print(f"teacher loaded from {teacher_from} (after {load_teacher(teacher_from, teacher)})",
+                  flush=True)
+            for p in teacher.parameters():
+                p.requires_grad_(False)
+            teacher.eval()
+            return
         teacher_w = BrainWeights(consolidate=0.0, flip=0.0)
         teacher_losses: list[float] = []
         started, done = time.time(), 0
@@ -686,6 +721,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         for p in teacher.parameters():
             p.requires_grad_(False)
         teacher.eval()
+        if checkpoint:
+            save_teacher(f"{checkpoint}.teacher", teacher, "teacher")
 
     model = model or C3Model(schema, cfg)
     model.to(device)
@@ -731,6 +768,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng, scale,
                         chunk=teacher_rows_per_step, piece_tokens=teacher_piece_tokens,
                         caps=teacher_caps, parts=view_parts and BIND_PARTS)
+            if checkpoint:
+                save_teacher(f"{checkpoint}.teacher", teacher, "bind")
             continue
         weights, sizes = gold_weights("deal" if stage in ("open_links",) or stage in lesson_stages else stage)
         use_teacher = stage in lesson_stages
@@ -800,6 +839,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                     json.dumps(validation_scores, indent=1, sort_keys=True), encoding="utf-8")
     if not teacher_ready:
         train_teacher()
+    if checkpoint and budget.teacher:
+        save_teacher(f"{checkpoint}.teacher", teacher, "end")
     if checkpoint and completed:
         save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
     # The live runs leave the holdout to `ml.c3.predict --score`, once, on the
@@ -906,6 +947,8 @@ def main() -> None:
                         help="Deals scored after every stage to choose steps; never trained")
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--checkpoint", default="")
+    parser.add_argument("--teacher-from", default="",
+                        help="A saved <checkpoint>.teacher: skip the teacher stage and use it")
     parser.add_argument("--teacher", default=H100_TEACHER,
                         help="Pretrained causal LM for the training-only teacher")
     parser.add_argument("--encoder", default="answerdotai/ModernBERT-large")
@@ -977,7 +1020,7 @@ def main() -> None:
             teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=TEACHER_CAPS,
             view_ground_rows=VIEW_GROUND_ROWS, view_parts=VIEW_PARTS, deal_graph=True,
             validation=validation, encoder_lr=args.encoder_lr if released else None,
-            score_holdout=args.score_holdout)
+            score_holdout=args.score_holdout, teacher_from=args.teacher_from or None)
     print("train", " ".join(result.train_ids))
     print("holdout", " ".join(result.holdout_ids))
     print("validation", " ".join(result.validation_ids) or "(none)")
