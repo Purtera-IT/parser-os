@@ -6,7 +6,7 @@ entry in the returned dict, so an ablation is "set its weight to 0".
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import torch
 from torch.nn import functional as F
@@ -119,8 +119,15 @@ def entity_loss(out: C3Output, batch: Batch, tau: float = 0.1) -> torch.Tensor:
     n = out.r.shape[0]
     if len(ents) != n or sum(bool(e) for e in ents) < 2:
         return out.r.new_zeros(())
-    pos = torch.tensor([[a != b and bool(ents[a] & ents[b]) for b in range(n)] for a in range(n)],
-                       device=out.r.device)
+    # Line x entity incidence: two lines share an entity when their rows meet.
+    # A Python N x N loop is minutes per step on an 8,192-line window.
+    vocab = {e: k for k, e in enumerate(sorted({e for s in ents for e in s}))}
+    rows = [i for i, s in enumerate(ents) for _ in s]
+    cols = [vocab[e] for s in ents for e in s]
+    inc = torch.zeros(n, len(vocab), device=out.r.device)
+    inc[rows, cols] = 1.0
+    pos = (inc @ inc.T) > 0
+    pos.fill_diagonal_(False)
     has = pos.any(1)
     if not has.any():
         return out.r.new_zeros(())
@@ -580,6 +587,31 @@ def supposed_twins(batch: Batch) -> tuple[list[FlipTarget], list[tuple[str, int]
     return sup, gold
 
 
+def teacher_rows(batch: Batch, why: list[str | None]) -> tuple[list[int] | None, Batch]:
+    """The lines the teacher's per-line terms can learn from: a saved answer,
+    a number or a WHY. Context-only lines (a window's overlap, an edge pack,
+    the digest) and unlabeled lines carry none, and reading them was most of
+    the teacher's GPU time. Returns ``(rows, targets of those rows)``;
+    ``rows`` is None when every line counts."""
+    n = len(batch)
+    keep = [bool(why[i]) for i in range(n)]
+    for vals in batch.targets.values():
+        for i, v in enumerate(vals):
+            keep[i] = keep[i] or v != IGNORE
+    for table in (batch.multi_targets, batch.numbers_target):
+        for vals in table.values():
+            for i, v in enumerate(vals):
+                keep[i] = keep[i] or v is not None
+    rows = [i for i in range(n) if keep[i]] or [0]
+    if len(rows) == n:
+        return None, batch
+    pick = lambda vals: [vals[i] for i in rows]  # noqa: E731
+    return rows, replace(batch, texts=pick(batch.texts),
+                         targets={k: pick(v) for k, v in batch.targets.items()},
+                         multi_targets={k: pick(v) for k, v in batch.multi_targets.items()},
+                         numbers_target={k: pick(v) for k, v in batch.numbers_target.items()})
+
+
 def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
                graph: torch.Tensor | None = None) -> tuple[torch.Tensor, dict[str, float]]:
     """Every v6 term for one deal (brain.py has the table). Notes come from
@@ -596,13 +628,18 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     company = batch.company or None
     parts: dict[str, torch.Tensor] = {}
 
-    direct = brain(batch, company=company, notes=notes, company_notes=cnotes, graph=graph, desc=desc)
     why = told_why(batch, brain.schema)
+    # Only lines with something to teach get a page; the rest of the part is
+    # still on those pages as earlier lines.
+    rows, taught = teacher_rows(batch, why)
+    direct = brain(batch, company=company, notes=notes, company_notes=cnotes, graph=graph, desc=desc,
+                   rows=rows)
     cfield = company_field_notes(batch, brain.schema)
     reasoned = brain(batch, company=company, why=why, notes=notes,
-                     company_notes=[c + f for c, f in zip(cnotes, cfield)], graph=graph, desc=desc)
-    parts["direct"] = _answer_ce(direct, batch, keys)
-    parts["reasoned"] = _answer_ce(reasoned, batch, keys)
+                     company_notes=[c + f for c, f in zip(cnotes, cfield)], graph=graph, desc=desc,
+                     rows=rows)
+    parts["direct"] = _answer_ce(direct, taught, keys)
+    parts["reasoned"] = _answer_ce(reasoned, taught, keys)
     parts["rationale"] = brain.rationale_loss(batch, notes, graph)
     parts["values"] = brain.value_loss(batch)
     for name, with_why in (("card_direct", False), ("card_reasoned", True)):
@@ -625,7 +662,8 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
             terms.append((per_row * weights).sum() / weights.sum().clamp(min=1e-6))
         parts[name] = torch.stack(terms).mean() if terms else parts["direct"].new_zeros(())
 
-    has_why = torch.tensor([bool(t) for t in why], device=parts["direct"].device)
+    has_why = torch.tensor([bool(why[i]) for i in (rows if rows is not None else range(len(batch)))],
+                           device=parts["direct"].device)
     if has_why.any():
         parts["distill"] = torch.stack([
             _kl(direct.logits[k][has_why], reasoned.logits[k][has_why].detach(), 1.0,
@@ -640,8 +678,8 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     if uni or com:
         with torch.no_grad():
             teacher = brain(batch, company=company, notes=[uni] * len(batch),
-                            company_notes=[com] * len(batch), graph=graph, desc=desc)
-        student = brain(batch, company=company, graph=graph, desc=desc,
+                            company_notes=[com] * len(batch), graph=graph, desc=desc, rows=rows)
+        student = brain(batch, company=company, graph=graph, desc=desc, rows=rows,
                         deltas=brain.memory_universal(brain.lm, uni),
                         company_deltas=brain.memory_company(brain.lm, com))
         parts["consolidate"] = context_distillation_loss(teacher.logits, student.logits,
@@ -661,7 +699,7 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
 
     num = parts["direct"].new_zeros(())
     for k, pred in direct.numbers.items():
-        vals = batch.numbers_target.get(k, [])
+        vals = taught.numbers_target.get(k, [])
         m = torch.tensor([v is not None for v in vals], device=pred.device, dtype=torch.bool)
         if m.any():
             t = torch.tensor([v or 0.0 for v in vals], device=pred.device)

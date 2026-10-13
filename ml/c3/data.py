@@ -39,6 +39,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+import torch
+
 from .notes import drop_meta, judgment_note, mask_verdict, sentences, split_note, without_opener
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
@@ -538,8 +540,8 @@ class Batch:
     role: list[str]
     side: list[str]
     times: list[float]
-    same_doc: list[list[bool]]
-    same_section: list[list[bool]]
+    same_doc: Any                                # [N, N] bool tensor (or nested lists)
+    same_section: Any
     context: dict[str, list[str | None]]
     # targets
     targets: dict[str, list[int]]               # opportunity key -> class index or IGNORE
@@ -931,6 +933,36 @@ def select_labels(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             raise ValueError(f"Conflicting saved labels for {key}; adjudication required")
         selected[key] = min(eligible, key=lambda r: str(r.get("id") or ""))
     return selected
+
+
+_LEADING_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def saved_number(v: Any) -> float | None:
+    """A saved numeric value as one number: "228", "1,200", "55in" (the
+    leading number), "4-6" or "4 to 6" (the middle of the range). None when
+    no number leads the value."""
+    import math
+
+    text = str(v).replace(",", "").strip().lower()
+    m = re.match(r"\s*(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\b", text)
+    if m:
+        number = (float(m.group(1)) + float(m.group(2))) / 2
+    else:
+        m = _LEADING_NUMBER.match(text)
+        if not m:
+            return None
+        number = float(m.group(0))
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def _pair_mask(ids: list[Any]) -> torch.Tensor:
+    """[N, N] bool: rows i and j carry the same non-empty id. Built by
+    broadcasting: a Python N x N list is half a gigabyte and seconds to
+    convert on an 8,192-line window."""
+    codes: dict[Any, int] = {}
+    v = torch.tensor([-1 if x is None else codes.setdefault(x, len(codes)) for x in ids], dtype=torch.long)
+    return (v.view(-1, 1) == v.view(1, -1)) & (v >= 0).view(-1, 1)
 
 
 def _norm_text(text: Any) -> str:
@@ -1325,6 +1357,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     multi_targets: dict[str, list[tuple[int, ...] | None]] = {}
     literals: list[LiteralTarget] = []
     deal_numbers: dict[str, float] = {}
+    value_notes: list[str] = []
     for opp in schema.opportunities:
         if opp.kind == RELATION or opp.size != LINE:
             continue
@@ -1348,7 +1381,13 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 values = v if isinstance(v, list) else [v]
                 indexes = [opp.index(value) for value in values]
                 if any(ix is None for ix in indexes):
-                    raise ValueError(f"Unknown selected answer for {opp.key} on {a.key}")
+                    # A value the question doesn't offer (a date typed into
+                    # needed_by) teaches nothing; the labeler sees a note.
+                    value_notes.append(f"{opp.key} on {a.key} has a value it doesn't offer; "
+                                       "that value is not taught")
+                    indexes = [ix for ix in indexes if ix is not None]
+                    if not indexes:
+                        continue
                 selections[i] = tuple(sorted(set(indexes)))
                 continue
             if isinstance(v, list):
@@ -1362,14 +1401,12 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             if literal:
                 literals.append(LiteralTarget(i, opp.key, literal, word_indexes(a.text, literal)))
             if opp.kind == NUMBER and v not in (None, "", ABSENT):
-                try:
-                    import math
-                    number = float(str(v).replace(",", "").split()[0])
-                    if not math.isfinite(number) or number < 0:
-                        raise ValueError()
+                number = saved_number(v)
+                if number is None:
+                    value_notes.append(f"{opp.key} on {a.key} is not a number; only that the line "
+                                       "states it is taught")
+                else:
                     nums[i] = number
-                except (ValueError, IndexError):
-                    raise ValueError(f"Invalid numeric target for {opp.key} on {a.key}") from None
         targets[opp.key] = col
         if opp.multiple:
             multi_targets[opp.key] = selections
@@ -1612,9 +1649,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         texts=[a.text for a in atoms], numbers=[number_tokens(a.text) for a in atoms],
         doc_kind=[a.doc_kind for a in atoms], role=[a.speaker_role for a in atoms],
         side=[a.speaker_side for a in atoms], times=[a.entered_at for a in atoms],
-        same_doc=[[bool(a.doc_id) and a.doc_id == b.doc_id for b in atoms] for a in atoms],
-        same_section=[[bool(a.section) and a.doc_id == b.doc_id and a.section == b.section
-                       for b in atoms] for a in atoms],
+        same_doc=_pair_mask([a.doc_id or None for a in atoms]),
+        same_section=_pair_mask([(a.doc_id, a.section) if a.section else None for a in atoms]),
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
@@ -1625,7 +1661,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         multi_targets=multi_targets, literals=literals, deal_numbers=deal_numbers,
         pixels=[a.pixels or _pixels(None) for a in atoms],
         geometry=[a.geometry or _geometry({}) for a in atoms],
-        link_elsewhere=_elsewhere_rows(elsewhere, index), notes=notes,
+        link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
         keys=[a.key for a in atoms])
 
 

@@ -219,3 +219,39 @@ def test_a_deal_kit_file_is_rebuilt_on_the_base_read():
     ex = KitExample.from_dict(out)                    # loads: no line points at a mistyped atom
     assert [line.atom_key for line in ex.lines] == ["s", None]
     assert ex.links == (("t", "s", "supports"),)
+
+
+def test_odd_saved_values_teach_what_they_can_and_are_reported():
+    schema = load_schema()
+    blob = {"labels": [label("h", reads_set={"labor_hours": "4-6"}),
+                       label("d", reads_set={"display_size": "55in"}),
+                       label("n", reads_set={"needed_by": ["2026-07-27", "sow"]})]}
+    batch = featurize(DealExample.from_training_blob(
+        blob, [atom("h"), atom("d", t=1), atom("n", t=2)], deal_id="synthetic"), schema)
+    assert batch.numbers_target["read:labor_hours"][0] == 5.0       # the middle of the range
+    assert batch.numbers_target["read:display_size"][1] == 55.0     # the leading number
+    needed = schema.by_key()["read:needed_by"]
+    assert batch.multi_targets[needed.key][2] == (needed.index("sow"),)
+    assert any("read:needed_by on n" in note for note in batch.notes)
+
+
+def test_the_teacher_reads_only_lines_with_something_to_teach():
+    from ml.c3.brain import told_why
+    from ml.c3.losses import teacher_rows
+
+    schema = load_schema()
+    blob = {"labels": [label("a1"), label("a3")]}
+    batch = featurize(DealExample.from_training_blob(
+        blob, [atom(f"a{i}", t=i) for i in range(4)], deal_id="synthetic"), schema)
+    rows, taught = teacher_rows(batch, told_why(batch, schema))
+    assert rows == [1, 3]
+    assert len(taught) == 2 and taught.targets["col:label_type"] == [batch.targets["col:label_type"][i] for i in rows]
+
+
+def test_same_document_masks_are_tensors_built_without_a_python_square():
+    schema = load_schema()
+    atoms = [atom("a", doc_id="x", section="S"), atom("b", t=1, doc_id="x", section="T"),
+             atom("c", t=2, doc_id="", section="S")]
+    batch = featurize(DealExample.from_training_blob({"labels": []}, atoms, deal_id="synthetic"), schema)
+    assert batch.same_doc.tolist() == [[True, True, False], [True, True, False], [False, False, False]]
+    assert batch.same_section.tolist() == [[True, False, False], [False, True, False], [False, False, True]]

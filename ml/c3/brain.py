@@ -192,20 +192,25 @@ class Brain(nn.Module):
                 notes: list[list[str]] | None = None,
                 company_notes: list[list[str]] | None = None,
                 deltas=None, company_deltas=None,
-                graph: torch.Tensor | None = None, desc=None) -> BrainOutput:
+                graph: torch.Tensor | None = None, desc=None,
+                rows: list[int] | None = None) -> BrainOutput:
         """Direct pass by default; pass ``why`` (one paragraph or None per
         line) for the reasoned pass. ``notes`` and ``deltas`` are universal;
-        ``company_notes`` and ``company_deltas`` reach the company heads only."""
+        ``company_notes`` and ``company_deltas`` reach the company heads only.
+        ``rows`` reads only those lines (each still with its earlier lines on
+        the page); output row k is line ``rows[k]``."""
         desc = desc if desc is not None else self.describe()
         n = len(batch)
+        g = graph if graph is None or rows is None else graph[list(rows)]
+        rows = list(range(n)) if rows is None else list(rows)
         notes = notes or [[] for _ in range(n)]
-        pages = [self.page(batch, i, notes[i]) + _tail(why, i) for i in range(n)]
-        out, _, _, _ = self.read(pages, "universal", desc, graph, deltas)
+        pages = [self.page(batch, i, notes[i]) + _tail(why, i) for i in rows]
+        out, _, _, _ = self.read(pages, "universal", desc, g, deltas)
         if company is not None and self.opps["company"]:
             cn = company_notes or [[] for _ in range(n)]
-            cpages = [self.page(batch, i, notes[i] + cn[i]) + _tail(why, i) for i in range(n)]
+            cpages = [self.page(batch, i, notes[i] + cn[i]) + _tail(why, i) for i in rows]
             both = _concat(deltas, company_deltas)
-            cout, _, _, _ = self.read(cpages, "company", desc, graph, both)
+            cout, _, _, _ = self.read(cpages, "company", desc, g, both)
             out.logits.update(cout.logits)
             out.numbers.update(cout.numbers)
             out.attention.update(cout.attention)

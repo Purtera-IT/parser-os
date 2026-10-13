@@ -72,6 +72,13 @@ CHANGE_SLOTS = ("hours", "crew", "sites", "price", "tasks", "schedule")
 DIRECTIONS = ("down", "none", "up")
 
 
+def pair_tensor(x, dev) -> torch.Tensor:
+    """A row-pair mask as float32 on ``dev``, from a tensor or nested lists."""
+    if isinstance(x, torch.Tensor):
+        return x.to(device=dev, dtype=torch.float32)
+    return torch.tensor(x, dtype=torch.float32, device=dev)
+
+
 @dataclass
 class C3Config:
     d_text: int = 256        # text encoder width (1024 for ModernBERT-large)
@@ -187,8 +194,8 @@ class DealEncoder(nn.Module):
     def forward(self, inp: dict[str, Any], *, hindsight: bool = False) -> torch.Tensor:
         x = self.embed_atoms(inp)
         n, dev = x.shape[0], x.device
-        same_doc = torch.tensor(inp["same_doc"], dtype=torch.float32, device=dev)
-        same_sec = torch.tensor(inp["same_section"], dtype=torch.float32, device=dev)
+        same_doc = pair_tensor(inp["same_doc"], dev)
+        same_sec = pair_tensor(inp["same_section"], dev)
         # Atoms arrive sorted by (entered_at, order): the foresight mask is
         # "j entered no later than i", which with ties in order is j <= i.
         allowed = (torch.ones(n, n, dtype=torch.bool, device=dev) if hindsight
@@ -603,8 +610,8 @@ class C3Model(nn.Module):
         sd = space_descriptions(self.schema, desc)
         space_desc = torch.stack([sd[s] for s in self.lattice.spaces])
         allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev))
-        same_doc = torch.tensor(inp["same_doc"], dtype=torch.float32, device=dev)
-        same_sec = torch.tensor(inp["same_section"], dtype=torch.float32, device=dev)
+        same_doc = pair_tensor(inp["same_doc"], dev)
+        same_sec = pair_tensor(inp["same_section"], dev)
         cdesc = company_description(self.schema, desc) if company is not None else None
         out.slots, out.company_slot, out.citations = self.lattice(
             out.h, space_desc, allowed, same_doc, same_sec, cdesc)
