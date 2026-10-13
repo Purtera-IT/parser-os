@@ -97,10 +97,14 @@ class HeadReader(nn.Module):
 
 class Brain(nn.Module):
     def __init__(self, schema: Schema, lm: LMBase, d_graph: int | None = None,
-                 n_prefix: int = 2, context_lines: int = 6, d_att: int = 64):
+                 n_prefix: int = 2, context_lines: int = 6, d_att: int = 64,
+                 page_batch: int = 0):
         super().__init__()
         self.schema, self.lm = schema, lm
         self.context_lines = context_lines
+        # 0 runs every line of a deal in one language-model pass. A positive
+        # width splits that pass so a large teacher fits next to the student.
+        self.page_batch = page_batch
         self.reader_universal = HeadReader(lm.dim, d_att)
         self.reader_company = HeadReader(lm.dim, d_att)
         self.n_prefix = n_prefix
@@ -142,6 +146,25 @@ class Brain(nn.Module):
             parts += [f"- {n}" for n in notes]
         return "\n".join(parts) + "\n"
 
+    def _lm_rows(self, ids: torch.Tensor, mask: torch.Tensor,
+                 prefix: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        """One language-model pass, or several row-slices of the same padded page.
+
+        Slicing the batch does not change a line's tokens or its mask. The
+        slices share one width, so the hidden states concatenate on the row.
+        """
+        width = self.page_batch
+        if not width or ids.shape[0] <= width:
+            return self.lm(ids, mask, prefix=prefix)
+        hidden, logits = [], []
+        for start in range(0, ids.shape[0], width):
+            stop = start + width
+            part = None if prefix is None else prefix[start:stop]
+            h, lg = self.lm(ids[start:stop], mask[start:stop], prefix=part)
+            hidden.append(h)
+            logits.append(lg)
+        return torch.cat(hidden, 0), torch.cat(logits, 0)
+
     # ------------------------------------------------------------ reading
     def read(self, pages: list[str], layer: str, desc, graph: torch.Tensor | None = None,
              deltas=None) -> tuple[BrainOutput, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -150,7 +173,7 @@ class Brain(nn.Module):
         if self.graph is not None and graph is not None:
             prefix = self.graph(graph).view(len(pages), self.n_prefix, self.lm.dim)
         with self.lm.adapted(deltas):
-            h, lm_logits = self.lm(ids, mask, prefix=prefix)
+            h, lm_logits = self._lm_rows(ids, mask, prefix)
         opps = self.opps[layer]
         reader = self.reader_universal if layer == "universal" else self.reader_company
         out = BrainOutput(hidden=h, mask=mask, ids=ids)
@@ -188,6 +211,44 @@ class Brain(nn.Module):
             out.attention.update(cout.attention)
         return out
 
+    def card_page(self, batch: Batch, judgment, *, with_why: bool = False) -> str:
+        """Source evidence and source question, isolated from saved target fields."""
+        o = self.schema.by_key()[judgment.key]
+        text = "Evidence:\n" + "\n".join(f"[{i}] {batch.texts[i]}" for i in judgment.lines)
+        if judgment.query:
+            text += "\nQuestion: " + judgment.query
+        if not o.universal:
+            text += "\nCompany policy: " + (batch.company_policy or "")
+        if with_why:
+            text += "\nWhy: " + judgment.note
+            if not o.universal and judgment.policy:
+                text += "\nCompany reasoning: " + judgment.policy
+        return text + "\nAnswer:"
+
+    def card_logits(self, batch: Batch, *, with_why: bool = False, desc=None,
+                    graph: torch.Tensor | None = None):
+        """Per-card teacher heads, preserving distinct questions sharing evidence."""
+        desc = desc if desc is not None else self.describe()
+        by = {}
+        for j in batch.judged:
+            by.setdefault(j.key, []).append(j)
+        result = {}
+        for key, js in by.items():
+            pages = [self.card_page(batch, j, with_why=with_why) for j in js]
+            if any(self.lm.token_count(t) > self.lm.max_len for t in pages):
+                raise ValueError("Card source/WHY exceeds teacher context budget; do not truncate")
+            ids, mask = self.lm.tokenize(pages)
+            prefix = None
+            if graph is not None and self.graph is not None:
+                pooled = torch.stack([
+                    graph[list(j.lines)].mean(0) if j.lines else graph.mean(0) for j in js])
+                prefix = self.graph(pooled).view(len(js), self.n_prefix, self.lm.dim)
+            h, _ = self._lm_rows(ids, mask, prefix)
+            reader = self.reader_universal if self.schema.by_key()[key].universal else self.reader_company
+            logits, _, _ = reader(h, mask, desc[key][0].unsqueeze(0), [desc[key][1]])
+            result[key] = logits[0]
+        return result
+
     # ------------------------------------------------------------ flips
     def flip_read(self, batch: Batch, why: list[str | None], flips: list,
                   notes: list[list[str]] | None = None, desc=None,
@@ -218,18 +279,51 @@ class Brain(nn.Module):
         notes = notes or [[] for _ in range(len(batch))]
         heads = [self.page(batch, i, notes[i]) + "Why: " for i in idx]
         fulls = [h + batch.why[i] for h, i in zip(heads, idx)]
+        if any(self.lm.token_count(t) > self.lm.max_len for t in fulls):
+            raise ValueError("Expert WHY exceeds teacher context budget; increase the budget "
+                             "or prepare source context explicitly, never truncate the WHY")
         _, hmask = self.lm.tokenize(heads)
         ids, mask = self.lm.tokenize(fulls)
         prefix = None
         if self.graph is not None and graph is not None:
             prefix = self.graph(graph[idx]).view(len(idx), self.n_prefix, self.lm.dim)
-        _, logits = self.lm(ids, mask, prefix=prefix)
+        _, logits = self._lm_rows(ids, mask, prefix)
         start = hmask.sum(1)                                           # first WHY token
         pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
         on_why = (pos >= start.view(-1, 1)) & mask & (pos > 0)
         tgt = ids.masked_fill(~on_why, IGNORE)[:, 1:]
-        return F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]), tgt.reshape(-1),
-                               ignore_index=IGNORE)
+        token_loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]),
+                                     tgt.reshape(-1), ignore_index=IGNORE, reduction="none")
+        token_loss = token_loss.view_as(tgt)
+        valid = tgt != IGNORE
+        if not valid.any(1).all():
+            raise ValueError("Expert WHY has no supervised tokens")
+        row_loss = token_loss.sum(1) / valid.sum(1).clamp(min=1)
+        weights = row_loss.new_tensor([batch.why_weights[i] if batch.why_weights else 1.0 for i in idx])
+        return (row_loss * weights).sum() / weights.sum().clamp(min=1e-6)
+
+    def value_loss(self, batch: Batch) -> torch.Tensor:
+        """Next-token loss on each exact saved value string. Nothing is clipped."""
+        rows = [(item.line, item.text) for item in batch.literals if item.text]
+        if not rows:
+            return next(self.parameters()).new_zeros(())
+        heads = ["Deal\nValue: " if i < 0 else batch.texts[i] + "\nValue: " for i, _ in rows]
+        fulls = [head + text for head, (_, text) in zip(heads, rows)]
+        if any(self.lm.token_count(text) > self.lm.max_len for text in fulls):
+            raise ValueError("Saved value exceeds teacher context budget; do not truncate it")
+        _, hmask = self.lm.tokenize(heads)
+        ids, mask = self.lm.tokenize(fulls)
+        _, logits = self._lm_rows(ids, mask)
+        start = hmask.sum(1)
+        pos = torch.arange(ids.shape[1], device=ids.device).view(1, -1)
+        on_value = (pos >= start.view(-1, 1)) & mask & (pos > 0)
+        tgt = ids.masked_fill(~on_value, IGNORE)[:, 1:]
+        token_loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.shape[-1]),
+                                     tgt.reshape(-1), ignore_index=IGNORE, reduction="none").view_as(tgt)
+        valid = tgt != IGNORE
+        if not valid.any():
+            raise ValueError("Saved value has no supervised tokens")
+        return token_loss[valid].mean()
 
     # ------------------------------------------------------------ grounding
     def grounded_page(self, batch: Batch, i: int, window: int = 12

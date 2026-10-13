@@ -16,10 +16,13 @@ What the heads get from it, per labeled line with a WHY:
 ==================  =====================================================  ==================
 term                what it does                                           why it saves labels
 ==================  =====================================================  ==================
-``teach_heads``     every head matches the teacher's answer on that line,  one paragraph
-                    including heads the human left blank (a WHY that says  teaches many heads,
-                    "the crew doubles" also tells the changes head and     not just the one
-                    the crew reading)                                       field it was for
+``teach_heads``     every class head matches the teacher's answer on     one paragraph
+                    that line, including heads the human left blank (a     teaches many heads,
+                    WHY that says "the crew doubles" also tells the        not just the one
+                    changes head and the crew reading)                     field it was for
+``teach_numbers``   every numeric head matches the teacher's log1p        hours, term slots
+                    reading on that line                                   and kit hours move
+                                                                           with the same WHY
 ``teach_geometry``  lines the teacher sees as alike *for the reason* are   the reason, not the
                     alike in the heads' latent (relational distillation    surface words, sets
                     of the pairwise similarities)                          who is near whom
@@ -73,21 +76,36 @@ from dataclasses import dataclass, field
 import torch
 from torch.nn import functional as F
 
-from .data import IGNORE, Batch, number_tokens
+from .data import IGNORE, Batch, judgment_identity, number_tokens
 from .model import C3Model, C3Output
 
 
 @dataclass
 class TeachWeights:
     heads: float = 1.0
+    judgments: float = 1.0
+    numbers: float = 0.2
     geometry: float = 0.5
-    unlabeled: float = 0.3
+    # Opt in after teacher calibration/warmup, not from an untrained teacher.
+    unlabeled: float = 0.0
+    unlabeled_min_confidence: float = 0.9
     pointers: float = 0.5
     words: float = 0.5
     flips: float = 0.5
     flip_size: float = 0.05     # the sentence moves the line only a little
     rewrites: float = 0.5
     temperature: float = 2.0
+
+    @classmethod
+    def for_base(cls) -> "TeachWeights":
+        """First usable version.
+
+        The person's mark is the lesson wherever they made one. The paragraph
+        fills only the questions they left blank. Nothing is copied onto lines
+        nobody labeled, and the helper does not rewrite lines or imagine a
+        different sentence. Card verdicts stay the person's.
+        """
+        return cls(flips=0.0, rewrites=0.0, unlabeled=0.0, judgments=0.0)
 
 
 @dataclass(frozen=True)
@@ -112,11 +130,15 @@ class TeacherView:
     flipped: dict[str, torch.Tensor] | None = None  # supposition pass, row n = batch.flips[n] [F, A]
     rewrites: list[Rewrite] = field(default_factory=list)   # kept after the round trip
     rewritten: dict[str, torch.Tensor] | None = None  # target per rewrite, row n = rewrites[n] [R, A]
+    card_logits: dict[str, torch.Tensor] = field(default_factory=dict)
+    card_subjects: dict[str, tuple] = field(default_factory=dict)
+    told_numbers: dict[str, torch.Tensor] = field(default_factory=dict)
 
 
 @torch.no_grad()
 def teacher_view(teacher, batch: Batch, company: str | None = None,
-                 grounding: bool = True, rewrites: list[Rewrite] | None = None) -> TeacherView:
+                 grounding: bool = True, rewrites: list[Rewrite] | None = None,
+                 graph=None) -> TeacherView:
     from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
 
     was = teacher.training
@@ -124,15 +146,22 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     desc = teacher.describe()
     notes, cnotes = notes_from_deal(batch)
     why = told_why(batch, teacher.schema)
-    told = teacher(batch, company=company, why=why, desc=desc,
+    told = teacher(batch, company=company, why=why, desc=desc, graph=graph,
                    company_notes=company_field_notes(batch, teacher.schema))
-    noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc)
+    noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc,
+                    graph=graph)
     m = told.mask.unsqueeze(-1).to(told.hidden.dtype)
     emb = (told.hidden * m).sum(1) / m.sum(1).clamp(min=1)
     pointers, words = teacher.grounding(batch) if grounding else (None, None)
-    flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc).logits
+    flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc, graph).logits
                if batch.flips else None)
     kept, rewritten = read_rewrites(teacher, batch, rewrites or [], why, told.logits, desc)
+    card_logits = teacher.card_logits(batch, with_why=True, desc=desc, graph=graph)
+    grouped = {}
+    for j in batch.judged:
+        grouped.setdefault(j.key, []).append(j)
+    card_subjects = {key: tuple(judgment_identity(batch, j) for j in js)
+                     for key, js in grouped.items()}
     teacher.train(was)
     dev = emb.device
     if pointers is not None:
@@ -145,7 +174,7 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     return TeacherView(told.logits, noted.logits, emb,
                        torch.tensor([bool(t) for t in why], device=dev),
                        torch.tensor(batch.labeled, device=dev), pointers, words, flipped,
-                       kept, rewritten)
+                       kept, rewritten, card_logits, card_subjects, told.numbers)
 
 
 def with_texts(batch: Batch, repl: dict[int, str]) -> Batch:
@@ -200,7 +229,10 @@ def read_rewrites(teacher, batch: Batch, rewrites: list[Rewrite], why: list[str 
     keep: list[int] = []
     for n, r in enumerate(rewrites):
         k = "col:label_type" if "col:label_type" in keys else keys[0]
-        if not r.same or int(read.logits[k][n].argmax()) == int(told[k][r.line].argmax()):
+        multiple = teacher.schema.by_key()[k].multiple
+        agrees = (torch.equal(read.logits[k][n] > 0, told[k][r.line] > 0) if multiple
+                  else int(read.logits[k][n].argmax()) == int(told[k][r.line].argmax()))
+        if not r.same or agrees:
             keep.append(n)
     if not keep:
         return [], None
@@ -231,20 +263,45 @@ def teach_rewrites(model: C3Model, batch: Batch, view: TeacherView, t: float) ->
         b = with_texts(batch, {view.rewrites[n].line: view.rewrites[n].text for n in g})
         out = model(b.inputs())
         lines = [view.rewrites[n].line for n in g]
-        terms += [_kl(out.logits[k][lines], view.rewritten[k][g], t)
+        terms += [_kl(out.logits[k][lines], view.rewritten[k][g], t, model.schema.by_key()[k].multiple)
                   for k in view.rewritten if k in out.logits]
     return torch.stack(terms).mean() if terms else zero
 
 
-def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float) -> torch.Tensor:
-    return F.kl_div((student / t).log_softmax(-1), (teacher / t).log_softmax(-1),
+def rows_the_paragraph_may_teach(batch: Batch | None, key: str, has_why: torch.Tensor) -> torch.Tensor:
+    """Lines where a paragraph may teach ``key``.
+
+    A saved mark already teaches that cell. The paragraph teaches the same
+    line's blank questions, which is how one note covers many heads.
+    """
+    if batch is None:
+        return has_why
+    if key in batch.multi_targets:
+        unmarked = [choice is None for choice in batch.multi_targets[key]]
+    else:
+        gold = batch.targets.get(key)
+        if not gold:
+            return has_why
+        unmarked = [y == IGNORE for y in gold]
+    if len(unmarked) != int(has_why.shape[0]):
+        return has_why
+    return has_why & torch.tensor(unmarked, device=has_why.device)
+
+
+def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float, multiple: bool = False) -> torch.Tensor:
+    if multiple:
+        p = (teacher / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+        return (F.binary_cross_entropy_with_logits(student / t, p)
+                - F.binary_cross_entropy(p, p)) * t * t
+    return F.kl_div((student / t).log_softmax(-1), (teacher.detach() / t).log_softmax(-1),
                     log_target=True, reduction="batchmean") * t * t
 
 
 def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
                      w: TeachWeights | None = None,
                      texts: list[str] | None = None,
-                     batch: Batch | None = None, desc=None) -> dict[str, torch.Tensor]:
+                     batch: Batch | None = None, desc=None,
+                     unlabeled_keys: set[str] | None = None) -> dict[str, torch.Tensor]:
     """The teaching terms for one deal. ``out`` is the heads' own forward pass
     (no teacher inside it); ``view`` is detached. ``batch`` (with its flips)
     turns on ``teach_flip``."""
@@ -253,18 +310,56 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
              "teach_pointers": zero, "teach_words": zero, "teach_flip": zero, "teach_flip_size": zero,
-             "teach_rewrites": zero}
+             "teach_rewrites": zero, "teach_judgments": zero, "teach_numbers": zero}
     if batch is not None and view.flipped is not None and batch.flips:
         parts["teach_flip"], parts["teach_flip_size"] = teach_flip(model, out, view, batch,
                                                                    w.temperature, desc)
     if batch is not None and view.rewrites:
         parts["teach_rewrites"] = teach_rewrites(model, batch, view, w.temperature)
+    if batch is not None and view.card_logits:
+        grouped = {}
+        for j in batch.judged:
+            grouped.setdefault(j.key, []).append(j)
+        terms = []
+        for key, teacher_logits in view.card_logits.items():
+            js = grouped.get(key, [])
+            identity = tuple(judgment_identity(batch, j) for j in js)
+            if identity != view.card_subjects.get(key):
+                raise ValueError("Teacher card subjects do not match this batch")
+            o = model.schema.by_key()[key]
+            if not o.universal and out.conduct_x is None:
+                continue
+            logits = model.judge(out, key, [j.lines for j in js], desc, queries=[j.query for j in js])
+            weights = logits.new_tensor([j.why_weight for j in js])
+            losses = torch.stack([_kl(logits[i:i+1], teacher_logits[i:i+1], w.temperature, o.multiple)
+                                  for i in range(len(js))])
+            terms.append((losses * weights).sum() / weights.sum().clamp(min=1e-6))
+        parts["teach_judgments"] = torch.stack(terms).mean() if terms else zero
     if not keys:
         return parts
     why = view.has_why
     if why.any():
-        parts["teach_heads"] = torch.stack(
-            [_kl(out.logits[k][why], view.told[k][why], w.temperature) for k in keys]).mean()
+        taught = []
+        for key in keys:
+            rows = rows_the_paragraph_may_teach(batch, key, why)
+            if rows.any():
+                taught.append(_kl(out.logits[key][rows], view.told[key][rows], w.temperature,
+                                  model.schema.by_key()[key].multiple))
+        if taught:
+            parts["teach_heads"] = torch.stack(taught).mean()
+        number_terms = []
+        for key, teacher_num in view.told_numbers.items():
+            student = out.numbers.get(key)
+            if student is None or student.shape != teacher_num.shape:
+                continue
+            rows = why
+            vals = batch.numbers_target.get(key) if batch is not None else None
+            if vals is not None and len(vals) == int(why.shape[0]):
+                rows = why & torch.tensor([v is None for v in vals], device=why.device)
+            if rows.any():
+                number_terms.append(F.smooth_l1_loss(student[rows], teacher_num.detach()[rows]))
+        if number_terms:
+            parts["teach_numbers"] = torch.stack(number_terms).mean()
     if int(why.sum()) > 2:
         s = F.normalize(out.r[why], dim=-1)
         t = F.normalize(view.embedding[why], dim=-1)
@@ -274,9 +369,22 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
         parts["teach_geometry"] = F.kl_div(ss.log_softmax(-1), tt.log_softmax(-1),
                                            log_target=True, reduction="batchmean")
     rest = ~view.labeled
-    if rest.any():
-        parts["teach_unlabeled"] = torch.stack(
-            [_kl(out.logits[k][rest], view.noted[k][rest], w.temperature) for k in keys]).mean()
+    if rest.any() and w.unlabeled > 0:
+        terms = []
+        if not 0.5 < w.unlabeled_min_confidence <= 1.0:
+            raise ValueError("Unlabeled confidence threshold must be in (0.5, 1]")
+        for k in keys:
+            if unlabeled_keys is not None and k not in unlabeled_keys:
+                continue
+            multiple = model.schema.by_key()[k].multiple
+            teacher = view.noted[k].detach()
+            p = teacher.sigmoid() if multiple else teacher.softmax(-1)
+            confidence = torch.maximum(p, 1 - p).amin(-1) if multiple else p.amax(-1)
+            eligible = rest & (confidence >= w.unlabeled_min_confidence)
+            if eligible.any():
+                terms.append(_kl(out.logits[k][eligible], teacher[eligible], w.temperature, multiple))
+        if terms:
+            parts["teach_unlabeled"] = torch.stack(terms).mean()
     if view.pointers is not None and out.pointers is not None and why.any():
         # The heads see only earlier lines: the teacher's weight on later
         # lines is dropped and the rest renormalized.
@@ -322,12 +430,18 @@ def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
     from .losses import why_row_weights  # noqa: PLC0415 (cycle)
     ww = why_row_weights(batch, out.r.device)[rows]
 
-    def kl_rows(s: torch.Tensor, tch: torch.Tensor) -> torch.Tensor:
+    def kl_rows(s: torch.Tensor, tch: torch.Tensor, multiple: bool) -> torch.Tensor:
+        if multiple:
+            p = (tch / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+            per = (F.binary_cross_entropy_with_logits(s / t, p, reduction="none")
+                   - F.binary_cross_entropy(p, p, reduction="none")).mean(-1) * t * t
+            return (per * ww).sum() / ww.sum()
         per = F.kl_div((s / t).log_softmax(-1), (tch / t).log_softmax(-1),
                        log_target=True, reduction="none").sum(-1) * t * t
         return (per * ww).sum() / ww.sum()
 
-    return torch.stack([kl_rows(sub.logits[k], view.flipped[k]) for k in keys]).mean(), size
+    return torch.stack([kl_rows(sub.logits[k], view.flipped[k], model.schema.by_key()[k].multiple)
+                        for k in keys]).mean(), size
 
 
 def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> torch.Tensor:
@@ -336,7 +450,9 @@ def weighted(parts: dict[str, torch.Tensor], w: TeachWeights | None = None) -> t
             + w.unlabeled * parts["teach_unlabeled"] + w.pointers * parts["teach_pointers"]
             + w.words * parts["teach_words"] + w.flips * parts.get("teach_flip", 0.0)
             + w.flip_size * parts.get("teach_flip_size", 0.0)
-            + w.rewrites * parts.get("teach_rewrites", 0.0))
+            + w.rewrites * parts.get("teach_rewrites", 0.0)
+            + w.judgments * parts.get("teach_judgments", 0.0)
+            + w.numbers * parts.get("teach_numbers", 0.0))
 
 
 def mask_labels(batch: Batch, keep: set[int]) -> Batch:
@@ -350,6 +466,8 @@ def mask_labels(batch: Batch, keep: set[int]) -> Batch:
     return dataclasses.replace(
         batch,
         targets={k: col(v) for k, v in batch.targets.items()},
+        multi_targets={k: [x if i in keep else None for i, x in enumerate(v)]
+                       for k, v in batch.multi_targets.items()},
         numbers_target={k: [x if i in keep else None for i, x in enumerate(v)]
                         for k, v in batch.numbers_target.items()},
         edges={r: [(s, d) for s, d in ps if s in keep] for r, ps in batch.edges.items()},

@@ -120,7 +120,9 @@ def test_weight_tier_reject_and_known_negatives(schema, batch):
     assert batch.targets["read:rate"][hw] == by["read:rate"].index("_absent")
     assert batch.targets["read:billing_type"][hw] == by["read:billing_type"].index("_absent")
     assert batch.field_notes[hw]["read:billing_type"].startswith("not billing_type:")
-    assert batch.targets["col:hints"][hw] == by["col:hints"].index("table_column")
+    assert batch.targets["col:hints"][hw] == IGNORE
+    assert set(batch.multi_targets["col:hints"][hw]) == {
+        by["col:hints"].index("table_column"), by["col:hints"].index("own_words")}
     assert batch.targets["col:admission"][_i(batch, "Thanks again")] == by["col:admission"].index("drop")
 
 
@@ -144,7 +146,7 @@ def test_deal_kit_routing_trains_only_the_purtera_layer(schema, batch):
     i = _i(batch, "Kit plan")
     assert by["read:co_deal_kit_route"].layer == "company" and by["read:train_for"].universal
     assert batch.targets["read:train_for"][i] == IGNORE
-    assert batch.targets["read:co_deal_kit_route"][i] == by["read:co_deal_kit_route"].index("delivery_parser")
+    assert batch.multi_targets["read:co_deal_kit_route"][i] == (by["read:co_deal_kit_route"].index("delivery_parser"),)
     assert batch.targets["read:crew_size"][i] != IGNORE
 
 
