@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import random
 from contextlib import nullcontext
@@ -234,7 +235,7 @@ H100_TEACHER = "Qwen/Qwen2.5-7B-Instruct"
 
 
 #: A progress line every this many parts, so a long stage is never silent.
-PROGRESS_EVERY = 25
+PROGRESS_EVERY = int(os.environ.get("C3_PROGRESS_EVERY", "25"))
 # The live teacher's memory caps. A call is one pass through the 7B body; a
 # piece is what one backward holds (checkpointed: about 0.2 MB a token).
 TEACHER_CALL_TOKENS = 32768
@@ -256,10 +257,16 @@ BIND_PARTS = 16
 PIECE_PROGRESS_EVERY = 8
 
 
+_LAST_PART: dict[str, float] = {}
+
+
 def _progress(stage: str, done: int, total: int, started: float) -> None:
+    now = time.time()
+    last = now - _LAST_PART.get(stage, started) if done > 1 else now - started
+    _LAST_PART[stage] = now
     if done % PROGRESS_EVERY == 0 or done == total:
-        rate = (time.time() - started) / max(done, 1)
-        print(f"progress {stage} {done}/{total} parts {rate:.1f}s/part "
+        rate = (now - started) / max(done, 1)
+        print(f"progress {stage} {done}/{total} parts {rate:.1f}s/part last {last:.1f}s "
               f"eta {rate * (total - done) / 60:.0f} min", flush=True)
 
 
@@ -545,10 +552,17 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
 
 
 def _score_oneshot(model: C3Model, batch: Batch, device: str = "cpu") -> dict[str, dict[str, float]]:
-    """Exact match on labeled rows from atoms only. Stage and geography are null."""
+    """Exact match on labeled rows from atoms only. Stage and geography are null.
+
+    All of it runs under the same no-grad autocast: the cards and links are
+    read from the pass's bf16 outputs by float32 layers."""
     model.eval()
     with torch.no_grad(), _autocast(device):
-        out = model(batch.oneshot(), company=batch.company or None)
+        return _score_oneshot_inner(model, batch)
+
+
+def _score_oneshot_inner(model: C3Model, batch: Batch) -> dict[str, dict[str, float]]:
+    out = model(batch.oneshot(), company=batch.company or None)
     scores: dict[str, dict[str, float]] = {}
     for key, logits in out.logits.items():
         if key in batch.multi_targets:
@@ -967,6 +981,10 @@ def main() -> None:
     parser.add_argument("--extra-lessons", action="store_true",
                         help="Also run the flips and spread lesson stages (each reads the teacher's "
                              "view again)")
+    parser.add_argument("--smoke", action="store_true",
+                        help="Minutes, not hours: every stage on two average-size parts with small "
+                             "teacher samples, lines twice (the second pass is the warm cost), "
+                             "validation on one part, teacher saved. For catching GPU-only errors")
     parser.add_argument("--score-holdout", action="store_true",
                         help="Score the holdout here. Off for the live runs: the winner is scored "
                              "once with `python -m ml.c3.predict --score`")
@@ -983,6 +1001,17 @@ def main() -> None:
     train, train_notes = load_split(args.train, schema, args.max_atoms)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
     validation, val_notes = load_split(args.validation, schema, args.max_atoms)
+    caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, VIEW_PARTS
+    if args.smoke:
+        mean = sum(len(b) for b in train) / len(train)
+        train = sorted(train, key=lambda b: abs(len(b) - mean))[:2]
+        validation = sorted(validation, key=len)[:1]
+        budget = Budget(teacher=1, lines=2, links=1, cards=1, numbers=1, deal=1, open_links=1,
+                        teach=1, bind=1)
+        caps, ground, view_parts = (16, 8, 4), 4, 1
+        global PROGRESS_EVERY, BIND_PARTS
+        PROGRESS_EVERY, BIND_PARTS = 1, 1
+        print("smoke_parts", " ".join(f"{b.deal_id}:{len(b)}" for b in train), flush=True)
     if args.limit_parts:
         train = sorted(train, key=len, reverse=True)[:args.limit_parts]
         print("preflight_parts", " ".join(f"{b.deal_id}:{len(b)}" for b in train), flush=True)
@@ -1017,8 +1046,8 @@ def main() -> None:
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=8, read_chunk=16,
             call_tokens=TEACHER_CALL_TOKENS, teacher_rows_per_step=32,
-            teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=TEACHER_CAPS,
-            view_ground_rows=VIEW_GROUND_ROWS, view_parts=VIEW_PARTS, deal_graph=True,
+            teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=caps,
+            view_ground_rows=ground, view_parts=view_parts, deal_graph=True,
             validation=validation, encoder_lr=args.encoder_lr if released else None,
             score_holdout=args.score_holdout, teacher_from=args.teacher_from or None)
     print("train", " ".join(result.train_ids))

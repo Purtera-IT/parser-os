@@ -136,6 +136,17 @@ class HFEncoder(nn.Module):
                 self.cache[t] = v
         return torch.stack([self.cache[t] for t in texts])
 
+    def fixed(self, texts: list[str]) -> torch.Tensor:
+        """Encode texts that are not the deal's lines (WHYs, notes, queries,
+        words, flip sentences) without a gradient into the encoder. Only the
+        lines teach the released blocks; the rest would hold every one of
+        those texts' activations for backward."""
+        texts = [str(t) for t in texts]
+        if self.frozen():
+            return self(texts)
+        with torch.no_grad():
+            return self._encode(self._ids(texts, self.max_length))
+
     def _check_budget(self, texts: list[str], budget: int) -> None:
         self._ids(texts, budget)
 

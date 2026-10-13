@@ -210,7 +210,7 @@ def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch, *,
             continue
         features = model.judgment_features(out, key, [j.lines for j in js], [j.query for j in js])
         # No WHY gradients flow into the source encoder via the target branch.
-        notes = model.judgment_note(model.text([j.note for j in js]).detach())
+        notes = model.judgment_note(model.aux_text([j.note for j in js]).detach())
         loss = 1 - F.cosine_similarity(features, notes, dim=-1)
         weights = loss.new_tensor([j.why_weight for j in js])
         total = total + (loss * weights).sum() / weights.sum().clamp(min=1e-6)
@@ -230,7 +230,7 @@ def literal_span_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tens
             grouped.setdefault(item.line, set()).update(item.words)
     if not grouped:
         return out.r.new_zeros(())
-    weights = model.word_weights(out, batch.texts)
+    weights = model.word_weights(out, batch.texts, rows=set(grouped))
     total, terms = out.r.new_zeros(()), 0
     for i, gold in grouped.items():
         logp = weights[i]
@@ -370,7 +370,7 @@ def why_losses(model: C3Model, out: C3Output, batch: Batch, desc, w: LossWeights
     if len(idx) < 2:
         z = out.r.new_zeros(())
         return z, z
-    why = model.why_proj(model.text([batch.why[i] for i in idx]))
+    why = model.why_proj(model.aux_text([batch.why[i] for i in idx]))
     r = F.normalize(out.r[idx], dim=-1)
     sim = r @ F.normalize(why, dim=-1).T / tau
     target = torch.arange(len(idx), device=sim.device)
@@ -450,7 +450,7 @@ def why_echo_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
     idx = [i for i, t in enumerate(batch.why) if t]
     if not idx:
         return out.r.new_zeros(())
-    target = model.text([batch.why[i] for i in idx]).detach()
+    target = model.aux_text([batch.why[i] for i in idx]).detach()
     ww = why_row_weights(batch, out.r.device)[idx]
     return ((1 - F.cosine_similarity(model.r_to_text(out.r[idx]), target, -1)) * ww).sum() / ww.sum()
 

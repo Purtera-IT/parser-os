@@ -365,6 +365,13 @@ class C3Model(nn.Module):
             body.eval()
         return self
 
+    def aux_text(self, texts: list[str]) -> torch.Tensor:
+        """The encoder on texts other than the deal's lines: no gradient into
+        a released pretrained encoder (text.HFEncoder.fixed). The hashed test
+        encoder has no such split and trains from every text."""
+        fixed = getattr(self.text, "fixed", None)
+        return fixed(texts) if fixed is not None else self.text(texts)
+
     def _encoder_frozen(self) -> bool:
         body = getattr(self.text, "model", None)
         return body is not None and all(not p.requires_grad for p in body.parameters())
@@ -401,7 +408,7 @@ class C3Model(nn.Module):
         with torch.no_grad():
             seed = torch.zeros(1, self.cfg.n_policy_atoms, device=self.alpha.device)
             if policy_text:
-                seed = self.alpha_from_text(self.text([policy_text]))
+                seed = self.alpha_from_text(self.aux_text([policy_text]))
             self.alpha = nn.Parameter(torch.cat([self.alpha.data, seed]))
         self.companies.append(name)
         return len(self.companies) - 1
@@ -435,7 +442,7 @@ class C3Model(nn.Module):
         if self.lattice is not None:
             self._ask(out, inp, desc, company)
         if bank_emb is None and bank is not None and len(bank):
-            bank_emb = self.text([e.text for e in bank.items])
+            bank_emb = self.aux_text([e.text for e in bank.items])
 
         # Propose links from the atoms, then let that proposal move the line
         # the heads read. The scores stay the pre-hop proposal so the loss
@@ -608,7 +615,7 @@ class C3Model(nn.Module):
         if queries is not None:
             # Empty queries preserve the old pair/group/deal computation.
             mask = features.new_tensor([bool(q) for q in queries]).unsqueeze(1)
-            features = features + mask * self.judgment_query(self.text(queries))
+            features = features + mask * self.judgment_query(self.aux_text(queries))
         return features
 
     def judge(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
@@ -644,7 +651,7 @@ class C3Model(nn.Module):
         sentences. Returns opportunity -> logits [len(lines), A]."""
         from .losses import moved_heads  # noqa: PLC0415 (cycle)
 
-        move = self.flip_proj(self.text(sentences))
+        move = self.flip_proj(self.aux_text(sentences))
         return moved_heads(self, out, lines, move, desc if desc is not None else self.describe()).logits
 
     def _context(self, context: dict[str, list], n: int, dev) -> torch.Tensor:
@@ -672,18 +679,21 @@ class C3Model(nn.Module):
         s = s.masked_fill(later, float("-inf"))
         return torch.cat([s, self.cite_self.expand(n, 1)], -1).log_softmax(-1)
 
-    def word_weights(self, out: "C3Output", texts: list[str]) -> list[torch.Tensor | None]:
-        """log p(word w of line i carries its reason), over text.word_spans."""
+    def word_weights(self, out: "C3Output", texts: list[str],
+                     rows: set[int] | None = None) -> list[torch.Tensor | None]:
+        """log p(word w of line i carries its reason), over text.word_spans.
+        ``rows`` limits it to the lines a loss reads (None elsewhere): each
+        line is one pass of the encoder over its words."""
         from .text import word_spans  # noqa: PLC0415
 
         res: list[torch.Tensor | None] = []
         q = self.word_r(out.r)
         for i, t in enumerate(texts):
-            ws = [w for w, _, _ in word_spans(t)]
+            ws = [w for w, _, _ in word_spans(t)] if rows is None or i in rows else []
             if not ws:
                 res.append(None)
                 continue
-            k = self.word_w(self.text(ws))
+            k = self.word_w(self.aux_text(ws))
             res.append((k @ q[i] / k.shape[-1] ** 0.5).log_softmax(-1))
         return res
 

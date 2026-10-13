@@ -130,8 +130,14 @@ def _deal_answers(model: C3Model, out, batch: Batch, schema: Schema) -> dict[str
     return answers
 
 
-@torch.no_grad()
-def read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
+def read_deal(model: C3Model, deal: DealExample, schema: Schema, **kwargs) -> dict[str, Any]:
+    """``_read_deal`` with every read, including the cards and links taken
+    from the pass's outputs, under one no-grad autocast."""
+    with torch.no_grad(), _autocast(kwargs.get("device", "cpu")):
+        return _read_deal(model, deal, schema, **kwargs)
+
+
+def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
               device: str = "cpu", link_min: float = 0.3, unsure: float = 0.6,
               governs_top: int = 5) -> dict[str, Any]:
     model.eval()

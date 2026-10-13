@@ -386,9 +386,19 @@ def test_every_stage_steps_under_the_pods_bf16_autocast(monkeypatch, tmp_path, e
     monkeypatch.setattr(F, "binary_cross_entropy", cuda_rules)
     monkeypatch.setattr(torch.nn.functional, "binary_cross_entropy", cuda_rules)
     monkeypatch.setattr(loop, "CPU_AUTOCAST", True)
+    from ml.c3.data import Judged
+
     schema = load_schema()
     train, hold = _batches(schema)
     check = featurize(replace(DealExample.load(FIXTURE), deal_id="synthetic-validation"), schema)
+    # The fixture has no cards; the card paths (teacher, lessons, scoring) must run too.
+    keys = [o.key for o in schema.opportunities if o.key.startswith("jdg:") and o.universal
+            and not o.multiple]
+    cards = [Judged(keys[0], "PAIR", (0, 1), 0, note="the pair agrees", query="Do these agree?",
+                    subject_key="p"),
+             Judged(keys[-1], "GROUP", (0, 1, 2), 0, note="the group is one ask", query="One ask?",
+                    subject_key="g")]
+    train, hold, check = (replace(b, judged=cards) for b in (train, hold, check))
     _, result = run_base(
         [train], [hold], schema,
         Budget(teacher=1, lines=1, links=1, cards=1, numbers=1, deal=1, open_links=1,

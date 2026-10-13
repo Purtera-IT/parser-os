@@ -14,3 +14,5 @@ TRAIN="000002 010042 010050 010082 010115 000123 010144 010003 010353 010127 000
 VALIDATION="010087 010043 010149"
 HOLDOUT="010172 010038 010387 010194"
 files() { for d in "$@"; do echo "$C3/train/$d.json"; done; }
+# Less fragmentation across the varied page and part sizes.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

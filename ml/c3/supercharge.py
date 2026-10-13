@@ -406,7 +406,7 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
             s = out.pointers[why][keep].clamp(min=-1e4)
             parts["teach_pointers"] = -(t * s).sum(-1).mean() + (t * t.clamp(min=1e-9).log()).sum(-1).mean()
     if view.words is not None and texts is not None:
-        mine = model.word_weights(out, texts)
+        mine = model.word_weights(out, texts, rows={i for i, t in enumerate(view.words) if t is not None})
         kls = [F.kl_div(m, t.clamp(min=1e-9).log(), log_target=True, reduction="sum")
                for m, t in zip(mine, view.words) if m is not None and t is not None
                and m.shape == t.shape]
@@ -428,7 +428,7 @@ def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
 
     zero = out.r.new_zeros(())
     fl = list(batch.flips)
-    move = model.flip_proj(model.text([f.condition for f in fl]))
+    move = model.flip_proj(model.aux_text([f.condition for f in fl]))
     sub = moved_heads(model, out, [f.line for f in fl], move,
                       desc if desc is not None else model.describe())
     rows = [f.line for f in fl]
