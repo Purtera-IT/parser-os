@@ -92,7 +92,22 @@ _PROSE_SPLIT_KEYS = frozenset({"needed_by"})
 #: quote stays verbatim.
 #: Our own pricing workbook is the Deal Kit, so it belongs on the company line;
 #: a customer's pricing workbook is a universal source and stays allowed.
-POLICY_WORDS = re.compile(r"\b(reject(?:s|ed)?|deal kit|atlas|hubspot|gantt|(?:internal|our) pricing workbook)\b", re.I)
+#: "POLICY (contact_from_crm)" opening a WHY is the company rule, not a reason.
+POLICY_WORDS = re.compile(r"\b(reject(?:s|ed)?|deal kit|atlas|hubspot|gantt|(?:internal|our) pricing workbook)\b"
+                          r"|\bpolicy\s*\(", re.I)
+#: The WHY recipe's near miss (d): the look-alike line and how it differs.
+NEAR_MISS_WORDS = re.compile(r"\b(?:unlike|near[- ]miss|whereas|by contrast|in contrast|differs? from|"
+                             r"compared? (?:to|with)|look-?alikes?|the line (?:above|below)|"
+                             r"the (?:other|sibling|twin) line)\b", re.I)
+#: The WHY recipe's "what does not matter" (e): a detail that leaves the answer alone.
+IRRELEVANT_WORDS = re.compile(r"\b(?:do(?:es)?(?: not|n't) matter|irrelevant|not relevant|no bearing|"
+                              r"makes? no difference|do(?:es)?(?: not|n't) change (?:the|this)|regardless of|"
+                              r"beside the point)\b", re.I)
+#: A leading "WHY:" label is a token the rationale head would learn as part of the reason.
+WHY_PREFIX = re.compile(r"\s*\**\s*why\s*\**\s*:", re.I)
+#: Site-tier wording: the OMB CBSA rule and its values belong on site rows only.
+TIER_TEXT = re.compile(r"\b(?:CBSA|OMB|major_metro|mid_metro|small_town)\b")
+TIER_READS = ("location_tier", "remote_miles")
 #: A remark about the parse rather than the deal (SHOULD SPLIT/MERGE, a parse
 #: problem). It belongs on the closing [parser] line, which training skips.
 PARSER_REMARK = re.compile(r"\bshould\s+(?:split|merge)\b|\bparser\b|\bmis-?pars(?:e|ed|es|ing)\b|\bparse\s+(?:problem|bug|error)s?\b", re.I)
@@ -218,7 +233,25 @@ def format_checks(row: dict[str, Any]) -> list[dict[str, str]]:
         add("why_without_flip", "rationale.why",
             "The WHY has no flip: say what would have to differ for the answer to change "
             "(\"if X, this would be Y\"). Training supposes each WHY sentence; a flip teaches the boundary.")
-    if (row.get("coarse") == "site" or ltype.endswith("site")) and str(row.get("rejected") or "") == "true":
+    first_why = next((ln for ln in why_text.splitlines() if ln.strip()), "")
+    if WHY_PREFIX.match(first_why):
+        add("why_prefix", "rationale.why",
+            'Drop the leading "WHY:": the note is the reason itself, and the label word would train as part of it.')
+    kept_fact = bool(why_text) and bool(ltype) and ltype not in NOISE_TYPES and not set_aside
+    plain = _QUOTED.sub("", why_text)
+    if kept_fact and not NEAR_MISS_WORDS.search(plain):
+        add("why_without_near_miss", "rationale.why",
+            "The WHY has no near miss: name the look-alike line and how it differs "
+            "(\"unlike the line above, ...\"), and draw a near_miss link to it.")
+    if kept_fact and not IRRELEVANT_WORDS.search(plain):
+        add("why_without_irrelevant", "rationale.why",
+            "The WHY does not say what does not matter: name a detail that leaves the answer alone "
+            "(\"the price does not matter to the type\").")
+    is_site = row.get("coarse") == "site" or ltype.endswith("site")
+    if not is_site and (any(k in reads for k in TIER_READS) or TIER_TEXT.search(_QUOTED.sub("", universal))):
+        add("tier_off_site", "rationale.why",
+            "Site tier (the OMB CBSA rule, location_tier, remote_miles) belongs on physical_site rows only.")
+    if is_site and str(row.get("rejected") or "") == "true":
         add("site_rejected", "conduct.action", "A site is never rejected.")
     for k, v in reads.items():
         if k not in defs:
