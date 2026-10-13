@@ -360,7 +360,11 @@ how steps are chosen. The labeling holdout (`010172`, `010038`, `010387`,
 `010194`, in `ml.c3.holdout`) and the five kits never train in either run, and
 the H100 run refuses to start unless all four labeling holdouts are passed as
 `--holdout`. The holdout is scored once and is not used to stop or tune. A
-frozen line encoder's vectors are computed once and reused. That loop does
+frozen line encoder's vectors are computed once and reused. `--max-atoms`
+sets the window (4,096 by default; 8,192 keeps most labeled deals whole and
+needs a bigger GPU). `--train-encoder-layers K` lets the encoder's top K
+blocks learn at `--encoder-lr`; keep it only if the validation deals say it
+beats the frozen encoder. That loop does
 not flip `READY_FOR_TRAINING`. The deal kit is a second model:
 `python -m ml.c3.kit --train <kit json> --holdout <kit json>`. `--tiny` is the
 CPU check. The live run is the H100: ModernBERT-large stays frozen, and a
