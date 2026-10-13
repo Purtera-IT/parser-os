@@ -141,10 +141,25 @@ class Brain(nn.Module):
             i += 1 + len(o.answers)
         return out
 
-    def page(self, batch: Batch, i: int, notes: list[str] | None = None) -> str:
+    def page(self, batch: Batch, i: int, notes: list[str] | None = None, tail: str = "") -> str:
         """Line i as the LM reads it: earlier lines only (foresight), then the
-        line, then any notes. Plain formatting, no rules."""
+        line, then any notes. Plain formatting, no rules.
+
+        The page and the ``tail`` its caller adds must fit the LM's window. When
+        they do not, the earliest context lines go first, then the last notes;
+        the line itself is never cut."""
         lo = max(0, i - self.context_lines)
+        notes = list(notes or [])
+        while True:
+            text = self._page(batch, i, lo, notes)
+            if self.fits(text + tail) or (lo >= i and not notes):
+                return text
+            if lo < i:
+                lo += 1
+            else:
+                notes.pop()
+
+    def _page(self, batch: Batch, i: int, lo: int, notes: list[str]) -> str:
         def who(j: int) -> str:
             return ", ".join(x for x in (batch.role[j], batch.doc_kind[j]) if x) or "line"
         parts = []
@@ -156,6 +171,23 @@ class Brain(nn.Module):
             parts.append("Notes from labeled lines:")
             parts += [f"- {n}" for n in notes]
         return "\n".join(parts) + "\n"
+
+    # Room left for a joined pair's seam and the start token.
+    FIT_MARGIN = 8
+
+    # Grounding takes a gradient through the whole page without
+    # checkpointing, so its pages stay at most this long.
+    GROUND_TOKENS = 8192
+
+    def fits(self, text: str, limit: int | None = None) -> bool:
+        """Whether ``text`` fits the LM's window (or ``limit``). A token is at
+        least one character, so a short text is checked without the tokenizer."""
+        limit = min(limit or self.lm.max_len, self.lm.max_len) - self.FIT_MARGIN
+        return len(text) <= limit or self.lm.token_count(text) <= limit
+
+    def card_fits(self, batch: Batch, judgment) -> bool:
+        """A card is read whole or not at all: its evidence is the question."""
+        return self.fits(self.card_page(batch, judgment, with_why=True))
 
     def _lm_rows(self, ids: torch.Tensor, mask: torch.Tensor,
                  prefix: torch.Tensor | None = None, *, logits: bool = True):
@@ -281,11 +313,11 @@ class Brain(nn.Module):
         g = graph if graph is None or rows is None else graph[list(rows)]
         rows = list(range(n)) if rows is None else list(rows)
         notes = notes or [[] for _ in range(n)]
-        pages = [self.page(batch, i, notes[i]) + _tail(why, i) for i in rows]
+        pages = [self.page(batch, i, notes[i], _tail(why, i)) + _tail(why, i) for i in rows]
         out, _, _, _ = self.read(pages, "universal", desc, g, deltas)
         if company is not None and self.opps["company"]:
             cn = company_notes or [[] for _ in range(n)]
-            cpages = [self.page(batch, i, notes[i] + cn[i]) + _tail(why, i) for i in rows]
+            cpages = [self.page(batch, i, notes[i] + cn[i], _tail(why, i)) + _tail(why, i) for i in rows]
             both = _concat(deltas, company_deltas)
             cout, _, _, _ = self.read(cpages, "company", desc, g, both)
             out.logits.update(cout.logits)
@@ -317,6 +349,7 @@ class Brain(nn.Module):
         result = {}
         for key, js in by.items():
             pages = [self.card_page(batch, j, with_why=with_why) for j in js]
+            # Callers pass only cards that fit (teacher_cards); this guards the rest.
             if any(self.lm.token_count(t) > self.lm.max_len for t in pages):
                 raise ValueError("Card source/WHY exceeds teacher context budget; do not truncate")
             ids, mask = self.lm.tokenize(pages)
@@ -343,9 +376,9 @@ class Brain(nn.Module):
         look-alike lines, where the answer is known (losses.supposed_twins)."""
         desc = desc if desc is not None else self.describe()
         notes = notes or [[] for _ in range(len(batch))]
-        pages = [self.page(batch, f.line, notes[f.line])
-                 + (f"Why: {why[f.line]}\n" if why[f.line] else "")
+        tails = [(f"Why: {why[f.line]}\n" if why[f.line] else "")
                  + f"Suppose instead: {f.condition}\nAnswer:" for f in flips]
+        pages = [self.page(batch, f.line, notes[f.line], t) + t for f, t in zip(flips, tails)]
         g = graph[[f.line for f in flips]] if graph is not None else None
         out, _, _, _ = self.read(pages, "universal", desc, g)
         return out
@@ -361,7 +394,7 @@ class Brain(nn.Module):
         if not idx:
             return next(self.parameters()).new_zeros(())
         notes = notes or [[] for _ in range(len(batch))]
-        heads = [self.page(batch, i, notes[i]) + "Why:" for i in idx]
+        heads = [self.page(batch, i, notes[i], "Why: " + batch.why[i]) + "Why:" for i in idx]
         tails = [" " + batch.why[i] for i in idx]
         if any(self.lm.token_count(h + t) > self.lm.max_len for h, t in zip(heads, tails)):
             raise ValueError("Expert WHY exceeds teacher context budget; increase the budget "
@@ -445,7 +478,16 @@ class Brain(nn.Module):
         for i in (range(n) if rows is None else rows):
             if not batch.why[i]:
                 continue
-            text, spans, (ws, we) = self.grounded_page(batch, i, window)
+            for w in sorted({window, 8, 4, 2, 1, 0}, reverse=True):
+                if w > window:
+                    continue
+                text, spans, (ws, we) = self.grounded_page(batch, i, w)
+                if self.fits(text, self.GROUND_TOKENS):
+                    break
+            else:
+                continue                      # the line and its WHY alone overflow: not grounded
+            if not self.fits(text, self.GROUND_TOKENS):
+                continue
             ids, mask = self.lm.tokenize([text])
             offs = self.lm.offsets(text)[: ids.shape[1]]
             emb = self.lm.input_embeddings(ids).detach().requires_grad_(True)
@@ -543,6 +585,12 @@ def company_field_notes(batch: Batch, schema: Schema) -> list[list[str]]:
     return [[f"{k.split(':', 1)[1]}: {t}" for k, t in (batch.field_notes[i].items()
              if i < len(batch.field_notes) else []) if layer.get(k) == "company"]
             for i in range(len(batch))]
+
+
+def teacher_cards(brain: "Brain", batch: Batch) -> list:
+    """The cards the teacher can read whole. A card whose evidence and WHY
+    overflow the window is left to the student, never cut."""
+    return [j for j in batch.judged if brain.card_fits(batch, j)]
 
 
 def _tail(why: list[str | None] | None, i: int) -> str:

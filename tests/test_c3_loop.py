@@ -396,7 +396,7 @@ def test_every_stage_steps_under_the_pods_bf16_autocast(monkeypatch, tmp_path, e
         checkpoint=str(tmp_path / "base.pt"), adamw=True, freeze_teacher=True,
         deal_graph=True, page_batch=2, read_chunk=2, call_tokens=2048,
         teacher_rows_per_step=4, teacher_piece_tokens=4000, encoder_lr=encoder_lr,
-        teacher_caps=(5, 3, 2), view_ground_rows=3,
+        teacher_caps=(5, 3, 2), view_ground_rows=3, view_parts=1,
         validation=[check], score_holdout=False,
     )
     assert result.ready_for_training is False
@@ -448,3 +448,51 @@ def test_teacher_caps_sample_a_fresh_bounded_slice_each_step():
         assert sum(len(p.flips) for p in pieces) <= 1
     assert ([r for p in first for r in p.rows] != [r for p in second for r in p.rows]
             or len(train) <= 3)
+
+
+def test_an_overlong_page_drops_context_first_and_an_overlong_card_is_left_out():
+    from ml.c3.brain import Brain, teacher_cards
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.losses import teacher_chunks
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    i = max(range(len(train)), key=lambda k: k if k >= 3 else -1)
+    wide = Brain(schema, TinyCausalLM(32, 1, 2, 8192), context_lines=3)
+    full = wide.page(train, i, ["a note"])
+    need = len(train.texts[i]) + 200
+    tight = Brain(schema, TinyCausalLM(32, 1, 2, need), context_lines=3)
+    page = tight.page(train, i, ["a note"], "Answer:")
+    assert train.texts[i] in page and tight.fits(page + "Answer:")
+    assert len(page) < len(full)
+    from ml.c3.data import Judged
+    from ml.c3.model import C3Model
+    from ml.c3.supercharge import supercharge_loss, teacher_view
+
+    key = next(o.key for o in schema.opportunities if o.key.startswith("jdg:") and o.universal
+               and not o.multiple)
+    short = Judged(key, "PAIR", (0, 1), 0, note="short reason", subject_key="s")
+    long_ = Judged(key, "PAIR", (0, 1), 0, note="x" * 9000, subject_key="l")
+    carded = replace(train, judged=[short, long_])
+    assert wide.card_fits(carded, short) and not wide.card_fits(carded, long_)
+    assert teacher_cards(wide, carded) == [short]
+    pieces = teacher_chunks(wide, carded, 4, 4000)
+    assert [c for p in pieces for c in p.cards] == [short]
+    view = teacher_view(wide, carded, grounding=False)
+    assert len(view.card_subjects[key]) == 1
+    model = C3Model(schema)
+    out = model(carded.inputs())
+    parts = supercharge_loss(model, out, view, texts=carded.texts, batch=carded)
+    assert "teach_judgments" in parts
+
+
+def test_budget_check_reads_every_teacher_page_of_a_part():
+    from ml.c3.budget_check import check
+    from ml.c3.lm import TinyCausalLM
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    counts, bad = check([train], schema, TinyCausalLM(32, 1, 2, 8192))
+    assert counts["parts"] == 1 and counts["pages"] >= 2 * len(train) and not bad
+    tight_counts, tight_bad = check([train], schema, TinyCausalLM(32, 1, 2, 120))
+    assert tight_counts["pages_fitted"] > 0 or tight_bad

@@ -214,6 +214,9 @@ PROGRESS_EVERY = 25
 # The live teacher's memory caps. A call is one pass through the 7B body; a
 # piece is what one backward holds (checkpointed: about 0.2 MB a token).
 TEACHER_CALL_TOKENS = 32768
+# Qwen2.5's own window. Most pages are far shorter; the longest saved lines
+# and card evidence need it, and nothing is cut to fit.
+TEACHER_MAX_LEN = 32768
 TEACHER_PIECE_TOKENS = 131072
 # What one teacher step teaches of a part: lines, cards, flips. A fresh
 # sample each step (seeded); a part of 8,192 lines would otherwise take hours.
@@ -221,6 +224,11 @@ TEACHER_CAPS = (256, 128, 32)
 # Lines per part whose WHY the teacher's lesson view grounds (a forward and
 # backward through the 7B each); the rest of the view still covers every line.
 VIEW_GROUND_ROWS = 128
+# Parts per lesson stage that get a teacher view (and so a lesson): a view
+# is ~4 teacher passes over every line of a part, ~20 minutes at 8,192 lines.
+VIEW_PARTS = 6
+# Parts per bind step.
+BIND_PARTS = 16
 PIECE_PROGRESS_EVERY = 8
 
 
@@ -422,7 +430,8 @@ def _deal_graph(model: C3Model, teacher: Brain, batch: Batch, device: str):
 def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
                 device: str, lr: float, adamw: bool, rng: random.Random,
                 scale: dict[str, float] | None = None, chunk: int = 0,
-                piece_tokens: int = 0, caps: tuple[int, int, int] = (0, 0, 0)) -> None:
+                piece_tokens: int = 0, caps: tuple[int, int, int] = (0, 0, 0),
+                parts: int = 0) -> None:
     """Teach the frozen language model to read the student's deal graph.
 
     Only the small projection trains. The pretrained body does not move.
@@ -439,7 +448,8 @@ def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
     for _ in range(steps):
         teacher.train()
         _steady_teacher(teacher)
-        order = train[:]
+        # Binding needs the graph read on a fair sample of parts, not on all.
+        order = rng.sample(train, parts) if parts and len(train) > parts else train[:]
         rng.shuffle(order)
         for batch in order:
             graph = _deal_graph(model, teacher, batch, device)
@@ -579,6 +589,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              teacher_piece_tokens: int = 0,
              teacher_caps: tuple[int, int, int] = (0, 0, 0),
              view_ground_rows: int = 0,
+             view_parts: int = 0,
              call_tokens: int = 0,
              deal_graph: bool = False,
              validation: list[Batch] | None = None,
@@ -681,7 +692,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if stage == "bind":
             _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng, scale,
                         chunk=teacher_rows_per_step, piece_tokens=teacher_piece_tokens,
-                        caps=teacher_caps)
+                        caps=teacher_caps, parts=view_parts and BIND_PARTS)
             continue
         weights, sizes = gold_weights("deal" if stage in ("open_links",) or stage in lesson_stages else stage)
         use_teacher = stage in lesson_stages
@@ -695,7 +706,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             if use_teacher and (views is None or (teacher.graph is not None and not fresh)):
                 views, fresh = {}, True
                 seen_at = time.time()
-                for k, batch in enumerate(train, 1):
+                # A lesson reads the teacher on a seeded sample of parts: one
+                # view is ~4 teacher passes over every line of a part.
+                pool = (sorted(rng.sample(train, view_parts), key=lambda b: b.deal_id)
+                        if view_parts and len(train) > view_parts else train)
+                for k, batch in enumerate(pool, 1):
                     graph = _deal_graph(model, teacher, batch, device)
                     ground = None
                     if view_ground_rows:
@@ -705,9 +720,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                     with _autocast(device):
                         views[batch.deal_id] = teacher_view(
                             teacher, batch, batch.company or None, graph=graph, ground_rows=ground)
-                    print(f"progress view {stage} {k}/{len(train)} parts "
+                    print(f"progress view {stage} {k}/{len(pool)} parts "
                           f"{time.time() - seen_at:.0f}s", flush=True)
-            order = train[:]
+            # A lesson trains on the parts it has a view of; the gold-only
+            # stages already walked every part.
+            order = [b for b in train if b.deal_id in views] if use_teacher and views else train[:]
             rng.shuffle(order)
             for batch in order:
                 step_loss = _student_step(model, opt, batch, weights, sizes,
@@ -855,18 +872,25 @@ def main() -> None:
     parser.add_argument("--limit-parts", type=int, default=0,
                         help="Preflight only: train on the N largest parts, to measure memory and "
                              "time per part without paying for a whole pass")
+    parser.add_argument("--teacher-steps", type=int, default=None,
+                        help="Teacher (and bind) steps, when they should differ from --steps; "
+                             "a teacher step on a large part costs far more than a student step")
+    parser.add_argument("--extra-lessons", action="store_true",
+                        help="Also run the flips and spread lesson stages (each reads the teacher's "
+                             "view again)")
     parser.add_argument("--score-holdout", action="store_true",
                         help="Score the holdout here. Off for the live runs: the winner is scored "
                              "once with `python -m ml.c3.predict --score`")
     args = parser.parse_args()
     require_live_teacher("" if args.tiny else args.teacher, args.tiny)
     schema = load_schema()
-    budget = Budget(teacher=args.steps, lines=args.steps, links=args.steps, cards=args.steps,
+    teacher_steps = args.steps if args.teacher_steps is None else args.teacher_steps
+    budget = Budget(teacher=teacher_steps, lines=args.steps, links=args.steps, cards=args.steps,
                     numbers=max(1, args.steps // 2), deal=max(1, args.steps // 2),
                     open_links=args.steps, teach=args.steps,
-                    bind=0 if args.tiny else max(1, args.steps // 4),
-                    flips=0 if args.tiny else max(1, args.steps // 4),
-                    spread=0 if args.tiny else max(1, args.steps // 4))
+                    bind=0 if args.tiny else max(1, teacher_steps // 4),
+                    flips=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4),
+                    spread=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4))
     train, train_notes = load_split(args.train, schema, args.max_atoms)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
     validation, val_notes = load_split(args.validation, schema, args.max_atoms)
@@ -899,13 +923,13 @@ def main() -> None:
             train, holdout, schema, budget, cfg=student.cfg,
             make_lm=lambda: HFCausalLM(
                 args.teacher, targets=("q_proj", "k_proj", "v_proj", "o_proj"),
-                max_len=8192, trainable_rank=32, dtype=torch.bfloat16),
+                max_len=TEACHER_MAX_LEN, trainable_rank=32, dtype=torch.bfloat16),
             checkpoint=args.checkpoint or None, model=student, device="cuda",
             lr=3e-4, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=8, read_chunk=16,
             call_tokens=TEACHER_CALL_TOKENS, teacher_rows_per_step=32,
             teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=TEACHER_CAPS,
-            view_ground_rows=VIEW_GROUND_ROWS, deal_graph=True,
+            view_ground_rows=VIEW_GROUND_ROWS, view_parts=VIEW_PARTS, deal_graph=True,
             validation=validation, encoder_lr=args.encoder_lr if released else None,
             score_holdout=args.score_holdout)
     print("train", " ".join(result.train_ids))

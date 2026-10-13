@@ -139,7 +139,7 @@ class TeacherView:
 def teacher_view(teacher, batch: Batch, company: str | None = None,
                  grounding: bool = True, rewrites: list[Rewrite] | None = None,
                  graph=None, ground_rows: list[int] | None = None) -> TeacherView:
-    from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
+    from .brain import company_field_notes, notes_from_deal, teacher_cards, told_why  # noqa: PLC0415
 
     was = teacher.training
     teacher.eval()
@@ -155,9 +155,10 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc, graph).logits
                if batch.flips else None)
     kept, rewritten = read_rewrites(teacher, batch, rewrites or [], why, told.logits, desc)
-    card_logits = teacher.card_logits(batch, with_why=True, desc=desc, graph=graph)
+    readable = dataclasses.replace(batch, judged=teacher_cards(teacher, batch))
+    card_logits = teacher.card_logits(readable, with_why=True, desc=desc, graph=graph)
     grouped = {}
-    for j in batch.judged:
+    for j in readable.judged:
         grouped.setdefault(j.key, []).append(j)
     card_subjects = {key: tuple(judgment_identity(batch, j) for j in js)
                      for key, js in grouped.items()}
@@ -328,9 +329,12 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
             grouped.setdefault(j.key, []).append(j)
         terms = []
         for key, teacher_logits in view.card_logits.items():
-            js = grouped.get(key, [])
+            # The view holds the cards the teacher could read whole.
+            subjects = view.card_subjects.get(key, ())
+            read = set(subjects)
+            js = [j for j in grouped.get(key, []) if judgment_identity(batch, j) in read]
             identity = tuple(judgment_identity(batch, j) for j in js)
-            if identity != view.card_subjects.get(key):
+            if identity != subjects or teacher_logits.shape[0] != len(subjects):
                 raise ValueError("Teacher card subjects do not match this batch")
             o = model.schema.by_key()[key]
             if not o.universal and out.conduct_x is None:

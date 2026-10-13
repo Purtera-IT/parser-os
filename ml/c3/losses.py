@@ -665,19 +665,20 @@ def _pack(items: list, cost: list[int], size: int, budget: int) -> list[list]:
 def teacher_chunks(brain, batch: Batch, size: int, budget: int = 0, *,
                    caps: tuple[int, int, int] = (0, 0, 0), rng=None) -> list[Piece]:
     """A part's teacher loss in pieces of at most ``size`` lines, cards or
-    flips and about ``budget`` grad tokens each. ``size`` and ``budget`` 0 is
+    flips and about ``budget`` grad tokens each. Cards the teacher cannot read
+    whole are left out (``brain.teacher_cards``). ``size`` and ``budget`` 0 is
     one piece holding everything. Deal-level values ride the first piece.
 
     ``caps`` (lines, cards, flips; 0 is all) with ``rng`` teach a fresh random
     sample of the part each step, so a step costs the same on any part and
     the steps together cover it."""
-    from .brain import told_why  # noqa: PLC0415
+    from .brain import teacher_cards, told_why  # noqa: PLC0415
 
     why = told_why(batch, brain.schema)
     sup, _ = supposed_twins(batch)
     rows, _ = teacher_rows(batch, why)
     rows = list(range(len(batch))) if rows is None else rows
-    judged = list(batch.judged)
+    judged = teacher_cards(brain, batch)
     flip_ids = list(range(len(sup)))
     if rng is not None:
         def take(items, cap):
