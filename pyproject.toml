@@ -73,6 +73,10 @@ dependencies = [
 ocr = [
   "pytesseract>=0.3.10",
 ]
+# tools/geo_tier.py only (site tier from the OMB metro/micro class); nothing in app/ imports it.
+geo = [
+  "uszipinfo>=1.1",
+]
 dev = [
   # pytest 9.x triggers STATUS_STACK_BUFFER_OVERRUN (0xC0000409) on Windows /
   # CPython 3.12.3 in the demo dev environment.  Cap until pytest 9 is
