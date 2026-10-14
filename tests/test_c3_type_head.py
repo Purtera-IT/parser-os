@@ -287,3 +287,29 @@ def test_averaged_checkpoints_load_and_sit_between_their_parts(tmp_path):
     fresh = C3Model(schema, CFG)
     assert load_checkpoint(out, fresh, schema_sha256="abc") == 4
     assert torch.allclose(fresh.free_heads[KEY].bias, torch.full_like(fresh.free_heads[KEY].bias, 2.0))
+
+
+def test_a_lesson_mixes_gold_steps_on_parts_without_a_view(tmp_path):
+    schema = load_schema()
+    parts = [featurize(replace(_deal(), deal_id=f"synthetic-{i}"), schema) for i in range(3)]
+    budget = Budget(teacher=1, lines=0, links=0, cards=0, numbers=0, deal=0, open_links=0, teach=1)
+    seen = []
+    import ml.c3.loop as loop
+    orig = loop._student_step
+
+    def spy(model, opt, batch, weights, sizes, teacher, view, *a, **k):
+        seen.append((batch.deal_id, view is not None))
+        return orig(model, opt, batch, weights, sizes, teacher, view, *a, **k)
+
+    loop._student_step = spy
+    try:
+        run_base(parts, [], schema, budget, fit_parts=0, score_holdout=False,
+                 view_parts=1, lesson_gold=2, checkpoint=str(tmp_path / "t.pt"))
+    finally:
+        loop._student_step = orig
+    taught = [d for d, v in seen if v]
+    assert len(taught) == 1 and len(seen) == 3
+    # Continuing a saved teacher trains it again.
+    _, r = run_base(parts, [], schema, budget, fit_parts=0, score_holdout=False, view_parts=1,
+                    teacher_from=str(tmp_path / "t.pt.teacher"), teacher_continue=True)
+    assert "teacher" in r.stage_loss

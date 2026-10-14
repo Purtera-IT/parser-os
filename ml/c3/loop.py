@@ -267,6 +267,9 @@ VIEW_GROUND_ROWS = 128
 # Parts per lesson stage that get a teacher view (and so a lesson): a view
 # is ~4 teacher passes over every line of a part, ~20 minutes at 8,192 lines.
 VIEW_PARTS = 6
+# Heads every check also reads on validation, beside line type (a lesson
+# stage cost run A's task tier; a gate can name ``valid_jdg_task_tier``).
+WATCH_CHECK = ("jdg:task_tier",)
 # Parts per bind step.
 BIND_PARTS = 16
 PIECE_PROGRESS_EVERY = 8
@@ -786,8 +789,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              teacher_piece_tokens: int = 0,
              teacher_caps: tuple[int, int, int] = (0, 0, 0),
              view_ground_rows: int = 0,
-             view_parts: int = 0,
-             teacher_from: str | None = None,
+             view_parts: int = 0, lesson_gold: int = 0,
+             teacher_from: str | None = None, teacher_continue: bool = False,
              call_tokens: int = 0,
              deal_graph: bool = False,
              validation: list[Batch] | None = None,
@@ -838,6 +841,12 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     teacher_updates = max(1, budget.teacher * len(train))
     teacher_sched = (torch.optim.lr_scheduler.CosineAnnealingLR(teacher_opt, T_max=teacher_updates)
                      if adamw else None)
+    if adamw and teacher_from and teacher_continue:
+        # A trained teacher resumes on a fresh Adam: ramp it up as the student does.
+        t_warm = max(1, len(train) // 4)
+        teacher_sched = torch.optim.lr_scheduler.LambdaLR(
+            teacher_opt, lambda s: min(1.0, (s + 1) / t_warm)
+            * 0.5 * (1 + math.cos(math.pi * min(s, teacher_updates) / teacher_updates)))
     stage_loss: dict[str, float] = {}
 
     # The teacher trains when the first stage that reads it comes up (bind, or
@@ -847,10 +856,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if teacher_from:
             print(f"teacher loaded from {teacher_from} (after {load_teacher(teacher_from, teacher)})",
                   flush=True)
-            for p in teacher.parameters():
-                p.requires_grad_(False)
-            teacher.eval()
-            return
+            if not teacher_continue:
+                for p in teacher.parameters():
+                    p.requires_grad_(False)
+                teacher.eval()
+                return
         teacher_w = BrainWeights(consolidate=0.0, flip=0.0)
         teacher_losses: list[float] = []
         started, done = time.time(), 0
@@ -908,6 +918,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 row.update({f"fit_{k}": v for k, v in type_check(model, fit_pool, device).items()})
             if validation:
                 row.update({f"valid_{k}": v for k, v in type_check(model, validation, device).items()})
+        if validation and WATCH_CHECK:
+            pooled = pool_scores([_score_oneshot(model, b, device) for b in validation])
+            for key in WATCH_CHECK:
+                if key in pooled:
+                    row[f"valid_{key.replace(':', '_')}"] = pooled[key]["exact"]
         checks[at] = row
         if row:
             print(f"check {at} " + " ".join(f"{k}={v:.3f}" for k, v in row.items()
@@ -1016,12 +1031,20 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             # A lesson trains on the parts it has a view of; the gold-only
             # stages already walked every part.
             order = [b for b in train if b.deal_id in views] if use_teacher and views else train[:]
+            # Gold steps on parts without a view keep a lesson from pulling
+            # the base toward the few parts it can see (run A's teach stage
+            # read 6 of 71 parts ten times and lost task tier, 1.000 to .656).
+            if use_teacher and views and lesson_gold:
+                rest = [b for b in train if b.deal_id not in views]
+                order += rng.sample(rest, min(len(rest), lesson_gold * len(order)))
             rng.shuffle(order)
             for batch in order:
+                taught = use_teacher and bool(views) and batch.deal_id in views
                 step_loss = _student_step(model, opt, batch, weights, sizes,
-                                         teacher if use_teacher else None,
-                                         views.get(batch.deal_id) if use_teacher and views else None,
-                                         device, lesson, allowed, scale[batch.deal_id], shares)
+                                         teacher if taught else None,
+                                         views.get(batch.deal_id) if taught else None,
+                                         device, lesson if taught else None,
+                                         allowed if taught else None, scale[batch.deal_id], shares)
                 _finite(step_loss, stage)
                 stage_losses.append(float(step_loss.detach()))
                 completed += 1
@@ -1199,6 +1222,12 @@ def main() -> None:
                         help="Release this many top blocks of the line encoder (0 keeps it frozen)")
     parser.add_argument("--encoder-lr", type=float, default=2e-5)
     parser.add_argument("--lr", type=float, default=3e-4, help="the student's rate (live path)")
+    parser.add_argument("--teacher-continue", action="store_true",
+                        help="train a --teacher-from teacher for --teacher-steps more passes")
+    parser.add_argument("--view-parts", type=int, default=VIEW_PARTS,
+                        help="parts per lesson stage that get a teacher view")
+    parser.add_argument("--lesson-gold", type=int, default=0,
+                        help="gold-only steps on unviewed parts per lesson step")
     parser.add_argument("--warmup-passes", type=float, default=0.0,
                         help="ramp the student's rate up over this many passes")
     parser.add_argument("--limit-parts", type=int, default=0,
@@ -1269,7 +1298,7 @@ def main() -> None:
     train, train_notes = load_split(args.train, schema, args.max_atoms)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
     validation, val_notes = load_split(args.validation, schema, args.max_atoms)
-    caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, VIEW_PARTS
+    caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, args.view_parts
     if args.smoke:
         mean = sum(len(b) for b in train) / len(train)
         near = sorted(train, key=lambda b: abs(len(b) - mean))
@@ -1330,9 +1359,10 @@ def main() -> None:
             adamw=True, freeze_teacher=True, page_batch=8, read_chunk=16,
             call_tokens=TEACHER_CALL_TOKENS, teacher_rows_per_step=32,
             teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=caps,
-            view_ground_rows=ground, view_parts=view_parts, deal_graph=True,
+            view_ground_rows=ground, view_parts=view_parts, lesson_gold=args.lesson_gold, deal_graph=True,
             validation=validation, encoder_lr=args.encoder_lr if released else None,
-            score_holdout=args.score_holdout, teacher_from=args.teacher_from or None, **checks)
+            score_holdout=args.score_holdout, teacher_from=args.teacher_from or None,
+            teacher_continue=args.teacher_continue, **checks)
     print("train", " ".join(result.train_ids))
     print("holdout", " ".join(result.holdout_ids))
     print("validation", " ".join(result.validation_ids) or "(none)")
