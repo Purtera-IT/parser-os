@@ -723,10 +723,10 @@ def classify_atoms(atoms: list[Any]) -> int:
     # deflection and the LLM. This emits one structured event per call so a
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
-    _dfl = {"speech_not_task": 0, "store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
+    _dfl = {"speech_not_task": 0, "store": 0, "student": 0, "c3": 0, "type_head": 0, "type_head_gpu": 0,
             "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected,
             "marker": marker_deflected, "bare_identity": identity_deflected}
-    _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
+    _dfl_ms = {"store": 0.0, "student": 0.0, "c3": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
                "contrastive": 0.0, "rubric_gate": 0.0, "post": 0.0}
     # + contact_deflected: those atoms left `promotable` before this count was
     # taken, so the telemetry input must include them back or the deflect rate
@@ -734,6 +734,9 @@ def classify_atoms(atoms: list[Any]) -> int:
     _dfl_input = len(promotable) + contact_deflected + marker_deflected + identity_deflected
     _t_start = time.perf_counter()
     _t_llm = 0.0
+    # C3 shadow: what the base would have done, reported beside the outcome
+    # at whichever exit the stage takes. Empty unless SOWSMITH_C3_TYPE=shadow.
+    _c3_shadow: dict[int, tuple[Any, str, str, float, str]] = {}
 
     # HOW FAR THROUGH THE STAGE, IN ATOMS RESOLVED.
     #
@@ -781,6 +784,12 @@ def classify_atoms(atoms: list[Any]) -> int:
             print(json.dumps(payload, ensure_ascii=True), file=sys.stderr)
         except Exception:
             pass
+        if _c3_shadow:
+            try:
+                from app.core import c3_type_base as _c3
+                _c3.report_shadow(_c3_shadow)
+            except Exception:
+                pass
 
     # upgrade #3: warm-store deflection on the atom-TYPE decision. STORE-ONLY
     # (llm=False) pre-filter: an atom the store CONFIDENTLY classifies ``_keep``
@@ -867,6 +876,76 @@ def classify_atoms(atoms: list[Any]) -> int:
     # conf>=0.85), abstains when unsure, retrains as the log grows. OFF by
     # default; cold/abstain -> byte-identical to the LLM-only path.
     head_deflected = 0
+    # C3 base (ml/c3): the trained deal reader types every line of the deal in
+    # context -- the whole compile is read once, in arrival order, and each
+    # promotable atom's reading looked up. Same value-light contract as the
+    # heads below: a SURE value-light answer is assigned and skips the LLM; a
+    # sure ``_keep`` drops the candidate (it keeps its type); an unsure or
+    # value-heavy answer falls through untouched, because the LLM alone
+    # synthesizes value payloads. Lines from a Deal Kit or an estimating calc
+    # are never acted on: the base was not scored on them. ``shadow`` reads and
+    # reports, changing nothing. OFF by default; cold/unloaded/abstain ->
+    # byte-identical to the LLM-only path.
+    _c3_mode = "off"
+    try:
+        from app.core import c3_type_base as _c3
+        _c3_mode = _c3.mode()
+    except Exception:
+        pass
+    if _c3_mode != "off":
+        _t = _lap()
+        try:
+            from app.core.schemas import AtomType as _AT
+
+            _VALUE_LIGHT = {
+                "requirement", "exclusion", "contract_term", "deal_metadata",
+                "acceptance_criterion", "task", "change_order_rule", "constraint",
+                "dependency", "mitigation", "compliance_rule", "submission_req",
+                "addendum_qa",
+            }
+            _sure = _c3.sure()
+            readings = _c3.classify(atoms)
+            survivors = []
+            decided = []
+            for a in promotable:
+                res = readings.get(id(a))
+                if res is None or res[1] < _sure or _c3.skipped(a):
+                    survivors.append(a)
+                    continue
+                answer, p = res
+                if answer == "_keep":
+                    act = "keep"
+                elif answer in _VALUE_LIGHT:
+                    try:
+                        new_type = _AT(answer)
+                    except ValueError:
+                        survivors.append(a)
+                        continue
+                    act = "assign"
+                else:
+                    survivors.append(a)
+                    continue
+                if _c3_mode == "shadow":
+                    _c3_shadow[id(a)] = (a, _atom_type_str(a), answer, p, act)
+                    survivors.append(a)
+                    continue
+                decided.append((a, new_type if act == "assign" else None))
+            # Applied only once every reading is in, so a failure part way
+            # leaves every atom as it was.
+            for a, new_type in decided:
+                if new_type is not None:
+                    a.atom_type = new_type
+                    head_deflected += 1
+                _dfl["c3"] += 1
+            promotable = survivors
+        except Exception:
+            pass
+        _dfl_ms["c3"] += _lap() - _t
+        _tick()
+        if not promotable:
+            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
+            return head_deflected
+
     # Grounded-Extractor #70 (GPU): the FINE-TUNED transformer type head (held-out
     # 0.814, ~53% deflect @ 0.966) assigns a confident value-light type and skips the
     # LLM for that atom. Same value-light contract + guess-free abstain as the CPU
