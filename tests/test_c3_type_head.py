@@ -236,3 +236,14 @@ def test_a_trained_body_layer_stays_in_the_slim_checkpoint():
     slim, body = slim_state(dict(model.state_dict()), C3Model(schema, CFG, text=_Body(CFG.d_text)))
     assert body["tensors"] == 1
     assert "text.model.bias" in slim and "text.model.weight" not in slim
+
+
+def test_a_run_with_no_teacher_stage_never_builds_the_language_model():
+    schema = load_schema()
+    train = featurize(_deal(), schema)
+    budget = Budget(teacher=0, lines=1, links=0, cards=0, numbers=0, deal=0, open_links=1, teach=0)
+
+    def refuse():
+        raise AssertionError("the teacher model was built")
+
+    run_base([train], [], schema, budget, fit_parts=0, score_holdout=False, make_lm=refuse)

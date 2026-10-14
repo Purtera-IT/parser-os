@@ -808,7 +808,15 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     budget = budget or Budget()
     torch.manual_seed(seed)
     rng = random.Random(seed)
-    teacher = Brain(schema, make_lm(), context_lines=context_lines, page_batch=page_batch,
+    # A run where no stage reads the teacher (no teacher passes, bind or
+    # lesson, and none loaded) builds the tiny stand-in, not the 7B model:
+    # nothing would read it, and it would hold 15 GB of the GPU.
+    needs_teacher = bool(teacher_from) or budget.teacher > 0 or budget.bind > 0 or any(
+        budget.steps(s) > 0 for s in ("teach", "flips", "spread"))
+    lm = make_lm() if needs_teacher else TinyCausalLM(32, 1, 2, 4096)
+    if not needs_teacher:
+        print("no stage reads the teacher; the language model is not loaded", flush=True)
+    teacher = Brain(schema, lm, context_lines=context_lines, page_batch=page_batch,
                     read_chunk=read_chunk, call_tokens=call_tokens, d_graph=cfg.d_r if deal_graph else None)
     if freeze_teacher:
         hold_teacher_body(teacher)
@@ -1244,8 +1252,12 @@ def main() -> None:
         train = ([max(train, key=len), near[0]] if os.environ.get("C3_SMOKE_LARGEST") == "1"
                  else near[:2])
         validation = sorted(validation, key=len)[:1]
+        # Every stage the run itself trains, once; a stage the run turned
+        # off (``--stage-steps teach=0``, ``--teacher-steps 0``) stays off.
+        full = budget
         budget = Budget(teacher=1, lines=2, links=1, cards=1, numbers=1, deal=1, open_links=1,
                         teach=1, bind=1)
+        budget = replace(budget, **{f: 0 for f in asdict(budget) if getattr(full, f) == 0})
         caps, ground, view_parts = (16, 8, 4), 4, 1
         global PROGRESS_EVERY, BIND_PARTS
         PROGRESS_EVERY, BIND_PARTS = 1, 1
