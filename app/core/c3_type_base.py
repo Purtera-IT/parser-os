@@ -153,33 +153,72 @@ def _value(atom: Any) -> dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
-def doc_kind(atom: Any) -> str:
-    """The page's ``docType``, as near as an atom can say it.
+#: Every document kind the base trained on: the lowercased lifecycle types
+#: (document_lifecycle/taxonomy.py) the training files carry, plus the three
+#: event kinds and ``file``, training's own bucket for a document of no known
+#: type. Anything else reads as ``file``, so the model never sees a tag it
+#: never trained on.
+TRAINED_KINDS = frozenset({
+    "email", "meeting", "note", "file", "sow_draft", "deal_kit", "site_survey",
+    "estimating_calc", "sow_signed", "site_list", "runbook", "cost_breakdown", "w9",
+    "purchase_order", "rfq", "rate_card", "engineering_design", "install_instructions",
+    "credit_application", "sow", "intake_request", "checklist", "quote", "bom",
+    "vendor_datasheet", "floor_plan", "case_manifest",
+})
+_EMAIL_TYPES = ("email", "msg", "mbox")
 
-    The page takes it from the compiled document (lifecycle type, or the file
-    kind); an atom carries only its source's artifact type, so that stands in,
-    with the two kinds export.py names as events spelled its way: a transcript
-    is a ``meeting``, a pasted HubSpot note a ``note``. A pricing workbook or
-    an estimating calc is recognised by its file's name, so the layer can
-    leave its lines alone."""
+
+def _doc_id(atom: Any) -> str:
+    return str(getattr(atom, "artifact_id", "") or _ref(atom, "artifact_id"))
+
+
+def _event_kind(atom: Any) -> str:
+    """``email``, ``note`` or ``meeting`` when the atom says so, else ''."""
+    art = (_ref(atom, "artifact_type") or "").strip().lower()
+    if art in _EMAIL_TYPES:
+        return "email"
+    if str(_value(atom).get("kind") or "").startswith("hubspot_note"):
+        return "note"
+    if art == "transcript" or "utterance_index" in _locator(atom):
+        return "meeting"
+    return ""
+
+
+def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
+    """A file's lifecycle type, looked up by its bytes' sha256 as the envelope
+    does; else ``deal_kit`` / ``estimating_calc`` by the file's name; else
+    ``file``."""
+    sha = (artifact_sha256 or {}).get(_doc_id(atom))
+    if sha:
+        try:
+            from app.core.document_lifecycle.dataset import lookup
+
+            rec = lookup(sha)
+        except Exception:
+            rec = None
+        kind = str((rec or {}).get("type") or "").strip().lower()
+        if kind:
+            return kind if kind in TRAINED_KINDS else "file"
     name = re.sub(r"[^a-z]", "", _ref(atom, "filename").lower())
     if "dealkit" in name:
         return "deal_kit"
     if _CALC_NAME.search(name):
         return "estimating_calc"
-    kind = str(_value(atom).get("kind") or "")
-    if kind.startswith("hubspot_note"):
-        return "note"
-    art = (_ref(atom, "artifact_type") or "").strip().lower()
-    if art == "transcript" or "utterance_index" in _locator(atom):
-        return "meeting"
-    return art
+    return "file"
 
 
-def skipped(atom: Any) -> bool:
+def doc_kind(atom: Any, artifact_sha256: dict[str, str] | None = None) -> str:
+    """The training files' ``doc_kind`` for this atom's document.
+
+    ``artifact_sha256``: artifact id -> the file's sha256 (the compile
+    manifest's fingerprints); without it a file falls back to its name."""
+    return _event_kind(atom) or _file_kind(atom, artifact_sha256)
+
+
+def skipped(atom: Any, artifact_sha256: dict[str, str] | None = None) -> bool:
     from ml.c3.data import is_deal_kit
 
-    kind = doc_kind(atom)
+    kind = doc_kind(atom, artifact_sha256)
     return kind in _SKIP_KINDS or is_deal_kit(kind)
 
 
@@ -195,14 +234,22 @@ def _section(atom: Any) -> str:
     return str(sheet) if sheet else ""
 
 
+#: The speaker values training saw; anything else is '' (as on ~95% of lines).
+_ROLES = frozenset({"internal", "reseller", "unknown"})
+_SIDES = frozenset({"ours", "theirs"})
+
+
 def _speaker(atom: Any) -> tuple[str, str]:
     """(role, side): the page's ``saidBy``. An email or pasted-note line carries
-    its party (deal_parties); a transcript line only the speaker's role. A line
-    with neither speaks for nobody, as on the page."""
+    its party (deal_parties); a transcript line only the speaker's role. A
+    value training never saw is '', like a line that speaks for nobody."""
     by = _value(atom).get("said_by")
     if isinstance(by, dict):
-        return str(by.get("role") or by.get("role_guess") or ""), str(by.get("side") or "")
-    return str(_locator(atom).get("speaker_role") or ""), ""
+        role, side = str(by.get("role") or by.get("role_guess") or ""), str(by.get("side") or "")
+    else:
+        role, side = str(_locator(atom).get("speaker_role") or ""), ""
+    role, side = role.strip().lower(), side.strip().lower()
+    return (role if role in _ROLES else ""), (side if side in _SIDES else "")
 
 
 def _when(raw: Any) -> float | None:
@@ -233,12 +280,12 @@ def _key(atom: Any, i: int) -> str:
     return str(getattr(atom, "id", "") or getattr(atom, "atom_id", "") or f"atom:{i}")
 
 
-def atoms_to_deal(atoms: list[Any]):
+def atoms_to_deal(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
     """One ``DealExample`` from a compile's atoms (see ``_build``)."""
-    return _build(atoms)[0]
+    return _build(atoms, artifact_sha256)[0]
 
 
-def _build(atoms: list[Any]):
+def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
     """One ``DealExample`` from a compile's atoms, in arrival order.
 
     Field by field, against export.py:
@@ -246,7 +293,9 @@ def _build(atoms: list[Any]):
     * key / atom_id: the atom's id (the page's ``labelKey`` is a label's key,
       not a model input; any stable key reads the same);
     * text: ``raw_text``;
-    * doc_id: ``artifact_id``; doc_kind: ``doc_kind`` above;
+    * doc_id: ``artifact_id``; doc_kind: ``doc_kind`` above, one per
+      document: an artifact any of whose atoms is an email, note or meeting
+      line is that kind throughout;
     * section: the locator's ``section_path`` joined with " > ", else its sheet;
     * speaker_role / speaker_side: ``value.said_by`` role and side, else the
       transcript locator's ``speaker_role``;
@@ -261,7 +310,14 @@ def _build(atoms: list[Any]):
     from ml.c3.data import Atom, DealExample
 
     times: list[float | None] = [_own_time(a) for a in atoms]
-    doc_ids = [str(getattr(a, "artifact_id", "") or _ref(a, "artifact_id")) for a in atoms]
+    doc_ids = [_doc_id(a) for a in atoms]
+    kinds: dict[str, str] = {}
+    for a, d in zip(atoms, doc_ids):
+        if not kinds.get(d):
+            kinds[d] = _event_kind(a)
+    for a, d in zip(atoms, doc_ids):
+        if not kinds[d]:
+            kinds[d] = _file_kind(a, artifact_sha256)
     # A document's arrival is its earliest line's own time, filled forward in
     # the order documents first appear in the compile.
     first: dict[str, float] = {}
@@ -291,7 +347,7 @@ def _build(atoms: list[Any]):
         rows.append(Atom(
             key=key, text=str(getattr(a, "raw_text", "") or ""),
             entered_at=t if t is not None else doc_time.get(d, latest),
-            doc_id=d, doc_kind=doc_kind(a), section=_section(a), order=float(i),
+            doc_id=d, doc_kind=kinds[d], section=_section(a), order=float(i),
             speaker_role=role, speaker_side=side, atom_id=str(getattr(a, "id", "") or "")))
     # Time order is the deal's order: ties keep compile order (DealExample.from_dict).
     rows.sort(key=lambda r: (r.entered_at, r.order))
@@ -300,14 +356,15 @@ def _build(atoms: list[Any]):
     return DealExample(deal_id=deal_id, atoms=rows, company="purtera"), keys
 
 
-def _read(atoms: list[Any]) -> dict[int, tuple[str, float]]:
+def _read(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
+          ) -> dict[int, tuple[str, float]]:
     from ml.c3.predict import read_deal
 
     loaded = get_model()
     if loaded is None:
         return {}
     model, schema, device = loaded
-    deal, keys = _build(atoms)
+    deal, keys = _build(atoms, artifact_sha256)
     doc = read_deal(model, deal, schema, max_atoms=MAX_ATOMS, device=device)
     lines = doc.get("lines") or {}
     out: dict[int, tuple[str, float]] = {}
@@ -318,11 +375,12 @@ def _read(atoms: list[Any]) -> dict[int, tuple[str, float]]:
     return out
 
 
-def classify(atoms: list[Any]) -> dict[int, tuple[str, float]]:
+def classify(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
+             ) -> dict[int, tuple[str, float]]:
     """``{id(atom): (label_type answer, probability)}`` for every atom read.
 
     Reads the whole deal once. Empty when the model is not loaded."""
-    return _read(atoms)
+    return _read(atoms, artifact_sha256)
 
 
 # ----------------------------------------------------------------- shadow

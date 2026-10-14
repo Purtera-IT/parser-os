@@ -2079,7 +2079,15 @@ def compile_project(
         promoted = 0
         try:
             from app.core.typed_atom_classifier import classify_atoms
-            promoted = classify_atoms(atoms)
+            from app.core import c3_type_base as _c3
+            if _c3.enabled():
+                # The C3 base names each file's lifecycle type by its bytes,
+                # as the envelope does; nothing else reads this.
+                promoted = classify_atoms(
+                    atoms, artifact_sha256={fp.artifact_id: fp.sha256 for fp in fingerprints},
+                )
+            else:
+                promoted = classify_atoms(atoms)
         except Exception as exc:
             warnings.append(f"WARNING: typed_atom_classifier failed: {type(exc).__name__}: {exc}")
         if promoted:

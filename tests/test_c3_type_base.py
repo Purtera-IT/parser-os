@@ -82,7 +82,7 @@ def llm(monkeypatch):
 
 
 def _stub_readings(monkeypatch, calls=None):
-    def _classify(atoms):
+    def _classify(atoms, shas=None):
         if calls is not None:
             calls.append(len(atoms))
         by = {a.id: a for a in atoms}
@@ -93,7 +93,7 @@ def _stub_readings(monkeypatch, calls=None):
 
 
 def test_flag_off_never_reads(monkeypatch, llm):
-    def _tripwire(atoms):
+    def _tripwire(atoms, shas=None):
         raise AssertionError("the C3 layer must not run with the flag off")
 
     monkeypatch.setattr(c3, "classify", _tripwire)
@@ -139,7 +139,7 @@ def test_a_deal_kit_line_is_never_acted_on(monkeypatch, llm):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
     atom = _Atom("a_task", _TEXTS["a_task"], ref=_Ref(filename="Example Deal Kit v3.xlsx",
                                                       artifact_type="xlsx"))
-    monkeypatch.setattr(c3, "classify", lambda atoms: {id(atom): ("task", 0.99)})
+    monkeypatch.setattr(c3, "classify", lambda atoms, shas=None: {id(atom): ("task", 0.99)})
     tac.classify_atoms([atom])
     assert atom.atom_type.value == "scope_item"
     assert llm == ["a_task"]
@@ -181,7 +181,7 @@ def test_a_model_that_will_not_load_falls_through(monkeypatch, llm, caplog):
 def test_a_reading_that_raises_leaves_every_atom_alone(monkeypatch, llm):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
 
-    def _raise(atoms):
+    def _raise(atoms, shas=None):
         raise RuntimeError("read failed")
 
     monkeypatch.setattr(c3, "classify", _raise)
@@ -228,10 +228,12 @@ def test_atoms_to_deal_maps_the_export_fields():
     # (export.py's fill) and ties keep compile order.
     assert [r.atom_id for r in deal.atoms] == ["atm3", "atm1", "atm2"]
     assert rows["atm1"].section == "Scope > Wireless"
-    assert rows["atm1"].doc_kind == "docx" and rows["atm1"].doc_id == "doc"
+    # A file the lifecycle dataset does not know reads as training's "file".
+    assert rows["atm1"].doc_kind == "file" and rows["atm1"].doc_id == "doc"
     assert rows["atm2"].doc_kind == "email"
     assert (rows["atm2"].speaker_role, rows["atm2"].speaker_side) == ("reseller", "theirs")
-    assert rows["atm3"].doc_kind == "meeting" and rows["atm3"].speaker_role == "customer"
+    # "customer" is no speaker role training saw: it reads as ''.
+    assert rows["atm3"].doc_kind == "meeting" and rows["atm3"].speaker_role == ""
     assert rows["atm1"].entered_at == rows["atm2"].entered_at
     assert rows["atm3"].entered_at < rows["atm2"].entered_at
 
@@ -258,3 +260,58 @@ def test_atoms_to_deal_reads_through_a_tiny_model(monkeypatch):
     assert set(got) == {id(a) for a in atoms}
     for answer, p in got.values():
         assert answer in answers and 0.0 <= p <= 1.0
+
+
+@pytest.fixture()
+def lifecycle(monkeypatch):
+    """The lifecycle dataset, as a dict of sha256 -> type."""
+    import app.core.document_lifecycle.dataset as ds
+
+    table: dict[str, str] = {}
+    monkeypatch.setattr(ds, "lookup", lambda sha: {"type": table[sha]} if sha in table else None)
+    return table
+
+
+def test_a_file_takes_its_lifecycle_type_by_sha(lifecycle):
+    lifecycle["sha-doc"] = "SOW_DRAFT"
+    deal = c3.atoms_to_deal(_evidence_atoms(), {"doc": "sha-doc", "mail": "sha-mail"})
+    kinds = {r.atom_id: r.doc_kind for r in deal.atoms}
+    assert kinds == {"atm1": "sow_draft", "atm2": "email", "atm3": "meeting"}
+
+
+def test_an_email_is_an_email_whatever_its_sha_says(lifecycle):
+    lifecycle["sha-mail"] = "SOW_DRAFT"
+    deal = c3.atoms_to_deal(_evidence_atoms(), {"mail": "sha-mail"})
+    assert {r.atom_id: r.doc_kind for r in deal.atoms}["atm2"] == "email"
+
+
+def test_a_type_training_never_saw_reads_as_file(lifecycle):
+    lifecycle["sha-doc"] = "WIN_WIRE"
+    deal = c3.atoms_to_deal(_evidence_atoms(), {"doc": "sha-doc"})
+    assert {r.atom_id: r.doc_kind for r in deal.atoms}["atm1"] == "file"
+    assert "win_wire" not in c3.TRAINED_KINDS
+
+
+def test_speaker_values_outside_training_read_empty():
+    a = _Atom("a1", "Made-up line from an email thread about the lobby displays.",
+              ref=_Ref(artifact_type="email"))
+    a.value = {"said_by": {"role_guess": "installer", "side": "OURS"}}
+    row = c3.atoms_to_deal([a]).atoms[0]
+    assert (row.speaker_role, row.speaker_side) == ("", "ours")
+
+
+def test_a_deal_kit_found_by_sha_is_never_acted_on(monkeypatch, llm, lifecycle):
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    lifecycle["sha-kit"] = "DEAL_KIT"
+    # A plain name: only the dataset says it is our pricing workbook.
+    atom = _Atom("a_task", _TEXTS["a_task"], ref=_Ref(filename="workbook.xlsx", artifact_type="xlsx",
+                                                      artifact_id="art1"))
+    monkeypatch.setattr(c3, "classify", lambda atoms, shas=None: {id(atom): ("task", 0.99)})
+    tac.classify_atoms([atom], artifact_sha256={"art1": "sha-kit"})
+    assert atom.atom_type.value == "scope_item"
+    assert llm == ["a_task"]
+    # The same line with no sha is acted on.
+    llm.clear()
+    tac.classify_atoms([atom])
+    assert atom.atom_type.value == "task"
+    assert llm == []

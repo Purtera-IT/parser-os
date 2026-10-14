@@ -594,11 +594,15 @@ def _is_speech(atom: Any) -> bool:
     return False
 
 
-def classify_atoms(atoms: list[Any]) -> int:
+def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None = None) -> int:
     """Promote atoms from the v47 taxonomy where confident.
 
     Mutates ``atom.atom_type`` and ``atom.value`` in place. Returns the
     number of atoms reclassified.
+
+    ``artifact_sha256`` (artifact id -> the file's sha256, from the compile's
+    fingerprints) lets the C3 layer name each file's lifecycle type; every
+    other layer ignores it.
 
     No-op on LLM unreachable / malformed response — atoms keep their
     original types. NEVER demotes a domain-specific type (risk,
@@ -904,12 +908,12 @@ def classify_atoms(atoms: list[Any]) -> int:
                 "addendum_qa",
             }
             _sure = _c3.sure()
-            readings = _c3.classify(atoms)
+            readings = _c3.classify(atoms, artifact_sha256)
             survivors = []
             decided = []
             for a in promotable:
                 res = readings.get(id(a))
-                if res is None or res[1] < _sure or _c3.skipped(a):
+                if res is None or res[1] < _sure or _c3.skipped(a, artifact_sha256):
                     survivors.append(a)
                     continue
                 answer, p = res
