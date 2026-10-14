@@ -173,3 +173,17 @@ def test_head_fit_trains_free_heads_on_cached_rows_and_beats_the_start():
         model.add_free_head(k)
     best, state = fit_heads(model, tr, tr, keys, epochs=150, check_every=50, lr=5e-2, batch=64)
     assert state is not None and best > 0.9
+
+
+def test_a_run_that_does_not_score_the_holdout_may_leave_its_files_out():
+    from ml.c3.loop import lock_split
+
+    schema = load_schema()
+    train = featurize(_deal(), schema)
+    budget = Budget(teacher=0, lines=1, links=0, cards=0, numbers=0, deal=0, open_links=0, teach=0)
+    _, result = run_base([train], [], schema, budget, fit_parts=0, score_holdout=False)
+    assert result.holdout_ids == () and result.holdout_scores == {}
+    with pytest.raises(ValueError):
+        lock_split([train], [])
+    with pytest.raises(ValueError, match="fixed holdout"):
+        lock_split([replace(train, deal_id="010194")], [], need_holdout=False)

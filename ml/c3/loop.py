@@ -111,10 +111,13 @@ def source_deal_id(deal_id: str) -> str:
     return head if sep else deal_id
 
 
-def lock_split(train: list[Batch], holdout: list[Batch]) -> tuple[list[Batch], list[Batch]]:
+def lock_split(train: list[Batch], holdout: list[Batch],
+               need_holdout: bool = True) -> tuple[list[Batch], list[Batch]]:
     """Refuse a holdout deal that is also a training deal, including its windows,
-    and any fixed holdout (``holdout.FIXED_HOLDOUT``) in training."""
-    if not train or not holdout:
+    and any fixed holdout (``holdout.FIXED_HOLDOUT``) in training. A run that
+    does not score the holdout may leave it out; the fixed holdout still
+    cannot train."""
+    if not train or (need_holdout and not holdout):
         raise ValueError("The base needs both a training set and a holdout")
     train_ids = [b.deal_id for b in train]
     hold_ids = [b.deal_id for b in holdout]
@@ -792,7 +795,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     """
     if READY_FOR_TRAINING:
         raise RuntimeError("This loop must not be the path that flips the release flag")
-    train, holdout = lock_split(train, holdout)
+    train, holdout = lock_split(train, holdout, need_holdout=score_holdout)
     validation = list(validation or [])
     lock_validation(train, holdout, validation)
     scale = part_scales(train) if balance else {b.deal_id: 1.0 for b in train}
@@ -1141,7 +1144,9 @@ def live_student(schema: Schema, encoder_name: str) -> C3Model:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Base loop. Does not release a model.")
     parser.add_argument("--train", nargs="+", required=True)
-    parser.add_argument("--holdout", nargs="+", required=True)
+    parser.add_argument("--holdout", nargs="*", default=[],
+                        help="The labeling holdout. Required with --score-holdout; without it the "
+                             "files may be left out (the fixed holdout still cannot train)")
     parser.add_argument("--validation", nargs="*", default=[],
                         help="Deals scored after every stage to choose steps; never trained")
     parser.add_argument("--steps", type=int, default=20)
@@ -1247,7 +1252,7 @@ def main() -> None:
     for note in train_notes + hold_notes + val_notes:
         print("note", note)
     held = {source_deal_id(b.deal_id) for b in holdout}
-    if not args.tiny and not set(LABEL_HOLDOUT) <= held:
+    if not args.tiny and (args.score_holdout or args.holdout) and not set(LABEL_HOLDOUT) <= held:
         raise SystemExit("The base scores the whole labeling holdout. Missing: "
                          + ", ".join(i for i in LABEL_HOLDOUT if i not in held))
     if args.tiny:
