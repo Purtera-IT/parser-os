@@ -672,3 +672,25 @@ def test_a_checkpoint_with_the_hindsight_copy_loads_into_a_fresh_model(tmp_path)
     assert load_checkpoint(path, fresh, schema_sha256="abc") == 7
     for (name, a), b in zip(trained.encoder.state_dict().items(), fresh.encoder.state_dict().values()):
         assert (a == b).all(), name
+
+
+def test_type_compare_scores_base_and_parser_on_the_same_lines():
+    from ml.c3.type_compare import compare
+
+    read = {"lines": {
+        "a": {"reads": {"col:label_type": {"answer": "task", "p": 0.95}}},
+        "b": {"reads": {"col:label_type": {"answer": "task", "p": 0.6}}},
+        "c": {"reads": {"col:label_type": {"answer": "rate_card", "p": 0.9}}},
+    }}
+    labels = [
+        {"label_key": "a", "label_type": "task", "parser_type": "task"},
+        {"label_key": "b", "label_type": "task", "parser_type": "scope_item"},
+        {"label_key": "c", "label_type": "rate_card", "parser_type": "service_line"},
+        {"label_key": "d", "label_type": "task", "parser_type": "task"},   # no read: left out
+    ]
+    out = compare(read, labels)
+    assert out["lines"] == 3
+    assert out["parser"]["task"] == {"labeled": 2, "said": 1, "right": 1, "recall": 0.5, "precision": 1.0}
+    assert out["base"]["exact"] == 1.0
+    assert out["parser"]["group"] == 1.0            # each miss stays inside its group
+    assert out["base_when_sure"]["0.9"]["n"] == 2

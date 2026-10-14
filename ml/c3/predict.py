@@ -225,9 +225,12 @@ def score_holdout(model: C3Model, deal: DealExample, schema: Schema, *, max_atom
 def _model(schema: Schema, args) -> tuple[C3Model, str]:
     if args.tiny:
         return C3Model(schema, SMALL), "cpu"
-    if not torch.cuda.is_available():
-        raise SystemExit("Reading with the live base needs CUDA. --tiny is the CPU check.")
-    return live_student(schema, args.encoder).to("cuda"), "cuda"
+    device = args.device
+    if device == "auto":
+        device = ("cuda" if torch.cuda.is_available()
+                  else "mps" if torch.backends.mps.is_available() else "cpu")
+    # The base is a 400M-parameter reader: a GPU is faster, not required.
+    return live_student(schema, args.encoder).to(device), device
 
 
 def main() -> None:
@@ -238,6 +241,7 @@ def main() -> None:
     p.add_argument("--max-atoms", type=int, default=4096)
     p.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     p.add_argument("--tiny", action="store_true")
+    p.add_argument("--device", default="auto", help="cuda, mps or cpu (auto picks the first present)")
     p.add_argument("--link-min", type=float, default=0.3)
     p.add_argument("--unsure", type=float, default=0.6)
     p.add_argument("--governs-top", type=int, default=5)
