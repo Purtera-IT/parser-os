@@ -29,8 +29,9 @@ def _rows(payload: Any) -> list[dict[str, Any]]:
     return [r for r in payload if isinstance(r, dict)]
 
 
-def compare(read: dict[str, Any], labels: list[dict[str, Any]], *,
-            focus: str = "task", sure: tuple[float, ...] = (0.5, 0.7, 0.9)) -> dict[str, Any]:
+def compare(read: dict[str, Any], labels: list[dict[str, Any]], *, focus: str = "task",
+            sure: tuple[float, ...] = (0.5, 0.7, 0.9), typed: bool = False) -> dict[str, Any]:
+    """``typed``: score the base's best named type (``_keep`` set aside), not its top answer."""
     coarse = {t["name"]: t["coarse"] for t in json.loads(TYPES_PATH.read_text())["types"]}
     lines = read.get("lines") or {}
     rows = []
@@ -38,7 +39,10 @@ def compare(read: dict[str, Any], labels: list[dict[str, Any]], *,
         gold, parser = lb.get("label_type"), lb.get("parser_type")
         got = (lines.get(lb.get("label_key")) or {}).get("reads", {}).get("col:label_type")
         if gold and parser and got:
-            rows.append((gold, parser, got["answer"], float(got.get("p", 0.0))))
+            if typed and "typed" in got:
+                rows.append((gold, parser, got["typed"], float(got.get("typed_p", 0.0))))
+            else:
+                rows.append((gold, parser, got["answer"], float(got.get("p", 0.0))))
 
     def side(pairs: list[tuple[str, str]]) -> dict[str, Any]:
         n = len(pairs)
@@ -73,10 +77,11 @@ def main() -> None:
     p.add_argument("--read", required=True)
     p.add_argument("--labels", required=True)
     p.add_argument("--focus", default="task", help="the type to report recall and precision for")
+    p.add_argument("--typed", action="store_true", help="score the best named type, _keep set aside")
     args = p.parse_args()
     read = json.loads(Path(args.read).read_text(encoding="utf-8"))
     labels = _rows(json.loads(Path(args.labels).read_text(encoding="utf-8")))
-    print(json.dumps(compare(read, labels, focus=args.focus), indent=2))
+    print(json.dumps(compare(read, labels, focus=args.focus, typed=args.typed), indent=2))
 
 
 if __name__ == "__main__":

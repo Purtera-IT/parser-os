@@ -694,3 +694,13 @@ def test_type_compare_scores_base_and_parser_on_the_same_lines():
     assert out["base"]["exact"] == 1.0
     assert out["parser"]["group"] == 1.0            # each miss stays inside its group
     assert out["base_when_sure"]["0.9"]["n"] == 2
+
+
+def test_type_compare_can_score_the_best_named_type():
+    from ml.c3.type_compare import compare
+
+    read = {"lines": {"a": {"reads": {"col:label_type": {"answer": "_keep", "p": 0.6,
+                                                         "typed": "rate_card", "typed_p": 0.3}}}}}
+    labels = [{"label_key": "a", "label_type": "rate_card", "parser_type": "service_line"}]
+    assert compare(read, labels)["base"]["exact"] == 0.0
+    assert compare(read, labels, typed=True)["base"]["exact"] == 1.0

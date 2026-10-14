@@ -88,9 +88,20 @@ def _readings(out, rows: list[int], schema: Schema) -> list[dict[str, Any]]:
                 reads[r][key] = {"answers": [_answer(opp, j) for j, h in enumerate(hit) if h],
                                  "p": [round(x, 4) for x in pr]}
         else:
-            top, j = lg.softmax(-1).max(-1)
+            prob = lg.softmax(-1)
+            top, j = prob.max(-1)
             for r, (pj, jj) in enumerate(zip(top.tolist(), j.tolist())):
                 reads[r][key] = {"answer": _answer(opp, jj), "p": round(pj, 4)}
+            if key == "col:label_type":
+                # "_keep" says keep the line, not what it is: ``typed`` is the
+                # best named type, for a consumer that needs one.
+                keep = [k for k, a in enumerate(opp.answers) if a.value == "_keep"]
+                if keep:
+                    prob[:, keep] = 0.0
+                    tp, tj = prob.max(-1)
+                    for r, (pj, jj) in enumerate(zip(tp.tolist(), tj.tolist())):
+                        reads[r][key]["typed"] = _answer(opp, jj)
+                        reads[r][key]["typed_p"] = round(pj, 4)
     for key, values in out.numbers.items():
         opp = by_key.get(key)
         if opp is not None and opp.kind == NUMBER:
