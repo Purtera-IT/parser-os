@@ -652,3 +652,23 @@ def test_a_checkpoint_saved_with_the_torch_version_loads_back(tmp_path):
     torch.save({"step": 5, "schema_sha256": "abc", "torch": torch.__version__,
                 "state": {k: v.detach().cpu() for k, v in model.state_dict().items()}}, old)
     assert load_checkpoint(old, model, schema_sha256="abc") == 5
+
+
+def test_a_checkpoint_with_the_hindsight_copy_loads_into_a_fresh_model(tmp_path):
+    import copy
+    from ml.c3.gates import load_checkpoint, save_checkpoint
+    from ml.c3.model import C3Config, C3Model
+
+    schema = load_schema()
+    cfg = C3Config(d_text=32, d=32, n_layers=1, n_heads=2, d_r=16, d_q=8,
+                   d_head=16, residual_dim=4, box_dim=4, n_policy_atoms=2, policy_rank=2)
+    trained = C3Model(schema, cfg)
+    # What hindsight_targets() leaves on a model that trained.
+    trained.teacher = copy.deepcopy(trained.encoder)
+    trained.teacher_proj = copy.deepcopy(trained.q_target)
+    path = tmp_path / "run.pt"
+    save_checkpoint(path, trained, step=7, schema_sha256="abc")
+    fresh = C3Model(schema, cfg)
+    assert load_checkpoint(path, fresh, schema_sha256="abc") == 7
+    for (name, a), b in zip(trained.encoder.state_dict().items(), fresh.encoder.state_dict().values()):
+        assert (a == b).all(), name

@@ -129,7 +129,13 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str) -> 
         payload = torch.load(path, map_location="cpu", weights_only=True)
     if payload.get("schema_sha256") != schema_sha256:
         raise ValueError("Checkpoint schema hash does not match this model")
-    model.load_state_dict(payload["state"])
+    state = payload["state"]
+    # The EMA hindsight copy (teacher, teacher_proj) is built lazily during
+    # training; a model that has not built it (predict) reads without it.
+    for name in ("teacher", "teacher_proj"):
+        if getattr(model, name, None) is None:
+            state = {k: v for k, v in state.items() if not k.startswith(name + ".")}
+    model.load_state_dict(state)
     return int(payload["step"])
 
 
