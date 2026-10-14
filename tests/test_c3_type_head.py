@@ -139,7 +139,7 @@ def test_a_failed_gate_stops_the_run_and_the_checks_are_saved(tmp_path):
         validation=[val], free_heads=(KEY,), head_weight={KEY: 20.0}, check_every=1,
         gates=parse_gates(["lines@2.fit_exact>=1.01"]), score_holdout=False)
     checks = json.loads((tmp_path / "run.pt.checks.json").read_text())
-    assert set(checks) == {"lines@1", "lines@2"}
+    assert set(checks) == {"start", "lines@1", "lines@2"}
     assert {"fit_exact", "valid_exact", "valid_routed_exact", "valid_focus_recall"} <= set(checks["lines@1"])
     assert "links" not in result.stage_loss and "lines" in result.stage_loss
     assert (tmp_path / "run.pt.lines@1").exists()

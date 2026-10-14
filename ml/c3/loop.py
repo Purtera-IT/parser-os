@@ -934,6 +934,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     if baseline:
         print(f"validation baseline single_heads={len(baseline)} "
               f"majority={sum(baseline.values()) / len(baseline):.4f}", flush=True)
+    # Where the run starts, read the same way as every later check: a start
+    # the checks already disagree with (a different part size, say) shows
+    # here, before any step moves it.
+    if fit_pool or validation:
+        check("start")
     teacher_ready = False
     for stage in student_stages:
         fresh = False
