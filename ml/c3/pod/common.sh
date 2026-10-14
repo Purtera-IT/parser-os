@@ -10,9 +10,11 @@ export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8} MKL_NUM_THREADS=${MKL_NUM_THREADS:-
 export TOKENIZERS_PARALLELISM=false
 mkdir -p "$C3/train" "$C3/out" "$HF_HOME"
 # The fixed split (ml/c3/holdout.py holds the holdout too).
-TRAIN="000002 010042 010050 010082 010115 000123 010144 010003 010353 010127 000061 010045 010224"
-VALIDATION="010087 010043 010149"
-HOLDOUT="010172 010038 010387 010194"
+# Run C (2026-10-14): no new deals to label, so two validation and two holdout
+# deals train; 010043 checks the run and 010038 / 010387 stay the test.
+TRAIN="000002 010042 010050 010082 010115 000123 010144 010003 010353 010127 000061 010045 010224 010087 010149 010172 010194"
+VALIDATION="010043"
+HOLDOUT="010038 010387"
 files() { for d in "$@"; do echo "$C3/train/$d.json"; done; }
 # Less fragmentation across the varied page and part sizes.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

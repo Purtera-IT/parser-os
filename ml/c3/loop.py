@@ -895,7 +895,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         checks[at] = row
         if row:
             print(f"check {at} " + " ".join(f"{k}={v:.3f}" for k, v in row.items()
-                                            if not k.endswith("n")), flush=True)
+                                            if not k.endswith(("_n", "n_"))), flush=True)
         if checkpoint:
             Path(f"{checkpoint}.checks.json").write_text(json.dumps(checks, indent=1, sort_keys=True),
                                                          encoding="utf-8")
@@ -1264,7 +1264,8 @@ def main() -> None:
         print("model", "tiny")
         # Real deals have hundreds of lines: the stand-in reads them 8 pages at a time.
         _, result = run_base(train, holdout, schema, budget, checkpoint=args.checkpoint or None,
-                             validation=validation, page_batch=8, **checks)
+                             validation=validation, page_batch=8,
+                             score_holdout=args.score_holdout or bool(holdout), **checks)
     else:
         from .lm import HFCausalLM
 
