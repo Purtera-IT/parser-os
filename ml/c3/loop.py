@@ -45,7 +45,7 @@ from .losses import BrainWeights, LossWeights, brain_loss, c3_loss, teacher_chun
 from .longdeal import plan_long_deal
 from .model import C3Config, C3Model
 from .readiness import digest
-from .schema import GROUP, PAIR, Schema, load_schema
+from .schema import GROUP, NUMBER, PAIR, RELATION, Schema, load_schema
 from .supercharge import TeachWeights, supercharge_loss, teacher_view, weighted
 
 SMALL = C3Config(d_text=64, d=64, n_layers=1, n_heads=4, d_r=32, d_q=16, d_head=32,
@@ -551,11 +551,15 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
                   teacher: Brain | None, view, device: str,
                   lesson: TeachWeights | None = None,
                   unlabeled_keys: set[str] | None = None,
-                  scale: float = 1.0) -> torch.Tensor:
+                  scale: float = 1.0, shares: dict[str, list[float]] | None = None) -> torch.Tensor:
     model.train()
     with _autocast(device):
         kept: dict = {}
-        loss, _ = c3_loss(model, batch, weights, judgment_sizes=sizes, keep=kept)
+        loss, parts = c3_loss(model, batch, weights, judgment_sizes=sizes, keep=kept)
+        if shares is not None:
+            # Each term as it enters the total, so a stage shows what it trained on.
+            for k, v in parts.items():
+                shares.setdefault(k, []).append(getattr(weights, k) * v)
         if teacher is not None and view is not None:
             # The lesson reads the same forward pass as the gold terms: a
             # second trunk pass would double what backward holds.
@@ -659,6 +663,96 @@ def _score_oneshot_inner(model: C3Model, batch: Batch) -> dict[str, dict[str, fl
     return scores
 
 
+TYPE_KEY = "col:label_type"
+# Documents the live parser never reads (old manual Deal Kits and their
+# estimating calcs): left out of the type checks, as in type_compare.
+CHECK_SKIP_DOC_KINDS = ("deal_kit", "estimating_calc")
+
+
+def type_check(model: C3Model, batches: list[Batch], device: str = "cpu", *,
+               key: str = TYPE_KEY, focus: str = "task", sure: float = 0.5) -> dict[str, float]:
+    """Line type on labeled lines, the way the promote path will use it.
+
+    ``exact``: top answer. ``typed_exact``: best named type, ``_keep`` set
+    aside. ``focus_recall`` / ``focus_precision``: for ``focus`` (task).
+    ``routed_exact``: the base where it is at least ``sure``, the parser's
+    classifier elsewhere, on lines the parser typed; ``routed_share`` is the
+    share the base takes. ``parser_exact`` is the classifier alone on those
+    lines. Counts and rates only."""
+    opp = model.schema.by_key()[key]
+    names = [a.value for a in opp.answers]
+    t, keep = names.index(focus) if focus in names else -1, names.index("_keep") if "_keep" in names else -1
+    n = hit = typed = real = said = both = 0
+    rn = rhit = phit = took = 0
+    model.eval()
+    with torch.no_grad(), _autocast(device):
+        for b in batches:
+            gold = b.targets.get(key)
+            if not gold or all(y == IGNORE for y in gold):
+                continue
+            logits = model(b.oneshot(), company=b.company or None).logits[key].float()
+            prob = logits.softmax(-1)
+            p, pred = prob.max(-1)
+            named = prob.clone()
+            if keep >= 0:
+                named[:, keep] = -1
+            named = named.argmax(-1)
+            parser = b.parser_targets.get(key) or [IGNORE] * len(gold)
+            for i, y in enumerate(gold):
+                if y == IGNORE or str(b.doc_kind[i] or "").lower() in CHECK_SKIP_DOC_KINDS:
+                    continue
+                g = int(pred[i])
+                n += 1
+                hit += g == y
+                typed += int(named[i]) == y
+                real += y == t
+                said += g == t
+                both += g == y == t
+                if parser[i] != IGNORE:
+                    rn += 1
+                    phit += parser[i] == y
+                    sure_here = float(p[i]) >= sure
+                    took += sure_here
+                    rhit += (g if sure_here else parser[i]) == y
+    return {"n": float(n), "exact": hit / n if n else 0.0, "typed_exact": typed / n if n else 0.0,
+            "focus_recall": both / real if real else 0.0,
+            "focus_precision": both / said if said else 0.0,
+            "routed_n": float(rn), "routed_exact": rhit / rn if rn else 0.0,
+            "routed_share": took / rn if rn else 0.0, "parser_exact": phit / rn if rn else 0.0}
+
+
+def parse_gates(specs: list[str]) -> list[tuple[str, str, str, float]]:
+    """``lines.valid_exact>=0.42`` or ``lines@10.fit_exact>=0.5``: after that
+    stage (or that pass of it), the check must clear the bar or the run stops.
+    ``fit_*`` reads the training-deal sample, ``valid_*`` the validation deals."""
+    out = []
+    for spec in specs:
+        for op in (">=", "<="):
+            if op in spec:
+                left, value = spec.split(op, 1)
+                at, metric = left.strip().rsplit(".", 1)
+                out.append((at, metric, op, float(value)))
+                break
+        else:
+            raise ValueError(f"A gate needs >= or <=: {spec}")
+    return out
+
+
+def gate_failures(gates: list[tuple[str, str, str, float]], at: str,
+                  checks: dict[str, float]) -> list[str]:
+    bad = []
+    for where, metric, op, bar in gates:
+        if where != at:
+            continue
+        if metric not in checks:
+            bad.append(f"{metric} was not measured")
+            continue
+        got = checks[metric]
+        if (got < bar) if op == ">=" else (got > bar):
+            bad.append(f"{metric}={got:.3f} needs {op}{bar}")
+    return bad
+
+
 def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = None,
              budget: Budget | None = None, cfg: C3Config = SMALL, lr: float = 3e-3,
              seed: int = 0,
@@ -683,7 +777,13 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              validation: list[Batch] | None = None,
              balance: bool = True,
              encoder_lr: float | None = None,
-             score_holdout: bool = True) -> tuple[C3Model, BaseRun]:
+             score_holdout: bool = True,
+             head_weight: dict[str, float] | None = None,
+             loss_weight: dict[str, float] | None = None,
+             free_heads: tuple[str, ...] = (),
+             fit_parts: int = 8,
+             check_every: int = 0,
+             gates: list[tuple[str, str, str, float]] | None = None) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
@@ -760,8 +860,41 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             save_teacher(f"{checkpoint}.teacher", teacher, "teacher")
 
     model = model or C3Model(schema, cfg)
+    for key in free_heads:
+        if key == "all":
+            for o in schema.opportunities:
+                if o.universal and o.kind not in (RELATION, NUMBER) and len(o.answers) > 1:
+                    model.add_free_head(o.key)
+        else:
+            model.add_free_head(key)
     model.to(device)
     _freeze_link_gate(model, False)
+    gates = list(gates or [])
+    # The fit check reads a fixed sample of training parts: a base that cannot
+    # type the lines it trained on is under-fit, whatever validation says.
+    fit_pool = (sorted(random.Random(seed + 1).sample(train, fit_parts), key=lambda b: b.deal_id)
+                if fit_parts and len(train) > fit_parts else (train if fit_parts else []))
+    checks: dict[str, dict[str, float]] = {}
+    stopped = ""
+
+    def check(at: str) -> list[str]:
+        row: dict[str, float] = {}
+        if TYPE_KEY in schema.by_key():
+            if fit_pool:
+                row.update({f"fit_{k}": v for k, v in type_check(model, fit_pool, device).items()})
+            if validation:
+                row.update({f"valid_{k}": v for k, v in type_check(model, validation, device).items()})
+        checks[at] = row
+        if row:
+            print(f"check {at} " + " ".join(f"{k}={v:.3f}" for k, v in row.items()
+                                            if not k.endswith("n")), flush=True)
+        if checkpoint:
+            Path(f"{checkpoint}.checks.json").write_text(json.dumps(checks, indent=1, sort_keys=True),
+                                                         encoding="utf-8")
+        bad = gate_failures(gates, at, row)
+        if bad:
+            print(f"GATE FAILED at {at}: " + "; ".join(bad), flush=True)
+        return bad
     opt = _student_optimizer(model, lr, adamw, encoder_lr)
     lesson_stages = {"teach", "flips", "spread"}
     student_stages = []
@@ -807,12 +940,18 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 save_teacher(f"{checkpoint}.teacher", teacher, "bind")
             continue
         weights, sizes = gold_weights("deal" if stage in ("open_links",) or stage in lesson_stages else stage)
+        if head_weight:
+            weights = replace(weights, head=dict(head_weight))
+        if loss_weight:
+            # Only terms the stage already trains: a 0 in gold_weights stays 0.
+            weights = replace(weights, **{k: v for k, v in loss_weight.items() if getattr(weights, k)})
         use_teacher = stage in lesson_stages
         lesson, allowed = _lesson(stage, seen) if use_teacher else (None, None)
         steps = budget.steps(stage)
         stage_losses: list[float] = []
+        shares: dict[str, list[float]] = {}
         started, done = time.time(), 0
-        for _ in range(steps):
+        for pass_i in range(steps):
             # The teacher's view is read once per lesson stage (it follows the
             # student's deal graph from stage to stage, not step to step).
             if use_teacher and (views is None or (teacher.graph is not None and not fresh)):
@@ -845,7 +984,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 step_loss = _student_step(model, opt, batch, weights, sizes,
                                          teacher if use_teacher else None,
                                          views.get(batch.deal_id) if use_teacher and views else None,
-                                         device, lesson, allowed, scale[batch.deal_id])
+                                         device, lesson, allowed, scale[batch.deal_id], shares)
                 _finite(step_loss, stage)
                 stage_losses.append(float(step_loss.detach()))
                 completed += 1
@@ -853,9 +992,20 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 _progress(stage, done, steps * len(train), started)
                 if sched is not None:
                     sched.step()
+            passed = pass_i + 1
+            if check_every and passed % check_every == 0 and passed < steps:
+                at = f"{stage}@{passed}"
+                if checkpoint:
+                    save_checkpoint(f"{checkpoint}.{at}", model, step=completed, schema_sha256=schema_sha)
+                if check(at):
+                    stopped = at
+                    break
         if stage_losses:
             stage_loss[stage] = sum(stage_losses) / len(stage_losses)
             print(f"stage {stage} loss {stage_loss[stage]:.4f}", flush=True)
+            means = {k: sum(v) / len(v) for k, v in shares.items() if v}
+            top = sorted(((k, m) for k, m in means.items() if abs(m) > 1e-4), key=lambda kv: -abs(kv[1]))
+            print(f"stage {stage} terms " + " ".join(f"{k}={m:.3f}" for k, m in top), flush=True)
         if validation and steps:
             pooled = pool_scores([_score_oneshot(model, b, device) for b in validation])
             validation_scores[stage] = pooled
@@ -873,6 +1023,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                     f"{k}={pooled[k]['exact']:.3f}"
                     + (f"/maj{baseline[k]:.3f}" if k in baseline else "") + f"(n={int(pooled[k]['n'])})"
                     for k in watched), flush=True)
+        if steps and not stopped and check(stage):
+            stopped = stage
         if checkpoint and completed:
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
             # Every stage keeps its own copy, so a later stage that makes
@@ -881,9 +1033,12 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             if validation_scores:
                 Path(f"{checkpoint}.validation.json").write_text(
                     json.dumps(validation_scores, indent=1, sort_keys=True), encoding="utf-8")
-    if not teacher_ready:
+        if stopped:
+            print(f"run stopped at {stopped}: a gate failed; later stages did not run", flush=True)
+            break
+    if not teacher_ready and not stopped:
         train_teacher()
-    if checkpoint and budget.teacher:
+    if checkpoint and budget.teacher and teacher_ready:
         save_teacher(f"{checkpoint}.teacher", teacher, "end")
     if checkpoint and completed:
         save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
@@ -1023,7 +1178,40 @@ def main() -> None:
     parser.add_argument("--score-holdout", action="store_true",
                         help="Score the holdout here. Off for the live runs: the winner is scored "
                              "once with `python -m ml.c3.predict --score`")
+    parser.add_argument("--head-weight", action="append", default=[],
+                        help="A question's share of the heads loss, e.g. col:label_type=20 (repeat)")
+    parser.add_argument("--loss-weight", action="append", default=[],
+                        help="Scale a loss term in every stage that trains it, e.g. why_align=0.1 (repeat)")
+    parser.add_argument("--free-head", action="append", default=[],
+                        help="Give this question one free weight row per answer, e.g. col:label_type, "
+                             "or all for every universal class question")
+    parser.add_argument("--check-every", type=int, default=0,
+                        help="Also check line type (and save a copy) every N passes inside a stage")
+    parser.add_argument("--fit-parts", type=int, default=8,
+                        help="Training parts the fit check reads (0 skips it)")
+    parser.add_argument("--gate", action="append", default=[],
+                        help="Stop the run when a check misses its bar, e.g. lines@5.fit_exact>=0.5 "
+                             "or lines.valid_exact>=0.45 (repeat)")
     args = parser.parse_args()
+    head_weight = {}
+    for spec in args.head_weight:
+        key, _, w = spec.rpartition("=")
+        if not key:
+            raise SystemExit(f"--head-weight: cannot read {spec!r}")
+        head_weight[key] = float(w)
+    loss_weight = {}
+    for spec in args.loss_weight:
+        key, _, w = spec.partition("=")
+        if key not in LossWeights.__dataclass_fields__ or key in ("space", "head"):
+            raise SystemExit(f"--loss-weight: no loss term {key!r}")
+        loss_weight[key] = float(w)
+    unknown = [k for k in list(head_weight) + args.free_head
+               if k != "all" and k not in load_schema().by_key()]
+    if unknown:
+        raise SystemExit("Unknown question: " + ", ".join(unknown))
+    gates = parse_gates(args.gate)
+    checks = dict(head_weight=head_weight, loss_weight=loss_weight, free_heads=tuple(args.free_head),
+                  fit_parts=args.fit_parts, check_every=args.check_every, gates=gates)
     require_live_teacher("" if args.tiny else args.teacher, args.tiny)
     schema = load_schema()
     teacher_steps = args.steps if args.teacher_steps is None else args.teacher_steps
@@ -1066,7 +1254,7 @@ def main() -> None:
         print("model", "tiny")
         # Real deals have hundreds of lines: the stand-in reads them 8 pages at a time.
         _, result = run_base(train, holdout, schema, budget, checkpoint=args.checkpoint or None,
-                             validation=validation, page_batch=8)
+                             validation=validation, page_batch=8, **checks)
     else:
         from .lm import HFCausalLM
 
@@ -1095,7 +1283,7 @@ def main() -> None:
             teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=caps,
             view_ground_rows=ground, view_parts=view_parts, deal_graph=True,
             validation=validation, encoder_lr=args.encoder_lr if released else None,
-            score_holdout=args.score_holdout, teacher_from=args.teacher_from or None)
+            score_holdout=args.score_holdout, teacher_from=args.teacher_from or None, **checks)
     print("train", " ".join(result.train_ids))
     print("holdout", " ".join(result.holdout_ids))
     print("validation", " ".join(result.validation_ids) or "(none)")

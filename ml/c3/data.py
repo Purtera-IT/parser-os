@@ -597,6 +597,10 @@ class Batch:
     #: Each row's line key (label_key, or a Dropped card's own key), so a
     #: prediction can be written back to the line it is about. Never an input.
     keys: list[str] = field(default_factory=list)
+    #: What the parser's classifier said, by opportunity (class index or
+    #: IGNORE). Never an input or a target: the training checks score the
+    #: base-where-sure, parser-elsewhere split with it.
+    parser_targets: dict[str, list[int]] = field(default_factory=dict)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -1525,7 +1529,12 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     by_key_all = schema.by_key()
     type_opp = by_key_all.get("col:label_type")
     negatives: dict[str, list[list[int]]] = {}
+    parser_targets: dict[str, list[int]] = {}
     if type_opp is not None:
+        said = [type_opp.index(t) if (t := str((a.label or {}).get("parser_type") or "")) else None
+                for a in atoms]
+        if any(ix is not None for ix in said):
+            parser_targets[type_opp.key] = [IGNORE if ix is None else ix for ix in said]
         col = [[] for _ in range(n)]
         for i, a in enumerate(atoms):
             lb = a.label
@@ -1678,7 +1687,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         pixels=[a.pixels or _pixels(None) for a in atoms],
         geometry=[a.geometry or _geometry({}) for a in atoms],
         link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
-        keys=[a.key for a in atoms])
+        keys=[a.key for a in atoms], parser_targets=parser_targets)
 
 
 def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:

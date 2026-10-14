@@ -49,6 +49,9 @@ class LossWeights:
     literals: float = 0.4          # unique in-line spans of open value strings
     deal_numbers: float = 0.2      # deal-answer site count
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
+    # Optional per-question weight in the heads average. The average is over
+    # the weights, so line type at 20 is ~20 of ~90 shares, not 1 of ~70.
+    head: dict[str, float] = field(default_factory=dict)
 
 
 def row_weights(batch: Batch, device) -> torch.Tensor:
@@ -141,14 +144,15 @@ def entity_loss(out: C3Output, batch: Batch, tau: float = 0.1) -> torch.Tensor:
 def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
                 layer: str) -> tuple[torch.Tensor, torch.Tensor]:
     dev = out.r.device
-    ce, num, terms = out.r.new_zeros(()), out.r.new_zeros(()), 0
+    ce, num, terms = out.r.new_zeros(()), out.r.new_zeros(()), 0.0
     rw = row_weights(batch, dev)
     for opp in model.schema.select(layer=layer):
         if opp.key not in out.logits:
             continue
         if has_answers(batch, opp.key):
-            ce = ce + w.space.get(opp.space, 1.0) * answer_loss(out.logits[opp.key], batch, opp.key, rw)
-            terms += 1
+            share = w.head.get(opp.key, 1.0)
+            ce = ce + share * w.space.get(opp.space, 1.0) * answer_loss(out.logits[opp.key], batch, opp.key, rw)
+            terms += share
         if opp.kind == NUMBER and opp.key in out.numbers:
             vals = batch.numbers_target.get(opp.key, [])
             mask = torch.tensor([v is not None for v in vals], device=dev)

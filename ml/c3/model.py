@@ -290,6 +290,9 @@ class C3Model(nn.Module):
         self.space_in = nn.ModuleDict({s: nn.Linear(c.d_r + (c.d_q if s == "consequence" else 0),
                                                     c.d_head) for s in spaces})
         self.heads = nn.ModuleDict({s: DescribedHead(c.d_text, c.d_head, c.n_folds) for s in spaces})
+        # Opt-in free weights per answer, on top of the described logits
+        # (add_free_head). Empty by default, so older checkpoints load as before.
+        self.free_heads = nn.ModuleDict()
         self.relation_head = DescribedRelation(c.d_text, c.d_head, c.n_folds)
         self.rel_in = nn.Linear(c.d_r, c.d_head)
         # One hop over the links this model just proposed. Zero at init, so a
@@ -535,6 +538,31 @@ class C3Model(nn.Module):
                     out.numbers[o.key] = nums[:, j]
             self._read(out, x, opps, desc, bank, bank_emb, "universal", "",
                        self.reader_universal, self.compiler_universal, head)
+            for o in opps:
+                if o.key in self.free_heads:
+                    free = self.free_heads[o.key](torch.cat([x, out.h.to(x.dtype)], -1))
+                    out.logits[o.key] = out.logits[o.key] + free.to(out.logits[o.key].dtype)
+
+    def add_free_head(self, key: str) -> nn.Linear:
+        """One free weight row per answer of a universal opportunity, added to
+        its described logits. Zero at init, so the model reads as before until
+        training opens it. A described head has no per-answer weight of its
+        own: answers live where their descriptions put them, and many answers
+        share one projection. This lets a busy head (line type) separate them.
+        It reads the head's input and the line's deal-graph state ``h``, which
+        carries the line's own text features straight through the residual
+        stream: a plain linear read of those features already types lines."""
+        if key in self.free_heads:
+            return self.free_heads[key]
+        opp = self.schema.by_key()[key]
+        if not opp.universal or opp.kind == RELATION:
+            raise ValueError(f"{key} is not a universal class head")
+        lin = nn.Linear(self.cfg.d_head + self.cfg.d, len(opp.answers))
+        nn.init.zeros_(lin.weight)
+        nn.init.zeros_(lin.bias)
+        ref = next(self.heads.parameters())
+        self.free_heads[key] = lin.to(device=ref.device)
+        return lin
 
     def _read(self, out: C3Output, x: torch.Tensor, opps: list, desc: dict[str, Any],
               bank: ExplanationBank | None, bank_emb: torch.Tensor | None,

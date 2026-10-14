@@ -135,7 +135,16 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str) -> 
     for name in ("teacher", "teacher_proj"):
         if getattr(model, name, None) is None:
             state = {k: v for k, v in state.items() if not k.startswith(name + ".")}
-    model.load_state_dict(state)
+    # A free head in the checkpoint is built before it loads; one the model
+    # has and the checkpoint lacks starts at zero (reads as the described head).
+    for k in state:
+        if k.startswith("free_heads.") and k.endswith(".weight"):
+            model.add_free_head(k[len("free_heads."):-len(".weight")])
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    missing = [k for k in missing if not k.startswith("free_heads.")]
+    if missing or unexpected:
+        raise RuntimeError(f"Checkpoint does not match the model: missing {missing[:5]} "
+                           f"unexpected {unexpected[:5]}")
     return int(payload["step"])
 
 
