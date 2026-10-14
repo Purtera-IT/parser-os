@@ -77,6 +77,17 @@ class Budget:
         return int(getattr(self, stage))
 
 
+def with_stage_steps(budget: Budget, spec: str) -> Budget:
+    """``lines=30,links=0``: the named stages' step counts replaced."""
+    changes = {}
+    for part in filter(None, (x.strip() for x in str(spec or "").split(","))):
+        stage, _, n = part.partition("=")
+        if stage not in Budget.__dataclass_fields__ or not n.strip().isdigit():
+            raise SystemExit(f"--stage-steps: cannot read {part!r}")
+        changes[stage] = int(n)
+    return replace(budget, **changes)
+
+
 @dataclass
 class BaseRun:
     train_ids: tuple[str, ...]
@@ -845,7 +856,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if stage_losses:
             stage_loss[stage] = sum(stage_losses) / len(stage_losses)
             print(f"stage {stage} loss {stage_loss[stage]:.4f}", flush=True)
-        if validation:
+        if validation and steps:
             pooled = pool_scores([_score_oneshot(model, b, device) for b in validation])
             validation_scores[stage] = pooled
             macro = sum(v["exact"] for v in pooled.values()) / max(1, len(pooled))
@@ -1004,6 +1015,11 @@ def main() -> None:
                         help="Minutes, not hours: every stage on two average-size parts with small "
                              "teacher samples, lines twice (the second pass is the warm cost), "
                              "validation on one part, teacher saved. For catching GPU-only errors")
+    parser.add_argument("--init-from", default="",
+                        help="Start the student from this checkpoint instead of from scratch")
+    parser.add_argument("--stage-steps", default="",
+                        help="Per-stage step overrides, e.g. lines=30,links=0,teach=0; a stage "
+                             "with 0 steps neither trains nor scores")
     parser.add_argument("--score-holdout", action="store_true",
                         help="Score the holdout here. Off for the live runs: the winner is scored "
                              "once with `python -m ml.c3.predict --score`")
@@ -1017,6 +1033,7 @@ def main() -> None:
                     bind=0 if args.tiny else max(1, teacher_steps // 4),
                     flips=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4),
                     spread=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4))
+    budget = with_stage_steps(budget, args.stage_steps)
     train, train_notes = load_split(args.train, schema, args.max_atoms)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
     validation, val_notes = load_split(args.validation, schema, args.max_atoms)
@@ -1058,6 +1075,12 @@ def main() -> None:
         torch.set_float32_matmul_precision("high")
         print("model", "h100", args.encoder, args.teacher)
         student = live_student(schema, args.encoder).to("cuda")
+        if args.init_from:
+            from .gates import load_checkpoint
+
+            step = load_checkpoint(args.init_from, student,
+                                   schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+            print("init_from", args.init_from, "step", step, flush=True)
         released = release_encoder_top(student, args.train_encoder_layers)
         print("encoder_blocks_training", released, flush=True)
         _, result = run_base(

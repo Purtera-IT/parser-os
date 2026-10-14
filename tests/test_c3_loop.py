@@ -724,3 +724,12 @@ def test_type_compare_routes_unsure_lines_to_the_parser():
               {"label_key": "b", "label_type": "task", "parser_type": "task"}]
     routed = compare(read, labels)["routed"]["0.5"]
     assert routed["exact"] == 1.0 and routed["share_of_lines"] == 0.5
+
+
+def test_stage_steps_override_named_stages_only():
+    from ml.c3.loop import Budget, with_stage_steps
+
+    b = with_stage_steps(Budget(), "lines=30, links=0,teach=0")
+    assert (b.lines, b.links, b.teach, b.cards) == (30, 0, 0, Budget().cards)
+    with pytest.raises(SystemExit):
+        with_stage_steps(Budget(), "linez=3")
