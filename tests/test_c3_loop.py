@@ -713,3 +713,14 @@ def test_type_compare_can_leave_out_a_document_kind():
                       "b": {"doc_kind": "email", "reads": {"col:label_type": {"answer": "task", "p": 0.9}}}}}
     labels = [{"label_key": k, "label_type": "task", "parser_type": "task"} for k in "ab"]
     assert compare(read, labels, skip_doc_kinds=("Deal_Kit",))["lines"] == 1
+
+
+def test_type_compare_routes_unsure_lines_to_the_parser():
+    from ml.c3.type_compare import compare
+
+    read = {"lines": {"a": {"reads": {"col:label_type": {"answer": "rate_card", "p": 0.9}}},
+                      "b": {"reads": {"col:label_type": {"answer": "_keep", "p": 0.3}}}}}
+    labels = [{"label_key": "a", "label_type": "rate_card", "parser_type": "service_line"},
+              {"label_key": "b", "label_type": "task", "parser_type": "task"}]
+    routed = compare(read, labels)["routed"]["0.5"]
+    assert routed["exact"] == 1.0 and routed["share_of_lines"] == 0.5

@@ -75,6 +75,13 @@ def compare(read: dict[str, Any], labels: list[dict[str, Any]], *, focus: str = 
         kept = [(g, b) for g, _, b, p in rows if p >= cut]
         out["base_when_sure"][str(cut)] = {"share_of_lines": len(kept) / len(rows) if rows else None,
                                            **side(kept)}
+    # The promote rule: the base where it is sure, the parser's classifier
+    # (its LLM pass) everywhere else. share_of_lines is what the LLM no longer sees.
+    out["routed"] = {}
+    for cut in sure:
+        picked = [(g, b if p >= cut else pt) for g, pt, b, p in rows]
+        out["routed"][str(cut)] = {"share_of_lines": (sum(p >= cut for *_, p in rows) / len(rows)
+                                                      if rows else None), **side(picked)}
     out["base_misses"] = Counter(f"{g}->{b}" for g, _, b, _ in rows if g != b).most_common(10)
     return out
 
