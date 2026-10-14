@@ -110,6 +110,7 @@ def test_type_check_scores_the_routed_split():
     # Nothing is sure at 1.01, so the routed read is the parser's alone.
     off = type_check(model, [batch], sure=1.01)
     assert off["routed_share"] == 0.0 and off["routed_exact"] == off["parser_exact"]
+    assert -1.0 <= off["margin"] <= 1.0
     # A Deal Kit line is never scored.
     kit = replace(batch, doc_kind=["deal_kit"] * len(batch))
     assert type_check(model, [kit])["n"] == 0

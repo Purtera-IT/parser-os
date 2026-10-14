@@ -681,12 +681,13 @@ def type_check(model: C3Model, batches: list[Batch], device: str = "cpu", *,
     ``routed_exact``: the base where it is at least ``sure``, the parser's
     classifier elsewhere, on lines the parser typed; ``routed_share`` is the
     share the base takes. ``parser_exact`` is the classifier alone on those
-    lines. Counts and rates only."""
+    lines, and ``margin`` the base's exact minus the classifier's there.
+    Counts and rates only."""
     opp = model.schema.by_key()[key]
     names = [a.value for a in opp.answers]
     t, keep = names.index(focus) if focus in names else -1, names.index("_keep") if "_keep" in names else -1
     n = hit = typed = real = said = both = 0
-    rn = rhit = phit = took = 0
+    rn = rhit = phit = took = bhit = 0
     model.eval()
     with torch.no_grad(), _autocast(device):
         for b in batches:
@@ -714,6 +715,7 @@ def type_check(model: C3Model, batches: list[Batch], device: str = "cpu", *,
                 if parser[i] != IGNORE:
                     rn += 1
                     phit += parser[i] == y
+                    bhit += g == y
                     sure_here = float(p[i]) >= sure
                     took += sure_here
                     rhit += (g if sure_here else parser[i]) == y
@@ -721,7 +723,10 @@ def type_check(model: C3Model, batches: list[Batch], device: str = "cpu", *,
             "focus_recall": both / real if real else 0.0,
             "focus_precision": both / said if said else 0.0,
             "routed_n": float(rn), "routed_exact": rhit / rn if rn else 0.0,
-            "routed_share": took / rn if rn else 0.0, "parser_exact": phit / rn if rn else 0.0}
+            "routed_share": took / rn if rn else 0.0, "parser_exact": phit / rn if rn else 0.0,
+            # The base alone against the classifier on the lines both typed:
+            # above 0 is what full replacement needs.
+            "margin": (bhit - phit) / rn if rn else 0.0}
 
 
 def parse_gates(specs: list[str]) -> list[tuple[str, str, str, float]]:
