@@ -154,3 +154,22 @@ def test_free_heads_all_covers_every_universal_class_question():
                         score_holdout=False)
     assert KEY in model.free_heads and len(model.free_heads) > 10
     assert all(not k.startswith("rel:") for k in model.free_heads)
+
+
+def test_head_fit_trains_free_heads_on_cached_rows_and_beats_the_start():
+    from ml.c3.head_fit import _cache, fit_heads
+    from ml.c3.schema import NUMBER, RELATION
+
+    schema = load_schema()
+    torch.manual_seed(0)
+    model = C3Model(schema, CFG).eval()
+    batch = featurize(_deal(), schema)
+    keys = [o.key for o in schema.select(layer="universal")
+            if o.kind not in (RELATION, NUMBER) and len(o.answers) > 1]
+    tr = _cache(model, [batch], keys, "cpu")
+    assert KEY in tr and len(tr[KEY]["y"]) == sum(y != IGNORE for y in batch.targets[KEY])
+    keys = [k for k in keys if k in tr]
+    for k in keys:
+        model.add_free_head(k)
+    best, state = fit_heads(model, tr, tr, keys, epochs=150, check_every=50, lr=5e-2, batch=64)
+    assert state is not None and best > 0.9
