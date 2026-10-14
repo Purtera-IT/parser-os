@@ -689,6 +689,7 @@ def type_check(model: C3Model, batches: list[Batch], device: str = "cpu", *,
     t, keep = names.index(focus) if focus in names else -1, names.index("_keep") if "_keep" in names else -1
     n = hit = typed = real = said = both = 0
     rn = rhit = phit = took = bhit = 0
+    preal = pboth = bboth = 0
     model.eval()
     with torch.no_grad(), _autocast(device):
         for b in batches:
@@ -720,6 +721,9 @@ def type_check(model: C3Model, batches: list[Batch], device: str = "cpu", *,
                     sure_here = float(p[i]) >= sure
                     took += sure_here
                     rhit += (g if sure_here else parser[i]) == y
+                    preal += y == t
+                    pboth += parser[i] == y == t
+                    bboth += g == y == t
     return {"n": float(n), "exact": hit / n if n else 0.0, "typed_exact": typed / n if n else 0.0,
             "focus_recall": both / real if real else 0.0,
             "focus_precision": both / said if said else 0.0,
@@ -727,7 +731,10 @@ def type_check(model: C3Model, batches: list[Batch], device: str = "cpu", *,
             "routed_share": took / rn if rn else 0.0, "parser_exact": phit / rn if rn else 0.0,
             # The base alone against the classifier on the lines both typed:
             # above 0 is what full replacement needs.
-            "margin": (bhit - phit) / rn if rn else 0.0}
+            "margin": (bhit - phit) / rn if rn else 0.0,
+            # Task recall on those same lines, the base's and the classifier's.
+            "pair_focus_recall": bboth / preal if preal else 0.0,
+            "parser_focus_recall": pboth / preal if preal else 0.0}
 
 
 def parse_gates(specs: list[str]) -> list[tuple[str, str, str, float]]:

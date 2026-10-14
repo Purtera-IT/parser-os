@@ -252,6 +252,11 @@ def score_holdout(model: C3Model, deal: DealExample, schema: Schema, *, max_atom
     return pool_scores([_score_oneshot(model, b, device) for b in parts])
 
 
+def _print_type(head: str, row: dict[str, float]) -> None:
+    print(head + " " + " ".join(f"{k}={int(v)}" if k in ("n", "routed_n") else f"{k}={v:.3f}"
+                                for k, v in row.items()), flush=True)
+
+
 def _model(schema: Schema, args) -> tuple[C3Model, str]:
     if args.tiny:
         return C3Model(schema, SMALL), "cpu"
@@ -293,17 +298,25 @@ def main() -> None:
         if not set(LABEL_HOLDOUT) <= ids:
             raise SystemExit("Score the whole labeling holdout at once: "
                              + ", ".join(i for i in LABEL_HOLDOUT if i not in ids))
-        rows = []
+        from .loop import training_batches, type_check
+
+        rows, every = [], []
         for deal in deals:
             scores = score_holdout(model, deal, schema, max_atoms=args.max_atoms, device=device)
             rows.append(scores)
             print("deal", deal.deal_id)
             for key, row in sorted(scores.items()):
                 print(f"  {key} exact={row['exact']:.3f} n={int(row['n'])}")
+            # Line type against the parser's classifier on the same lines, as
+            # the run's checks read it (Deal Kit and estimating calc left out).
+            parts, _ = training_batches(deal, schema, max_atoms=args.max_atoms)
+            every += parts
+            _print_type(f"  type {deal.deal_id}", type_check(model, parts, device))
         pooled = pool_scores(rows)
         print("holdout")
         for key, row in sorted(pooled.items()):
             print(f"  {key} exact={row['exact']:.3f} n={int(row['n'])}")
+        _print_type("  type holdout", type_check(model, every, device))
         mark.write_text(json.dumps({"deals": sorted(ids), "heads": len(pooled)}), encoding="utf-8")
         return
     if not args.output:
