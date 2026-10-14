@@ -55,6 +55,14 @@ def deal_parts(deal: DealExample, schema: Schema, max_atoms: int) -> tuple[list[
     return plan.windows, plan.digest[0]
 
 
+def _read_autocast(device: str):
+    """The live encoder is bf16 and the layers above it float32, so a read on
+    any device runs under autocast, as training on CUDA did."""
+    if device.startswith("cpu"):
+        return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
+    return _autocast(device)
+
+
 def _answer(opp, i: int) -> str:
     return opp.answers[i].value if 0 <= i < len(opp.answers) else str(i)
 
@@ -133,7 +141,7 @@ def _deal_answers(model: C3Model, out, batch: Batch, schema: Schema) -> dict[str
 def read_deal(model: C3Model, deal: DealExample, schema: Schema, **kwargs) -> dict[str, Any]:
     """``_read_deal`` with every read, including the cards and links taken
     from the pass's outputs, under one no-grad autocast."""
-    with torch.no_grad(), _autocast(kwargs.get("device", "cpu")):
+    with torch.no_grad(), _read_autocast(kwargs.get("device", "cpu")):
         return _read_deal(model, deal, schema, **kwargs)
 
 
@@ -147,7 +155,7 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     shaky: list[dict[str, Any]] = []
     atoms = {a.key: a for a in deal.atoms}
     for batch in windows:
-        with _autocast(device):
+        with _read_autocast(device):
             out = model(batch.oneshot(), company=batch.company or None)
         home = [i for i, k in enumerate(batch.keys) if k not in lines]
         for i in home:
@@ -158,7 +166,7 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
         found, maybe = _links(out, batch, home, link_min, governs_top)
         links += found
         shaky += maybe
-    with _autocast(device):
+    with _read_autocast(device):
         out = model(whole.oneshot(), company=whole.company or None)
     answers = _deal_answers(model, out, whole, schema)
     low = sorted(k for k, r in lines.items()

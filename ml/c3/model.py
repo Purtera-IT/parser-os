@@ -454,10 +454,13 @@ class C3Model(nn.Module):
             # A causal link points back in arrival time. A document arrives
             # whole, so within one arrival a total may derive from the rows
             # below it and an answer may sit above its question's line.
-            t = torch.tensor(inp["times"], dtype=torch.float64, device=h.device)
+            # Compared in float64 on the CPU (MPS has no float64; float32
+            # would round arrival times together), then moved as a mask.
+            t = torch.tensor(inp["times"], dtype=torch.float64)
+            later = (t.view(-1, 1) < t.view(1, -1)).to(h.device)
             for o, s, z in zip(rels, scores, nones):
                 if CAUSAL_RELATIONS.get(o.field):
-                    s = s.masked_fill(t.view(-1, 1) < t.view(1, -1), float("-inf"))
+                    s = s.masked_fill(later, float("-inf"))
                 out.relations[o.field] = s.masked_fill(torch.eye(n, dtype=torch.bool,
                                                                  device=h.device), float("-inf"))
                 out.link_none[o.field] = z

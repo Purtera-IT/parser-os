@@ -262,3 +262,21 @@ def test_a_field_note_the_registry_does_not_list_still_explains_its_field():
     blob = {"labels": [label("r", reads_set={"rate": "present", "rate_note": "The rate card sets the hourly rate."})]}
     batch = featurize(DealExample.from_training_blob(blob, [atom("r")], deal_id="synthetic"), schema)
     assert "read:rate" in batch.field_notes[0]
+
+
+def test_a_bf16_encoder_reads_a_deal_on_the_cpu():
+    """The live encoder is bf16 under float32 layers; a CPU read must not
+    trip on the mix, and causal links must not need float64 on the device."""
+    from ml.c3.loop import SMALL
+    from ml.c3.model import C3Model
+    from ml.c3.predict import read_deal
+    from ml.c3.text import HashingEncoder
+
+    class Bf16(HashingEncoder):
+        def forward(self, texts):
+            return super().forward(texts).bfloat16()
+
+    schema = load_schema()
+    model = C3Model(schema, SMALL, text=Bf16(SMALL.d_text))
+    doc = read_deal(model, _long_deal(), schema, max_atoms=5, device="cpu")
+    assert set(doc["lines"]) == {f"a{i}" for i in range(12)}
