@@ -268,3 +268,22 @@ def test_warmup_starts_the_rate_small_and_reaches_it_after_the_passes():
     finally:
         torch.optim.AdamW.step = orig
     assert seen[0] == pytest.approx(5e-4) and seen[1] > seen[0]
+
+
+def test_averaged_checkpoints_load_and_sit_between_their_parts(tmp_path):
+    from ml.c3.average import average
+
+    schema = load_schema()
+    a, b = C3Model(schema, CFG), C3Model(schema, CFG)
+    for m, v in ((a, 1.0), (b, 3.0)):
+        m.add_free_head(KEY)
+        with torch.no_grad():
+            m.free_heads[KEY].bias.fill_(v)
+    pa, pb = tmp_path / "a.pt", tmp_path / "b.pt"
+    save_checkpoint(pa, a, step=2, schema_sha256="abc")
+    save_checkpoint(pb, b, step=4, schema_sha256="abc")
+    out = tmp_path / "avg.pt"
+    torch.save(average([str(pa), str(pb)]), out)
+    fresh = C3Model(schema, CFG)
+    assert load_checkpoint(out, fresh, schema_sha256="abc") == 4
+    assert torch.allclose(fresh.free_heads[KEY].bias, torch.full_like(fresh.free_heads[KEY].bias, 2.0))
