@@ -313,3 +313,20 @@ def test_a_lesson_mixes_gold_steps_on_parts_without_a_view(tmp_path):
     _, r = run_base(parts, [], schema, budget, fit_parts=0, score_holdout=False, view_parts=1,
                     teacher_from=str(tmp_path / "t.pt.teacher"), teacher_continue=True)
     assert "teacher" in r.stage_loss
+
+
+def test_holdout_floor_reads_the_same_heads_the_score_does():
+    # predict --score --train prints each head beside its majority floor;
+    # the floor's heads are the score's, or the comparison prints nothing.
+    from ml.c3.loop import SMALL, load_deal, majority_baseline, training_batches
+    from ml.c3.model import C3Model
+    from ml.c3.predict import score_holdout
+    from ml.c3.schema import load_schema
+
+    schema = load_schema()
+    fixture = Path(__file__).resolve().parents[1] / "ml" / "c3" / "fixtures" / "synthetic_deal.json"
+    deal = load_deal(str(fixture))
+    parts, _ = training_batches(deal, schema, max_atoms=4096)
+    scores = score_holdout(C3Model(schema, SMALL), deal, schema, max_atoms=4096, device="cpu")
+    floor = majority_baseline(parts, parts)
+    assert floor and set(floor) <= set(scores)

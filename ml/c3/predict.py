@@ -281,6 +281,8 @@ def main() -> None:
     p.add_argument("--unsure", type=float, default=0.6)
     p.add_argument("--governs-top", type=int, default=5)
     p.add_argument("--score", action="store_true", help="score the holdout's saved labels, once")
+    p.add_argument("--train", nargs="*", default=[],
+                   help="with --score: the training deals, for each head's majority-answer floor")
     p.add_argument("--kit", help="a Deal Kit file for this deal: write it again with the base's atoms")
     p.add_argument("--kit-output", help="where the rewritten Deal Kit file goes")
     args = p.parse_args()
@@ -298,7 +300,7 @@ def main() -> None:
         if not set(LABEL_HOLDOUT) <= ids:
             raise SystemExit("Score the whole labeling holdout at once: "
                              + ", ".join(i for i in LABEL_HOLDOUT if i not in ids))
-        from .loop import training_batches, type_check
+        from .loop import majority_baseline, training_batches, type_check
 
         rows, every = [], []
         for deal in deals:
@@ -313,9 +315,22 @@ def main() -> None:
             every += parts
             _print_type(f"  type {deal.deal_id}", type_check(model, parts, device))
         pooled = pool_scores(rows)
+        # Every head against always giving its most common training answer:
+        # a head that does not clear that floor has learned nothing to keep.
+        floor = {}
+        if args.train:
+            seen = [b for path in args.train
+                    for b in training_batches(load_deal(path), schema, max_atoms=args.max_atoms)[0]]
+            floor = majority_baseline(seen, every)
         print("holdout")
         for key, row in sorted(pooled.items()):
-            print(f"  {key} exact={row['exact']:.3f} n={int(row['n'])}")
+            print(f"  {key} exact={row['exact']:.3f} n={int(row['n'])}"
+                  + (f" majority={floor[key]:.3f}" if key in floor else ""))
+        same = [k for k in pooled if k in floor]
+        if same:
+            print(f"  beat_majority {sum(pooled[k]['exact'] > floor[k] for k in same)}/{len(same)} "
+                  f"macro={sum(pooled[k]['exact'] for k in same) / len(same):.4f} "
+                  f"majority={sum(floor[k] for k in same) / len(same):.4f}")
         _print_type("  type holdout", type_check(model, every, device))
         mark.write_text(json.dumps({"deals": sorted(ids), "heads": len(pooled)}), encoding="utf-8")
         return
