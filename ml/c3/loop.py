@@ -1055,7 +1055,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                     for k in watched), flush=True)
         if steps and not stopped and check(stage):
             stopped = stage
-        if checkpoint and completed:
+        # A stage that took no step would only copy the last file (3.4 GB on
+        # the live model), so it saves nothing.
+        if checkpoint and completed and steps:
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
             # Every stage keeps its own copy, so a later stage that makes
             # validation worse costs a file pick, not a rerun.
