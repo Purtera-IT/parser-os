@@ -247,3 +247,24 @@ def test_a_run_with_no_teacher_stage_never_builds_the_language_model():
         raise AssertionError("the teacher model was built")
 
     run_base([train], [], schema, budget, fit_parts=0, score_holdout=False, make_lm=refuse)
+
+
+def test_warmup_starts_the_rate_small_and_reaches_it_after_the_passes():
+    schema = load_schema()
+    train = featurize(_deal(), schema)
+    budget = Budget(teacher=0, lines=3, links=0, cards=0, numbers=0, deal=0, open_links=0, teach=0)
+    model = C3Model(schema, CFG)
+    seen = []
+    orig = torch.optim.AdamW.step
+
+    def spy(self, *a, **k):
+        seen.append(self.param_groups[0]["lr"])
+        return orig(self, *a, **k)
+
+    torch.optim.AdamW.step = spy
+    try:
+        run_base([train], [], schema, budget, model=model, lr=1e-3, adamw=True, warmup_passes=2,
+                 fit_parts=0, score_holdout=False)
+    finally:
+        torch.optim.AdamW.step = orig
+    assert seen[0] == pytest.approx(5e-4) and seen[1] > seen[0]

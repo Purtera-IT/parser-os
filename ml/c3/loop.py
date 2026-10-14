@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import time
 import random
@@ -763,7 +764,7 @@ def gate_failures(gates: list[tuple[str, str, str, float]], at: str,
 
 def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = None,
              budget: Budget | None = None, cfg: C3Config = SMALL, lr: float = 3e-3,
-             seed: int = 0,
+             seed: int = 0, warmup_passes: float = 0.0,
              teacher_lr: float | None = None,
              context_lines: int = 2,
              make_lm=lambda: TinyCausalLM(32, 1, 2, 4096),
@@ -925,6 +926,14 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     student_updates = sum(budget.steps(s) * len(train) for s in student_stages if s != "bind")
     sched = (torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, student_updates))
              if adamw else None)
+    # A run that starts from trained heads ramps the rate up: a fresh Adam
+    # moves every weight by the full rate on its first steps, which in run C's
+    # smoke undid the fitted line-type heads in four updates.
+    warm = int(warmup_passes * len(train))
+    if adamw and warm > 0:
+        total = max(1, student_updates)
+        sched = torch.optim.lr_scheduler.LambdaLR(
+            opt, lambda s: min(1.0, (s + 1) / warm) * 0.5 * (1 + math.cos(math.pi * min(s, total) / total)))
     seen = heads_seen(train)
     validation_scores: dict[str, dict[str, dict[str, float]]] = {}
     views = None
@@ -1180,6 +1189,9 @@ def main() -> None:
     parser.add_argument("--train-encoder-layers", type=int, default=0,
                         help="Release this many top blocks of the line encoder (0 keeps it frozen)")
     parser.add_argument("--encoder-lr", type=float, default=2e-5)
+    parser.add_argument("--lr", type=float, default=3e-4, help="the student's rate (live path)")
+    parser.add_argument("--warmup-passes", type=float, default=0.0,
+                        help="ramp the student's rate up over this many passes")
     parser.add_argument("--limit-parts", type=int, default=0,
                         help="Preflight only: train on the N largest parts, to measure memory and "
                              "time per part without paying for a whole pass")
@@ -1305,7 +1317,7 @@ def main() -> None:
                 args.teacher, targets=("q_proj", "k_proj", "v_proj", "o_proj"),
                 max_len=TEACHER_MAX_LEN, trainable_rank=32, dtype=torch.bfloat16),
             checkpoint=args.checkpoint or None, model=student, device="cuda",
-            lr=3e-4, teacher_lr=1e-4, context_lines=6,
+            lr=args.lr, warmup_passes=args.warmup_passes, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=8, read_chunk=16,
             call_tokens=TEACHER_CALL_TOKENS, teacher_rows_per_step=32,
             teacher_piece_tokens=TEACHER_PIECE_TOKENS, teacher_caps=caps,
