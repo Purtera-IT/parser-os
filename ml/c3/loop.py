@@ -400,6 +400,10 @@ CPU_AUTOCAST = False
 def _autocast(device: str):
     if device.startswith("cuda"):
         return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    if device.startswith("mps"):
+        # The bf16 encoder feeds float32 layers; Metal refuses a mixed matmul
+        # outside autocast.
+        return torch.autocast(device_type="mps", dtype=torch.bfloat16)
     if CPU_AUTOCAST:
         return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
     return nullcontext()
