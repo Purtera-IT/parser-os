@@ -704,3 +704,12 @@ def test_type_compare_can_score_the_best_named_type():
     labels = [{"label_key": "a", "label_type": "rate_card", "parser_type": "service_line"}]
     assert compare(read, labels)["base"]["exact"] == 0.0
     assert compare(read, labels, typed=True)["base"]["exact"] == 1.0
+
+
+def test_type_compare_can_leave_out_a_document_kind():
+    from ml.c3.type_compare import compare
+
+    read = {"lines": {"a": {"doc_kind": "deal_kit", "reads": {"col:label_type": {"answer": "task", "p": 0.9}}},
+                      "b": {"doc_kind": "email", "reads": {"col:label_type": {"answer": "task", "p": 0.9}}}}}
+    labels = [{"label_key": k, "label_type": "task", "parser_type": "task"} for k in "ab"]
+    assert compare(read, labels, skip_doc_kinds=("Deal_Kit",))["lines"] == 1
