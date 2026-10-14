@@ -19,7 +19,10 @@ python - <<'PY'
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 for name in ("answerdotai/ModernBERT-large",):
     AutoTokenizer.from_pretrained(name); AutoModel.from_pretrained(name)
-name = "Qwen/Qwen2.5-7B-Instruct"
-AutoTokenizer.from_pretrained(name); AutoModelForCausalLM.from_pretrained(name, torch_dtype="auto")
+import os
+# The 7B teacher only for a run that reads it (run C does not unless TEACH=1).
+if os.environ.get("TEACH", "1") == "1":
+    name = "Qwen/Qwen2.5-7B-Instruct"
+    AutoTokenizer.from_pretrained(name); AutoModelForCausalLM.from_pretrained(name, torch_dtype="auto")
 print("models ready")
 PY
