@@ -105,33 +105,59 @@ class HFEncoder(nn.Module):
             raise ValueError("Encoder paragraph exceeds token budget; do not truncate rich supervision")
         return ids
 
+    def _all_ids(self, texts: list[str]) -> list[list[int]]:
+        return self.tok([str(t) for t in texts], truncation=False)["input_ids"]
+
+    def _windows(self, ids: list[list[int]]) -> list[tuple[int, list[int]]]:
+        """(owner, window) pairs. A paragraph longer than ``max_length`` is
+        cut into consecutive windows, each with its own special tokens, and
+        nothing is dropped: its vector is the mean over every window's
+        tokens, as one pass would pool them (without attention across the
+        cut)."""
+        out: list[tuple[int, list[int]]] = []
+        for owner, x in enumerate(ids):
+            if len(x) <= self.max_length:
+                out.append((owner, x))
+                continue
+            head = x[:1] if x[0] == self.tok.cls_token_id else []
+            tail = x[-1:] if x[-1] == self.tok.sep_token_id else []
+            body = x[len(head):len(x) - len(tail)]
+            step = self.max_length - len(head) - len(tail)
+            for k in range(0, len(body), step):
+                out.append((owner, head + body[k:k + step] + tail))
+        return out
+
     def _encode(self, ids: list[list[int]]) -> torch.Tensor:
         dev = next(self.model.parameters()).device
-        order = sorted(range(len(ids)), key=lambda i: len(ids[i]))
-        out: list[torch.Tensor | None] = [None] * len(ids)
+        wins = self._windows(ids)
+        order = sorted(range(len(wins)), key=lambda i: len(wins[i][1]))
+        sums: list = [None] * len(ids)
+        counts: list = [None] * len(ids)
         start = 0
         while start < len(order):
             end = start + 1
-            while end < len(order) and len(ids[order[end]]) * (end + 1 - start) <= self.chunk_tokens:
+            while end < len(order) and len(wins[order[end]][1]) * (end + 1 - start) <= self.chunk_tokens:
                 end += 1
             rows = order[start:end]
-            enc = self.tok.pad({"input_ids": [ids[i] for i in rows]}, return_tensors="pt").to(dev)
+            enc = self.tok.pad({"input_ids": [wins[i][1] for i in rows]}, return_tensors="pt").to(dev)
             h = self.model(**enc).last_hidden_state
             mask = enc["attention_mask"].unsqueeze(-1).to(h.dtype)
-            pooled = (h * mask).sum(1) / mask.sum(1).clamp(min=1)
+            total, n = (h * mask).sum(1), mask.sum(1)
             for k, i in enumerate(rows):
-                out[i] = pooled[k]
+                owner = wins[i][0]
+                sums[owner] = total[k] if sums[owner] is None else sums[owner] + total[k]
+                counts[owner] = n[k] if counts[owner] is None else counts[owner] + n[k]
             start = end
-        return torch.stack(out)  # type: ignore[arg-type]
+        return torch.stack([t / c.clamp(min=1) for t, c in zip(sums, counts)])
 
     def forward(self, texts: list[str]) -> torch.Tensor:
         texts = [str(t) for t in texts]
         if not self.frozen():
-            return self._encode(self._ids(texts, self.max_length))
+            return self._encode(self._all_ids(texts))
         todo = sorted({t for t in texts if t not in self.cache})
         if todo:
             with torch.no_grad():
-                vecs = self._encode(self._ids(todo, self.max_length))
+                vecs = self._encode(self._all_ids(todo))
             for t, v in zip(todo, vecs):
                 self.cache[t] = v
         return torch.stack([self.cache[t] for t in texts])
@@ -145,7 +171,7 @@ class HFEncoder(nn.Module):
         if self.frozen():
             return self(texts)
         with torch.no_grad():
-            return self._encode(self._ids(texts, self.max_length))
+            return self._encode(self._all_ids(texts))
 
     def _check_budget(self, texts: list[str], budget: int) -> None:
         self._ids(texts, budget)

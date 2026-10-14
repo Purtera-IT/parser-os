@@ -7,7 +7,13 @@ pages. It reports what was fitted (context or notes dropped), what is left
 out (cards, grounding), and anything that would still overflow, which is
 the one thing that stops a run. Exit status 1 when anything would overflow.
 
-    python -m ml.c3.budget_check --teacher Qwen/Qwen2.5-7B-Instruct --max-len 32768 <deal files>
+With ``--encoder`` it also reads every line with the student encoder's
+tokenizer: a line over ``--encoder-max`` tokens is encoded in windows
+(text.HFEncoder._windows), so it never stops a run, but the count and the
+longest line are reported.
+
+    python -m ml.c3.budget_check --teacher Qwen/Qwen2.5-7B-Instruct --max-len 32768 \
+        --encoder answerdotai/ModernBERT-large --encoder-max 8192 <deal files>
 """
 from __future__ import annotations
 
@@ -82,12 +88,28 @@ def check_part(brain: Brain, batch: Batch, counts: Counter) -> list[str]:
     return bad
 
 
-def check(batches: list[Batch], schema: Schema, lm: LMBase, context_lines: int = 6) -> tuple[Counter, list[str]]:
+def check_encoder(tokenizer, batch: Batch, budget: int, counts: Counter) -> list[str]:
+    """Count the lines the student encoder reads in more than one window."""
+    long_: list[str] = []
+    lens = [len(x) for x in tokenizer([str(t) for t in batch.texts], truncation=False)["input_ids"]]
+    for i, n in enumerate(lens):
+        if n > budget:
+            counts["encoder_lines_windowed"] += 1
+            long_.append(f"{batch.deal_id} line {i}: {n} encoder tokens")
+        counts["encoder_max_tokens"] = max(counts["encoder_max_tokens"], n)
+    return long_
+
+
+def check(batches: list[Batch], schema: Schema, lm: LMBase, context_lines: int = 6,
+          encoder=None, encoder_max: int = 8192) -> tuple[Counter, list[str]]:
     brain = Brain(schema, lm, context_lines=context_lines)
     counts: Counter = Counter()
     bad: list[str] = []
     for b in batches:
         bad += check_part(brain, b, counts)
+        if encoder is not None:
+            for line in check_encoder(encoder, b, encoder_max, counts):
+                print("windowed", line)
         counts["parts"] += 1
     return counts, bad
 
@@ -100,11 +122,19 @@ def main() -> None:
     p.add_argument("--max-len", type=int, default=32768)
     p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--context-lines", type=int, default=6)
+    p.add_argument("--encoder", default="", help="student encoder tokenizer, e.g. answerdotai/ModernBERT-large")
+    p.add_argument("--encoder-max", type=int, default=8192)
     p.add_argument("deals", nargs="+")
     args = p.parse_args()
     schema = load_schema()
     batches, _ = load_split(args.deals, schema, args.max_atoms)
-    counts, bad = check(batches, schema, TokenizerOnly(args.teacher, args.max_len), args.context_lines)
+    encoder = None
+    if args.encoder:
+        from transformers import AutoTokenizer  # optional dependency
+
+        encoder = AutoTokenizer.from_pretrained(args.encoder)
+    counts, bad = check(batches, schema, TokenizerOnly(args.teacher, args.max_len), args.context_lines,
+                        encoder, args.encoder_max)
     print("budget", " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     for line in bad[:50]:
         print("overflow", line)

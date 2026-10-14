@@ -576,3 +576,61 @@ def test_a_lesson_step_runs_the_trunk_and_the_descriptions_once():
     loss = _student_step(model, opt, carded, LossWeights(), None, object(), view, "cpu")
     assert torch.isfinite(loss)
     assert calls == {"describe": 1, "forward": 1}
+
+
+def test_an_overlong_line_is_encoded_in_windows_with_no_token_dropped():
+    from ml.c3.text import HFEncoder
+
+    class Tok:
+        cls_token_id, sep_token_id = 1, 2
+
+        def __call__(self, texts, truncation=False):
+            return {"input_ids": [[1] + [3 + len(w) for w in t.split()] + [2] for t in texts]}
+
+        def pad(self, enc, return_tensors="pt"):
+            rows = enc["input_ids"]
+            width = max(len(r) for r in rows)
+
+            class Enc(dict):
+                def to(self, dev):
+                    return self
+            return Enc(input_ids=torch.tensor([r + [0] * (width - len(r)) for r in rows]),
+                       attention_mask=torch.tensor([[1] * len(r) + [0] * (width - len(r)) for r in rows]))
+
+    class Body(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.emb = torch.nn.Embedding(64, 4)
+
+        def forward(self, input_ids, attention_mask):
+            from types import SimpleNamespace
+            return SimpleNamespace(last_hidden_state=self.emb(input_ids))
+
+    enc = HFEncoder.__new__(HFEncoder)
+    torch.nn.Module.__init__(enc)
+    enc.tok, enc.model, enc.max_length, enc.chunk_tokens, enc.cache = Tok(), Body(), 6, 32, {}
+    long_ = " ".join(["a", "bb", "ccc", "dddd", "e", "ff", "ggg", "hhhh", "i"])
+    wins = enc._windows(enc._all_ids([long_, "short one"]))
+    assert all(len(w) <= 6 for _, w in wins) and [o for o, _ in wins].count(0) == 3
+    assert [t for o, w in wins if o == 0 for t in w[1:-1]] == [3 + len(w) for w in long_.split()]
+    vec = enc([long_, "short one"])
+    every = torch.cat([enc.model.emb(torch.tensor(w)) for o, w in wins if o == 0])
+    assert torch.allclose(vec[0], every.mean(0), atol=1e-6)
+    assert torch.allclose(vec[1], enc.model.emb(torch.tensor([1, 8, 6, 2])).mean(0), atol=1e-6)
+
+
+def test_budget_check_counts_lines_the_encoder_reads_in_windows():
+    from collections import Counter
+
+    from ml.c3.budget_check import check_encoder
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+
+    def tok(texts, truncation=False):
+        return {"input_ids": [list(range(len(t.split()) + 2)) for t in texts]}
+
+    counts = Counter()
+    longest = max(len(t.split()) + 2 for t in train.texts)
+    assert check_encoder(tok, train, longest, counts) == [] and counts["encoder_max_tokens"] == longest
+    assert len(check_encoder(tok, train, longest - 1, counts)) >= 1
