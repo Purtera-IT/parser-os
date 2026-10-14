@@ -187,4 +187,4 @@ def test_a_run_that_does_not_score_the_holdout_may_leave_its_files_out():
     with pytest.raises(ValueError):
         lock_split([train], [])
     with pytest.raises(ValueError, match="fixed holdout"):
-        lock_split([replace(train, deal_id="010194")], [], need_holdout=False)
+        lock_split([replace(train, deal_id="010038")], [], need_holdout=False)
