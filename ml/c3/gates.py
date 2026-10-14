@@ -114,7 +114,8 @@ def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha25
     payload = {
         "step": int(step),
         "schema_sha256": schema_sha256,
-        "torch": torch_version or torch.__version__,
+        # str(): torch.__version__ is a TorchVersion, which weights_only loads refuse.
+        "torch": str(torch_version or torch.__version__),
         "state": {k: v.detach().cpu() for k, v in model.state_dict().items()},
     }
     if any(isinstance(v, str) and len(v) > 80 for v in payload.values()):
@@ -123,7 +124,9 @@ def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha25
 
 
 def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str) -> int:
-    payload = torch.load(path, map_location="cpu", weights_only=True)
+    # Checkpoints saved before the str() above carry a TorchVersion.
+    with torch.serialization.safe_globals([torch.torch_version.TorchVersion]):
+        payload = torch.load(path, map_location="cpu", weights_only=True)
     if payload.get("schema_sha256") != schema_sha256:
         raise ValueError("Checkpoint schema hash does not match this model")
     model.load_state_dict(payload["state"])

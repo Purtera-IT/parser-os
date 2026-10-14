@@ -634,3 +634,21 @@ def test_budget_check_counts_lines_the_encoder_reads_in_windows():
     longest = max(len(t.split()) + 2 for t in train.texts)
     assert check_encoder(tok, train, longest, counts) == [] and counts["encoder_max_tokens"] == longest
     assert len(check_encoder(tok, train, longest - 1, counts)) >= 1
+
+
+def test_a_checkpoint_saved_with_the_torch_version_loads_back(tmp_path):
+    import torch
+    from ml.c3.gates import load_checkpoint, save_checkpoint
+    from ml.c3.model import C3Config, C3Model
+
+    schema = load_schema()
+    model = C3Model(schema, C3Config(d_text=32, d=32, n_layers=1, n_heads=2, d_r=16, d_q=8,
+                                    d_head=16, residual_dim=4, box_dim=4, n_policy_atoms=2, policy_rank=2))
+    new = tmp_path / "new.pt"
+    save_checkpoint(new, model, step=3, schema_sha256="abc")
+    assert load_checkpoint(new, model, schema_sha256="abc") == 3
+    # The live runs saved torch.__version__ as a TorchVersion, before the str().
+    old = tmp_path / "old.pt"
+    torch.save({"step": 5, "schema_sha256": "abc", "torch": torch.__version__,
+                "state": {k: v.detach().cpu() for k, v in model.state_dict().items()}}, old)
+    assert load_checkpoint(old, model, schema_sha256="abc") == 5
