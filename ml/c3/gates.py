@@ -7,6 +7,7 @@ fitters.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -109,15 +110,71 @@ def per_head_scores(model: C3Model, batch: Batch) -> dict[str, dict[str, float]]
     return scores
 
 
+def body_prefixes(model: C3Model) -> tuple[str, ...]:
+    """State-dict prefixes of every pretrained body the model holds (the
+    shared line encoder appears under several names, and under ``teacher.``
+    once the EMA copy is built)."""
+    found = {f"{name}.{m.pretrained_body}." if name else f"{m.pretrained_body}."
+             for name, m in model.named_modules(remove_duplicate=False)
+             if getattr(m, "pretrained_body", None)}
+    found |= {"teacher." + p[len("encoder."):] for p in found if p.startswith("encoder.")}
+    return tuple(sorted(found))
+
+
+def _split_body(key: str, prefixes: tuple[str, ...]) -> str | None:
+    for p in prefixes:
+        if key.startswith(p):
+            return key[len(p):]
+    return None
+
+
+def body_digest(tensors: dict[str, torch.Tensor]) -> str:
+    """sha256 over the body's tensors by name, bytes exactly as stored."""
+    h = hashlib.sha256()
+    for name in sorted(tensors):
+        t = tensors[name].detach().cpu().contiguous().reshape(-1)
+        h.update(name.encode() + b"\0" + str(t.dtype).encode() + b"\0")
+        h.update(t.view(torch.uint8).numpy().tobytes())
+    return h.hexdigest()
+
+
+def slim_state(state: dict[str, torch.Tensor], model: C3Model) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
+    """Leave out the pretrained body where it is exactly the hub's weights.
+
+    ``model`` holds the body as freshly downloaded. A saved tensor that differs
+    from it (a trained layer) stays in the checkpoint. Returns the slim state
+    and what the reader needs to check its own download against."""
+    prefixes = body_prefixes(model)
+    fresh = {k: v for k, v in model.state_dict().items() if _split_body(k, prefixes) is not None}
+    fresh = {_split_body(k, prefixes): v for k, v in fresh.items()}
+    slim, dropped = {}, {}
+    for k, v in state.items():
+        rest = _split_body(k, prefixes)
+        if rest is not None and rest in fresh and fresh[rest].shape == v.shape \
+                and fresh[rest].dtype == v.dtype and torch.equal(fresh[rest].cpu(), v.cpu()):
+            dropped[rest] = v
+        else:
+            slim[k] = v
+    if not dropped:
+        return dict(state), {}
+    return slim, {"sha256": body_digest(dropped), "tensors": len(dropped)}
+
+
 def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha256: str,
-                    torch_version: str | None = None) -> None:
+                    torch_version: str | None = None, slim: bool = False) -> None:
+    state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    body: dict[str, Any] = {}
+    if slim:
+        state, body = slim_state(state, model)
     payload = {
         "step": int(step),
         "schema_sha256": schema_sha256,
         # str(): torch.__version__ is a TorchVersion, which weights_only loads refuse.
         "torch": str(torch_version or torch.__version__),
-        "state": {k: v.detach().cpu() for k, v in model.state_dict().items()},
+        "state": state,
     }
+    if body:
+        payload["pretrained_body"] = body
     if any(isinstance(v, str) and len(v) > 80 for v in payload.values()):
         raise ValueError("Checkpoint metadata must stay free of source text")
     torch.save(payload, path)
@@ -142,6 +199,17 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str) -> 
             model.add_free_head(k[len("free_heads."):-len(".weight")])
     missing, unexpected = model.load_state_dict(state, strict=False)
     missing = [k for k in missing if not k.startswith("free_heads.")]
+    # A slim checkpoint left the pretrained body out: the model's own download
+    # stands in, and it must be byte for byte the body the run trained on.
+    body = payload.get("pretrained_body")
+    if body:
+        prefixes = body_prefixes(model)
+        own = model.state_dict()
+        filled = {_split_body(k, prefixes): own[k] for k in missing if _split_body(k, prefixes) is not None}
+        if len(filled) != int(body["tensors"]) or body_digest(filled) != body["sha256"]:
+            raise RuntimeError("This model's pretrained encoder is not the one the slim checkpoint was "
+                               "saved against (different download or revision)")
+        missing = [k for k in missing if _split_body(k, prefixes) is None]
     if missing or unexpected:
         raise RuntimeError(f"Checkpoint does not match the model: missing {missing[:5]} "
                            f"unexpected {unexpected[:5]}")

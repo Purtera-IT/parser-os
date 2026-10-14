@@ -188,3 +188,51 @@ def test_a_run_that_does_not_score_the_holdout_may_leave_its_files_out():
         lock_split([train], [])
     with pytest.raises(ValueError, match="fixed holdout"):
         lock_split([replace(train, deal_id="010038")], [], need_holdout=False)
+
+
+class _Body(torch.nn.Module):
+    """Stands in for HFEncoder: a hashing reader plus a 'downloaded' body."""
+
+    pretrained_body = "model"
+
+    def __init__(self, dim: int, seed: int = 0):
+        super().__init__()
+        from ml.c3.text import HashingEncoder
+        self.reader = HashingEncoder(dim, buckets=64)
+        torch.manual_seed(seed)
+        self.model = torch.nn.Linear(dim, dim)
+
+    def forward(self, texts):
+        return self.model(self.reader(texts))
+
+
+def test_a_slim_checkpoint_leaves_out_the_frozen_body_and_refills_it(tmp_path):
+    from ml.c3.gates import slim_state
+
+    schema = load_schema()
+    model = C3Model(schema, CFG, text=_Body(CFG.d_text))
+    model.add_free_head(KEY)
+    state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+    slim, body = slim_state(state, C3Model(schema, CFG, text=_Body(CFG.d_text)))
+    assert body["tensors"] == 2 and not any(".model." in k or k.startswith("text.model") for k in slim)
+    path = tmp_path / "slim.pt"
+    torch.save({"step": 3, "schema_sha256": "abc", "torch": "x", "state": slim, "pretrained_body": body}, path)
+    reader = C3Model(schema, CFG, text=_Body(CFG.d_text))
+    assert load_checkpoint(path, reader, schema_sha256="abc") == 3
+    for k, v in model.state_dict().items():
+        assert torch.equal(reader.state_dict()[k], v), k
+    # A different download is refused, not silently used.
+    with pytest.raises(RuntimeError, match="not the one"):
+        load_checkpoint(path, C3Model(schema, CFG, text=_Body(CFG.d_text, seed=1)), schema_sha256="abc")
+
+
+def test_a_trained_body_layer_stays_in_the_slim_checkpoint():
+    from ml.c3.gates import slim_state
+
+    schema = load_schema()
+    model = C3Model(schema, CFG, text=_Body(CFG.d_text))
+    with torch.no_grad():
+        model.text.model.bias.add_(1.0)
+    slim, body = slim_state(dict(model.state_dict()), C3Model(schema, CFG, text=_Body(CFG.d_text)))
+    assert body["tensors"] == 1
+    assert "text.model.bias" in slim and "text.model.weight" not in slim

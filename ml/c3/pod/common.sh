@@ -1,6 +1,8 @@
 # Sourced by the pod scripts.
 set -euo pipefail
 C3=${C3:-/root/c3}
+# Ubuntu images (Azure) have python3 and no `python`.
+if ! command -v python >/dev/null; then python() { python3 "$@"; }; export -f python; fi
 REPO=${REPO:-$C3/repo}
 export HF_HOME=${HF_HOME:-$C3/hf}
 export PYTHONPATH=$REPO

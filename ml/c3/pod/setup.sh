@@ -9,8 +9,11 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 export PIP_BREAK_SYSTEM_PACKAGES=1 PIP_ROOT_USER_ACTION=ignore
 # The repo's own dependencies (python-docx and the rest) for the test suite's
 # conftest. torch sits in an optional extra, so this keeps the image's torch.
-pip install -q -e .
-pip install -q "transformers>=4.48" pytest
+# An Azure GPU image has the driver but no torch: the default Linux wheel is
+# the CUDA build.
+python -c "import torch" 2>/dev/null || python -m pip install -q torch
+python -m pip install -q -e .
+python -m pip install -q "transformers>=4.48" pytest
 python -m pytest -q tests/test_c3_*.py
 python - <<'PY'
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer

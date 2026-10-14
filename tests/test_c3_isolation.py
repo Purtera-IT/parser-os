@@ -10,10 +10,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+#: The opt-in C3 type layer (off unless SOWSMITH_C3_TYPE is set, on a box
+#: that has ml/ and torch) may import ml/c3 inside its functions, never at
+#: module level, so importing the parser never loads it.
+LAZY_ML = {"app/core/c3_type_base.py"}
+
+
 def test_app_never_imports_ml():
     pat = re.compile(r"^\s*(from|import)\s+ml(\.|\s|$)", re.M)
-    hits = [str(p.relative_to(ROOT)) for p in (ROOT / "app").rglob("*.py")
-            if pat.search(p.read_text(encoding="utf-8", errors="ignore"))]
+    top = re.compile(r"^(from|import)\s+ml(\.|\s|$)", re.M)
+    hits = []
+    for p in (ROOT / "app").rglob("*.py"):
+        rel, text = str(p.relative_to(ROOT)), p.read_text(encoding="utf-8", errors="ignore")
+        if (top if rel in LAZY_ML else pat).search(text):
+            hits.append(rel)
     assert hits == []
 
 

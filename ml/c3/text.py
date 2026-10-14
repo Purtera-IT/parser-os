@@ -96,6 +96,10 @@ class HFEncoder(nn.Module):
         self.chunk_tokens = chunk_tokens
         self.cache: dict[str, torch.Tensor] = {}
 
+    # The submodule loaded from the hub. A slim checkpoint leaves it out and
+    # the reader fills it from its own download (``gates.slim_state``).
+    pretrained_body = "model"
+
     def frozen(self) -> bool:
         return not any(p.requires_grad for p in self.model.parameters())
 
