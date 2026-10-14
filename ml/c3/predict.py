@@ -67,26 +67,36 @@ def _answer(opp, i: int) -> str:
     return opp.answers[i].value if 0 <= i < len(opp.answers) else str(i)
 
 
-def _line_readings(model: C3Model, out, batch: Batch, row: int, schema: Schema) -> dict[str, Any]:
+def _readings(out, rows: list[int], schema: Schema) -> list[dict[str, Any]]:
+    """Every line reading for ``rows``, one dict per row.
+
+    Each head's logits for the rows move to the CPU once and are read there:
+    element by element on the device, a 2,000-line window costs a device sync
+    per number."""
     by_key = schema.by_key()
-    reads: dict[str, Any] = {}
+    reads: list[dict[str, Any]] = [{} for _ in rows]
+    idx = torch.tensor(rows, dtype=torch.long)
     for key, logits in out.logits.items():
         opp = by_key.get(key)
         if opp is None or opp.size != LINE:
             continue
-        lg = logits[row].float()
+        lg = logits[idx.to(logits.device)].float().cpu()
         if opp.multiple:
             p = lg.sigmoid()
-            reads[key] = {"answers": [_answer(opp, int(j)) for j in (p > 0.5).nonzero().flatten().tolist()],
-                          "p": [round(float(x), 4) for x in p.tolist()]}
+            on = (p > 0.5).tolist()
+            for r, (pr, hit) in enumerate(zip(p.tolist(), on)):
+                reads[r][key] = {"answers": [_answer(opp, j) for j, h in enumerate(hit) if h],
+                                 "p": [round(x, 4) for x in pr]}
         else:
-            p = lg.softmax(-1)
-            j = int(p.argmax())
-            reads[key] = {"answer": _answer(opp, j), "p": round(float(p[j]), 4)}
+            top, j = lg.softmax(-1).max(-1)
+            for r, (pj, jj) in enumerate(zip(top.tolist(), j.tolist())):
+                reads[r][key] = {"answer": _answer(opp, jj), "p": round(pj, 4)}
     for key, values in out.numbers.items():
         opp = by_key.get(key)
         if opp is not None and opp.kind == NUMBER:
-            reads.setdefault(key, {})["value"] = round(float(torch.expm1(values[row].float())), 3)
+            v = torch.expm1(values[idx.to(values.device)].float().cpu()).tolist()
+            for r, x in enumerate(v):
+                reads[r].setdefault(key, {})["value"] = round(x, 3)
     return reads
 
 
@@ -94,28 +104,29 @@ def _links(out, batch: Batch, rows: list[int], link_min: float, governs_top: int
            ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     links, unsure = [], []
     keys = batch.keys
+    n = len(keys)
+    idx = torch.tensor(rows, dtype=torch.long)
     for rel, scores in out.relations.items():
         none = out.link_none.get(rel)
-        for i in rows:
-            row = scores[i].float()
-            if none is not None:
-                row = torch.cat([row, none[i].float().view(1)])
-            if not torch.isfinite(row).any():
+        sc = scores[idx.to(scores.device)].float().cpu()
+        if none is not None:
+            sc = torch.cat([sc, none[idx.to(none.device)].float().cpu().view(-1, 1)], 1)
+        live = torch.isfinite(sc).any(-1)
+        p, j = sc.softmax(-1).max(-1)
+        for i, ok, pj, jj in zip(rows, live.tolist(), p.tolist(), j.tolist()):
+            if not ok or (none is not None and jj == n) or pj < link_min:
                 continue
-            p = row.softmax(-1)
-            j = int(p.argmax())
-            if none is not None and j == len(keys):
-                continue
-            if float(p[j]) < link_min:
-                continue
-            link = {"src": keys[i], "dst": keys[j], "relation": rel, "p": round(float(p[j]), 4)}
-            (links if float(p[j]) >= 0.5 else unsure).append(link)
-    if out.governs is not None:
-        g = out.governs.float().exp()
-        for i in rows:
-            kids = [(float(g[i, j]), j) for j in range(len(keys)) if j != i and float(g[i, j]) > 0.5]
-            for p, j in sorted(kids, reverse=True)[:governs_top]:
-                links.append({"src": keys[i], "dst": keys[j], "relation": "governs", "p": round(p, 4)})
+            link = {"src": keys[i], "dst": keys[jj], "relation": rel, "p": round(pj, 4)}
+            (links if pj >= 0.5 else unsure).append(link)
+    if out.governs is not None and governs_top > 0:
+        g = out.governs[idx.to(out.governs.device)].float().cpu().exp()
+        g[torch.arange(len(rows)), idx] = 0.0
+        top, j = g.topk(min(governs_top, n), -1)
+        for i, ps, js in zip(rows, top.tolist(), j.tolist()):
+            for pj, jj in zip(ps, js):
+                if pj > 0.5:
+                    links.append({"src": keys[i], "dst": keys[jj], "relation": "governs",
+                                  "p": round(pj, 4)})
     return links, unsure
 
 
@@ -158,11 +169,11 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
         with _read_autocast(device):
             out = model(batch.oneshot(), company=batch.company or None)
         home = [i for i, k in enumerate(batch.keys) if k not in lines]
-        for i in home:
+        for i, reads in zip(home, _readings(out, home, schema)):
             a = atoms[batch.keys[i]]
             lines[a.key] = {"atom_id": a.atom_id, "text": a.text, "doc_id": a.doc_id,
                             "doc_kind": a.doc_kind, "section": a.section, "entered_at": a.entered_at,
-                            "reads": _line_readings(model, out, batch, i, schema)}
+                            "reads": reads}
         found, maybe = _links(out, batch, home, link_min, governs_top)
         links += found
         shaky += maybe
