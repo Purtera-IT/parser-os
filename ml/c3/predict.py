@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -167,9 +168,14 @@ def read_deal(model: C3Model, deal: DealExample, schema: Schema, **kwargs) -> di
         return _read_deal(model, deal, schema, **kwargs)
 
 
-def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
+def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: int = 8192,
               device: str = "cpu", link_min: float = 0.3, unsure: float = 0.6,
-              governs_top: int = 5) -> dict[str, Any]:
+              governs_top: int = 5, lines_only: bool = False,
+              deadline: float | None = None) -> dict[str, Any]:
+    """``lines_only`` reads each line and skips the links and the whole-deal
+    answers (the live type layer needs only the lines). ``deadline`` is a
+    ``time.monotonic()`` past which the read stops with ``TimeoutError``,
+    checked before each window."""
     model.eval()
     windows, whole = deal_parts(deal, schema, max_atoms)
     lines: dict[str, dict[str, Any]] = {}
@@ -177,6 +183,8 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     shaky: list[dict[str, Any]] = []
     atoms = {a.key: a for a in deal.atoms}
     for batch in windows:
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError(f"read passed its deadline at {len(lines)}/{len(deal.atoms)} lines")
         with _read_autocast(device):
             out = model(batch.oneshot(), company=batch.company or None)
         home = [i for i, k in enumerate(batch.keys) if k not in lines]
@@ -185,12 +193,16 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
             lines[a.key] = {"atom_id": a.atom_id, "text": a.text, "doc_id": a.doc_id,
                             "doc_kind": a.doc_kind, "section": a.section, "entered_at": a.entered_at,
                             "reads": reads}
+        if lines_only:
+            continue
         found, maybe = _links(out, batch, home, link_min, governs_top)
         links += found
         shaky += maybe
-    with _read_autocast(device):
-        out = model(whole.oneshot(), company=whole.company or None)
-    answers = _deal_answers(model, out, whole, schema)
+    answers: dict[str, Any] = {}
+    if not lines_only:
+        with _read_autocast(device):
+            out = model(whole.oneshot(), company=whole.company or None)
+        answers = _deal_answers(model, out, whole, schema)
     low = sorted(k for k, r in lines.items()
                  if r["reads"].get("col:label_type", {}).get("p", 1.0) < unsure)
     return {"deal_id": deal.deal_id, "lines": lines, "links": links, "deal": answers,

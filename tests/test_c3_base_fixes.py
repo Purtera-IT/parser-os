@@ -280,3 +280,34 @@ def test_a_bf16_encoder_reads_a_deal_on_the_cpu():
     model = C3Model(schema, SMALL, text=Bf16(SMALL.d_text))
     doc = read_deal(model, _long_deal(), schema, max_atoms=5, device="cpu")
     assert set(doc["lines"]) == {f"a{i}" for i in range(12)}
+
+
+def test_a_lines_only_read_skips_links_and_deal_and_honours_its_deadline():
+    import time
+
+    from ml.c3.loop import SMALL
+    from ml.c3.model import C3Model
+    from ml.c3.predict import read_deal
+
+    schema = load_schema()
+    model = C3Model(schema, SMALL)
+    deal = _long_deal()
+    doc = read_deal(model, deal, schema, max_atoms=5, lines_only=True)
+    assert set(doc["lines"]) == {f"a{i}" for i in range(12)}
+    assert doc["links"] == [] and doc["deal"] == {}
+    with pytest.raises(TimeoutError):
+        read_deal(model, deal, schema, max_atoms=5, lines_only=True, deadline=time.monotonic() - 1)
+
+
+def test_a_bf16_copy_reads_every_line_on_the_cpu():
+    import torch
+
+    from ml.c3.loop import SMALL
+    from ml.c3.model import C3Model
+    from ml.c3.predict import read_deal
+
+    schema = load_schema()
+    model = C3Model(schema, SMALL).to(torch.bfloat16)
+    doc = read_deal(model, _long_deal(), schema, max_atoms=5, lines_only=True)
+    assert set(doc["lines"]) == {f"a{i}" for i in range(12)}
+    assert all(0.0 <= r["reads"]["col:label_type"]["p"] <= 1.0 for r in doc["lines"].values())

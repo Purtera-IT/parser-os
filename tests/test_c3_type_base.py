@@ -346,3 +346,45 @@ def test_the_live_read_uses_the_window_the_base_was_trained_and_scored_with():
     for script in ("runC.sh", "runD.sh"):
         got = re.search(r"ATOMS=\$\{ATOMS:-(\d+)\}", (pod / script).read_text())
         assert got and int(got.group(1)) == c3.MAX_ATOMS, script
+
+
+def test_too_little_memory_abstains_before_loading(monkeypatch, tmp_path):
+    ck = tmp_path / "base.pt"
+    ck.write_bytes(b"x")
+    monkeypatch.setenv("SOWSMITH_C3_CHECKPOINT", str(ck))
+    monkeypatch.setenv("SOWSMITH_C3_ENCODER", "answerdotai/ModernBERT-large")
+    monkeypatch.setattr(c3, "_free_mb", lambda: 900.0)
+    assert c3.get_model() is None
+    assert c3.status()["state"] == "no_memory" and "900 MB free" in c3.status()["reason"]
+
+
+def test_a_read_past_its_budget_stops_and_sends_every_atom_to_the_llm(monkeypatch, llm):
+    import ml.c3.predict as predict
+
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_BUDGET_S", "5")
+    seen = {}
+
+    def _slow(model, deal, schema, **kw):
+        seen.update(kw)
+        raise TimeoutError("read passed its deadline at 2/5 lines")
+
+    monkeypatch.setattr(predict, "read_deal", _slow)
+    monkeypatch.setattr(c3, "_MODEL", (object(), object(), "cpu"))
+    monkeypatch.setattr(c3, "_TRIED", True)
+    monkeypatch.setattr(c3, "_build", lambda atoms, shas=None: (None, []))
+    atoms = _atoms()
+    tac.classify_atoms(atoms)
+    assert sorted(llm) == sorted(_TEXTS)
+    assert seen["lines_only"] is True and seen["deadline"] > 0
+    assert c3.status()["state"] == "over_budget"
+
+
+def test_the_compile_manifest_carries_the_layers_state(monkeypatch):
+    from app.core.ml_capabilities import build_compile_capabilities
+
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "shadow")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "task")
+    monkeypatch.setattr(c3, "_STATUS", {"state": "read", "read_ms": 1200.0, "lines": 40})
+    got = build_compile_capabilities()["deflect_counts"]["c3"]
+    assert got["mode"] == "shadow" and got["types"] == ["task"] and got["state"] == "read"

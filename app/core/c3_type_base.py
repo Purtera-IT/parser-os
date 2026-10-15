@@ -12,6 +12,16 @@ default.
                              (a hub name or a local path)
     SOWSMITH_C3_SURE         probability a reading must reach to act (0.7)
     SOWSMITH_C3_DEVICE       cuda | mps | cpu (default: the first present)
+    SOWSMITH_C3_TYPES        the answers it may act on (default: every
+                             value-light type and ``_keep``)
+    SOWSMITH_C3_DTYPE        fp32 (default) | bf16: the layers above the
+                             encoder in bf16, about half their memory
+                             (the encoder is bf16 either way)
+    SOWSMITH_C3_MIN_FREE_MB  memory the container must have free before the
+                             model loads (2500); short of it, the layer
+                             abstains instead of risking the compile
+    SOWSMITH_C3_BUDGET_S     longest a deal read may take (90); past it the
+                             read stops and every atom goes to the LLM
 
 ``shadow`` reads the deal and reports what the layer would have done, beside
 what the compile then did, as one ``c3_type_shadow`` event; it changes
@@ -31,6 +41,7 @@ import os
 import re
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -49,6 +60,45 @@ _CALC_NAME = re.compile(r"estimat\w*calc")
 #: a deal past this is read in windows. Reading smaller windows than it saw
 #: in training changes its answers.
 MAX_ATOMS = 8192
+
+
+# What the layer last did, for the compile's ML manifest and the nightly
+# report: state is off | loaded | load_failed | no_memory | over_budget |
+# read_failed | read. Counts and times only.
+_STATUS: dict[str, Any] = {"state": "off"}
+
+
+def status() -> dict[str, Any]:
+    return dict(_STATUS)
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+def _free_mb() -> float | None:
+    """Memory this container can still use, from its cgroup (v2, then v1);
+    None when no limit is visible (a laptop, an unlimited box)."""
+    for limit_p, used_p in (("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory.current"),
+                            ("/sys/fs/cgroup/memory/memory.limit_in_bytes",
+                             "/sys/fs/cgroup/memory/memory.usage_in_bytes")):
+        try:
+            with open(limit_p) as f:
+                raw = f.read().strip()
+            if raw == "max":
+                return None
+            limit = int(raw)
+            if limit >= 1 << 60:
+                return None
+            with open(used_p) as f:
+                used = int(f.read().strip())
+            return (limit - used) / 1e6
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def mode() -> str:
@@ -117,10 +167,18 @@ def _load() -> tuple[Any, Any, str]:
         raise FileNotFoundError("SOWSMITH_C3_CHECKPOINT is unset or missing")
     if not encoder:
         raise ValueError("SOWSMITH_C3_ENCODER is unset")
+    need = _env_float("SOWSMITH_C3_MIN_FREE_MB", 2500.0)
+    free = _free_mb()
+    if free is not None and free < need:
+        raise MemoryError(f"{free:.0f} MB free, {need:.0f} MB needed")
+    import torch
+
     schema = load_schema()
     device = _device()
     model = live_student(schema, encoder).to(device)
     load_checkpoint(path, model, schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+    if os.environ.get("SOWSMITH_C3_DTYPE", "").strip().lower() in ("bf16", "bfloat16"):
+        model.to(torch.bfloat16)
     model.eval()
     return model, schema, device
 
@@ -132,12 +190,17 @@ def get_model() -> tuple[Any, Any, str] | None:
         return _MODEL
     with _LOCK:
         if not _TRIED:
+            started = time.monotonic()
             try:
                 _MODEL = _load()
+                _STATUS.update(state="loaded", reason="")
             except Exception as exc:
                 _MODEL = None
+                _STATUS.update(state="no_memory" if isinstance(exc, MemoryError) else "load_failed",
+                               reason=f"{type(exc).__name__}: {exc}"[:300])
                 log.warning("C3 type base not loaded (%s: %s); the layer abstains",
                             type(exc).__name__, exc)
+            _STATUS["load_ms"] = round((time.monotonic() - started) * 1000, 1)
             _TRIED = True
     return _MODEL
 
@@ -379,7 +442,22 @@ def _read(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
         return {}
     model, schema, device = loaded
     deal, keys = _build(atoms, artifact_sha256)
-    doc = read_deal(model, deal, schema, max_atoms=MAX_ATOMS, device=device)
+    started = time.monotonic()
+    budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
+    try:
+        doc = read_deal(model, deal, schema, max_atoms=MAX_ATOMS, device=device,
+                        lines_only=True, deadline=started + budget)
+    except TimeoutError as exc:
+        _STATUS.update(state="over_budget", reason=str(exc)[:300], lines=len(atoms),
+                       read_ms=round((time.monotonic() - started) * 1000, 1))
+        log.warning("C3 type base read stopped (%s); every atom goes to the LLM", exc)
+        return {}
+    except Exception as exc:
+        _STATUS.update(state="read_failed", reason=f"{type(exc).__name__}: {exc}"[:300],
+                       lines=len(atoms), read_ms=round((time.monotonic() - started) * 1000, 1))
+        raise
+    _STATUS.update(state="read", reason="", lines=len(atoms),
+                   read_ms=round((time.monotonic() - started) * 1000, 1))
     lines = doc.get("lines") or {}
     out: dict[int, tuple[str, float]] = {}
     for a, key in zip(atoms, keys):
