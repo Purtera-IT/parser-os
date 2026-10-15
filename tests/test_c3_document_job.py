@@ -154,3 +154,4 @@ def test_a_request_names_heads_as_a_list_of_strings():
     assert serve._asked([KEY, KEY, " "]) == (KEY,)
     with pytest.raises(ValueError):
         serve._asked(KEY)
+

@@ -82,6 +82,15 @@ def status() -> dict[str, Any]:
     return dict(_STATUS)
 
 
+def note_typing(why: dict[str, Any]) -> None:
+    """What the typing stage did with the base's readings (``on``): of the
+    lines it would send the LLM, how many the base took, and why the rest were
+    not its -- no reading, unsure, a skipped kind, or a sure answer the list
+    does not take (by answer). Lands in the compile's ML manifest beside the
+    read's own status. Counts only."""
+    _STATUS["typing"] = dict(why)
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, "").strip() or default)
@@ -582,6 +591,7 @@ def _prepare(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
     """Take what the base reads from the atoms now, and return the read to
     run later: what it sees is fixed before the LLM touches any atom."""
     ids = [id(a) for a in atoms]
+    _STATUS.pop("typing", None)  # this compile's counts only
     if _url():
         deal_id, rows, keys = _rows(atoms, artifact_sha256)
         return lambda: _remote(deal_id, rows, keys, ids)

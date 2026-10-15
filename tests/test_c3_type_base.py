@@ -516,3 +516,17 @@ def test_a_sure_small_talk_drops_like_keep_and_only_when_listed(monkeypatch, llm
     assert "a_keep" not in llm and "a_task" in llm
     assert by["a_keep"].atom_type.value == "scope_item"
     assert tac.get_last_deflect_stats()["deflected"]["c3"] == 1
+
+
+def test_on_records_why_the_llm_still_gets_each_line(monkeypatch, llm):
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "task,_keep")
+    monkeypatch.setenv("SOWSMITH_C3_SURE", "0.85")
+    atoms = _atoms()
+    answers = {"a_task": ("task", 0.95), "a_keep": ("_keep", 0.9),
+               "a_heavy": ("stakeholder", 0.97), "a_unsure": ("task", 0.5)}
+    monkeypatch.setattr(c3, "classify", lambda a, shas=None: {id(x): answers[x.id] for x in a})
+    tac.classify_atoms(atoms)
+    why = c3.status()["typing"]
+    assert (why["lines"], why["taken"], why["unsure"], why["no_reading"]) == (4, 2, 1, 0)
+    assert why["sure_not_taken"] == {"stakeholder": 1}

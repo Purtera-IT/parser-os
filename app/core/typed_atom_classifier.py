@@ -962,11 +962,27 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 readings = _c3.classify(atoms, artifact_sha256)
                 survivors = []
                 decided = []
+                # Why each line the LLM still gets was not the base's: no
+                # reading, under the bar, a Deal Kit / calc line, or a sure
+                # answer the list does not take (by answer). Counts only.
+                _why: dict[str, Any] = {"lines": len(promotable), "taken": 0, "no_reading": 0,
+                                        "unsure": 0, "skipped_kind": 0, "sure_not_taken": {}}
                 for a in promotable:
-                    got = _c3_act(a, readings.get(id(a)))
+                    _res = readings.get(id(a))
+                    got = _c3_act(a, _res)
                     if got is None:
+                        if _res is None:
+                            _why["no_reading"] += 1
+                        elif _res[1] < _sure:
+                            _why["unsure"] += 1
+                        elif _c3.skipped(a, artifact_sha256):
+                            _why["skipped_kind"] += 1
+                        else:
+                            _n = _why["sure_not_taken"]
+                            _n[_res[0]] = _n.get(_res[0], 0) + 1
                         survivors.append(a)
                         continue
+                    _why["taken"] += 1
                     act, _answer, _p, new_type = got
                     decided.append((a, new_type if act == "assign" else None))
                 # Applied only once every reading is in, so a failure part way
@@ -977,6 +993,10 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                         head_deflected += 1
                     _dfl["c3"] += 1
                 promotable = survivors
+                try:
+                    _c3.note_typing(_why)
+                except Exception:
+                    pass
         except Exception:
             pass
         _dfl_ms["c3"] += _lap() - _t
