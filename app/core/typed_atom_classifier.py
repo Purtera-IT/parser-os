@@ -942,7 +942,9 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 # ``small_talk`` is the same drop as ``_keep`` with a name
                 # (``ml.c3.data._NOT_FACT``): the line keeps its type, skips
                 # the LLM, and ``deal_chatter`` names it later as before.
-                if answer in ("_keep", "small_talk"):
+                # ``list_header`` (a list's lead-in line) is not a parser type
+                # and not a fact to type: the line keeps its type, like _keep.
+                if answer in ("_keep", "small_talk", "list_header"):
                     return "keep", answer, p, None
                 if answer in _VALUE_LIGHT:
                     try:
