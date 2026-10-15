@@ -45,8 +45,10 @@ _TRUE = ("1", "true", "yes", "on")
 _SKIP_KINDS = ("deal_kit", "estimating_calc")
 _CALC_NAME = re.compile(r"estimat\w*calc")
 
-#: What predict.py reads a deal with: a deal past this is read in windows.
-MAX_ATOMS = 4096
+#: The window the base was trained and scored with (ml/c3/pod/*.sh ATOMS):
+#: a deal past this is read in windows. Reading smaller windows than it saw
+#: in training changes its answers.
+MAX_ATOMS = 8192
 
 
 def mode() -> str:
@@ -66,6 +68,18 @@ def sure() -> float:
         return float(os.environ.get("SOWSMITH_C3_SURE", "0.7"))
     except ValueError:
         return 0.7
+
+
+def acts_on() -> frozenset[str] | None:
+    """The answers the layer may act on (``SOWSMITH_C3_TYPES``, comma
+    separated, ``_keep`` included by name), or None for every value-light
+    type and ``_keep``. Promotion widens this one type at a time, each only
+    after it clears the route report (``ml.c3.route_report``); shadow reports
+    exactly what ``on`` would do with the same list."""
+    raw = os.environ.get("SOWSMITH_C3_TYPES", "").strip()
+    if not raw:
+        return None
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
 
 
 # --------------------------------------------------------------- the model

@@ -9,8 +9,11 @@ deal-graph state are kept for the labeled lines; the free heads
 (``C3Model.add_free_head``) then train on those for many epochs in minutes.
 Line type is checked on the validation deals every few epochs (Deal Kit and
 estimating-calc lines left out), and the best epoch is saved as a normal
-checkpoint that ``ml.c3.predict`` reads. Validation picks the epoch; the
-holdout is never read. Counts and rates only, never line text.
+checkpoint that ``ml.c3.predict`` reads. An epoch counts only when the watched
+heads (task tier) hold ``--min-watch`` and the other heads' mean exact has not
+dropped below where the checkpoint started, so a refit that buys line type by
+breaking another head is never saved. Validation picks the epoch; the holdout
+is never read. Counts and rates only, never line text.
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ import torch
 import torch.nn.functional as F
 
 from .data import IGNORE
-from .loop import CHECK_SKIP_DOC_KINDS, TYPE_KEY, _autocast, live_student, load_split
+from .loop import CHECK_SKIP_DOC_KINDS, TYPE_KEY, WATCH_CHECK, _autocast, live_student, load_split
 from .readiness import digest
 from .schema import NUMBER, RELATION, load_schema
 
@@ -107,11 +110,34 @@ def type_scores(model, c, focus: int, keep: int, sure: float = 0.5) -> dict[str,
             "parser_exact": float((parser[has] == y[has]).sum()) / max(1, int(has.sum()))}
 
 
+def head_scores(model, va) -> dict[str, float]:
+    """Validation exact per single-answer head (multi-answer heads left out)."""
+    out = {}
+    with torch.no_grad():
+        for k, c in va.items():
+            if k == TYPE_KEY or c["y"].dim() != 1 or k not in model.free_heads:
+                continue
+            out[k] = float((_logits(model, k, c).argmax(-1) == c["y"]).float().mean())
+    return out
+
+
+def _guard(heads: dict[str, float], start_macro: float | None, min_watch: float) -> tuple[bool, float, str]:
+    """Whether an epoch may be saved: every watched head at ``min_watch`` and
+    the heads' mean exact not below the checkpoint's own."""
+    macro = sum(heads.values()) / max(1, len(heads))
+    low = [f"{k}={heads[k]:.3f}" for k in WATCH_CHECK if k in heads and heads[k] < min_watch]
+    if start_macro is not None and macro < start_macro - 1e-9:
+        low.append(f"macro={macro:.4f}<{start_macro:.4f}")
+    return not low, macro, " ".join(low)
+
+
 def fit_heads(model, tr, va, keys, *, epochs: int = 60, check_every: int = 5, lr: float = 1e-3,
-              weight_decay: float = 1e-2, type_weight: float = 5.0, batch: int = 4096):
+              weight_decay: float = 1e-2, type_weight: float = 5.0, batch: int = 4096,
+              min_watch: float = 0.9):
     """Train the free heads on the cached rows. Returns the best validation
-    line-type exact and the free heads' state at that epoch (None when no
-    epoch beat where it started)."""
+    line-type exact among the epochs that pass the head guard, and the free
+    heads' state at that epoch (None when no guarded epoch beat where it
+    started, or the start failed the guard and no epoch passed it)."""
     schema = model.schema
     opt = torch.optim.AdamW([q for k in keys for q in model.free_heads[k].parameters()],
                             lr=lr, weight_decay=weight_decay)
@@ -120,9 +146,14 @@ def fit_heads(model, tr, va, keys, *, epochs: int = 60, check_every: int = 5, lr
     multi = {k for k in keys if tr[k]["y"].dim() == 2}
     before = type_scores(model, va[TYPE_KEY], focus, keep)
     fit0 = type_scores(model, tr[TYPE_KEY], focus, keep)
+    heads0 = head_scores(model, va)
+    ok0, macro0, why0 = _guard(heads0, None, min_watch)
+    watch0 = " ".join(f"valid_{k.replace(':', '_')}={heads0[k]:.3f}" for k in WATCH_CHECK if k in heads0)
     print("check epoch 0 " + " ".join(f"valid_{k}={v:.3f}" for k, v in before.items() if k != "n")
-          + f" fit_exact={fit0['exact']:.3f}", flush=True)
-    best, best_state = before["exact"], None
+          + f" fit_exact={fit0['exact']:.3f} {watch0} valid_macro={macro0:.4f}"
+          + ("" if ok0 else f" guard_failed {why0}"), flush=True)
+    # A start that fails the guard is no bar to beat: any guarded epoch wins.
+    best, best_state = (before["exact"] if ok0 else -1.0), None
     for epoch in range(1, epochs + 1):
         orders = {k: torch.randperm(len(tr[k]["y"])) for k in keys}
         steps = max((len(o) + batch - 1) // batch for o in orders.values())
@@ -149,7 +180,12 @@ def fit_heads(model, tr, va, keys, *, epochs: int = 60, check_every: int = 5, lr
             print(f"check epoch {epoch} loss {total / steps:.3f} "
                   + " ".join(f"valid_{k}={x:.3f}" for k, x in v.items() if k != "n")
                   + f" fit_exact={fit['exact']:.3f} fit_task_recall={fit['task_recall']:.3f}", flush=True)
-            if v["exact"] > best:
+            heads = head_scores(model, va)
+            ok, macro, why = _guard(heads, macro0, min_watch)
+            print(f"check epoch {epoch} " + " ".join(
+                f"valid_{k.replace(':', '_')}={heads[k]:.3f}" for k in WATCH_CHECK if k in heads)
+                + f" valid_macro={macro:.4f}" + ("" if ok else f" guard_failed {why}"), flush=True)
+            if ok and v["exact"] > best:
                 best = v["exact"]
                 best_state = {k: {n: t.detach().clone() for n, t in model.free_heads[k].state_dict().items()}
                               for k in keys}
@@ -169,7 +205,9 @@ def main() -> None:
     p.add_argument("--weight-decay", type=float, default=1e-2)
     p.add_argument("--type-weight", type=float, default=5.0, help="line type's weight among the heads")
     p.add_argument("--batch", type=int, default=4096)
-    p.add_argument("--max-atoms", type=int, default=4096)
+    p.add_argument("--min-watch", type=float, default=0.9,
+                   help="lowest validation exact a watched head (task tier) may have in a saved epoch")
+    p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     p.add_argument("--device", default="auto")
     args = p.parse_args()
@@ -192,7 +230,7 @@ def main() -> None:
     val, _ = load_split(args.validation, schema, args.max_atoms)
     print(f"parts train={len(train)} validation={len(val)}", flush=True)
     tr = _cache(model, train, keys, dev)
-    va = _cache(model, val, [TYPE_KEY], dev)
+    va = _cache(model, val, keys, dev)
     keys = [k for k in keys if k in tr]
     # The heads train on the CPU copy: they are small, and the cache is there.
     model.to("cpu")
@@ -201,9 +239,10 @@ def main() -> None:
     print("heads " + " ".join(f"{k}:{len(tr[k]['y'])}" for k in keys), flush=True)
     best, best_state = fit_heads(model, tr, va, keys, epochs=args.epochs, check_every=args.check_every,
                                  lr=args.lr, weight_decay=args.weight_decay,
-                                 type_weight=args.type_weight, batch=args.batch)
+                                 type_weight=args.type_weight, batch=args.batch, min_watch=args.min_watch)
     if best_state is None:
-        print("no epoch beat the checkpoint on validation; nothing saved", flush=True)
+        print("no epoch passed the head guard and beat the checkpoint on validation; nothing saved",
+              flush=True)
         return
     for k, st in best_state.items():
         model.free_heads[k].load_state_dict(st)

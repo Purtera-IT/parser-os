@@ -135,6 +135,26 @@ def test_sure_threshold_comes_from_the_environment(monkeypatch, llm):
     assert llm == ["a_heavy"]
 
 
+def test_only_the_listed_answers_are_acted_on(monkeypatch, llm):
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "_keep")
+    _stub_readings(monkeypatch)
+    atoms = _atoms()
+    tac.classify_atoms(atoms)
+    by = {a.id: a for a in atoms}
+    # The sure task is not on the list, so the LLM types it; the keep drops.
+    assert by["a_task"].atom_type.value == "scope_item"
+    assert sorted(llm) == ["a_heavy", "a_task", "a_unsure"]
+    assert tac.get_last_deflect_stats()["deflected"]["c3"] == 1
+
+
+def test_an_unset_list_acts_on_every_value_light_type(monkeypatch):
+    monkeypatch.delenv("SOWSMITH_C3_TYPES", raising=False)
+    assert c3.acts_on() is None
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", " task, _keep ,")
+    assert c3.acts_on() == {"task", "_keep"}
+
+
 def test_a_deal_kit_line_is_never_acted_on(monkeypatch, llm):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
     atom = _Atom("a_task", _TEXTS["a_task"], ref=_Ref(filename="Example Deal Kit v3.xlsx",
@@ -315,3 +335,13 @@ def test_a_deal_kit_found_by_sha_is_never_acted_on(monkeypatch, llm, lifecycle):
     tac.classify_atoms([atom])
     assert atom.atom_type.value == "task"
     assert llm == []
+
+
+def test_the_live_read_uses_the_window_the_base_was_trained_and_scored_with():
+    import re
+    from pathlib import Path
+
+    pod = Path(__file__).resolve().parents[1] / "ml" / "c3" / "pod"
+    for script in ("runC.sh", "runD.sh"):
+        got = re.search(r"ATOMS=\$\{ATOMS:-(\d+)\}", (pod / script).read_text())
+        assert got and int(got.group(1)) == c3.MAX_ATOMS, script

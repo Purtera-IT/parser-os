@@ -273,7 +273,7 @@ def main() -> None:
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--deal", nargs="+", required=True, help="training-format deal files")
     p.add_argument("--output", help="output file (one deal) or directory (several)")
-    p.add_argument("--max-atoms", type=int, default=4096)
+    p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     p.add_argument("--tiny", action="store_true")
     p.add_argument("--device", default="auto", help="cuda, mps or cpu (auto picks the first present)")

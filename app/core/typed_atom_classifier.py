@@ -908,6 +908,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 "addendum_qa",
             }
             _sure = _c3.sure()
+            _acts = _c3.acts_on()
             readings = _c3.classify(atoms, artifact_sha256)
             survivors = []
             decided = []
@@ -917,6 +918,9 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     survivors.append(a)
                     continue
                 answer, p = res
+                if _acts is not None and answer not in _acts:
+                    survivors.append(a)
+                    continue
                 if answer == "_keep":
                     act = "keep"
                 elif answer in _VALUE_LIGHT:

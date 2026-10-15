@@ -176,6 +176,38 @@ def test_head_fit_trains_free_heads_on_cached_rows_and_beats_the_start():
     assert state is not None and best > 0.9
 
 
+def test_head_fit_never_saves_an_epoch_that_breaks_a_watched_head():
+    from ml.c3.head_fit import _guard
+
+    ok, macro, _ = _guard({"jdg:task_tier": 0.95, "col:about": 0.8}, 0.85, 0.9)
+    assert ok and abs(macro - 0.875) < 1e-9
+    ok, _, why = _guard({"jdg:task_tier": 0.55, "col:about": 0.99}, 0.5, 0.9)
+    assert not ok and "jdg:task_tier" in why
+    ok, _, why = _guard({"jdg:task_tier": 1.0, "col:about": 0.5}, 0.8, 0.9)
+    assert not ok and "macro" in why
+
+
+def test_head_fit_with_an_unreachable_watch_bar_saves_nothing(monkeypatch):
+    import ml.c3.head_fit as hf
+    from ml.c3.head_fit import _cache, fit_heads
+    from ml.c3.schema import NUMBER, RELATION
+
+    schema = load_schema()
+    torch.manual_seed(0)
+    model = C3Model(schema, CFG).eval()
+    batch = featurize(_deal(), schema)
+    keys = [o.key for o in schema.select(layer="universal")
+            if o.kind not in (RELATION, NUMBER) and len(o.answers) > 1]
+    tr = _cache(model, [batch], keys, "cpu")
+    keys = [k for k in keys if k in tr]
+    watched = next(k for k in keys if k != KEY and tr[k]["y"].dim() == 1)
+    monkeypatch.setattr(hf, "WATCH_CHECK", (watched,))
+    for k in keys:
+        model.add_free_head(k)
+    _, state = fit_heads(model, tr, tr, keys, epochs=20, check_every=10, lr=5e-2, batch=64, min_watch=1.01)
+    assert state is None
+
+
 def test_a_run_that_does_not_score_the_holdout_may_leave_its_files_out():
     from ml.c3.loop import lock_split
 
