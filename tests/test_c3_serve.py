@@ -136,3 +136,20 @@ def test_a_cold_service_answers_at_once_and_the_compile_goes_to_the_llm(service,
 
 def test_the_service_reads_with_the_layers_window():
     assert serve.MAX_ATOMS == c3.MAX_ATOMS
+
+
+def test_the_client_needs_no_ml_code(service, monkeypatch):
+    import builtins
+
+    monkeypatch.setenv("SOWSMITH_C3_URL", service())
+    real = builtins.__import__
+
+    def _no_ml(name, *a, **kw):
+        if name == "ml" or name.startswith("ml."):
+            raise ImportError("the worker ships without ml/")
+        return real(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ml)
+    got = c3.classify(_atoms())
+    monkeypatch.setattr(builtins, "__import__", real)
+    assert len(got) == len(_TEXTS)

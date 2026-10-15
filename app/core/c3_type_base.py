@@ -391,6 +391,18 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
     """
     from ml.c3.data import Atom, DealExample
 
+    deal_id, rows, keys = _rows(atoms, artifact_sha256)
+    atoms_ = [Atom(**r) for r in rows]
+    # Time order is the deal's order: ties keep compile order (DealExample.from_dict).
+    atoms_.sort(key=lambda r: (r.entered_at, r.order))
+    return DealExample(deal_id=deal_id, atoms=atoms_, company="purtera"), keys
+
+
+def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
+          ) -> tuple[str, list[dict[str, Any]], list[str]]:
+    """(deal id, one row per atom in compile order, each atom's key): the
+    fields ``_build`` describes, as plain values. Needs no ``ml`` code, so a
+    worker that reads through the base service ships without it."""
     times: list[float | None] = [_own_time(a) for a in atoms]
     doc_ids = [_doc_id(a) for a in atoms]
     kinds: dict[str, str] = {}
@@ -426,16 +438,14 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
         seen.add(key)
         keys.append(key)
         role, side = _speaker(a)
-        rows.append(Atom(
+        rows.append(dict(
             key=key, text=str(getattr(a, "raw_text", "") or ""),
             entered_at=t if t is not None else doc_time.get(d, latest),
             doc_id=d, doc_kind=kinds[d], section=_section(a), order=float(i),
             speaker_role=role, speaker_side=side, atom_id=str(getattr(a, "id", "") or "")))
-    # Time order is the deal's order: ties keep compile order (DealExample.from_dict).
-    rows.sort(key=lambda r: (r.entered_at, r.order))
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
                     if getattr(a, "project_id", None)), "") or "live"
-    return DealExample(deal_id=deal_id, atoms=rows, company="purtera"), keys
+    return deal_id, rows, keys
 
 
 def _url() -> str:
@@ -484,11 +494,12 @@ def _read_remote(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
                  ) -> dict[int, tuple[str, float]]:
     import urllib.error
 
-    deal, keys = _build(atoms, artifact_sha256)
+    deal_id, rows, keys = _rows(atoms, artifact_sha256)
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     started = time.monotonic()
     try:
-        got = _request("/read", {"deal": deal_payload(deal), "budget_s": budget},
+        payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
+        got = _request("/read", {"deal": payload, "budget_s": budget},
                        timeout=budget + 10.0)
     except Exception as exc:
         code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
