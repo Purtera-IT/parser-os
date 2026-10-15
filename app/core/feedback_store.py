@@ -487,12 +487,20 @@ class FeedbackStore:
         (mean of exemplar vectors). Cached until a write dirties it."""
         if not self._proto_dirty and all(c.id in self._proto for c in corrections):
             return
-        self._proto = {}
-        self._proto_ex = {}
+        if self._proto_dirty:
+            # A write changed the corrections: every prototype is rebuilt.
+            self._proto = {}
+            self._proto_ex = {}
+        # Only the corrections not built yet. Wiping the cache whenever a call
+        # asked for one it lacked made two callers with different candidate
+        # sets (typing asks the full types, then the base types, per line)
+        # rebuild every prototype on every call: 599 rebuilds of 1,766
+        # corrections for 300 lines, ~22 s warm (2026-10-15).
+        missing = [c for c in corrections if c.id not in self._proto]
         # Batch-embed all exemplars in one call, then group back per correction.
         flat: list[str] = []
         spans: list[tuple[str, int, int]] = []
-        for c in corrections:
+        for c in missing:
             if not c.exemplars:
                 continue
             start = len(flat)
