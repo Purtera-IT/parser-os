@@ -840,6 +840,112 @@ def report_shadow(would: dict[int, tuple[Any, str, str, float, str]]) -> dict[st
     return payload
 
 
+# ---------------------------------------------------------- final labels
+
+#: Answers the base kept a line for that are parser types: once every stage has
+#: run, the line takes the base's type (000002, 2026-10-15: 53 of the gold
+#: small_talk / deal_state lines ended as scope_item though the base read them
+#: right, because a keep left the type as it was).
+FINAL_TYPES = frozenset({"small_talk", "deal_state"})
+_STILL_UNTYPED = frozenset({"scope_item", "entity", "customer_instruction"})
+
+
+def apply_final_labels(atoms: list[Any]) -> int:
+    """After every stage: a line the base kept with a FINAL_TYPES answer, and
+    that no stage has typed since, takes that type. Its type before stays an
+    alternative for the labeler, as deal_chatter does. Returns lines typed."""
+    from app.core.schemas import AtomType
+
+    n = 0
+    for a in atoms:
+        v = getattr(a, "value", None)
+        lab = v.get("c3_label") if isinstance(v, dict) else None
+        if not isinstance(lab, dict) or lab.get("type") not in FINAL_TYPES:
+            continue
+        t = getattr(a, "atom_type", None)
+        before = str(getattr(t, "value", t) or "")
+        if before not in _STILL_UNTYPED:
+            continue
+        try:
+            a.atom_type = AtomType(lab["type"])
+        except ValueError:
+            continue
+        nv = dict(v)
+        alt = list(nv.get("alt_atom_types") or [])
+        if before not in alt:
+            alt.append(before)
+        nv["alt_atom_types"] = alt
+        if lab["type"] == "small_talk":
+            nv.setdefault("rejected_by", "c3")
+        a.value = nv
+        flags = list(getattr(a, "review_flags", None) or [])
+        if "c3_label" not in flags:
+            try:
+                a.review_flags = flags + ["c3_label"]
+            except Exception:
+                pass
+        n += 1
+    m = _override_simple_types(atoms)
+    _STATUS["final_labels"] = n
+    _STATUS["final_overrides"] = m
+    return n + m
+
+
+#: Types a line can hold without values the parser extracted, so the base's
+#: sure reading can replace one with another at the end of the compile.
+_SIMPLE = frozenset({
+    "requirement", "exclusion", "contract_term", "deal_metadata", "acceptance_criterion",
+    "task", "change_order_rule", "constraint", "dependency", "mitigation", "compliance_rule",
+    "submission_req", "addendum_qa",
+})
+_OVERRIDE_FROM = _SIMPLE | _STILL_UNTYPED | {"action_item", "open_question"}
+_OVERRIDE_TO = _SIMPLE | {"small_talk", "deal_state"}
+
+
+def _override_simple_types(atoms: list[Any]) -> int:
+    """A line whose type the parser set by rule, before typing ever asked the
+    base, takes the base's type where the base is sure (at least 0.85 and its
+    own bar) and both types are simple. Validation deal 010043 (2026-10-15):
+    on the gold-labeled lines this fixed 101 and broke none; at 0.85 the base
+    reads 88% right where the parser is 45% on the same lines."""
+    from app.core.schemas import AtomType
+
+    readings = _DEAL.get("types") or {}
+    if not readings:
+        return 0
+    n = 0
+    for a in atoms:
+        got = readings.get(str(getattr(a, "id", "") or ""))
+        if not got or got[0] not in _OVERRIDE_TO:
+            continue
+        ans, p = str(got[0]), float(got[1] or 0.0)
+        if p < max(0.85, sure_for(ans)):
+            continue
+        t = getattr(a, "atom_type", None)
+        before = str(getattr(t, "value", t) or "")
+        if before == ans or before not in _OVERRIDE_FROM:
+            continue
+        try:
+            a.atom_type = AtomType(ans)
+        except ValueError:
+            continue
+        v = dict(getattr(a, "value", None) or {})
+        alt = list(v.get("alt_atom_types") or [])
+        if before not in alt:
+            alt.append(before)
+        v["alt_atom_types"] = alt
+        v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "override", "was": before}
+        a.value = v
+        flags = list(getattr(a, "review_flags", None) or [])
+        if "c3_label" not in flags:
+            try:
+                a.review_flags = flags + ["c3_label"]
+            except Exception:
+                pass
+        n += 1
+    return n
+
+
 # ------------------------------------------------------- document judgments
 
 #: The base's answer to "is this document about this deal's job"

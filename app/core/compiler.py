@@ -3565,6 +3565,16 @@ def compile_project(
             warnings.append(f"INFO: {_st} small-talk line(s) typed small_talk")
     except Exception as exc:
         warnings.append(f"WARNING: small_talk typing failed: {type(exc).__name__}: {exc}")
+    # The base's own answer for the lines it kept, now that no stage will read
+    # it: small_talk and deal_state as the labeler types them.
+    try:
+        from app.core import c3_type_base as _c3_final
+
+        _fl = _c3_final.apply_final_labels(atoms)
+        if _fl:
+            warnings.append(f"INFO: {_fl} line(s) typed by the C3 base at the end of the compile")
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.

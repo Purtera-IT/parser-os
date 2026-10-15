@@ -991,6 +991,8 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 readings = _c3.classify(atoms, artifact_sha256)
                 survivors = []
                 decided = []
+                _c3_keep_answer: dict[int, tuple[str, float]] = {}
+                _c3_answer: dict[int, tuple[str, float]] = {}
                 # Why each line the LLM still gets was not the base's: no
                 # reading, under the bar, a Deal Kit / calc line, or a sure
                 # answer the list does not take (by answer). Counts only.
@@ -1013,6 +1015,9 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                         continue
                     _why["taken"] += 1
                     act, _answer, _p, new_type = got
+                    _c3_answer[id(a)] = (_answer, _p)
+                    if act == "keep":
+                        _c3_keep_answer[id(a)] = (_answer, _p)
                     decided.append((a, new_type if act == "assign" else (new_type, _answer) if act == "fill" else None))
                 # Applied only once every reading is in, so a failure part way
                 # leaves every atom as it was.
@@ -1023,6 +1028,16 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     if new_type is not None:
                         a.atom_type = new_type
                         head_deflected += 1
+                        _ans = _c3_answer.get(id(a))
+                        if _ans:
+                            _mark_c3(a, _ans[0], _ans[1], "assign")
+                    else:
+                        # A keep: the line keeps its type through the compile,
+                        # and the base's answer rides along for the final
+                        # labels (c3_type_base.apply_final_labels).
+                        _ans = _c3_keep_answer.get(id(a))
+                        if _ans:
+                            _mark_c3(a, _ans[0], _ans[1], "keep")
                     _dfl["c3"] += 1
                 if fills:
                     filled, back = _fill_values(fills)
@@ -1586,6 +1601,21 @@ If a field is not present in the atom text, omit it from value. Do not invent va
 /no_think"""
 
 
+def _mark_c3(atom: Any, answer: str, p: float | None, act: str) -> None:
+    """What the C3 base said about this line and what the stage did with it
+    (assign / fill / keep), on ``value.c3_label``: the end of the compile reads
+    it (final labels; deal_chatter leaves a base-typed line alone)."""
+    try:
+        v = dict(getattr(atom, "value", None) or {})
+        lab = {"type": answer, "act": act}
+        if p is not None:
+            lab["p"] = round(float(p), 3)
+        v["c3_label"] = lab
+        atom.value = v
+    except Exception:
+        pass
+
+
 def _build_value_prompt(batch: list[tuple[Any, str]]) -> str:
     """Values only: each line's type is already decided (the C3 base), so the
     model is shown just that type's fields, never the taxonomy to choose from."""
@@ -1642,6 +1672,7 @@ def _fill_values(fills: list[tuple[Any, tuple[Any, str]]]) -> tuple[int, list[An
                     back.append(a)
                     continue
                 a.atom_type = t
+                _mark_c3(a, name, None, "fill")
                 value = payload.get("value")
                 if isinstance(value, dict) and value:
                     cur = getattr(a, "value", None)

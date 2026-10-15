@@ -616,3 +616,54 @@ def test_each_answer_can_carry_its_own_bar(monkeypatch, llm):
     why = c3.status()["typing"]
     assert why["taken"] == 1 and why["unsure"] == 1     # task clears 0.5; _keep misses 0.85
     assert "a_task" not in llm and "a_keep" in llm
+
+
+def test_a_kept_line_takes_the_bases_type_at_the_end_unless_a_stage_typed_it(monkeypatch, llm):
+    """000002: gold small_talk / deal_state lines ended as scope_item because a
+    keep left the type as it was."""
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "small_talk,deal_state")
+    atoms = _atoms()
+    answers = {"a_keep": ("small_talk", 0.95), "a_unsure": ("deal_state", 0.9)}
+    monkeypatch.setattr(c3, "classify", lambda a, shas=None: {id(x): answers[x.id] for x in a if x.id in answers})
+    tac.classify_atoms(atoms)
+    keep = next(a for a in atoms if a.id == "a_keep")
+    other = next(a for a in atoms if a.id == "a_unsure")
+    assert keep.atom_type.value == "scope_item" and keep.value["c3_label"]["type"] == "small_talk"
+    other.atom_type = _Type("task")              # a later stage typed it: leave it
+    from app.core.schemas import AtomType
+
+    n = c3.apply_final_labels([keep, other])
+    assert n == 1
+    assert str(getattr(keep.atom_type, "value", keep.atom_type)) == "small_talk"
+    assert "scope_item" in keep.value["alt_atom_types"] and "c3_label" in keep.review_flags
+    assert other.atom_type.value == "task"
+
+
+def test_a_sure_base_reading_replaces_a_simple_rule_type_at_the_end(monkeypatch):
+    from app.core.schemas import AtomType
+
+    a = _Atom("r1", "Payment due within thirty days of invoice.", "acceptance_criterion")
+    b = _Atom("r2", "Ann Lee, Facilities Manager, ann@example.com", "stakeholder")
+    a.atom_type, b.atom_type = AtomType("acceptance_criterion"), AtomType("stakeholder")
+    c3.set_deal([], {})
+    c3._DEAL["types"].update({"r1": ["contract_term", 0.93], "r2": ["small_talk", 0.99]})
+    assert c3.apply_final_labels([a, b]) == 1
+    assert a.atom_type.value == "contract_term" and a.value["c3_label"]["was"] == "acceptance_criterion"
+    assert b.atom_type.value == "stakeholder"          # carries values: never replaced
+    c3._DEAL["types"]["r1"] = ["contract_term", 0.8]
+    a.atom_type = AtomType("acceptance_criterion")
+    assert c3.apply_final_labels([a]) == 0             # under 0.85
+    c3.set_deal(None)
+
+
+def test_the_signature_rule_leaves_a_line_the_base_typed():
+    from app.core import deal_chatter
+    from app.core.schemas import AtomType
+
+    a = _Atom("s1", "Ann Lee | Facilities Manager | ann@example.com", "stakeholder")
+    a.atom_type = AtomType("stakeholder")
+    a.value = {"c3_label": {"type": "stakeholder", "act": "fill"}}
+    assert deal_chatter._typed_by_base(a) is True
+    a.atom_type = AtomType("task")                     # a stage re-typed it since
+    assert deal_chatter._typed_by_base(a) is False
