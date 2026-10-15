@@ -787,6 +787,13 @@ def compile_project(
     except Exception:  # pragma: no cover - never break a compile over this
         pass
 
+    # Setup before the first stage was untimed: 010043 (2026-10-15) spent
+    # 102 s here with no stage open. Each step's seconds go to the warnings.
+    import time as _setup_time
+
+    _setup_s: dict[str, float] = {}
+    _t0 = _setup_time.perf_counter()
+
     # Wake the C3 base service now, so its start-up overlaps reading the
     # documents. No-op unless SOWSMITH_C3_URL is set and the layer is on.
     try:
@@ -795,10 +802,13 @@ def compile_project(
         c3_type_base.warm()
     except Exception:  # pragma: no cover - never break a compile over this
         pass
+    _setup_s["c3_warm"] = _setup_time.perf_counter() - _t0
 
     # Opt-in: activate the feedback store iff SOWSMITH_FEEDBACK_STORE_DB is set.
     # No-op otherwise, so default compiles (and the test suite) are unchanged.
+    _t0 = _setup_time.perf_counter()
     _maybe_wire_feedback_store()
+    _setup_s["wire_feedback_store"] = _setup_time.perf_counter() - _t0
     # Cross-container instant learning: pull PM corrections the SERVICE mirrored
     # to blob into this worker's live store so decide() honors them on THIS
     # compile. Gated + best-effort; no-op unless SOWSMITH_FEEDBACK_BLOB is on.
@@ -810,11 +820,16 @@ def compile_project(
     try:
         from app.core import cache_blob as _cb
 
+        _t0 = _setup_time.perf_counter()
         _cb.sync_ocr_into_cache()
+        _setup_s["sync_ocr_cache"] = _setup_time.perf_counter() - _t0
+        _t0 = _setup_time.perf_counter()
         _cb.sync_embed_into_cache()
+        _setup_s["sync_embed_cache"] = _setup_time.perf_counter() - _t0
     except Exception:  # pragma: no cover - a cache restore must never break a compile
         pass
 
+    _t0 = _setup_time.perf_counter()
     try:
         from app.core import feedback_blob as _fb
         from app.core.decide import get_store as _get_store
@@ -824,6 +839,7 @@ def compile_project(
             _fb.sync_into_store(_st)
     except Exception:  # pragma: no cover - sync must never break a compile
         pass
+    _setup_s["sync_feedback_store"] = _setup_time.perf_counter() - _t0
 
     resolved_project_id = project_id or project_dir.name
 
@@ -850,6 +866,8 @@ def compile_project(
         on_stage_start=stage_start_callback,
     )
     warnings: list[str] = []
+    warnings.append("INFO: compile setup seconds " + ", ".join(
+        f"{k}={v:.1f}" for k, v in _setup_s.items()))
     if pack_routing_decision is not None:
         warnings.append(
             f"INFO: domain pack '{resolved_domain_pack.pack_id}' selected via "
