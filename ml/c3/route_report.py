@@ -52,19 +52,21 @@ VALUE_LIGHT = frozenset({
 ACTABLE = VALUE_LIGHT | {"_keep"}
 
 
-def count(model, batches, device: str, sure: float) -> tuple[list[str], list[tuple[int, int, int, float]]]:
-    """(answer names, one (gold, base, parser, p) row per scored line)."""
-    names = [a.value for a in model.schema.by_key()[TYPE_KEY].answers]
+def count(model, batches, device: str, sure: float, key: str = TYPE_KEY
+          ) -> tuple[list[str], list[tuple[int, int, int, float]]]:
+    """(answer names, one (gold, base, parser, p) row per scored line) for
+    one single-answer head (line type unless ``key`` says otherwise)."""
+    names = [a.value for a in model.schema.by_key()[key].answers]
     rows = []
     model.eval()
     with torch.no_grad(), _autocast(device):
         for b in batches:
-            gold = b.targets.get(TYPE_KEY)
+            gold = b.targets.get(key)
             if not gold or all(y == IGNORE for y in gold):
                 continue
-            prob = model(b.oneshot(), company=b.company or None).logits[TYPE_KEY].float().softmax(-1)
+            prob = model(b.oneshot(), company=b.company or None).logits[key].float().softmax(-1)
             p, pred = prob.max(-1)
-            parser = b.parser_targets.get(TYPE_KEY) or [IGNORE] * len(gold)
+            parser = b.parser_targets.get(key) or [IGNORE] * len(gold)
             for i, y in enumerate(gold):
                 if y == IGNORE or str(b.doc_kind[i] or "").lower() in CHECK_SKIP_DOC_KINDS:
                     continue
@@ -125,6 +127,9 @@ def main() -> None:
                    help="lowest base precision for _keep, which drops the candidate")
     p.add_argument("--min-n", type=int, default=20, help="fewest sure lines a type needs to be judged")
     p.add_argument("--types", help="a frozen comma list to check instead of picking one")
+    p.add_argument("--head", default=TYPE_KEY,
+                   help="another single-answer head (e.g. col:admission): per answer, sure precision "
+                        "and recall against the parser's own pick; only line type has a live layer")
     p.add_argument("--confirm", action="store_true", help="read the holdout, once, to check --types")
     p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--encoder", default="answerdotai/ModernBERT-large")
@@ -150,11 +155,11 @@ def main() -> None:
     model = live_student(schema, args.encoder).to(dev)
     load_checkpoint(args.checkpoint, model, schema_sha256=digest([asdict(o) for o in schema.opportunities]))
     parts = [b for d in deals for b in training_batches(d, schema, max_atoms=args.max_atoms)[0]]
-    names, rows = count(model, parts, dev, args.sure)
+    names, rows = count(model, parts, dev, args.sure, args.head)
     per = table(names, rows, sure=args.sure, bar=args.bar, min_n=args.min_n, keep_bar=args.keep_bar)
     types = ({t.strip() for t in args.types.split(",") if t.strip()} if args.types
              else {k for k, v in per.items() if v["replace"]})
-    result = {"checkpoint": Path(args.checkpoint).name, "deals": sorted(d.deal_id for d in deals),
+    result = {"head": args.head, "checkpoint": Path(args.checkpoint).name, "deals": sorted(d.deal_id for d in deals),
               "sure": args.sure, "bar": args.bar, "keep_bar": args.keep_bar, "min_n": args.min_n, "per_type": per,
               "types": sorted(types), "routed": routed(names, rows, types, args.sure)}
     Path(args.out).write_text(json.dumps(result, indent=1, sort_keys=True), encoding="utf-8")

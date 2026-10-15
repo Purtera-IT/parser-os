@@ -79,3 +79,20 @@ def test_keep_needs_the_stricter_bar():
     per = table(NAMES, rows, sure=0.7, bar=0.85, min_n=20)
     assert per["_keep"]["base_precision"] == 0.95 and not per["_keep"]["replace"]
     assert table(NAMES, rows, sure=0.7, bar=0.85, min_n=20, keep_bar=0.9)["_keep"]["replace"]
+
+
+def test_count_reads_another_single_answer_head():
+    import torch
+
+    from ml.c3.data import IGNORE, featurize
+    from ml.c3.model import C3Model
+    from ml.c3.route_report import count
+    from ml.c3.schema import load_schema
+    from tests.test_c3_type_head import CFG, _deal
+
+    schema = load_schema()
+    torch.manual_seed(0)
+    batch = featurize(_deal(), schema)
+    names, rows = count(C3Model(schema, CFG), [batch], "cpu", 0.7, "col:admission")
+    assert names == [a.value for a in schema.by_key()["col:admission"].answers]
+    assert len(rows) == sum(y != IGNORE for y in batch.targets.get("col:admission", []))
