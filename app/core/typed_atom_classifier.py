@@ -527,6 +527,19 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
             return decided
         cands = _atom_type_candidates()
         base = _taught_base_candidates()
+        # One batched embedding call for every line the loop below will look
+        # up: each lookup embeds its text, and one at a time that was ~2
+        # Azure round trips per line (010043, 2026-10-15: ~139 s of the
+        # typing stage, timed by nothing). The cache is content-addressed, so
+        # the lookups then hit it; what they decide is unchanged.
+        try:
+            from app.core.embedding_retrieval import embed_texts
+
+            _texts = sorted({str(getattr(a, "raw_text", "") or "").strip()[:600] for a in atoms} - {""})
+            if _texts:
+                embed_texts(_texts)
+        except Exception:
+            pass
         for a in atoms:
             text = str(getattr(a, "raw_text", "") or "").strip()
             if not text:
@@ -625,7 +638,9 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
     # they were taught as `dependency` (the customer's remote team's work), and
     # span admission only sees what the LLM left untyped. Store-only, no LLM;
     # abstain leaves the atom alone; runs even with the LLM switched off.
+    _t_taught = time.perf_counter()
     taught = _apply_taught_types(promotable)
+    _taught_ms = (time.perf_counter() - _t_taught) * 1000
     taught_promoted = sum(1 for v in taught.values() if v != "_keep")
     promotable = [a for a in promotable if id(a) not in taught]
 
@@ -800,7 +815,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
             "reached_llm": reached_llm,
             "total_ms": round((time.perf_counter() - _t_start) * 1000, 1),
             "llm_ms": round(_t_llm * 1000, 1),
-            "layer_ms": {k: round(v * 1000, 1) for k, v in _dfl_ms.items()},
+            "layer_ms": {**{k: round(v * 1000, 1) for k, v in _dfl_ms.items()}, "taught": round(_taught_ms, 1)},
         }
         _set_last_deflect_stats(payload)
         try:
