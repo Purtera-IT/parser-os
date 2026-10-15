@@ -102,8 +102,8 @@ class Base:
         return self._loaded.is_set() and self.model is not None
 
     def read(self, payload: dict[str, Any], budget_s: float, *,
-             line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = ()
-             ) -> dict[str, Any]:
+             line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = (),
+             full: bool = False) -> dict[str, Any]:
         """Line types always; with ``line_heads``, those readings of every
         line under ``reads``; with ``document_heads``, each document's group
         judgments under ``documents``. One pass of the model answers all of
@@ -124,7 +124,10 @@ class Base:
             kwargs["document_heads"] = tuple(document_heads)
         with self._lock:
             started = time.monotonic()
-            doc = read(model, deal, schema, device=device, lines_only=True,
+            # ``full``: the links between lines and the whole-deal answers
+            # too (primary service, billing, scopes, tier), from the same
+            # model -- what a brief is assembled from.
+            doc = read(model, deal, schema, device=device, lines_only=not full,
                        deadline=started + budget_s, heads=wanted, **kwargs)
             read_ms = round((time.monotonic() - started) * 1000, 1)
         types: dict[str, list[Any]] = {}
@@ -141,6 +144,11 @@ class Base:
         out: dict[str, Any] = {"types": types, "read_ms": read_ms, "lines": len(deal.atoms)}
         if line_heads:
             out["reads"] = reads
+        if full:
+            out["links"] = [{"src": l["src"], "dst": l["dst"], "relation": l["relation"],
+                             "p": round(float(l.get("p") or 0.0), 4)} for l in (doc.get("links") or [])]
+            out["deal"] = {k: ([str(v["answer"]), round(float(v.get("p") or 0.0), 4)] if "answer" in v
+                               else [v.get("value"), None]) for k, v in (doc.get("deal") or {}).items()}
         if document_heads:
             out["documents"] = {
                 d: {k: [str(v["answer"]), round(float(v.get("p") or 0.0), 4)] for k, v in heads.items()}
@@ -200,6 +208,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 deal = body["deal"]
                 line_heads = _asked(body.get("line_heads"))
                 document_heads = _asked(body.get("document_heads"))
+                full = bool(body.get("full"))
             except (ValueError, KeyError, TypeError):
                 return self._send(400, {"error": "bad body"})
             started = time.monotonic()
@@ -209,7 +218,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 return self._send(503, {"error": base.error or "still loading"})
             try:
                 out = base.read(deal, max(1.0, budget - (time.monotonic() - started)),
-                                line_heads=line_heads, document_heads=document_heads)
+                                line_heads=line_heads, document_heads=document_heads, full=full)
             except TimeoutError as exc:
                 log.warning("read over budget: %s", exc)
                 return self._send(504, {"error": "over budget"})

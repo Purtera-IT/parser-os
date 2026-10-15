@@ -155,3 +155,26 @@ def test_a_request_names_heads_as_a_list_of_strings():
     with pytest.raises(ValueError):
         serve._asked(KEY)
 
+
+
+def test_a_full_read_returns_links_and_whole_deal_answers():
+    seen = {}
+
+    def read(model, deal, schema, **kw):
+        seen.update(kw)
+        return {"lines": {"k1": {"reads": {serve.TYPE_KEY: {"answer": "task", "p": 0.9}}}},
+                "links": [{"src": "k1", "dst": "k2", "relation": "answers", "p": 0.81}],
+                "deal": {"deal:primary_service": {"answer": "low_voltage_cabling", "p": 0.7},
+                         "deal:declared_site_count": {"value": 3.0}}}
+
+    base = serve.Base(load=lambda: (object(), object(), "cpu"), read=read)
+    base.load()
+    deal = {"deal_id": "d", "company": "purtera", "atoms": [
+        {"key": "k1", "text": "t", "entered_at": 0, "doc_id": "doc1", "doc_kind": "email", "section": "",
+         "order": 0, "speaker_role": "", "speaker_side": "", "atom_id": "k1"}]}
+    out = base.read(deal, 30.0, full=True)
+    assert seen["lines_only"] is False
+    assert out["links"] == [{"src": "k1", "dst": "k2", "relation": "answers", "p": 0.81}]
+    assert out["deal"]["deal:primary_service"] == ["low_voltage_cabling", 0.7]
+    assert out["deal"]["deal:declared_site_count"] == [3.0, None]
+    assert base.read(deal, 30.0)["types"] and seen["lines_only"] is True
