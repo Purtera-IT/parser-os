@@ -32,7 +32,7 @@ def test_trusted_heads_decide_and_say_so():
     atoms = [_atom(1, "scope_item"), _atom(2, "scope_item"), _atom(3, "task")]
     reads = {"a1": {"read:co_action": ["keep", 0.9], "read:sow_section": ["deliverables", 0.8]},
              "a2": {"read:co_action": ["reject", 0.7], "read:co_reason": ["hw_price_not_ours", 0.6]},
-             "a3": {"read:co_action": ["keep", 0.4]}}
+             "a3": {"read:co_action": ["keep", 0.7]}}
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
     assert b["sections"]["deliverables"][0]["by"] == "purtera:read:co_action"
     assert b["sections"]["deliverables"][0]["section_by"] == "base:read:sow_section"

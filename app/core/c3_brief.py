@@ -10,7 +10,7 @@ moving from ``rule:`` to ``base:`` or ``purtera:`` with nothing else changed.
     part        head (when trusted)          fallback
     ----------  ---------------------------  ------------------------------------
     keep        read:co_action (purtera)     the line's type is brief material
-    left out    read:noise_class, co_reason  rejected / small_talk types
+    left out    (why) co_reason, noise_class rejected / small_talk types
     section     read:sow_section             section by line type
     service     deal:primary_service         the parse's domain pack
     questions   col:wants / read:intake_gap  open_question lines, missing_info packets
@@ -32,8 +32,8 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-KEEP_BAR = 0.5           # co_action keep at or above this: in the brief
-MAYBE_BAR = 0.3          # keep between MAYBE_BAR and KEEP_BAR: "also mentioned"
+KEEP_BAR = 0.9           # co_action keep at or above this: in the brief body (71% right on unseen 010043)
+MAYBE_BAR = 0.5          # keep between MAYBE_BAR and KEEP_BAR: "also mentioned"
 SECTION_BAR = 0.4
 NOISE_BAR = 0.6
 SERVICE_BAR = 0.6
@@ -101,6 +101,15 @@ def _type(atom: Any) -> str:
     return str(getattr(t, "value", t) or "")
 
 
+def _deal_kit(atom: Any) -> bool:
+    try:
+        from app.core.c3_type_base import _DEAL, skipped
+
+        return skipped(atom, _DEAL.get("sha"))
+    except Exception:
+        return False
+
+
 def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None,
           readings: dict[str, Any] | None = None) -> dict[str, Any]:
     """The structured brief: no LLM. ``readings`` is the compile's full read
@@ -124,23 +133,41 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
     use["rel:contradicts"] = bool(links) and _trusted("rel:contradicts")
 
     # ---- keep / left out
+    # co_action decides. noise_class and co_reason only say WHY a line was
+    # left out: noise_class names a kind of noise for every line it reads
+    # (its labels are all noise kinds), so it is no gate -- run first it threw
+    # out 28 of the 57 lines the labeler kept on 000002, each read keep >= 0.998.
     kept, maybe, left_out, label_tasks = [], [], [], []
     why = Counter()
+
+    def _reason(aid: str, fallback: str) -> tuple[str, str]:
+        if use["read:co_reason"]:
+            c, pc = r(aid, "read:co_reason")
+            if c != "_absent" and pc >= 0.5:
+                return c, _by("read:co_reason")
+        if use["read:noise_class"]:
+            n, pn = r(aid, "read:noise_class")
+            if n != "_absent" and pn >= NOISE_BAR:
+                return n, _by("read:noise_class")
+        return fallback, "rule"
+
     for a in atoms:
         aid, t = str(a.id), _type(a)
         status = str(getattr(getattr(a, "review_status", ""), "value", getattr(a, "review_status", "")))
-        if t in NEVER or status == "rejected":
-            left_out.append({"id": aid, "reason": f"type {t}" if t in NEVER else "rejected", "by": "rule:type"})
+        if _deal_kit(a):
+            # The base is never shown a Deal Kit or estimating sheet (it is
+            # what the kit model is trained to produce), so its reading of one
+            # means nothing: 45 of 135 false keeps on 010043 were kit lines.
+            left_out.append({"id": aid, "reason": "old_manual_deal_kit", "by": "rule:document"})
+            why["rule:deal_kit"] += 1
+            continue
+        act, p = r(aid, "read:co_action") if use["read:co_action"] else ("_absent", 0.0)
+        if status == "rejected" or (t in NEVER and not (t == "small_talk" and act == "keep" and p >= 0.9)):
+            left_out.append({"id": aid, "reason": "rejected" if status == "rejected" else f"type {t}",
+                             "by": "rule:type"})
             why["rule:never"] += 1
             continue
-        if use["read:noise_class"]:
-            noise, pn = r(aid, "read:noise_class")
-            if noise != "_absent" and pn >= NOISE_BAR:
-                left_out.append({"id": aid, "reason": noise, "by": _by("read:noise_class")})
-                why["noise"] += 1
-                continue
-        if use["read:co_action"]:
-            act, p = r(aid, "read:co_action")
+        if act != "_absent":
             if act == "keep" and p >= KEEP_BAR:
                 kept.append((a, p, _by("read:co_action")))
                 why["head:keep"] += 1
@@ -148,12 +175,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 maybe.append((a, p))
                 why["head:maybe"] += 1
             else:
-                reason = r(aid, "read:co_reason")[0] if use["read:co_reason"] else "_absent"
-                left_out.append({"id": aid, "reason": reason if reason != "_absent" else act,
-                                 "by": _by("read:co_action"), "p": round(p, 3)})
+                reason, rby = _reason(aid, act)
+                left_out.append({"id": aid, "reason": reason, "by": rby, "p": round(p, 3)})
                 why["head:" + act] += 1
             # The lines the head is least sure of are the best ones to label.
-            if MAYBE_BAR <= p < 0.6 and act != "_absent":
+            if 0.3 <= p < 0.9 and act == "keep" or 0.3 <= p < 0.6:
                 label_tasks.append({"id": aid, "head": "read:co_action", "base_says": act, "p": round(p, 3),
                                     "text": a.raw_text[:200]})
         elif t in SECTION_BY_TYPE:
@@ -178,9 +204,14 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         sections[sec].sort(key=lambda x: -(x["keep_p"] or 0.5))
 
     # ---- service
-    svc = deal.get("deal:primary_service") if use["deal:primary_service"] else None
-    if svc and svc[0] not in (None, "_absent") and float(svc[1] or 0) >= SERVICE_BAR:
-        service = {"value": svc[0], "p": round(float(svc[1]), 3), "by": _by("deal:primary_service")}
+    # The head answers when trusted, and also when the parse has no real pack
+    # to fall back on ("default_pack" names none): on 000002 the head said
+    # low_voltage_cabling, the labeler's answer, and the rule said default_pack.
+    svc = deal.get("deal:primary_service") if deal else None
+    no_rule = service_fallback in (None, "", "default_pack")
+    if svc and svc[0] not in (None, "_absent") and (
+            (use["deal:primary_service"] and float(svc[1] or 0) >= SERVICE_BAR) or no_rule):
+        service = {"value": svc[0], "p": round(float(svc[1] or 0), 3), "by": _by("deal:primary_service")}
     else:
         service = {"value": service_fallback, "by": "rule:domain_pack",
                    "base_says": (deal.get("deal:primary_service") or [None])[0]}
@@ -237,7 +268,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "service": service,
         "sections": dict(sections),
         "also_mentioned": [{"id": str(a.id), "text": a.raw_text[:200], "keep_p": round(p, 3)}
-                           for a, p in sorted(maybe, key=lambda x: -x[1])[:40]],
+                           for a, p in sorted(maybe, key=lambda x: -x[1])[:150]],
         "questions": questions,
         "conflicts": conflicts[:40],
         "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12))},
