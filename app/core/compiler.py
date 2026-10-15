@@ -825,11 +825,14 @@ def compile_project(
         # so only a deal that reads pictures can wait, and only on a merge.
         _cb.sync_ocr_into_cache_background()
         _setup_s["sync_ocr_cache_start"] = _setup_time.perf_counter() - _t0
-        _t0 = _setup_time.perf_counter()
-        # In the background: the whole mirror is 1.7 GB after a container
-        # starts, and a vector it has not merged yet is just embedded again.
-        _cb.sync_embed_into_cache_background()
-        _setup_s["sync_embed_cache_start"] = _setup_time.perf_counter() - _t0
+        # The embedding mirror is 1.7 GB (dev, 2026-10-15) and the warm worker
+        # scales from zero, so nearly every compile lands on an empty cache:
+        # merging it cost ~53 s to save a few seconds of batched re-embedding
+        # (same model, same vectors). Opt in with SOWSMITH_EMBED_CACHE_SYNC=1.
+        if os.environ.get("SOWSMITH_EMBED_CACHE_SYNC", "").strip().lower() in ("1", "true", "yes", "on"):
+            _t0 = _setup_time.perf_counter()
+            _cb.sync_embed_into_cache_background()
+            _setup_s["sync_embed_cache_start"] = _setup_time.perf_counter() - _t0
     except Exception:  # pragma: no cover - a cache restore must never break a compile
         pass
 
