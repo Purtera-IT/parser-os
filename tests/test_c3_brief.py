@@ -39,3 +39,11 @@ def test_trusted_heads_decide_and_say_so():
     assert [x["id"] for x in b["also_mentioned"]] == ["a3"]
     assert b["left_out"]["by_reason"] == {"hw_price_not_ours": 1}
     assert {t["id"] for t in b["label_next"]} == {"a3"}
+
+
+def test_brief_survives_result_round_trip():
+    from app.core.schemas import CompileResult
+
+    r = CompileResult(project_id="p", atoms=[], entities=[], edges=[], packets=[], project_dir="/x",
+                      c3_brief={"version": 2})
+    assert CompileResult.model_validate_json(r.model_dump_json()).c3_brief == {"version": 2}

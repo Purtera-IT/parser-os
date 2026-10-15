@@ -868,6 +868,7 @@ class CompileResult(BaseModel):
                 "suppressed_atoms": data.get("suppressed_atoms", []),
                 "text_coverage": data.get("text_coverage", []),
                 "ledger_audit": data.get("ledger_audit", {}),
+                "c3_brief": data.get("c3_brief"),
                 "manifest": data.get("manifest"),
                 "trace": data.get("trace"),
                 "candidate_summary": data.get("candidate_summary"),
