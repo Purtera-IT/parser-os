@@ -46,14 +46,16 @@ from .readiness import digest
 from .schema import DEAL, LINE, NUMBER, RELATION, Schema, load_schema
 
 
-def deal_parts(deal: DealExample, schema: Schema, max_atoms: int) -> tuple[list[Batch], Batch]:
-    """The windows a deal is read in, and the part its whole-deal answers come from."""
+def deal_parts(deal: DealExample, schema: Schema, max_atoms: int, *, lines_only: bool = False
+               ) -> tuple[list[Batch], Batch | None]:
+    """The windows a deal is read in, and the part its whole-deal answers come
+    from (None with ``lines_only``, which reads no whole-deal answers)."""
     if len(deal.atoms) <= max_atoms:
         plan = plan_long_deal(deal, schema, max_atoms=max_atoms)
         return plan.windows, plan.windows[0]
     plan = plan_long_deal(deal, schema, max_atoms=max_atoms, overlap=min(256, max_atoms // 4),
-                          always_digest=True)
-    return plan.windows, plan.digest[0]
+                          always_digest=not lines_only)
+    return plan.windows, (None if lines_only else plan.digest[0])
 
 
 def _read_autocast(device: str):
@@ -181,7 +183,7 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     ``time.monotonic()`` past which the read stops with ``TimeoutError``,
     checked before each window."""
     model.eval()
-    windows, whole = deal_parts(deal, schema, max_atoms)
+    windows, whole = deal_parts(deal, schema, max_atoms, lines_only=lines_only)
     lines: dict[str, dict[str, Any]] = {}
     links: list[dict[str, Any]] = []
     shaky: list[dict[str, Any]] = []

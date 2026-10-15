@@ -741,6 +741,9 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
     # C3 shadow: what the base would have done, reported beside the outcome
     # at whichever exit the stage takes. Empty unless SOWSMITH_C3_TYPE=shadow.
     _c3_shadow: dict[int, tuple[Any, str, str, float, str]] = {}
+    # The shadow read running beside the stage: (job, atoms with their types
+    # before the stage, the act rule). Joined at the exit.
+    _c3_pending: list = []
 
     # HOW FAR THROUGH THE STAGE, IN ATOMS RESOLVED.
     #
@@ -770,6 +773,20 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
         return time.perf_counter()
 
     def _emit_deflect(*, llm_batch: int, promoted: int, reached_llm: bool) -> None:
+        if _c3_pending:
+            _w = time.perf_counter()
+            try:
+                from app.core import c3_type_base as _c3
+                job, before, act_rule = _c3_pending.pop()
+                readings = job.result(timeout=_c3._env_float("SOWSMITH_C3_BUDGET_S", 90.0) + 15.0)
+                for a, was in before:
+                    got = act_rule(a, readings.get(id(a)))
+                    if got is not None:
+                        _c3_shadow[id(a)] = (a, was, got[1], got[2], got[0])
+            except Exception:
+                pass
+            # Only the wait the stage added, not the read that overlapped it.
+            _dfl_ms["c3"] += time.perf_counter() - _w
         payload = {
             "event": "typed_atom_deflect",
             "stage": "typed_atom_classification",
@@ -909,46 +926,52 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
             }
             _sure = _c3.sure()
             _acts = _c3.acts_on()
-            readings = _c3.classify(atoms, artifact_sha256)
-            survivors = []
-            decided = []
-            for a in promotable:
-                res = readings.get(id(a))
+
+            def _c3_act(a, res):
+                """(act, answer, p, new type) for a reading the layer would act on, else None."""
                 if res is None or res[1] < _sure or _c3.skipped(a, artifact_sha256):
-                    survivors.append(a)
-                    continue
+                    return None
                 answer, p = res
                 # "on" acts only on a list that cleared the route report; with
                 # no list it takes nothing. Shadow with no list reports every
                 # value-light type, the widest view of what "on" could take.
                 if (answer not in _acts) if _acts is not None else _c3_mode != "shadow":
-                    survivors.append(a)
-                    continue
+                    return None
                 if answer == "_keep":
-                    act = "keep"
-                elif answer in _VALUE_LIGHT:
+                    return "keep", answer, p, None
+                if answer in _VALUE_LIGHT:
                     try:
-                        new_type = _AT(answer)
+                        return "assign", answer, p, _AT(answer)
                     except ValueError:
+                        return None
+                return None
+
+            if _c3_mode == "shadow":
+                # Shadow changes nothing, so its read runs beside the LLM
+                # instead of in front of it: what the base reads is taken now,
+                # and the comparison is made at the stage's exit.
+                _c3_before = [(a, _atom_type_str(a)) for a in promotable]
+                _c3_job = _c3.start(atoms, artifact_sha256)
+                _c3_pending.append((_c3_job, _c3_before, _c3_act))
+            else:
+                readings = _c3.classify(atoms, artifact_sha256)
+                survivors = []
+                decided = []
+                for a in promotable:
+                    got = _c3_act(a, readings.get(id(a)))
+                    if got is None:
                         survivors.append(a)
                         continue
-                    act = "assign"
-                else:
-                    survivors.append(a)
-                    continue
-                if _c3_mode == "shadow":
-                    _c3_shadow[id(a)] = (a, _atom_type_str(a), answer, p, act)
-                    survivors.append(a)
-                    continue
-                decided.append((a, new_type if act == "assign" else None))
-            # Applied only once every reading is in, so a failure part way
-            # leaves every atom as it was.
-            for a, new_type in decided:
-                if new_type is not None:
-                    a.atom_type = new_type
-                    head_deflected += 1
-                _dfl["c3"] += 1
-            promotable = survivors
+                    act, _answer, _p, new_type = got
+                    decided.append((a, new_type if act == "assign" else None))
+                # Applied only once every reading is in, so a failure part way
+                # leaves every atom as it was.
+                for a, new_type in decided:
+                    if new_type is not None:
+                        a.atom_type = new_type
+                        head_deflected += 1
+                    _dfl["c3"] += 1
+                promotable = survivors
         except Exception:
             pass
         _dfl_ms["c3"] += _lap() - _t

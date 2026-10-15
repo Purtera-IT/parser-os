@@ -90,6 +90,7 @@ def _stub_readings(monkeypatch, calls=None):
                 id(by["a_unsure"]): ("requirement", 0.4), id(by["a_heavy"]): ("stakeholder", 0.99)}
 
     monkeypatch.setattr(c3, "classify", _classify)
+    monkeypatch.setattr(c3, "_prepare", lambda atoms, shas=None: (lambda: _classify(atoms, shas)))
 
 
 def test_flag_off_never_reads(monkeypatch, llm):
@@ -440,3 +441,37 @@ def test_a_read_scores_containment_in_slices_with_the_same_result(monkeypatch):
         monkeypatch.setattr(m, "BOX_ROWS", 3)
         sliced = model._box_containment(r)
     assert torch.allclose(whole, sliced)
+
+
+def test_a_shadow_read_runs_beside_the_llm(monkeypatch, llm):
+    import threading
+
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "shadow")
+    llm_started = threading.Event()
+    real = tac._call_ollama
+
+    def _llm(prompt, *, max_tokens=4096):
+        llm_started.set()
+        return real(prompt, max_tokens=max_tokens)
+
+    monkeypatch.setattr(tac, "_call_ollama", _llm)
+
+    def _prepare(atoms, shas=None):
+        by = {a.id: a for a in atoms}
+        texts = {a.id: a.raw_text for a in atoms}
+
+        def _run():
+            # Finishes only once the LLM has started: a read in front of the
+            # LLM would wait here until the timeout and report nothing.
+            assert llm_started.wait(5)
+            assert {a.id: a.raw_text for a in atoms} == texts
+            return {id(by["a_task"]): ("task", 0.95)}
+        return _run
+
+    monkeypatch.setattr(c3, "_prepare", _prepare)
+    atoms = _atoms()
+    assert tac.classify_atoms(atoms) == 0
+    assert sorted(llm) == sorted(_TEXTS)
+    report = c3.get_last_shadow()
+    assert report["would_assign"] == 1
+    assert tac.get_last_deflect_stats()["layer_ms"]["c3"] < 5000

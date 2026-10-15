@@ -112,6 +112,7 @@ def plan_long_deal(deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
     dropped_edges = len(deal.edges) - len(edges)
 
     lines = _Lines(atoms)
+    kept = n - len(aside)
     owned: list[list[dict]] = [[] for _ in spans]
     loose: list[tuple[tuple[int, ...], dict]] = []
     whole: list[dict] = []
@@ -136,7 +137,7 @@ def plan_long_deal(deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
         owners = [w for w, (b, e) in enumerate(spans) if all(b <= i < e for i in idx)]
         if owners:
             owned[owners[0]].append(judgment)
-        elif len(idx) == n - len([a for a in atoms if excluded(a.label)]):
+        elif len(idx) == kept:
             whole.append(judgment)                # an unanchored question reads the deal
         elif len(idx) <= max_atoms:
             loose.append((tuple(sorted(idx)), judgment))

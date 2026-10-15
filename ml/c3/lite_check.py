@@ -61,7 +61,13 @@ def main() -> None:
     if args.threads:
         torch.set_num_threads(args.threads)
     schema = load_schema()
+    # Read the deal as the live layer gets it: lines only, no labels, links
+    # or cards (a training file's labels cost featurize time a compile never pays).
+    from dataclasses import replace
+
     deal = load_deal(args.deal)
+    deal = replace(deal, atoms=[replace(a, label=None) for a in deal.atoms], edges=[], judgments=[],
+                   source_supervision={})
     t0 = time.monotonic()
     model = live_student(schema, args.encoder).to(args.device)
     load_checkpoint(args.checkpoint, model, schema_sha256=digest([asdict(o) for o in schema.opportunities]))

@@ -490,74 +490,79 @@ def deal_payload(deal: Any) -> dict[str, Any]:
         for a in deal.atoms]}
 
 
-def _read_remote(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
-                 ) -> dict[int, tuple[str, float]]:
+def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list[int]
+            ) -> dict[int, tuple[str, float]]:
     import urllib.error
 
-    deal_id, rows, keys = _rows(atoms, artifact_sha256)
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     started = time.monotonic()
     try:
         payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
-        got = _request("/read", {"deal": payload, "budget_s": budget},
-                       timeout=budget + 10.0)
+        got = _request("/read", {"deal": payload, "budget_s": budget}, timeout=budget + 10.0)
     except Exception as exc:
         code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
         # 503: the service is still starting. That compile goes to the LLM;
         # the next one, a minute or two later, reads warm.
         state = {504: "over_budget", 503: "warming"}.get(code, "read_failed")
-        _STATUS.update(state=state, remote=True, lines=len(atoms),
+        _STATUS.update(state=state, remote=True, lines=len(rows),
                        reason=(f"HTTP {code}" if code else f"{type(exc).__name__}: {exc}")[:300],
                        read_ms=round((time.monotonic() - started) * 1000, 1))
         log.warning("C3 base service read failed (%s); every atom goes to the LLM",
                     _STATUS["reason"])
         return {}
-    _STATUS.update(state="read", reason="", remote=True, lines=len(atoms),
+    _STATUS.update(state="read", reason="", remote=True, lines=len(rows),
                    read_ms=round((time.monotonic() - started) * 1000, 1),
                    service_read_ms=got.get("read_ms"))
     types = got.get("types") or {}
     out: dict[int, tuple[str, float]] = {}
-    for a, key in zip(atoms, keys):
+    for i, key in zip(ids, keys):
         t = types.get(key)
         if t and t[0] is not None:
-            out[id(a)] = (str(t[0]), float(t[1] or 0.0))
+            out[i] = (str(t[0]), float(t[1] or 0.0))
     return out
 
 
-def _read(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
-          ) -> dict[int, tuple[str, float]]:
-    if _url():
-        return _read_remote(atoms, artifact_sha256)
+def _local(deal: Any, keys: list[str], ids: list[int]) -> dict[int, tuple[str, float]]:
     from ml.c3.predict import read_deal
 
     loaded = get_model()
     if loaded is None:
         return {}
     model, schema, device = loaded
-    deal, keys = _build(atoms, artifact_sha256)
     started = time.monotonic()
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     try:
         doc = read_deal(model, deal, schema, max_atoms=MAX_ATOMS, device=device,
                         lines_only=True, deadline=started + budget, heads=("col:label_type",))
     except TimeoutError as exc:
-        _STATUS.update(state="over_budget", reason=str(exc)[:300], lines=len(atoms),
+        _STATUS.update(state="over_budget", reason=str(exc)[:300], lines=len(ids),
                        read_ms=round((time.monotonic() - started) * 1000, 1))
         log.warning("C3 type base read stopped (%s); every atom goes to the LLM", exc)
         return {}
     except Exception as exc:
         _STATUS.update(state="read_failed", reason=f"{type(exc).__name__}: {exc}"[:300],
-                       lines=len(atoms), read_ms=round((time.monotonic() - started) * 1000, 1))
+                       lines=len(ids), read_ms=round((time.monotonic() - started) * 1000, 1))
         raise
-    _STATUS.update(state="read", reason="", lines=len(atoms),
+    _STATUS.update(state="read", reason="", lines=len(ids),
                    read_ms=round((time.monotonic() - started) * 1000, 1))
     lines = doc.get("lines") or {}
     out: dict[int, tuple[str, float]] = {}
-    for a, key in zip(atoms, keys):
+    for i, key in zip(ids, keys):
         got = ((lines.get(key) or {}).get("reads") or {}).get("col:label_type")
         if got and got.get("answer") is not None:
-            out[id(a)] = (str(got["answer"]), float(got.get("p") or 0.0))
+            out[i] = (str(got["answer"]), float(got.get("p") or 0.0))
     return out
+
+
+def _prepare(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
+    """Take what the base reads from the atoms now, and return the read to
+    run later: what it sees is fixed before the LLM touches any atom."""
+    ids = [id(a) for a in atoms]
+    if _url():
+        deal_id, rows, keys = _rows(atoms, artifact_sha256)
+        return lambda: _remote(deal_id, rows, keys, ids)
+    deal, keys = _build(atoms, artifact_sha256)
+    return lambda: _local(deal, keys, ids)
 
 
 def classify(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
@@ -565,7 +570,36 @@ def classify(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
     """``{id(atom): (label_type answer, probability)}`` for every atom read.
 
     Reads the whole deal once. Empty when the model is not loaded."""
-    return _read(atoms, artifact_sha256)
+    return _prepare(atoms, artifact_sha256)()
+
+
+class Job:
+    """A read running beside the compile (shadow): ``result`` waits for it,
+    and any failure reads as nothing."""
+
+    def __init__(self, run):
+        self._out: dict[int, tuple[str, float]] = {}
+        self._done = threading.Event()
+
+        def _go():
+            try:
+                self._out = run()
+            except Exception as exc:
+                log.warning("C3 shadow read failed (%s)", type(exc).__name__)
+            finally:
+                self._done.set()
+
+        threading.Thread(target=_go, daemon=True, name="c3-shadow-read").start()
+
+    def result(self, timeout: float | None = None) -> dict[int, tuple[str, float]]:
+        self._done.wait(timeout)
+        return self._out if self._done.is_set() else {}
+
+
+def start(atoms: list[Any], artifact_sha256: dict[str, str] | None = None) -> Job:
+    """Begin the read in the background (shadow), so it overlaps the LLM
+    instead of adding to the stage's time."""
+    return Job(_prepare(atoms, artifact_sha256))
 
 
 # ----------------------------------------------------------------- shadow
