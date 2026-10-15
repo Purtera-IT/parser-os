@@ -605,7 +605,7 @@ def judge_documents(
     _total = len(bundles)
     if _total:
         _telemetry.set_stage_progress(0, _total)
-    for _i, b in enumerate(bundles.values(), 1):
+    def _judge_one(b):
         keys = list(b["docs"])
         # In the order they were written, so the opener's lines lead.
         keys.sort(key=lambda k: _when(str((idx.get(_doc_filename(by_doc[k][0], k)) or {}).get("authored_at") or "")) or datetime.max.replace(tzinfo=timezone.utc))
@@ -652,6 +652,19 @@ def judge_documents(
                            scope=scope, model=model, timeout=timeout, exclude_created_by=("teacher",))
             except Exception:
                 d = None
+        return keys, docs, filenames, subject, text, context, c3_verdict, c3_p, d
+
+    # Each conversation's verdict is independent: they are worked out in
+    # parallel (the judge is an LLM call for every conversation the base does
+    # not keep) and applied below in the original order, so nothing changes
+    # but the time (010043, 2026-10-15: 13.5 s, one call after another).
+    import concurrent.futures as _cf
+
+    _par = max(1, int(os.environ.get("SOWSMITH_DOCUMENT_JOB_PARALLEL", "8") or 8))
+    with _cf.ThreadPoolExecutor(max_workers=_par) as _pool:
+        _judged = list(_pool.map(_judge_one, list(bundles.values())))
+    for _i, (b, (keys, docs, filenames, subject, text, context, c3_verdict, c3_p, d)) in enumerate(
+            zip(bundles.values(), _judged), 1):
         verdict = getattr(d, "verdict", None) or "this_deal"
         conf = float(getattr(d, "confidence", 0.0) or 0.0)
         source = getattr(d, "source", "fallback")
