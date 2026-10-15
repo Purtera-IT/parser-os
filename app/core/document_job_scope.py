@@ -203,6 +203,65 @@ def judge_model() -> str | None:
     return None if raw.lower() in ("", "default") else raw
 
 
+def c3_mode() -> str:
+    """``SOWSMITH_C3_DOCUMENT_JOB``: off (default) | shadow | on.
+
+    The C3 base answers this stage's question per document
+    (``jdg:document_job``). ``on``: a conversation every judged document of
+    which the base calls ``this_deal`` at ``c3_sure()`` or more is kept on the
+    base's word, without asking the model; anything else -- an ``other_job``
+    call, an unsure one, no read -- goes to the model as before. The base
+    never sets a document aside by itself: run C, 2026-10-15, at 0.8 was right
+    on every ``this_deal`` call of validation deal 010043 (28/28) and 71/79 on
+    the holdout, but its ``other_job`` calls were wrong on 010043 (0/7, none of
+    its documents is another job). ``shadow`` records the base's call beside
+    the model's and changes nothing. A PM's taught verdict still comes first."""
+    v = os.environ.get("SOWSMITH_C3_DOCUMENT_JOB", "").strip().lower()
+    if v == "shadow":
+        return "shadow"
+    return "on" if v in ("1", "true", "yes", "on") else "off"
+
+
+def c3_sure() -> float:
+    try:
+        return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_SURE", "0.8"))
+    except ValueError:
+        return 0.8
+
+
+def c3_bundle_verdict(docs: list[list[Any]], verdicts: dict[str, dict[str, tuple[str, float]]],
+                      sure: float) -> tuple[str | None, float]:
+    """The base's call on one conversation: ``this_deal`` when every one of
+    its documents the base read says so at ``sure`` or more (its lowest
+    certainty comes back), ``other_job`` when any says that, else None."""
+    from app.core.c3_type_base import DOCUMENT_JOB_KEY, _doc_id
+
+    seen: dict[str, tuple[str, float]] = {}
+    for doc_atoms in docs:
+        for a in doc_atoms:
+            d = _doc_id(a)
+            got = (verdicts.get(d) or {}).get(DOCUMENT_JOB_KEY)
+            if got:
+                seen[d] = got
+    if not seen:
+        return None, 0.0
+    if any(ans == "other_job" for ans, _ in seen.values()):
+        return "other_job", max(p for ans, p in seen.values() if ans == "other_job")
+    if all(ans == "this_deal" and p >= sure for ans, p in seen.values()):
+        return "this_deal", min(p for _, p in seen.values())
+    return None, min(p for _, p in seen.values())
+
+
+class _C3Decision:
+    """The base's ``this_deal``, shaped like decide()'s answer."""
+
+    def __init__(self, confidence: float):
+        self.verdict = "this_deal"
+        self.confidence = confidence
+        self.source = "c3"
+        self.correction_id = None
+
+
 def judge_timeout() -> int:
     try:
         return max(5, int(os.environ.get("SOWSMITH_DOCUMENT_JOB_TIMEOUT", str(_DEFAULT_TIMEOUT))))
@@ -529,6 +588,15 @@ def judge_documents(
     idx = index if index is not None else manifest_index(project_dir)
     anchors = deal_anchors(deal_name, crm if crm is not None else crm_from_manifest(project_dir))
     deal_line = strip_refs(deal_name)
+    mode, sure = c3_mode(), c3_sure()
+    c3_docs: dict[str, dict[str, tuple[str, float]]] = {}
+    if mode != "off":
+        try:
+            from app.core import c3_type_base as _c3
+
+            c3_docs = _c3.documents(list(atoms))
+        except Exception:
+            c3_docs = {}
 
     # SAY HOW FAR THROUGH THIS IS. The unit is the DOCUMENT BUNDLE, because
     # that is what costs: one judge call per bundle, however many atoms it
@@ -563,14 +631,27 @@ def judge_documents(
         # lessons are keyed on.
         text = f"DOCUMENT: {subject}"
         context = f"DEAL: {deal_line}\n" + "\n".join(f"- {l}" for l in bundle_lines(docs, common))
-        try:
-            # Judgments only: a person's or a Deal Kit's verdict decides; the
-            # model's own cached verdicts never do, since one wrong other_job
-            # would then remove a whole thread on every later compile.
-            d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
-                       scope=scope, model=model, timeout=timeout, exclude_created_by=("teacher",))
-        except Exception:
-            d = None
+        c3_verdict, c3_p = c3_bundle_verdict(docs, c3_docs, sure) if c3_docs else (None, 0.0)
+        d = None
+        if mode == "on" and c3_verdict == "this_deal":
+            # The base keeps the conversation. A PM's taught verdict still
+            # decides first: the store alone, no model.
+            try:
+                d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
+                           scope=scope, llm=False, exclude_created_by=("teacher",))
+            except Exception:
+                d = None
+            if getattr(d, "verdict", None) is None:
+                d = _C3Decision(c3_p)
+        if d is None:
+            try:
+                # Judgments only: a person's or a Deal Kit's verdict decides; the
+                # model's own cached verdicts never do, since one wrong other_job
+                # would then remove a whole thread on every later compile.
+                d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
+                           scope=scope, model=model, timeout=timeout, exclude_created_by=("teacher",))
+            except Exception:
+                d = None
         verdict = getattr(d, "verdict", None) or "this_deal"
         conf = float(getattr(d, "confidence", 0.0) or 0.0)
         source = getattr(d, "source", "fallback")
@@ -605,6 +686,7 @@ def judge_documents(
             "confidence": round(conf, 3), "source": source, "atoms": n_atoms,
             "correction_id": getattr(d, "correction_id", None),
             "drawing_spared": drawing_spared,
+            "c3_verdict": c3_verdict, "c3_confidence": round(c3_p, 3),
             "content_spared": content_spared, "content_match": matched,
             "reason": reason,
             "atom_ids": [str(getattr(a, "id", "") or "") for d_ in docs for a in d_] if other else [],
@@ -645,6 +727,6 @@ def verdict_note(v: dict[str, Any]) -> str:
     return f"INFO: document_job_scope kept {what}; {how}"
 
 
-__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "common_lines",
+__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "c3_mode", "c3_sure", "c3_bundle_verdict", "deal_name_from_manifest", "common_lines",
            "thread_key", "manifest_index", "bundle_documents", "bundle_lines", "bundle_text", "document_text",
            "judge_documents", "verdict_note", "strip_refs", "deal_anchors", "content_match", "judge_model", "judge_timeout", "min_confidence"]

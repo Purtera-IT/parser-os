@@ -9,9 +9,11 @@ It loads the base once, on the GPU when there is one (the live layer's
 * ``GET /health``: ``{"ready": bool, "device", "load_ms"}``. The worker calls
   it when a compile starts, so a service that scaled to zero starts loading
   while the documents are still being read.
-* ``POST /read``: body ``{"deal": <DealExample dict>, "budget_s": float}``
-  (the rows ``c3_type_base.deal_payload`` builds). Answer: ``{"types":
-  {key: [answer, p]}, "read_ms", "lines"}``, or 504 when the read passes its
+* ``POST /read``: body ``{"deal": <DealExample dict>, "budget_s": float,
+  "line_heads"?: [key], "document_heads"?: [key]}`` (the rows
+  ``c3_type_base.deal_payload`` builds). Answer: ``{"types": {key: [answer,
+  p]}, "reads"?: {key: {head: [answer, p]}}, "documents"?: {doc_id: {head:
+  [answer, p]}}, "read_ms", "lines"}``, or 504 when the read passes its
   budget, or 503 at once while it is still loading (that compile's atoms go
   to the LLM, so a cold start never slows a compile). One read at a time.
 
@@ -96,7 +98,13 @@ class Base:
     def ready(self) -> bool:
         return self._loaded.is_set() and self.model is not None
 
-    def read(self, payload: dict[str, Any], budget_s: float) -> dict[str, Any]:
+    def read(self, payload: dict[str, Any], budget_s: float, *,
+             line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = ()
+             ) -> dict[str, Any]:
+        """Line types always; with ``line_heads``, those readings of every
+        line under ``reads``; with ``document_heads``, each document's group
+        judgments under ``documents``. One pass of the model answers all of
+        them, so asking for more costs the read almost nothing."""
         from .data import DealExample
 
         model, schema, device = self.model  # type: ignore[misc]
@@ -107,17 +115,44 @@ class Base:
 
             def read(m, d, s, **kw):
                 return read_deal(m, d, s, max_atoms=MAX_ATOMS, **kw)
+        wanted = tuple(dict.fromkeys((TYPE_KEY,) + tuple(line_heads)))
+        kwargs: dict[str, Any] = {}
+        if document_heads:
+            kwargs["document_heads"] = tuple(document_heads)
         with self._lock:
             started = time.monotonic()
             doc = read(model, deal, schema, device=device, lines_only=True,
-                       deadline=started + budget_s, heads=(TYPE_KEY,))
+                       deadline=started + budget_s, heads=wanted, **kwargs)
             read_ms = round((time.monotonic() - started) * 1000, 1)
-        types = {}
+        types: dict[str, list[Any]] = {}
+        reads: dict[str, dict[str, list[Any]]] = {}
         for key, line in (doc.get("lines") or {}).items():
-            got = (line.get("reads") or {}).get(TYPE_KEY)
+            got_all = line.get("reads") or {}
+            got = got_all.get(TYPE_KEY)
             if got and got.get("answer") is not None:
                 types[key] = [str(got["answer"]), round(float(got.get("p") or 0.0), 4)]
-        return {"types": types, "read_ms": read_ms, "lines": len(deal.atoms)}
+            for head in line_heads:
+                r = got_all.get(head)
+                if r and r.get("answer") is not None:
+                    reads.setdefault(key, {})[head] = [str(r["answer"]), round(float(r.get("p") or 0.0), 4)]
+        out: dict[str, Any] = {"types": types, "read_ms": read_ms, "lines": len(deal.atoms)}
+        if line_heads:
+            out["reads"] = reads
+        if document_heads:
+            out["documents"] = {
+                d: {k: [str(v["answer"]), round(float(v.get("p") or 0.0), 4)] for k, v in heads.items()}
+                for d, heads in (doc.get("documents") or {}).items()}
+        return out
+
+
+def _asked(value: Any) -> tuple[str, ...]:
+    """A request's list of head keys (``jdg:document_job``), checked for
+    shape only: an unknown key reads as nothing, never as an error."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError("heads must be a list of strings")
+    return tuple(dict.fromkeys(v.strip() for v in value if v.strip()))[:64]
 
 
 def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
@@ -160,6 +195,8 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 body = json.loads(self.rfile.read(size))
                 budget = float(body.get("budget_s") or 90.0)
                 deal = body["deal"]
+                line_heads = _asked(body.get("line_heads"))
+                document_heads = _asked(body.get("document_heads"))
             except (ValueError, KeyError, TypeError):
                 return self._send(400, {"error": "bad body"})
             started = time.monotonic()
@@ -168,7 +205,8 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
             if not base.ready():
                 return self._send(503, {"error": base.error or "still loading"})
             try:
-                out = base.read(deal, max(1.0, budget - (time.monotonic() - started)))
+                out = base.read(deal, max(1.0, budget - (time.monotonic() - started)),
+                                line_heads=line_heads, document_heads=document_heads)
             except TimeoutError as exc:
                 log.warning("read over budget: %s", exc)
                 return self._send(504, {"error": "over budget"})

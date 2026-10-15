@@ -175,18 +175,28 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
               device: str = "cpu", link_min: float = 0.3, unsure: float = 0.6,
               governs_top: int = 5, lines_only: bool = False,
               deadline: float | None = None,
-              heads: tuple[str, ...] | None = None) -> dict[str, Any]:
+              heads: tuple[str, ...] | None = None,
+              document_heads: tuple[str, ...] = ()) -> dict[str, Any]:
     """``lines_only`` reads each line and skips the links and the whole-deal
     answers (the live type layer needs only the lines). ``heads`` keeps only
     those line readings (the type layer needs ``col:label_type``); the
     model's pass is the same, so the answers are too. ``deadline`` is a
     ``time.monotonic()`` past which the read stops with ``TimeoutError``,
-    checked before each window."""
+    checked before each window.
+
+    ``document_heads`` are group judgments asked of each whole document
+    (``jdg:document_job``), from the same pass and as training asked them: the
+    subject is every line of the document (data.py ``_Lines.document``). A
+    document split across windows is judged in the window holding most of
+    its lines. They come back under ``documents``: ``{doc_id: {key:
+    {"answer", "p"}}}``."""
     model.eval()
     windows, whole = deal_parts(deal, schema, max_atoms, lines_only=lines_only)
     lines: dict[str, dict[str, Any]] = {}
     links: list[dict[str, Any]] = []
     shaky: list[dict[str, Any]] = []
+    documents: dict[str, dict[str, Any]] = {}
+    covered: dict[str, int] = {}
     atoms = {a.key: a for a in deal.atoms}
     for batch in windows:
         if deadline is not None and time.monotonic() > deadline:
@@ -200,6 +210,8 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
             lines[a.key] = {"atom_id": a.atom_id, "text": a.text, "doc_id": a.doc_id,
                             "doc_kind": a.doc_kind, "section": a.section, "entered_at": a.entered_at,
                             "reads": reads}
+        if document_heads:
+            _judge_documents(model, out, batch, atoms, schema, document_heads, documents, covered)
         if lines_only:
             continue
         found, maybe = _links(out, batch, home, link_min, governs_top)
@@ -213,7 +225,38 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     low = sorted(k for k, r in lines.items()
                  if r["reads"].get("col:label_type", {}).get("p", 1.0) < unsure)
     return {"deal_id": deal.deal_id, "lines": lines, "links": links, "deal": answers,
-            "unsure": {"lines": low, "links": shaky}}
+            "documents": documents, "unsure": {"lines": low, "links": shaky}}
+
+
+def _judge_documents(model: C3Model, out, batch: Batch, atoms: dict[str, Any], schema: Schema,
+                     keys: tuple[str, ...], documents: dict[str, dict[str, Any]],
+                     covered: dict[str, int]) -> None:
+    """Each document's group judgments from this window, kept where the window
+    holds more of the document's lines than any window before it."""
+    rows: dict[str, list[int]] = {}
+    for i, k in enumerate(batch.keys):
+        doc = atoms[k].doc_id
+        if doc:
+            rows.setdefault(doc, []).append(i)
+    take = [d for d, r in rows.items() if len(r) > covered.get(d, 0)]
+    if not take or not hasattr(model, "judge"):
+        return
+    by_key = schema.by_key()
+    for key in keys:
+        opp = by_key.get(key)
+        if opp is None:
+            continue
+        try:
+            logits = model.judge(out, key, [tuple(rows[d]) for d in take],
+                                 queries=["" for _ in take]).float()
+        except (ValueError, KeyError):
+            continue
+        p = logits.softmax(-1)
+        top, j = p.max(-1)
+        for d, pj, jj in zip(take, top.tolist(), j.tolist()):
+            documents.setdefault(d, {})[key] = {"answer": _answer(opp, jj), "p": round(pj, 4)}
+    for d in take:
+        covered[d] = len(rows[d])
 
 
 def kit_from_read(kit: dict[str, Any], read: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:

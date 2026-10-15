@@ -674,3 +674,73 @@ def report_shadow(would: dict[int, tuple[Any, str, str, float, str]]) -> dict[st
     except Exception:
         pass
     return payload
+
+
+# ------------------------------------------------------- document judgments
+
+#: The base's answer to "is this document about this deal's job"
+#: (``document_job_scope``), asked of each whole document.
+DOCUMENT_JOB_KEY = "jdg:document_job"
+_DOC_STATUS: dict[str, Any] = {"state": "off"}
+
+
+def document_status() -> dict[str, Any]:
+    return dict(_DOC_STATUS)
+
+
+def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
+              artifact_sha256: dict[str, str] | None = None) -> dict[str, dict[str, tuple[str, float]]]:
+    """``{doc_id: {head: (answer, p)}}`` for every document of the deal, from
+    one read of the base (the service when ``SOWSMITH_C3_URL`` is set, else
+    the local model). ``doc_id`` is ``_doc_id(atom)``. Empty on any failure:
+    the caller then asks its own judge, exactly as without the base."""
+    if not atoms:
+        return {}
+    import urllib.error
+
+    started = time.monotonic()
+    budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
+    deal_id, rows, _keys = _rows(atoms, artifact_sha256)
+    try:
+        if _url():
+            try:
+                health = _request("/health", None, timeout=_env_float("SOWSMITH_C3_CONNECT_S", 5.0))
+            except Exception as exc:
+                _DOC_STATUS.update(state="unreachable", reason=f"{type(exc).__name__}"[:300],
+                                   read_ms=round((time.monotonic() - started) * 1000, 1))
+                return {}
+            if not health.get("ready"):
+                _DOC_STATUS.update(state="warming", reason="", read_ms=0.0)
+                return {}
+            payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
+            got = _request("/read", {"deal": payload, "budget_s": budget, "document_heads": list(keys)},
+                           timeout=budget + 10.0)
+            raw = got.get("documents") or {}
+        else:
+            from ml.c3.predict import read_deal
+
+            loaded = get_model()
+            if loaded is None:
+                _DOC_STATUS.update(state="no_model", reason="", read_ms=0.0)
+                return {}
+            model, schema, device = loaded
+            deal, _ = _build(atoms, artifact_sha256)
+            doc = read_deal(model, deal, schema, max_atoms=MAX_ATOMS, device=device, lines_only=True,
+                            deadline=started + budget, heads=("col:label_type",), document_heads=keys)
+            raw = {d: {k: [v["answer"], v.get("p")] for k, v in h.items()}
+                   for d, h in (doc.get("documents") or {}).items()}
+    except Exception as exc:
+        code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
+        _DOC_STATUS.update(state={504: "over_budget", 503: "warming"}.get(code, "read_failed"),
+                           reason=(f"HTTP {code}" if code else type(exc).__name__)[:300],
+                           read_ms=round((time.monotonic() - started) * 1000, 1))
+        log.warning("C3 document read failed (%s); the judge decides as before", _DOC_STATUS["reason"])
+        return {}
+    out: dict[str, dict[str, tuple[str, float]]] = {}
+    for d, heads in raw.items():
+        for k, v in (heads or {}).items():
+            if v and v[0] is not None:
+                out.setdefault(str(d), {})[k] = (str(v[0]), float(v[1] or 0.0))
+    _DOC_STATUS.update(state="read", reason="", documents=len(out),
+                       read_ms=round((time.monotonic() - started) * 1000, 1))
+    return out
