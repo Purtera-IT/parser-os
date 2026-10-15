@@ -44,20 +44,15 @@ _EVENT_KINDS = ("meeting", "note", "email")
 
 
 def _doc_times(documents: list[dict[str, Any]]) -> dict[str, str]:
-    """Arrival time per artifact, filled forward in the export's arrival order."""
-    known = []
-    for d in documents:
-        origin = d.get("origin") if isinstance(d.get("origin"), dict) else {}
-        t = origin.get("sent_at") or (d.get("authoredAt") if d.get("kind") in _EVENT_KINDS else None)
-        known.append(t)
-    first = next((t for t in known if t), None)
-    out: dict[str, str] = {}
-    prev = first
-    for d, t in zip(documents, known):
-        prev = t or prev
-        if d.get("artifactId") and prev:
-            out[str(d["artifactId"])] = str(prev)
-    return out
+    """Arrival time per artifact, filled forward in the export's arrival order
+    (the deal record's rules, ``record.document_times``)."""
+    from .record import document_times
+
+    return {k: str(v) for k, v in document_times(
+        {"doc_id": str(d.get("artifactId") or ""), "kind": d.get("kind"),
+         "sent_at": (d.get("origin") if isinstance(d.get("origin"), dict) else {}).get("sent_at"),
+         "authored_at": d.get("authoredAt")}
+        for d in documents).items()}
 
 
 def _speaker(atom: dict[str, Any]) -> tuple[str, str]:

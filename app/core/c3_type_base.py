@@ -259,7 +259,7 @@ TRAINED_KINDS = frozenset({
     "estimating_calc", "sow_signed", "site_list", "runbook", "cost_breakdown", "w9",
     "purchase_order", "rfq", "rate_card", "engineering_design", "install_instructions",
     "credit_application", "sow", "intake_request", "checklist", "quote", "bom",
-    "vendor_datasheet", "floor_plan", "case_manifest",
+    "vendor_datasheet", "floor_plan", "case_manifest", "sow_template", "nda", "crm_note",
 })
 _EMAIL_TYPES = ("email", "msg", "mbox")
 
@@ -319,13 +319,22 @@ def skipped(atom: Any, artifact_sha256: dict[str, str] | None = None) -> bool:
 
 
 def _section(atom: Any) -> str:
+    """The labeling page's section: the envelope's own ``_atom_section_path``
+    (a locator's ``section_path``, else its section, sheet, speaker, channel or
+    location, then the email list rules), joined as export.py joins it. A
+    transcript line's section is its speaker, as training saw it."""
+    try:
+        from app.core.orbitbrief_envelope import _atom_section_path
+
+        path = _atom_section_path(atom)
+    except Exception:
+        path = []
+    if path:
+        return " > ".join(str(x) for x in path if str(x).strip())
     loc = _locator(atom)
     sp = loc.get("section_path")
-    if isinstance(sp, (list, tuple)) and sp:
-        return " > ".join(str(x) for x in sp if str(x).strip())
     if isinstance(sp, str) and sp.strip():
         return sp
-    # A sheet is a workbook row's section, as the classifier reads it.
     sheet = loc.get("sheet")
     return str(sheet) if sheet else ""
 
@@ -336,16 +345,15 @@ _SIDES = frozenset({"ours", "theirs"})
 
 
 def _speaker(atom: Any) -> tuple[str, str]:
-    """(role, side): the page's ``saidBy``. An email or pasted-note line carries
-    its party (deal_parties); a transcript line only the speaker's role. A
-    value training never saw is '', like a line that speaks for nobody."""
+    """(role, side): the page's ``saidBy``, which is ``value.said_by``. A
+    transcript line's locator ``speaker_role`` is not it: training has '' on
+    99.98% of meeting lines, and ``unknown`` there meant an email sender."""
+    from c3_record import speaker
+
     by = _value(atom).get("said_by")
-    if isinstance(by, dict):
-        role, side = str(by.get("role") or by.get("role_guess") or ""), str(by.get("side") or "")
-    else:
-        role, side = str(_locator(atom).get("speaker_role") or ""), ""
-    role, side = role.strip().lower(), side.strip().lower()
-    return (role if role in _ROLES else ""), (side if side in _SIDES else "")
+    if not isinstance(by, dict):
+        return "", ""
+    return speaker(by.get("role") or by.get("role_guess"), by.get("side"))
 
 
 def _when(raw: Any) -> float | None:
@@ -403,63 +411,177 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
 
     Returns the deal and each atom's key, in the compile's order.
     """
-    from ml.c3.data import Atom, DealExample
+    from ml.c3.data import DealExample
 
     deal_id, rows, keys = _rows(atoms, artifact_sha256)
-    atoms_ = [Atom(**r) for r in rows]
-    # Time order is the deal's order: ties keep compile order (DealExample.from_dict).
-    atoms_.sort(key=lambda r: (r.entered_at, r.order))
-    return DealExample(deal_id=deal_id, atoms=atoms_, company="purtera"), keys
+    return DealExample.from_dict({"deal_id": deal_id, "company": "purtera", "atoms": rows}), keys
 
 
-def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
+def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
+          documents: list[dict[str, Any]] | None = None
           ) -> tuple[str, list[dict[str, Any]], list[str]]:
-    """(deal id, one row per atom in compile order, each atom's key): the
-    fields ``_build`` describes, as plain values. Needs no ``ml`` code, so a
-    worker that reads through the base service ships without it."""
-    times: list[float | None] = [_own_time(a) for a in atoms]
-    doc_ids = [_doc_id(a) for a in atoms]
-    kinds: dict[str, str] = {}
-    for a, d in zip(atoms, doc_ids):
-        if not kinds.get(d):
-            kinds[d] = _event_kind(a)
-    for a, d in zip(atoms, doc_ids):
-        if not kinds[d]:
-            kinds[d] = _file_kind(a, artifact_sha256)
-    # A document's arrival is its earliest line's own time, filled forward in
-    # the order documents first appear in the compile.
-    first: dict[str, float] = {}
-    order: list[str] = []
-    for d, t in zip(doc_ids, times):
-        if d not in order:
-            order.append(d)
-        if t is not None and (d not in first or t < first[d]):
-            first[d] = t
-    doc_time: dict[str, float] = {}
-    prev = next((first[d] for d in order if d in first), None)
-    for d in order:
-        prev = first.get(d, prev)
-        if prev is not None:
-            doc_time[d] = prev
-    known = [t for t in times if t is not None] + list(doc_time.values())
-    latest = max(known) if known else 0.0
+    """(deal id, one row per atom in compile order, each atom's key), built by
+    the deal record standard (``c3_record.build_rows``), the same rules the
+    training export uses: every line takes its DOCUMENT's arrival.
 
-    rows, keys, seen = [], [], set()
-    for i, (a, d, t) in enumerate(zip(atoms, doc_ids, times)):
+    ``documents`` is the compile's document list (``deal_documents``); without
+    it (or for a document it lacks) the documents are read off the atoms, with
+    each document's earliest own line time standing in for its arrival."""
+    from c3_record import build_rows
+
+    sha = artifact_sha256 if artifact_sha256 is not None else _DEAL.get("sha")
+    docs = list(documents if documents is not None else (_DEAL.get("documents") or []))
+    have = {str(d.get("doc_id")) for d in docs}
+    lines, keys, seen = [], [], set()
+    extra: dict[str, dict[str, Any]] = {}
+    for i, a in enumerate(atoms):
         key = _key(a, i)
         if key in seen:
             key = f"{key}#{i}"
         seen.add(key)
         keys.append(key)
+        d = _doc_id(a)
+        if d not in have:
+            e = extra.setdefault(d, {"doc_id": d, "kind": "", "sent_at": None, "authored_at": None})
+            e["kind"] = e["kind"] or _event_kind(a)
+            t = _own_time(a)
+            if t is not None and (e["authored_at"] is None or t < e["authored_at"]):
+                e["authored_at"] = t
+                e["sent_at"] = t
         role, side = _speaker(a)
-        rows.append(dict(
-            key=key, text=str(getattr(a, "raw_text", "") or ""),
-            entered_at=t if t is not None else doc_time.get(d, latest),
-            doc_id=d, doc_kind=kinds[d], section=_section(a), order=float(i),
-            speaker_role=role, speaker_side=side, atom_id=str(getattr(a, "id", "") or "")))
+        lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
+                      "section": _section(a), "order": float(i), "speaker_role": role,
+                      "speaker_side": side, "atom_id": str(getattr(a, "id", "") or "")})
+    rank = _reading_rank(atoms, docs)
+    if rank is not None:
+        for ln, r in zip(lines, rank):
+            ln["order"] = float(r)
+    for d, e in extra.items():
+        if not e["kind"]:
+            first = next(a for a in atoms if _doc_id(a) == d)
+            e["kind"] = _file_kind(first, sha)
+    rows = build_rows(lines, docs + list(extra.values()), latest_fallback=0.0)
+    _STATUS["rows"] = {"documents": len(docs), "documents_from_atoms": len(extra),
+                       "times": len({r["entered_at"] for r in rows})}
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
                     if getattr(a, "project_id", None)), "") or "live"
     return deal_id, rows, keys
+
+
+def _reading_rank(atoms: list[Any], docs: list[dict[str, Any]]) -> list[int] | None:
+    """Each atom's place in the envelope's reading order (``_in_reading_order``,
+    the order the labeling page lists lines in, which is training's ``order``):
+    documents by authored time, ties by their place in the compile manifest,
+    then page, paragraph or row, line and sentence. None without the compile's
+    documents; the atoms' own order stands."""
+    if not docs or not all("pos" in d for d in docs):
+        return None
+    try:
+        from app.core.orbitbrief_envelope import _in_reading_order
+
+        reading = [{"artifact_id": d["doc_id"], "authored_at": d.get("authored_at") or ""}
+                   for d in sorted(docs, key=lambda d: d["pos"])]
+        place = {id(a): i for i, a in enumerate(_in_reading_order(list(atoms), reading))}
+        return [place[id(a)] for a in atoms]
+    except Exception:
+        return None
+
+
+# ------------------------------------------------------------ the deal
+
+#: This compile's documents (``deal_documents``) and file fingerprints, set
+#: once by the compiler so every read of the deal sees the same record, and
+#: the readings already made, so the deal is read once per compile.
+_DEAL: dict[str, Any] = {}
+
+
+def document_job_enabled() -> bool:
+    """``SOWSMITH_C3_DOCUMENT_JOB`` is on or shadow (document_job_scope.c3_mode)."""
+    return os.environ.get("SOWSMITH_C3_DOCUMENT_JOB", "").strip().lower() in ("1", "true", "yes", "on", "shadow")
+
+
+def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
+    _DEAL.clear()
+    _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={})
+
+
+def _delivered_at(sha256: str) -> Any:
+    try:
+        from app.core.document_lifecycle.dataset import lookup
+
+        rec = lookup(sha256) or {}
+    except Exception:
+        return None
+    for d in rec.get("delivered") or []:
+        if isinstance(d, dict) and d.get("ts"):
+            return d["ts"]
+    return None
+
+
+def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
+                   project_dir: Any = None) -> list[dict[str, Any]]:
+    """The compile's documents in the deal record's shape, in arrival order.
+
+    ``fingerprints``: artifact id -> ``{"filename", "sha256"}``. Arrival comes
+    from the manifest Purpulse writes: the email or note that carried a file
+    (``carried_by.sent_at``, else that carrier's authored time), and an
+    event's own authored time; a file nothing carried has none (it takes the
+    one before it, as on the labeling page). Kind is the atoms' event kind,
+    else the file's type by its bytes (``_file_kind``)."""
+    prov: dict[str, dict[str, Any]] = {}
+    index: dict[str, dict[str, Any]] = {}
+    if project_dir:
+        try:
+            from app.core.orbitbrief_envelope import _load_manifest_provenance
+
+            prov = _load_manifest_provenance(project_dir) or {}
+        except Exception:
+            prov = {}
+        try:
+            from app.core.document_job_scope import manifest_index
+
+            index = manifest_index(project_dir) or {}
+        except Exception:
+            index = {}
+    first: dict[str, Any] = {}
+    event: dict[str, str] = {}
+    for a in atoms:
+        d = _doc_id(a)
+        first.setdefault(d, a)
+        if d not in event or not event[d]:
+            event[d] = _event_kind(a)
+    sha = {k: str(v.get("sha256") or "") for k, v in (fingerprints or {}).items() if v.get("sha256")}
+    docs = []
+    for pos, (d, fp) in enumerate((fingerprints or {}).items()):
+        name = str(fp.get("filename") or "")
+        p = prov.get(name) or {}
+        authored = p.get("authored_at") or (index.get(name) or {}).get("authored_at") or None
+        cb = p.get("carried_by") if isinstance(p.get("carried_by"), dict) else {}
+        carrier = prov.get(str(cb.get("filename") or "")) or {}
+        sent = (cb.get("sent_at") or carrier.get("authored_at")) if cb else None
+        if not sent and sha.get(d):
+            # doc_origin.origin_for's last rule: the message the lifecycle
+            # matched as delivering the file (live 000002: the SOW draft
+            # arrived with the note at 23:32:57.777, as the page had it).
+            sent = _delivered_at(sha[d])
+        kind = event.get(d) or (_file_kind(first[d], sha) if d in first else "file")
+        docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
+                     "filename": name, "pos": pos})
+    from c3_record import EVENT_KINDS
+
+    def arrival(doc):
+        t = doc["sent_at"] or (doc["authored_at"] if doc["kind"] in EVENT_KINDS else None)
+        return _when(t)
+
+    # Arrival order: documents with a known arrival by time; the rest after
+    # the document before them in the manifest, so they inherit its arrival.
+    keyed, prev = [], None
+    for doc in docs:
+        t = arrival(doc)
+        prev = t if t is not None else prev
+        keyed.append(((prev if prev is not None else float("-inf")), doc["pos"], doc))
+    keyed.sort(key=lambda x: (x[0], x[1]))
+    return [doc for _, _, doc in keyed]
 
 
 def _url() -> str:
@@ -510,6 +632,13 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
 
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     started = time.monotonic()
+    shared = _DEAL.get("types") or {}
+    if keys and all(k in shared for k in keys):
+        # This compile already read the deal (document_job_scope, on the same
+        # record): its lines only dropped since, so the readings stand.
+        _STATUS.update(state="read", reason="shared", remote=True, lines=len(rows), read_ms=0.0)
+        return {i: (str(shared[k][0]), float(shared[k][1] or 0.0)) for i, k in zip(ids, keys)
+                if shared[k] and shared[k][0] is not None}
     # Ask /health first, with a short timeout: a service that can't be
     # reached (or is still loading) costs the compile seconds, not the whole
     # read budget. 2026-10-15: a URL with no route to the Mac timed out the
@@ -547,6 +676,8 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
                    read_ms=round((time.monotonic() - started) * 1000, 1),
                    service_read_ms=got.get("read_ms"))
     types = got.get("types") or {}
+    if "types" in _DEAL:
+        _DEAL["types"].update(types)
     out: dict[int, tuple[str, float]] = {}
     for i, key in zip(ids, keys):
         t = types.get(key)
@@ -706,6 +837,8 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
     the caller then asks its own judge, exactly as without the base."""
     if not atoms:
         return {}
+    if _DEAL.get("docs"):
+        return dict(_DEAL["docs"])
     import urllib.error
 
     started = time.monotonic()
@@ -726,6 +859,8 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _request("/read", {"deal": payload, "budget_s": budget, "document_heads": list(keys)},
                            timeout=budget + 10.0)
             raw = got.get("documents") or {}
+            if "types" in _DEAL:
+                _DEAL["types"].update(got.get("types") or {})
         else:
             from ml.c3.predict import read_deal
 
@@ -751,6 +886,8 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
         for k, v in (heads or {}).items():
             if v and v[0] is not None:
                 out.setdefault(str(d), {})[k] = (str(v[0]), float(v[1] or 0.0))
+    if "docs" in _DEAL:
+        _DEAL["docs"] = dict(out)
     _DOC_STATUS.update(state="read", reason="", documents=len(out),
                        read_ms=round((time.monotonic() - started) * 1000, 1))
     return out

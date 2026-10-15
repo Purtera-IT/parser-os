@@ -2033,6 +2033,20 @@ def compile_project(
     # beside the SD-WAN scope). Judged per document through decide() -- a PM's
     # correction first, then the model -- and only a confident "other job" sets
     # a document aside. Lossless: its atoms go to the suppression ledger.
+    # The C3 base reads this compile's deal as ONE record (ml/c3/record.py):
+    # every line with its document's arrival and kind, built the way the
+    # training export builds it, and read once for every stage that asks it.
+    try:
+        from app.core import c3_type_base as _c3_deal
+
+        _c3_deal.set_deal(None)
+        if _c3_deal.enabled() or _c3_deal.document_job_enabled():
+            _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
+            _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
+                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")})
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
+
     with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
         _djs_dropped = 0
         _djs_notes: list[str] = []

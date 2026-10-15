@@ -93,7 +93,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*", "orbitbrief_page_os*"]
+include = ["app*", "orbitbrief_page_os*", "c3_record*"]
 
 [tool.setuptools.package-data]
 app = [
