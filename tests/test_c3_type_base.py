@@ -106,6 +106,7 @@ def test_flag_off_never_reads(monkeypatch, llm):
 
 def test_flag_on_assigns_sure_light_drops_sure_keep_and_passes_the_rest(monkeypatch, llm):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "task,_keep")
     calls: list[int] = []
     _stub_readings(monkeypatch, calls)
     atoms = _atoms()
@@ -127,6 +128,7 @@ def test_flag_on_assigns_sure_light_drops_sure_keep_and_passes_the_rest(monkeypa
 def test_sure_threshold_comes_from_the_environment(monkeypatch, llm):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "on")
     monkeypatch.setenv("SOWSMITH_C3_SURE", "0.3")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "task,requirement,_keep")
     _stub_readings(monkeypatch)
     atoms = _atoms()
     tac.classify_atoms(atoms)
@@ -148,11 +150,23 @@ def test_only_the_listed_answers_are_acted_on(monkeypatch, llm):
     assert tac.get_last_deflect_stats()["deflected"]["c3"] == 1
 
 
-def test_an_unset_list_acts_on_every_value_light_type(monkeypatch):
+def test_the_list_parses_and_reads_unset_as_none(monkeypatch):
     monkeypatch.delenv("SOWSMITH_C3_TYPES", raising=False)
     assert c3.acts_on() is None
     monkeypatch.setenv("SOWSMITH_C3_TYPES", " task, _keep ,")
     assert c3.acts_on() == {"task", "_keep"}
+
+
+def test_on_with_no_list_takes_nothing(monkeypatch, llm):
+    # Flipping the layer on before a list clears the route report changes nothing.
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.delenv("SOWSMITH_C3_TYPES", raising=False)
+    _stub_readings(monkeypatch)
+    atoms = _atoms()
+    assert tac.classify_atoms(atoms) == 0
+    assert sorted(llm) == sorted(_TEXTS)
+    assert all(a.atom_type.value == "scope_item" for a in atoms)
+    assert tac.get_last_deflect_stats()["deflected"]["c3"] == 0
 
 
 def test_a_deal_kit_line_is_never_acted_on(monkeypatch, llm):
@@ -323,6 +337,7 @@ def test_speaker_values_outside_training_read_empty():
 
 def test_a_deal_kit_found_by_sha_is_never_acted_on(monkeypatch, llm, lifecycle):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "task")
     lifecycle["sha-kit"] = "DEAL_KIT"
     # A plain name: only the dataset says it is our pricing workbook.
     atom = _Atom("a_task", _TEXTS["a_task"], ref=_Ref(filename="workbook.xlsx", artifact_type="xlsx",

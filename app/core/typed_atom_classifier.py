@@ -918,7 +918,10 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     survivors.append(a)
                     continue
                 answer, p = res
-                if _acts is not None and answer not in _acts:
+                # "on" acts only on a list that cleared the route report; with
+                # no list it takes nothing. Shadow with no list reports every
+                # value-light type, the widest view of what "on" could take.
+                if (answer not in _acts) if _acts is not None else _c3_mode != "shadow":
                     survivors.append(a)
                     continue
                 if answer == "_keep":

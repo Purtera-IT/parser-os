@@ -11,7 +11,9 @@
 # only after ml.c3.lite_check says the bf16 copy agrees.
 set -euo pipefail
 : "${CHECKPOINT:?set CHECKPOINT to the picked slim checkpoint}"
-: "${TYPES:?set TYPES to the list route_report printed (SOWSMITH_C3_TYPES)}"
+# TYPES may be empty: shadow then reports every value-light type, and "on"
+# takes nothing until a list clears the route report.
+: "${TYPES?set TYPES to the list route_report printed (SOWSMITH_C3_TYPES), empty for none}"
 OUT=${OUT:-c3_base.tgz}
 SURE=${SURE:-0.7}
 DTYPE=${DTYPE:-fp32}
