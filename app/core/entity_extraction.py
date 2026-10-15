@@ -5311,6 +5311,10 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
     return out
 
 
+#: Seconds per part of the last ``enrich_atoms`` call (counts only).
+ENRICH_SECONDS: dict[str, float] = {}
+
+
 def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     """Mutate ``atoms`` in place: populate ``entity_keys``.
 
@@ -5337,7 +5341,15 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # landmarks, standards bodies, header fragments) gets dropped.
     from app.core.site_detection import find_authoritative_site_phrases
     atom_list = list(atoms)
+    # Each part's seconds, for the compile notes (010043, 2026-10-15: this
+    # stage took 39 s and nothing said where).
+    import time as _ee_time
+
+    _ee_t0 = _ee_time.perf_counter()
     authoritative_sites = find_authoritative_site_phrases(atom_list)
+    ENRICH_SECONDS.clear()
+    ENRICH_SECONDS["site_phrases"] = round(_ee_time.perf_counter() - _ee_t0, 1)
+    _ee_t0 = _ee_time.perf_counter()
 
     # When the catalog contains LLM-discovered sites that NO atom's
     # raw_text would naturally emit (e.g. "Geary County Schools USD
@@ -5383,6 +5395,8 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # v53.2: STRICT mode — when ANY physical_site atom exists, the
     # roster catalog is the ONLY valid set of sites. Reject any
     # site:* key not aliasing to a roster row.
+    ENRICH_SECONDS["site_role_drops"] = round(_ee_time.perf_counter() - _ee_t0, 1)
+    _ee_t0 = _ee_time.perf_counter()
     _has_physical_site_atoms = any(
         (getattr(a, "atom_type", None).value
             if hasattr(getattr(a, "atom_type", None), "value")

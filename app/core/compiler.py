@@ -2008,6 +2008,13 @@ def compile_project(
         # downstream graph_builder anchors land on `device:unknown` and
         # quantity_conflict edges never form.  See PRODUCTION_GAPS.md P0.2.
         atoms_enriched, keys_added = enrich_entity_keys(atoms, resolved_domain_pack)
+        try:
+            from app.core.entity_extraction import ENRICH_SECONDS as _EES
+
+            enrich_warnings.append("INFO: enrich_entities seconds " + ", ".join(
+                f"{k}={v}" for k, v in _EES.items()))
+        except Exception:
+            pass
         if atoms_enriched:
             enrich_warnings.append(
                 f"INFO: enriched {atoms_enriched} atoms with {keys_added} entity keys "
