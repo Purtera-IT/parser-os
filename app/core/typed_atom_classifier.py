@@ -512,6 +512,17 @@ def _atom_decide_text(atom: Any) -> str:
     return text
 
 
+def _taught_excluded() -> tuple[str, ...]:
+    """Lesson makers the typing check skips: the model's own self-taught rows
+    (never a ruling), and the labeling accounts (``SOWSMITH_TAUGHT_SKIP_LABELERS``,
+    comma separated). A labeling account's lessons are the labels the C3 base
+    trained on, mirrored into the store: 1,460 of the 1,470 atom_type lessons
+    on dev (2026-10-15), deciding 1 line in 300 that the base already reads.
+    PM and Deal Kit corrections still apply first, before any retrain."""
+    extra = tuple(x.strip() for x in os.environ.get("SOWSMITH_TAUGHT_SKIP_LABELERS", "").split(",") if x.strip())
+    return ("teacher",) + extra
+
+
 def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
     """Re-type atoms the feedback store confidently recognises.
 
@@ -558,7 +569,7 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
             d = decide(
                 _ATOM_TYPE_RELATION, text[:600], cands,
                 instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
-                exclude_created_by=("teacher",),
+                exclude_created_by=_taught_excluded(),
             )
             if d is None or d.source != "store" or not d.verdict:
                 # Second pass, base types, exemplar similarity only: what was
@@ -566,7 +577,7 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
                 d = decide(
                     _ATOM_TYPE_RELATION, text[:600], base,
                     instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
-                    exclude_created_by=("teacher",), neural_head=False,
+                    exclude_created_by=_taught_excluded(), neural_head=False,
                 )
             if d is None or d.source != "store" or not d.verdict:
                 continue
