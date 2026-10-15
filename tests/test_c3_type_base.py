@@ -475,3 +475,25 @@ def test_a_shadow_read_runs_beside_the_llm(monkeypatch, llm):
     report = c3.get_last_shadow()
     assert report["would_assign"] == 1
     assert tac.get_last_deflect_stats()["layer_ms"]["c3"] < 5000
+
+
+def test_a_slow_shadow_read_never_holds_the_stage(monkeypatch, llm):
+    """Shadow changes nothing, so the stage waits at most SHADOW_WAIT_S for it."""
+    import threading
+
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "shadow")
+    monkeypatch.setenv("SOWSMITH_C3_SHADOW_WAIT_S", "0.3")
+    release = threading.Event()
+
+    def _prepare(atoms, shas=None):
+        def _run():
+            release.wait(10)
+            return {}
+        return _run
+
+    monkeypatch.setattr(c3, "_prepare", _prepare)
+    try:
+        tac.classify_atoms(_atoms())
+        assert tac.get_last_deflect_stats()["layer_ms"]["c3"] < 2000
+    finally:
+        release.set()

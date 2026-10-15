@@ -778,7 +778,9 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
             try:
                 from app.core import c3_type_base as _c3
                 job, before, act_rule = _c3_pending.pop()
-                readings = job.result(timeout=_c3._env_float("SOWSMITH_C3_BUDGET_S", 90.0) + 15.0)
+                # Shadow changes nothing, so it may not hold the stage long:
+                # past SOWSMITH_C3_SHADOW_WAIT_S the shadow is dropped.
+                readings = job.result(timeout=_c3._env_float("SOWSMITH_C3_SHADOW_WAIT_S", 20.0))
                 for a, was in before:
                     got = act_rule(a, readings.get(id(a)))
                     if got is not None:

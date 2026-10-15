@@ -27,6 +27,11 @@ default.
                              the worker then needs no model memory. Past the
                              budget or on any error, every atom goes to the LLM
     SOWSMITH_C3_TOKEN        the service's bearer token, when it has one
+    SOWSMITH_C3_CONNECT_S    how long the service's /health may take before
+                             the read is skipped as unreachable (5)
+    SOWSMITH_C3_SHADOW_WAIT_S  longest the stage waits for a shadow read
+                             after the LLM is done (20); past it the shadow
+                             is dropped, so shadow never holds a compile
 
 ``shadow`` reads the deal and reports what the layer would have done, beside
 what the compile then did, as one ``c3_type_shadow`` event; it changes
@@ -496,6 +501,25 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
 
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     started = time.monotonic()
+    # Ask /health first, with a short timeout: a service that can't be
+    # reached (or is still loading) costs the compile seconds, not the whole
+    # read budget. 2026-10-15: a URL with no route to the Mac timed out the
+    # full 100 s and the shadow join held the stage for 61 s of it.
+    try:
+        health = _request("/health", None, timeout=_env_float("SOWSMITH_C3_CONNECT_S", 5.0))
+    except Exception as exc:
+        code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
+        _STATUS.update(state="unreachable", remote=True, lines=len(rows),
+                       reason=(f"HTTP {code}" if code else f"{type(exc).__name__}: {exc}")[:300],
+                       read_ms=round((time.monotonic() - started) * 1000, 1))
+        log.warning("C3 base service unreachable (%s); every atom goes to the LLM",
+                    _STATUS["reason"])
+        return {}
+    if not health.get("ready"):
+        _STATUS.update(state="warming", remote=True, lines=len(rows),
+                       reason=str(health.get("error") or "still loading")[:300],
+                       read_ms=round((time.monotonic() - started) * 1000, 1))
+        return {}
     try:
         payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
         got = _request("/read", {"deal": payload, "budget_s": budget}, timeout=budget + 10.0)

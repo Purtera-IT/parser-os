@@ -96,7 +96,7 @@ def test_a_service_that_is_down_sends_every_atom_to_the_llm(service, monkeypatch
     monkeypatch.setenv("SOWSMITH_C3_URL", url.rsplit(":", 1)[0] + ":1")
     monkeypatch.setenv("SOWSMITH_C3_BUDGET_S", "1")
     assert c3.classify(_atoms()) == {}
-    assert c3.status()["state"] == "read_failed"
+    assert c3.status()["state"] == "unreachable"
 
 
 def test_warm_pings_only_when_the_layer_is_on(service, monkeypatch):
@@ -129,7 +129,7 @@ def test_a_cold_service_answers_at_once_and_the_compile_goes_to_the_llm(service,
         monkeypatch.setenv("SOWSMITH_C3_URL", f"http://127.0.0.1:{server.server_address[1]}")
         assert c3.classify(_atoms()) == {}
         st = c3.status()
-        assert st["state"] == "warming" and st["reason"] == "HTTP 503" and st["read_ms"] < 2000
+        assert st["state"] == "warming" and st["reason"] == "still loading" and st["read_ms"] < 2000
     finally:
         server.shutdown()
 
@@ -153,3 +153,45 @@ def test_the_client_needs_no_ml_code(service, monkeypatch):
     got = c3.classify(_atoms())
     monkeypatch.setattr(builtins, "__import__", real)
     assert len(got) == len(_TEXTS)
+
+
+def test_an_unreachable_service_is_skipped_in_seconds_not_the_budget(service, monkeypatch):
+    """2026-10-15: a URL with no route timed out the whole read budget."""
+    import socket
+    import time
+
+    hole = socket.socket()
+    hole.bind(("127.0.0.1", 0))
+    hole.listen(0)  # accepts nothing: connects hang like a missing route
+    try:
+        monkeypatch.setenv("SOWSMITH_C3_URL", f"http://127.0.0.1:{hole.getsockname()[1]}")
+        monkeypatch.setenv("SOWSMITH_C3_CONNECT_S", "0.5")
+        monkeypatch.setenv("SOWSMITH_C3_BUDGET_S", "60")
+        started = time.monotonic()
+        assert c3.classify(_atoms()) == {}
+        assert time.monotonic() - started < 5
+        assert c3.status()["state"] == "unreachable"
+    finally:
+        hole.close()
+
+
+
+def test_a_read_goes_through_a_path_prefix(monkeypatch):
+    """The dev worker reaches the Mac through the Ollama relay at /c3."""
+    seen = []
+    monkeypatch.setenv("SOWSMITH_C3_URL", "https://relay.example/c3/")
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: seen.append(req.full_url) or _Resp())
+    c3._request("/health", None, timeout=1)
+    assert seen == ["https://relay.example/c3/health"]
