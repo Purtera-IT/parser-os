@@ -132,7 +132,7 @@ def sure() -> float:
 
 def acts_on() -> frozenset[str] | None:
     """The answers the layer may act on (``SOWSMITH_C3_TYPES``, comma
-    separated, ``_keep`` included by name), or None when unset. Unset, ``on``
+    separated, ``_keep`` and ``small_talk`` included by name), or None when unset. Unset, ``on``
     takes nothing and ``shadow`` reports every value-light type and ``_keep``. Promotion widens this one type at a time, each only
     after it clears the route report (``ml.c3.route_report``); shadow reports
     exactly what ``on`` would do with the same list."""

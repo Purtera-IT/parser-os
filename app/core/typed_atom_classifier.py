@@ -939,7 +939,10 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 # value-light type, the widest view of what "on" could take.
                 if (answer not in _acts) if _acts is not None else _c3_mode != "shadow":
                     return None
-                if answer == "_keep":
+                # ``small_talk`` is the same drop as ``_keep`` with a name
+                # (``ml.c3.data._NOT_FACT``): the line keeps its type, skips
+                # the LLM, and ``deal_chatter`` names it later as before.
+                if answer in ("_keep", "small_talk"):
                     return "keep", answer, p, None
                 if answer in _VALUE_LIGHT:
                     try:

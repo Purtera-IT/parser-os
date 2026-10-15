@@ -497,3 +497,22 @@ def test_a_slow_shadow_read_never_holds_the_stage(monkeypatch, llm):
         assert tac.get_last_deflect_stats()["layer_ms"]["c3"] < 2000
     finally:
         release.set()
+
+
+def test_a_sure_small_talk_drops_like_keep_and_only_when_listed(monkeypatch, llm):
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "small_talk")
+
+    def _classify(atoms, shas=None):
+        by = {a.id: a for a in atoms}
+        return {id(by["a_keep"]): ("small_talk", 0.9), id(by["a_task"]): ("task", 0.95)}
+
+    monkeypatch.setattr(c3, "classify", _classify)
+    monkeypatch.setattr(c3, "_prepare", lambda atoms, shas=None: (lambda: _classify(atoms, shas)))
+    atoms = _atoms()
+    by = {a.id: a for a in atoms}
+    tac.classify_atoms(atoms)
+    # Dropped from the LLM with its type unchanged; task is not on the list.
+    assert "a_keep" not in llm and "a_task" in llm
+    assert by["a_keep"].atom_type.value == "scope_item"
+    assert tac.get_last_deflect_stats()["deflected"]["c3"] == 1
