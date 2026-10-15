@@ -288,6 +288,41 @@ def sync_embed_into_cache() -> int:
 
 
 _EMBED_SYNC: dict[str, Any] = {"thread": None}
+_OCR_SYNC: dict[str, Any] = {"thread": None}
+#: Set whenever no OCR merge is running: an OCR lookup waits on it, so a
+#: picture is never re-read through the billed service because its cached
+#: text had not been merged yet, and a deal with no pictures never waits.
+OCR_MERGED = __import__("threading").Event()
+OCR_MERGED.set()
+
+
+def sync_ocr_into_cache_background() -> bool:
+    """``sync_ocr_into_cache`` on a background thread; ``OcrCache.get`` waits
+    for it (``wait_for_ocr_merge``). Returns True when a merge was started."""
+    import threading
+
+    t = _OCR_SYNC.get("thread")
+    if t is not None and t.is_alive():
+        return False
+    OCR_MERGED.clear()
+
+    def _run():
+        try:
+            sync_ocr_into_cache()
+        except Exception:
+            pass
+        finally:
+            OCR_MERGED.set()
+
+    t = threading.Thread(target=_run, daemon=True, name="ocr-cache-sync")
+    _OCR_SYNC["thread"] = t
+    t.start()
+    return True
+
+
+def wait_for_ocr_merge(timeout: float = 120.0) -> bool:
+    """Block until no OCR merge is running (at most ``timeout`` seconds)."""
+    return OCR_MERGED.wait(timeout)
 
 
 def sync_embed_into_cache_background() -> bool:
