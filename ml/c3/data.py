@@ -824,9 +824,7 @@ def policy_reject(label: dict[str, Any] | None) -> bool:
     return str(act or (label or {}).get("co_action") or "").strip().lower() in _POLICY
 
 
-def is_deal_kit(doc_kind: str) -> bool:
-    """Our own pricing workbook, however the document kind is spelled."""
-    return "dealkit" in re.sub(r"[^a-z]", "", str(doc_kind or "").lower())
+from c3_record import is_deal_kit  # noqa: E402  (one definition, shared with the parser's worker)
 
 
 #: Why the parser lost a hand-added line (app.learning.human_labels.MISS_CAUSE).

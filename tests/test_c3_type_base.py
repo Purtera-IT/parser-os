@@ -576,3 +576,29 @@ def test_a_failed_fill_sends_the_line_back_to_the_full_llm(monkeypatch):
     tac.classify_atoms(atoms)
     assert any("a_heavy" in p for p in prompts if "TAXONOMY" in p)
     assert c3.status()["typing"]["fill_back_to_llm"] == 1
+
+
+def test_the_typing_layer_runs_without_ml_code(monkeypatch, llm):
+    """The worker ships without ml/. 2026-10-15: skipped() imported
+    ml.c3.data, so the first sure reading raised ImportError and the whole
+    layer abstained on every live compile."""
+    import builtins
+
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "task,_keep")
+    atoms = _atoms()
+    answers = {"a_task": ("task", 0.95), "a_keep": ("_keep", 0.9)}
+    monkeypatch.setattr(c3, "classify", lambda a, shas=None: {id(x): answers[x.id] for x in a if x.id in answers})
+    real = builtins.__import__
+
+    def _no_ml(name, *a, **kw):
+        if name == "ml" or name.startswith("ml."):
+            raise ImportError("the worker ships without ml/")
+        return real(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ml)
+    tac.classify_atoms(atoms)
+    monkeypatch.setattr(builtins, "__import__", real)
+    why = c3.status()["typing"]
+    assert "error" not in why and why["taken"] == 2
+    assert "a_task" not in llm and "a_keep" not in llm

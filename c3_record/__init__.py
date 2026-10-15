@@ -37,6 +37,7 @@ message order instead of arrival order moves the base's answers.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 #: Document kinds whose ``authored_at`` is the moment they entered the deal.
@@ -45,6 +46,12 @@ EVENT_KINDS = ("meeting", "note", "email")
 #: Speaker values the base was trained on; anything else reads as ''.
 ROLES = frozenset({"internal", "reseller", "unknown"})
 SIDES = frozenset({"ours", "theirs"})
+
+
+def is_deal_kit(doc_kind: Any) -> bool:
+    """Our own pricing workbook, however the document kind is spelled. The
+    base is never scored on, and never acts on, a Deal Kit line."""
+    return "dealkit" in re.sub(r"[^a-z]", "", str(doc_kind or "").lower())
 
 
 def document_times(documents: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -101,4 +108,4 @@ def _sort_key(t: Any) -> tuple[int, Any]:
     return (0, float(t)) if isinstance(t, (int, float)) else (1, str(t))
 
 
-__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "document_times", "speaker", "build_rows"]
+__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "is_deal_kit", "document_times", "speaker", "build_rows"]

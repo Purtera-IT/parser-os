@@ -1017,8 +1017,16 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     _c3.note_typing(_why)
                 except Exception:
                     pass
-        except Exception:
-            pass
+        except Exception as exc:
+            # The layer abstains (every atom goes on to the LLM as before),
+            # but never silently: the compile result says why.
+            try:
+                from app.core import c3_type_base as _c3e
+
+                _c3e.note_typing({"error": f"{type(exc).__name__}: {exc}"[:300]})
+            except Exception:
+                pass
+            print(f"WARNING: C3 typing layer failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         _dfl_ms["c3"] += _lap() - _t
         _tick()
         if not promotable:

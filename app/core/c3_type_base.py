@@ -312,7 +312,9 @@ def doc_kind(atom: Any, artifact_sha256: dict[str, str] | None = None) -> str:
 
 
 def skipped(atom: Any, artifact_sha256: dict[str, str] | None = None) -> bool:
-    from ml.c3.data import is_deal_kit
+    # c3_record, not ml.c3.data: the worker ships without ml/, and this runs
+    # on every sure reading (an ImportError here disabled the whole layer).
+    from c3_record import is_deal_kit
 
     kind = doc_kind(atom, artifact_sha256)
     return kind in _SKIP_KINDS or is_deal_kit(kind)
