@@ -28,6 +28,7 @@ import argparse
 import json
 import math
 import os
+from typing import Any
 import time
 import random
 from contextlib import nullcontext
@@ -415,13 +416,33 @@ def _optimizer(params, lr: float, adamw: bool) -> torch.optim.Optimizer:
 CPU_AUTOCAST = False
 
 
+def half_dtype() -> torch.dtype:
+    """The half precision the encoder and autocast use on a GPU:
+    ``C3_HALF_DTYPE`` = bf16 (default, what training used) | fp16. A T4 (and
+    any GPU before Ampere) has no bf16 arithmetic, so it reads in fp16; the
+    trained weights are the same, only how they are computed changes."""
+    v = os.environ.get("C3_HALF_DTYPE", "").strip().lower()
+    return torch.float16 if v in ("fp16", "float16", "half") else torch.bfloat16
+
+
+def to_read_precision(model: Any) -> Any:
+    """After the checkpoint loads (its encoder check reads the bf16 weights
+    it was trained on), move the line encoder to ``half_dtype()`` when that
+    is not bf16. Weights are unchanged; only their number format is."""
+    want = half_dtype()
+    body = getattr(getattr(model, "text", None), "model", None)
+    if body is not None and want != torch.bfloat16:
+        body.to(want)
+    return model
+
+
 def _autocast(device: str):
     if device.startswith("cuda"):
-        return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        return torch.autocast(device_type="cuda", dtype=half_dtype())
     if device.startswith("mps"):
-        # The bf16 encoder feeds float32 layers; Metal refuses a mixed matmul
-        # outside autocast.
-        return torch.autocast(device_type="mps", dtype=torch.bfloat16)
+        # The half-precision encoder feeds float32 layers; Metal refuses a
+        # mixed matmul outside autocast.
+        return torch.autocast(device_type="mps", dtype=half_dtype())
     if CPU_AUTOCAST:
         return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
     return nullcontext()

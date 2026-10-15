@@ -212,6 +212,9 @@ def _load() -> tuple[Any, Any, str]:
     device = _device()
     model = live_student(schema, encoder).to(device)
     load_checkpoint(path, model, schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+    from ml.c3.loop import to_read_precision
+
+    to_read_precision(model)
     if os.environ.get("SOWSMITH_C3_DTYPE", "").strip().lower() in ("bf16", "bfloat16"):
         model.to(torch.bfloat16)
     model.eval()
