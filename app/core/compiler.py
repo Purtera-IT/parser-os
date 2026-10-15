@@ -2065,6 +2065,26 @@ def compile_project(
     # beside the SD-WAN scope). Judged per document through decide() -- a PM's
     # correction first, then the model -- and only a confident "other job" sets
     # a document aside. Lossless: its atoms go to the suppression ledger.
+    # Every lesson lookup from here on embeds its line's text, one network
+    # call per line on a replica whose cache is empty (the warm worker scales
+    # from zero): 010043 spent ~90 s across typing, span admission and open
+    # questions doing that (2026-10-15). One batched call warms the cache for
+    # the text form they look up; what they decide is unchanged.
+    try:
+        from app.core.decide import get_store as _warm_get_store
+
+        if _warm_get_store() is not None:
+            from app.core.embedding_retrieval import embed_texts as _warm_embed
+
+            _t_warm = time.perf_counter()
+            _warm = sorted({str(getattr(a, "raw_text", "") or "").strip()[:600] for a in atoms} - {""})
+            if _warm:
+                _warm_embed(_warm)
+            warnings.append(f"INFO: lesson-lookup embeddings warmed for {len(_warm)} lines "
+                            f"in {time.perf_counter() - _t_warm:.1f}s")
+    except Exception as exc:
+        warnings.append(f"WARNING: lesson-lookup warm-up failed: {type(exc).__name__}: {exc}")
+
     # The C3 base reads this compile's deal as ONE record (ml/c3/record.py):
     # every line with its document's arrival and kind, built the way the
     # training export builds it, and read once for every stage that asks it.
