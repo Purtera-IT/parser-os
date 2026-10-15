@@ -107,14 +107,15 @@ def generation_ready(host: str, model: str, *, timeout: int | None = None) -> bo
 
     Cached per host and model for ``PARSER_OS_LLM_PREFLIGHT_TTL`` seconds, so
     a compile pays the probe once rather than per atom. ``SOWSMITH_DISABLE_LLM``
-    short-circuits to ``False`` — nothing should be dialled at all.
+    and ``PARSER_OS_NO_LOCAL_MODELS`` short-circuit to ``False`` — nothing
+    should be dialled at all.
 
     Any failure is a ``False``: timeout, connection refused, non-200, malformed
     body, or a 200 carrying no text. The caller's contract is unchanged — it
     treats a falsy result exactly as it treats an empty completion, and takes
     its deterministic path.
     """
-    if _gates.models_disabled():
+    if _gates.models_disabled() or _gates.no_local_models():
         return False
     if not host or not model:
         return False
@@ -147,7 +148,7 @@ def embed_ready(host: str, model: str, *, timeout: int | None = None) -> bool:
     ``enrich_atoms`` embeds repeatedly. One deal sat in ``enrich_entities`` for
     21 minutes against a dead endpoint with nothing to short-circuit it.
     """
-    if _gates.models_disabled():
+    if _gates.models_disabled() or _gates.no_local_models():
         return False
     if not host or not model:
         return False
