@@ -931,7 +931,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
 
             def _c3_act(a, res):
                 """(act, answer, p, new type) for a reading the layer would act on, else None."""
-                if res is None or res[1] < _sure or _c3.skipped(a, artifact_sha256):
+                if res is None or res[1] < _c3.sure_for(res[0]) or _c3.skipped(a, artifact_sha256):
                     return None
                 answer, p = res
                 # "on" acts only on a list that cleared the route report; with
@@ -944,7 +944,11 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 # the LLM, and ``deal_chatter`` names it later as before.
                 # ``list_header`` (a list's lead-in line) is not a parser type
                 # and not a fact to type: the line keeps its type, like _keep.
-                if answer in ("_keep", "small_talk", "list_header"):
+                # The parser has no type for a deal's state, a commitment or an
+                # answered question (other stages read those lines): a sure one
+                # keeps its line and skips an LLM that cannot name it either.
+                if answer in ("_keep", "small_talk", "list_header", "deal_state", "commitment",
+                              "answered_question"):
                     return "keep", answer, p, None
                 if answer in _VALUE_LIGHT:
                     try:
@@ -983,7 +987,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     if got is None:
                         if _res is None:
                             _why["no_reading"] += 1
-                        elif _res[1] < _sure:
+                        elif _res[1] < _c3.sure_for(_res[0]):
                             _why["unsure"] += 1
                         elif _c3.skipped(a, artifact_sha256):
                             _why["skipped_kind"] += 1

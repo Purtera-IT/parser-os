@@ -602,3 +602,17 @@ def test_the_typing_layer_runs_without_ml_code(monkeypatch, llm):
     why = c3.status()["typing"]
     assert "error" not in why and why["taken"] == 2
     assert "a_task" not in llm and "a_keep" not in llm
+
+
+def test_each_answer_can_carry_its_own_bar(monkeypatch, llm):
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "task,_keep")
+    monkeypatch.setenv("SOWSMITH_C3_SURE", "0.85")
+    monkeypatch.setenv("SOWSMITH_C3_SURE_BY_TYPE", "task:0.5")
+    atoms = _atoms()
+    answers = {"a_task": ("task", 0.6), "a_keep": ("_keep", 0.6)}
+    monkeypatch.setattr(c3, "classify", lambda a, shas=None: {id(x): answers[x.id] for x in a if x.id in answers})
+    tac.classify_atoms(atoms)
+    why = c3.status()["typing"]
+    assert why["taken"] == 1 and why["unsure"] == 1     # task clears 0.5; _keep misses 0.85
+    assert "a_task" not in llm and "a_keep" in llm

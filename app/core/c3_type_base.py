@@ -139,6 +139,22 @@ def sure() -> float:
         return 0.7
 
 
+def sure_for(answer: str) -> float:
+    """The certainty an answer must reach to act: ``SOWSMITH_C3_SURE_BY_TYPE``
+    (``type:p,...``) where set, else ``SOWSMITH_C3_SURE``. Each type's bar is
+    the lowest band where the base matches or beats the parser on the same
+    lines (validation deal 010043, 2026-10-15)."""
+    raw = os.environ.get("SOWSMITH_C3_SURE_BY_TYPE", "")
+    for part in raw.split(","):
+        name, _, val = part.strip().partition(":")
+        if name.strip() == answer:
+            try:
+                return float(val)
+            except ValueError:
+                break
+    return sure()
+
+
 def acts_on() -> frozenset[str] | None:
     """The answers the layer may act on (``SOWSMITH_C3_TYPES``, comma
     separated, ``_keep`` and ``small_talk`` included by name), or None when unset. Unset, ``on``
