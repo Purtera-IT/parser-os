@@ -69,7 +69,7 @@ MAX_ATOMS = 8192
 
 # What the layer last did, for the compile's ML manifest and the nightly
 # report: state is off | loaded | load_failed | no_memory | over_budget |
-# read_failed | read. Counts and times only.
+# warming | read_failed | read. Counts and times only.
 _STATUS: dict[str, Any] = {"state": "off"}
 
 
@@ -492,7 +492,9 @@ def _read_remote(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
                        timeout=budget + 10.0)
     except Exception as exc:
         code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
-        state = "over_budget" if code == 504 else "read_failed"
+        # 503: the service is still starting. That compile goes to the LLM;
+        # the next one, a minute or two later, reads warm.
+        state = {504: "over_budget", 503: "warming"}.get(code, "read_failed")
         _STATUS.update(state=state, remote=True, lines=len(atoms),
                        reason=(f"HTTP {code}" if code else f"{type(exc).__name__}: {exc}")[:300],
                        read_ms=round((time.monotonic() - started) * 1000, 1))

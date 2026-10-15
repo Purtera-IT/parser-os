@@ -129,7 +129,7 @@ def test_a_cold_service_answers_at_once_and_the_compile_goes_to_the_llm(service,
         monkeypatch.setenv("SOWSMITH_C3_URL", f"http://127.0.0.1:{server.server_address[1]}")
         assert c3.classify(_atoms()) == {}
         st = c3.status()
-        assert st["state"] == "read_failed" and st["reason"] == "HTTP 503" and st["read_ms"] < 2000
+        assert st["state"] == "warming" and st["reason"] == "HTTP 503" and st["read_ms"] < 2000
     finally:
         server.shutdown()
 
