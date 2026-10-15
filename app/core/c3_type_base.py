@@ -22,6 +22,11 @@ default.
                              abstains instead of risking the compile
     SOWSMITH_C3_BUDGET_S     longest a deal read may take (90); past it the
                              read stops and every atom goes to the LLM
+    SOWSMITH_C3_URL          a base service (``ml.c3.serve``, on a GPU) to
+                             read the deal instead of loading the model here;
+                             the worker then needs no model memory. Past the
+                             budget or on any error, every atom goes to the LLM
+    SOWSMITH_C3_TOKEN        the service's bearer token, when it has one
 
 ``shadow`` reads the deal and reports what the layer would have done, beside
 what the compile then did, as one ``c3_type_shadow`` event; it changes
@@ -433,8 +438,83 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
     return DealExample(deal_id=deal_id, atoms=rows, company="purtera"), keys
 
 
+def _url() -> str:
+    return os.environ.get("SOWSMITH_C3_URL", "").strip().rstrip("/")
+
+
+def _request(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
+    import urllib.request
+
+    req = urllib.request.Request(_url() + path, method="POST" if body is not None else "GET",
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json"})
+    token = os.environ.get("SOWSMITH_C3_TOKEN", "").strip()
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def warm() -> None:
+    """Wake the base service when a compile starts, so a service that scaled
+    to zero loads while the documents are read. Background, best-effort."""
+    if mode() == "off" or not _url():
+        return
+
+    def _ping():
+        try:
+            _request("/health", None, timeout=_env_float("SOWSMITH_C3_WARM_S", 180.0))
+        except Exception as exc:
+            log.info("C3 base service warm-up: %s", type(exc).__name__)
+
+    threading.Thread(target=_ping, daemon=True).start()
+
+
+def deal_payload(deal: Any) -> dict[str, Any]:
+    """The rows ``DealExample.from_dict`` reads back: what the base sees of
+    each line, and nothing else."""
+    return {"deal_id": deal.deal_id, "company": deal.company, "atoms": [
+        {"key": a.key, "text": a.text, "entered_at": a.entered_at, "doc_id": a.doc_id,
+         "doc_kind": a.doc_kind, "section": a.section, "order": a.order,
+         "speaker_role": a.speaker_role, "speaker_side": a.speaker_side, "atom_id": a.atom_id}
+        for a in deal.atoms]}
+
+
+def _read_remote(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
+                 ) -> dict[int, tuple[str, float]]:
+    import urllib.error
+
+    deal, keys = _build(atoms, artifact_sha256)
+    budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
+    started = time.monotonic()
+    try:
+        got = _request("/read", {"deal": deal_payload(deal), "budget_s": budget},
+                       timeout=budget + 10.0)
+    except Exception as exc:
+        code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
+        state = "over_budget" if code == 504 else "read_failed"
+        _STATUS.update(state=state, remote=True, lines=len(atoms),
+                       reason=(f"HTTP {code}" if code else f"{type(exc).__name__}: {exc}")[:300],
+                       read_ms=round((time.monotonic() - started) * 1000, 1))
+        log.warning("C3 base service read failed (%s); every atom goes to the LLM",
+                    _STATUS["reason"])
+        return {}
+    _STATUS.update(state="read", reason="", remote=True, lines=len(atoms),
+                   read_ms=round((time.monotonic() - started) * 1000, 1),
+                   service_read_ms=got.get("read_ms"))
+    types = got.get("types") or {}
+    out: dict[int, tuple[str, float]] = {}
+    for a, key in zip(atoms, keys):
+        t = types.get(key)
+        if t and t[0] is not None:
+            out[id(a)] = (str(t[0]), float(t[1] or 0.0))
+    return out
+
+
 def _read(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
           ) -> dict[int, tuple[str, float]]:
+    if _url():
+        return _read_remote(atoms, artifact_sha256)
     from ml.c3.predict import read_deal
 
     loaded = get_model()

@@ -787,6 +787,15 @@ def compile_project(
     except Exception:  # pragma: no cover - never break a compile over this
         pass
 
+    # Wake the C3 base service now, so its start-up overlaps reading the
+    # documents. No-op unless SOWSMITH_C3_URL is set and the layer is on.
+    try:
+        from app.core import c3_type_base
+
+        c3_type_base.warm()
+    except Exception:  # pragma: no cover - never break a compile over this
+        pass
+
     # Opt-in: activate the feedback store iff SOWSMITH_FEEDBACK_STORE_DB is set.
     # No-op otherwise, so default compiles (and the test suite) are unchanged.
     _maybe_wire_feedback_store()
