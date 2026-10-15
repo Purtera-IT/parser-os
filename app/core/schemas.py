@@ -836,6 +836,9 @@ class CompileResult(BaseModel):
     # survivor, merged/lossy survivors, partly folded lists. Counts plus
     # examples with atom ids -- see app/core/ledger_audit.py.
     ledger_audit: dict[str, Any] = Field(default_factory=dict)
+    # Brief v2 (app/core/c3_brief.py): what the super heads put in the brief,
+    # each item marked with the head or rule that decided it. None when off.
+    c3_brief: dict[str, Any] | None = None
     manifest: "CompileManifest | None" = None
     trace: "CompileTrace | None" = None
     candidate_summary: CandidateSummary | None = None

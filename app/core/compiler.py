@@ -3601,6 +3601,19 @@ def compile_project(
     except Exception as exc:
         warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
 
+    # Brief v2: the super heads decide what the brief says, rules where a head
+    # is not yet trusted (c3_brief.py). Off unless SOWSMITH_C3_BRIEF is on.
+    _c3_brief = None
+    try:
+        from app.core import c3_brief as _brief
+
+        if _brief.enabled():
+            _c3_brief = _brief.run(atoms, packets, service_fallback=resolved_domain_pack.pack_id)
+            warnings.append(f"INFO: C3 brief built: heads {len(_c3_brief['decided_by']['heads_used'])}, "
+                            f"fell back {len(_c3_brief['decided_by']['fell_back'])}")
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 brief failed: {type(exc).__name__}: {exc}")
+
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.
     try:
@@ -3631,6 +3644,7 @@ def compile_project(
         suppressed_atoms=sorted(suppressed_atoms, key=lambda x: x.id),
         text_coverage=_coverage,
         ledger_audit=_ledger_audit,
+        c3_brief=_c3_brief,
         entities=entities,
         edges=edges,
         packets=packets,

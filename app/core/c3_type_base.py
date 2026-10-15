@@ -521,9 +521,34 @@ def document_job_enabled() -> bool:
     return os.environ.get("SOWSMITH_C3_DOCUMENT_JOB", "").strip().lower() in ("1", "true", "yes", "on", "shadow")
 
 
+#: The line readings brief v2 (``c3_brief``) uses, asked for in the compile's
+#: one read of the deal when ``SOWSMITH_C3_BRIEF`` is on.
+BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
+                    "read:scope_facet", "col:wants", "read:intake_gap", "read:needed_by",
+                    "read:blocked_on", "read:superseded")
+
+
+def brief_enabled() -> bool:
+    return os.environ.get("SOWSMITH_C3_BRIEF", "").strip().lower() in _TRUE
+
+
+def _keep_full(got: dict[str, Any]) -> None:
+    """Hold the read's line readings, links and deal answers for the brief."""
+    if "reads" in _DEAL:
+        _DEAL["reads"].update(got.get("reads") or {})
+        _DEAL["links"].extend(got.get("links") or [])
+        _DEAL["deal"].update(got.get("deal") or {})
+
+
+def full_read() -> dict[str, Any]:
+    """This compile's readings beyond types: ``{"reads", "links", "deal"}``."""
+    return {k: _DEAL.get(k) for k in ("reads", "links", "deal")}
+
+
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
     _DEAL.clear()
-    _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={})
+    _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
+                 reads={}, links=[], deal={})
 
 
 def _delivered_at(sha256: str) -> Any:
@@ -681,7 +706,11 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
         return {}
     try:
         payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
-        got = _request("/read", {"deal": payload, "budget_s": budget}, timeout=budget + 10.0)
+        body = {"deal": payload, "budget_s": budget}
+        if brief_enabled():
+            body.update(line_heads=list(BRIEF_LINE_HEADS), full=True)
+        got = _request("/read", body, timeout=budget + 10.0)
+        _keep_full(got)
     except Exception as exc:
         code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
         # 503: the service is still starting. That compile goes to the LLM;
@@ -985,11 +1014,14 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
                 _DOC_STATUS.update(state="warming", reason="", read_ms=0.0)
                 return {}
             payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
-            got = _request("/read", {"deal": payload, "budget_s": budget, "document_heads": list(keys)},
-                           timeout=budget + 10.0)
+            body = {"deal": payload, "budget_s": budget, "document_heads": list(keys)}
+            if brief_enabled():
+                body.update(line_heads=list(BRIEF_LINE_HEADS), full=True)
+            got = _request("/read", body, timeout=budget + 10.0)
             raw = got.get("documents") or {}
             if "types" in _DEAL:
                 _DEAL["types"].update(got.get("types") or {})
+            _keep_full(got)
         else:
             from ml.c3.predict import read_deal
 

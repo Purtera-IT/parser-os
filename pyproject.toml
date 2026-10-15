@@ -96,6 +96,8 @@ dev = [
 include = ["app*", "orbitbrief_page_os*", "c3_record*"]
 
 [tool.setuptools.package-data]
+# The head registry (which super heads are ready, and what each replaces).
+c3_record = ["heads.json"]
 app = [
   "domain/*.yaml",
   "domain/ontology/*.yaml",
