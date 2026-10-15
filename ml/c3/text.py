@@ -80,8 +80,16 @@ class HFEncoder(nn.Module):
     padded tokens, so a 4,096-line window never becomes one padded batch.
     While the body is frozen (no parameter requires grad) a line's vector
     never changes, so it is computed once and kept (``cache``); the deal
-    graph and every head above it still train.
+    graph and every head above it still train. A read (eval mode, no
+    gradient) keeps vectors the same way, fine-tuned body or not: a line
+    repeated across a deal (signatures, quoted replies) or a deal parsed
+    again is encoded once. ``train()`` drops what a read kept, since the
+    body's weights change from there.
     """
+
+    #: Most line vectors kept (about 2 KB each in bf16); past it the cache
+    #: starts over.
+    CACHE_MAX = 200_000
 
     def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256,
                  dtype: torch.dtype | None = None, chunk_tokens: int = 32768):
@@ -154,11 +162,20 @@ class HFEncoder(nn.Module):
             start = end
         return torch.stack([t / c.clamp(min=1) for t, c in zip(sums, counts)])
 
+    def train(self, mode: bool = True):
+        if mode and not self.frozen():
+            self.cache.clear()
+        return super().train(mode)
+
     def forward(self, texts: list[str]) -> torch.Tensor:
         texts = [str(t) for t in texts]
-        if not self.frozen():
+        reading = not self.training and not torch.is_grad_enabled()
+        if not self.frozen() and not reading:
             return self._encode(self._all_ids(texts))
         todo = sorted({t for t in texts if t not in self.cache})
+        if len(self.cache) + len(todo) > self.CACHE_MAX:
+            self.cache.clear()
+            todo = sorted(set(texts))
         if todo:
             with torch.no_grad():
                 vecs = self._encode(self._all_ids(todo))

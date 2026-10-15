@@ -52,6 +52,8 @@ def main() -> None:
     p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--only-bf16", action="store_true", help="load in bf16 and read once (true peak)")
     p.add_argument("--only-fp32", action="store_true", help="read once in fp32 (a GPU timing)")
+    p.add_argument("--twice", action="store_true",
+                   help="with --only-fp32, read the deal again in the same process (a re-parse)")
     p.add_argument("--device", default="cpu", help="cpu (the dev worker), mps or cuda (the base service)")
     args = p.parse_args()
     if args.threads:
@@ -79,7 +81,13 @@ def main() -> None:
         n = len(_types(read_deal(model, deal, schema, max_atoms=args.max_atoms, device=args.device,
                                  lines_only=True)))
         s = time.monotonic() - t0
-        print(f"fp32 read_s={s:.1f} peak_mb={_peak_mb():.0f} lines={n} within_budget={s <= args.budget}")
+        print(f"fp32 read_s={s:.1f} peak_mb={_peak_mb():.0f} lines={n} within_budget={s <= args.budget}",
+              flush=True)
+        if args.twice:
+            t0 = time.monotonic()
+            read_deal(model, deal, schema, max_atoms=args.max_atoms, device=args.device, lines_only=True)
+            s = time.monotonic() - t0
+            print(f"again read_s={s:.1f} peak_mb={_peak_mb():.0f} within_budget={s <= args.budget}")
         return
     t0 = time.monotonic()
     full = _types(read_deal(model, deal, schema, max_atoms=args.max_atoms, device=args.device, lines_only=True))
