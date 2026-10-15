@@ -110,7 +110,7 @@ class Base:
         with self._lock:
             started = time.monotonic()
             doc = read(model, deal, schema, device=device, lines_only=True,
-                       deadline=started + budget_s)
+                       deadline=started + budget_s, heads=(TYPE_KEY,))
             read_ms = round((time.monotonic() - started) * 1000, 1)
         types = {}
         for key, line in (doc.get("lines") or {}).items():

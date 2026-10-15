@@ -528,7 +528,7 @@ def _read(atoms: list[Any], artifact_sha256: dict[str, str] | None = None
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     try:
         doc = read_deal(model, deal, schema, max_atoms=MAX_ATOMS, device=device,
-                        lines_only=True, deadline=started + budget)
+                        lines_only=True, deadline=started + budget, heads=("col:label_type",))
     except TimeoutError as exc:
         _STATUS.update(state="over_budget", reason=str(exc)[:300], lines=len(atoms),
                        read_ms=round((time.monotonic() - started) * 1000, 1))

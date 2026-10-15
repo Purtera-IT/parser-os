@@ -403,3 +403,40 @@ def test_the_compile_manifest_carries_the_layers_state(monkeypatch):
     monkeypatch.setattr(c3, "_STATUS", {"state": "read", "read_ms": 1200.0, "lines": 40})
     got = build_compile_capabilities()["deflect_counts"]["c3"]
     assert got["mode"] == "shadow" and got["types"] == ["task"] and got["state"] == "read"
+
+
+def test_reading_only_the_type_head_gives_the_same_types():
+    torch = pytest.importorskip("torch")
+    from ml.c3.model import C3Config, C3Model
+    from ml.c3.predict import read_deal
+    from ml.c3.schema import load_schema
+
+    schema = load_schema()
+    deal = c3.atoms_to_deal(_evidence_atoms())
+    cfg = C3Config(d_text=32, d=32, n_layers=1, n_heads=2, d_r=16, d_q=8, d_head=16,
+                   residual_dim=4, box_dim=4, n_policy_atoms=2, policy_rank=2)
+    torch.manual_seed(0)
+    model = C3Model(schema, cfg).eval()
+    full = read_deal(model, deal, schema, lines_only=True)
+    only = read_deal(model, deal, schema, lines_only=True, heads=("col:label_type",))
+    for key, line in only["lines"].items():
+        assert set(line["reads"]) == {"col:label_type"}
+        assert line["reads"]["col:label_type"] == full["lines"][key]["reads"]["col:label_type"]
+
+
+def test_a_read_scores_containment_in_slices_with_the_same_result(monkeypatch):
+    torch = pytest.importorskip("torch")
+    import ml.c3.model as m
+    from ml.c3.model import C3Config, C3Model
+    from ml.c3.schema import load_schema
+
+    cfg = C3Config(d_text=32, d=32, n_layers=1, n_heads=2, d_r=16, d_q=8, d_head=16,
+                   residual_dim=4, box_dim=4, n_policy_atoms=2, policy_rank=2)
+    torch.manual_seed(0)
+    model = C3Model(load_schema(), cfg).eval()
+    r = torch.randn(10, cfg.d_r)
+    with torch.no_grad():
+        whole = model._box_containment(r)
+        monkeypatch.setattr(m, "BOX_ROWS", 3)
+        sliced = model._box_containment(r)
+    assert torch.allclose(whole, sliced)

@@ -744,6 +744,11 @@ class C3Model(nn.Module):
         if _remember_less(n):
             score = torch.cat([checkpoint(rows, lo[a:a + BOX_ROWS], hi[a:a + BOX_ROWS], use_reentrant=False)
                                for a in range(0, n, BOX_ROWS)])
+        elif not torch.is_grad_enabled() and n > BOX_ROWS:
+            # A read holds no activations, so the same rows in slices: at
+            # 8,192 lines one pass is [N, N, box_dim], about 8 GB a step.
+            score = torch.cat([rows(lo[a:a + BOX_ROWS], hi[a:a + BOX_ROWS])
+                               for a in range(0, n, BOX_ROWS)])
         else:
             score = rows(lo, hi)
         return score.masked_fill(torch.eye(r.shape[0], dtype=torch.bool, device=r.device),

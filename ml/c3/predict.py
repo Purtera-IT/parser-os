@@ -68,8 +68,9 @@ def _answer(opp, i: int) -> str:
     return opp.answers[i].value if 0 <= i < len(opp.answers) else str(i)
 
 
-def _readings(out, rows: list[int], schema: Schema) -> list[dict[str, Any]]:
-    """Every line reading for ``rows``, one dict per row.
+def _readings(out, rows: list[int], schema: Schema,
+              heads: frozenset[str] | None = None) -> list[dict[str, Any]]:
+    """Every line reading for ``rows`` (or only ``heads``), one dict per row.
 
     Each head's logits for the rows move to the CPU once and are read there:
     element by element on the device, a 2,000-line window costs a device sync
@@ -79,7 +80,7 @@ def _readings(out, rows: list[int], schema: Schema) -> list[dict[str, Any]]:
     idx = torch.tensor(rows, dtype=torch.long)
     for key, logits in out.logits.items():
         opp = by_key.get(key)
-        if opp is None or opp.size != LINE:
+        if opp is None or opp.size != LINE or (heads is not None and key not in heads):
             continue
         lg = logits[idx.to(logits.device)].float().cpu()
         if opp.multiple:
@@ -105,7 +106,7 @@ def _readings(out, rows: list[int], schema: Schema) -> list[dict[str, Any]]:
                         reads[r][key]["typed_p"] = round(pj, 4)
     for key, values in out.numbers.items():
         opp = by_key.get(key)
-        if opp is not None and opp.kind == NUMBER:
+        if opp is not None and opp.kind == NUMBER and (heads is None or key in heads):
             v = torch.expm1(values[idx.to(values.device)].float().cpu()).tolist()
             for r, x in enumerate(v):
                 reads[r].setdefault(key, {})["value"] = round(x, 3)
@@ -171,9 +172,12 @@ def read_deal(model: C3Model, deal: DealExample, schema: Schema, **kwargs) -> di
 def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: int = 8192,
               device: str = "cpu", link_min: float = 0.3, unsure: float = 0.6,
               governs_top: int = 5, lines_only: bool = False,
-              deadline: float | None = None) -> dict[str, Any]:
+              deadline: float | None = None,
+              heads: tuple[str, ...] | None = None) -> dict[str, Any]:
     """``lines_only`` reads each line and skips the links and the whole-deal
-    answers (the live type layer needs only the lines). ``deadline`` is a
+    answers (the live type layer needs only the lines). ``heads`` keeps only
+    those line readings (the type layer needs ``col:label_type``); the
+    model's pass is the same, so the answers are too. ``deadline`` is a
     ``time.monotonic()`` past which the read stops with ``TimeoutError``,
     checked before each window."""
     model.eval()
@@ -188,7 +192,8 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
         with _read_autocast(device):
             out = model(batch.oneshot(), company=batch.company or None)
         home = [i for i, k in enumerate(batch.keys) if k not in lines]
-        for i, reads in zip(home, _readings(out, home, schema)):
+        for i, reads in zip(home, _readings(out, home, schema,
+                                            frozenset(heads) if heads is not None else None)):
             a = atoms[batch.keys[i]]
             lines[a.key] = {"atom_id": a.atom_id, "text": a.text, "doc_id": a.doc_id,
                             "doc_kind": a.doc_kind, "section": a.section, "entered_at": a.entered_at,
