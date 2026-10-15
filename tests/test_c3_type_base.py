@@ -667,3 +667,11 @@ def test_the_signature_rule_leaves_a_line_the_base_typed():
     assert deal_chatter._typed_by_base(a) is True
     a.atom_type = AtomType("task")                     # a stage re-typed it since
     assert deal_chatter._typed_by_base(a) is False
+
+
+def test_typing_can_read_no_lessons_at_all(monkeypatch):
+    from app.core import decide as decide_mod
+
+    monkeypatch.setenv("SOWSMITH_TAUGHT_TYPES", "off")
+    monkeypatch.setattr(decide_mod, "get_store", lambda: (_ for _ in ()).throw(AssertionError("read the store")))
+    assert tac._apply_taught_types(_atoms()) == {}

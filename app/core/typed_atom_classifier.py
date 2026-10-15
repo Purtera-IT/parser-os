@@ -530,6 +530,11 @@ def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
     included (that leaves the type as it is). Never raises; no store -> ``{}``.
     """
     decided: dict[int, str] = {}
+    # SOWSMITH_TAUGHT_TYPES=off: typing reads no lessons at all. The C3 base
+    # learns corrections at its retrain; a lookup here only copied a saved
+    # answer onto near-identical wording (2026-10-15: 1 line in 300).
+    if os.environ.get("SOWSMITH_TAUGHT_TYPES", "").strip().lower() in ("0", "off", "false", "no"):
+        return decided
     try:
         from app.core.decide import DecisionScope, decide, get_store
         from app.core.schemas import AtomType
