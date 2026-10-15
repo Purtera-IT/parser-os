@@ -130,14 +130,66 @@ def upload_rows(kind: str, rows: list[dict]) -> bool:
         return False
 
 
+#: Batches this process already merged, by blob name -> etag. Every compile
+#: used to download and re-merge EVERY mirrored batch: 1.7 GB of embedding
+#: rows and 76 MB of OCR rows on dev (2026-10-15), ~100 s before a compile's
+#: first stage, growing with every compile. A batch is now merged once per
+#: local cache; a changed batch (new etag) is merged again.
+_MERGED: dict[str, str] = {}
+
+
+def _seen_path() -> str:
+    """Beside the local caches, so a wiped cache (a new container's /tmp)
+    wipes the record with it and everything is merged again."""
+    db = os.environ.get("SOWSMITH_EMBED_CACHE_DB", "").strip() or "/tmp/ml/_embed_cache.db"
+    return os.path.join(os.path.dirname(db) or ".", "_cache_rows_merged.json")
+
+
+def _load_seen() -> dict[str, str]:
+    if not _MERGED:
+        try:
+            with open(_seen_path(), encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _MERGED.update({str(k): str(v) for k, v in data.items()})
+        except Exception:
+            pass
+    return _MERGED
+
+
+def _save_seen() -> None:
+    try:
+        path = _seen_path()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_MERGED, f)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def _iter_batches(cc, kind: str):
+    seen = _load_seen()
+    merged_any = False
     for b in cc.list_blobs(name_starts_with=f"{_PREFIX}{kind}/"):
         if not b.name.endswith(".jsonl"):
             continue
+        tag = str(getattr(b, "etag", "") or getattr(b, "last_modified", "") or "")
+        if tag and seen.get(b.name) == tag:
+            continue
         try:
-            yield jsonl_to_rows(cc.download_blob(b.name).readall().decode("utf-8", "replace"))
+            rows = jsonl_to_rows(cc.download_blob(b.name).readall().decode("utf-8", "replace"))
         except Exception:
             continue
+        yield rows
+        # Marked only after the caller merged the rows (the generator resumes
+        # here), so a batch that failed part way is fetched again next time.
+        if tag:
+            seen[b.name] = tag
+            merged_any = True
+    if merged_any:
+        _save_seen()
 
 
 def sync_ocr_into_cache() -> int:
