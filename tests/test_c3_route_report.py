@@ -72,3 +72,10 @@ def test_count_reads_a_real_batch_through_a_tiny_model():
     names, rows = count(C3Model(schema, CFG), [batch], "cpu", 0.7)
     assert names[0] and len(rows) == sum(y != IGNORE for y in batch.targets[TYPE_KEY])
     assert all(0.0 <= p <= 1.0 for *_, p in rows)
+
+
+def test_keep_needs_the_stricter_bar():
+    rows = [(2, 2, 0, 0.99)] * 95 + [(0, 2, 0, 0.99)] * 5
+    per = table(NAMES, rows, sure=0.7, bar=0.85, min_n=20)
+    assert per["_keep"]["base_precision"] == 0.95 and not per["_keep"]["replace"]
+    assert table(NAMES, rows, sure=0.7, bar=0.85, min_n=20, keep_bar=0.9)["_keep"]["replace"]

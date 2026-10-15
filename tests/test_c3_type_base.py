@@ -176,6 +176,7 @@ def test_shadow_changes_nothing_and_reports(monkeypatch, llm):
     assert report["would_assign"] == 1 and report["would_keep"] == 1
     # The LLM kept everything: the keep agrees, the assignment does not.
     assert report["agree"] == 1 and report["disagree"] == 1
+    assert sum(report["disagree_pairs"].values()) == 1
     assert tac.get_last_deflect_stats()["deflected"]["c3"] == 0
 
 

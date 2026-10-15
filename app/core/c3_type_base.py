@@ -418,6 +418,9 @@ def report_shadow(would: dict[int, tuple[Any, str, str, float, str]]) -> dict[st
 
     agree = disagree = 0
     by_answer: dict[str, dict[str, int]] = {}
+    # What the compile ended with where the layer would have said otherwise,
+    # as "layer answer->compile type": the dev review reads these pairs.
+    pairs: dict[str, int] = {}
     for a, before, answer, _p, act in would.values():
         want = answer if act == "assign" else before
         hit = _t(a) == want
@@ -425,11 +428,15 @@ def report_shadow(would: dict[int, tuple[Any, str, str, float, str]]) -> dict[st
         disagree += not hit
         slot = by_answer.setdefault(answer, {"agree": 0, "disagree": 0})
         slot["agree" if hit else "disagree"] += 1
+        if not hit:
+            pair = f"{answer}->{_t(a)}"
+            pairs[pair] = pairs.get(pair, 0) + 1
     payload = {
         "event": "c3_type_shadow", "stage": "typed_atom_classification", "sure": sure(),
         "would_assign": sum(1 for v in would.values() if v[4] == "assign"),
         "would_keep": sum(1 for v in would.values() if v[4] == "keep"),
         "agree": agree, "disagree": disagree, "by_answer": by_answer,
+        "disagree_pairs": pairs,
     }
     _LAST_SHADOW.clear()
     _LAST_SHADOW.update(payload)

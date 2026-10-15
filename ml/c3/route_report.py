@@ -15,7 +15,9 @@ and estimating calc left out, as at run time):
 * ``acts``: the answer is one the live layer may act on at all (a value-light
   AtomType, or ``_keep``); the rest always reach the LLM, which writes values.
 * ``replace``: ``acts``, at least ``--min-n`` sure lines, base precision at
-  ``--bar`` and no worse than the classifier's for that answer.
+  ``--bar`` and no worse than the classifier's for that answer. ``_keep``
+  drops a candidate, and a wrong drop loses an atom, so it has its own,
+  stricter ``--keep-bar``.
 
 The ``replace`` answers are the ``SOWSMITH_C3_TYPES`` list, printed last with
 what it would take from the LLM and how often it would be wrong (misroute).
@@ -70,7 +72,8 @@ def count(model, batches, device: str, sure: float) -> tuple[list[str], list[tup
     return names, rows
 
 
-def table(names: list[str], rows, *, sure: float, bar: float, min_n: int) -> dict[str, dict]:
+def table(names: list[str], rows, *, sure: float, bar: float, min_n: int,
+          keep_bar: float = 0.97) -> dict[str, dict]:
     out = {}
     for a, name in enumerate(names):
         gold_n = sum(g == a for g, _, _, _ in rows)
@@ -89,7 +92,8 @@ def table(names: list[str], rows, *, sure: float, bar: float, min_n: int) -> dic
             "classifier_n": len(said), "classifier_precision": round(cls_prec, 4),
             "classifier_recall": round(cls_hit / gold_n, 4) if gold_n else 0.0,
             "acts": acts,
-            "replace": bool(acts and len(took) >= min_n and base_prec >= bar and base_prec >= cls_prec),
+            "replace": bool(acts and len(took) >= min_n and base_prec >= cls_prec
+                            and base_prec >= (keep_bar if name == "_keep" else bar)),
         }
     return out
 
@@ -117,6 +121,8 @@ def main() -> None:
     p.add_argument("--out", required=True)
     p.add_argument("--sure", type=float, default=0.7, help="the live SOWSMITH_C3_SURE")
     p.add_argument("--bar", type=float, default=0.85, help="lowest base precision for a type it takes")
+    p.add_argument("--keep-bar", type=float, default=0.97,
+                   help="lowest base precision for _keep, which drops the candidate")
     p.add_argument("--min-n", type=int, default=20, help="fewest sure lines a type needs to be judged")
     p.add_argument("--types", help="a frozen comma list to check instead of picking one")
     p.add_argument("--confirm", action="store_true", help="read the holdout, once, to check --types")
@@ -145,11 +151,11 @@ def main() -> None:
     load_checkpoint(args.checkpoint, model, schema_sha256=digest([asdict(o) for o in schema.opportunities]))
     parts = [b for d in deals for b in training_batches(d, schema, max_atoms=args.max_atoms)[0]]
     names, rows = count(model, parts, dev, args.sure)
-    per = table(names, rows, sure=args.sure, bar=args.bar, min_n=args.min_n)
+    per = table(names, rows, sure=args.sure, bar=args.bar, min_n=args.min_n, keep_bar=args.keep_bar)
     types = ({t.strip() for t in args.types.split(",") if t.strip()} if args.types
              else {k for k, v in per.items() if v["replace"]})
     result = {"checkpoint": Path(args.checkpoint).name, "deals": sorted(d.deal_id for d in deals),
-              "sure": args.sure, "bar": args.bar, "min_n": args.min_n, "per_type": per,
+              "sure": args.sure, "bar": args.bar, "keep_bar": args.keep_bar, "min_n": args.min_n, "per_type": per,
               "types": sorted(types), "routed": routed(names, rows, types, args.sure)}
     Path(args.out).write_text(json.dumps(result, indent=1, sort_keys=True), encoding="utf-8")
     for k, v in sorted(per.items(), key=lambda kv: -kv[1]["base_n"]):
