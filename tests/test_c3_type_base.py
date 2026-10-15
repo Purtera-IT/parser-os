@@ -189,9 +189,12 @@ def test_shadow_changes_nothing_and_reports(monkeypatch, llm):
     assert all(a.atom_type.value == "scope_item" for a in atoms)
     report = c3.get_last_shadow()
     assert report["would_assign"] == 1 and report["would_keep"] == 1
-    # The LLM kept everything: the keep agrees, the assignment does not.
-    assert report["agree"] == 1 and report["disagree"] == 1
-    assert sum(report["disagree_pairs"].values()) == 1
+    # A sure value-carrying answer is one the base would take too (its type,
+    # the LLM filling the fields).
+    assert report["would_fill"] == 1
+    # The LLM kept everything: the keep agrees; the assignment and the fill do not.
+    assert report["agree"] == 1 and report["disagree"] == 2
+    assert sum(report["disagree_pairs"].values()) == 2
     assert tac.get_last_deflect_stats()["deflected"]["c3"] == 0
 
 
@@ -530,3 +533,46 @@ def test_on_records_why_the_llm_still_gets_each_line(monkeypatch, llm):
     why = c3.status()["typing"]
     assert (why["lines"], why["taken"], why["unsure"], why["no_reading"]) == (4, 2, 1, 0)
     assert why["sure_not_taken"] == {"stakeholder": 1}
+
+
+def test_a_sure_value_carrying_type_is_the_bases_and_the_llm_only_fills_its_fields(monkeypatch):
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "stakeholder,task")
+    atoms = _atoms()
+    answers = {"a_heavy": ("stakeholder", 0.97), "a_task": ("task", 0.95)}
+    monkeypatch.setattr(c3, "classify", lambda a, shas=None: {id(x): answers[x.id] for x in a if x.id in answers})
+    prompts: list[str] = []
+
+    def _fake(prompt, *, max_tokens=4096):
+        prompts.append(prompt)
+        if "already has its type" in prompt:
+            return '{"results": [{"atom_id": "a_heavy", "atom_type": "stakeholder", "value": {"name": "facilities office"}}]}'
+        return '{"results": []}'
+
+    monkeypatch.setattr(tac, "_call_ollama", _fake)
+    tac.classify_atoms(atoms)
+    heavy = next(a for a in atoms if a.id == "a_heavy")
+    assert str(getattr(heavy.atom_type, "value", heavy.atom_type)) == "stakeholder"
+    assert heavy.value.get("name") == "facilities office"
+    fill = [p for p in prompts if "already has its type" in p]
+    assert len(fill) == 1 and "TAXONOMY" not in fill[0] and "a_heavy" in fill[0]
+    # The full classifier never saw the lines the base decided.
+    assert not any("a_heavy" in p or "a_task" in p for p in prompts if "TAXONOMY" in p)
+    assert c3.status()["typing"]["filled"] == 1
+
+
+def test_a_failed_fill_sends_the_line_back_to_the_full_llm(monkeypatch):
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPES", "stakeholder")
+    atoms = _atoms()
+    monkeypatch.setattr(c3, "classify", lambda a, shas=None: {id(x): ("stakeholder", 0.97) for x in a if x.id == "a_heavy"})
+    prompts: list[str] = []
+
+    def _fake(prompt, *, max_tokens=4096):
+        prompts.append(prompt)
+        return "" if "already has its type" in prompt else '{"results": []}'
+
+    monkeypatch.setattr(tac, "_call_ollama", _fake)
+    tac.classify_atoms(atoms)
+    assert any("a_heavy" in p for p in prompts if "TAXONOMY" in p)
+    assert c3.status()["typing"]["fill_back_to_llm"] == 1

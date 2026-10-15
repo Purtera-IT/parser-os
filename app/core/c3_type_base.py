@@ -779,9 +779,10 @@ def get_last_shadow() -> dict[str, Any]:
 def report_shadow(would: dict[int, tuple[Any, str, str, float, str]]) -> dict[str, Any]:
     """What the layer would have done beside what the compile did.
 
-    ``would``: id(atom) -> (atom, type before, answer, p, "assign" | "keep").
-    An assignment agrees when the atom ended as that type; a keep when it
-    ended as the type it had. No text leaves the compile."""
+    ``would``: id(atom) -> (atom, type before, answer, p, "assign" | "fill" |
+    "keep"). An assignment or a fill (the base's type, the LLM's values)
+    agrees when the atom ended as that type; a keep when it ended as the type
+    it had. No text leaves the compile."""
     def _t(a: Any) -> str:
         t = getattr(a, "atom_type", None)
         return str(getattr(t, "value", t) or "")
@@ -792,7 +793,7 @@ def report_shadow(would: dict[int, tuple[Any, str, str, float, str]]) -> dict[st
     # as "layer answer->compile type": the dev review reads these pairs.
     pairs: dict[str, int] = {}
     for a, before, answer, _p, act in would.values():
-        want = answer if act == "assign" else before
+        want = answer if act in ("assign", "fill") else before
         hit = _t(a) == want
         agree += hit
         disagree += not hit
@@ -804,6 +805,7 @@ def report_shadow(would: dict[int, tuple[Any, str, str, float, str]]) -> dict[st
     payload = {
         "event": "c3_type_shadow", "stage": "typed_atom_classification", "sure": sure(),
         "would_assign": sum(1 for v in would.values() if v[4] == "assign"),
+        "would_fill": sum(1 for v in would.values() if v[4] == "fill"),
         "would_keep": sum(1 for v in would.values() if v[4] == "keep"),
         "agree": agree, "disagree": disagree, "by_answer": by_answer,
         "disagree_pairs": pairs,

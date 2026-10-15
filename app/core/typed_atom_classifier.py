@@ -727,7 +727,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
     # deflection and the LLM. This emits one structured event per call so a
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
-    _dfl = {"speech_not_task": 0, "store": 0, "student": 0, "c3": 0, "type_head": 0, "type_head_gpu": 0,
+    _dfl = {"speech_not_task": 0, "store": 0, "student": 0, "c3": 0, "c3_fill": 0, "type_head": 0, "type_head_gpu": 0,
             "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected,
             "marker": marker_deflected, "bare_identity": identity_deflected}
     _dfl_ms = {"store": 0.0, "student": 0.0, "c3": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
@@ -949,6 +949,14 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                         return "assign", answer, p, _AT(answer)
                     except ValueError:
                         return None
+                # A value-carrying type: the base decides WHAT the line is;
+                # the LLM is asked only for that type's fields (``_fill_values``),
+                # never to choose among the taxonomy.
+                if answer in _TAXONOMY:
+                    try:
+                        return "fill", answer, p, _AT(answer)
+                    except ValueError:
+                        return None
                 return None
 
             if _c3_mode == "shadow":
@@ -984,14 +992,24 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                         continue
                     _why["taken"] += 1
                     act, _answer, _p, new_type = got
-                    decided.append((a, new_type if act == "assign" else None))
+                    decided.append((a, new_type if act == "assign" else (new_type, _answer) if act == "fill" else None))
                 # Applied only once every reading is in, so a failure part way
                 # leaves every atom as it was.
+                fills = [(a, t) for a, t in decided if isinstance(t, tuple)]
                 for a, new_type in decided:
+                    if isinstance(new_type, tuple):
+                        continue
                     if new_type is not None:
                         a.atom_type = new_type
                         head_deflected += 1
                     _dfl["c3"] += 1
+                if fills:
+                    filled, back = _fill_values(fills)
+                    head_deflected += filled
+                    _dfl["c3_fill"] += filled
+                    _why["filled"] = filled
+                    _why["fill_back_to_llm"] = len(back)
+                    survivors.extend(back)
                 promotable = survivors
                 try:
                     _c3.note_typing(_why)
@@ -1537,6 +1555,70 @@ OUTPUT — strict JSON, one line per atom, in the form:
 If a field is not present in the atom text, omit it from value. Do not invent values. Do not echo example fields.
 
 /no_think"""
+
+
+def _build_value_prompt(batch: list[tuple[Any, str]]) -> str:
+    """Values only: each line's type is already decided (the C3 base), so the
+    model is shown just that type's fields, never the taxonomy to choose from."""
+    lines = []
+    for atom, typ in batch:
+        meta = _TAXONOMY.get(typ) or {}
+        text = _atom_text(atom).replace("\n", " ")
+        section = _atom_section_path(atom)
+        suffix = f" [section: {section}]" if section else ""
+        lines.append(f"  {_atom_id(atom) or '?'} | {typ} ({meta.get('desc', '')}) | value fields: "
+                     f"{','.join(meta.get('fields', []))}\n      text: {text}{suffix}")
+    block = "\n".join(lines)
+    return f"""Each deal-document line below already has its type. For EACH line, extract the named value fields for that type from the line's text.
+
+LINES:
+{block}
+
+OUTPUT -- strict JSON, one entry per line, echoing the given type:
+{{"results": [{{"atom_id": "...", "atom_type": "<the given type>", "value": {{...extracted fields...}}}}, ...]}}
+
+If a field is not present in the text, omit it. Do not invent values. Do not change a line's type.
+
+/no_think"""
+
+
+def _fill_values(fills: list[tuple[Any, tuple[Any, str]]]) -> tuple[int, list[Any]]:
+    """Fill the value payload of lines the base typed with a value-carrying
+    type, in parallel batches of ``SOWSMITH_C3_FILL_BATCH`` (24). Returns (lines
+    typed and filled, lines whose call failed). A failed line goes back to
+    the full LLM path untouched, so a dead endpoint costs nothing but time."""
+    import concurrent.futures
+
+    size = max(1, int(os.environ.get("SOWSMITH_C3_FILL_BATCH", "24") or 24))
+    jobs = [(a, t, name) for a, (t, name) in fills]
+    batches = [jobs[i:i + size] for i in range(0, len(jobs), size)]
+    parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
+
+    def _one(batch):
+        try:
+            raw = _call_ollama(_build_value_prompt([(a, name) for a, _t, name in batch]))
+        except Exception:
+            raw = ""
+        return batch, (_parse_response(raw) if raw else {})
+
+    filled, back = 0, []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        for batch, got in pool.map(_one, batches):
+            if not got:
+                back.extend(a for a, _t, _n in batch)
+                continue
+            for a, t, name in batch:
+                payload = got.get(_atom_id(a) or "")
+                if payload is None:
+                    back.append(a)
+                    continue
+                a.atom_type = t
+                value = payload.get("value")
+                if isinstance(value, dict) and value:
+                    cur = getattr(a, "value", None)
+                    a.value = {**cur, **value} if isinstance(cur, dict) else value
+                filled += 1
+    return filled, back
 
 
 def _classify_batch(batch: list[Any]) -> dict[str, dict[str, Any]]:
