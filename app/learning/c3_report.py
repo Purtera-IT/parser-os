@@ -12,7 +12,11 @@ those into one report, written beside them as ``reports/c3/<date>.md`` (and
 * speed: the base's read time against the LLM time, per compile and pooled;
 * take: atoms the base typed, and the share of the atom-type stage it took;
 * agreement (shadow): per answer, and the commonest disagreements;
-* weak: answers whose agreement is under the bar, which is where to label.
+* weak: answers whose agreement is under the bar, which is where to label;
+* compile time (every compile, the C3 layer on or not): total and per stage,
+  median and slowest tenth, and the share done under ``C3_REPORT_TARGET_S``
+  (120 s), from each result's ``trace``, so the slowest stage is the one to
+  fix next.
 
 Counts and times only; no line text is in the manifest or the report. Run by
 the nightly job before its retrains (``nightly_retrain.main``), or by hand:
@@ -30,6 +34,35 @@ from typing import Any
 WEAK_BELOW = float(os.environ.get("C3_REPORT_WEAK_BELOW", "0.85"))
 #: Fewest shadow decisions an answer needs before it is judged.
 MIN_N = int(os.environ.get("C3_REPORT_MIN_N", "20"))
+#: The compile-time goal: every parse fully done under this.
+TARGET_S = float(os.environ.get("C3_REPORT_TARGET_S", "120"))
+
+
+def _pct(xs: list[float], q: float) -> float | None:
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return round(xs[min(len(xs) - 1, int(q * len(xs)))], 1)
+
+
+def timing(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compile time from the saved traces: total and per stage."""
+    totals: list[float] = []
+    stages: dict[str, list[float]] = defaultdict(list)
+    for t in traces:
+        if not t:
+            continue
+        if t.get("total_duration_ms") is not None:
+            totals.append(float(t["total_duration_ms"]))
+        for st in t.get("stages") or []:
+            stages[str(st.get("stage_name"))].append(float(st.get("duration_ms") or 0.0))
+    per = {k: {"median_ms": _pct(v, 0.5), "p90_ms": _pct(v, 0.9), "n": len(v),
+               "total_ms": round(sum(v), 1)} for k, v in stages.items()}
+    order = sorted(per, key=lambda k: -per[k]["total_ms"])
+    return {"compiles": len(totals), "median_ms": _pct(totals, 0.5), "p90_ms": _pct(totals, 0.9),
+            "max_ms": round(max(totals), 1) if totals else None,
+            "under_target": sum(x <= TARGET_S * 1000 for x in totals), "target_s": TARGET_S,
+            "stages": {k: per[k] for k in order}}
 
 
 def pool(manifests: list[dict[str, Any]]) -> dict[str, Any]:
@@ -86,7 +119,23 @@ def pool(manifests: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def timing_markdown(tm: dict[str, Any]) -> list[str]:
+    if not tm.get("compiles"):
+        return []
+    out = ["## Compile time", "",
+           f"{tm['under_target']} of {tm['compiles']} compiles done under {tm['target_s']:.0f}s. "
+           f"Median {_s(tm['median_ms'])}, slowest tenth {_s(tm['p90_ms'])}, slowest {_s(tm['max_ms'])}.", "",
+           "Stages, most total time first:", "",
+           "| stage | median | slowest tenth | compiles |", "|---|---|---|---|"]
+    out += [f"| {k} | {_s(v['median_ms'])} | {_s(v['p90_ms'])} | {v['n']} |"
+            for k, v in list(tm["stages"].items())[:15]]
+    return out + [""]
+
+
 def markdown(rep: dict[str, Any], day: str) -> str:
+    if not rep.get("compiles"):
+        return "\n".join([f"# Compile report, {day}", "", "No compile ran the C3 layer.", ""]
+                         + timing_markdown(rep.get("timing") or {}))
     h, s, t = rep["health"], rep["speed"], rep["take"]
     ok = h.get("read", 0)
     lines = [f"# C3 base report, {day}", "",
@@ -102,6 +151,7 @@ def markdown(rep: dict[str, Any], day: str) -> str:
               f"{s['compiles_slower_than_llm']} of {ok} reads took longer than the LLM.", "",
               "## What it took", "",
               f"{t['atoms_typed_by_base']} atoms typed by the base, from {t['atoms_read']} read.", ""]
+    lines += timing_markdown(rep.get("timing") or {})
     if rep["agreement"]:
         lines += ["## Agreement with the compile (shadow)", "",
                   "| answer | agree | disagree | rate |", "|---|---|---|---|"]
@@ -134,23 +184,26 @@ def run(limit: int = 500) -> dict[str, Any] | None:
             conn, os.environ.get("AZURE_STORAGE_BLOB_CONTAINER", "orbitbrief-artifacts"))
         names = [b.name for b in cc.list_blobs(name_starts_with="deals/")
                  if b.name.endswith("/parser-os/latest/result.json")][:limit]
-        manifests = []
+        manifests, traces = [], []
         for nm in names:
             try:
                 doc = json.loads(cc.download_blob(nm).readall())
                 manifests.append(doc.get("compile_capabilities") or {})
+                traces.append(doc.get("trace") or {})
             except Exception:
                 continue
         rep = pool(manifests)
-        if not rep["compiles"]:
-            print(f"[c3_report] no compile in {len(names)} ran the C3 layer — skip")
+        rep["timing"] = timing(traces)
+        if not rep["compiles"] and not rep["timing"]["compiles"]:
+            print(f"[c3_report] nothing to report from {len(names)} results — skip")
             return rep
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         md = markdown(rep, day)
         for name, body in ((f"reports/c3/{day}.md", md), ("reports/c3/latest.md", md),
                            (f"reports/c3/{day}.json", json.dumps(rep, indent=1, sort_keys=True))):
             cc.upload_blob(name, body.encode("utf-8"), overwrite=True)
-        print(f"[c3_report] {rep['compiles']} compiles -> reports/c3/{day}.md")
+        print(f"[c3_report] {rep['compiles']} C3 compiles, {rep['timing']['compiles']} timed "
+              f"-> reports/c3/{day}.md")
         return rep
     except Exception as e:
         print(f"[c3_report] skipped: {e}")
