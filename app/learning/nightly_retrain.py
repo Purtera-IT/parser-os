@@ -193,6 +193,14 @@ def _fit_calibrator() -> None:
 
 
 def main() -> int:
+    # The C3 base's daily report needs no embedder, so it runs first.
+    try:
+        from app.learning.c3_report import run as c3_report
+
+        c3_report()
+    except Exception as e:
+        print(f"[nightly] c3 report skipped: {e}")
+
     if not _embedder_live():
         print("[nightly] embedder unreachable — skipping retrain (no training on zero-vectors)")
         return 0

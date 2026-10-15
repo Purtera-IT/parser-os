@@ -138,8 +138,8 @@ class TeacherView:
 @torch.no_grad()
 def teacher_view(teacher, batch: Batch, company: str | None = None,
                  grounding: bool = True, rewrites: list[Rewrite] | None = None,
-                 graph=None) -> TeacherView:
-    from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
+                 graph=None, ground_rows: list[int] | None = None) -> TeacherView:
+    from .brain import company_field_notes, notes_from_deal, teacher_cards, told_why  # noqa: PLC0415
 
     was = teacher.training
     teacher.eval()
@@ -150,15 +150,15 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
                    company_notes=company_field_notes(batch, teacher.schema))
     noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc,
                     graph=graph)
-    m = told.mask.unsqueeze(-1).to(told.hidden.dtype)
-    emb = (told.hidden * m).sum(1) / m.sum(1).clamp(min=1)
-    pointers, words = teacher.grounding(batch) if grounding else (None, None)
+    emb = told.pooled
+    pointers, words = teacher.grounding(batch, rows=ground_rows) if grounding else (None, None)
     flipped = (teacher.flip_read(batch, why, batch.flips, notes, desc, graph).logits
                if batch.flips else None)
     kept, rewritten = read_rewrites(teacher, batch, rewrites or [], why, told.logits, desc)
-    card_logits = teacher.card_logits(batch, with_why=True, desc=desc, graph=graph)
+    readable = dataclasses.replace(batch, judged=teacher_cards(teacher, batch))
+    card_logits = teacher.card_logits(readable, with_why=True, desc=desc, graph=graph)
     grouped = {}
-    for j in batch.judged:
+    for j in readable.judged:
         grouped.setdefault(j.key, []).append(j)
     card_subjects = {key: tuple(judgment_identity(batch, j) for j in js)
                      for key, js in grouped.items()}
@@ -288,11 +288,18 @@ def rows_the_paragraph_may_teach(batch: Batch | None, key: str, has_why: torch.T
     return has_why & torch.tensor(unmarked, device=has_why.device)
 
 
+def _bernoulli_entropy(p: torch.Tensor) -> torch.Tensor:
+    """H(p) per element, in float32. F.binary_cross_entropy(p, p) is the same
+    number but is refused under CUDA autocast."""
+    p = p.float()
+    return -(p * p.log() + (1 - p) * (1 - p).log())
+
+
 def _kl(student: torch.Tensor, teacher: torch.Tensor, t: float, multiple: bool = False) -> torch.Tensor:
     if multiple:
-        p = (teacher / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
-        return (F.binary_cross_entropy_with_logits(student / t, p)
-                - F.binary_cross_entropy(p, p)) * t * t
+        p = (teacher.float() / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+        return (F.binary_cross_entropy_with_logits(student.float() / t, p)
+                - _bernoulli_entropy(p).mean()) * t * t
     return F.kl_div((student / t).log_softmax(-1), (teacher.detach() / t).log_softmax(-1),
                     log_target=True, reduction="batchmean") * t * t
 
@@ -306,6 +313,9 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     (no teacher inside it); ``view`` is detached. ``batch`` (with its flips)
     turns on ``teach_flip``."""
     w = w or TeachWeights()
+    # One encoding of the descriptions for every term: with a trainable
+    # encoder each describe() is a full pass kept for backward.
+    desc = desc if desc is not None else model.describe()
     zero = out.r.new_zeros(())
     keys = [k for k in view.told if k in out.logits]
     parts = {"teach_heads": zero, "teach_geometry": zero, "teach_unlabeled": zero,
@@ -322,9 +332,12 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
             grouped.setdefault(j.key, []).append(j)
         terms = []
         for key, teacher_logits in view.card_logits.items():
-            js = grouped.get(key, [])
+            # The view holds the cards the teacher could read whole.
+            subjects = view.card_subjects.get(key, ())
+            read = set(subjects)
+            js = [j for j in grouped.get(key, []) if judgment_identity(batch, j) in read]
             identity = tuple(judgment_identity(batch, j) for j in js)
-            if identity != view.card_subjects.get(key):
+            if identity != subjects or teacher_logits.shape[0] != len(subjects):
                 raise ValueError("Teacher card subjects do not match this batch")
             o = model.schema.by_key()[key]
             if not o.universal and out.conduct_x is None:
@@ -396,7 +409,7 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
             s = out.pointers[why][keep].clamp(min=-1e4)
             parts["teach_pointers"] = -(t * s).sum(-1).mean() + (t * t.clamp(min=1e-9).log()).sum(-1).mean()
     if view.words is not None and texts is not None:
-        mine = model.word_weights(out, texts)
+        mine = model.word_weights(out, texts, rows={i for i, t in enumerate(view.words) if t is not None})
         kls = [F.kl_div(m, t.clamp(min=1e-9).log(), log_target=True, reduction="sum")
                for m, t in zip(mine, view.words) if m is not None and t is not None
                and m.shape == t.shape]
@@ -418,7 +431,7 @@ def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
 
     zero = out.r.new_zeros(())
     fl = list(batch.flips)
-    move = model.flip_proj(model.text([f.condition for f in fl]))
+    move = model.flip_proj(model.aux_text([f.condition for f in fl]))
     sub = moved_heads(model, out, [f.line for f in fl], move,
                       desc if desc is not None else model.describe())
     rows = [f.line for f in fl]
@@ -432,9 +445,9 @@ def teach_flip(model: C3Model, out: C3Output, view: TeacherView, batch: Batch,
 
     def kl_rows(s: torch.Tensor, tch: torch.Tensor, multiple: bool) -> torch.Tensor:
         if multiple:
-            p = (tch / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
-            per = (F.binary_cross_entropy_with_logits(s / t, p, reduction="none")
-                   - F.binary_cross_entropy(p, p, reduction="none")).mean(-1) * t * t
+            p = (tch.float() / t).sigmoid().detach().clamp(1e-7, 1 - 1e-7)
+            per = (F.binary_cross_entropy_with_logits(s.float() / t, p, reduction="none")
+                   - _bernoulli_entropy(p)).mean(-1) * t * t
             return (per * ww).sum() / ww.sum()
         per = F.kl_div((s / t).log_softmax(-1), (tch / t).log_softmax(-1),
                        log_target=True, reduction="none").sum(-1) * t * t

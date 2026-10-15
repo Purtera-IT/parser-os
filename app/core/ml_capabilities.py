@@ -14,6 +14,9 @@ _ML_ENV_FLAGS = (
     "SOWSMITH_TYPE_HEAD_DEFLECT",
     "SOWSMITH_TYPE_HEAD_GPU",
     "SOWSMITH_TYPE_HEAD_GPU_CONF",
+    "SOWSMITH_C3_TYPE",
+    "SOWSMITH_C3_SURE",
+    "SOWSMITH_C3_TYPES",
     "SOWSMITH_RUBRIC_GATE",
     "SOWSMITH_RUBRIC_GATE_CONF",
     "SOWSMITH_CONTRASTIVE_TYPE",
@@ -90,9 +93,23 @@ def _deflect_counts() -> dict[str, Any]:
                 "type_head_gpu": stats.get("deflected", {}).get("type_head_gpu", 0),
                 "contrastive": stats.get("deflected", {}).get("contrastive", 0),
                 "rubric_gate": stats.get("deflected", {}).get("rubric_gate", 0),
+                "c3": stats.get("deflected", {}).get("c3", 0),
                 "deflected_total": stats.get("deflected_total", 0),
                 "reached_llm": stats.get("reached_llm"),
+                "llm_ms": stats.get("llm_ms"),
+                "layer_ms": stats.get("layer_ms", {}),
             }
+    except Exception:
+        pass
+    # The C3 base: what it did this compile, for the nightly C3 report.
+    # Counts, times and its load/read state only.
+    try:
+        from app.core import c3_type_base as _c3
+
+        if _c3.mode() != "off":
+            out["c3"] = {"mode": _c3.mode(), "sure": _c3.sure(),
+                         "types": sorted(_c3.acts_on() or []), **_c3.status(),
+                         "shadow": _c3.get_last_shadow()}
     except Exception:
         pass
     try:

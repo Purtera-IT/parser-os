@@ -97,7 +97,7 @@ def test_pixels_and_geometry_are_inputs_and_required_for_those_tabs():
     ]}
     batch = featurize(DealExample.from_training_blob(blob, [row], deal_id="synthetic"), schema)
     assert any(batch.pixels[0]) and any(batch.geometry[0])
-    assert "pixels" in batch.inputs() and "verdict" not in json.dumps(batch.inputs())
+    assert "pixels" in batch.inputs() and "verdict" not in json.dumps(batch.inputs(), default=lambda t: t.tolist())
     report = audit_contract(blob, [row], schema, deal_id="synthetic")
     assert "vision_input_not_implemented" not in report["blockers"]
     assert "table_geometry_missing" not in report["blockers"]

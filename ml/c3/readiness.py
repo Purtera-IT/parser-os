@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .data import (DealExample, _Lines, _derived, _is_a_person, _judged_lines,
+from .data import (DealExample, _Lines, _derived, _is_a_person, _judged_lines, _time,
                    excluded, field_note_targets, is_deal_kit, select_labels, judgment_query, judgment_subject, question_field_targets)
 from .notes import _REASON_CODE_RE
 from .schema import CAUSAL_RELATIONS, LINE, NUMBER, PAIR, RELATION, Schema, load_schema
@@ -263,7 +263,8 @@ def audit_contract(blob: dict[str, Any], atoms: list[dict[str, Any]], schema: Sc
         if relation not in relations:
             blockers[f"unconsumed_relation:{relation}"] += 1
         i, j = lines.by_key.get(src), lines.by_key.get(dst)
-        if i is not None and j is not None and relation in CAUSAL_RELATIONS and i <= j:
+        if (i is not None and j is not None and relation in CAUSAL_RELATIONS
+                and _time(deal.atoms[i].entered_at) < _time(deal.atoms[j].entered_at)):
             blockers[f"masked_causal_relation:{relation}"] += 1
     for code in ("unresolved", "card_no_line", "self_links"):
         if deal.link_stats.get(code):

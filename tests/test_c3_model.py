@@ -320,6 +320,10 @@ def test_every_loss_term_reaches_the_weights(schema, deal):
     with torch.no_grad():
         out = m(batch.inputs())
     s = out.relations["answers"]
-    upper = torch.triu(torch.ones_like(s, dtype=torch.bool), 1)
-    assert (s[upper] == float("-inf")).all()
+    t = torch.tensor(batch.times, dtype=torch.float64)
+    later = t.view(-1, 1) < t.view(1, -1)        # the target entered after the source
+    assert later.any() and (s[later] == float("-inf")).all()
+    # Lines that arrived together (one document) may point either way.
+    same = (t.view(-1, 1) == t.view(1, -1)) & ~torch.eye(len(t), dtype=torch.bool)
+    assert torch.isfinite(s[same]).all()
     assert IGNORE in batch.targets["col:wants"]

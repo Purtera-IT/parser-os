@@ -44,9 +44,14 @@ def test_repeated_text_requires_occurrence_and_document_evidence():
     blob = {"judgments": [{"head": "suppression", "target_key": "sup:b@1",
                            "labeler": "reviewer@example.com", "text": "Example work item.",
                            "verdict": "correctly_dropped"}]}
-    batch = featurize(DealExample.from_training_blob(blob, [atom("a"), atom("b")],
-                                                    deal_id="synthetic"), load_schema())
-    assert batch.targets["col:admission"] == [IGNORE, 2]
+    deal = DealExample.from_training_blob(blob, [atom("a"), atom("b")], deal_id="synthetic")
+    batch = featurize(deal, load_schema())
+    # The card names a copy at another position: it gets its own line, and
+    # the kept line b keeps its own (empty) admission.
+    copy = [a.key for a in deal.atoms].index("sup:b@1")
+    assert [a.key for a in deal.atoms][:2] == ["a", "b"]
+    assert batch.targets["col:admission"][copy] == 2
+    assert batch.targets["col:admission"][:2] == [IGNORE, IGNORE]
 
 
 def test_retired_head_collision_does_not_remove_live_task_links():

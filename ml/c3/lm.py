@@ -85,6 +85,9 @@ class LoRALinear(nn.Module):
 class LMBase(nn.Module):
     dim: int
     max_len: int
+    #: Descriptions embedded per language-model pass.
+    EMBED_CHUNK = 32
+    EMBED_TOKENS = 32768      # padded tokens per embedding call
 
     def adapters(self) -> list[LoRALinear]:
         return [m for m in self.modules() if isinstance(m, LoRALinear)]
@@ -110,8 +113,53 @@ class LMBase(nn.Module):
         """Untruncated count needed to certify complete expert supervision."""
         raise NotImplementedError
 
+    def encode(self, text: str, first: bool) -> list[int]:
+        """Token ids of ``text``; ``first`` adds the start token, if any."""
+        raise NotImplementedError
+
+    @property
+    def pad_id(self) -> int:
+        raise NotImplementedError
+
+    def tokenize_pairs(self, heads: list[str], tails: list[str]
+                       ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Each head then its tail, encoded apart and joined, right-padded.
+
+        Returns ids, mask and each row's first tail position. Encoding the
+        tail on its own keeps every one of its tokens out of the head, even
+        where a joint encoding would merge the two at the seam.
+        """
+        seqs, start = [], []
+        for h, t in zip(heads, tails):
+            a, b = self.encode(h, True), self.encode(t, False)
+            if not b:
+                raise ValueError("Supervised text encodes to no tokens")
+            if len(a) + len(b) > self.max_len:
+                raise ValueError("Teacher text exceeds context budget; explicit context preparation is required")
+            seqs.append(a + b)
+            start.append(len(a))
+        width = max(len(q) for q in seqs)
+        ids = torch.full((len(seqs), width), self.pad_id, dtype=torch.long)
+        mask = torch.zeros((len(seqs), width), dtype=torch.bool)
+        for i, q in enumerate(seqs):
+            ids[i, :len(q)] = torch.tensor(q)
+            mask[i, :len(q)] = True
+        dev = next(self.parameters()).device
+        return ids.to(dev), mask.to(dev), torch.tensor(start, device=dev)
+
     def forward(self, ids: torch.Tensor, mask: torch.Tensor,
                 prefix: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
+
+    def hidden(self, ids: torch.Tensor, mask: torch.Tensor,
+               prefix: torch.Tensor | None = None,
+               inputs_embeds: torch.Tensor | None = None) -> torch.Tensor:
+        """Last hidden states only. A causal LM's vocabulary logits are
+        [pages, tokens, ~150k]; the heads never read them."""
+        return self(ids, mask, prefix=prefix, inputs_embeds=inputs_embeds)[0]
+
+    def head(self, h: torch.Tensor) -> torch.Tensor:
+        """Vocabulary logits for the hidden states given, and only those."""
         raise NotImplementedError
 
     def offsets(self, text: str) -> list[tuple[int, int]]:
@@ -121,11 +169,27 @@ class LMBase(nn.Module):
         raise NotImplementedError
 
     def embed(self, texts: list[str]) -> torch.Tensor:
-        """Mean-pooled hidden states [B, dim]."""
-        ids, mask = self.tokenize(texts)
-        h, _ = self(ids, mask)
-        m = mask.unsqueeze(-1).to(h.dtype)
-        return (h * m).sum(1) / m.sum(1).clamp(min=1)
+        """Mean-pooled hidden states [B, dim], in length-sorted chunks so the
+        schema's ~760 descriptions are never one padded batch."""
+        size = [self.token_count(t) for t in texts]
+        order = sorted(range(len(texts)), key=lambda i: size[i])
+        out: list[torch.Tensor | None] = [None] * len(texts)
+        calls, cur = [], []
+        for i in order:
+            if cur and (len(cur) >= self.EMBED_CHUNK or (len(cur) + 1) * size[i] > self.EMBED_TOKENS):
+                calls.append(cur)
+                cur = []
+            cur.append(i)
+        if cur:
+            calls.append(cur)
+        for rows in calls:
+            ids, mask = self.tokenize([texts[i] for i in rows])
+            h = self.hidden(ids, mask)
+            m = mask.unsqueeze(-1).to(h.dtype)
+            pooled = (h * m).sum(1) / m.sum(1).clamp(min=1)
+            for k, i in enumerate(rows):
+                out[i] = pooled[k]
+        return torch.stack(out)  # type: ignore[arg-type]
 
 
 class _Block(nn.Module):
@@ -167,8 +231,18 @@ class TinyCausalLM(LMBase):
         self.ln = nn.LayerNorm(dim)
         self.out = nn.Linear(dim, 258, bias=False)
 
+    def head(self, h: torch.Tensor) -> torch.Tensor:
+        return self.out(h)
+
     def token_count(self, text: str) -> int:
         return 1 + len(str(text).encode("utf-8"))
+
+    def encode(self, text: str, first: bool) -> list[int]:
+        return ([self.BOS] if first else []) + list(str(text).encode("utf-8"))
+
+    @property
+    def pad_id(self) -> int:
+        return self.PAD
 
     def tokenize(self, texts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         if any(self.token_count(t) > self.max_len for t in texts):
@@ -224,6 +298,8 @@ class HFCausalLM(LMBase):
         self.tokenizer = AutoTokenizer.from_pretrained(name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        # Pages are split and trimmed by their real length; that needs the pad on the right.
+        self.tokenizer.padding_side = "right"
         kwargs = {"torch_dtype": dtype} if dtype is not None else {}
         self.model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
         self.dim, self.max_len = self.model.config.hidden_size, max_len
@@ -234,6 +310,13 @@ class HFCausalLM(LMBase):
 
     def token_count(self, text: str) -> int:
         return len(self.tokenizer(str(text), truncation=False)["input_ids"])
+
+    def encode(self, text: str, first: bool) -> list[int]:
+        return self.tokenizer(str(text), add_special_tokens=first, truncation=False)["input_ids"]
+
+    @property
+    def pad_id(self) -> int:
+        return self.tokenizer.pad_token_id
 
     def tokenize(self, texts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         if any(self.token_count(t) > self.max_len for t in texts):
@@ -263,3 +346,20 @@ class HFCausalLM(LMBase):
         if prefix is not None:
             h, logits = h[:, prefix.shape[1]:], logits[:, prefix.shape[1]:]
         return h, logits
+
+    def head(self, h: torch.Tensor) -> torch.Tensor:
+        return self.model.get_output_embeddings()(h)
+
+    def hidden(self, ids: torch.Tensor, mask: torch.Tensor,
+               prefix: torch.Tensor | None = None,
+               inputs_embeds: torch.Tensor | None = None) -> torch.Tensor:
+        body = getattr(self.model, "model", None)
+        if body is None:                          # not a *ForCausalLM wrapper
+            return self(ids, mask, prefix=prefix, inputs_embeds=inputs_embeds)[0]
+        x = self.input_embeddings(ids) if inputs_embeds is None else inputs_embeds
+        if prefix is not None:
+            x = torch.cat([prefix.to(x.dtype), x], 1)
+            mask = torch.cat([torch.ones(prefix.shape[:2], dtype=torch.bool,
+                                         device=mask.device), mask], 1)
+        h = body(inputs_embeds=x, attention_mask=mask.long()).last_hidden_state
+        return h[:, prefix.shape[1]:] if prefix is not None else h
