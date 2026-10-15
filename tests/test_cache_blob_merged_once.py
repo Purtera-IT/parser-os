@@ -33,3 +33,24 @@ def test_each_batch_is_fetched_once_and_again_only_when_it_changes(monkeypatch, 
     monkeypatch.setattr(cache_blob, "_MERGED", {})
     (tmp_path / "_cache_rows_merged.json").unlink()
     assert sum(len(r) for r in cache_blob._iter_batches(cc, "embed")) == 2
+
+
+def test_the_embedding_merge_runs_beside_the_compile(monkeypatch):
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+
+    def _slow():
+        started.set()
+        release.wait(5)
+        return 0
+
+    monkeypatch.setattr(cache_blob, "sync_embed_into_cache", _slow)
+    monkeypatch.setattr(cache_blob, "_EMBED_SYNC", {"thread": None})
+    assert cache_blob.sync_embed_into_cache_background() is True      # returns at once
+    assert started.wait(2)
+    assert cache_blob.sync_embed_into_cache_background() is False     # one at a time
+    release.set()
+    cache_blob._EMBED_SYNC["thread"].join(2)
+    assert cache_blob.sync_embed_into_cache_background() is True
+    cache_blob._EMBED_SYNC["thread"].join(2)

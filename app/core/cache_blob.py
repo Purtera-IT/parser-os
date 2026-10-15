@@ -287,6 +287,34 @@ def sync_embed_into_cache() -> int:
     return n
 
 
+_EMBED_SYNC: dict[str, Any] = {"thread": None}
+
+
+def sync_embed_into_cache_background() -> bool:
+    """``sync_embed_into_cache`` on a background thread, so a compile never
+    waits for it: a vector not merged yet is embedded again (the same vector
+    from the same model), and one merged in time is a cache hit. After a
+    container starts, the first merge is the whole mirror (1.7 GB on dev);
+    after that only new batches. Returns True when a sync was started; False
+    when one is still running."""
+    import threading
+
+    t = _EMBED_SYNC.get("thread")
+    if t is not None and t.is_alive():
+        return False
+
+    def _run():
+        try:
+            sync_embed_into_cache()
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run, daemon=True, name="embed-cache-sync")
+    _EMBED_SYNC["thread"] = t
+    t.start()
+    return True
+
+
 def export_embed_rows(limit: int = 4000) -> list[dict]:
     """The vectors this process computed."""
     try:

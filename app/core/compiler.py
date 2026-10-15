@@ -824,8 +824,10 @@ def compile_project(
         _cb.sync_ocr_into_cache()
         _setup_s["sync_ocr_cache"] = _setup_time.perf_counter() - _t0
         _t0 = _setup_time.perf_counter()
-        _cb.sync_embed_into_cache()
-        _setup_s["sync_embed_cache"] = _setup_time.perf_counter() - _t0
+        # In the background: the whole mirror is 1.7 GB after a container
+        # starts, and a vector it has not merged yet is just embedded again.
+        _cb.sync_embed_into_cache_background()
+        _setup_s["sync_embed_cache_start"] = _setup_time.perf_counter() - _t0
     except Exception:  # pragma: no cover - a cache restore must never break a compile
         pass
 
