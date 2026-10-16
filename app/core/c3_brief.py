@@ -39,6 +39,10 @@ NOISE_BAR = 0.6
 SERVICE_BAR = 0.6
 QUESTION_BAR = 0.5
 QUESTION_KEY = "jdg:gap"
+#: Catalog questions kept per topic (site access, schedule, commercial ...),
+#: best first, before the writing call drops the ones the deal answers.
+QUESTIONS_PER_FAMILY = int(os.environ.get("SOWSMITH_C3_QUESTIONS_PER_FAMILY", "2"))
+EVIDENCE_LINES = 3
 #: Catalog questions at or above this p_valid are asked. Chosen on 010043
 #: (validation deal): its top 7 were all valid, the head's own 0.5 cut found 2
 #: of 13. SOWSMITH_C3_QUESTION_BAR overrides.
@@ -114,6 +118,32 @@ def _deal_kit(atom: Any) -> bool:
         return skipped(atom, _DEAL.get("sha"))
     except Exception:
         return False
+
+
+def _attach_evidence(questions: list[dict[str, Any]], atoms: list[Any]) -> None:
+    """The deal lines closest to each catalog question (the parse's own
+    embeddings, cached by the compile's warm-up), so the writing call can see
+    whether the deal already answers it and word it for this job."""
+    if not questions:
+        return
+    pool = [a for a in atoms if _type(a) not in NEVER and not _deal_kit(a) and len(a.raw_text.strip()) > 12]
+    if not pool:
+        return
+    try:
+        import numpy as np
+
+        from app.core.embedding_retrieval import embed_texts
+
+        lines = embed_texts([a.raw_text.strip()[:600] for a in pool])
+        qv = embed_texts([q["text"] for q in questions])
+        sims = qv @ lines.T
+    except Exception as exc:
+        log.info("C3 brief evidence skipped: %s", type(exc).__name__)
+        return
+    for q, row in zip(questions, sims):
+        top = np.argsort(-row)[:EVIDENCE_LINES]
+        q["evidence"] = [{"id": str(pool[i].id), "text": pool[i].raw_text[:240], "sim": round(float(row[i]), 3)}
+                         for i in top if row[i] > 0]
 
 
 def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None,
@@ -241,6 +271,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         except Exception:
             meta = {}
         svc_value = str(service.get("value") or "")
+        per_family: Counter = Counter()
         bar = (float(os.environ["SOWSMITH_C3_QUESTION_BAR"]) if os.environ.get("SOWSMITH_C3_QUESTION_BAR")
                else readings.get("question_bar") or QUESTION_CATALOG_BAR)
         for q in sorted(asked, key=lambda x: -float(x.get("p_valid") or 0)):
@@ -250,9 +281,15 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             m = meta.get(q["text"]) or {}
             if m.get("applies_to") and svc_value and svc_value not in m["applies_to"]:
                 continue
-            questions.append({"id": "q:" + str(m.get("id") or len(questions)), "text": q["text"],
+            fam = m.get("family", "")
+            if per_family[fam] >= QUESTIONS_PER_FAMILY:
+                continue
+            per_family[fam] += 1
+            questions.append({"id": "q:" + str(m.get("id") or len(questions)), "text": m.get("display") or q["text"],
+                              "asked_as": q["text"],
                               "family": m.get("family", ""), "layer": m.get("layer", "base"),
                               "p": round(p_valid, 3), "by": _by(QUESTION_KEY), "owner": "project_manager"})
+    _attach_evidence([q for q in questions if q["id"].startswith("q:")], atoms)
     for a in atoms:
         aid = str(a.id)
         hit = None
@@ -356,6 +393,15 @@ _PROMPT = (
     "\"cites\": [id]}]}.\n\nSERVICE: %s\nFACTS BY SECTION: %s\nOPEN QUESTIONS: %s\nCONFLICTS: %s"
 )
 
+_ASK_PROMPT = (
+    "\n\nCANDIDATE QUESTIONS: each has an id, a question, and the deal lines closest to it [line ids]. For "
+    "each one decide: is it already answered by those lines? If yes, mark it answered and cite the line that "
+    "answers it. If not, rewrite it as one short question specific to THIS job (name the site, device, "
+    "count or document from the lines when they show it), and cite the lines that make it relevant. Never "
+    "invent a fact. Add to the JSON: \"checked_questions\": [{\"id\": str, \"answered\": bool, "
+    "\"answered_by\": [line id], \"ask\": str, \"cites\": [line id]}].\n%s"
+)
+
 
 def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     """One LLM call turns the structured brief into prose. Sentences whose
@@ -367,9 +413,17 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     qs = [f"[{q['id']}] (owner: {q['owner']}) {q['text']}" for q in brief["questions"][:30]]
     cs = [x["ids"] for x in brief["conflicts"][:15]]
     known = {x["id"] for v in brief["sections"].values() for x in v} | {q["id"] for q in brief["questions"]}
+    catalog = [q for q in brief["questions"] if q["id"].startswith("q:")]
+    qs = [f"[{q['id']}] (owner: {q['owner']}) {q['text']}" for q in brief["questions"]
+          if not q["id"].startswith("q:")][:30]
+    cands = [{"id": q["id"], "question": q["text"],
+              "closest_lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]} for q in catalog]
+    lines_seen = {e["id"] for q in catalog for e in q.get("evidence") or []}
     started = time.monotonic()
-    raw = llm_client.complete(_PROMPT % (brief["service"].get("value"), json.dumps(facts), json.dumps(qs),
-                                         json.dumps(cs)),
+    prompt = _PROMPT % (brief["service"].get("value"), json.dumps(facts), json.dumps(qs), json.dumps(cs))
+    if cands:
+        prompt += _ASK_PROMPT % json.dumps(cands)
+    raw = llm_client.complete(prompt,
                               max_tokens=4000, model=model or os.environ.get("SOWSMITH_C3_BRIEF_MODEL") or None,
                               timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "120")))
     out: dict[str, Any] = {"write_ms": round((time.monotonic() - started) * 1000, 1)}
@@ -392,8 +446,21 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
             else:
                 dropped += 1
         doc["sections"][sec] = keep
+    asked, answered = [], []
+    by_qid = {q["id"]: q for q in catalog}
+    for c in doc.get("checked_questions") or []:
+        q = by_qid.get(str(c.get("id")))
+        if q is None:
+            continue
+        ok = lambda ids: [str(i).strip("[]") for i in ids or [] if str(i).strip("[]") in lines_seen]
+        if c.get("answered") and ok(c.get("answered_by")):
+            answered.append({"id": q["id"], "question": q["text"], "answered_by": ok(c.get("answered_by"))})
+        else:
+            asked.append({"id": q["id"], "question": str(c.get("ask") or q["text"]), "family": q.get("family"),
+                          "owner": q["owner"], "p": q.get("p"), "cites": ok(c.get("cites"))})
     out.update(summary=doc.get("summary", ""), sections=doc.get("sections") or {},
-               open_questions=doc.get("open_questions") or [], uncited_dropped=dropped)
+               open_questions=doc.get("open_questions") or [], uncited_dropped=dropped,
+               catalog_questions=asked, answered_in_deal=answered)
     return out
 
 
