@@ -30,17 +30,21 @@ code{font-family:var(--f-mono);font-size:.88em}
 <section><h2>Ready to go live? Where it stands</h2>
 <p><b>Ready for people to use and label on dev now.</b> Going live in prod needs three things first, listed at the end.</p>
 <h3>Speed: final numbers on dev</h3>
-<div class=tbl><table><thead><tr><th>Deal</th><th>Lines</th><th>Yesterday</th><th>This morning</th><th>Now</th><th>Quality vs your labels</th></tr></thead><tbody>
-<tr><td>000002</td><td class=n>386</td><td class=n>122 s</td><td class=n>105 s</td><td class="n ok">74 s</td><td>keep 51/52, sections 46/48</td></tr>
-<tr><td>010043</td><td class=n>2,312</td><td class=n>334 s</td><td class=n>285 s</td><td class="n ok">162 s</td><td>keep precision 0.74, sections 84/119</td></tr>
-<tr><td>010115</td><td class=n>6,898</td><td class=n>672 s</td><td class=n>468 s</td><td class="n ok">357 s</td><td>keep 0.99, sections 86/150</td></tr>
+<p class=muted>"Cold" is a fresh container with an empty cache, which is what most real compiles get, because the worker scales from zero. "Warm" is a re-parse soon after another one.</p>
+<div class=tbl><table><thead><tr><th>Deal</th><th>Lines</th><th>Yesterday</th><th>Now, cold</th><th>Now, warm</th><th>Quality vs your labels</th></tr></thead><tbody>
+<tr><td>000002</td><td class=n>386</td><td class=n>122 s</td><td class=n>—</td><td class="n ok">74 s</td><td>keep 51/52, sections 46/48</td></tr>
+<tr><td>010043</td><td class=n>2,312</td><td class=n>334 s</td><td class="n ok">241 s</td><td class="n ok">162 s</td><td>keep precision 0.74, sections 84/119</td></tr>
+<tr><td>010115</td><td class=n>6,898</td><td class=n>672 s</td><td class="n ok">377 s</td><td class="n ok">357 s</td><td>keep 0.99, sections 84/149</td></tr>
 </tbody></table></div>
 <p>What made it faster today:</p>
 <ul>
 <li><b>Parsing: 130 s → 36 s on 010043.</b> Two parser checks embedded one line per network call: 351 calls of about 0.38 s each. They now ask in one batch, and the image-label check only runs on pages that have images. The parse output is identical: all 3,811 lines of 010043's 38 files, before and after.</li>
+<li><b>Cold starts.</b> One TLS timeout used to fail the compile's embedding warm-up, and every later step then embedded one line per call (010043 took 393 s). Embedding requests now retry. Span admission no longer re-types lines the base already typed; that saved 335 calls.</li>
 <li><b>nano on the small LLM jobs</b>, with 10 calls in flight instead of 5.</li>
 </ul>
-<p>Small deals are now under 2 minutes. On big deals, what's left is value filling (75 s, 94 calls on 010115) and the entity pass (32 s). Both go away when the heads run on the GPU and fill values themselves.</p>
+<p>Small deals are under 2 minutes warm. On big deals, what's left is value filling (75 s, 94 calls on 010115) and the entity pass (32 s). Both go away when the heads run on the GPU and fill values themselves.</p>
+<h3>Big deals had no PM page on dev</h3>
+<p>Every Core brief that ran over about 5 minutes was killed. Core accepts the run over HTTP and works in the background, and with no open request Container Apps scaled it to zero after a 300 s cooldown. 010115's page failed every time today. The dev cooldown is now 20 minutes, and 010115's page built for the first time. Prod has the same setting and is unchanged. Core also runs each brief 2–3 times at once, which makes this worse.</p>
 <h3>What a PM sees now</h3>
 <ul>
 <li><b>Headline:</b> the brief's first sentence ("This project involves installing three Verkada cameras at the Lane Construction office…").</li>
