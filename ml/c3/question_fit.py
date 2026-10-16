@@ -62,13 +62,27 @@ def load_refit(path: str, device: str = "cpu") -> QuestionRefit:
     return m.to(device).eval()
 
 
+def _head_wording() -> dict[str, str]:
+    """Card wording -> the wording the Questions head reads (c3_record catalog):
+    a catalog card shows `display`, the head is asked `text`."""
+    try:
+        from c3_record.questions_catalog import catalog
+
+        return {q.get("display") or q["text"]: q["text"] for q in catalog()}
+    except Exception:
+        return {}
+
+
 def labels_of(path: str) -> list[tuple[str, str]]:
     d = json.loads(Path(path).read_text(encoding="utf-8"))
+    wording = _head_wording()
     out = []
     for j in d.get("judgments") or []:
         t = j.get("target") if isinstance(j.get("target"), dict) else {}
         if j.get("head") == "gap" and t.get("kind") in UNANCHORED and j.get("verdict") in ("valid", "invalid"):
-            text = str(t.get("text") or "").strip()
+            # A catalog card shows clean wording; `query` is what the head reads.
+            text = str(t.get("query") or t.get("text") or "").strip()
+            text = wording.get(text, text)
             if text:
                 out.append((text, j["verdict"]))
     return out

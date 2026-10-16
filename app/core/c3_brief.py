@@ -531,6 +531,38 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     return out
 
 
+def envelope_questions(brief: dict[str, Any]) -> list[dict[str, Any]]:
+    """The base's catalog questions as the envelope's open questions (kind
+    ``catalog``): the ones to ask (best first) and the ones the deal already
+    answers (review_status ``answered``, with the line). ``query`` is the
+    wording the Questions head reads; question_fit trains on it."""
+    by_id = {q["id"]: q for q in brief.get("questions") or [] if str(q.get("id", "")).startswith("q:")}
+    w = brief.get("written") or {}
+    asked = w.get("catalog_questions")
+    if asked is None:
+        asked = [{"id": q["id"], "question": q["text"], "p": q.get("p")} for q in by_id.values()]
+    out = []
+    for a in asked:
+        q = by_id.get(a["id"]) or {}
+        cites = a.get("cites") or []
+        # No atom_id: the labeling API keys a card by its line when it has one,
+        # and catalog questions often share their closest line, so they would
+        # fold into one card. Keyed by text instead; the lines go in `cites`.
+        out.append({"atom_id": None, "cites": cites, "artifact_id": None, "text": a["question"],
+                    "query": q.get("asked_as") or q.get("text") or a["question"],
+                    "review_status": "needs_review", "kind": "catalog", "question_id": a["id"],
+                    "family": q.get("family"), "layer": q.get("layer", "base"), "p": a.get("p"),
+                    "decided_by": q.get("by", "base:jdg:gap")})
+    for a in w.get("answered_in_deal") or []:
+        q = by_id.get(a["id"]) or {}
+        out.append({"atom_id": None, "cites": a.get("answered_by") or [], "artifact_id": None, "text": a["question"],
+                    "query": q.get("asked_as") or a["question"], "review_status": "answered",
+                    "kind": "catalog", "question_id": a["id"], "family": q.get("family"),
+                    "layer": q.get("layer", "base"), "p": q.get("p"), "answered_by": a.get("answered_by"),
+                    "decided_by": q.get("by", "base:jdg:gap")})
+    return out
+
+
 def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None) -> dict[str, Any]:
     """Build (and, when switched on, write) the brief from this compile's read."""
     from app.core import c3_type_base

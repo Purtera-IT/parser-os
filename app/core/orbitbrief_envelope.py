@@ -1205,6 +1205,23 @@ def build_orbitbrief_envelope(
     envelope["pm_dashboard"] = build_pm_dashboard(
         atoms=atoms, packets=packets, edges=edges, entities=entities,
     )
+    # Brief v2 (c3_brief): the base decides which questions this deal needs,
+    # so its list replaces the fixed head-start checklist and the gap map
+    # (both are in the question catalog). The Questions card labels these
+    # like any other question, and each verdict trains the Questions head.
+    _c3b = getattr(compile_result, "c3_brief", None)
+    if _c3b:
+        envelope["c3_brief"] = _c3b
+        try:
+            from app.core.c3_brief import envelope_questions
+
+            _dash = envelope["pm_dashboard"]
+            _keep = [q for q in _dash.get("open_questions") or []
+                     if q.get("kind") not in ("headstart", "generated_gap")]
+            _dash["open_questions"] = _keep + envelope_questions(_c3b)
+            _dash["blockers"] = [b for b in _dash.get("blockers") or [] if b.get("kind") != "generated_gap"]
+        except Exception as exc:  # the old list stands
+            envelope.setdefault("warnings", []).append(f"c3 questions not applied: {type(exc).__name__}")
     envelope["sow_readiness_scorecard"] = build_sow_readiness_scorecard(
         atoms=atoms, packets=packets, edges=edges, entities=entities,
     )

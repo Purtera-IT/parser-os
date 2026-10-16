@@ -66,3 +66,20 @@ def test_catalog_questions_ranked_by_the_question_head(monkeypatch):
     got = [q["id"] for q in b["questions"]]
     assert got == ["q:site_access_approver"]  # VMS is for cameras; parking is under the bar
     assert b["questions"][0]["by"] == "base:jdg:gap"
+
+
+def test_envelope_questions_carry_what_the_head_reads():
+    brief = {"questions": [{"id": "q:indemnification", "text": "What indemnification terms apply?",
+                            "asked_as": "Missing: Indemnification clause", "family": "commercial_terms",
+                            "layer": "base", "p": 0.9, "by": "base:jdg:gap"},
+                           {"id": "q:payment_terms", "text": "What are the payment terms?",
+                            "asked_as": "What are the payment terms?", "p": 0.8, "by": "base:jdg:gap"}],
+             "written": {"catalog_questions": [{"id": "q:indemnification", "question": "What indemnification terms apply?",
+                                                "p": 0.9, "cites": ["a1"]}],
+                         "answered_in_deal": [{"id": "q:payment_terms", "question": "What are the payment terms?",
+                                               "answered_by": ["a7"]}]}}
+    got = c3_brief.envelope_questions(brief)
+    assert [(q["question_id"], q["review_status"]) for q in got] == [
+        ("q:indemnification", "needs_review"), ("q:payment_terms", "answered")]
+    assert got[0]["query"] == "Missing: Indemnification clause" and got[0]["kind"] == "catalog"
+    assert got[1]["atom_id"] is None and got[1]["cites"] == ["a7"]
