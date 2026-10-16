@@ -70,6 +70,7 @@ for _section, _types in {
 #: Types that never belong in a brief whatever a head says.
 NEVER = frozenset({"small_talk", "raw_utterance", "raw_table_row", "dropped_sheet", "entity",
                    "schematic_detection_target_set", "schematic_symbol_detection", "schematic_line_run"})
+_PLACEHOLDER = re.compile(r"\s*\[(image|figure|table) awaiting", re.I)
 QUESTION_WANTS = ("chase-artifact", "chase-conversation", "confirm-with-customer", "decide-internally")
 
 
@@ -231,7 +232,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             if g == "true" and pg >= QUESTION_BAR:
                 hit = ("intake_gap", _by("read:intake_gap"))
         if not hit and _type(a) == "open_question":
-            hit = ("open_question", "rule:type")
+            # Call chatter is typed open_question too ("can you meet us in
+            # Tampa?"): the line must also be one co_action keeps.
+            act, pa = r(aid, "read:co_action") if use["read:co_action"] else ("keep", 1.0)
+            if act == "keep" and pa >= MAYBE_BAR and not _deal_kit(a) and not _PLACEHOLDER.match(a.raw_text):
+                hit = ("open_question", "rule:type+" + _by("read:co_action") if use["read:co_action"] else "rule:type")
         if hit:
             owner = r(aid, "read:needed_by")[0] if use["read:needed_by"] else "_absent"
             questions.append({"id": aid, "text": a.raw_text[:300], "wants": hit[0], "by": hit[1],
@@ -242,10 +247,17 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         if fam != "missing_info":
             continue
         ids = [i for i in (list(pk.governing_atom_ids) + list(pk.supporting_atom_ids)) if i in by_id]
-        if ids and ids[0] not in seen_q:
-            seen_q.add(ids[0])
-            questions.append({"id": ids[0], "text": (pk.reason or by_id[ids[0]].raw_text)[:300],
-                              "wants": "missing_info", "by": "rule:packet", "owner": "project_manager"})
+        if not ids or ids[0] in seen_q:
+            continue
+        a = by_id[ids[0]]
+        act, pa = r(ids[0], "read:co_action") if use["read:co_action"] else ("keep", 1.0)
+        if act != "keep" or pa < MAYBE_BAR or _deal_kit(a) or _PLACEHOLDER.match(a.raw_text):
+            continue
+        seen_q.add(ids[0])
+        # The packet's reason is boilerplate ("Open question from transcript
+        # requires clarification."); the line itself is the question.
+        questions.append({"id": ids[0], "text": a.raw_text[:300], "wants": "missing_info",
+                          "by": "rule:packet", "owner": "project_manager"})
 
     # ---- conflicts
     conflicts: list[dict[str, Any]] = []
