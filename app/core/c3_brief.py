@@ -650,11 +650,69 @@ def envelope_questions(brief: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+#: Sections a later SOW restates in full, so an earlier version's clause is
+#: not a second fact but an old one.
+CONTRACT_SECTIONS = frozenset({"scope_of_work", "customer_responsibilities", "provider_responsibilities",
+                               "out_of_scope", "assumptions", "fees", "terms", "change_control",
+                               "acceptance", "deliverables", "timeline"})
+_SOW_NAME = re.compile(r"\bsow\b|statement of work|ready for signature|fully executed|\bsigned\b", re.I)
+
+
+def _sow_like(doc: dict[str, Any]) -> bool:
+    kind = str(doc.get("kind") or "").lower()
+    return kind in ("sow_draft", "signed_sow", "sow", "proposal") or (
+        kind in ("file", "") and bool(_SOW_NAME.search(str(doc.get("filename") or ""))))
+
+
+def _drop_superseded(brief: dict[str, Any], atoms: list[Any], documents: list[dict[str, Any]]) -> int:
+    """Keep only the latest SOW's clauses in the contract sections. On 010038
+    the brief was handed the June draft ($7,890, travel billable), the July
+    change order ($1,260) and the signed SOW ($9,150, no travel) as equals and
+    wrote "conflicting amounts exist" and "travel is billed". Documents are in
+    arrival order (c3_type_base.deal_documents); every SOW version and change
+    order before the latest SOW is superseded. Their lines are moved to
+    ``superseded``, not dropped, so a PM can see what changed. Returns lines moved."""
+    order = [d for d in documents if isinstance(d, dict)]
+    sows = [i for i, d in enumerate(order) if _sow_like(d)]
+    if len(sows) < 1:
+        return 0
+    latest = sows[-1]
+    old = {str(order[i].get("doc_id")) for i in range(latest)
+           if _sow_like(order[i]) or str(order[i].get("kind") or "").lower() == "change_order"}
+    if not old:
+        return 0
+    doc_of = {str(a.id): str(getattr(a, "artifact_id", "") or "") for a in atoms}
+    latest_id = str(order[latest].get("doc_id"))
+    moved = []
+    for sec in list(brief.get("sections") or {}):
+        items = brief["sections"][sec]
+        # Only where the latest SOW speaks to this section itself; else the
+        # older version is all the deal has on it, and it stays.
+        has_latest = any(doc_of.get(str(it.get("id"))) == latest_id for it in items)
+        keep = []
+        for it in items:
+            iid = str(it.get("id"))
+            # "Documents disagree: $7,890 vs $9,150" between a superseded
+            # version and the latest is not a conflict, wherever it is filed.
+            stale_conflict = iid.startswith("xdoc_conflict") and doc_of.get(iid) in old
+            if stale_conflict or (sec in CONTRACT_SECTIONS and has_latest and doc_of.get(iid) in old):
+                moved.append({**it, "section": sec, "superseded_by": str(order[latest].get("filename") or "")})
+            else:
+                keep.append(it)
+        brief["sections"][sec] = keep
+    brief["superseded"] = moved
+    return len(moved)
+
+
 def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None) -> dict[str, Any]:
     """Build (and, when switched on, write) the brief from this compile's read."""
     from app.core import c3_type_base
 
     brief = build(atoms, packets, service_fallback=service_fallback, readings=c3_type_base.full_read())
+    try:
+        _drop_superseded(brief, atoms, c3_type_base._DEAL.get("documents") or [])
+    except Exception as exc:  # pragma: no cover - never lose the brief over this
+        log.info("C3 brief superseded check skipped: %s", type(exc).__name__)
     # The base's line type for every line that names a site, for the roster
     # filter (site_identity.filter_roster): a site only ever mentioned in lines
     # the base does not read as a site is a mention, not a job site.

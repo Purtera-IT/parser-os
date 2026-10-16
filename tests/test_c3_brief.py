@@ -95,3 +95,26 @@ def test_cut_off_prose_keeps_its_complete_sentences():
     assert doc["summary"].startswith('Install "three"')
     assert doc["sections"]["scope"] == [{"text": "Mount cameras.", "cites": ["atm_a"]}]
     assert _salvage("no json here") is None
+
+
+def test_the_latest_sow_governs_the_contract_sections():
+    from types import SimpleNamespace as N
+
+    from app.core.c3_brief import _drop_superseded
+
+    atoms = [N(id="d1", artifact_id="draft"), N(id="c1", artifact_id="co"), N(id="s1", artifact_id="signed"),
+             N(id="x1", artifact_id="co"), N(id="o1", artifact_id="draft")]
+    docs = [{"doc_id": "draft", "kind": "sow_draft", "filename": "Install 06.22.26 v1.docx"},
+            {"doc_id": "co", "kind": "change_order", "filename": "Change Order (7.29.26).docx"},
+            {"doc_id": "signed", "kind": "file", "filename": "SOW_207586 ready for signature.pdf"}]
+    brief = {"sections": {"fees": [{"id": "d1", "text": "$7,890"}, {"id": "c1", "text": "$1,260"},
+                                   {"id": "s1", "text": "$9,150"}],
+                          "overview": [{"id": "x1", "text": "Documents disagree"}],
+                          "out_of_scope": [{"id": "o1", "text": "Painting is excluded"}]}}
+    brief["sections"]["overview"][0]["id"] = "xdoc_conflict_1"
+    atoms.append(N(id="xdoc_conflict_1", artifact_id="co"))
+    assert _drop_superseded(brief, atoms, docs) == 3
+    assert [i["id"] for i in brief["sections"]["fees"]] == ["s1"]
+    assert brief["sections"]["overview"] == []
+    # The signed SOW says nothing on exclusions: the draft's stays.
+    assert [i["id"] for i in brief["sections"]["out_of_scope"]] == ["o1"]

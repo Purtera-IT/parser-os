@@ -81,3 +81,15 @@ def test_a_signature_copied_out_as_a_site_line_is_set_aside():
     types = {"a1": ["physical_site", 0.99], "s1": ["stakeholder", 0.96], "s2": ["physical_site", 1.0]}
     kept, aside = filter_roster(rows, atoms, types, {"s2": ["vendor_address_suspected"]})
     assert [r["site"] for r in kept] == ["site:323_lakeside"] and aside[0]["site"] == "site:chicago"
+
+
+def test_when_nothing_reads_as_a_site_only_the_signature_goes():
+    from app.core.site_identity import filter_roster
+
+    rows = [_row("site:engineering_services", "Engineering Services"),
+            _row("site:johns_creek_pkwy", "", "3838 Johns Creek Pkwy", "Suwanee", "30024")]
+    atoms = {"site:engineering_services": ["a1"], "site:johns_creek_pkwy": ["b1", "b2"]}
+    types = {"a1": ["stakeholder", 0.97], "b1": ["_keep", 0.95], "b2": ["entity", 0.74]}
+    kept, aside = filter_roster(rows, atoms, types)
+    assert [r["site"] for r in kept] == ["site:johns_creek_pkwy"]
+    assert [r["site"] for r in aside] == ["site:engineering_services"]

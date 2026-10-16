@@ -213,5 +213,18 @@ def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
                           "reason": f"no line naming it reads as a job site ({len(reads)} read; "
                                     f"most sure: {top[0]} {float(top[1] or 0):.2f})"})
     if not kept:
+        # Nothing reads as a site (010387: the real address lines read "keep
+        # the current type" / entity). Keep every row but the signatures: a row
+        # whose read lines are all sure stakeholders is a name block
+        # ("Bill Ort, AVP - End User Compute and Engineering Services").
+        sig = [r for r in aside if _all_stakeholder(r, site_atoms, line_types)]
+        if sig and len(sig) < len(rows):
+            gone = {str(r.get("site")) for r in sig}
+            return [r for r in rows if str(r.get("site")) not in gone], sig
         return rows, []
     return kept, aside
+
+
+def _all_stakeholder(row: dict[str, Any], site_atoms: dict[str, list[str]], line_types: dict[str, list]) -> bool:
+    reads = [line_types[i] for i in site_atoms.get(str(row.get("site") or ""), []) if line_types.get(i)]
+    return bool(reads) and all(t == "stakeholder" and float(p or 0) >= 0.9 for t, p in reads)
