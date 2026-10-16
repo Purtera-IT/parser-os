@@ -24,8 +24,6 @@ upload() {
 }
 
 upload span_heads_gpu.tgz span_heads_gpu.tgz
-upload type_head_gpu.tgz type_head_gpu.tgz
-upload gate_rubric_best.tgz gate_rubric_best.tgz
 upload contrastive_type.tgz contrastive_type.tgz
 upload contrastive_facet.tgz contrastive_facet.tgz
 upload contrastive_router.tgz contrastive_router.tgz

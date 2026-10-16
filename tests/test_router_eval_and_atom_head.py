@@ -1,4 +1,4 @@
-"""The router's evaluation gate, and the per-atom head it is meant to gate.
+"""The router's evaluation gate.
 
 Both exist because of one measurement: across every training database and the
 whole correction store, this repo holds
@@ -16,11 +16,8 @@ the gold set is empty.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
-from app.core.atom_route_head import PerAtomRouter
 from app.eval.router_eval import (
     RouterCase,
     compare_routers,
@@ -180,117 +177,6 @@ def test_readiness_reports_a_distance_not_a_score() -> None:
     text = readiness([])
     assert "NOT enough to gate anything" in text
     assert "more held-out deal(s) needed" in text
-
-
-# ── the per-atom head ───────────────────────────────────────────────────
-
-
-_PATTERNS = {
-    "wireless": r"access point|wireless|wi-fi|wlan|heatmap|meraki mr",
-    "audio_visual": r"display|projector|crestron|microphone|video wall|teams room",
-    "low_voltage_cabling": r"cat6|fiber|drop|patch panel|idf|cable tray|fluke",
-}
-
-
-def _keyword_classifier(texts):
-    """Stand-in for the trained atom head, with a real abstain path.
-
-    The head is injected exactly as ``ContrastiveTypeKNN`` injects ``embed_fn``,
-    so the aggregator and its decision rule are testable without a GPU artifact
-    present -- which matters, because none of the promoted stores
-    (_contrastive_router, _contrastive_type, _facet_store) exist on this
-    machine.
-    """
-    out = []
-    for text in texts:
-        hits = [(k, len(re.findall(p, text, re.I))) for k, p in _PATTERNS.items()]
-        hits = [(k, n) for k, n in hits if n]
-        if len(hits) == 1:
-            out.append((hits[0][0], min(0.6 + 0.2 * hits[0][1], 1.0)))
-        else:
-            out.append(None)  # ambiguous or silent -> contributes nothing
-    return out
-
-
-_WLAN = [
-    "Install twenty Meraki MR46 access points across five floors.",
-    "Provide a wireless heatmap survey before installation.",
-    "Mount access points to the ceiling grid.",
-    "Configure WLAN SSIDs per site.",
-    "Validate wi-fi coverage after install.",
-    "Stage the wireless controller before the site visit.",
-    "Escort access is required at the dock before 2pm.",
-]
-_CABLING = [
-    "Run Cat6 to each outlet.",
-    "Terminate every drop at the patch panel.",
-    "Certify each drop with a Fluke tester.",
-    "Install cable tray above the ceiling.",
-]
-
-
-def test_a_clear_deal_routes_and_carries_its_evidence() -> None:
-    """The route arrives with the atoms that caused it.
-
-    That is the point of classifying atoms rather than one blob: a PM
-    correcting "this is not wireless" can be shown the atoms that said it was.
-    """
-    decision = PerAtomRouter(classify=_keyword_classifier).route_texts(_WLAN)
-    assert decision.label == "wireless"
-    assert decision.evidence, "a route with no evidence is the blob problem again"
-    assert all(v.label == "wireless" for v in decision.evidence)
-    assert "wireless" in decision.explain()
-
-
-def test_a_genuinely_mixed_deal_abstains_rather_than_picking() -> None:
-    router = PerAtomRouter(classify=_keyword_classifier)
-    decision = router.route_texts(_WLAN[:4] + _CABLING)
-    assert decision.abstained
-    assert "mixed" in decision.abstain_reason
-
-
-def test_thin_evidence_abstains() -> None:
-    router = PerAtomRouter(classify=_keyword_classifier)
-    decision = router.route_texts(["Escort access is required.", "Work occurs after hours."])
-    assert decision.abstained
-    assert "atoms voted" in decision.abstain_reason
-
-
-def test_a_real_second_workstream_is_reported_not_discarded() -> None:
-    """A deal that is mostly wireless with real cabling has both. The blob
-    representation has to pick one and lose the other."""
-    router = PerAtomRouter(classify=_keyword_classifier)
-    decision = router.route_texts(_WLAN[:6] + ["Wireless AP labelling."] + _CABLING[:3])
-    assert decision.label == "wireless"
-    assert decision.secondary == "low_voltage_cabling"
-
-
-def test_bom_rows_cannot_outvote_the_scope() -> None:
-    """A TV install reads as 313 cabling material rows against 52 scope atoms.
-
-    Counting those routes the deal by its bill of materials instead of its
-    work, which is why the noise types are filtered before any vote.
-    """
-
-    class _Atom:
-        def __init__(self, text: str, atom_type: str = "scope_item") -> None:
-            self.raw_text = text
-            self.atom_type = atom_type
-
-    atoms = [_Atom(t) for t in _WLAN[:6]]
-    atoms += [_Atom("Cat6 patch panel 48-port, qty 12", "pricing_assumption") for _ in range(40)]
-    decision = PerAtomRouter(classify=_keyword_classifier).route_deal(atoms)
-    assert decision.label == "wireless"
-    assert decision.considered_atoms == 6
-
-
-def test_deal_size_does_not_move_a_clear_route() -> None:
-    """Every atom votes and the decision is a SHARE, so there is no sampling
-    step left to have a cliff in -- which was the defect in the blob path."""
-    router = PerAtomRouter(classify=_keyword_classifier)
-    small = router.route_texts(_WLAN)
-    padded = router.route_texts(_WLAN + ["Work occurs after hours."] * 200)
-    assert small.label == padded.label == "wireless"
 
 
 # ── promotion must survive a small hold-out ─────────────────────────────
