@@ -390,6 +390,22 @@ def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
 
 
 def _embed_uncached(texts: list[str]) -> list[list[float] | None]:
+    """Timed per compile stage (telemetry.charge), then ``_embed_uncached_inner``."""
+    import time as _t
+
+    started = _t.perf_counter()
+    try:
+        return _embed_uncached_inner(texts)
+    finally:
+        try:
+            from app.core import telemetry as _tel
+
+            _tel.charge("embed", _t.perf_counter() - started, n=1)
+        except Exception:
+            pass
+
+
+def _embed_uncached_inner(texts: list[str]) -> list[list[float] | None]:
     """Embed texts with no caching. Prefers the one-round-trip batch endpoint;
     falls back to the legacy ThreadPoolExecutor per-text path."""
     if embed_backend() == "azure":

@@ -430,6 +430,24 @@ def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
 def _chat(messages: list, *, max_tokens: int, model: str | None,
           timeout: int | None, base: str | None = None,
           key: str | None = None) -> str:
+    """Timed per compile stage (telemetry.charge), then ``_chat_inner``."""
+    import time as _t
+
+    started = _t.perf_counter()
+    try:
+        return _chat_inner(messages, max_tokens=max_tokens, model=model, timeout=timeout, base=base, key=key)
+    finally:
+        try:
+            from app.core import telemetry as _tel
+
+            _tel.charge("llm", _t.perf_counter() - started)
+        except Exception:
+            pass
+
+
+def _chat_inner(messages: list, *, max_tokens: int, model: str | None,
+                timeout: int | None, base: str | None = None,
+                key: str | None = None) -> str:
     """Shared OpenAI-compatible chat-completions transport for text and vision:
     bounded retry on 429/5xx/transport errors, global concurrency semaphore,
     usage metering. Returns assistant text or ``""``.

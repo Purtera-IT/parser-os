@@ -868,6 +868,12 @@ def compile_project(
             project_dir, explicit=domain_pack
         )
     set_active_domain_pack(resolved_domain_pack)
+    try:
+        from app.core import telemetry as _tel_reset
+
+        _tel_reset.CALLS_BY_STAGE.clear()
+    except Exception:
+        pass
     telemetry = CompileTelemetry(
         project_id=resolved_project_id,
         on_stage_end=stage_callback,
@@ -3863,6 +3869,13 @@ def compile_project(
         from app.core.ml_capabilities import build_compile_capabilities
 
         result.compile_capabilities = build_compile_capabilities()
+        try:
+            from app.core import telemetry as _tel_calls
+
+            result.compile_capabilities["calls_by_stage"] = dict(sorted(
+                _tel_calls.CALLS_BY_STAGE.items(), key=lambda kv: -(kv[1].get("llm_s", 0) + kv[1].get("embed_s", 0))))
+        except Exception:
+            pass
     except Exception:
         result.compile_capabilities = None
 
