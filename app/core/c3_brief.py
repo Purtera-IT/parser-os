@@ -38,6 +38,11 @@ SECTION_BAR = 0.4
 NOISE_BAR = 0.6
 SERVICE_BAR = 0.6
 QUESTION_BAR = 0.5
+QUESTION_KEY = "jdg:gap"
+#: Catalog questions at or above this p_valid are asked. Chosen on 010043
+#: (validation deal): its top 7 were all valid, the head's own 0.5 cut found 2
+#: of 13. SOWSMITH_C3_QUESTION_BAR overrides.
+QUESTION_CATALOG_BAR = float(os.environ.get("SOWSMITH_C3_QUESTION_BAR", "0.33"))
 CONFLICT_BAR = 0.5
 MAX_FACTS_PER_SECTION = 25
 MAX_LABEL_TASKS = 40
@@ -218,8 +223,34 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                    "base_says": (deal.get("deal:primary_service") or [None])[0]}
 
     # ---- questions
+    # 1. Base: every catalog question (c3_record/questions.json) asked of the
+    #    whole deal by the Questions head; it says whether THIS deal needs it
+    #    and nothing answers it yet. Kept at or above the bar, best first.
+    #    On 010043 its scores ranked the labeler's valid ones first (AUC 0.92;
+    #    its top 7 were all valid); the head's own 0.5 cut found 2 of 13.
+    # 2. The deal's own open asks: lines that ask something, which co_action
+    #    keeps (call chatter is typed open_question too).
     questions: list[dict[str, Any]] = []
     seen_q: set[str] = set()
+    asked = readings.get("questions") or []
+    if asked:
+        try:
+            from c3_record.questions_catalog import by_text
+
+            meta = by_text()
+        except Exception:
+            meta = {}
+        svc_value = str(service.get("value") or "")
+        for q in sorted(asked, key=lambda x: -float(x.get("p_valid") or 0)):
+            p_valid = float(q.get("p_valid") or 0)
+            if p_valid < QUESTION_CATALOG_BAR:
+                break
+            m = meta.get(q["text"]) or {}
+            if m.get("applies_to") and svc_value and svc_value not in m["applies_to"]:
+                continue
+            questions.append({"id": "q:" + str(m.get("id") or len(questions)), "text": q["text"],
+                              "family": m.get("family", ""), "layer": m.get("layer", "base"),
+                              "p": round(p_valid, 3), "by": _by(QUESTION_KEY), "owner": "project_manager"})
     for a in atoms:
         aid = str(a.id)
         hit = None
@@ -240,6 +271,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         if hit:
             owner = r(aid, "read:needed_by")[0] if use["read:needed_by"] else "_absent"
             questions.append({"id": aid, "text": a.raw_text[:300], "wants": hit[0], "by": hit[1],
+                              "family": "deal_ask", "layer": "base",
                               "owner": owner if owner != "_absent" else "project_manager"})
             seen_q.add(aid)
     for pk in packets or ():
@@ -257,6 +289,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # The packet's reason is boilerplate ("Open question from transcript
         # requires clarification."); the line itself is the question.
         questions.append({"id": ids[0], "text": a.raw_text[:300], "wants": "missing_info",
+                          "family": "deal_ask", "layer": "base",
                           "by": "rule:packet", "owner": "project_manager"})
 
     # ---- conflicts

@@ -532,23 +532,44 @@ def brief_enabled() -> bool:
     return os.environ.get("SOWSMITH_C3_BRIEF", "").strip().lower() in _TRUE
 
 
+def brief_questions() -> list[str]:
+    """The catalog questions the read asks of the whole deal (c3_record)."""
+    try:
+        from c3_record.questions_catalog import texts
+
+        return texts()
+    except Exception:
+        return []
+
+
+def _brief_body(body: dict[str, Any]) -> dict[str, Any]:
+    if brief_enabled():
+        body.update(line_heads=list(BRIEF_LINE_HEADS), full=True)
+        qs = brief_questions()
+        if qs:
+            body["questions"] = qs
+    return body
+
+
 def _keep_full(got: dict[str, Any]) -> None:
-    """Hold the read's line readings, links and deal answers for the brief."""
+    """Hold the read's line readings, links, deal answers and question
+    answers for the brief."""
     if "reads" in _DEAL:
         _DEAL["reads"].update(got.get("reads") or {})
+        _DEAL["questions"].extend(got.get("questions") or [])
         _DEAL["links"].extend(got.get("links") or [])
         _DEAL["deal"].update(got.get("deal") or {})
 
 
 def full_read() -> dict[str, Any]:
     """This compile's readings beyond types: ``{"reads", "links", "deal"}``."""
-    return {k: _DEAL.get(k) for k in ("reads", "links", "deal")}
+    return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions")}
 
 
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
     _DEAL.clear()
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
-                 reads={}, links=[], deal={})
+                 reads={}, links=[], deal={}, questions=[])
 
 
 def _delivered_at(sha256: str) -> Any:
@@ -706,9 +727,7 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
         return {}
     try:
         payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
-        body = {"deal": payload, "budget_s": budget}
-        if brief_enabled():
-            body.update(line_heads=list(BRIEF_LINE_HEADS), full=True)
+        body = _brief_body({"deal": payload, "budget_s": budget})
         got = _request("/read", body, timeout=budget + 10.0)
         _keep_full(got)
     except Exception as exc:
@@ -1014,9 +1033,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
                 _DOC_STATUS.update(state="warming", reason="", read_ms=0.0)
                 return {}
             payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
-            body = {"deal": payload, "budget_s": budget, "document_heads": list(keys)}
-            if brief_enabled():
-                body.update(line_heads=list(BRIEF_LINE_HEADS), full=True)
+            body = _brief_body({"deal": payload, "budget_s": budget, "document_heads": list(keys)})
             got = _request("/read", body, timeout=budget + 10.0)
             raw = got.get("documents") or {}
             if "types" in _DEAL:

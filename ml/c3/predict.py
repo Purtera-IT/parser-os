@@ -176,8 +176,14 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
               governs_top: int = 5, lines_only: bool = False,
               deadline: float | None = None,
               heads: tuple[str, ...] | None = None,
-              document_heads: tuple[str, ...] = ()) -> dict[str, Any]:
-    """``lines_only`` reads each line and skips the links and the whole-deal
+              document_heads: tuple[str, ...] = (),
+              questions: tuple[str, ...] = ()) -> dict[str, Any]:
+    """``questions``: question texts asked of the whole deal through the
+    Questions head (``jdg:gap``, unanchored, as training asks a checklist or
+    generated question): ``{"questions": [{"text", "answer", "p_valid"}]}``,
+    where valid means this deal needs it asked and nothing answers it yet.
+
+    ``lines_only`` reads each line and skips the links and the whole-deal
     answers (the live type layer needs only the lines). ``heads`` keeps only
     those line readings (the type layer needs ``col:label_type``); the
     model's pass is the same, so the answers are too. ``deadline`` is a
@@ -218,14 +224,39 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
         links += found
         shaky += maybe
     answers: dict[str, Any] = {}
-    if not lines_only:
+    asked: list[dict[str, Any]] = []
+    if not lines_only or questions:
         with _read_autocast(device):
             out = model(whole.oneshot(), company=whole.company or None)
-        answers = _deal_answers(model, out, whole, schema)
+        if not lines_only:
+            answers = _deal_answers(model, out, whole, schema)
+        if questions:
+            asked = _ask_questions(model, out, whole, schema, questions)
     low = sorted(k for k, r in lines.items()
                  if r["reads"].get("col:label_type", {}).get("p", 1.0) < unsure)
     return {"deal_id": deal.deal_id, "lines": lines, "links": links, "deal": answers,
-            "documents": documents, "unsure": {"lines": low, "links": shaky}}
+            "documents": documents, "questions": asked, "unsure": {"lines": low, "links": shaky}}
+
+
+QUESTION_KEY = "jdg:gap"
+
+
+def _ask_questions(model: C3Model, out, batch: Batch, schema: Schema, questions: tuple[str, ...],
+                   chunk: int = 64) -> list[dict[str, Any]]:
+    """Each question asked of the whole deal (every line not excluded is its
+    subject, data.judgment_subject's unanchored case)."""
+    opp = schema.by_key()[QUESTION_KEY]
+    every = tuple(range(len(batch)))
+    valid = [a.value for a in opp.answers].index("valid")
+    rows: list[dict[str, Any]] = []
+    for at in range(0, len(questions), chunk):
+        part = list(questions[at:at + chunk])
+        logits = model.judge(out, QUESTION_KEY, [every] * len(part), queries=part).float()
+        p = logits.softmax(-1)
+        for q, pq in zip(part, p.tolist()):
+            j = max(range(len(pq)), key=pq.__getitem__)
+            rows.append({"text": q, "answer": _answer(opp, j), "p_valid": round(pq[valid], 4)})
+    return rows
 
 
 def _judge_documents(model: C3Model, out, batch: Batch, atoms: dict[str, Any], schema: Schema,

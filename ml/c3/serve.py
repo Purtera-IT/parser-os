@@ -103,7 +103,7 @@ class Base:
 
     def read(self, payload: dict[str, Any], budget_s: float, *,
              line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = (),
-             full: bool = False) -> dict[str, Any]:
+             full: bool = False, questions: tuple[str, ...] = ()) -> dict[str, Any]:
         """Line types always; with ``line_heads``, those readings of every
         line under ``reads``; with ``document_heads``, each document's group
         judgments under ``documents``. One pass of the model answers all of
@@ -122,6 +122,8 @@ class Base:
         kwargs: dict[str, Any] = {}
         if document_heads:
             kwargs["document_heads"] = tuple(document_heads)
+        if questions:
+            kwargs["questions"] = tuple(questions)
         with self._lock:
             started = time.monotonic()
             # ``full``: the links between lines and the whole-deal answers
@@ -153,6 +155,8 @@ class Base:
             out["documents"] = {
                 d: {k: [str(v["answer"]), round(float(v.get("p") or 0.0), 4)] for k, v in heads.items()}
                 for d, heads in (doc.get("documents") or {}).items()}
+        if questions:
+            out["questions"] = doc.get("questions") or []
         return out
 
 
@@ -209,6 +213,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 line_heads = _asked(body.get("line_heads"))
                 document_heads = _asked(body.get("document_heads"))
                 full = bool(body.get("full"))
+                questions = tuple(str(q)[:500] for q in (body.get("questions") or [])[:400])
             except (ValueError, KeyError, TypeError):
                 return self._send(400, {"error": "bad body"})
             started = time.monotonic()
@@ -218,7 +223,8 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 return self._send(503, {"error": base.error or "still loading"})
             try:
                 out = base.read(deal, max(1.0, budget - (time.monotonic() - started)),
-                                line_heads=line_heads, document_heads=document_heads, full=full)
+                                line_heads=line_heads, document_heads=document_heads, full=full,
+                                questions=questions)
             except TimeoutError as exc:
                 log.warning("read over budget: %s", exc)
                 return self._send(504, {"error": "over budget"})

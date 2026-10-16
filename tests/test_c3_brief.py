@@ -47,3 +47,21 @@ def test_brief_survives_result_round_trip():
     r = CompileResult(project_id="p", atoms=[], entities=[], edges=[], packets=[], project_dir="/x",
                       c3_brief={"version": 2})
     assert CompileResult.model_validate_json(r.model_dump_json()).c3_brief == {"version": 2}
+
+
+def test_catalog_questions_ranked_by_the_question_head(monkeypatch):
+    import c3_record.questions_catalog as qc
+
+    monkeypatch.setattr(qc, "by_text", lambda: {
+        "Who approves site access?": {"id": "site_access_approver", "family": "site_access", "layer": "base"},
+        "What VMS do they run?": {"id": "vms", "family": "network_it", "layer": "base",
+                                  "applies_to": ["security_camera"]}})
+    asked = [{"text": "Who approves site access?", "p_valid": 0.6},
+             {"text": "What VMS do they run?", "p_valid": 0.7},
+             {"text": "Is there parking?", "p_valid": 0.1}]
+    b = c3_brief.build([_atom(1, "scope_item")], service_fallback="low_voltage_cabling",
+                       readings={"reads": {"a1": {"read:co_action": ["keep", 0.95]}}, "links": [],
+                                 "deal": {}, "questions": asked})
+    got = [q["id"] for q in b["questions"]]
+    assert got == ["q:site_access_approver"]  # VMS is for cameras; parking is under the bar
+    assert b["questions"][0]["by"] == "base:jdg:gap"
