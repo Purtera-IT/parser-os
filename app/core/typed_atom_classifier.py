@@ -988,7 +988,15 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                         return None
                 # A value-carrying type: the base decides WHAT the line is;
                 # the LLM is asked only for that type's fields (``_fill_values``),
-                # never to choose among the taxonomy.
+                # never to choose among the taxonomy -- and only for types whose
+                # fields something downstream reads (SOWSMITH_C3_FILL_TYPES).
+                # Every other type is assigned with no LLM call: filling every
+                # line's fields cost 010115 639 s of typing.
+                if answer in _TAXONOMY and answer not in _c3_fill_types():
+                    try:
+                        return "assign", answer, p, _AT(answer)
+                    except ValueError:
+                        return None
                 if answer in _TAXONOMY:
                     try:
                         return "fill", answer, p, _AT(answer)
@@ -1655,6 +1663,21 @@ OUTPUT -- strict JSON, one entry per line, echoing the given type:
 If a field is not present in the text, omit it. Do not invent values. Do not change a line's type.
 
 /no_think"""
+
+
+#: Types whose extracted fields something downstream reads: a site's address
+#: and id, money, payment terms, rates, quantities, dates, access windows,
+#: people. Lines the base types as anything else get no LLM fill.
+_C3_FILL_DEFAULT = (
+    "physical_site", "commercial_total", "payment_term", "rate_card", "pricing_assumption", "quantity",
+    "bom_line", "vendor_line_item", "milestone_phase", "deadline", "site_access_window",
+    "blackout_date_range", "stakeholder", "service_line", "site_budget", "expense", "license_subscription",
+)
+
+
+def _c3_fill_types() -> frozenset:
+    raw = os.environ.get("SOWSMITH_C3_FILL_TYPES", "").strip()
+    return frozenset(t.strip() for t in raw.split(",") if t.strip()) if raw else frozenset(_C3_FILL_DEFAULT)
 
 
 def _fill_values(fills: list[tuple[Any, tuple[Any, str]]]) -> tuple[int, list[Any]]:
