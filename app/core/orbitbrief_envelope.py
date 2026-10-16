@@ -1433,6 +1433,26 @@ def build_orbitbrief_envelope(
 
         _sr_block = envelope.get("site_readiness")
         if isinstance(_sr_block, dict):
+            # One building, one row (site_identity.py): the same site code, or a
+            # numbered street whose ZIP and city agree. Folded rows stay visible
+            # on the kept row under `merged_from`; weaker look-alikes remain
+            # duplicate candidates below for a PM.
+            try:
+                from app.core.site_identity import merge_roster
+                from app.core.site_count_reconcile import reconcile_site_count
+
+                _merged_rows, _folded = merge_roster(
+                    [r for r in (_sr_block.get("sites") or []) if isinstance(r, dict)])
+                if _folded:
+                    _sr_block["sites"] = _merged_rows
+                    _sr_block["site_count"] = len(_merged_rows)
+                    _sr_block["anchored_count"] = sum(1 for r in _merged_rows if r.get("anchored"))
+                    _sr_block["merged_count"] = _folded
+                    envelope["site_count_reconciliation"] = reconcile_site_count(atoms, len(_merged_rows))
+            except Exception as _mr_exc:
+                import logging as _lg_mr
+
+                _lg_mr.getLogger(__name__).warning("site roster merge failed: %s", _mr_exc)
             # The deal's text, so a name printed beside its street ("Checkout
             # LLC, 40 10th Ave") is offered as one site.
             _evidence = " || ".join(
