@@ -259,9 +259,15 @@ def _ask_questions(model: C3Model, out, batch: Batch, schema: Schema, questions:
             q = model.judgment_query(model.aux_text(part)).float()
             logits = logits + refit(pooled.expand(len(part), -1), q).float()
         p = logits.softmax(-1)
-        for q, pq in zip(part, p.tolist()):
-            j = max(range(len(pq)), key=pq.__getitem__)
-            rows.append({"text": q, "answer": _answer(opp, j), "p_valid": round(pq[valid], 4)})
+        cal = getattr(refit, "calibration", None) if refit is not None else None
+        if cal:
+            # Held-out temperature on valid-vs-rest (question_fit): real probabilities.
+            pv = p[:, valid].clamp(1e-6, 1 - 1e-6)
+            pv = torch.sigmoid(torch.log(pv / (1 - pv)) * cal["scale"] + cal["shift"])
+        else:
+            pv = p[:, valid]
+        for q, pq, v in zip(part, p.tolist(), pv.tolist()):
+            rows.append({"text": q, "answer": "valid" if v >= 0.5 else "invalid", "p_valid": round(v, 4)})
     return rows
 
 

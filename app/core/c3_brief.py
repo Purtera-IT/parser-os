@@ -41,7 +41,8 @@ QUESTION_BAR = 0.5
 QUESTION_KEY = "jdg:gap"
 #: Catalog questions kept per topic (site access, schedule, commercial ...),
 #: best first, before the writing call drops the ones the deal answers.
-QUESTIONS_PER_FAMILY = int(os.environ.get("SOWSMITH_C3_QUESTIONS_PER_FAMILY", "2"))
+#: 0 = no cap: the head decides how many (its scores are calibrated).
+QUESTIONS_PER_FAMILY = int(os.environ.get("SOWSMITH_C3_QUESTIONS_PER_FAMILY", "0"))
 EVIDENCE_LINES = 3
 #: Catalog questions at or above this p_valid are asked. Chosen on 010043
 #: (validation deal): its top 7 were all valid, the head's own 0.5 cut found 2
@@ -282,7 +283,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             if m.get("applies_to") and svc_value and svc_value not in m["applies_to"]:
                 continue
             fam = m.get("family", "")
-            if per_family[fam] >= QUESTIONS_PER_FAMILY:
+            if QUESTIONS_PER_FAMILY and per_family[fam] >= QUESTIONS_PER_FAMILY:
                 continue
             per_family[fam] += 1
             questions.append({"id": "q:" + str(m.get("id") or len(questions)), "text": m.get("display") or q["text"],

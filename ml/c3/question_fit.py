@@ -58,6 +58,7 @@ def load_refit(path: str, device: str = "cpu") -> QuestionRefit:
     m = QuestionRefit(saved["d"], len(saved["answers"]))
     m.load_state_dict(saved["state"])
     m.bar = (saved.get("summary") or {}).get("bar")
+    m.calibration = (saved.get("summary") or {}).get("calibration")
     return m.to(device).eval()
 
 
@@ -112,13 +113,12 @@ def train(rows, answers: int, valid: int, *, epochs: int = 300, lr: float = 3e-3
     y = torch.tensor([r[3] for r in rows])
     m = QuestionRefit(deal.shape[-1], answers)
     opt = torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=wd)
-    # Weight the rarer answer up so "always invalid" is not the easy minimum.
-    share = (y == valid).float().mean().clamp(0.05, 0.95)
-    w = torch.ones(answers)
-    w[valid] = (1 - share) / share
+    # Plain cross-entropy: the scores stay real probabilities, so how many
+    # questions a deal gets is the head's call (a reweighted loss inflated
+    # every score and asked 56 universal questions on 010043).
     for _ in range(epochs):
         opt.zero_grad()
-        loss = F.cross_entropy(frozen + m(deal, query), y, weight=w)
+        loss = F.cross_entropy(frozen + m(deal, query), y)
         loss.backward()
         opt.step()
     return m.eval()
@@ -170,6 +170,22 @@ def main() -> None:
         y = [int(r[3] == valid) for r in rows]
         all_base += base; all_fit += fit; all_y += y
         report[Path(held).stem] = {"n": len(y), "valid": sum(y), "auc_base": _auc(base, y), "auc_refit": _auc(fit, y)}
+    # Calibrate on the held-out scores: one temperature on the valid-vs-rest
+    # log-odds, so a score of 0.7 is right about 70% of the time.
+    import math
+    lo = torch.tensor([math.log(max(p, 1e-6) / max(1 - p, 1e-6)) for p in all_fit])
+    yt = torch.tensor(all_y, dtype=torch.float)
+    temp = torch.zeros(2, requires_grad=True)  # log-scale, shift
+    opt_t = torch.optim.LBFGS([temp], max_iter=200)
+
+    def _closure():
+        opt_t.zero_grad()
+        loss = F.binary_cross_entropy_with_logits(lo * temp[0].exp() + temp[1], yt)
+        loss.backward()
+        return loss
+    opt_t.step(_closure)
+    scale, shift = float(temp[0].exp()), float(temp[1])
+    all_fit = torch.sigmoid(lo * scale + shift).tolist()
     # The bar the brief asks at, from held-out scores: the lowest bar whose
     # held-out precision is at least --precision (more questions, still right).
     bars = {}
@@ -178,9 +194,9 @@ def main() -> None:
         bars[bar] = {"asked": len(said), "precision": round(sum(said) / max(1, len(said)), 3),
                      "recall": round(sum(said) / max(1, sum(all_y)), 3)}
     good = [b for b, v in bars.items() if v["precision"] >= a.precision and v["asked"] >= 10]
-    summary_bar = min(good) if good else None
+    summary_bar = 0.5  # calibrated: ask when the head says more likely needed than not
     summary = {"deals": len(by_deal), "verdicts": len(all_y), "valid": sum(all_y),
-               "bar": summary_bar, "bars": bars,
+               "bar": summary_bar, "bars": bars, "calibration": {"scale": scale, "shift": shift},
                "auc_base_pooled": _auc(all_base, all_y), "auc_refit_pooled": _auc(all_fit, all_y),
                "per_deal": report, "read_s": round(time.time() - started)}
     final = train([r for rs in by_deal.values() for r in rs], len(names), valid)
