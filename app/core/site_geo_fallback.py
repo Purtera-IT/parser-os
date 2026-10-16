@@ -335,6 +335,12 @@ def suppress_vendor_sites(
         llm_budget = max(0, int(_os.environ.get("SOWSMITH_VENDOR_SUPPRESS_LLM_MAX", "60")))
     except Exception:
         llm_budget = 60
+    # Store-only pass on every site, then the bounded LLM fallback for the
+    # first `llm_budget` undecided ones IN PARALLEL (the LLM client caps
+    # concurrency): 53 s of a warm 010043 compile was these calls one by one.
+    from concurrent.futures import ThreadPoolExecutor
+
+    pending: list[tuple[Any, str, str, Any]] = []
     for a in sites:
         aid = getattr(a, "id", None)
         if not aid:
@@ -353,21 +359,29 @@ def suppress_vendor_sites(
             instruction=_SITE_ROLE_INSTRUCTION, context=context,
             scope=scope, model=_SITE_ROLE_MODEL, llm=False,
         )
-        # 2) the base's site-role reading, when it is sure (SOWSMITH_C3_SITE_ROLE):
-        #    on the labeled deals it was right 241/243 against the LLM's 234/243.
+        # 2) the base's site-role reading, when it is sure (SOWSMITH_C3_SITE_ROLE).
         #    It decides like the LLM does: a vendor reading only proposes.
         if decision.verdict is None:
             base = _base_site_role(aid)
             if base is not None:
                 decision = base
-        # 3) bounded LLM fallback only when nothing above decided AND budget remains.
-        if decision.verdict is None and llm_budget > 0:
-            decision = decide(
-                "physical_site", addr, _SITE_ROLE_CANDIDATES,
-                instruction=_SITE_ROLE_INSTRUCTION, context=context,
-                scope=scope, model=_SITE_ROLE_MODEL,
-            )
-            llm_budget -= 1
+        pending.append((a, addr, context, decision))
+    asks = [i for i, (_, _, _, d) in enumerate(pending) if d.verdict is None][:llm_budget]
+
+    def _ask(i):
+        _, addr, context, _ = pending[i]
+        try:
+            return decide("physical_site", addr, _SITE_ROLE_CANDIDATES, instruction=_SITE_ROLE_INSTRUCTION,
+                          context=context, scope=scope, model=_SITE_ROLE_MODEL)
+        except Exception:
+            return None
+    if asks:
+        with ThreadPoolExecutor(max_workers=max(1, int(_os.environ.get("SOWSMITH_SITE_ROLE_PARALLEL", "8") or 8))) as pool:
+            for i, d in zip(asks, pool.map(_ask, asks)):
+                if d is not None:
+                    pending[i] = pending[i][:3] + (d,)
+    for a, addr, context, decision in pending:
+        aid = getattr(a, "id", None)
         if (
             decision is not None
             and decision.verdict == "vendor_or_billing_address"

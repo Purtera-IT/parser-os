@@ -98,12 +98,24 @@ def stamp_bom_owners(atoms: list[Any], *, project_id: str = "") -> tuple[int, li
     if _total:
         _telemetry.set_stage_progress(0, _total)
 
-    for _i, (a, text) in enumerate(_candidates, 1):
+    # The lines are independent questions: asked in parallel (the LLM client
+    # caps concurrency itself), applied in order. 010082 spent 323 s here
+    # asking one bom_line at a time.
+    from concurrent.futures import ThreadPoolExecutor
+    import os as _os
+
+    def _ask(item):
+        a, text = item
         try:
-            d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=_context(a)[:1200],
-                       scope=scope, exclude_created_by=("teacher",))
+            return decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=_context(a)[:1200],
+                          scope=scope, exclude_created_by=("teacher",))
         except Exception:
-            d = None
+            return None
+    _workers = max(1, int(_os.environ.get("SOWSMITH_BOM_OWNER_PARALLEL", "8") or 8))
+    with ThreadPoolExecutor(max_workers=_workers) as _pool:
+        _decisions = list(_pool.map(_ask, _candidates))
+
+    for _i, ((a, text), d) in enumerate(zip(_candidates, _decisions), 1):
         # Ticked here, before the verdict is applied: a decision that raised is
         # still one this stage is finished with, and the rest of the body is
         # free.
