@@ -259,7 +259,13 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 log.warning("read over budget: %s", exc)
                 return self._send(504, {"error": "over budget"})
             except Exception as exc:
-                log.error("read failed: %s", type(exc).__name__)
+                # Where it failed (file:line:function per frame) and the
+                # message's first 160 characters -- never the deal's text.
+                import traceback as _tb
+
+                frames = " < ".join(f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}"
+                                    for f in reversed(_tb.extract_tb(exc.__traceback__)[-6:]))
+                log.error("read failed: %s: %s | %s", type(exc).__name__, str(exc)[:160], frames)
                 return self._send(500, {"error": type(exc).__name__})
             log.info("read lines=%d typed=%d read_ms=%.0f", out["lines"], len(out["types"]),
                      out["read_ms"])
