@@ -83,3 +83,15 @@ def test_envelope_questions_carry_what_the_head_reads():
         ("q:indemnification", "needs_review"), ("q:payment_terms", "answered")]
     assert got[0]["query"] == "Missing: Indemnification clause" and got[0]["kind"] == "catalog"
     assert got[1]["atom_id"] is None and got[1]["cites"] == ["a7"]
+
+
+def test_cut_off_prose_keeps_its_complete_sentences():
+    from app.core.c3_brief import _json_of, _salvage
+
+    raw = ('```json\n{"summary": "Install \\"three\\" cameras [atm_a].", "sections": {"scope": ['
+           '{"text": "Mount cameras.", "cites": ["atm_a"]}, {"text": "Run cab')
+    assert _json_of(raw) is None
+    doc = _salvage(raw)
+    assert doc["summary"].startswith('Install "three"')
+    assert doc["sections"]["scope"] == [{"text": "Mount cameras.", "cites": ["atm_a"]}]
+    assert _salvage("no json here") is None

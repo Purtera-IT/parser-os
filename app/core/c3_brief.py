@@ -416,6 +416,8 @@ _ASK_PROMPT = (
     "SERVICE: %s\nQUESTIONS: %s"
 )
 ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "40"))
+#: The prose answer's token cap. 2,000 cut off 010043's brief (it runs ~1,800).
+PROSE_TOKENS = int(os.environ.get("SOWSMITH_C3_BRIEF_PROSE_TOKENS", "3500"))
 
 
 def _json_of(raw: str) -> dict[str, Any] | None:
@@ -424,6 +426,44 @@ def _json_of(raw: str) -> dict[str, Any] | None:
         return None
     try:
         return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+def _salvage(raw: str) -> dict[str, Any] | None:
+    """A prose answer cut off at the token cap, closed after its last complete
+    sentence object. The answer runs ~1,800 tokens on a big deal (010043:
+    6,200-6,800 chars), at the old 2,000 cap, and one cut-off answer used to
+    lose the whole brief."""
+    start = (raw or "").find("{")
+    if start < 0:
+        return None
+    stack: list[str] = []
+    in_str = esc = False
+    best: tuple[int, list[str]] | None = None
+    for i in range(start, len(raw)):
+        ch = raw[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack:
+            stack.pop()
+            if ch == "}" and len(stack) >= 2:
+                best = (i + 1, list(stack))
+    if best is None:
+        return None
+    end, open_ = best
+    try:
+        return json.loads(raw[start:end] + "".join(reversed(open_)))
     except Exception:
         return None
 
@@ -475,7 +515,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
         prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(facts), json.dumps(qs), json.dumps(cs)),
-                              model, 2000)
+                              model, PROSE_TOKENS)
         ask_f = [pool.submit(_complete, _ASK_PROMPT % (service, json.dumps(
             [{"id": q["id"], "q": q["text"],
               "lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]} for q in b])),
@@ -485,6 +525,10 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {"write_ms": round((time.monotonic() - started) * 1000, 1), "calls": 1 + len(batches)}
     doc = _json_of(prose_raw)
     dropped = 0
+    if doc is None:
+        doc = _salvage(prose_raw)
+        if doc is not None:
+            out["salvaged"] = True
     if doc is None:
         out["error"] = "the prose call returned no usable JSON"
         doc = {}
