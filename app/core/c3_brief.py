@@ -398,49 +398,69 @@ _PROMPT = (
 )
 
 _ASK_PROMPT = (
-    "\n\nCANDIDATE QUESTIONS: each has an id, a question, and the deal lines closest to it [line ids]. For "
-    "each one decide: is it already answered by those lines? If yes, mark it answered and cite the line that "
-    "answers it. If not, rewrite it as one short question specific to THIS job (name the site, device, "
-    "count or document from the lines when they show it), and cite the lines that make it relevant. Never "
-    "invent a fact. Return exactly one entry for EVERY candidate id. Add to the JSON: \"checked_questions\": [{\"id\": str, \"answered\": bool, "
-    "\"answered_by\": [line id], \"ask\": str, \"cites\": [line id]}].\n%s"
+    "Check open questions for a field-services job. Each candidate has an id, a question, and the deal lines "
+    "closest to it [line ids]. For EVERY candidate decide: do those lines already answer it? If yes, mark it "
+    "answered and cite the line that answers it. If not, rewrite it as one short question specific to THIS "
+    "job (name the site, device, count or document the lines show), citing the lines that make it relevant. "
+    "Never invent a fact. Return JSON only: {\"checked\": [{\"id\": str, \"answered\": bool, "
+    "\"answered_by\": [line id], \"ask\": str, \"cites\": [line id]}]} with one entry per candidate.\n"
+    "SERVICE: %s\nCANDIDATES: %s"
 )
+ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "15"))
+
+
+def _json_of(raw: str) -> dict[str, Any] | None:
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
+    from app.core import llm_client
+
+    return llm_client.complete(prompt, max_tokens=max_tokens,
+                               model=model or os.environ.get("SOWSMITH_C3_BRIEF_MODEL") or None,
+                               timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "120")))
 
 
 def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
-    """One LLM call turns the structured brief into prose. Sentences whose
-    citations are not facts of this brief are dropped and counted."""
-    from app.core import llm_client
+    """The brief's prose and the question check, as parallel LLM calls: one
+    for the prose, one per batch of catalog questions. Sentences whose
+    citations are not facts of this brief are dropped and counted; a question
+    a batch did not mark answered (citing a line that answers it) stays asked,
+    so a failed or partial call loses nothing."""
+    from concurrent.futures import ThreadPoolExecutor
 
     facts = {s: [f"[{x['id']}] {x['text']}" for x in v[:MAX_FACTS_PER_SECTION]]
              for s, v in brief["sections"].items()}
-    qs = [f"[{q['id']}] (owner: {q['owner']}) {q['text']}" for q in brief["questions"][:30]]
     cs = [x["ids"] for x in brief["conflicts"][:15]]
     known = {x["id"] for v in brief["sections"].values() for x in v} | {q["id"] for q in brief["questions"]}
     catalog = [q for q in brief["questions"] if q["id"].startswith("q:")]
     qs = [f"[{q['id']}] (owner: {q['owner']}) {q['text']}" for q in brief["questions"]
           if not q["id"].startswith("q:")][:30]
-    cands = [{"id": q["id"], "question": q["text"],
-              "closest_lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]} for q in catalog]
     lines_seen = {e["id"] for q in catalog for e in q.get("evidence") or []}
+    service = brief["service"].get("value")
+    batches = [catalog[i:i + ASK_BATCH] for i in range(0, len(catalog), ASK_BATCH)]
     started = time.monotonic()
-    prompt = _PROMPT % (brief["service"].get("value"), json.dumps(facts), json.dumps(qs), json.dumps(cs))
-    if cands:
-        prompt += _ASK_PROMPT % json.dumps(cands)
-    raw = llm_client.complete(prompt,
-                              max_tokens=4000, model=model or os.environ.get("SOWSMITH_C3_BRIEF_MODEL") or None,
-                              timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "120")))
-    out: dict[str, Any] = {"write_ms": round((time.monotonic() - started) * 1000, 1)}
-    m = re.search(r"\{.*\}", raw or "", re.S)
-    if not m:
-        out["error"] = "no JSON from the writing call"
-        return out
-    try:
-        doc = json.loads(m.group(0))
-    except Exception as exc:
-        out["error"] = f"bad JSON: {exc}"[:200]
-        return out
+    with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
+        prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(facts), json.dumps(qs), json.dumps(cs)),
+                              model, 4000)
+        ask_f = [pool.submit(_complete, _ASK_PROMPT % (service, json.dumps(
+            [{"id": q["id"], "question": q["text"],
+              "closest_lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]} for q in b])),
+            model, 3000) for b in batches]
+        prose_raw = prose_f.result()
+        ask_raw = [f.result() for f in ask_f]
+    out: dict[str, Any] = {"write_ms": round((time.monotonic() - started) * 1000, 1), "calls": 1 + len(batches)}
+    doc = _json_of(prose_raw)
     dropped = 0
+    if doc is None:
+        out["error"] = "the prose call returned no usable JSON"
+        doc = {}
     for sec, sentences in list((doc.get("sections") or {}).items()):
         keep = []
         for s in sentences or []:
@@ -450,21 +470,25 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
             else:
                 dropped += 1
         doc["sections"][sec] = keep
-    asked, answered = [], []
     by_qid = {q["id"]: q for q in catalog}
-    for c in doc.get("checked_questions") or []:
-        q = by_qid.get(str(c.get("id")))
-        if q is None:
+    asked, answered, failed = [], [], 0
+
+    def ok(ids):
+        return [str(i).strip("[]") for i in ids or [] if str(i).strip("[]") in lines_seen]
+    for raw in ask_raw:
+        got = _json_of(raw)
+        if got is None:
+            failed += 1
             continue
-        ok = lambda ids: [str(i).strip("[]") for i in ids or [] if str(i).strip("[]") in lines_seen]
-        if c.get("answered") and ok(c.get("answered_by")):
-            answered.append({"id": q["id"], "question": q["text"], "answered_by": ok(c.get("answered_by"))})
-        else:
-            asked.append({"id": q["id"], "question": str(c.get("ask") or q["text"]), "family": q.get("family"),
-                          "owner": q["owner"], "p": q.get("p"), "cites": ok(c.get("cites"))})
-    # Lose nothing: a candidate the call did not mark answered (with a line
-    # that answers it) stays asked, in its own wording. On 010043 the call
-    # returned 4 of 22 and the other 18 vanished.
+        for c in got.get("checked") or []:
+            q = by_qid.get(str(c.get("id")))
+            if q is None or q["id"] in {a["id"] for a in asked + answered}:
+                continue
+            if c.get("answered") and ok(c.get("answered_by")):
+                answered.append({"id": q["id"], "question": q["text"], "answered_by": ok(c.get("answered_by"))})
+            else:
+                asked.append({"id": q["id"], "question": str(c.get("ask") or q["text"]), "family": q.get("family"),
+                              "owner": q["owner"], "p": q.get("p"), "cites": ok(c.get("cites"))})
     checked = {a["id"] for a in asked} | {a["id"] for a in answered}
     unchecked = [q for q in catalog if q["id"] not in checked]
     for q in unchecked:
@@ -473,7 +497,8 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     asked.sort(key=lambda a: -(a.get("p") or 0))
     out.update(summary=doc.get("summary", ""), sections=doc.get("sections") or {},
                open_questions=doc.get("open_questions") or [], uncited_dropped=dropped,
-               catalog_questions=asked, answered_in_deal=answered, unchecked=len(unchecked))
+               catalog_questions=asked, answered_in_deal=answered, unchecked=len(unchecked),
+               failed_ask_calls=failed)
     return out
 
 
