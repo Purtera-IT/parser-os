@@ -23,7 +23,8 @@ def test_no_read_falls_back_to_rules():
              _atom(3, "open_question", "Who owns the lift?")]
     b = c3_brief.build(atoms, service_fallback="security_camera")
     assert [x["id"] for x in b["sections"]["scope_of_work"]] == ["a1"]
-    assert b["service"] == {"value": "security_camera", "by": "rule:domain_pack", "base_says": None}
+    assert b["service"] == {"value": "security_camera", "by": "rule:domain_pack", "base_says": None,
+                            "decided_by_layer": "rule"}
     assert [q["id"] for q in b["questions"]] == ["a3"]
     assert b["decided_by"]["heads_used"] == []
 

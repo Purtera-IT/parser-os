@@ -197,7 +197,7 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     its lines. They come back under ``documents``: ``{doc_id: {key:
     {"answer", "p"}}}``."""
     model.eval()
-    windows, whole = deal_parts(deal, schema, max_atoms, lines_only=lines_only)
+    windows, whole = deal_parts(deal, schema, max_atoms, lines_only=lines_only and not questions)
     lines: dict[str, dict[str, Any]] = {}
     links: list[dict[str, Any]] = []
     shaky: list[dict[str, Any]] = []
@@ -252,6 +252,12 @@ def _ask_questions(model: C3Model, out, batch: Batch, schema: Schema, questions:
     for at in range(0, len(questions), chunk):
         part = list(questions[at:at + chunk])
         logits = model.judge(out, QUESTION_KEY, [every] * len(part), queries=part).float()
+        refit = getattr(model, "question_refit", None)
+        if refit is not None:
+            # The Mac-trained add-on (question_fit.py) on the frozen head.
+            pooled = model.judgment_features(out, QUESTION_KEY, [every], queries=[""]).float()
+            q = model.judgment_query(model.aux_text(part)).float()
+            logits = logits + refit(pooled.expand(len(part), -1), q).float()
         p = logits.softmax(-1)
         for q, pq in zip(part, p.tolist()):
             j = max(range(len(pq)), key=pq.__getitem__)

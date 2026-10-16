@@ -308,7 +308,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 conflicts.append({"ids": [good[0], bad[0]], "about": pk.anchor_key, "by": "rule:packet"})
 
     label_tasks.sort(key=lambda x: abs(x["p"] - 0.45))
-    return {
+    brief = {
         "version": 2,
         "service": service,
         "sections": dict(sections),
@@ -326,6 +326,25 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "label_next": label_tasks[:MAX_LABEL_TASKS],
         "assemble_ms": round((time.monotonic() - started) * 1000, 1),
     }
+    _stamp_layers(brief)
+    return brief
+
+
+def _layer_of(by: str) -> str:
+    """base: decided by a universal head (any company); purtera: by a
+    company head; rule: by a fallback rule until a head is trusted."""
+    head = by.split("+")[-1]
+    return "purtera" if head.startswith("purtera:") else "base" if head.startswith("base:") else "rule"
+
+
+def _stamp_layers(brief: dict[str, Any]) -> None:
+    counts: Counter = Counter()
+    items = [x for v in brief["sections"].values() for x in v] + brief["questions"] + brief["conflicts"]
+    for x in items:
+        x["decided_by_layer"] = _layer_of(str(x.get("by") or ""))
+        counts[x["decided_by_layer"]] += 1
+    brief["service"]["decided_by_layer"] = _layer_of(str(brief["service"].get("by") or ""))
+    brief["decided_by"]["layers"] = dict(counts)
 
 
 _PROMPT = (

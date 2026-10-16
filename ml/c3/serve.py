@@ -71,6 +71,11 @@ def _load() -> tuple[Any, Any, str]:
     if os.environ.get("SOWSMITH_C3_DTYPE", "").strip().lower() in ("bf16", "bfloat16"):
         model.to(torch.bfloat16)
     model.eval()
+    refit = os.environ.get("SOWSMITH_C3_QUESTION_REFIT", "").strip()
+    if refit and os.path.exists(refit):
+        from .question_fit import load_refit
+
+        model.question_refit = load_refit(refit, device)
     return model, schema, device
 
 
