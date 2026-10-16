@@ -1059,8 +1059,22 @@ def _is_header_row(row: list[_Seg]) -> bool:
     return True
 
 
-def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -> list[tuple[dict[str, Any], Any]]:
-    """``[(table block, fitz.Rect)]`` for each line-item grid on the page."""
+#: An item row (a description plus figures under the grid's number columns)
+#: may follow the item above after this many line heights. CDW sets its items
+#: ~33pt apart on 7pt type (PVDP685, 010043); the 1.6-line bar for tail lines
+#: ended that grid after its first item and the rest fell back to text, each
+#: item's tail glued onto the next.
+_ITEM_GAP_LINES = 6.0
+
+
+def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None,
+                       carry: dict[str, Any] | None = None) -> list[tuple[dict[str, Any], Any]]:
+    """``[(table block, fitz.Rect)]`` for each line-item grid on the page.
+
+    ``carry``: pass the dict from the previous page's call. A grid that ran to
+    the bottom of its page leaves its header there (``carry["heads"]``), and
+    item rows at the top of this page that sit under those columns are read
+    as the same grid ("ORDER DETAILS (CONT.)" has no header row of its own)."""
     try:
         import fitz  # type: ignore[import-not-found]
 
@@ -1070,32 +1084,60 @@ def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -
         return []
     out: list[tuple[dict[str, Any], Any]] = []
     taken: set[int] = set()
+    lh = statistics.median([max(1.0, s.y1 - s.y0) for r in rows for s in r]) if rows else 10.0
+    carried = (carry or {}).pop("heads", None) if carry is not None else None
+    if carry is not None:
+        carry.clear()
+    start = None
+    if carried:
+        # Continue the previous page's grid: the first item row in the top
+        # third of the page, above any header row of this page's own.
+        top = float(getattr(getattr(page, "rect", None), "height", 0) or 0) / 3.0
+        for k, row in enumerate(rows):
+            if _is_header_row(row) or (top and min(s.y0 for s in row) > top):
+                break
+            cells = {_cell_column(s, carried) for s in row}
+            if 0 in cells and len(cells) >= 3 and all(
+                    _NUMERICISH.match(s.text.strip()) for s in row if _cell_column(s, carried) != 0):
+                start = k
+                break
     i = 0
     while i < len(rows):
         head = rows[i]
-        if not _is_header_row(head):
+        if start is not None and i == start:
+            heads = carried
+            prev_bottom = min(s.y0 for s in head)
+            used = []
+            j = i
+            start = None
+        elif not _is_header_row(head):
             i += 1
             continue
-        heads = sorted(head, key=lambda s: s.x0)
-        lh = statistics.median([max(1.0, s.y1 - s.y0) for r in rows for s in r]) if rows else 10.0
+        else:
+            heads = sorted(head, key=lambda s: s.x0)
+            prev_bottom = max(s.y1 for s in head)
+            used = [head]
+            j = i + 1
         records: list[dict[str, Any]] = []
         numeric_cols: set[int] = set()
-        prev_bottom = max(s.y1 for s in head)
-        used = [head]
-        j = i + 1
         while j < len(rows):
             row = rows[j]
             gap = min(s.y0 for s in row) - prev_bottom
-            if gap > (2.5 if not records else 1.6) * lh:
-                break
             cells: dict[int, list[str]] = {}
             for s in row:
                 cells.setdefault(_cell_column(s, heads), []).append(s.text.strip())
             nums = {c for c, ts in cells.items() if all(_NUMERICISH.match(t) for t in ts)}
-            if 0 in cells and len(cells) >= 2 and nums:
+            is_item = 0 in cells and len(cells) >= 2 and bool(nums)
+            if gap > (2.5 if not records else 1.6) * lh and not (
+                    records and is_item and nums <= numeric_cols and gap <= _ITEM_GAP_LINES * lh):
+                break
+            if is_item:
                 records.append({"cells": cells, "extra": []})
                 numeric_cols |= nums
-            elif records and not nums and not (set(cells) & numeric_cols) \
+            # A row in the item column only is the item's tail, even when it
+            # reads like a figure: the wrapped "60 d" of "...with 30 days of
+            # / 60 d" ended PVDP685's grid mid-item.
+            elif records and (not nums or set(cells) == {0}) and not (set(cells) & numeric_cols) \
                     and not _is_header_row(row):
                 rec = records[-1]
                 for c, ts in cells.items():
@@ -1129,6 +1171,11 @@ def header_grid_tables(page: Any, exclude_bboxes: Iterable[Any] | None = None) -
             out.append(({"kind": "table", "columns": columns, "rows": out_rows,
                          "extraction": "header_grid_v1"}, box))
             taken.update(id(r) for r in used)
+            if carry is not None and len(columns) >= 3:
+                # Ran to the page's last rows: what follows on the next page
+                # may be more of it. Totals rows below do not end it.
+                rest = [r for r in rows[j:] if not any(_TOTAL_LABEL.match(x.text.strip()) for x in r)]
+                carry["heads"] = heads if len(rest) <= 2 else None
             i = j
         else:
             i += 1

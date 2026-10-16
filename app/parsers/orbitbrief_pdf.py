@@ -4824,7 +4824,11 @@ def _extract_header_grids(
         from app.parsers.pdf.layout_text import header_grid_tables
 
         with fitz.open(str(pdf_path)) as doc:
-            found = header_grid_tables(doc[page_index], exclude)
+            # The previous page's grid header, for a grid that carries on here.
+            carry: dict[str, Any] = {}
+            if page_index > 0:
+                header_grid_tables(doc[page_index - 1], [], carry)
+            found = header_grid_tables(doc[page_index], exclude, carry)
     except Exception:
         return [], []
     return [b for b, _ in found], [r for _, r in found]
