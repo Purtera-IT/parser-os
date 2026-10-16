@@ -17,7 +17,7 @@ Per relation:
     owns the RECALL half (which atoms are items). The LLM is consulted only on
     the residual the head is unsure about (guess-free).
 
-Same learnable contract as app.core.type_head: trains from the CURRENT log,
+Same learnable contract as the retired atom-type head: trains from the CURRENT log,
 eval-gated promotion + rollback (recall must not regress), retrains as the log
 grows. OFF until wired + flag-enabled.
 """

@@ -57,14 +57,14 @@ def test_build_compile_capabilities_lite(monkeypatch):
 
 def test_build_compile_capabilities_full(monkeypatch):
     monkeypatch.setenv("SOWSMITH_ML_PROFILE", "full")
-    monkeypatch.setenv("SOWSMITH_TYPE_HEAD_GPU", "1")
+    monkeypatch.setenv("SOWSMITH_C3_TYPE", "on")
     monkeypatch.setenv("SOWSMITH_RUNTIME", "worker-warm")
     from app.core.ml_capabilities import build_compile_capabilities
 
     cap = build_compile_capabilities()
     assert cap["ml_profile"] == "full"
     assert cap["runtime"] == "worker-warm"
-    assert "SOWSMITH_TYPE_HEAD_GPU" in cap["env_active"]
+    assert "SOWSMITH_C3_TYPE" in cap["env_active"]
 
 
 @requires_fetch_ml

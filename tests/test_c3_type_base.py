@@ -1,6 +1,6 @@
 """The C3 base as a deflect layer on the atom-type stage (SOWSMITH_C3_TYPE).
 
-Same contract as the other deflect layers: one-sided, guess-free, OFF by
+The one learned layer in front of the typing LLM: one-sided, guess-free, OFF by
 default. A sure value-light answer is assigned and skips the LLM; a sure
 ``_keep`` drops the candidate with its type unchanged; an unsure or
 value-heavy answer reaches the LLM untouched; a model that will not load
@@ -55,9 +55,7 @@ def _atoms():
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    for name in ("SOWSMITH_C3_TYPE", "SOWSMITH_C3_SURE", "SOWSMITH_TYPED_STUDENT",
-                 "SOWSMITH_ATOM_TYPE_DEFLECT", "SOWSMITH_TYPE_HEAD_GPU", "SOWSMITH_TYPE_HEAD_DEFLECT",
-                 "SOWSMITH_CONTRASTIVE_TYPE", "SOWSMITH_RUBRIC_GATE",
+    for name in ("SOWSMITH_C3_TYPE", "SOWSMITH_C3_SURE",
                  "SOWSMITH_TYPED_CLASSIFIER_DISABLE", "SOWSMITH_DISABLE_LLM"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(tac, "_ollama_reachable", lambda: True)
@@ -669,12 +667,15 @@ def test_the_signature_rule_leaves_a_line_the_base_typed():
     assert deal_chatter._typed_by_base(a) is False
 
 
-def test_typing_can_read_no_lessons_at_all(monkeypatch):
+def test_typing_reads_no_lessons(monkeypatch, llm):
+    """The base and the LLM are the whole stage: no lesson store is read."""
     from app.core import decide as decide_mod
 
-    monkeypatch.setenv("SOWSMITH_TAUGHT_TYPES", "off")
     monkeypatch.setattr(decide_mod, "get_store", lambda: (_ for _ in ()).throw(AssertionError("read the store")))
-    assert tac._apply_taught_types(_atoms()) == {}
+    monkeypatch.setattr(decide_mod, "decide", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked decide()")))
+    atoms = _atoms()
+    tac.classify_atoms(atoms)
+    assert sorted(llm) == sorted(_TEXTS)
 
 
 def test_site_role_reading_decides_before_the_llm(monkeypatch):
