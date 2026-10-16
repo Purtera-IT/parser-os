@@ -2160,6 +2160,11 @@ def compile_project(
     try:
         from app.core import c3_type_base as _c3_auth
 
+        # The deal's one base read normally happens in document_job_scope; with
+        # that stage off (its set-asides were wrong on all 145 labeled lines),
+        # read here so authority, typing and the brief all share it.
+        if _c3_auth.authority_enabled() and not (_c3_auth._DEAL.get("types") or {}) and _c3_auth.enabled():
+            _c3_auth.documents(atoms)
         _auth_n = _c3_auth.apply_authority(atoms)
         if _auth_n:
             warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
