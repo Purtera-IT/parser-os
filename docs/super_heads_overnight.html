@@ -24,8 +24,24 @@ td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums} td.ok{color:va
 code{font-family:var(--f-mono);font-size:.88em}
 </style>
 <div class=wrap>
-<header><h1>Super Heads Overnight</h1>
+<header><h1>Super Heads Overnight</h1><p class=muted>Updated 16 October, afternoon: the four asks are done; see the first section.</p>
 <p class=muted>Dev only; prod untouched. Branch <code>claude/c3-serve-all-heads</code>. Every number below was measured on a live dev compile or against your labels; training deals (the base learned from them) are marked as flattering, and 010043 is the deal it never trained on.</p></header>
+
+<section><h2>Today: the four asks</h2><ol>
+<li><b>The PM page reads the heads' brief.</b> Orbitbrief-Core now builds the handoff's questions from <code>c3_brief</code>: first the questions the deal itself asks (cited lines), then the catalog questions the base asked, most likely first. Its summary line also comes from the brief. The old pipeline's questions move to the audit pool, so nothing is lost. It is behind <code>ORBITBRIEF_C3_BRIEF</code>, which is on in dev only (Core revision 0000140, <a href="https://github.com/Purtera-IT/Orbitbrief-Core/pull/89">Core PR #89</a>, not merged). Live on 010043, the page opens with the brief's summary ("installing three Verkada cameras at the Lane Construction office… 6125 Tyvola Centre Drive"). Next come the deal's own five questions (camera model/BOM, address and quantity, the 2-camera quote, an NC install partner, cable lengths), each citing its email. Then 44 catalog questions, and six cited sections. Severity is not a head yet, so every question is a clarification and none is a blocker.</li>
+<li><b>Quote rows stay whole.</b> The cause was not the text splitter. CDW's grid reader stopped after the first item: items sit about 33pt apart, past its gap limit, and a wrapped "60 d" looked like a number. The rest fell back to text, with each item's tail glued onto the next. Page 2 ("ORDER DETAILS (CONT.)") has no header row. Now on live dev, all five PVDP685 items are one line each with QTY, CDW#, prices and Mfg. Part#, and they add up to the quote's subtotal ($5,707.28). A regression test covers spacing, the wrap and the continued page.</li>
+<li><b>Supplier is company config.</b> Your partners (CDW, SHI) live in the Purtera layer (<code>purtera_layer.json</code>), and a base "third party" on their lines reads as "partner". The schema move for the next retrain is written down in <code>docs/RETRAIN_SCHEMA_CHANGES.md</code>.</li>
+<li><b>PR #418 is merged.</b> The old typing code is gone from the dev branch. One leftover: the worker's build check still required the deleted module, so the first deploy failed. Fixed in <a href="https://github.com/Purtera-IT/parser-os-worker/pull/30">worker PR #30</a> (merged; dev only).</li>
+</ol>
+<h3>nano: what it buys</h3>
+<p>gpt-4.1-nano now runs the small LLM jobs (value filling, vendor check, BOM owner, entity extraction and resolution). The brief's writing call stays on mini.</p>
+<div class=tbl><table><thead><tr><th>Deal</th><th>Before (mini) s</th><th>nano s</th><th>LLM-seconds before → after</th><th>Quality vs your labels</th></tr></thead><tbody>
+<tr><td>000002</td><td class=n>122</td><td class=n>105</td><td class=n>78 → 82</td><td>keep 51/52 both; sections 48/48 → 46/48</td></tr>
+<tr><td>010043</td><td class=n>334</td><td class=n>285</td><td class=n>368 → 134</td><td>keep precision 0.68 → 0.74 (whole quote rows); sections 85/119 both</td></tr>
+<tr><td>010115</td><td class=n>672</td><td class=n>468</td><td class=n>1752 → 934</td><td>keep 0.99 both; sections 87/150 → 86/151</td></tr>
+</tbody></table></div>
+<p class=muted>The first 010043 run on nano (351 s) lost its whole written brief: the writing call's answer runs about 1,800 tokens, right at its 2,000 cap, and came back cut off. The cap is now 3,500, and a cut-off answer keeps its complete sentences. The 285 s run is on that fix. About 100 s of every compile is still cold embeddings at setup, so no deal here is under 2 minutes yet. The next big cuts are that warm-up and the 38 entity-extraction calls on 010043.</p>
+</section>
 
 <section><h2>What changed</h2><ol>
 <li><b>The super heads type every line; the parser only parses.</b> Measured on 010043, the deal the base never trained on (Deal Kit sheets excluded, <code>_keep</code> read as "the current type stands"), the base beats the parser/LLM in every confidence band: 67.7% vs 54.0% overall, 91.8% vs 67.5% when sure. Dev now gives the base every line except Deal Kit and estimating sheets, before typing and again at the end of the compile, so no parser rule can overrule it. The LLM no longer types; it only fills values (an address, an amount) on lines the base typed.</li>
@@ -34,7 +50,7 @@ code{font-family:var(--f-mono);font-size:.88em}
 <li><b>Site bugs fixed in the parser, with the base deciding.</b> Different stores were merged by store number, a customer's own site list was deleted by one self-taught lesson, passing mentions in a call became sites, and the roster never applied merges. Details below.</li>
 <li><b>The LLM's self-taught lessons can no longer act as your corrections.</b> They answered as "store", the label rules trust to delete or drop. One deleted 49 of 010194's stores. They now answer as "teacher".</li>
 <li><b>Faster.</b> Vision replies are cached (42.8 s → 0.2 s on 010043), the brief's writing calls are 13–14 s, the base's question read went from 24 s to 11 s, and a lesson-embedding warm-up that skipped by timing (18 minutes on 010082) now always runs.</li>
-<li><b>Old typing code removed.</b> <a href="https://github.com/Purtera-IT/parser-os/pull/418">PR #418</a> deletes the replaced type heads, the typing student, the rubric gate and the lesson-lookup typing. It needs your merge.</li>
+<li><b>Old typing code removed.</b> <a href="https://github.com/Purtera-IT/parser-os/pull/418">PR #418</a> deletes the replaced type heads, the typing student, the rubric gate and the lesson-lookup typing. Merged 16 October.</li>
 </ol></section>
 
 
@@ -108,19 +124,15 @@ code{font-family:var(--f-mono);font-size:.88em}
 </ol></section>
 
 <section><h2>Final ask</h2><ol>
-<li><b>Merge <a href="https://github.com/Purtera-IT/parser-os/pull/418">PR #418</a></b> into the dev branch: it deletes the typing code the base replaced. It is clean and tested; the merge needs your review.</li>
-<li><b>Move <code>supplier</code> to the Purtera layer</b> (or map "third party" to "partner" for your partners). Takes effect at the next retrain.</li>
-<li><b>Keep quote rows whole in the PDF parser.</b> <code>PVDP685.pdf</code> (010043) emits one line item as four lines. Its regression tests need font tools this Mac lacks, so the change should be made where those tests run.</li>
-<li><b>Switch OrbitBrief's PM page to read <code>c3_brief</code></b> so the brief a PM sees comes from the heads.</li>
-<li><b>Label next</b>, in the order below. Each one moves a decision from the LLM or a rule to a head.</li>
-<li><b>A faster small model for the small LLM jobs.</b> Value filling, the vendor check, BOM owner and entity extraction each send many short requests at about 10 s each. A gpt-4.1-nano deployment on the dev Azure account would roughly halve that time. It is a new resource, so it waits for your OK.</li>
+<li><b>Check the PM page on 010043 in dev</b>: the summary and questions now come from the heads. Then merge <a href="https://github.com/Purtera-IT/Orbitbrief-Core/pull/89">Core PR #89</a> if it reads right. A Core deploy from main drops the change until then.</li>
+<li><b>Label next</b>, in the order above. Severity (blocker vs clarification) is the one question decision that is still not a head.</li>
 <li><b>Prod</b>: one migration when you say so, with the heads on the Azure GPU.</li>
 </ol></section>
 
 <section><h2>Still open</h2><ul>
-<li><b>Time outside any stage.</b> 119 s on 010043, 538 s on 000123 before the last fix. It is now timed as its own stage (the base read) in the build being verified; the next run shows whether that is all of it.</li>
-<li><b>OrbitBrief's PM page still runs its own pipeline.</b> Brief v2 and the head-picked questions are in the envelope (<code>c3_brief</code>, <code>pm_dashboard.open_questions</code>) and reach the labeling page, but Orbitbrief-Core still builds PM_HANDOFF with its own templates and LLM calls. Switching that page to read <code>c3_brief</code> is the next step, and it is what makes the brief a PM sees come from the heads.</li>
-<li>Big deals are slow on a cold compile (000123: about 21 minutes). The remaining time is per-line LLM and lesson lookups; the GPU and more trusted types shrink it.</li>
-<li>The prod migration waits for your call, and PR #418 waits for your merge.</li>
+<li><b>Sub-2-minute parses.</b> Cold embeddings at setup take about 100 s, and entity extraction makes 38 calls on 010043 and 81 on 010115. These are the next things to move to heads or cache.</li>
+<li><b>The PM page does not show the brief's sections yet.</b> They are on PM_HANDOFF (<code>c3_brief.sections</code>), but the frontend does not render them. Frontend main deploys to prod, so that change waits for you.</li>
+<li>Big deals are slow on a cold compile (000123: about 21 minutes before today's changes).</li>
+<li>The prod migration waits for your call.</li>
 </ul></section>
 </div>
