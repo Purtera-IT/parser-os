@@ -711,3 +711,12 @@ def test_authority_types_every_sure_line_and_survives_rules(monkeypatch):
     a2.atom_type = "deal_metadata"  # a later rule re-types it
     assert c3.apply_authority([a2], final=True) == 1 and str(a2.atom_type.value) == "physical_site"
     c3._DEAL.clear()
+
+
+def test_roster_rows_and_teacher_lessons_never_delete_sites():
+    from types import SimpleNamespace as NS
+    from app.core import site_geo_fallback as sgf
+
+    row = NS(source_refs=[NS(extraction_method="xlsx_site_roster_v1", locator={})],
+             value={"kind": "physical_site", "site_id": "ORD_Chicago_112"})
+    assert sgf._is_roster_site(row)

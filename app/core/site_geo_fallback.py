@@ -229,7 +229,14 @@ def _site_address_text(atom: Any) -> tuple[str, str]:
 
 
 def _is_roster_site(atom: Any) -> bool:
-    """Did this site come out of a locations table (site roster row)?"""
+    """Did this site come out of a locations table (site roster row)?
+
+    The roster extractor names itself on the ref (``extraction_method:
+    xlsx_site_roster_v1``), not only in the locator: 010194's 49 store rows
+    carried it there, had no facility column, failed both checks below, and
+    were judged -- and deleted -- as vendor addresses."""
+    if _is_roster_sourced(atom):
+        return True
     for ref in (getattr(atom, "source_refs", None) or []):
         loc = getattr(ref, "locator", None)
         if isinstance(loc, dict) and str(loc.get("extraction") or "").startswith("site_roster"):
@@ -388,7 +395,11 @@ def suppress_vendor_sites(
             # the labelling workspace, gets a verdict, and that verdict lands in
             # the store as a correction -- after which `source == "store"` and
             # this branch deletes it for free, on this deal and every other.
-            if getattr(decision, "source", None) == "store":
+            # A person's correction, never the model's own cached guess: a
+            # self-taught row (correction id teacher_*) deleted 49 of 010194's
+            # customer stores by similarity alone.
+            if getattr(decision, "source", None) == "store" and not str(
+                    getattr(decision, "correction_id", "") or "").startswith("teacher"):
                 drop_ids.add(aid)
                 _stamp_decision(a, decision)
             else:
