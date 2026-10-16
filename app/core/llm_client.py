@@ -427,6 +427,29 @@ def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
     return reply
 
 
+#: Stages whose LLM work is small and structured (filling a line's fields,
+#: job site or vendor, who supplies a BOM line, pulling entities out of a
+#: document): they use SOWSMITH_SMALL_MODEL when it is set. On a 24-line fill
+#: batch gpt-4.1-nano answered in ~5.7 s against gpt-4.1-mini's 10-18 s, with
+#: the same output. The brief's prose stays on the teacher model.
+_SMALL_MODEL_STAGES_DEFAULT = ("typed_atom_classification", "bom_owner", "site_geo_fallback",
+                               "enrich_entities", "entity_resolution")
+
+
+def _small_model_for_stage() -> str | None:
+    small = os.environ.get("SOWSMITH_SMALL_MODEL", "").strip()
+    if not small:
+        return None
+    raw = os.environ.get("SOWSMITH_SMALL_MODEL_STAGES", "").strip()
+    stages = tuple(x.strip() for x in raw.split(",") if x.strip()) if raw else _SMALL_MODEL_STAGES_DEFAULT
+    try:
+        from app.core import telemetry as _tel
+
+        return small if _tel.CURRENT_STAGE in stages else None
+    except Exception:
+        return None
+
+
 def _chat(messages: list, *, max_tokens: int, model: str | None,
           timeout: int | None, base: str | None = None,
           key: str | None = None) -> str:
@@ -434,6 +457,7 @@ def _chat(messages: list, *, max_tokens: int, model: str | None,
     import time as _t
 
     started = _t.perf_counter()
+    model = _small_model_for_stage() or model
     try:
         return _chat_inner(messages, max_tokens=max_tokens, model=model, timeout=timeout, base=base, key=key)
     finally:
