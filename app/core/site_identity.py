@@ -121,3 +121,36 @@ def merge_roster(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]
         k["merged_from"] = merged
         k["aliases"] = sorted(aliases)
     return [r for i, r in enumerate(rows) if i not in drop], len(drop)
+
+
+#: A roster site with no street address survives when at least one line that
+#: names it reads as physical_site at this bar. On 010082 / 010115 a shared
+#: call transcript ("whether it's the Seattle Mariners Stadium or the Las Vegas
+#: Convention center") put five such places on both rosters; the base read
+#: those lines as small_talk / stakeholder / deal_metadata (<= 0.65 site), and
+#: every real address line as physical_site at 0.73-1.00.
+MENTION_SITE_BAR = 0.7
+
+
+def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
+                  line_types: dict[str, list]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(kept rows, set-aside rows). Only rows with no street address are
+    judged, only when the base read at least one of their lines, and never all
+    rows. A set-aside row keeps its evidence and the reason."""
+    kept, aside = [], []
+    for r in rows:
+        street = str(r.get("street_address") or r.get("address") or "").strip()
+        ids = site_atoms.get(str(r.get("site") or ""), [])
+        reads = [line_types[i] for i in ids if i in line_types and line_types[i]]
+        if street[:1].isdigit() or not reads:
+            kept.append(r)
+            continue
+        best = max((float(p or 0) for t, p in reads if t == "physical_site"), default=0.0)
+        if best >= MENTION_SITE_BAR:
+            kept.append(r)
+        else:
+            aside.append({**r, "set_aside": "mention_only",
+                          "reason": f"no line naming it reads as a site (best {best:.2f} of {len(reads)} read)"})
+    if not kept:
+        return rows, []
+    return kept, aside

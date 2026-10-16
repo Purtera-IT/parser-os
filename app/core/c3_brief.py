@@ -568,6 +568,13 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     from app.core import c3_type_base
 
     brief = build(atoms, packets, service_fallback=service_fallback, readings=c3_type_base.full_read())
+    # The base's line type for every line that names a site, for the roster
+    # filter (site_identity.filter_roster): a site only ever mentioned in lines
+    # the base does not read as a site is a mention, not a job site.
+    _types = c3_type_base._DEAL.get("types") or {}
+    brief["site_line_types"] = {
+        str(a.id): _types[str(a.id)] for a in atoms
+        if str(a.id) in _types and any(str(k).startswith("site:") for k in (getattr(a, "entity_keys", None) or []))}
     if writing_enabled():
         try:
             brief["written"] = write(brief)

@@ -24,3 +24,18 @@ def test_neighbors_and_other_cities_stay_apart():
             _row("site:d", "", "100 Main St", "Portland", "97201")]
     out, folded = merge_roster(rows)
     assert folded == 0 and len(out) == 4
+
+
+def test_mention_only_sites_are_set_aside_not_lost():
+    from app.core.site_identity import filter_roster
+
+    rows = [_row("site:1401", "Southern Farm Bureau", "1401 Livingston Ln", "Jackson", "39213"),
+            _row("site:mariners", "Seattle Mariners Stadium"),
+            _row("site:easterling", "Easterling, 600")]
+    atoms = {"site:1401": ["a1"], "site:mariners": ["a2"], "site:easterling": ["a3", "a4"]}
+    types = {"a1": ["physical_site", 0.86], "a2": ["small_talk", 0.44],
+             "a3": ["small_talk", 0.71], "a4": ["physical_site", 0.65]}
+    kept, aside = filter_roster(rows, atoms, types)
+    assert [r["site"] for r in kept] == ["site:1401"]
+    assert {r["site"] for r in aside} == {"site:mariners", "site:easterling"}
+    assert all(r["set_aside"] == "mention_only" for r in aside)

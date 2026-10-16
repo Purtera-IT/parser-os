@@ -1443,6 +1443,19 @@ def build_orbitbrief_envelope(
 
                 _merged_rows, _folded = merge_roster(
                     [r for r in (_sr_block.get("sites") or []) if isinstance(r, dict)])
+                _lt = ((getattr(compile_result, "c3_brief", None) or {}).get("site_line_types") or {})
+                if _lt:
+                    from app.core.site_identity import filter_roster
+
+                    _site_atoms: dict[str, list[str]] = {}
+                    for _a in atoms:
+                        for _k in (getattr(_a, "entity_keys", None) or []):
+                            if str(_k).startswith("site:"):
+                                _site_atoms.setdefault(str(_k), []).append(str(getattr(_a, "id", "")))
+                    _merged_rows, _aside = filter_roster(_merged_rows, _site_atoms, _lt)
+                    if _aside:
+                        _sr_block["set_aside_sites"] = _aside
+                        _folded += len(_aside)
                 if _folded:
                     _sr_block["sites"] = _merged_rows
                     _sr_block["site_count"] = len(_merged_rows)
