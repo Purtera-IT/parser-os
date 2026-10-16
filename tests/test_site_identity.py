@@ -70,3 +70,14 @@ def test_a_signature_address_with_a_street_is_set_aside():
     kept, aside = filter_roster(rows, atoms, types, flags)
     assert [r["site"] for r in kept] == ["site:323_lakeside"]
     assert {r["site"] for r in aside} == {"site:625_w_adams", "site:2390_satellite"}
+
+
+def test_a_signature_copied_out_as_a_site_line_is_set_aside():
+    from app.core.site_identity import filter_roster
+
+    rows = [_row("site:323_lakeside", "Brooksource", "323 Lakeside Ave", "Cleveland", "44113"),
+            _row("site:chicago", "CDW", "625 W. Adams", "Chicago", "60661")]
+    atoms = {"site:323_lakeside": ["a1"], "site:chicago": ["s1", "s2"]}
+    types = {"a1": ["physical_site", 0.99], "s1": ["stakeholder", 0.96], "s2": ["physical_site", 1.0]}
+    kept, aside = filter_roster(rows, atoms, types, {"s2": ["vendor_address_suspected"]})
+    assert [r["site"] for r in kept] == ["site:323_lakeside"] and aside[0]["site"] == "site:chicago"

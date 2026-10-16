@@ -186,12 +186,22 @@ def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
         if not ids:
             kept.append(r)
             continue
+        # A rule can copy a signature's address out as a site line of its own
+        # ("625 W. Adams |, Chicago" on 010038): read alone it is an address
+        # (physical_site 1.00), while the signature line it came from reads as
+        # a stakeholder (0.96). A flagged site line on a row with a sure
+        # stakeholder line is that signature.
+        signature = any(line_types[i][0] == "stakeholder" and float(line_types[i][1] or 0) >= 0.9
+                        for i in ids)
         best = 0.0
         for i in ids:
             t, p = line_types[i]
             if t != "physical_site":
                 continue
-            bar = VENDOR_SITE_BAR if "vendor_address_suspected" in (flags.get(i) or []) else MENTION_SITE_BAR
+            vendor = "vendor_address_suspected" in (flags.get(i) or [])
+            if vendor and signature:
+                continue
+            bar = VENDOR_SITE_BAR if vendor else MENTION_SITE_BAR
             if float(p or 0) >= bar:
                 best = max(best, float(p or 0))
         if best:
