@@ -985,6 +985,21 @@ def _address_identity(row: dict[str, Any]) -> str:
     return f"{street}|{code}"
 
 
+#: A customer site code: a short prefix, a place, a number ("OAK_Albany_449",
+#: "SJC_Santa-Clara_407"), read off the site's own key or name.
+_SITE_CODE = re.compile(r"^([a-z]{2,5}(?:_[a-z][a-z.]*)+_\d{1,5})(?:_|$)")
+
+
+def _site_code(key: str, row: dict[str, Any]) -> str:
+    for raw in (row.get("site_id"), row.get("site_code"), key.split(":", 1)[-1],
+                row.get("name"), row.get("facility_name")):
+        slug = re.sub(r"[^a-z0-9.]+", "_", str(raw or "").lower()).strip("_")
+        m = _SITE_CODE.match(slug)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def address_identity_groups(
     site_keys: set[str],
     rows_by_key: dict[str, dict[str, Any]] | None = None,
@@ -1011,15 +1026,37 @@ def address_identity_groups(
     keys = sorted(k for k in site_keys if isinstance(k, str) and k.startswith("site:"))
     if len(keys) < 2:
         return []
-    by_address: dict[str, set[str]] = {}
+    # Two identities, either one enough: street + postcode, or the customer's
+    # own site code. 000123 published 55 stores twice each, "OAK_Albany_449
+    # (Bevmosto)" and "OAK_Albany_449 (San)", the second copy's address a
+    # garbled repeat; every pair was labeled same_site and none merged.
+    parent = {k: k for k in keys}
+
+    def root(k: str) -> str:
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+    by_ident: dict[str, str] = {}
     for key in keys:
         row = (rows_by_key or {}).get(key)
-        if not isinstance(row, dict):
-            continue
-        ident = _address_identity(row)
-        if ident:
-            by_address.setdefault(ident, set()).add(key)
-    groups = [g for g in by_address.values() if len(g) >= 2]
+        idents = []
+        if isinstance(row, dict):
+            addr = _address_identity(row)
+            if addr:
+                idents.append("a:" + addr)
+        code = _site_code(key, row if isinstance(row, dict) else {})
+        if code:
+            idents.append("c:" + code)
+        for ident in idents:
+            if ident in by_ident:
+                parent[root(key)] = root(by_ident[ident])
+            else:
+                by_ident[ident] = key
+    by_root: dict[str, set[str]] = {}
+    for key in keys:
+        by_root.setdefault(root(key), set()).add(key)
+    groups = [g for g in by_root.values() if len(g) >= 2]
     if groups:
         logging.getLogger(__name__).info(
             "address_identity: %d site key(s) share %d address(es) -> merged %s",
