@@ -691,3 +691,23 @@ def test_site_role_reading_decides_before_the_llm(monkeypatch):
     monkeypatch.setenv("SOWSMITH_C3_SITE_ROLE", "off")
     assert sgf._base_site_role("a1") is None
     c3._DEAL.clear()
+
+
+def test_authority_types_every_sure_line_and_survives_rules(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setenv("SOWSMITH_C3_AUTHORITY", "on")
+    c3._DEAL.clear()
+    c3._DEAL.update(types={"a1": ["small_talk", 0.97], "a2": ["physical_site", 0.95],
+                           "a3": ["physical_site", 0.95], "a4": ["task", 0.6]})
+    a1 = NS(id="a1", atom_type="scope_item", value={}, review_flags=[])
+    a2 = NS(id="a2", atom_type="deal_metadata", value={"kind": "physical_site"}, review_flags=[])  # demoted site row
+    a3 = NS(id="a3", atom_type="deal_metadata", value={}, review_flags=[])  # no site value: recorded, not typed
+    a4 = NS(id="a4", atom_type="scope_item", value={}, review_flags=[])  # unsure: left alone
+    assert c3.apply_authority([a1, a2, a3, a4]) == 2
+    assert str(a1.atom_type.value) == "small_talk" and str(a2.atom_type.value) == "physical_site"
+    assert a3.atom_type == "deal_metadata" and a3.value["c3_base_says"]["type"] == "physical_site"
+    assert a4.atom_type == "scope_item"
+    a2.atom_type = "deal_metadata"  # a later rule re-types it
+    assert c3.apply_authority([a2], final=True) == 1 and str(a2.atom_type.value) == "physical_site"
+    c3._DEAL.clear()

@@ -975,7 +975,15 @@ _NO_DETAIL = _NoDetail()
 
 
 def _demote_from_site(atom: Any) -> None:
-    """Keep the sentence, drop its claim to be a site declaration."""
+    """Keep the sentence, drop its claim to be a site declaration. Never for a
+    line the base typed (c3 authority): a dedup rule does not outrank it."""
+    try:
+        from app.core.c3_type_base import is_locked
+
+        if is_locked(atom):
+            return
+    except Exception:
+        pass
     try:
         from app.core.schemas import AtomType
 

@@ -2151,6 +2151,18 @@ def compile_project(
     # electrical_acceptance_test, compliance_*, ...). LLM-driven so
     # it generalises across customer terminology variations without
     # hardcoded regex column headers.
+    # The base decides every line's type where it is sure (SOWSMITH_C3_AUTHORITY):
+    # the parser has split the lines and read their values; the typing LLM sees
+    # only what the base leaves.
+    try:
+        from app.core import c3_type_base as _c3_auth
+
+        _auth_n = _c3_auth.apply_authority(atoms)
+        if _auth_n:
+            warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 type authority failed: {type(exc).__name__}: {exc}")
+
     with telemetry.stage("typed_atom_classification", input_count=len(atoms)) as stage:
         promoted = 0
         try:
@@ -3599,6 +3611,9 @@ def compile_project(
         _fl = _c3_final.apply_final_labels(atoms)
         if _fl:
             warnings.append(f"INFO: {_fl} line(s) typed by the C3 base at the end of the compile")
+        _fa = _c3_final.apply_authority(atoms, final=True)
+        if _fa:
+            warnings.append(f"INFO: C3 base restored {_fa} line(s) a rule had re-typed (authority)")
     except Exception as exc:
         warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
 

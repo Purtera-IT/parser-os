@@ -1006,6 +1006,105 @@ def _override_simple_types(atoms: list[Any]) -> int:
     return n
 
 
+# ---------------------------------------------------------- type authority
+#
+# The base decides every line's type when it is sure; the parser only splits
+# lines and extracts values. Applied twice: before typing (every line, not only
+# the ones routed to the LLM) and at the end of the compile, so a rule that
+# re-typed a line in between does not stand against a sure reading. The rule's
+# type is kept as an alternative for the labeler.
+
+
+def authority_enabled() -> bool:
+    return os.environ.get("SOWSMITH_C3_AUTHORITY", "").strip().lower() in _TRUE
+
+
+def _authority_bar(answer: str) -> float:
+    raw = os.environ.get("SOWSMITH_C3_AUTHORITY_SURE_BY_TYPE", "")
+    for part in raw.split(","):
+        k, _, v = part.partition(":")
+        if k.strip() == answer:
+            try:
+                return float(v)
+            except ValueError:
+                pass
+    return _env_float("SOWSMITH_C3_AUTHORITY_SURE", 0.9)
+
+
+#: Never assigned by authority: a placeholder, or a type that only exists as
+#: the parser's container for something not yet read.
+_AUTHORITY_SKIP = frozenset({"_keep", "raw_utterance", "raw_table_row", "dropped_sheet", "entity"})
+#: Types a line can take without extracted values.
+_VALUELESS = _SIMPLE | frozenset({"small_talk", "deal_state", "list_header", "answered_question",
+                                    "commitment", "open_question", "action_item", "scope_item"})
+
+
+def is_locked(atom: Any) -> bool:
+    """True when the base decided this line's type (authority)."""
+    v = getattr(atom, "value", None)
+    lab = v.get("c3_label") if isinstance(v, dict) else None
+    return isinstance(lab, dict) and lab.get("act") == "authority"
+
+
+def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
+    """Give each line the base's type where it is sure. Before typing
+    (``final=False``) and again at the end (``final=True``: a locked line a
+    rule re-typed goes back). Returns lines (re)typed."""
+    from app.core.schemas import AtomType
+
+    if not authority_enabled():
+        return 0
+    readings = _DEAL.get("types") or {}
+    if not readings:
+        return 0
+    n = 0
+    for a in atoms:
+        got = readings.get(str(getattr(a, "id", "") or ""))
+        if not got or got[0] in _AUTHORITY_SKIP:
+            continue
+        ans, p = str(got[0]), float(got[1] or 0.0)
+        if p < _authority_bar(ans):
+            continue
+        t = getattr(a, "atom_type", None)
+        before = str(getattr(t, "value", t) or "")
+        v = dict(getattr(a, "value", None) or {}) if isinstance(getattr(a, "value", None), dict) else {}
+        if final and not is_locked(a):
+            continue
+        if before == ans:
+            if not final and not is_locked(a):
+                v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
+                a.value = v
+            continue
+        # A value-carrying type only where the parser's own value is that kind
+        # (a rule demoted a row it had read as one); otherwise the base's answer
+        # is recorded and typing's fill path gives it values.
+        if ans not in _VALUELESS and str(v.get("kind") or "") != ans:
+            v.setdefault("c3_base_says", {"type": ans, "p": round(p, 3)})
+            a.value = v
+            continue
+        try:
+            a.atom_type = AtomType(ans)
+        except ValueError:
+            continue
+        alt = list(v.get("alt_atom_types") or [])
+        if before and before not in alt:
+            alt.append(before)
+        v["alt_atom_types"] = alt
+        v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
+        if ans == "small_talk":
+            v.setdefault("rejected_by", "c3")
+        a.value = v
+        flags = list(getattr(a, "review_flags", None) or [])
+        if "c3_label" not in flags:
+            try:
+                a.review_flags = flags + ["c3_label"]
+            except Exception:
+                pass
+        n += 1
+    _STATUS["authority_final" if final else "authority"] = n
+    return n
+
+
 # ------------------------------------------------------- document judgments
 
 #: The base's answer to "is this document about this deal's job"
