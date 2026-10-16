@@ -39,3 +39,20 @@ def test_mention_only_sites_are_set_aside_not_lost():
     assert [r["site"] for r in kept] == ["site:1401"]
     assert {r["site"] for r in aside} == {"site:mariners", "site:easterling"}
     assert all(r["set_aside"] == "mention_only" for r in aside)
+
+
+def test_street_in_display_name_and_town_rows_fold_into_the_one_site():
+    rows = [{"site": "site:6125_tyvola_centre_dr", "display_name": "6125 Tyvola Centre Drive, Charlotte, NC 28217",
+             "street_address": "6125 Tyvola Centre Drive", "city": "Charlotte", "zip": "28217"},
+            {"site": "site:6125_tyvola_centre_drive", "display_name": "6125 Tyvola Centre Drive"},
+            {"site": "site:charlotte_nc_28217", "display_name": "Charlotte NC 28217"}]
+    out, folded = merge_roster(rows)
+    assert len(out) == 1 and folded == 2
+
+
+def test_town_row_stays_apart_when_two_sites_share_the_town():
+    rows = [_row("site:a", "", "37 Cherry Hill Drive", "Danvers", "01923"),
+            _row("site:b", "", "35 Cherry Hill Drive", "Danvers", "01923"),
+            {"site": "site:danvers_ma_01923", "display_name": "Danvers MA 01923"}]
+    out, folded = merge_roster(rows)
+    assert folded == 0

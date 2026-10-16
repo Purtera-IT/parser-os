@@ -23,11 +23,33 @@ _ZIP = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
 
 
 def _street(row: dict[str, Any]) -> str:
+    """The row's numbered street: from its street field, else from its display
+    name or its key ("6125 Tyvola Centre Drive" was only in display_name on
+    010043; "site:loc_1030_delta_blvd_delta_admin" only in the key on 010115)."""
     from app.core.address_parse import _street_for_dedup
 
-    s = _street_for_dedup(str(row.get("street_address") or row.get("address") or ""))
-    # A numbered street with a name, not a bare number or a lone word.
-    return s if s[:1].isdigit() and len(s.split()) >= 2 else ""
+    key_text = str(row.get("site") or "").split(":", 1)[-1].replace("_", " ")
+    for raw in (row.get("street_address"), row.get("address"), row.get("display_name"),
+                row.get("facility_name"), key_text):
+        text = re.sub(r"^\s*(loc|site)\s+", "", str(raw or ""), flags=re.I)
+        text = re.split(r"\s+[—–-]\s+", text)[-1] if " — " in text else text
+        m = re.search(r"\b\d{1,6}\s+[a-z][^,|]*", text, re.I)
+        s = _street_for_dedup(m.group(0)) if m else ""
+        # A numbered street with a name, not a bare number or a lone word.
+        if s[:1].isdigit() and len(s.split()) >= 2:
+            return s
+    return ""
+
+
+def _town(row: dict[str, Any]) -> tuple[str, str]:
+    """(city, zip) a row names, from its fields or its display name."""
+    text = " ".join(str(row.get(k) or "") for k in ("display_name", "facility_name", "address"))
+    z = _zip(row) or (_ZIP.search(text).group(1) if _ZIP.search(text) else "")
+    city = str(row.get("city") or "").strip().lower()
+    if not city:
+        m = re.search(r"([A-Za-z][A-Za-z .]+?),?\s+[A-Z]{2}\b", text)
+        city = m.group(1).strip().lower() if m else ""
+    return city, z
 
 
 def _zip(row: dict[str, Any]) -> str:
@@ -77,6 +99,19 @@ def identity_groups(rows: list[dict[str, Any]]) -> list[list[int]]:
                 if _compatible(_zip(ra), _zip(rb)) and _compatible(
                         str(ra.get("city") or "").strip().lower(), str(rb.get("city") or "").strip().lower()):
                     join(idx[a], idx[b])
+    # A row that names only a town (no street, no site code) is the town of the
+    # deal's one site there: it folds into the single street row that shares
+    # its ZIP (else its city). Two street rows in that town: it stays apart.
+    streeted = [i for i in range(n) if _street(rows[i])]
+    for i in range(n):
+        if _street(rows[i]) or _site_code(str(rows[i].get("site") or ""), rows[i]):
+            continue
+        city, z = _town(rows[i])
+        if not city and not z:
+            continue
+        hits = [j for j in streeted if (z and _town(rows[j])[1] == z) or (not z and city and _town(rows[j])[0] == city)]
+        if len({root(j) for j in hits}) == 1:
+            join(hits[0], i)
     groups: dict[int, list[int]] = {}
     for i in range(n):
         groups.setdefault(root(i), []).append(i)
