@@ -2071,10 +2071,13 @@ def compile_project(
     # from zero): 010043 spent ~90 s across typing, span admission and open
     # questions doing that (2026-10-15). One batched call warms the cache for
     # the text form they look up; what they decide is unchanged.
+    # Not gated on the store being loaded: it loads in the background, and a
+    # warm-up that skipped because the store was not there YET left every later
+    # lookup embedding one line per round trip (010082, 2026-10-16: span
+    # admission 1,103 s, open questions 120 s, bom_owner 323 s; 655 s the night
+    # before, when the store happened to be ready).
     try:
-        from app.core.decide import get_store as _warm_get_store
-
-        if _warm_get_store() is not None:
+        if True:
             from app.core.embedding_retrieval import embed_texts as _warm_embed
 
             _t_warm = time.perf_counter()
