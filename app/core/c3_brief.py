@@ -271,7 +271,13 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             meta = by_text()
         except Exception:
             meta = {}
+        # Trade questions only for a service someone is sure of: the head at
+        # SERVICE_BAR, or the parse's own pack. 010043 read imac at 0.52 (the
+        # labeler said security_camera) and was asked IMAC questions.
         svc_value = str(service.get("value") or "")
+        if service.get("by", "").startswith(("base:", "purtera:")) and float(service.get("p") or 0) < SERVICE_BAR:
+            svc_value = ""
+            service["unsure"] = True
         per_family: Counter = Counter()
         bar = (float(os.environ["SOWSMITH_C3_QUESTION_BAR"]) if os.environ.get("SOWSMITH_C3_QUESTION_BAR")
                else readings.get("question_bar") or QUESTION_CATALOG_BAR)
@@ -280,7 +286,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             if p_valid < bar:
                 break
             m = meta.get(q["text"]) or {}
-            if m.get("applies_to") and svc_value and svc_value not in m["applies_to"]:
+            if m.get("applies_to") and svc_value not in m["applies_to"]:
                 continue
             fam = m.get("family", "")
             if QUESTIONS_PER_FAMILY and per_family[fam] >= QUESTIONS_PER_FAMILY:
@@ -399,14 +405,17 @@ _PROMPT = (
 
 _ASK_PROMPT = (
     "Check open questions for a field-services job. Each candidate has an id, a question, and the deal lines "
-    "closest to it [line ids]. For EVERY candidate decide: do those lines already answer it? If yes, mark it "
-    "answered and cite the line that answers it. If not, rewrite it as one short question specific to THIS "
-    "job (name the site, device, count or document the lines show), citing the lines that make it relevant. "
-    "Never invent a fact. Return JSON only: {\"checked\": [{\"id\": str, \"answered\": bool, "
+    "closest to it [line ids]. For EVERY candidate decide: does one of those lines STATE the answer? Mark it "
+    "answered only when a line gives the specific answer (a date, a number, a name, a yes or no, the term "
+    "itself). A line that only mentions the topic, or says something will be decided later, does NOT answer "
+    "it. If answered, cite the line that answers it. If not, rewrite it as one short, plain question a project "
+    "manager would ask the customer about THIS job: name the site, device, count or document the lines show. "
+    "Never put line ids, brackets or internal service codes (like low_voltage_cabling) in the question text; "
+    "line ids go only in cites. Never invent a fact. Return JSON only: {\"checked\": [{\"id\": str, \"answered\": bool, "
     "\"answered_by\": [line id], \"ask\": str, \"cites\": [line id]}]} with one entry per candidate.\n"
     "SERVICE: %s\nCANDIDATES: %s"
 )
-ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "15"))
+ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "32"))
 
 
 def _json_of(raw: str) -> dict[str, Any] | None:
