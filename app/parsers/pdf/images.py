@@ -74,14 +74,20 @@ def _pdf_image_markers(
             page_requests: list[tuple[float, str]] = []   # (y0, request text) — carry-forward
             page_captions: list[tuple[float, str]] = []   # requests + field labels — per-image caption
             try:
-                for b in page.get_text("blocks"):
-                    joined = re.sub(r"\s+", " ", (b[4] or "")).strip()
+                blocks = [(b, re.sub(r"\s+", " ", (b[4] or "")).strip()) for b in page.get_text("blocks")]
+                # A field label only captions an image on its own page, so a page
+                # with no image never asks. Where it does, ask in one round trip:
+                # one embedding call per block cost 34 s on 010043's signed SOW.
+                if images:
+                    from app.core.semantic_rules import prewarm as _prewarm
+                    _prewarm(j for _, j in blocks if j and not _is_photo_request(j))
+                for b, joined in blocks:
                     if not joined:
                         continue
                     if _is_photo_request(joined):
                         page_requests.append((float(b[1]), joined[:160]))
                         page_captions.append((float(b[1]), joined[:160]))
-                    elif _is_image_field_label(joined):
+                    elif images and _is_image_field_label(joined):
                         # a labelled field whose value is the image below it
                         # ('Signature' -> the signature image) — caption the image
                         # with the field, not the far-off photo request above.

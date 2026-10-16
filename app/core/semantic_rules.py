@@ -85,7 +85,7 @@ _PREWARM_MAX_CHARS = 400
 _PREWARM_MAX_TEXTS = int(os.environ.get("SOWSMITH_SEMANTIC_PREWARM_MAX", "4000"))
 
 
-def prewarm(texts: Iterable[str]) -> int:
+def prewarm(texts: Iterable[str], *, max_chars: int = _PREWARM_MAX_CHARS) -> int:
     """Embed a document's candidate lines in ONE round trip. Returns the count.
 
     ``SemanticRule.fires`` embeds ONE text per call, so each candidate line
@@ -109,7 +109,7 @@ def prewarm(texts: Iterable[str]) -> int:
     batch: list[str] = []
     for raw in texts:
         t = (raw or "").strip()
-        if not t or len(t) > _PREWARM_MAX_CHARS or t in seen:
+        if not t or len(t) > max_chars or t in seen:
             continue
         seen.add(t)
         batch.append(t)
