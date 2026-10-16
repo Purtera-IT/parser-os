@@ -766,13 +766,16 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
         prefix = m.group(1) if m else slug
         prefix_map.setdefault(prefix, set()).add(k)
     for prefix, group in prefix_map.items():
-        if len(group) >= 2:
-            # Also include the bare-prefix form (no suffix) when it
-            # exists as a separate site key.
-            bare = f"site:{prefix}"
-            if bare in all_site_keys:
-                group.add(bare)
-            all_groups.append(group)
+        # Only an extractor's re-emission: the bare key and ONE numbered copy
+        # of it (site:main_office + site:main_office_2). Two numbered keys are
+        # two places: a customer's site codes end in the store number, and
+        # merging on the prefix collapsed JFK_Bronx_620 and JFK_Bronx_637,
+        # every ORD_Chicago_* and every PHL_Philadelphia_* store into one site
+        # each (010194 published 26 sites of 65).
+        bare = f"site:{prefix}"
+        numbered = [k for k in group if k != bare]
+        if bare in all_site_keys and len(numbered) == 1:
+            all_groups.append({bare, numbered[0]})
 
     # Separators are not identity.
     #
