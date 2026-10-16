@@ -224,6 +224,12 @@ def teacher_model(default: str = _DEFAULT_MODEL) -> str:
 _VCACHE_LOCK = threading.Lock()
 _VCACHE_CONN = None
 _VCACHE_PATH = None
+#: Replies this process stored, for the blob mirror (cache_blob.mirror_vision):
+#: only what this container paid for is uploaded, never the whole file.
+VCACHE_NEW: list[dict] = []
+#: Set when the blob merge is not running (cache_blob.sync_vision_into_cache_background).
+VCACHE_MERGED = threading.Event()
+VCACHE_MERGED.set()
 
 
 def _vision_cache_conn():
@@ -264,6 +270,8 @@ def _vision_cache_get(key: str):
     conn = _vision_cache_conn()
     if conn is None:
         return None
+    # A merge from the blob mirror may still be running at compile start.
+    VCACHE_MERGED.wait(60.0)
     try:
         with _VCACHE_LOCK:
             row = conn.execute("SELECT reply FROM vision_cache WHERE k=?", (key,)).fetchone()
@@ -283,6 +291,7 @@ def _vision_cache_put(key: str, model: str, reply: str) -> None:
                 (key, model, reply),
             )
             conn.commit()
+            VCACHE_NEW.append({"key": key, "model": model, "reply": reply})
     except Exception:
         pass
 

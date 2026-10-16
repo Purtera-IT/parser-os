@@ -824,6 +824,7 @@ def compile_project(
         # In the background too: an OCR lookup waits for it (OcrCache.get),
         # so only a deal that reads pictures can wait, and only on a merge.
         _cb.sync_ocr_into_cache_background()
+        _cb.sync_vision_into_cache_background()
         _setup_s["sync_ocr_cache_start"] = _setup_time.perf_counter() - _t0
         # The embedding mirror is 1.7 GB (dev, 2026-10-15) and the warm worker
         # scales from zero, so nearly every compile lands on an empty cache:
@@ -3862,6 +3863,7 @@ def compile_project(
 
         _cb.mirror_ocr()
         _cb.mirror_embed()
+        _cb.mirror_vision()
     except Exception:  # pragma: no cover - mirroring must never break a compile
         pass
 

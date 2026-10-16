@@ -46,6 +46,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 #: The two caches this mirrors. ``kind`` is the blob sub-prefix and the table.
 OCR = "ocr"
 EMBED = "embed"
+VISION = "vision"
 
 
 def _enabled() -> bool:
@@ -113,7 +114,7 @@ def jsonl_to_rows(text: str) -> list[dict]:
 
 def upload_rows(kind: str, rows: list[dict]) -> bool:
     """Mirror one batch of cache entries to its own blob. Best-effort."""
-    if not rows or kind not in (OCR, EMBED):
+    if not rows or kind not in (OCR, EMBED, VISION):
         return False
     cc = _container_client()
     if cc is None:
@@ -369,3 +370,78 @@ def mirror_embed(limit: int = 4000) -> bool:
     """Upload what this compile embedded. Called at the end of a compile."""
     rows = export_embed_rows(limit=limit)
     return upload_rows(EMBED, rows) if rows else False
+
+
+# ---- vision replies ----------------------------------------------------------
+#
+# The vision LLM's description of a picture, keyed by sha256(model, prompt,
+# mime, image). Unset SOWSMITH_VISION_CACHE_DB meant no cache at all, and the
+# worker scales from zero, so every compile asked again about every picture:
+# 42.8 s of a warm 010043 compile (2026-10-16). Same immutable-batch mirror as
+# OCR; only replies this process paid for are uploaded.
+
+
+def sync_vision_into_cache() -> int:
+    cc = _container_client()
+    if cc is None:
+        return 0
+    try:
+        from app.core import llm_client
+    except Exception:
+        return 0
+    conn = llm_client._vision_cache_conn()
+    if conn is None:
+        return 0
+    n = 0
+    for rows in _iter_batches(cc, VISION):
+        good = [(str(r["key"]), str(r.get("model") or ""), str(r.get("reply") or ""))
+                for r in rows if r.get("key") and str(r.get("reply") or "").strip()]
+        if not good:
+            continue
+        try:
+            with llm_client._VCACHE_LOCK:
+                conn.executemany("INSERT OR IGNORE INTO vision_cache (k, model, reply) VALUES (?,?,?)", good)
+                conn.commit()
+            n += len(good)
+        except Exception:
+            continue
+    return n
+
+
+def sync_vision_into_cache_background() -> bool:
+    """``sync_vision_into_cache`` on a thread; a vision lookup waits for it."""
+    import threading
+
+    try:
+        from app.core import llm_client
+    except Exception:
+        return False
+    if llm_client._vision_cache_conn() is None or not _enabled():
+        return False
+    llm_client.VCACHE_MERGED.clear()
+
+    def _run():
+        try:
+            sync_vision_into_cache()
+        except Exception:
+            pass
+        finally:
+            llm_client.VCACHE_MERGED.set()
+
+    threading.Thread(target=_run, daemon=True, name="vision-cache-sync").start()
+    return True
+
+
+def mirror_vision() -> bool:
+    """Upload the vision replies this process stored. Called at compile end."""
+    try:
+        from app.core import llm_client
+    except Exception:
+        return False
+    rows = list(llm_client.VCACHE_NEW)
+    if not rows:
+        return False
+    ok = upload_rows(VISION, rows)
+    if ok:
+        del llm_client.VCACHE_NEW[:len(rows)]
+    return ok
