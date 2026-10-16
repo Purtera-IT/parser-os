@@ -263,6 +263,18 @@ def decide(
             hit = None
         if hit is not None and hit.verdict is not None:
             _STATS["store_hits"] += 1
+            # The model's own cached answer (teacher cache, correction id
+            # teacher_*) is not a person's correction. Callers give
+            # source == "store" the power to delete or drop; a self-taught row
+            # carrying that label deleted 49 of 010194's customer stores. It
+            # still answers (no LLM call), labeled for what it is.
+            if str(getattr(hit, "correction_id", "") or "").startswith("teacher"):
+                try:
+                    hit.source = "teacher"
+                except Exception:
+                    import dataclasses
+
+                    hit = dataclasses.replace(hit, source="teacher")
             return hit
 
     # 2) LLM — undecided by the store; ask the model, primed with nearest
