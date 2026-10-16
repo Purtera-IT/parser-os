@@ -1262,7 +1262,34 @@ def _classify_batch(batch: list[Any]) -> dict[str, dict[str, Any]]:
     return _parse_response(response_text)
 
 
+def _items_one_by_one(text: str) -> dict[str, dict[str, Any]]:
+    """Each ``{"atom_id": ...}`` object read on its own. gpt-4.1-nano writes a
+    stray ``}`` after an item, or two ``{"results": ...}`` objects back to back;
+    read as one document, one such slip lost a whole batch (010038: 74 of 100
+    value fills went back, 2026-10-16)."""
+    dec = json.JSONDecoder()
+    out: dict[str, dict[str, Any]] = {}
+    for m in re.finditer(r'\{\s*"atom_id"', text or ""):
+        try:
+            item, _ = dec.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict) and item.get("atom_id") and item.get("atom_type"):
+            out[str(item["atom_id"])] = {
+                "atom_type": str(item["atom_type"]),
+                "value": item.get("value") if isinstance(item.get("value"), dict) else {},
+            }
+    return out
+
+
 def _parse_response(response_text: str) -> dict[str, dict[str, Any]]:
+    whole = _parse_whole(response_text)
+    if whole:
+        return whole
+    return _items_one_by_one(response_text)
+
+
+def _parse_whole(response_text: str) -> dict[str, dict[str, Any]]:
     match = re.search(r"\{[\s\S]*\"results\"[\s\S]*\}", response_text)
     if not match:
         return {}

@@ -1448,11 +1448,13 @@ def build_orbitbrief_envelope(
                     from app.core.site_identity import filter_roster
 
                     _site_atoms: dict[str, list[str]] = {}
+                    _flags: dict[str, list[str]] = {}
                     for _a in atoms:
                         for _k in (getattr(_a, "entity_keys", None) or []):
                             if str(_k).startswith("site:"):
                                 _site_atoms.setdefault(str(_k), []).append(str(getattr(_a, "id", "")))
-                    _merged_rows, _aside = filter_roster(_merged_rows, _site_atoms, _lt)
+                                _flags[str(getattr(_a, "id", ""))] = list(getattr(_a, "review_flags", None) or [])
+                    _merged_rows, _aside = filter_roster(_merged_rows, _site_atoms, _lt, _flags)
                     if _aside:
                         _sr_block["set_aside_sites"] = _aside
                         _folded += len(_aside)

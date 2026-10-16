@@ -56,3 +56,17 @@ def test_town_row_stays_apart_when_two_sites_share_the_town():
             {"site": "site:danvers_ma_01923", "display_name": "Danvers MA 01923"}]
     out, folded = merge_roster(rows)
     assert folded == 0
+
+
+def test_a_signature_address_with_a_street_is_set_aside():
+    from app.core.site_identity import filter_roster
+
+    rows = [_row("site:323_lakeside", "Brooksource", "323 Lakeside Ave", "Cleveland", "44113"),
+            _row("site:625_w_adams", "CDW", "625 W. Adams", "Chicago", "60661"),
+            _row("site:2390_satellite", "SG", "2390 Satellite Blvd", "Buford", "30518")]
+    atoms = {"site:323_lakeside": ["a1"], "site:625_w_adams": ["a2"], "site:2390_satellite": ["a3"]}
+    types = {"a1": ["physical_site", 0.77], "a2": ["stakeholder", 0.97], "a3": ["physical_site", 0.8]}
+    flags = {"a3": ["vendor_address_suspected"]}
+    kept, aside = filter_roster(rows, atoms, types, flags)
+    assert [r["site"] for r in kept] == ["site:323_lakeside"]
+    assert {r["site"] for r in aside} == {"site:625_w_adams", "site:2390_satellite"}

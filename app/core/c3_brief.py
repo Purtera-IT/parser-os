@@ -35,6 +35,8 @@ log = logging.getLogger(__name__)
 KEEP_BAR = 0.9           # co_action keep at or above this: in the brief body (71% right on unseen 010043)
 MAYBE_BAR = 0.5          # keep between MAYBE_BAR and KEEP_BAR: "also mentioned"
 SECTION_BAR = 0.4
+#: The owner head moves a line out of customer responsibilities above this.
+OWNER_BAR = 0.75
 NOISE_BAR = 0.6
 SERVICE_BAR = 0.6
 QUESTION_BAR = 0.5
@@ -43,7 +45,7 @@ QUESTION_KEY = "jdg:gap"
 #: best first, before the writing call drops the ones the deal answers.
 #: 0 = no cap: the head decides how many (its scores are calibrated).
 QUESTIONS_PER_FAMILY = int(os.environ.get("SOWSMITH_C3_QUESTIONS_PER_FAMILY", "0"))
-EVIDENCE_LINES = 3
+EVIDENCE_LINES = 5
 #: Catalog questions at or above this p_valid are asked. Chosen on 010043
 #: (validation deal): its top 7 were all valid, the head's own 0.5 cut found 2
 #: of 13. SOWSMITH_C3_QUESTION_BAR overrides.
@@ -82,6 +84,18 @@ NEVER = frozenset({"small_talk", "raw_utterance", "raw_table_row", "dropped_shee
                    "schematic_detection_target_set", "schematic_symbol_detection", "schematic_line_run"})
 _PLACEHOLDER = re.compile(r"\s*\[(image|figure|table) awaiting", re.I)
 QUESTION_WANTS = ("chase-artifact", "chase-conversation", "confirm-with-customer", "decide-internally")
+
+
+def _derived(atom: Any) -> bool:
+    """A line the parser made up from other lines, not one a document has."""
+    try:
+        for ref in getattr(atom, "source_refs", None) or []:
+            loc = getattr(ref, "locator", None) or (ref.get("locator") if isinstance(ref, dict) else None)
+            if isinstance(loc, dict) and loc.get("derived"):
+                return True
+    except Exception:
+        pass
+    return any(str(f).startswith("derived_") for f in (getattr(atom, "review_flags", None) or []))
 
 
 def enabled() -> bool:
@@ -142,9 +156,19 @@ def _attach_evidence(questions: list[dict[str, Any]], atoms: list[Any]) -> None:
         log.info("C3 brief evidence skipped: %s", type(exc).__name__)
         return
     for q, row in zip(questions, sims):
-        top = np.argsort(-row)[:EVIDENCE_LINES]
-        q["evidence"] = [{"id": str(pool[i].id), "text": pool[i].raw_text[:240], "sim": round(float(row[i]), 3)}
-                         for i in top if row[i] > 0]
+        # Distinct lines only: the same clause repeated across drafts ("PAYMENT
+        # TERMS" twice, one travel sentence three times on 010038) filled every
+        # slot, and the line that answers the question ("Net 30") was crowded out.
+        ev, seen = [], set()
+        for i in np.argsort(-row):
+            if row[i] <= 0 or len(ev) >= EVIDENCE_LINES:
+                break
+            key = re.sub(r"\W+", " ", pool[i].raw_text.lower()).strip()[:160]
+            if key in seen:
+                continue
+            seen.add(key)
+            ev.append({"id": str(pool[i].id), "text": pool[i].raw_text[:240], "sim": round(float(row[i]), 3)})
+        q["evidence"] = ev
 
 
 def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None,
@@ -198,6 +222,14 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             left_out.append({"id": aid, "reason": "old_manual_deal_kit", "by": "rule:document"})
             why["rule:deal_kit"] += 1
             continue
+        # A line the parser wrote itself ("stage: awaiting site survey --
+        # Derived from the step outstanding") says nothing a document says;
+        # on 010038 two such lines became "a site survey is pending" on a job
+        # already done. Labeled co_action ignore / parser_derived.
+        if _derived(a):
+            left_out.append({"id": aid, "reason": "parser_derived", "by": "rule:derived"})
+            why["rule:derived"] += 1
+            continue
         act, p = r(aid, "read:co_action") if use["read:co_action"] else ("_absent", 0.0)
         if status == "rejected" or (t in NEVER and not (t == "small_talk" and act == "keep" and p >= 0.9)):
             left_out.append({"id": aid, "reason": "rejected" if status == "rejected" else f"type {t}",
@@ -235,6 +267,15 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             sec_by = _by("read:sow_section")
         else:
             sec, sec_by = SECTION_BY_TYPE.get(_type(a), "other"), "rule:type"
+        # Our technician's work is never the customer's responsibility. On
+        # 010038 the section head, unsure (0.42-0.56), filed "Remove the TVs
+        # and mounts from the OLD site" there while the owner head said
+        # technician at 0.80-0.94; on the labeled deal the owner head said
+        # technician at >= 0.75 on 82 of 94 scope lines and on no customer line.
+        if sec == "customer_responsibilities" and have_reads:
+            own, po = r(aid, "read:task_owner_role")
+            if own == "technician" and po >= OWNER_BAR:
+                sec, sec_by = "scope_of_work", "base:read:task_owner_role"
         sections[sec].append({"id": aid, "text": a.raw_text[:400], "type": _type(a),
                               "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by})
     for sec in sections:
@@ -415,7 +456,9 @@ _ASK_PROMPT = (
     "{\"answered\": [{\"id\": question id, \"by\": line id}]}. Return {\"answered\": []} if none.\n"
     "SERVICE: %s\nQUESTIONS: %s"
 )
-ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "40"))
+#: Questions per answered-check call. At 40, one 010038 call answered 9 and
+#: the same call again answered none; at 12 it answered 6-8 every time.
+ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "12"))
 #: The prose answer's token cap. 2,000 cut off 010043's brief (it runs ~1,800).
 PROSE_TOKENS = int(os.environ.get("SOWSMITH_C3_BRIEF_PROSE_TOKENS", "3500"))
 

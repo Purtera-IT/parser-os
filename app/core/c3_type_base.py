@@ -534,7 +534,7 @@ def document_job_enabled() -> bool:
 #: one read of the deal when ``SOWSMITH_C3_BRIEF`` is on.
 BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
                     "read:scope_facet", "col:wants", "read:intake_gap", "read:needed_by",
-                    "read:blocked_on", "read:superseded",
+                    "read:blocked_on", "read:superseded", "read:task_owner_role",
                     # Site role for site_geo_fallback (line_reading): on the labeled
                     # deals the base was right 241/243, the LLM/parser 234/243.
                     "jdg:site_role", "jdg:geo_mention")
@@ -1061,6 +1061,79 @@ def base_decided(atom: Any) -> bool:
     v = getattr(atom, "value", None)
     lab = v.get("c3_label") if isinstance(v, dict) else None
     return isinstance(lab, dict) and lab.get("act") in ("authority", "assign", "keep", "fill")
+
+
+def reread_if_new(atoms: list[Any]) -> int:
+    """Read the deal again when lines were created after the base's read
+    (signature splits, site backfills, geo mentions): 97 of 010038's labeled
+    lines had no reading at all, so no head ever judged them. The read is of
+    the whole deal (a line is read in its document's context) and replaces the
+    first one. Returns the lines that were new."""
+    if not authority_enabled() or "types" not in _DEAL:
+        return 0
+    seen = _DEAL.get("types") or {}
+    sha = _DEAL.get("sha")
+    new = 0
+    for a in atoms:
+        if str(getattr(a, "id", "") or "") in seen:
+            continue
+        try:
+            if skipped(a, sha):
+                continue
+        except Exception:
+            pass
+        new += 1
+    if not new:
+        return 0
+    _DEAL.update(docs={}, reads={}, links=[], deal={}, questions=[])
+    documents(atoms)
+    return new
+
+
+def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
+    """Apply the base's answer to every line still carrying one unapplied
+    (``value.c3_base_says``): a type with no fields is assigned, a type whose
+    fields something reads is filled by the LLM, as typing does. On 010038
+    56 lines kept a generic type although the base had them right (the OLD and
+    NEW site lines at 1.00, a CDW contact at 0.94). Returns (assigned, filled)."""
+    from app.core.schemas import AtomType
+
+    try:
+        from app.core.typed_atom_classifier import _TAXONOMY, _c3_fill_types, _fill_values
+    except Exception:
+        return 0, 0
+    sha = _DEAL.get("sha")
+    fills, assigned = [], 0
+    for a in atoms:
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict) or isinstance(v.get("c3_label"), dict):
+            continue
+        says = v.get("c3_base_says")
+        if not isinstance(says, dict) or not says.get("type"):
+            continue
+        try:
+            if skipped(a, sha):
+                continue
+        except Exception:
+            pass
+        ans, p = str(says["type"]), float(says.get("p") or 0.0)
+        if p < _authority_bar(ans) or ans in _AUTHORITY_SKIP:
+            continue
+        try:
+            t = AtomType(ans)
+        except ValueError:
+            continue
+        if ans in _TAXONOMY and ans in _c3_fill_types():
+            fills.append((a, (t, ans)))
+            continue
+        before = str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", "")) or "")
+        a.atom_type = t
+        a.value = {**v, "c3_label": {"type": ans, "p": round(p, 3), "act": "authority", "was": before}}
+        assigned += 1
+    filled = 0
+    if fills:
+        filled, _back = _fill_values(fills)
+    return assigned, filled
 
 
 def apply_authority(atoms: list[Any], *, final: bool = False) -> int:

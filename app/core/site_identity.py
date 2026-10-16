@@ -158,34 +158,50 @@ def merge_roster(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]
     return [r for i, r in enumerate(rows) if i not in drop], len(drop)
 
 
-#: A roster site with no street address survives when at least one line that
-#: names it reads as physical_site at this bar. On 010082 / 010115 a shared
-#: call transcript ("whether it's the Seattle Mariners Stadium or the Las Vegas
-#: Convention center") put five such places on both rosters; the base read
-#: those lines as small_talk / stakeholder / deal_metadata (<= 0.65 site), and
-#: every real address line as physical_site at 0.73-1.00.
+#: A roster site survives when at least one line that names it reads as
+#: physical_site at this bar. On 010082 / 010115 a shared call transcript
+#: ("whether it's the Seattle Mariners Stadium or the Las Vegas Convention
+#: center") put five such places on both rosters; the base read those lines as
+#: small_talk / stakeholder / deal_metadata (<= 0.65 site), and every real
+#: address line as physical_site at 0.73-1.00.
 MENTION_SITE_BAR = 0.7
+#: A line a rule flagged as a vendor's or sender's address (email signature)
+#: counts as a site line only above this. On 010038 four of six roster rows
+#: were signature addresses (CDW Chicago, SG Buford ...): rows that had a
+#: street, so the street exemption kept them; the base read CDW's as a
+#: stakeholder at 0.97.
+VENDOR_SITE_BAR = 0.9
 
 
 def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
-                  line_types: dict[str, list]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(kept rows, set-aside rows). Only rows with no street address are
-    judged, only when the base read at least one of their lines, and never all
-    rows. A set-aside row keeps its evidence and the reason."""
+                  line_types: dict[str, list], flags: dict[str, list[str]] | None = None
+                  ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(kept rows, set-aside rows). A row is judged when the base read at
+    least one of its lines, street address or not, and never all rows. A
+    set-aside row keeps its evidence and the reason."""
+    flags = flags or {}
     kept, aside = [], []
     for r in rows:
-        street = str(r.get("street_address") or r.get("address") or "").strip()
-        ids = site_atoms.get(str(r.get("site") or ""), [])
-        reads = [line_types[i] for i in ids if i in line_types and line_types[i]]
-        if street[:1].isdigit() or not reads:
+        ids = [i for i in site_atoms.get(str(r.get("site") or ""), []) if line_types.get(i)]
+        if not ids:
             kept.append(r)
             continue
-        best = max((float(p or 0) for t, p in reads if t == "physical_site"), default=0.0)
-        if best >= MENTION_SITE_BAR:
+        best = 0.0
+        for i in ids:
+            t, p = line_types[i]
+            if t != "physical_site":
+                continue
+            bar = VENDOR_SITE_BAR if "vendor_address_suspected" in (flags.get(i) or []) else MENTION_SITE_BAR
+            if float(p or 0) >= bar:
+                best = max(best, float(p or 0))
+        if best:
             kept.append(r)
         else:
+            reads = [line_types[i] for i in ids]
+            top = max(reads, key=lambda x: float(x[1] or 0))
             aside.append({**r, "set_aside": "mention_only",
-                          "reason": f"no line naming it reads as a site (best {best:.2f} of {len(reads)} read)"})
+                          "reason": f"no line naming it reads as a job site ({len(reads)} read; "
+                                    f"most sure: {top[0]} {float(top[1] or 0):.2f})"})
     if not kept:
         return rows, []
     return kept, aside

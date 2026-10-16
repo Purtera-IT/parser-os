@@ -744,3 +744,15 @@ def test_rows_never_repeat_an_atom_id():
     _, rows, keys = c3._rows(atoms, {})
     ids = [r["atom_id"] for r in rows]
     assert len(set(ids)) == 2 and len(set(keys)) == 2
+
+
+def test_value_fill_survives_nanos_malformed_json():
+    from app.core.typed_atom_classifier import _parse_response
+
+    extra_brace = ('{"results": [{"atom_id": "a1", "atom_type": "stakeholder", "value": {"name": "Rob"}}}, '
+                   '{"atom_id": "a2", "atom_type": "payment_term", "value": {"days": 30}}]}')
+    two_objects = ('{"results": [{"atom_id": "a1", "atom_type": "payment_term", "value": {}}]}\n'
+                   '{"results": [{"atom_id": "a2", "atom_type": "stakeholder", "value": {"name": "Ann"}}]}')
+    assert set(_parse_response(extra_brace)) == {"a1", "a2"}
+    got = _parse_response(two_objects)
+    assert set(got) == {"a1", "a2"} and got["a2"]["value"] == {"name": "Ann"}

@@ -3629,6 +3629,14 @@ def compile_project(
     try:
         from app.core import c3_type_base as _c3_final
 
+        _new = _c3_final.reread_if_new(atoms)
+        if _new:
+            _late = _c3_final.apply_authority(atoms)
+            warnings.append(f"INFO: C3 base re-read the deal for {_new} line(s) created after its read; "
+                            f"typed {_late}")
+        _sa, _sf = _c3_final.settle_base_answers(atoms)
+        if _sa or _sf:
+            warnings.append(f"INFO: C3 base answers applied late: {_sa} assigned, {_sf} filled")
         _fl = _c3_final.apply_final_labels(atoms)
         if _fl:
             warnings.append(f"INFO: {_fl} line(s) typed by the C3 base at the end of the compile")
