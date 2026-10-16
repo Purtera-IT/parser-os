@@ -290,7 +290,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                               "asked_as": q["text"],
                               "family": m.get("family", ""), "layer": m.get("layer", "base"),
                               "p": round(p_valid, 3), "by": _by(QUESTION_KEY), "owner": "project_manager"})
+    _t_ev = time.monotonic()
     _attach_evidence([q for q in questions if q["id"].startswith("q:")], atoms)
+    evidence_ms = round((time.monotonic() - _t_ev) * 1000, 1)
     for a in atoms:
         aid = str(a.id)
         hit = None
@@ -365,6 +367,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         },
         "label_next": label_tasks[:MAX_LABEL_TASKS],
         "assemble_ms": round((time.monotonic() - started) * 1000, 1),
+        "evidence_ms": evidence_ms,
     }
     _stamp_layers(brief)
     return brief
@@ -399,7 +402,7 @@ _ASK_PROMPT = (
     "each one decide: is it already answered by those lines? If yes, mark it answered and cite the line that "
     "answers it. If not, rewrite it as one short question specific to THIS job (name the site, device, "
     "count or document from the lines when they show it), and cite the lines that make it relevant. Never "
-    "invent a fact. Add to the JSON: \"checked_questions\": [{\"id\": str, \"answered\": bool, "
+    "invent a fact. Return exactly one entry for EVERY candidate id. Add to the JSON: \"checked_questions\": [{\"id\": str, \"answered\": bool, "
     "\"answered_by\": [line id], \"ask\": str, \"cites\": [line id]}].\n%s"
 )
 
@@ -459,9 +462,18 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
         else:
             asked.append({"id": q["id"], "question": str(c.get("ask") or q["text"]), "family": q.get("family"),
                           "owner": q["owner"], "p": q.get("p"), "cites": ok(c.get("cites"))})
+    # Lose nothing: a candidate the call did not mark answered (with a line
+    # that answers it) stays asked, in its own wording. On 010043 the call
+    # returned 4 of 22 and the other 18 vanished.
+    checked = {a["id"] for a in asked} | {a["id"] for a in answered}
+    unchecked = [q for q in catalog if q["id"] not in checked]
+    for q in unchecked:
+        asked.append({"id": q["id"], "question": q["text"], "family": q.get("family"), "owner": q["owner"],
+                      "p": q.get("p"), "cites": [], "unchecked": True})
+    asked.sort(key=lambda a: -(a.get("p") or 0))
     out.update(summary=doc.get("summary", ""), sections=doc.get("sections") or {},
                open_questions=doc.get("open_questions") or [], uncited_dropped=dropped,
-               catalog_questions=asked, answered_in_deal=answered)
+               catalog_questions=asked, answered_in_deal=answered, unchecked=len(unchecked))
     return out
 
 
