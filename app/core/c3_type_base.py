@@ -1058,10 +1058,20 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
     if not readings:
         return 0
     n = 0
+    sha = _DEAL.get("sha")
     for a in atoms:
         got = readings.get(str(getattr(a, "id", "") or ""))
         if not got or got[0] in _AUTHORITY_SKIP:
             continue
+        # A Deal Kit or estimating sheet is the owner's training data, not a
+        # document the base reads (it never trained on one): its lines keep the
+        # parser's type. Counting them was what made the base look worse than
+        # the parser on 010043 (rate_card on 212 kit lines).
+        try:
+            if skipped(a, sha):
+                continue
+        except Exception:
+            pass
         ans, p = str(got[0]), float(got[1] or 0.0)
         if p < _authority_bar(ans):
             continue

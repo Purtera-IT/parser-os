@@ -720,3 +720,15 @@ def test_roster_rows_and_teacher_lessons_never_delete_sites():
     row = NS(source_refs=[NS(extraction_method="xlsx_site_roster_v1", locator={})],
              value={"kind": "physical_site", "site_id": "ORD_Chicago_112"})
     assert sgf._is_roster_site(row)
+
+
+def test_authority_leaves_deal_kit_lines_as_parsed(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    monkeypatch.setenv("SOWSMITH_C3_AUTHORITY", "on")
+    c3._DEAL.clear()
+    c3._DEAL.update(types={"k1": ["rate_card", 0.99]}, sha={})
+    kit = NS(id="k1", atom_type="pricing_assumption", value={}, review_flags=[],
+             source_refs=[NS(filename="010043-Deal Kit.xlsx", locator={})])
+    assert c3.apply_authority([kit]) == 0 and kit.atom_type == "pricing_assumption"
+    c3._DEAL.clear()
