@@ -26,6 +26,14 @@ def _stub_read(model, deal, schema, **kw):
     return {"lines": lines}
 
 
+@pytest.fixture(autouse=True)
+def _fresh_deal_context():
+    """No deal read left behind by another test (c3._DEAL is process-wide)."""
+    c3._DEAL.clear()
+    yield
+    c3._DEAL.clear()
+
+
 @pytest.fixture()
 def service(monkeypatch):
     def _start(model="ok", token=""):

@@ -397,8 +397,10 @@ def _stamp_layers(brief: dict[str, Any]) -> None:
 
 
 _PROMPT = (
-    "Write a project manager's brief from these facts. Every sentence must cite the [ids] of the facts it "
-    "uses, and say nothing that is not in a fact. Return JSON only: {\"summary\": str, \"sections\": "
+    "Write a short project manager's brief from these facts: a summary of at most 4 sentences, and at most 4 "
+    "short sentences per section (the facts themselves are listed under the brief, so do not restate every "
+    "one). Every sentence must cite the [ids] of the facts it uses, and say nothing that is not in a fact. "
+    "Return JSON only: {\"summary\": str, \"sections\": "
     "{section: [{\"text\": str, \"cites\": [id]}]}, \"open_questions\": [{\"question\": str, \"owner\": str, "
     "\"cites\": [id]}]}.\n\nSERVICE: %s\nFACTS BY SECTION: %s\nOPEN QUESTIONS: %s\nCONFLICTS: %s"
 )
@@ -407,9 +409,10 @@ _ASK_PROMPT = (
     "Check open questions for a field-services job. Each candidate has an id, a question, and the deal lines "
     "closest to it [line ids]. For EVERY candidate decide: does one of those lines STATE the answer? Mark it "
     "answered only when a line gives the specific answer (a date, a number, a name, a yes or no, the term "
-    "itself). A line that only mentions the topic, or says something will be decided later, does NOT answer "
-    "it. If answered, cite the line that answers it. If not, rewrite it as one short, plain question a project "
-    "manager would ask the customer about THIS job: name the site, device, count or document the lines show. "
+    "itself). A line that only mentions the topic, a table heading, or a line saying something will be "
+    "decided later does NOT answer it. If answered, cite the line that answers it. If not, rewrite it as one short, plain question a project "
+    "manager would ask the customer about THIS job, at most 20 words, naming the real site, device, count or "
+    "document the lines show (say \"the three Verkada cameras at the Charlotte office\", not \"this job\"). "
     "Never put line ids, brackets or internal service codes (like low_voltage_cabling) in the question text; "
     "line ids go only in cites. Never invent a fact. Return JSON only: {\"checked\": [{\"id\": str, \"answered\": bool, "
     "\"answered_by\": [line id], \"ask\": str, \"cites\": [line id]}]} with one entry per candidate.\n"
@@ -429,11 +432,20 @@ def _json_of(raw: str) -> dict[str, Any] | None:
 
 
 def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
+    """One call, retried once when it comes back empty or unparseable
+    (llm_client returns "" on any failure, a throttled burst included: one of
+    010043's two question batches came back empty and its 32 went unchecked)."""
     from app.core import llm_client
 
-    return llm_client.complete(prompt, max_tokens=max_tokens,
-                               model=model or os.environ.get("SOWSMITH_C3_BRIEF_MODEL") or None,
-                               timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "120")))
+    for attempt in range(2):
+        raw = llm_client.complete(prompt, max_tokens=max_tokens,
+                                  model=model or os.environ.get("SOWSMITH_C3_BRIEF_MODEL") or None,
+                                  timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "60")))
+        if _json_of(raw) is not None:
+            return raw
+        if attempt == 0:
+            time.sleep(1.0)
+    return raw
 
 
 def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
@@ -457,11 +469,11 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
         prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(facts), json.dumps(qs), json.dumps(cs)),
-                              model, 4000)
+                              model, 1500)
         ask_f = [pool.submit(_complete, _ASK_PROMPT % (service, json.dumps(
             [{"id": q["id"], "question": q["text"],
               "closest_lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]} for q in b])),
-            model, 3000) for b in batches]
+            model, 2000) for b in batches]
         prose_raw = prose_f.result()
         ask_raw = [f.result() for f in ask_f]
     out: dict[str, Any] = {"write_ms": round((time.monotonic() - started) * 1000, 1), "calls": 1 + len(batches)}
