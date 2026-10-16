@@ -2336,7 +2336,12 @@ def compile_project(
         if _os_sa.environ.get("SOWSMITH_SPAN_ADMISSION", "") in ("1", "true", "yes", "on"):
             try:
                 from app.core.span_admission import readmit_atom_types
-                readmitted = readmit_atom_types(atoms)
+                from app.core.c3_type_base import base_decided
+
+                # A line the base typed keeps the base's type (its final pass
+                # restores it), so re-typing it here is wasted: on a cold
+                # cache that was 335 one-line store lookups, 110 s, on 010043.
+                readmitted = readmit_atom_types([a for a in atoms if not base_decided(a)])
                 if readmitted:
                     warnings.append(
                         f"INFO: span_admission re-typed {readmitted} retained atom(s) "

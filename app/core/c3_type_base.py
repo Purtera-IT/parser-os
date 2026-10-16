@@ -1055,6 +1055,14 @@ def is_locked(atom: Any) -> bool:
     return isinstance(lab, dict) and lab.get("act") == "authority"
 
 
+def base_decided(atom: Any) -> bool:
+    """True when the base typed this line: authority, or typing's assign /
+    keep / fill on the base's answer."""
+    v = getattr(atom, "value", None)
+    lab = v.get("c3_label") if isinstance(v, dict) else None
+    return isinstance(lab, dict) and lab.get("act") in ("authority", "assign", "keep", "fill")
+
+
 def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
     """Give each line the base's type where it is sure. Before typing
     (``final=False``) and again at the end (``final=True``: a locked line a

@@ -24,8 +24,52 @@ td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums} td.ok{color:va
 code{font-family:var(--f-mono);font-size:.88em}
 </style>
 <div class=wrap>
-<header><h1>Super Heads Overnight</h1><p class=muted>Updated 16 October, afternoon: the four asks are done; see the first section.</p>
+<header><h1>Super Heads Overnight</h1><p class=muted>Updated 16 October, evening: go-live assessment first, then the four asks.</p>
 <p class=muted>Dev only; prod untouched. Branch <code>claude/c3-serve-all-heads</code>. Every number below was measured on a live dev compile or against your labels; training deals (the base learned from them) are marked as flattering, and 010043 is the deal it never trained on.</p></header>
+
+<section><h2>Ready to go live? Where it stands</h2>
+<p><b>Ready for people to use and label on dev now.</b> Going live in prod needs three things first, listed at the end.</p>
+<h3>Speed: final numbers on dev</h3>
+<div class=tbl><table><thead><tr><th>Deal</th><th>Lines</th><th>Yesterday</th><th>This morning</th><th>Now</th><th>Quality vs your labels</th></tr></thead><tbody>
+<tr><td>000002</td><td class=n>386</td><td class=n>122 s</td><td class=n>105 s</td><td class="n ok">74 s</td><td>keep 51/52, sections 46/48</td></tr>
+<tr><td>010043</td><td class=n>2,312</td><td class=n>334 s</td><td class=n>285 s</td><td class="n ok">162 s</td><td>keep precision 0.74, sections 84/119</td></tr>
+<tr><td>010115</td><td class=n>6,898</td><td class=n>672 s</td><td class=n>468 s</td><td class="n ok">357 s</td><td>keep 0.99, sections 86/150</td></tr>
+</tbody></table></div>
+<p>What made it faster today:</p>
+<ul>
+<li><b>Parsing: 130 s → 36 s on 010043.</b> Two parser checks embedded one line per network call: 351 calls of about 0.38 s each. They now ask in one batch, and the image-label check only runs on pages that have images. The parse output is identical: all 3,811 lines of 010043's 38 files, before and after.</li>
+<li><b>nano on the small LLM jobs</b>, with 10 calls in flight instead of 5.</li>
+</ul>
+<p>Small deals are now under 2 minutes. On big deals, what's left is value filling (75 s, 94 calls on 010115) and the entity pass (32 s). Both go away when the heads run on the GPU and fill values themselves.</p>
+<h3>What a PM sees now</h3>
+<ul>
+<li><b>Headline:</b> the brief's first sentence ("This project involves installing three Verkada cameras at the Lane Construction office…").</li>
+<li><b>Overview:</b> the heads' summary, then Scope, Customer responsibilities, Out of scope, Schedule, Fees and Terms, each sentence drawn only from cited lines.</li>
+<li><b>Questions:</b> the deal's own questions first, then the catalog questions the base asked, each with the file and line it rests on. The old pipeline's questions stay in the audit pool.</li>
+</ul>
+<p>Three things on dev had been overwriting this:</p>
+<ul>
+<li>Core's own overview writer;</li>
+<li>its polish LLM;</li>
+<li>a headline template in the Function App (<a href="https://github.com/Purtera-IT/Platform-infra/pull/631">Platform-infra PR #631</a>).</li>
+</ul>
+<p>All three now leave the heads' brief alone.</p>
+<h3>If the Mac that serves the heads is off</h3>
+<p>Nothing breaks. Lines with no reading go to the LLM typing path as before. With no heads' brief, the PM page falls back to Core's old pipeline. The compile is slower and back at the old quality.</p>
+<h3>Before prod</h3>
+<ol>
+<li><b>The heads on the Azure GPU</b>, not the Mac. The Mac is one machine behind a relay and fine for dev, but prod needs it always on. The GPU quota ticket is still pending.</li>
+<li><b>Merge and migrate, in one go:</b>
+<ul>
+<li>parser-os branch <code>claude/c3-serve-all-heads</code>;</li>
+<li><a href="https://github.com/Purtera-IT/Orbitbrief-Core/pull/89">Core PR #89</a>;</li>
+<li><a href="https://github.com/Purtera-IT/Platform-infra/pull/631">Platform-infra PR #631</a>;</li>
+<li>the env switches (<code>SOWSMITH_C3_*</code>, <code>SOWSMITH_SMALL_MODEL</code>, <code>SOWSMITH_LLM_PARALLEL=10</code>, <code>ORBITBRIEF_C3_BRIEF</code>);</li>
+<li>a gpt-4.1-nano deployment on the prod Azure account.</li>
+</ul></li>
+<li><b>Severity:</b> every heads' question is a "clarification" until a severity head exists. PMs will see no blockers from the heads. Label blocker vs clarification on the Questions card to train it.</li>
+</ol>
+</section>
 
 <section><h2>Today: the four asks</h2><ol>
 <li><b>The PM page reads the heads' brief.</b> Orbitbrief-Core now builds the handoff's questions from <code>c3_brief</code>: first the questions the deal itself asks (cited lines), then the catalog questions the base asked, most likely first. Its summary line also comes from the brief. The old pipeline's questions move to the audit pool, so nothing is lost. It is behind <code>ORBITBRIEF_C3_BRIEF</code>, which is on in dev only (Core revision 0000140, <a href="https://github.com/Purtera-IT/Orbitbrief-Core/pull/89">Core PR #89</a>, not merged). Live on 010043, the page opens with the brief's summary ("installing three Verkada cameras at the Lane Construction office… 6125 Tyvola Centre Drive"). Next come the deal's own five questions (camera model/BOM, address and quantity, the 2-camera quote, an NC install partner, cable lengths), each citing its email. Then 44 catalog questions, and six cited sections. Severity is not a head yet, so every question is a clarification and none is a blocker.</li>
