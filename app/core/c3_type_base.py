@@ -455,11 +455,20 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     have = {str(d.get("doc_id")) for d in docs}
     lines, keys, seen = [], [], set()
     extra: dict[str, dict[str, Any]] = {}
+    seen_ids: set[str] = set()
     for i, a in enumerate(atoms):
         key = _key(a, i)
         if key in seen:
             key = f"{key}#{i}"
         seen.add(key)
+        # The base refuses a read in which two lines share an atom id
+        # (data.DealExample.from_dict), and a compile can hold duplicates at
+        # this point (ids are made unique later): 010115 read nothing at all
+        # and typed every line with the LLM. A repeat carries its unique key.
+        aid = str(getattr(a, "id", "") or "")
+        if aid in seen_ids:
+            aid = key
+        seen_ids.add(aid)
         keys.append(key)
         d = _doc_id(a)
         if d not in have:
@@ -472,7 +481,7 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         role, side = _speaker(a)
         lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
                       "section": _section(a), "order": float(i), "speaker_role": role,
-                      "speaker_side": side, "atom_id": str(getattr(a, "id", "") or "")})
+                      "speaker_side": side, "atom_id": aid})
     rank = _reading_rank(atoms, docs)
     if rank is not None:
         for ln, r in zip(lines, rank):

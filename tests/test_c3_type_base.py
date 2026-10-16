@@ -732,3 +732,14 @@ def test_authority_leaves_deal_kit_lines_as_parsed(monkeypatch):
              source_refs=[NS(filename="010043-Deal Kit.xlsx", locator={})])
     assert c3.apply_authority([kit]) == 0 and kit.atom_type == "pricing_assumption"
     c3._DEAL.clear()
+
+
+def test_rows_never_repeat_an_atom_id():
+    from types import SimpleNamespace as NS
+
+    c3._DEAL.clear()
+    atoms = [NS(id="a1", raw_text="one", source_refs=[], value={}, atom_type="task", artifact_id="d1"),
+             NS(id="a1", raw_text="two", source_refs=[], value={}, atom_type="task", artifact_id="d1")]
+    _, rows, keys = c3._rows(atoms, {})
+    ids = [r["atom_id"] for r in rows]
+    assert len(set(ids)) == 2 and len(set(keys)) == 2
