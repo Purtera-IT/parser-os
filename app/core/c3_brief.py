@@ -397,8 +397,9 @@ def _stamp_layers(brief: dict[str, Any]) -> None:
 
 
 _PROMPT = (
-    "Write a short project manager's brief from these facts: a summary of at most 4 sentences, and at most 4 "
-    "short sentences per section (the facts themselves are listed under the brief, so do not restate every "
+    "Write a short project manager's brief from these facts: a summary of at most 3 sentences, and at most 3 "
+    "short sentences for each of at most 6 sections (the ones a PM reads first: scope, customer "
+    "responsibilities, out of scope, schedule, fees, terms) (the facts themselves are listed under the brief, so do not restate every "
     "one). Every sentence must cite the [ids] of the facts it uses, and say nothing that is not in a fact. "
     "Return JSON only: {\"summary\": str, \"sections\": "
     "{section: [{\"text\": str, \"cites\": [id]}]}, \"open_questions\": [{\"question\": str, \"owner\": str, "
@@ -406,19 +407,15 @@ _PROMPT = (
 )
 
 _ASK_PROMPT = (
-    "Check open questions for a field-services job. Each candidate has an id, a question, and the deal lines "
-    "closest to it [line ids]. For EVERY candidate decide: does one of those lines STATE the answer? Mark it "
-    "answered only when a line gives the specific answer (a date, a number, a name, a yes or no, the term "
-    "itself). A line that only mentions the topic, a table heading, or a line saying something will be "
-    "decided later does NOT answer it. If answered, cite the line that answers it. If not, rewrite it as one short, plain question a project "
-    "manager would ask the customer about THIS job, at most 20 words, naming the real site, device, count or "
-    "document the lines show (say \"the three Verkada cameras at the Charlotte office\", not \"this job\"). "
-    "Never put line ids, brackets or internal service codes (like low_voltage_cabling) in the question text; "
-    "line ids go only in cites. Never invent a fact. Return JSON only: {\"checked\": [{\"id\": str, \"answered\": bool, "
-    "\"answered_by\": [line id], \"ask\": str, \"cites\": [line id]}]} with one entry per candidate.\n"
-    "SERVICE: %s\nCANDIDATES: %s"
+    "Which of these open questions about a field-services job do the given deal lines already ANSWER? A line "
+    "answers a question only when it states the specific answer (a date, a number, a name, a yes or no, the "
+    "term itself). A line that only mentions the topic, a table heading, or a line saying it will be decided "
+    "later does NOT answer it. A contract's effective date is not a start or go-live date, and a payment "
+    "milestone is not a schedule. Return JSON only, listing ONLY the answered ones: "
+    "{\"answered\": [{\"id\": question id, \"by\": line id}]}. Return {\"answered\": []} if none.\n"
+    "SERVICE: %s\nQUESTIONS: %s"
 )
-ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "32"))
+ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "40"))
 
 
 def _json_of(raw: str) -> dict[str, Any] | None:
@@ -429,6 +426,15 @@ def _json_of(raw: str) -> dict[str, Any] | None:
         return json.loads(m.group(0))
     except Exception:
         return None
+
+
+def _in_failed(q: dict[str, Any], batches: list[list[dict[str, Any]]], raws: list[str]) -> bool:
+    """Whether this question's batch came back unusable (it then counts as
+    unchecked, never dropped)."""
+    for b, raw in zip(batches, raws):
+        if any(x["id"] == q["id"] for x in b):
+            return _json_of(raw) is None
+    return False
 
 
 def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
@@ -469,11 +475,11 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
         prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(facts), json.dumps(qs), json.dumps(cs)),
-                              model, 1500)
+                              model, 2000)
         ask_f = [pool.submit(_complete, _ASK_PROMPT % (service, json.dumps(
-            [{"id": q["id"], "question": q["text"],
-              "closest_lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]} for q in b])),
-            model, 2000) for b in batches]
+            [{"id": q["id"], "q": q["text"],
+              "lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]} for q in b])),
+            model, 600) for b in batches]
         prose_raw = prose_f.result()
         ask_raw = [f.result() for f in ask_f]
     out: dict[str, Any] = {"write_ms": round((time.monotonic() - started) * 1000, 1), "calls": 1 + len(batches)}
@@ -501,15 +507,17 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
         if got is None:
             failed += 1
             continue
-        for c in got.get("checked") or []:
+        for c in got.get("answered") or []:
             q = by_qid.get(str(c.get("id")))
-            if q is None or q["id"] in {a["id"] for a in asked + answered}:
-                continue
-            if c.get("answered") and ok(c.get("answered_by")):
-                answered.append({"id": q["id"], "question": q["text"], "answered_by": ok(c.get("answered_by"))})
-            else:
-                asked.append({"id": q["id"], "question": str(c.get("ask") or q["text"]), "family": q.get("family"),
-                              "owner": q["owner"], "p": q.get("p"), "cites": ok(c.get("cites"))})
+            by = ok([c.get("by")] if not isinstance(c.get("by"), list) else c.get("by"))
+            if q is not None and by and q["id"] not in {a["id"] for a in answered}:
+                answered.append({"id": q["id"], "question": q["text"], "answered_by": by})
+    done = {a["id"] for a in answered}
+    for q in catalog:
+        if q["id"] not in done and not (failed and _in_failed(q, batches, ask_raw)):
+            asked.append({"id": q["id"], "question": q["text"], "family": q.get("family"),
+                          "owner": q["owner"], "p": q.get("p"),
+                          "cites": [e["id"] for e in (q.get("evidence") or [])[:1]]})
     checked = {a["id"] for a in asked} | {a["id"] for a in answered}
     unchecked = [q for q in catalog if q["id"] not in checked]
     for q in unchecked:
