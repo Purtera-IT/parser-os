@@ -241,6 +241,16 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
 QUESTION_KEY = "jdg:gap"
 
 
+def _query_features(model: C3Model, texts: list[str]):
+    """judgment_query(aux_text(t)) per text, cached on the model."""
+    cache = model.__dict__.setdefault("_question_cache", {})
+    todo = [t for t in dict.fromkeys(texts) if t not in cache]
+    if todo:
+        for t, f in zip(todo, model.judgment_query(model.aux_text(todo))):
+            cache[t] = f.detach()
+    return torch.stack([cache[t] for t in texts])
+
+
 def _ask_questions(model: C3Model, out, batch: Batch, schema: Schema, questions: tuple[str, ...],
                    chunk: int = 64) -> list[dict[str, Any]]:
     """Each question asked of the whole deal (every line not excluded is its
@@ -249,15 +259,21 @@ def _ask_questions(model: C3Model, out, batch: Batch, schema: Schema, questions:
     every = tuple(range(len(batch)))
     valid = [a.value for a in opp.answers].index("valid")
     rows: list[dict[str, Any]] = []
+    # The deal is pooled once; each question's text features are encoded once
+    # per server and kept (the catalog barely changes): judge() re-encoded all
+    # 154 per compile, 20 s of a 24 s read on 010043.
+    pooled = model.judgment_features(out, QUESTION_KEY, [every], queries=[""])
+    desc = model.describe()
+    refit = getattr(model, "question_refit", None)
     for at in range(0, len(questions), chunk):
         part = list(questions[at:at + chunk])
-        logits = model.judge(out, QUESTION_KEY, [every] * len(part), queries=part).float()
-        refit = getattr(model, "question_refit", None)
+        qf = _query_features(model, part)
+        features = pooled.expand(len(part), -1) + qf.to(pooled.dtype)
+        logits, _ = model.judgment_head(features, desc[QUESTION_KEY][0].unsqueeze(0), [desc[QUESTION_KEY][1]])
+        logits = logits[0].float()
         if refit is not None:
             # The Mac-trained add-on (question_fit.py) on the frozen head.
-            pooled = model.judgment_features(out, QUESTION_KEY, [every], queries=[""]).float()
-            q = model.judgment_query(model.aux_text(part)).float()
-            logits = logits + refit(pooled.expand(len(part), -1), q).float()
+            logits = logits + refit(pooled.float().expand(len(part), -1), qf.float()).float()
         p = logits.softmax(-1)
         cal = getattr(refit, "calibration", None) if refit is not None else None
         if cal:

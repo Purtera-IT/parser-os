@@ -76,7 +76,29 @@ def _load() -> tuple[Any, Any, str]:
         from .question_fit import load_refit
 
         model.question_refit = load_refit(refit, device)
+    _prewarm_questions(model, device)
     return model, schema, device
+
+
+def _prewarm_questions(model, device: str) -> None:
+    """Encode the question catalog once at start (predict._query_features),
+    so the first compile pays nothing for its questions."""
+    try:
+        import json as _json
+        from pathlib import Path
+
+        import torch
+
+        from .predict import _query_features, _read_autocast
+
+        path = Path(__file__).resolve().parents[2] / "c3_record" / "questions.json"
+        texts = [q["text"] for q in _json.loads(path.read_text(encoding="utf-8"))["questions"]]
+        with torch.no_grad(), _read_autocast(device):
+            for i in range(0, len(texts), 64):
+                _query_features(model, texts[i:i + 64])
+        log.info("question catalog encoded: %d", len(texts))
+    except Exception as exc:
+        log.info("question catalog not encoded at start: %s", type(exc).__name__)
 
 
 class Base:
