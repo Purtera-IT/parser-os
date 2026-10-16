@@ -163,6 +163,27 @@ _SITE_ROLE_MODEL = os.environ.get("OLLAMA_SITE_ROLE_MODEL", "qwen3:14b")
 _VENDOR_DROP_CONFIDENCE = 0.6
 
 
+def _base_site_role(atom_id: str):
+    """The C3 base's job_site / vendor reading for this site line as a
+    decide()-shaped decision (source ``c3``), or None when it is off, unsure,
+    or the line was not read."""
+    import os as _os
+    from types import SimpleNamespace
+
+    if _os.environ.get("SOWSMITH_C3_SITE_ROLE", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    try:
+        from app.core.c3_type_base import line_reading
+
+        got = line_reading(str(atom_id), "jdg:site_role")
+    except Exception:
+        return None
+    sure = float(_os.environ.get("SOWSMITH_C3_SITE_ROLE_SURE", "0.9") or 0.9)
+    if not got or got[0] not in _SITE_ROLE_CANDIDATES or got[1] < sure:
+        return None
+    return SimpleNamespace(verdict=got[0], confidence=got[1], source="c3", reason="c3 base site_role")
+
+
 def _stamp_decision(atom: Any, decision: Any) -> None:
     """Record WHY a site was demoted, on the atom itself (provenance, invariant
     I). Captures which tier decided (``store``/``llm``) and, when a learned
@@ -325,7 +346,14 @@ def suppress_vendor_sites(
             instruction=_SITE_ROLE_INSTRUCTION, context=context,
             scope=scope, model=_SITE_ROLE_MODEL, llm=False,
         )
-        # 2) bounded LLM fallback only when the store abstained AND budget remains.
+        # 2) the base's site-role reading, when it is sure (SOWSMITH_C3_SITE_ROLE):
+        #    on the labeled deals it was right 241/243 against the LLM's 234/243.
+        #    It decides like the LLM does: a vendor reading only proposes.
+        if decision.verdict is None:
+            base = _base_site_role(aid)
+            if base is not None:
+                decision = base
+        # 3) bounded LLM fallback only when nothing above decided AND budget remains.
         if decision.verdict is None and llm_budget > 0:
             decision = decide(
                 "physical_site", addr, _SITE_ROLE_CANDIDATES,

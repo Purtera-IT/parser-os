@@ -525,7 +525,17 @@ def document_job_enabled() -> bool:
 #: one read of the deal when ``SOWSMITH_C3_BRIEF`` is on.
 BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
                     "read:scope_facet", "col:wants", "read:intake_gap", "read:needed_by",
-                    "read:blocked_on", "read:superseded")
+                    "read:blocked_on", "read:superseded",
+                    # Site role for site_geo_fallback (line_reading): on the labeled
+                    # deals the base was right 241/243, the LLM/parser 234/243.
+                    "jdg:site_role", "jdg:geo_mention")
+
+
+def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
+    """This compile's base reading of one line, or None when the line was not
+    read (created after the read) or the head was not asked."""
+    v = ((_DEAL.get("reads") or {}).get(str(atom_id)) or {}).get(head)
+    return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else None
 
 
 def brief_enabled() -> bool:

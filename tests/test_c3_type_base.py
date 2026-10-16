@@ -675,3 +675,19 @@ def test_typing_can_read_no_lessons_at_all(monkeypatch):
     monkeypatch.setenv("SOWSMITH_TAUGHT_TYPES", "off")
     monkeypatch.setattr(decide_mod, "get_store", lambda: (_ for _ in ()).throw(AssertionError("read the store")))
     assert tac._apply_taught_types(_atoms()) == {}
+
+
+def test_site_role_reading_decides_before_the_llm(monkeypatch):
+    from app.core import site_geo_fallback as sgf
+
+    c3._DEAL.clear()
+    c3._DEAL.update(reads={"a1": {"jdg:site_role": ["job_site", 0.97]},
+                           "a2": {"jdg:site_role": ["vendor_or_billing_address", 0.6]}})
+    monkeypatch.setenv("SOWSMITH_C3_SITE_ROLE", "on")
+    d = sgf._base_site_role("a1")
+    assert d.verdict == "job_site" and d.source == "c3"
+    assert sgf._base_site_role("a2") is None  # unsure: the LLM decides
+    assert sgf._base_site_role("a3") is None  # not read
+    monkeypatch.setenv("SOWSMITH_C3_SITE_ROLE", "off")
+    assert sgf._base_site_role("a1") is None
+    c3._DEAL.clear()
