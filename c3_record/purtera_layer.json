@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "description": "Purtera company-layer facts the universal base cannot know. Read by c3_record.purtera.",
+  "partners": ["CDW", "SHI"],
+  "partners_evidence": "supplier=partner labels: CDW 2,117 lines on 8 deals, SHI 606 lines on 4 deals (2026-10-16)."
+}
