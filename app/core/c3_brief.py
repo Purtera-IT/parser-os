@@ -241,9 +241,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         except Exception:
             meta = {}
         svc_value = str(service.get("value") or "")
+        bar = (float(os.environ["SOWSMITH_C3_QUESTION_BAR"]) if os.environ.get("SOWSMITH_C3_QUESTION_BAR")
+               else readings.get("question_bar") or QUESTION_CATALOG_BAR)
         for q in sorted(asked, key=lambda x: -float(x.get("p_valid") or 0)):
             p_valid = float(q.get("p_valid") or 0)
-            if p_valid < QUESTION_CATALOG_BAR:
+            if p_valid < bar:
                 break
             m = meta.get(q["text"]) or {}
             if m.get("applies_to") and svc_value and svc_value not in m["applies_to"]:

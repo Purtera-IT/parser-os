@@ -557,13 +557,15 @@ def _keep_full(got: dict[str, Any]) -> None:
     if "reads" in _DEAL:
         _DEAL["reads"].update(got.get("reads") or {})
         _DEAL["questions"].extend(got.get("questions") or [])
+        if got.get("question_bar") is not None:
+            _DEAL["question_bar"] = float(got["question_bar"])
         _DEAL["links"].extend(got.get("links") or [])
         _DEAL["deal"].update(got.get("deal") or {})
 
 
 def full_read() -> dict[str, Any]:
     """This compile's readings beyond types: ``{"reads", "links", "deal"}``."""
-    return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions")}
+    return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions", "question_bar")}
 
 
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:

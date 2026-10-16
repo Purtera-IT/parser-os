@@ -57,6 +57,7 @@ def load_refit(path: str, device: str = "cpu") -> QuestionRefit:
     saved = torch.load(path, map_location="cpu", weights_only=False)
     m = QuestionRefit(saved["d"], len(saved["answers"]))
     m.load_state_dict(saved["state"])
+    m.bar = (saved.get("summary") or {}).get("bar")
     return m.to(device).eval()
 
 
@@ -129,6 +130,8 @@ def main() -> None:
     ap.add_argument("--feedback", default="")
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-atoms", type=int, default=8192)
+    ap.add_argument("--precision", type=float, default=0.68,
+                    help="held-out precision the chosen bar must reach")
     a = ap.parse_args()
 
     from .serve import _load
@@ -167,13 +170,23 @@ def main() -> None:
         y = [int(r[3] == valid) for r in rows]
         all_base += base; all_fit += fit; all_y += y
         report[Path(held).stem] = {"n": len(y), "valid": sum(y), "auc_base": _auc(base, y), "auc_refit": _auc(fit, y)}
+    # The bar the brief asks at, from held-out scores: the lowest bar whose
+    # held-out precision is at least --precision (more questions, still right).
+    bars = {}
+    for bar in [x / 100 for x in range(5, 100, 5)]:
+        said = [y for p, y in zip(all_fit, all_y) if p >= bar]
+        bars[bar] = {"asked": len(said), "precision": round(sum(said) / max(1, len(said)), 3),
+                     "recall": round(sum(said) / max(1, sum(all_y)), 3)}
+    good = [b for b, v in bars.items() if v["precision"] >= a.precision and v["asked"] >= 10]
+    summary_bar = min(good) if good else None
     summary = {"deals": len(by_deal), "verdicts": len(all_y), "valid": sum(all_y),
+               "bar": summary_bar, "bars": bars,
                "auc_base_pooled": _auc(all_base, all_y), "auc_refit_pooled": _auc(all_fit, all_y),
                "per_deal": report, "read_s": round(time.time() - started)}
     final = train([r for rs in by_deal.values() for r in rs], len(names), valid)
     torch.save({"state": final.state_dict(), "d": final.net[0].in_features // 3, "answers": names,
                 "key": QUESTION_KEY, "summary": summary}, a.out)
-    print(json.dumps({k: v for k, v in summary.items() if k != "per_deal"}, indent=1))
+    print(json.dumps({k: v for k, v in summary.items() if k not in ("per_deal",)}, indent=1))
     print(json.dumps(report, indent=1))
 
 

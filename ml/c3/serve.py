@@ -162,6 +162,9 @@ class Base:
                 for d, heads in (doc.get("documents") or {}).items()}
         if questions:
             out["questions"] = doc.get("questions") or []
+            # The bar the refit was chosen at on held-out deals (question_fit),
+            # so the asker keeps a bar that matches the scores it gets.
+            out["question_bar"] = getattr(getattr(model, "question_refit", None), "bar", None)
         return out
 
 
