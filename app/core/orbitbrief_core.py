@@ -1607,8 +1607,10 @@ def build_site_readiness(
             sid = ""
             if isinstance(val, dict):
                 sid = val.get("id") or val.get("site_id") or ""
-            if not sid:
+            if not sid or not re.search(r"[A-Za-z]{2}", str(sid)):
                 # No explicit site code → skip. Don't pollute site_readiness.
+                # A bare number is never a place: 010043's "34" (a count off
+                # a floor plan) read as a site took the Charlotte office's place.
                 continue
             # The atom's OWN entity key is the one the rest of the system uses.
             #
@@ -1716,7 +1718,7 @@ def build_site_readiness(
             if not isinstance(_val, dict):
                 continue
             _sid = _val.get("id") or _val.get("site_id") or ""
-            if not _sid:
+            if not _sid or not re.search(r"[A-Za-z]{2}", str(_sid)):
                 continue
             _canon_slug = "site:" + _re_canon.sub(
                 r"[^a-z0-9]+", "_", str(_sid).lower()

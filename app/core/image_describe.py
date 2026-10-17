@@ -30,7 +30,8 @@ Report ONLY what the image itself shows. The document text below is there only s
 legend (e.g. "3 Aruba APs" for red hexagons numbered 1-3 when the legend says red hexagons are Aruba APs);
 never repeat a fact from that text. Count a mark by its number labels (marks numbered 1, 2, 3 are 3) and
 only count what you can see clearly. Room numbers, door numbers and gridlines are not devices; count a
-device only when a legend, label or the picture itself says what it is. Ignore furniture and decoration. Never guess. If it is a logo,
+device only when a legend, label or the picture itself says what it is; a room's name is not a device, and
+a plan with no marked devices has no device counts. Ignore furniture and decoration. Never guess. If it is a logo,
 signature, banner or decoration, answer with no facts.
 DOCUMENT TEXT (legend and names only): {context}
 Return JSON only: {{"meaningful": true|false, "facts": ["one short sentence per fact"]}}
