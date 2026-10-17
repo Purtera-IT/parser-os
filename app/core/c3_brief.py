@@ -441,11 +441,7 @@ _PROMPT = (
     "Write a short project manager's brief from these facts: a summary of at most 3 sentences, and at most 3 "
     "short sentences for each of at most 6 sections (the ones a PM reads first: scope, customer "
     "responsibilities, out of scope, schedule, fees, terms) (the facts themselves are listed under the brief, so do not restate every "
-    "one). Also write a \"job details\" section of at most 8 short sentences, from the job_details facts, that a "
-    "PM prices from: count each kind of equipment or work item (\"3 access points\", \"2 TVs\"), and give models, "
-    "measurements and cable lengths, site conditions (ceiling, wall, mounting, lift or ladder) and access or "
-    "timing limits. Write it in the third person; never copy a fact word for word or quote an email; when facts "
-    "disagree, the later fact wins. Every sentence must cite the [ids] of the facts it uses, and say nothing that is not in a fact. "
+    "one). Every sentence must cite the [ids] of the facts it uses, and say nothing that is not in a fact. "
     "Return JSON only: {\"summary\": str, \"sections\": "
     "{section: [{\"text\": str, \"cites\": [id]}]}, \"open_questions\": [{\"question\": str, \"owner\": str, "
     "\"cites\": [id]}]}.\n\nSERVICE: %s\nFACTS BY SECTION: %s\nOPEN QUESTIONS: %s\nCONFLICTS: %s"
@@ -784,9 +780,10 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             log.info("C3 brief open-question check skipped: %s", type(exc).__name__)
         if isinstance(w, dict) and isinstance(w.get("sections"), dict):
             secs = w["sections"]
-            written_details = secs.pop("job details", None) or secs.pop("job_details", None)
+            written_details = _write_job_details(brief, details)
             if written_details:
                 details = written_details
+                w["job_details_written"] = True
             if details:
                 # Right after scope: the lines a PM prices from.
                 secs = dict(w["sections"])
@@ -801,6 +798,38 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             if brief["contacts"]:
                 w["sections"]["contacts"] = [{"text": c["line"], "cites": c["cites"]} for c in brief["contacts"]]
     return brief
+
+
+_DETAILS_PROMPT = (
+    "Turn these deal lines into the job details a project manager prices a field-services job from: at most 8 "
+    "short sentences. Count each kind of equipment or work item (\"3 access points\", \"2 TVs\"); give models, "
+    "measurements and cable lengths, site conditions (ceiling, wall, mounting, lift or ladder) and access or "
+    "timing limits. Write in the third person; never quote or copy a line, never write \"I\" or \"we\". When "
+    "lines disagree, the later line wins (lines are in order). Say nothing a line does not say, and cite the "
+    "[ids] each sentence uses. Return JSON only: {\"sentences\": [{\"text\": str, \"cites\": [id]}]}."
+    "\n\nSERVICE: %s\nLINES:\n%s"
+)
+
+
+def _write_job_details(brief: dict[str, Any], details: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The job-details lines worded as facts by one small call (the main
+    writer, told to add the section, kept to its six). Sentences citing
+    anything but these lines are dropped; nothing back means the raw lines stay."""
+    if not details:
+        return []
+    ids = {c for d in details for c in d.get("cites") or []}
+    lines = "\n".join(f"[{d['cites'][0]}] {d['text']}" for d in details if d.get("cites"))
+    raw = _complete(_DETAILS_PROMPT % ((brief.get("service") or {}).get("value"), lines), None, 900)
+    got = _json_of(raw) or {}
+    out = []
+    for snt in got.get("sentences") or []:
+        if not isinstance(snt, dict):
+            continue
+        cites = [str(c).strip("[]") for c in snt.get("cites") or []]
+        text = str(snt.get("text") or "").strip()
+        if text and cites and all(c in ids for c in cites) and not re.search(r"\b(I|we|our)\b", text):
+            out.append({"text": text, "cites": cites})
+    return out[:8]
 
 
 def _drop_answered_open_questions(brief: dict[str, Any], atoms: list[Any]) -> int:
