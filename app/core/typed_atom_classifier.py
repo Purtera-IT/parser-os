@@ -685,6 +685,8 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
         try:
             from app.core.schemas import AtomType as _AT
 
+            _BASE_ONLY = {"answered_question", "internal_question", "list_header", "commitment",
+                          "rate_card", "deal_summary", "certification", "source_caveat", "legend_entry"}
             _VALUE_LIGHT = {
                 "requirement", "exclusion", "contract_term", "deal_metadata",
                 "acceptance_criterion", "task", "change_order_rule", "constraint",
@@ -721,9 +723,13 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 # The parser has no type for a deal's state, a commitment or an
                 # answered question (other stages read those lines): a sure one
                 # keeps its line and skips an LLM that cannot name it either.
-                if answer in ("_keep", "small_talk", "list_header", "deal_state", "commitment",
-                              "answered_question"):
+                if answer in ("_keep", "small_talk", "deal_state"):
                     return "keep", answer, p, None
+                # The base's own types the parser now holds: assigned as the
+                # base said (they were kept as the parser's type, or sent to
+                # the LLM, which has no name for them either).
+                if answer in _BASE_ONLY:
+                    return "assign", answer, p, _AT(answer)
                 if answer in _VALUE_LIGHT:
                     try:
                         return "assign", answer, p, _AT(answer)

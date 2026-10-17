@@ -716,6 +716,16 @@ def deal_payload(deal: Any) -> dict[str, Any]:
         for a in deal.atoms]}
 
 
+#: The base's name for a type the parser calls by another. ``work_scope_item``
+#: is the parser's ``scope_item`` (the labelers' word for it); without this
+#: every sure work_scope_item answer had no parser type and went to the LLM.
+BASE_ALIAS = {"work_scope_item": "scope_item"}
+
+
+def _aliased(types: dict[str, Any] | None) -> dict[str, Any]:
+    return {k: ([BASE_ALIAS.get(str(v[0]), v[0]), *list(v[1:])] if v else v) for k, v in (types or {}).items()}
+
+
 def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list[int]
             ) -> dict[int, tuple[str, float]]:
     import urllib.error
@@ -767,7 +777,7 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
     _STATUS.update(state="read", reason="", remote=True, lines=len(rows),
                    read_ms=round((time.monotonic() - started) * 1000, 1),
                    service_read_ms=got.get("read_ms"))
-    types = got.get("types") or {}
+    types = _aliased(got.get("types"))
     if "types" in _DEAL:
         _DEAL["types"].update(types)
     out: dict[int, tuple[str, float]] = {}
@@ -806,7 +816,7 @@ def _local(deal: Any, keys: list[str], ids: list[int]) -> dict[int, tuple[str, f
     for i, key in zip(ids, keys):
         got = ((lines.get(key) or {}).get("reads") or {}).get("col:label_type")
         if got and got.get("answer") is not None:
-            out[i] = (str(got["answer"]), float(got.get("p") or 0.0))
+            out[i] = (BASE_ALIAS.get(str(got["answer"]), str(got["answer"])), float(got.get("p") or 0.0))
     return out
 
 
@@ -1047,6 +1057,8 @@ def _authority_bar(answer: str) -> float:
 _AUTHORITY_SKIP = frozenset({"_keep", "raw_utterance", "raw_table_row", "dropped_sheet", "entity"})
 #: Types a line can take without extracted values.
 _VALUELESS = _SIMPLE | frozenset({"small_talk", "deal_state", "list_header", "answered_question",
+                                    "internal_question", "deal_summary", "source_caveat", "legend_entry",
+                                    "certification",
                                     "commitment", "open_question", "action_item", "scope_item"})
 
 
@@ -1328,7 +1340,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _request("/read", body, timeout=budget + 10.0)
             raw = got.get("documents") or {}
             if "types" in _DEAL:
-                _DEAL["types"].update(got.get("types") or {})
+                _DEAL["types"].update(_aliased(got.get("types")))
             _keep_full(got)
         else:
             from ml.c3.predict import read_deal

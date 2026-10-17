@@ -800,10 +800,15 @@ def test_the_base_answer_wins_at_the_end_even_when_a_stage_lost_its_lock(monkeyp
     t = N(id="t1", atom_type=AtomType("scope_item"), value={}, review_flags=[])
     s = N(id="s1", atom_type=AtomType("deal_metadata"), value={}, review_flags=[])
     q = N(id="q1", atom_type=AtomType("open_question"), value={}, review_flags=[])
-    assert C.apply_authority([t, s, q], final=True) == 1
+    assert C.apply_authority([t, s, q], final=True) == 2
     assert t.atom_type == AtomType("small_talk")
     assert s.atom_type == AtomType("deal_metadata")  # needs values: not forced
-    # No parser type for it: the line keeps its type and carries the answer.
-    assert q.atom_type == AtomType("open_question")
-    assert q.value["c3_base_type"] == {"type": "answered_question", "p": 0.999}
+    assert q.atom_type == AtomType("answered_question")
+
+
+def test_work_scope_item_is_the_parsers_scope_item():
+    from app.core import c3_type_base as C
+
+    assert C._aliased({"a": ["work_scope_item", 0.8], "b": ["task", 0.6]}) == {
+        "a": ["scope_item", 0.8], "b": ["task", 0.6]}
     C._DEAL.clear()

@@ -142,6 +142,19 @@ class AtomType(str, Enum):
     # (``deal_chatter.retype_small_talk``); every stage before it sees
     # deal_metadata + chatter, as it always has.
     small_talk = "small_talk"
+    # The base's own line types the parser had no slot for: its sure answer
+    # was thrown away and the line kept the parser's type (an answered
+    # question stayed open_question, a heading scope_item, a reseller's price
+    # row vendor_line_item). The base decides; these hold what it says.
+    answered_question = "answered_question"
+    internal_question = "internal_question"
+    list_header = "list_header"
+    commitment = "commitment"
+    rate_card = "rate_card"
+    deal_summary = "deal_summary"
+    certification = "certification"
+    source_caveat = "source_caveat"
+    legend_entry = "legend_entry"
     commercial_total = "commercial_total"
     payment_term = "payment_term"
     change_order_rule = "change_order_rule"
