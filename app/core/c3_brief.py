@@ -441,7 +441,11 @@ _PROMPT = (
     "Write a short project manager's brief from these facts: a summary of at most 3 sentences, and at most 3 "
     "short sentences for each of at most 6 sections (the ones a PM reads first: scope, customer "
     "responsibilities, out of scope, schedule, fees, terms) (the facts themselves are listed under the brief, so do not restate every "
-    "one). Every sentence must cite the [ids] of the facts it uses, and say nothing that is not in a fact. "
+    "one). Also write a \"job details\" section of at most 8 short sentences, from the job_details facts, that a "
+    "PM prices from: count each kind of equipment or work item (\"3 access points\", \"2 TVs\"), and give models, "
+    "measurements and cable lengths, site conditions (ceiling, wall, mounting, lift or ladder) and access or "
+    "timing limits. Write it in the third person; never copy a fact word for word or quote an email; when facts "
+    "disagree, the later fact wins. Every sentence must cite the [ids] of the facts it uses, and say nothing that is not in a fact. "
     "Return JSON only: {\"summary\": str, \"sections\": "
     "{section: [{\"text\": str, \"cites\": [id]}]}, \"open_questions\": [{\"question\": str, \"owner\": str, "
     "\"cites\": [id]}]}.\n\nSERVICE: %s\nFACTS BY SECTION: %s\nOPEN QUESTIONS: %s\nCONFLICTS: %s"
@@ -761,15 +765,28 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         str(a.id): _types[str(a.id)] for a in atoms
         if str(a.id) in _types and any(str(k).startswith("site:") for k in (getattr(a, "entity_keys", None) or []))}
     brief["contacts"] = contacts(atoms)
+    details = job_details(atoms)
+    brief["job_details"] = details
+    if details:
+        # The writer words these as facts (counts, models, conditions); pasted
+        # as they were, a grader read customer emails in the first person.
+        brief.setdefault("sections", {})["job_details"] = [
+            {"id": d["cites"][0], "text": d["text"]} for d in details]
     if writing_enabled():
         try:
             brief["written"] = write(brief)
         except Exception as exc:
             brief["written"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         w = brief.get("written")
+        try:
+            _drop_answered_open_questions(brief, atoms)
+        except Exception as exc:  # pragma: no cover - a check never costs the brief
+            log.info("C3 brief open-question check skipped: %s", type(exc).__name__)
         if isinstance(w, dict) and isinstance(w.get("sections"), dict):
-            details = job_details(atoms)
-            brief["job_details"] = details
+            secs = w["sections"]
+            written_details = secs.pop("job details", None) or secs.pop("job_details", None)
+            if written_details:
+                details = written_details
             if details:
                 # Right after scope: the lines a PM prices from.
                 secs = dict(w["sections"])
@@ -784,6 +801,45 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             if brief["contacts"]:
                 w["sections"]["contacts"] = [{"text": c["line"], "cites": c["cites"]} for c in brief["contacts"]]
     return brief
+
+
+def _drop_answered_open_questions(brief: dict[str, Any], atoms: list[Any]) -> int:
+    """The deal's own questions the deal goes on to answer are not open. On the
+    graded pre-quote deals the brief re-asked "Can you confirm the address and
+    quantity?" and "Did he mention the cable lengths?" that later emails had
+    answered. Each question gets its closest lines and the same answered check
+    the catalog gets; an answered one moves to ``answered_open_questions``."""
+    w = brief.get("written")
+    qs = (w or {}).get("open_questions") or []
+    if not qs:
+        return 0
+    probe = [{"id": f"d{i}", "text": strip_cites(str(q.get("question") or ""))} for i, q in enumerate(qs)]
+    _attach_evidence(probe, atoms)
+    service = (brief.get("service") or {}).get("value")
+    answered: dict[str, list[str]] = {}
+    for b in range(0, len(probe), ASK_BATCH):
+        batch = probe[b:b + ASK_BATCH]
+        raw = _complete(_ASK_PROMPT % (service, json.dumps(
+            [{"id": q["id"], "q": q["text"], "lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]}
+             for q in batch])), None, 600)
+        got = _json_of(raw) or {}
+        seen = {e["id"] for q in batch for e in q.get("evidence") or []}
+        for c in got.get("answered") or []:
+            by = c.get("by") if isinstance(c.get("by"), list) else [c.get("by")]
+            by = [str(x).strip("[]") for x in by if str(x).strip("[]") in seen]
+            if by:
+                answered[str(c.get("id"))] = by
+    keep, gone = [], []
+    for i, q in enumerate(qs):
+        (gone if f"d{i}" in answered else keep).append({**q, **({"answered_by": answered[f"d{i}"]}
+                                                                 if f"d{i}" in answered else {})})
+    w["open_questions"] = keep
+    w["answered_open_questions"] = gone
+    return len(gone)
+
+
+def strip_cites(text: str) -> str:
+    return re.sub(r"\s*\[(?:[a-z]+_[0-9a-zA-Z_]+(?:,\s*)?)+\]", "", text or "").strip()
 
 
 #: Line types a PM prices from. The written brief is three sentences a

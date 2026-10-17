@@ -189,3 +189,21 @@ def test_a_cut_run_admits_only_pm_answers_given_by_the_cutoff(monkeypatch):
     monkeypatch.setattr(A, "pm_answers_to_atoms", fake)
     B.load_pm_answer_atoms(project_id="p", as_of="2026-06-23T14:48:50Z")
     assert seen["n"] == 1
+
+
+def test_a_deal_question_the_deal_answers_is_dropped(monkeypatch):
+    import app.core.c3_brief as B
+
+    brief = {"service": {"value": "camera"}, "written": {"open_questions": [
+        {"question": "Can you confirm the cable lengths? [atm_a]", "cites": ["atm_a"]},
+        {"question": "Who supplies the mounts?", "cites": []}]}}
+
+    def fake_ev(qs, atoms):
+        for q in qs:
+            q["evidence"] = [{"id": "atm_b", "text": "Side door 154 ft, back door 88 ft"}]
+    monkeypatch.setattr(B, "_attach_evidence", fake_ev)
+    monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"answered": [{"id": "d0", "by": "atm_b"}]}')
+    assert B._drop_answered_open_questions(brief, []) == 1
+    w = brief["written"]
+    assert [q["question"] for q in w["open_questions"]] == ["Who supplies the mounts?"]
+    assert w["answered_open_questions"][0]["answered_by"] == ["atm_b"]
