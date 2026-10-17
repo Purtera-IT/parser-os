@@ -3942,6 +3942,34 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         if (et.get("message") or {}).get("index") == 0:
             own_pos[aid] = _int(p)
 
+    # A piece read out of a longer line on the same line (a signature's
+    # address or name pulled from a one-line email body) sits where its words
+    # sit in that line. Ordered by when it was made, live 010038's CDW
+    # signature address "625 W. Adams, Chicago" read right after the header,
+    # ahead of the body, and the site-role head took it for the job site
+    # (training had it after the body).
+    def _norm(t: Any) -> str:
+        return " ".join(str(t or "").split()).lower()
+
+    by_line: dict[tuple[str, Any], list[Any]] = {}
+    for a in atoms or []:
+        ln = _line(_loc(a))
+        if ln is not None and _loc(a).get("char_start") is None:
+            by_line.setdefault((str(getattr(a, "artifact_id", "") or ""), ln), []).append(a)
+    inside: dict[int, int] = {}
+    for group in by_line.values():
+        if len(group) < 2:
+            continue
+        texts = {id(a): _norm(getattr(a, "raw_text", "")) for a in group}
+        host = max(group, key=lambda a: len(texts[id(a)]))
+        body = texts[id(host)]
+        for a in group:
+            if a is host:
+                continue
+            probe = texts[id(a)][:24]
+            at = body.find(probe) if len(probe) >= 6 else -1
+            inside[id(a)] = at + 1 if at >= 0 else len(body) + 1
+
     # A workbook's sheets in the order the parser met them.
     sheet_rank: dict[tuple[str, str], int] = {}
     for a in atoms or []:
@@ -3991,7 +4019,7 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         seq = _int(loc.get("sentence_index"))
         # Several atoms cut from one line without a sentence index (a note's
         # " - "-separated list, live 000132) still have a column.
-        col = _int(loc.get("char_start"))
+        col = _int(loc.get("char_start")) if loc.get("char_start") is not None else inside.get(id(a), 0)
         return (when, doc_pos.get(aid, 10**6), pos, page, blk, line or 0, seq, col,
                 emitted.get(id(a), 10**9), str(getattr(a, "id", "")))
 
