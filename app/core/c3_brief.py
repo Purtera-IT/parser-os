@@ -673,12 +673,37 @@ def _drop_superseded(brief: dict[str, Any], atoms: list[Any], documents: list[di
     order before the latest SOW is superseded. Their lines are moved to
     ``superseded``, not dropped, so a PM can see what changed. Returns lines moved."""
     order = [d for d in documents if isinstance(d, dict)]
-    sows = [i for i, d in enumerate(order) if _sow_like(d)]
-    if len(sows) < 1:
+
+    def contract(d: dict[str, Any]) -> bool:
+        return _sow_like(d) or str(d.get("kind") or "").lower() == "change_order"
+
+    by_doc: dict[str, list[Any]] = {}
+    for a in atoms:
+        by_doc.setdefault(str(getattr(a, "artifact_id", "") or ""), []).append(a)
+    header: dict[int, str] = {}
+    for i, d in enumerate(order):
+        if contract(d) and not d.get("authored_at"):
+            try:
+                from app.core.orbitbrief_envelope import _document_header_date
+
+                header[i] = str(_document_header_date(by_doc.get(str(d.get("doc_id")), [])) or "")
+            except Exception:
+                header[i] = ""
+
+    def when(i: int) -> tuple:
+        # The date the document says it was written (its record, else its own
+        # header, as the envelope reads it), else its arrival. On 010038 the
+        # signed SOW was attached to nothing, so arrival put it before the July
+        # change order it folds in.
+        d = order[i]
+        return (str(d.get("authored_at") or header.get(i) or d.get("sent_at") or ""), i)
+
+    sows = sorted((i for i, d in enumerate(order) if _sow_like(d)), key=when)
+    if not sows:
         return 0
     latest = sows[-1]
-    old = {str(order[i].get("doc_id")) for i in range(latest)
-           if _sow_like(order[i]) or str(order[i].get("kind") or "").lower() == "change_order"}
+    old = {str(order[i].get("doc_id")) for i, d in enumerate(order)
+           if i != latest and contract(d) and when(i) < when(latest)}
     if not old:
         return 0
     doc_of = {str(a.id): str(getattr(a, "artifact_id", "") or "") for a in atoms}

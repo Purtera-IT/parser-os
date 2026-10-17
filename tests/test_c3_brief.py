@@ -118,3 +118,18 @@ def test_the_latest_sow_governs_the_contract_sections():
     assert brief["sections"]["overview"] == []
     # The signed SOW says nothing on exclusions: the draft's stays.
     assert [i["id"] for i in brief["sections"]["out_of_scope"]] == ["o1"]
+
+
+def test_a_signed_sow_attached_to_nothing_still_governs_by_its_date():
+    from types import SimpleNamespace as N
+
+    from app.core.c3_brief import _drop_superseded
+
+    atoms = [N(id="c1", artifact_id="co"), N(id="s1", artifact_id="signed")]
+    docs = [{"doc_id": "signed", "kind": "file", "filename": "SOW_207586 is ready for signature.pdf",
+             "authored_at": "2026-09-30"},
+            {"doc_id": "co", "kind": "change_order", "filename": "Change Order (7.29.26).docx",
+             "authored_at": "2026-07-29"}]
+    brief = {"sections": {"fees": [{"id": "c1", "text": "$1,260"}, {"id": "s1", "text": "$9,150"}]}}
+    assert _drop_superseded(brief, atoms, docs) == 1
+    assert [i["id"] for i in brief["sections"]["fees"]] == ["s1"]
