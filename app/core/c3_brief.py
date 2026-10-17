@@ -646,6 +646,16 @@ def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
 _INLINE_ID = re.compile(r"\b(?:atm|xdoc_conflict|pmq|ent|q)_[0-9A-Za-z_]+")
 
 
+def _service_for_writer(brief: dict[str, Any]) -> str:
+    """The service the writer is told: none when the head was unsure. Told
+    "wireless" at 0.36, the writer called 010426's monitor install a
+    wireless project in three sentences."""
+    svc = brief.get("service") or {}
+    if svc.get("unsure") or not svc.get("value"):
+        return "not known; describe the job only from the facts"
+    return str(svc["value"])
+
+
 def _cites_of(sentence: Any) -> list[str]:
     """A written sentence's cited ids: its ``cites`` list, a comma string, or
     -- when the model put them only in the text, as it does on about one call
@@ -684,7 +694,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     qs = [f"[{q['id']}] (owner: {q['owner']}) {q['text']}" for q in brief["questions"]
           if not q["id"].startswith("q:")][:30]
     lines_seen = {e["id"] for q in catalog for e in q.get("evidence") or []}
-    service = brief["service"].get("value")
+    service = _service_for_writer(brief)
     batches = [catalog[i:i + ASK_BATCH] for i in range(0, len(catalog), ASK_BATCH)]
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
@@ -969,7 +979,7 @@ def _write_job_details(brief: dict[str, Any], details: list[dict[str, Any]]) -> 
         return []
     ids = {c for d in details for c in d.get("cites") or []}
     lines = "\n".join(f"[{d['cites'][0]}] {d['text']}" for d in details if d.get("cites"))
-    raw = _complete(_DETAILS_PROMPT % ((brief.get("service") or {}).get("value"), lines), None, 900)
+    raw = _complete(_DETAILS_PROMPT % (_service_for_writer(brief), lines), None, 900)
     got = _json_of(raw) or {}
     out = []
     for snt in got.get("sentences") or []:
@@ -994,7 +1004,7 @@ def _drop_answered_open_questions(brief: dict[str, Any], atoms: list[Any]) -> in
         return 0
     probe = [{"id": f"d{i}", "text": strip_cites(str(q.get("question") or ""))} for i, q in enumerate(qs)]
     _attach_evidence(probe, atoms)
-    service = (brief.get("service") or {}).get("value")
+    service = _service_for_writer(brief)
     answered: dict[str, list[str]] = {}
     for b in range(0, len(probe), ASK_BATCH):
         batch = probe[b:b + ASK_BATCH]
