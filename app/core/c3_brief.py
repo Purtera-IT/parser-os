@@ -262,7 +262,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             why["rule:derived"] += 1
             continue
         act, p = r(aid, "read:co_action") if use["read:co_action"] else ("_absent", 0.0)
-        if status == "rejected" or (t in NEVER and not (t == "small_talk" and act == "keep" and p >= 0.9)):
+        # small_talk is a type, not a keep decision: when co_action keeps the
+        # line it stays (in the body at KEEP_BAR, else "also mentioned").
+        # 010426's only date, "the three weeks after Thanksgiving", read
+        # small_talk 0.80 / keep 0.64 and was dropped outright.
+        if status == "rejected" or (t in NEVER and not (t == "small_talk" and act == "keep" and p >= MAYBE_BAR)):
             left_out.append({"id": aid, "reason": "rejected" if status == "rejected" else f"type {t}",
                              "by": "rule:type"})
             why["rule:never"] += 1
@@ -1075,7 +1079,9 @@ _DETAIL_SIGNAL = re.compile(
     r"\b\d+(\.\d+)?\s*(ft|feet|foot|'|in|inch|u|units?|x|qty|aps?|tvs?|cameras?|drops?|runs?|sites?|days?|hours?)\b"
     r"|\bqty\b|\bmodel\b|\b(ceiling|vaulted|brick|concrete|drop[- ]tile|lift|ladder|scissor|rack|backboard|"
     r"plywood|mount(s|ing)?|conduit|idf|mdf|poe|outlet|power|access|window|after[- ]hours|escort|badge|"
-    r"elevator|loading dock|move[- ]in|deadline|asap|urgent|week of)\b", re.I)
+    r"elevator|loading dock|move[- ]in|deadline|asap|urgent|week of|weeks? (after|before)|thanksgiving|christmas|"
+    r"holiday|new year|(next|this) (week|month)|january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)\b", re.I)
 _VENDOR_TOTAL = re.compile(r"\b(sub ?total|grand total|sales tax|tax|shipping|lease|fmv)\b", re.I)
 _PLACEHOLDER_LINE = re.compile(r"^\[(image|drawing|figure|table)[^\]]*\]", re.I)
 
@@ -1089,7 +1095,11 @@ def job_details(atoms: list[Any], kept: set[str] | None = None) -> list[dict[str
     first, rest, seen = [], [], set()
     for a in atoms:
         t = _type(a)
-        if t in _NOT_DETAIL or (kept is not None and str(a.id) not in kept) or _not_brief(a):
+        if kept is not None and str(a.id) not in kept:
+            continue
+        # A line co_action kept is eligible whatever its type reads (small_talk
+        # is a type, not a keep decision); the other types are never details.
+        if (t in _NOT_DETAIL and not (t == "small_talk" and kept is not None)) or _not_brief(a):
             continue
         v = a.value if isinstance(getattr(a, "value", None), dict) else {}
         if v.get("superseded_by") or _deal_kit(a):

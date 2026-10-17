@@ -290,3 +290,12 @@ def test_a_summary_written_as_sentence_objects_is_text(monkeypatch):
     monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"summary": [{"text": "45 desks, two monitors each.", '
                         '"cites": ["atm_a1"]}, {"text": "Day work."}], "sections": {}}')
     assert B.write(brief)["summary"] == "45 desks, two monitors each. Day work."
+
+
+def test_a_kept_line_typed_small_talk_is_not_dropped(monkeypatch):
+    _trusted_all(monkeypatch)
+    atoms = [_atom(1, "small_talk", "They are thinking the three weeks after Thanksgiving if all stays on track.")]
+    reads = {"a1": {"read:co_action": ["keep", 0.64]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert [x["id"] for x in b["also_mentioned"]] == ["a1"]
+    assert c3_brief.job_details(atoms, {"a1"})[0]["cites"] == ["a1"]
