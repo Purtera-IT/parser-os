@@ -171,6 +171,18 @@ def _when_of(atom: Any) -> str:
         return ""
 
 
+def _heading_of(atom: Any) -> str:
+    """The document heading a line sits under ("What We Ask YOU Provide"): a
+    bare "Ethernet cabling" says nothing about who supplies it without it."""
+    try:
+        from app.core.c3_type_base import _section
+
+        path = _section(atom)
+    except Exception:
+        return ""
+    return path.split(" > ")[-1][:80] if path else ""
+
+
 def _not_brief(atom: Any) -> str:
     """The type that keeps a line out of the brief, or ''."""
     bt, pb = _base_type(str(atom.id))
@@ -340,6 +352,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             if own == "technician" and (po >= OWNER_BAR or po > ps):
                 sec, sec_by = "scope_of_work", "base:read:task_owner_role"
         sections[sec].append({"id": aid, "text": a.raw_text[:400], "type": _type(a), "when": _when_of(a),
+                              "under": _heading_of(a),
                               "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by})
     _customer_furnished(sections, by_id, r if have_reads else None)
     for sec in sections:
@@ -579,7 +592,9 @@ _PROMPT = (
     "SECTIONS: write each section given under SECTIONS ONLY from that section's own facts, up to 5 short "
     "sentences. Cover every distinct fact a PM would price from once in the whole brief: never repeat a fact "
     "another sentence already gave, and merge facts that say the same thing. Never write a section that is not "
-    "given, never move a fact to another section, and never say something is excluded unless that section's "
+    "given, never move a fact to another section, and never say something is excluded, unknown or not stated "
+    "unless that section's fact says so. A line's [under: ...] heading is the list it sits in ('What We Ask YOU "
+    "Provide' means PurTera supplies it). Never say "
     "fact says so. job_details (up to 10 sentences): every count (including counts read off the figures), "
     "model, size, length, material PurTera must supply, extra work asked for, site condition, and access window "
     "or deadline the facts give, in the third person; never restate a fact Scope already gave. customer_furnished: equipment the customer already bought or "
@@ -788,7 +803,8 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     for ws, srcs in WRITER_SECTIONS.items():
         items = [x for src in srcs for x in heads.get(src) or []][:MAX_FACTS_PER_SECTION]
         if items:
-            facts[ws] = [f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "") + _dated(x["text"], x.get("when"))
+            facts[ws] = [f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "")
+                         + (f"[under: {x['under']}] " if x.get("under") else "") + _dated(x["text"], x.get("when"))
                          for x in items]
             own[ws] = {x["id"] for x in items}
     overview = [f"[{x['id']}] {x['text']}" for x in (heads.get("overview") or [])[:MAX_FACTS_PER_SECTION]]
@@ -1189,7 +1205,10 @@ _COVER_PROMPT = (
     "Below is a brief a project manager prices a field-services job from, and every fact it was written from. "
     "List the facts a PM needs to price the job that the brief does NOT already state: counts (also counts "
     "read off figures), equipment and materials PurTera must supply or the customer supplies, extra work "
-    "asked for, access windows, dates and deadlines, site conditions, and the on-site contact. Write each as "
+    "asked for (anything PurTera is asked to supply or install), access windows, dates and deadlines, site "
+    "conditions, and the on-site contact. A line's [under: ...] heading says what list it is in ('What We Ask "
+    "YOU Provide' means PurTera supplies it). Never write that something is unknown, not stated or not given. "
+    "Write each as "
     "one short third-person sentence that cites the [ids] it comes from and says nothing more than they do; "
     "a later fact replaces an earlier one; never restate what the brief already says. At most 8. Return JSON "
     "only: {\"add\": [{\"text\": str, \"cites\": [id]}]}.\nBRIEF:\n%s\nFACTS:\n%s"
@@ -1210,7 +1229,8 @@ def _cover_missing_facts(brief: dict[str, Any]) -> int:
         items += v
     items += list(brief.get("also_mentioned") or [])[:30] + list(brief.get("figures") or [])
     known = {str(x["id"]) for x in items}
-    facts = "\n".join(f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "") + _dated(str(x["text"])[:300], x.get("when"))
+    facts = "\n".join(f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "")
+                      + (f"[under: {x['under']}] " if x.get("under") else "") + _dated(str(x["text"])[:300], x.get("when"))
                       for x in {str(x["id"]): x for x in items}.values())[:26000]
     text = "\n".join([str(w.get("summary") or "")] + [str(x.get("text") or "") for v in secs.values() for x in v])
     got = _json_of(_complete(_COVER_PROMPT % (text[:8000], facts), None, 1200)) or {}
