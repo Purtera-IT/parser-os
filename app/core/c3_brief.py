@@ -1129,6 +1129,10 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             brief["written"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         w = brief.get("written")
         try:
+            _verify_written(brief)
+        except Exception as exc:  # pragma: no cover
+            log.info("C3 brief verify pass skipped: %s", type(exc).__name__)
+        try:
             _cover_missing_facts(brief)
         except Exception as exc:  # pragma: no cover
             log.info("C3 brief coverage pass skipped: %s", type(exc).__name__)
@@ -1219,8 +1223,9 @@ _COVER_PROMPT = (
 
 
 _VERIFY_PROMPT = (
-    "For each numbered sentence, say whether the lines it cites state exactly what it says (no more, no "
-    "guessing, no merging). Return JSON only: {\"supported\": [sentence numbers]}.\n%s"
+    "For each numbered sentence, say whether the lines it cites state what it says. A faithful rewording and a "
+    "total by plain arithmetic from the cited lines count as stated; anything added, guessed, merged into a new "
+    "claim, or attributed to the wrong party does not. Return JSON only: {\"supported\": [sentence numbers]}.\n%s"
 )
 
 
@@ -1234,6 +1239,39 @@ def _verified(sentences: list[dict[str, Any]], lines: dict[str, str]) -> list[di
     got = _json_of(_complete(_VERIFY_PROMPT % body, None, 300)) or {}
     ok = {int(i) for i in got.get("supported") or [] if str(i).isdigit()}
     return [x for i, x in enumerate(sentences) if i in ok]
+
+
+def _verify_written(brief: dict[str, Any]) -> int:
+    """Every written sentence checked against the lines it cites; one they do
+    not state is dropped (010426's "installing 45 desks" for monitors on arms,
+    an after-hours "exclusion" nobody made). Returns sentences dropped."""
+    w = brief.get("written") or {}
+    secs = w.get("sections")
+    if not isinstance(secs, dict):
+        return 0
+    lines: dict[str, str] = {}
+    for v in (brief.get("sections") or {}).values():
+        for x in v:
+            lines[str(x["id"])] = (f"[under: {x['under']}] " if x.get("under") else "") + str(x["text"])
+    for x in list(brief.get("also_mentioned") or []) + list(brief.get("figures") or []):
+        lines[str(x["id"])] = str(x["text"])
+    flat = [(k, i, x) for k, v in secs.items() if k != "contacts" for i, x in enumerate(v)
+            if isinstance(x, dict) and x.get("cites")]
+    if not flat:
+        return 0
+    keep = _verified([x for _, _, x in flat][:60], lines)
+    keep_ids = {id(x) for x in keep}
+    gone = 0
+    for k in list(secs):
+        if k == "contacts":
+            continue
+        before = secs[k]
+        secs[k] = [x for x in before if id(x) in keep_ids or not (isinstance(x, dict) and x.get("cites"))]
+        gone += len(before) - len(secs[k])
+        if not secs[k]:
+            secs.pop(k)
+    w["verify_dropped"] = gone
+    return gone
 
 
 def _cover_missing_facts(brief: dict[str, Any]) -> int:
