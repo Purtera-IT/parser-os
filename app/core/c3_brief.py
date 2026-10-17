@@ -610,7 +610,9 @@ _PROMPT = (
     "ALSO KEPT (less sure, or read off the job's figures and photos by a vision pass; use them only in the "
     "summary and job_details, and only when they add a date, a "
     "deadline, a contact, a count, what is being asked for, or a change to the scope such as work added): %s\n"
-    "OPEN QUESTIONS (asked in the deal): %s\nCONFLICTS: %s"
+    "OPEN QUESTIONS (asked in the deal; return under open_questions only those a PM must still get answered to "
+    "price the job, reworded plainly; drop nudges and chasers such as 'have you had a chance to review', 'any "
+    "update', and notes or labels copied from a spreadsheet): %s\nCONFLICTS: %s"
 )
 
 _ASK_PROMPT = (
@@ -898,7 +900,11 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
             pricing.append({"question": strip_cites(str(q["question"])), "owner": "project_manager",
                             "cites": cites, "kind": "pricing"})
     out.update(summary=str(summary or ""), sections=doc.get("sections") or {},
-               open_questions=list(doc.get("open_questions") or []) + pricing[:10], uncited_dropped=dropped,
+               # Pricing questions first: what the PM must ask to price. The
+               # deal's own asks after, only those the writer kept as still
+               # open ("Have you had a chance to review this proposal?" is a
+               # nudge, not a question to price from).
+               open_questions=pricing[:10] + list(doc.get("open_questions") or []), uncited_dropped=dropped,
                # The deal's own and its pricing questions come first; the head's
                # catalog questions after them, the most likely few (all of them
                # stay for labeling).

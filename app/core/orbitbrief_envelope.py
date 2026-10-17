@@ -1405,6 +1405,8 @@ def build_orbitbrief_envelope(
     # city/state/ZIP. Consumers that glue slug and street together render
     # "2970 Brandywine RD STE 200 - 2970 Brandywine Rd" (live 010300); the
     # envelope now says "HQ — 2970 Brandywine Rd, STE 200, Atlanta, GA 30641".
+    _file_stems = {re.sub(r"[^a-z0-9]+", " ", str(d.get("filename") or "").rsplit(".", 1)[0].lower()).strip()
+                   for d in (envelope.get("documents") or []) if isinstance(d, dict)}
     try:
         for _row in ((envelope.get("site_readiness") or {}).get("sites") or []):
             _fac = str(_row.get("facility_name") or "").strip()
@@ -1414,12 +1416,27 @@ def build_orbitbrief_envelope(
                 " ".join(q for q in (str(_row.get("state") or "").strip(), str(_row.get("zip") or "").strip()) if q),
             ) if p)
             _place = ", ".join(p for p in (_street, _loc) if p)
+            # A "facility" that is only the site key spelled out came from a
+            # file name ("hou Houston Port Utilization 2wk", 010428), not from
+            # anything that names the place: show the place alone.
+            _key_words = re.sub(r"^site:", "", str(_row.get("site") or "")).replace("_", " ").strip().lower()
+            if (_fac and _key_words and _place and _key_words in _file_stems
+                    and re.sub(r"\W+", " ", _fac.lower()).strip() == _key_words):
+                _fac = ""
             if _fac and _place and _fac.lower() not in _place.lower():
                 _row["display_name"] = f"{_fac} — {_place}"
             elif _place:
                 _row["display_name"] = _place
             elif _fac:
                 _row["display_name"] = _fac
+            # A site named after a file ("HOU_Houston_Port_Utilization_2wk.xlsx",
+            # 010428) is no place: name it by the town the deal record gives.
+            _dn = str(_row.get("display_name") or "")
+            if re.search(r"\.(xlsx?|csv|docx?|pdf|pptx?)\b|_[a-z0-9]+_", _dn, re.I) and not _street:
+                _town = re.search(r"([A-Z][A-Za-z .'-]+,\s*[A-Z]{2})\s*$",
+                                  str(((summary.get("crm") or {}) if isinstance(summary, dict) else {}).get("deal_name") or ""))
+                if _town:
+                    _row["display_name"] = f"{_town.group(1).strip()} (address not given)"
 
         # Pairs that look like one place, for a person to judge.
         #
