@@ -281,3 +281,12 @@ def test_ids_written_only_in_the_sentence_still_count_as_its_cites(monkeypatch):
                         '[{"text": "Install three cameras [atm_a1]."}]}}')
     w = B.write(brief)
     assert w["sections"]["scope"][0]["cites"] == ["atm_a1"] and w["uncited_dropped"] == 0
+
+
+def test_a_summary_written_as_sentence_objects_is_text(monkeypatch):
+    B = c3_brief
+    brief = {"service": {"value": "x"}, "conflicts": [], "questions": [],
+             "sections": {"scope_of_work": [{"id": "atm_a1", "text": "45 desks"}]}}
+    monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"summary": [{"text": "45 desks, two monitors each.", '
+                        '"cites": ["atm_a1"]}, {"text": "Day work."}], "sections": {}}')
+    assert B.write(brief)["summary"] == "45 desks, two monitors each. Day work."

@@ -751,7 +751,12 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
         asked.append({"id": q["id"], "question": q["text"], "family": q.get("family"), "owner": q["owner"],
                       "p": q.get("p"), "cites": [], "unchecked": True})
     asked.sort(key=lambda a: -(a.get("p") or 0))
-    out.update(summary=doc.get("summary", ""), sections=doc.get("sections") or {},
+    summary = doc.get("summary", "")
+    if isinstance(summary, list):
+        # The model sometimes writes the summary as sentence objects like the
+        # sections (010426): the page printed the list itself.
+        summary = " ".join(str(x.get("text") if isinstance(x, dict) else x).strip() for x in summary if x)
+    out.update(summary=str(summary or ""), sections=doc.get("sections") or {},
                open_questions=doc.get("open_questions") or [], uncited_dropped=dropped,
                catalog_questions=asked, answered_in_deal=answered, unchecked=len(unchecked),
                failed_ask_calls=failed)
