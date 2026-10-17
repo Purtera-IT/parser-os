@@ -158,6 +158,19 @@ def _base_type(atom_id: str) -> tuple[str, float]:
     return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else ("_absent", 0.0)
 
 
+def _when_of(atom: Any) -> str:
+    """The day the line's message or note was written (YYYY-MM-DD), or ''."""
+    try:
+        from datetime import datetime, timezone
+
+        from app.core.c3_type_base import _own_time
+
+        t = _own_time(atom)
+        return datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d") if t else ""
+    except Exception:
+        return ""
+
+
 def _not_brief(atom: Any) -> str:
     """The type that keeps a line out of the brief, or ''."""
     bt, pb = _base_type(str(atom.id))
@@ -319,7 +332,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             # responsibility 0.65, and the brief gave our work to the customer.
             if own == "technician" and (po >= OWNER_BAR or po > ps):
                 sec, sec_by = "scope_of_work", "base:read:task_owner_role"
-        sections[sec].append({"id": aid, "text": a.raw_text[:400], "type": _type(a),
+        sections[sec].append({"id": aid, "text": a.raw_text[:400], "type": _type(a), "when": _when_of(a),
                               "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by})
     _customer_furnished(sections, by_id, r if have_reads else None)
     for sec in sections:
@@ -535,6 +548,7 @@ def _stamp_layers(brief: dict[str, Any]) -> None:
 #: backboard is not included" under out of scope from an overview line.
 WRITER_SECTIONS: dict[str, tuple[str, ...]] = {
     "scope": ("scope_of_work", "deliverables", "provider_responsibilities"),
+    "job_details": ("job_details",),
     "customer_responsibilities": ("customer_responsibilities",),
     "customer_furnished": ("customer_furnished",),
     "out_of_scope": ("out_of_scope",),
@@ -545,20 +559,45 @@ WRITER_SECTIONS: dict[str, tuple[str, ...]] = {
 }
 
 _PROMPT = (
-    "Write a short project manager's brief. The summary: at most 3 sentences about the whole job, from any "
-    "facts. Then each section given under SECTIONS, at most 3 short sentences, written ONLY from that "
-    "section's own facts: never write a section that is not given, never move a fact to another section, and "
-    "never say something is excluded or not included unless that section's fact says so. "
-    "customer_furnished means equipment the customer already bought or supplies; it is not this job's price. "
-    "Every sentence must cite the [ids] of the facts it uses and say nothing that is not in them. "
-    "Never combine two facts into a claim neither states (a note that payments exclude tax does not make a "
-    "grand total tax-free); copy counts, amounts, sizes and dates exactly as a fact gives them; when facts "
-    "disagree, give both and say they disagree. "
-    "Return JSON only: {\"summary\": str, \"sections\": "
-    "{section: [{\"text\": str, \"cites\": [id]}]}, \"open_questions\": [{\"question\": str, \"owner\": str, "
-    "\"cites\": [id]}]}.\n\nSERVICE: %s\nDEAL (the CRM's record: name the account and the job as it does, in "
-    "the summary): %s\nOVERVIEW FACTS (summary only): %s\nSECTIONS: %s\n"
-    "OPEN QUESTIONS: %s\nCONFLICTS: %s"
+    "Write the brief a project manager at PurTera prices a field-services job from. PurTera is the provider "
+    "being asked to quote and do the work. The account in the CRM record is who asked PurTera for the quote (often a "
+    "reseller or partner such as CDW); the end customer is who the work is for. Never say the account or the "
+    "end customer does the work.\n"
+    "SUMMARY: 3 or 4 sentences on the whole job, from any facts and the CRM record: who the account is and who "
+    "the end customer is when named, what work it is with its counts, where, when (dates, windows, deadlines) and, "
+    "only when a fact says it, what is being asked for (a budgetary price, a quote, a SOW). Leave out anything the "
+    "facts do not give; never guess what is being asked for. The CRM record's deal name is a fact too: keep its "
+    "specifics (trade, cable type, counts, place, end customer) in the summary, in plain words. Never mention "
+    "the CRM, a deal name or number, an id, or these instructions in the text.\n"
+    "SECTIONS: write each section given under SECTIONS ONLY from that section's own facts, up to 5 short "
+    "sentences. Cover every distinct fact a PM would price from once in the whole brief: never repeat a fact "
+    "another sentence already gave, and merge facts that say the same thing. Never write a section that is not "
+    "given, never move a fact to another section, and never say something is excluded unless that section's "
+    "fact says so. job_details: the counts, models, sizes, lengths, site conditions and access or timing limits, "
+    "in the third person; never restate a fact Scope already gave. customer_furnished: equipment the customer already bought or "
+    "supplies; it is not this job's price: say what was bought, how many, and its total by the label the "
+    "fact gives (GRAND TOTAL), never whether that total includes tax.\n"
+    "PRICING QUESTIONS: up to 10 questions a PM must ask before pricing THIS job that the facts leave open: "
+    "specific to its work, site, counts, access, materials, who supplies what, and timing. Never ask what ANY "
+    "fact given here (overview, sections or also kept) already answers, never ask contract boilerplate; cite "
+    "the facts each question comes from.\n"
+    "RULES: every sentence cites the [ids] of the facts it uses and says nothing that is not in them. Never "
+    "combine two facts into a claim neither states (a note that payments exclude tax does not make a grand total "
+    "tax-free); copy counts, amounts, sizes and dates exactly as a fact gives them; name a total by the label its "
+    "fact gives it (GRAND TOTAL, SUBTOTAL) and never say whether it includes tax unless that same fact says so; "
+    "when facts disagree, give both and say they disagree. A later fact replaces an earlier one on the same "
+    "point, and a question a later fact answers is no longer open. A fact may start with the day it was written "
+    "(YYYY-MM-DD): turn 'tomorrow', 'next Tuesday' and the like into the date. Give places as City, ST. Say "
+    "plainly what PurTera supplies (labor, lift, cable ...) and what the customer supplies. Ignore email-client "
+    "banners and notices (\"Learn why this is important\", \"You don't often get email from\"); they are not "
+    "about the deal.\n"
+    "Return JSON only: {\"summary\": str, \"sections\": {section: [{\"text\": str, \"cites\": [id]}]}, "
+    "\"open_questions\": [{\"question\": str, \"owner\": str, \"cites\": [id]}], "
+    "\"pricing_questions\": [{\"question\": str, \"cites\": [id]}]}.\n\n"
+    "SERVICE: %s\nCRM RECORD: %s\nOVERVIEW FACTS (summary only): %s\nSECTIONS: %s\n"
+    "ALSO KEPT (less sure; use them only in the summary and job_details, and only when they add a date, a "
+    "deadline, a contact, a count, what is being asked for, or a change to the scope such as work added): %s\n"
+    "OPEN QUESTIONS (asked in the deal): %s\nCONFLICTS: %s"
 )
 
 _ASK_PROMPT = (
@@ -572,6 +611,12 @@ _ASK_PROMPT = (
 )
 #: Questions per answered-check call. At 40, one 010038 call answered 9 and
 #: the same call again answered none; at 12 it answered 6-8 every time.
+SECTION_SENTENCES = 6
+#: Catalog families shown under the pricing questions: the ones about this
+#: job. Contract terms and compliance are asked of every deal (labeled valid on
+#: every one), so they stay for labeling and the SOW, not the pre-quote page.
+SHOWN_FAMILIES = frozenset({"site_access", "schedule", "quantities_scope", "network_it", "people_contacts"})
+CATALOG_SHOW = int(os.environ.get("SOWSMITH_C3_BRIEF_CATALOG_SHOW", "3"))
 ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "12"))
 #: The prose answer's token cap. 2,000 cut off 010043's brief (it runs ~1,800).
 PROSE_TOKENS = int(os.environ.get("SOWSMITH_C3_BRIEF_PROSE_TOKENS", "3500"))
@@ -664,6 +709,39 @@ def _service_for_writer(brief: dict[str, Any]) -> str:
     return str(svc["value"])
 
 
+_RELATIVE = {"today": 0, "tonight": 0, "tomorrow": 1, "yesterday": -1}
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def _dated(text: str, when: str | None) -> str:
+    """A relative day in a line, given its date in brackets, worked out from the
+    day the line was written: "tomorrow" in a 2026-10-14 email is 2026-10-15
+    (010440: the model, left to it, wrote Oct 14)."""
+    if not when:
+        return text
+    try:
+        from datetime import date, timedelta
+
+        d0 = date.fromisoformat(when[:10])
+    except Exception:
+        return text
+
+    def sub(m):
+        w = m.group(0).lower()
+        if w in _RELATIVE:
+            d = d0 + timedelta(days=_RELATIVE[w])
+        else:
+            wd = _WEEKDAYS.index(w.split()[-1])
+            ahead = (wd - d0.weekday()) % 7 or 7
+            if w.startswith("next "):
+                ahead = ahead if ahead > 0 else 7
+            d = d0 + timedelta(days=ahead)
+        return f"{m.group(0)} ({d.isoformat()})"
+
+    return re.sub(r"\b(?:today|tonight|tomorrow|yesterday|(?:next |this )?(?:monday|tuesday|wednesday|thursday|"
+                  r"friday|saturday|sunday))\b", sub, text, flags=re.I)
+
+
 def _cites_of(sentence: Any) -> list[str]:
     """A written sentence's cited ids: its ``cites`` list, a comma string, or
     -- when the model put them only in the text, as it does on about one call
@@ -693,9 +771,18 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     for ws, srcs in WRITER_SECTIONS.items():
         items = [x for src in srcs for x in heads.get(src) or []][:MAX_FACTS_PER_SECTION]
         if items:
-            facts[ws] = [f"[{x['id']}] {x['text']}" for x in items]
+            facts[ws] = [f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "") + _dated(x["text"], x.get("when"))
+                         for x in items]
             own[ws] = {x["id"] for x in items}
     overview = [f"[{x['id']}] {x['text']}" for x in (heads.get("overview") or [])[:MAX_FACTS_PER_SECTION]]
+    also_items = list(brief.get("also_mentioned") or [])[:30]
+    also = [f"[{x['id']}] {x['text']}" for x in also_items]
+    if also_items:
+        own.setdefault("job_details", set()).update(x["id"] for x in also_items)
+    # An overview line can carry the job's details (010038's follow-up email:
+    # ladders on site, no COI, a backboard, the June 24-30 window); written
+    # only into the summary, they were lost.
+    own.setdefault("job_details", set()).update(x["id"] for x in (heads.get("overview") or []))
     cs = [x["ids"] for x in brief["conflicts"][:15]]
     known = {x["id"] for k, v in heads.items() if k != "job_details" for x in v} | {q["id"] for q in brief["questions"]}
     catalog = [q for q in brief["questions"] if q["id"].startswith("q:")]
@@ -707,7 +794,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
         prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(brief.get("deal") or {}),
-                                                    json.dumps(overview), json.dumps(facts),
+                                                    json.dumps(overview), json.dumps(facts), json.dumps(also),
                                                     json.dumps(qs), json.dumps(cs)),
                               model, PROSE_TOKENS)
         ask_f = [pool.submit(_complete, _ASK_PROMPT % (service, json.dumps(
@@ -739,10 +826,16 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
             else:
                 dropped += 1
         if keep:
-            doc["sections"][sec] = keep
+            doc["sections"][sec] = keep[:SECTION_SENTENCES]
         else:
             doc["sections"].pop(sec, None)
     out["moved_dropped"] = moved
+    scope_cites = {c for x in (doc.get("sections") or {}).get("scope") or [] for c in x.get("cites") or []}
+    jd = (doc.get("sections") or {}).get("job_details")
+    if jd and scope_cites:
+        doc["sections"]["job_details"] = [x for x in jd if not set(x.get("cites") or []) <= scope_cites]
+        if not doc["sections"]["job_details"]:
+            doc["sections"].pop("job_details")
     by_qid = {q["id"]: q for q in catalog}
     asked, answered, failed = [], [], 0
 
@@ -775,9 +868,19 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
         # The model sometimes writes the summary as sentence objects like the
         # sections (010426): the page printed the list itself.
         summary = " ".join(str(x.get("text") if isinstance(x, dict) else x).strip() for x in summary if x)
+    pricing = []
+    for q in doc.get("pricing_questions") or []:
+        if isinstance(q, dict) and str(q.get("question") or "").strip():
+            cites = [c for c in _cites_of({"cites": q.get("cites"), "text": q.get("question")}) if c in known]
+            pricing.append({"question": strip_cites(str(q["question"])), "owner": "project_manager",
+                            "cites": cites, "kind": "pricing"})
     out.update(summary=str(summary or ""), sections=doc.get("sections") or {},
-               open_questions=doc.get("open_questions") or [], uncited_dropped=dropped,
-               catalog_questions=asked, answered_in_deal=answered, unchecked=len(unchecked),
+               open_questions=list(doc.get("open_questions") or []) + pricing[:10], uncited_dropped=dropped,
+               # The deal's own and its pricing questions come first; the head's
+               # catalog questions after them, the most likely few (all of them
+               # stay for labeling).
+               catalog_questions=[q for q in asked if q.get("family") in SHOWN_FAMILIES][:CATALOG_SHOW],
+               catalog_questions_all=asked, answered_in_deal=answered, unchecked=len(unchecked),
                failed_ask_calls=failed)
     return out
 
@@ -789,7 +892,7 @@ def envelope_questions(brief: dict[str, Any]) -> list[dict[str, Any]]:
     wording the Questions head reads; question_fit trains on it."""
     by_id = {q["id"]: q for q in brief.get("questions") or [] if str(q.get("id", "")).startswith("q:")}
     w = brief.get("written") or {}
-    asked = w.get("catalog_questions")
+    asked = w.get("catalog_questions_all", w.get("catalog_questions"))
     if asked is None:
         asked = [{"id": q["id"], "question": q["text"], "p": q.get("p")} for q in by_id.values()]
     out = []
@@ -968,7 +1071,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             log.info("C3 brief open-question check skipped: %s", type(exc).__name__)
         if isinstance(w, dict) and isinstance(w.get("sections"), dict):
             secs = w["sections"]
-            written_details = _write_job_details(brief, details)
+            written_details = w["sections"].get("job_details") or _write_job_details(brief, details)
             if written_details:
                 details = written_details
                 w["job_details_written"] = True
@@ -1131,6 +1234,10 @@ _JUNK_ROLE = re.compile(r"linkedin|^\w+\s*-$|^\W*$", re.I)
 _EMAIL = re.compile(r"(?!image\d)[\w.+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
 
+_ONSITE = re.compile(r"(?i:\b(?:site|on-?site|onsite|point of|local)?\s*contact(?: person)?\s+(?:is|will be|:))\s*"
+                     r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'-]+){1,2})")
+
+
 def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
     """The deal's people, from the lines read as stakeholders: a real name with
     a role, email or phone, one entry per person, most-mentioned first. No LLM.
@@ -1138,7 +1245,27 @@ def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
     Fernandez ...) already on stakeholder lines; the writer just dropped them.
     A greeting ("Hi Tanner"), a place or a date is not a person."""
     people: dict[str, dict[str, Any]] = {}
-    for a in atoms:
+    for i, a in enumerate(atoms):
+        m = _ONSITE.search(str(getattr(a, "raw_text", "") or ""))
+        if m:
+            # "Contact Person is Rafael Fernandez" names the role itself: the
+            # on-site contact (010387), which no stakeholder field carried.
+            name = re.sub(r"\s+", " ", m.group("name")).strip(" ,.;:")
+            if 2 <= len(name.split()) <= 4 and not _NOT_A_NAME.search(name):
+                p = people.setdefault(name.lower(), {"name": name, "role": "", "email": "", "phone": "",
+                                                     "n": 0, "cites": []})
+                p["n"] += 2
+                p["role"] = "on-site contact"
+                p["cites"].append(str(a.id))
+                # Their number is the next line of the same document
+                # ("Cell Number: 904-386-5066", 010387).
+                for b in atoms[i + 1:i + 3]:
+                    if str(getattr(b, "artifact_id", "")) != str(getattr(a, "artifact_id", "")):
+                        break
+                    ph = _PHONE.search(str(getattr(b, "raw_text", "") or ""))
+                    if ph and not p["phone"]:
+                        p["phone"] = ph.group(0)
+                        break
         if _type(a) != "stakeholder":
             continue
         v = a.value if isinstance(getattr(a, "value", None), dict) else {}
@@ -1155,7 +1282,14 @@ def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
         email = str(v.get("email") or "").strip()
         if not _EMAIL.fullmatch(email):
             email = ""
-        phone = str(v.get("phone") or "").strip() or ((_PHONE.search(a.raw_text or "") or [None])[0] or "")
+        phone = str(v.get("phone") or "").strip()
+        if not phone:
+            # A number written before the name is not theirs: "Cell Number:
+            # 904-386-5066, Bill Ort, AVP" is the on-site contact's cell run
+            # into Bill's signature (010387).
+            ph = _PHONE.search(a.raw_text or "")
+            at = (a.raw_text or "").find(name.split()[0]) if name else -1
+            phone = ph.group(0) if ph and (at < 0 or ph.start() > at) else ""
         if not (role or email or phone):
             continue
         p = people.setdefault(name.lower(), {"name": name, "role": "", "email": "", "phone": "", "n": 0, "cites": []})

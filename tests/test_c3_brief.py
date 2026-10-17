@@ -299,3 +299,18 @@ def test_a_kept_line_typed_small_talk_is_not_dropped(monkeypatch):
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
     assert [x["id"] for x in b["also_mentioned"]] == ["a1"]
     assert c3_brief.job_details(atoms, {"a1"})[0]["cites"] == ["a1"]
+
+
+def test_a_named_contact_person_is_the_on_site_contact():
+    atoms = [NS(id="a1", atom_type="stakeholder", raw_text="Contact Person is Rafael Fernandez", value={})]
+    got = c3_brief.contacts(atoms)
+    assert got[0]["name"] == "Rafael Fernandez" and got[0]["role"] == "on-site contact"
+
+
+def test_a_phone_before_a_name_is_not_that_persons():
+    atoms = [NS(id="a1", atom_type="stakeholder", raw_text="Contact Person is Rafael Fernandez", value={}, artifact_id="d"),
+             NS(id="a2", atom_type="deal_metadata", raw_text="Cell Number:  904-386-5066", value={}, artifact_id="d"),
+             NS(id="a3", atom_type="stakeholder", raw_text="Cell Number: 904-386-5066, Bill Ort, AVP | ortw@vystarcu.org",
+                value={"name": "Bill Ort", "role": "AVP", "email": "ortw@vystarcu.org"}, artifact_id="n")]
+    got = {c["name"]: c for c in c3_brief.contacts(atoms)}
+    assert got["Rafael Fernandez"]["phone"] == "904-386-5066" and got["Bill Ort"]["phone"] == ""

@@ -1189,7 +1189,10 @@ def own_site_keys(atoms: list[Any]) -> int:
                 if not any(str(k).startswith("site:") for k in keys):
                     keys.append("site:" + slug)
                 try:
-                    a.value = {**v, "site_id": slug, "name": v.get("name") or f"{c.group(1)}, {c.group(2)}"}
+                    name = str(v.get("name") or "")
+                    if not name or not re.search(r",\s*[A-Z]{2}\b", name):
+                        name = f"{c.group(1)}, {c.group(2)}"
+                    a.value = {**v, "site_id": slug, "name": name}
                     a.entity_keys = keys
                     n += 1
                 except Exception:
