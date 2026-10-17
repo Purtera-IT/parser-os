@@ -71,16 +71,60 @@ def check(deal: str, facts: dict, conn: str) -> list[tuple[bool, str]]:
     return out
 
 
+OWN_TYPES = {"DEAL_KIT", "ESTIMATING_CALC", "CHANGE_ORDER"}
+
+
+def check_pre_quote(deal: str, facts: dict, conn: str) -> list[tuple[bool, str]]:
+    """A pre-quote run: the cutoff held, and the deal facts known before we quoted."""
+    base = f"deals/{facts['uuid']}/orbitbrief/latest/"
+    pmh = _blob(conn, base + "PM_HANDOFF.json")
+    env = _blob(conn, base + "envelope.json")
+    pq = facts.get("pre_quote") or {}
+    out: list[tuple[bool, str]] = []
+    as_of = str(((env.get("run_scope") or {}).get("as_of")) or ((env.get("manifest_context") or {}).get("as_of")) or "")
+    out.append((bool(as_of), f"run has a pre-quote cutoff ({as_of or 'none'})"))
+    docs = env.get("documents") or []
+    late = [d.get("filename") for d in docs
+            if as_of and str((d.get("lifecycle") or {}).get("delivered_at") or d.get("authored_at") or "")[:19] > as_of[:19]]
+    out.append((not late, f"no document after the cutoff ({len(late)} found{': ' + ', '.join(late[:3]) if late else ''})"))
+    own = [d.get("filename") for d in docs
+           if (d.get("lifecycle") or {}).get("type") in OWN_TYPES
+           or re.search(r"deal ?kit|\bcalc\b", str(d.get("filename") or ""), re.I)]
+    out.append((not own, f"none of our own files in the deal ({len(own)} found{': ' + ', '.join(own[:3]) if own else ''})"))
+    es = pmh.get("executive_summary") or {}
+    overview = str(es.get("overview") or "").lower()
+    out.append((es.get("source") == "c3_brief", "page shows the heads' brief"))
+    page_sites = " | ".join(f"{s.get('name') or ''} {s.get('address') or ''}" for s in pmh.get("sites") or []).lower()
+    roster = " | ".join(f"{s.get('display_name') or ''} {s.get('street_address') or ''} {s.get('site') or ''}"
+                        for s in (env.get("site_readiness") or {}).get("sites") or []).lower().replace("_", " ")
+    for alts in (pq.get("sites") or {}).get("must_have_any_of", []):
+        out.append((any(a in roster for a in alts), f"roster has {alts[0]}"))
+    for s in (pq.get("sites") or {}).get("must_not_have", []):
+        out.append((s not in roster and s not in page_sites, f"no site {s}"))
+    contacts = _section(es.get("overview") or "", "Contacts").lower()
+    names = (pq.get("contacts") or {}).get("must_include_any", [])
+    if names:
+        out.append((any(n.lower() in contacts for n in names), f"contacts name one of {', '.join(names)}"))
+    words = (pq.get("overview") or {}).get("must_include_any", [])
+    if words:
+        out.append((any(w in overview for w in words), f"overview describes the job ({'/'.join(words)})"))
+    for s in (pq.get("overview") or {}).get("must_not_include", []):
+        out.append((s.lower() not in overview, f"overview has no quoted figure {s}"))
+    return out
+
+
 def main() -> int:
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
     if not conn:
         print("set AZURE_STORAGE_CONNECTION_STRING (dev storage)", file=sys.stderr)
         return 2
     golden = {k: v for k, v in json.loads(GOLDEN.read_text()).items() if not k.startswith("_")}
-    deals = sys.argv[1:] or list(golden)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    pre = "--pre-quote" in sys.argv
+    deals = args or [d for d in golden if (not pre or golden[d].get("pre_quote")) and (pre or golden[d].get("fee"))]
     failed = total = 0
     for deal in deals:
-        results = check(deal, golden[deal], conn)
+        results = (check_pre_quote if pre else check)(deal, golden[deal], conn)
         bad = [m for ok, m in results if not ok]
         total += len(results)
         failed += len(bad)
