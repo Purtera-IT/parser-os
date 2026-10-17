@@ -633,7 +633,7 @@ SHOWN_FAMILIES = frozenset({"site_access", "schedule", "quantities_scope", "netw
 CATALOG_SHOW = int(os.environ.get("SOWSMITH_C3_BRIEF_CATALOG_SHOW", "0"))
 ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "12"))
 #: The prose answer's token cap. 2,000 cut off 010043's brief (it runs ~1,800).
-PROSE_TOKENS = int(os.environ.get("SOWSMITH_C3_BRIEF_PROSE_TOKENS", "3500"))
+PROSE_TOKENS = int(os.environ.get("SOWSMITH_C3_BRIEF_PROSE_TOKENS", "6000"))
 
 
 def _json_of(raw: str) -> dict[str, Any] | None:
@@ -828,6 +828,14 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     if doc is None:
         out["error"] = "the prose call returned no usable JSON"
         doc = {}
+    # The model sometimes nests the question lists inside "sections" (010038):
+    # they were read as sentences and dropped as uncited.
+    secs_in = doc.get("sections") if isinstance(doc.get("sections"), dict) else {}
+    for k in ("pricing_questions", "open_questions"):
+        if k in secs_in and not doc.get(k):
+            doc[k] = secs_in.pop(k)
+        else:
+            secs_in.pop(k, None)
     moved = 0
     for sec, sentences in list((doc.get("sections") or {}).items()):
         keep = []

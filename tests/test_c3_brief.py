@@ -323,3 +323,14 @@ def test_our_task_filed_out_of_scope_goes_back_to_scope(monkeypatch):
                     "read:task_owner_role": ["technician", 0.84]}}
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
     assert [x["id"] for x in b["sections"]["scope_of_work"]] == ["a1"]
+
+
+def test_question_lists_nested_in_sections_are_kept(monkeypatch):
+    B = c3_brief
+    brief = {"service": {"value": "x"}, "conflicts": [], "questions": [],
+             "sections": {"scope_of_work": [{"id": "atm_a1", "text": "Move 3 APs"}]}}
+    monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"summary": "s", "sections": {"scope": [{"text": "Move 3 APs.", '
+                        '"cites": ["atm_a1"]}], "pricing_questions": [{"question": "What is the ceiling height?", '
+                        '"cites": ["atm_a1"]}]}}')
+    w = B.write(brief)
+    assert [q["question"] for q in w["open_questions"]] == ["What is the ceiling height?"] and w["uncited_dropped"] == 0
