@@ -488,10 +488,14 @@ def _customer_furnished(sections: dict[str, list[dict[str, Any]]], by_id: dict[s
                 priced[d].append((sec, it))
     moved: list[tuple[str, dict[str, Any]]] = []
     for d, items in priced.items():
+        seen_ids: set[str] = set()
+        items = [(sec, it) for sec, it in items if sec != "job_details" and not (it["id"] in seen_ids or seen_ids.add(it["id"]))]
         sure = [(sec, it, r(it["id"], "col:supplier")) for sec, it in items]
-        sure = [(sec, it, v) for sec, it, v in sure if v[0] in ("customer", "us") and v[1] >= SUPPLIER_BAR]
-        cust = [x for x in sure if x[2][0] == "customer"]
-        if sure and len(cust) * 2 > len(sure):
+        # Not ours is the question: the head splits a reseller's order between
+        # customer and third_party (010043: 3 customer, 2 third party, 3 us).
+        sure = [(sec, it, v) for sec, it, v in sure if v[1] >= SUPPLIER_BAR]
+        ours = [x for x in sure if x[2][0] == "us"]
+        if sure and len(ours) * 2 < len(sure):
             moved.extend(items)
     if not moved:
         return 0

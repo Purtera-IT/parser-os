@@ -246,7 +246,7 @@ def test_a_document_the_customer_furnishes_is_not_our_fees(monkeypatch):
                                          ("vendor_line_item", "ITEM: CD53-E dome | QTY: 2 | $2,797.86"),
                                          ("vendor_line_item", "ITEM: license | QTY: 3 | $1,313.79"),
                                          ("commercial_total", "GRAND TOTAL: $6,184.28")], 1)]
-    sup = {"a1": ["customer", 0.76], "a2": ["customer", 0.73], "a3": ["us", 0.88], "a4": ["us", 0.59]}
+    sup = {"a1": ["customer", 0.76], "a2": ["customer", 0.73], "a3": ["us", 0.88], "a4": ["third_party", 0.66]}
     reads = {a.id: {"read:co_action": ["keep", 0.99], "read:sow_section": ["fees", 0.8],
                     "col:supplier": sup[a.id]} for a in atoms}
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
