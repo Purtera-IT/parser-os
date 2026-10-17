@@ -334,3 +334,14 @@ def test_question_lists_nested_in_sections_are_kept(monkeypatch):
                         '"cites": ["atm_a1"]}]}}')
     w = B.write(brief)
     assert [q["question"] for q in w["open_questions"]] == ["What is the ceiling height?"] and w["uncited_dropped"] == 0
+
+
+def test_the_coverage_pass_adds_cited_missing_facts(monkeypatch):
+    B = c3_brief
+    brief = {"sections": {"scope_of_work": [{"id": "atm_a1", "text": "Move the APs"}]},
+             "figures": [{"id": "atm_f1", "text": "3 Aruba APs are marked."}],
+             "written": {"summary": "Move APs.", "sections": {"scope": [{"text": "Move the APs.", "cites": ["atm_a1"]}]}}}
+    monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"add": [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]},'
+                        ' {"text": "Invented.", "cites": ["atm_zz"]}]}')
+    assert B._cover_missing_facts(brief) == 1
+    assert brief["written"]["sections"]["job_details"] == [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]}]

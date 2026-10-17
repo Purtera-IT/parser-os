@@ -1112,6 +1112,10 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             brief["written"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         w = brief.get("written")
         try:
+            _cover_missing_facts(brief)
+        except Exception as exc:  # pragma: no cover
+            log.info("C3 brief coverage pass skipped: %s", type(exc).__name__)
+        try:
             _drop_questions_the_facts_answer(brief)
         except Exception as exc:  # pragma: no cover
             log.info("C3 brief pricing-question check skipped: %s", type(exc).__name__)
@@ -1179,6 +1183,47 @@ _FACTS_ANSWER_PROMPT = (
     "answer (state the answer, or settle it: a fact that ladders are on site answers whether a lift is needed)? "
     "Return JSON only: {\"answered\": [question id, ...]}.\nFACTS:\n%s\nQUESTIONS: %s"
 )
+
+
+_COVER_PROMPT = (
+    "Below is a brief a project manager prices a field-services job from, and every fact it was written from. "
+    "List the facts a PM needs to price the job that the brief does NOT already state: counts (also counts "
+    "read off figures), equipment and materials PurTera must supply or the customer supplies, extra work "
+    "asked for, access windows, dates and deadlines, site conditions, and the on-site contact. Write each as "
+    "one short third-person sentence that cites the [ids] it comes from and says nothing more than they do; "
+    "a later fact replaces an earlier one; never restate what the brief already says. At most 8. Return JSON "
+    "only: {\"add\": [{\"text\": str, \"cites\": [id]}]}.\nBRIEF:\n%s\nFACTS:\n%s"
+)
+
+
+def _cover_missing_facts(brief: dict[str, Any]) -> int:
+    """A second look for pricing facts the brief left out: the writer, given
+    every line, still dropped 010038's floor-plan counts, the backboard it is
+    asked to supply and the June 24-30 access window. Added sentences go under
+    job details and must cite lines the brief was given."""
+    w = brief.get("written") or {}
+    secs = w.get("sections")
+    if not isinstance(secs, dict):
+        return 0
+    items: list[dict[str, Any]] = []
+    for v in (brief.get("sections") or {}).values():
+        items += v
+    items += list(brief.get("also_mentioned") or [])[:30] + list(brief.get("figures") or [])
+    known = {str(x["id"]) for x in items}
+    facts = "\n".join(f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "") + _dated(str(x["text"])[:300], x.get("when"))
+                      for x in {str(x["id"]): x for x in items}.values())[:26000]
+    text = "\n".join([str(w.get("summary") or "")] + [str(x.get("text") or "") for v in secs.values() for x in v])
+    got = _json_of(_complete(_COVER_PROMPT % (text[:8000], facts), None, 1200)) or {}
+    add = []
+    for x in got.get("add") or []:
+        cites = [c for c in _cites_of(x) if c in known]
+        t = strip_cites(str(x.get("text") or "") if isinstance(x, dict) else "")
+        if t and cites:
+            add.append({"text": t, "cites": cites})
+    if add:
+        secs["job_details"] = list(secs.get("job_details") or []) + add[:8]
+        w["covered_added"] = len(add[:8])
+    return len(add)
 
 
 def _drop_questions_the_facts_answer(brief: dict[str, Any]) -> int:

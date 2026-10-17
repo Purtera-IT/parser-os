@@ -34,7 +34,8 @@ device only when a legend, label or the picture itself says what it is; a room's
 a plan with no marked devices has no device counts. Ignore furniture and decoration. Never guess. If it is a logo,
 signature, banner or decoration, answer with no facts.
 DOCUMENT TEXT (legend and names only): {context}
-Return JSON only: {{"meaningful": true|false, "facts": ["one short sentence per fact"]}}
+Return JSON only: {{"kind": "photo|plan|diagram|screenshot|other", "meaningful": true|false,
+"facts": ["one short sentence per fact"]}}
 """
 
 
@@ -75,6 +76,11 @@ def describe(image_bytes: bytes, filename: str, context: str = "") -> list[str]:
         return []
     facts = [re.sub(r"\s+", " ", str(f)).strip() for f in got.get("facts") or [] if str(f).strip()]
     legend = bool(_LEGEND.search(context or ""))
+    # A plan or diagram is read only through the document's legend: without
+    # one the model described 010043's floor plan as "indoor offices with drop
+    # ceilings", against the photos of exterior brick.
+    if str(got.get("kind") or "").lower() in ("plan", "diagram") and not legend:
+        return []
     keep = []
     for f in facts:
         if not 6 <= len(f) <= 300:

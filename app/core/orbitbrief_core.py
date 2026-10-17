@@ -1648,6 +1648,12 @@ def build_site_readiness(
                 "system_mapping", "signatory", "site_attribute",
             ):
                 continue
+            # Text read off an image (OCR, vision) names places in title
+            # blocks and legends -- an architect's office on 010043's floor
+            # plan became a second site. It never makes a site row.
+            _v = getattr(atom, "value", None)
+            if isinstance(_v, dict) and _v.get("kind") in ("image_ocr_text", "image_fact"):
+                continue
             site_keys = [k for k in (atom.entity_keys or []) if k.startswith("site:")]
         # Two surface forms of one place become one row. Without this the
         # entity roster merges and the site COUNT does not.
