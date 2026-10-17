@@ -271,3 +271,13 @@ def test_job_details_come_only_from_lines_the_heads_kept():
     atoms = [_atom(1, "scope_item", "IDF to side door 154ft"), _atom(2, "scope_item", "concrete ceiling")]
     got = c3_brief.job_details(atoms, {"a1"})
     assert [d["cites"] for d in got] == [["a1"]]
+
+
+def test_ids_written_only_in_the_sentence_still_count_as_its_cites(monkeypatch):
+    B = c3_brief
+    brief = {"service": {"value": "security_camera"}, "conflicts": [], "questions": [],
+             "sections": {"scope_of_work": [{"id": "atm_a1", "text": "3 cameras"}]}}
+    monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"summary": "x", "sections": {"scope": '
+                        '[{"text": "Install three cameras [atm_a1]."}]}}')
+    w = B.write(brief)
+    assert w["sections"]["scope"][0]["cites"] == ["atm_a1"] and w["uncited_dropped"] == 0

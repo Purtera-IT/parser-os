@@ -639,6 +639,24 @@ def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
     return raw
 
 
+_INLINE_ID = re.compile(r"\b(?:atm|xdoc_conflict|pmq|ent|q)_[0-9A-Za-z_]+")
+
+
+def _cites_of(sentence: Any) -> list[str]:
+    """A written sentence's cited ids: its ``cites`` list, a comma string, or
+    -- when the model put them only in the text, as it does on about one call
+    in three (010043 lost every section that way) -- the ids in the text."""
+    if not isinstance(sentence, dict):
+        return []
+    raw = sentence.get("cites")
+    if isinstance(raw, str):
+        raw = re.split(r"[,\s]+", raw)
+    cites = [str(c).strip("[] ") for c in (raw or []) if str(c).strip("[] ")]
+    if not cites:
+        cites = _INLINE_ID.findall(str(sentence.get("text") or ""))
+    return list(dict.fromkeys(cites))
+
+
 def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     """The brief's prose and the question check, as parallel LLM calls: one
     for the prose, one per batch of catalog questions. Sentences whose
@@ -690,7 +708,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
         keep = []
         allowed = own.get(sec, set())
         for s in sentences or []:
-            cites = [str(c).strip("[]") for c in (s.get("cites") or [])] if isinstance(s, dict) else []
+            cites = _cites_of(s)
             if cites and all(c in allowed for c in cites):
                 keep.append({"text": s.get("text", ""), "cites": cites})
             elif cites and all(c in known for c in cites):
