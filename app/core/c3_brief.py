@@ -552,7 +552,8 @@ _PROMPT = (
     "disagree, give both and say they disagree. "
     "Return JSON only: {\"summary\": str, \"sections\": "
     "{section: [{\"text\": str, \"cites\": [id]}]}, \"open_questions\": [{\"question\": str, \"owner\": str, "
-    "\"cites\": [id]}]}.\n\nSERVICE: %s\nOVERVIEW FACTS (summary only): %s\nSECTIONS: %s\n"
+    "\"cites\": [id]}]}.\n\nSERVICE: %s\nDEAL (the CRM's record: name the account and the job as it does, in "
+    "the summary): %s\nOVERVIEW FACTS (summary only): %s\nSECTIONS: %s\n"
     "OPEN QUESTIONS: %s\nCONFLICTS: %s"
 )
 
@@ -701,7 +702,8 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     batches = [catalog[i:i + ASK_BATCH] for i in range(0, len(catalog), ASK_BATCH)]
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
-        prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(overview), json.dumps(facts),
+        prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(brief.get("deal") or {}),
+                                                    json.dumps(overview), json.dumps(facts),
                                                     json.dumps(qs), json.dumps(cs)),
                               model, PROSE_TOKENS)
         ask_f = [pool.submit(_complete, _ASK_PROMPT % (service, json.dumps(
@@ -902,11 +904,30 @@ def _drop_superseded(brief: dict[str, Any], atoms: list[Any], documents: list[di
     return len(moved)
 
 
-def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None) -> dict[str, Any]:
+def _crm_deal(project_dir: Any) -> dict[str, str]:
+    """The CRM's name for the deal and its account (who we quote), never its
+    amount: before the quote that amount IS the quote."""
+    if not project_dir:
+        return {}
+    try:
+        from app.core.orbitbrief_envelope import _load_manifest_crm
+
+        crm = _load_manifest_crm(project_dir) or {}
+    except Exception:
+        return {}
+    return {k: str(crm[k]) for k in ("deal_name", "account_name") if crm.get(k)}
+
+
+def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None,
+        project_dir: Any = None) -> dict[str, Any]:
     """Build (and, when switched on, write) the brief from this compile's read."""
     from app.core import c3_type_base
 
     brief = build(atoms, packets, service_fallback=service_fallback, readings=c3_type_base.full_read())
+    # The heads leave contacts and the deal's identity to the CRM
+    # (contact_from_crm); the writer is told what the CRM calls the deal and
+    # who the account is, or the brief names neither (5 of 6 graded deals).
+    brief["deal"] = _crm_deal(project_dir)
     try:
         _drop_superseded(brief, atoms, c3_type_base._DEAL.get("documents") or [])
     except Exception as exc:  # pragma: no cover - never lose the brief over this

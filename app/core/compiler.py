@@ -3674,7 +3674,8 @@ def compile_project(
 
         if _brief.enabled():
             with telemetry.stage("c3_brief", input_count=len(atoms)) as _bstage:
-                _c3_brief = _brief.run(atoms, packets, service_fallback=resolved_domain_pack.pack_id)
+                _c3_brief = _brief.run(atoms, packets, service_fallback=resolved_domain_pack.pack_id,
+                                        project_dir=project_dir)
                 telemetry.end_stage(_bstage, output_count=len(_c3_brief.get("questions") or []))
             warnings.append(f"INFO: C3 brief built: heads {len(_c3_brief['decided_by']['heads_used'])}, "
                             f"fell back {len(_c3_brief['decided_by']['fell_back'])}")
