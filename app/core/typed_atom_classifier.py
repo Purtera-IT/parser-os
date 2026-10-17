@@ -694,10 +694,19 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
             _sure = _c3.sure()
             _acts = _c3.acts_on()
 
+            _unsure_keep = os.environ.get("SOWSMITH_C3_UNSURE_KEEP", "").strip().lower() in ("1", "true", "yes", "on")
+
             def _c3_act(a, res):
                 """(act, answer, p, new type) for a reading the layer would act on, else None."""
-                if res is None or res[1] < _c3.sure_for(res[0]) or _c3.skipped(a, artifact_sha256):
+                if res is None or _c3.skipped(a, artifact_sha256):
                     return None
+                if res[1] < _c3.sure_for(res[0]):
+                    # Under the bar the parser's type stands, not the LLM's
+                    # (SOWSMITH_C3_UNSURE_KEEP). Pre-quote, the base under 0.5
+                    # was right less often than the parser on all three graded
+                    # deals; with the bar at 0.5: 010038 29->46%, 010387
+                    # 50->52%, 010043 75->77%.
+                    return ("keep", "_keep", res[1], None) if _unsure_keep else None
                 answer, p = res
                 # "on" acts only on a list that cleared the route report; with
                 # no list it takes nothing. Shadow with no list reports every
