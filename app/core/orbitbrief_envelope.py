@@ -1432,10 +1432,13 @@ def build_orbitbrief_envelope(
             # A site named after a file ("HOU_Houston_Port_Utilization_2wk.xlsx",
             # 010428) is no place: name it by the town the deal record gives.
             _dn = str(_row.get("display_name") or "")
-            if re.search(r"\.(xlsx?|csv|docx?|pdf|pptx?)\b|_[a-z0-9]+_", _dn, re.I) and not _street:
-                _town = re.search(r"([A-Z][A-Za-z .'-]+,\s*[A-Z]{2})\s*$",
-                                  str(((summary.get("crm") or {}) if isinstance(summary, dict) else {}).get("deal_name") or ""))
-                if _town:
+            _filey = re.compile(r"\.(xlsx?|csv|docx?|pdf|pptx?)\b|_[a-z0-9]+_", re.I)
+            if _filey.search(str(_row.get("facility_name") or "")):
+                _row["facility_name"] = None
+            if (_filey.search(_dn) or not _row.get("facility_name")) and not _street:
+                _deal_name = str(((summary.get("crm") or {}) if isinstance(summary, dict) else {}).get("deal_name") or "")
+                _town = re.search(r"([A-Z][A-Za-z.' ]+,\s*[A-Z]{2})\s*$", _deal_name.split(" - ")[-1].strip())
+                if _town and (_filey.search(_dn) or not _dn):
                     _row["display_name"] = f"{_town.group(1).strip()} (address not given)"
 
         # Pairs that look like one place, for a person to judge.
