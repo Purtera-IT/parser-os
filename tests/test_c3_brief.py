@@ -133,3 +133,4 @@ def test_a_signed_sow_attached_to_nothing_still_governs_by_its_date():
     brief = {"sections": {"fees": [{"id": "c1", "text": "$1,260"}, {"id": "s1", "text": "$9,150"}]}}
     assert _drop_superseded(brief, atoms, docs) == 1
     assert [i["id"] for i in brief["sections"]["fees"]] == ["s1"]
+    assert atoms[0].value["superseded_by"].startswith("SOW_207586") and not getattr(atoms[1], "value", None)

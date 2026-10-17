@@ -726,6 +726,21 @@ def _drop_superseded(brief: dict[str, Any], atoms: list[Any], documents: list[di
                 keep.append(it)
         brief["sections"][sec] = keep
     brief["superseded"] = moved
+    # Every reader of the lines, not only the brief: the Deal Kit and the SOW
+    # read atoms directly and saw the draft's $7,890 beside the signed $9,150.
+    # The line stays; it says which document replaced it.
+    by = str(order[latest].get("filename") or order[latest].get("doc_id") or "")
+    for a in atoms:
+        if str(getattr(a, "artifact_id", "") or "") in old:
+            v = getattr(a, "value", None)
+            if isinstance(v, dict):
+                v["superseded_by"] = by
+            else:
+                try:
+                    a.value = {"superseded_by": by}
+                except Exception:
+                    pass
+    brief["superseded_documents"] = sorted(old)
     return len(moved)
 
 
