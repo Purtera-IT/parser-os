@@ -760,9 +760,67 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     brief["site_line_types"] = {
         str(a.id): _types[str(a.id)] for a in atoms
         if str(a.id) in _types and any(str(k).startswith("site:") for k in (getattr(a, "entity_keys", None) or []))}
+    brief["contacts"] = contacts(atoms)
     if writing_enabled():
         try:
             brief["written"] = write(brief)
         except Exception as exc:
             brief["written"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
+        w = brief.get("written")
+        if isinstance(w, dict) and brief["contacts"] and isinstance(w.get("sections"), dict):
+            w["sections"]["contacts"] = [{"text": c["line"], "cites": c["cites"]} for c in brief["contacts"]]
     return brief
+
+
+_NOT_A_NAME = re.compile(r"^(hi|hey|hello|dear|thanks|thank you|regards)\b|\d|@|\b(site|facility|office|"
+                         r"suite|street|ave|inc|llc|corp|group|services)\b", re.I)
+_PHONE = re.compile(r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}")
+MAX_CONTACTS = 10
+#: A job title read as a name ("Seller Representative", "Client Executive").
+_TITLE_WORD = re.compile(r"\b(representative|executive|manager|director|president|officer|buyer|seller|"
+                         r"engineer|technician|coordinator|administrator|sales|account|client|customer|team)\b", re.I)
+#: A greeting ("Trent-") or a signature's link text read as a role.
+_JUNK_ROLE = re.compile(r"linkedin|^\w+\s*-$|^\W*$", re.I)
+#: A real address, not an inline image's content id ("image002.png@01dd...").
+_EMAIL = re.compile(r"(?!image\d)[\w.+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+
+
+def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
+    """The deal's people, from the lines read as stakeholders: a real name with
+    a role, email or phone, one entry per person, most-mentioned first. No LLM.
+    The graders found every name the brief left out (Rob Cole, Rafael
+    Fernandez ...) already on stakeholder lines; the writer just dropped them.
+    A greeting ("Hi Tanner"), a place or a date is not a person."""
+    people: dict[str, dict[str, Any]] = {}
+    for a in atoms:
+        if _type(a) != "stakeholder":
+            continue
+        v = a.value if isinstance(getattr(a, "value", None), dict) else {}
+        if v.get("superseded_by") or str(v.get("role") or "").lower() == "filler":
+            continue
+        name = re.sub(r"\s+", " ", str(v.get("name") or "")).strip(" ,;:|")
+        if not name or len(name.split()) < 2 or len(name) > 40 or _NOT_A_NAME.search(name):
+            continue
+        if _TITLE_WORD.search(name):
+            continue
+        role = str(v.get("role") or v.get("title") or "").strip()
+        if role.lower() in ("stakeholder", "contact") or _NOT_A_NAME.match(role) or _JUNK_ROLE.search(role):
+            role = ""
+        email = str(v.get("email") or "").strip()
+        if not _EMAIL.fullmatch(email):
+            email = ""
+        phone = str(v.get("phone") or "").strip() or ((_PHONE.search(a.raw_text or "") or [None])[0] or "")
+        if not (role or email or phone):
+            continue
+        p = people.setdefault(name.lower(), {"name": name, "role": "", "email": "", "phone": "", "n": 0, "cites": []})
+        p["n"] += 1
+        p["role"] = p["role"] or role
+        p["email"] = p["email"] or email
+        p["phone"] = p["phone"] or phone
+        if len(p["cites"]) < 2:
+            p["cites"].append(str(a.id))
+    out = sorted(people.values(), key=lambda p: -p["n"])[:MAX_CONTACTS]
+    for p in out:
+        bits = [x for x in (p["role"], p["email"], p["phone"]) if x]
+        p["line"] = p["name"] + (" (" + ", ".join(bits) + ")" if bits else "")
+    return out

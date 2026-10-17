@@ -134,3 +134,23 @@ def test_a_signed_sow_attached_to_nothing_still_governs_by_its_date():
     assert _drop_superseded(brief, atoms, docs) == 1
     assert [i["id"] for i in brief["sections"]["fees"]] == ["s1"]
     assert atoms[0].value["superseded_by"].startswith("SOW_207586") and not getattr(atoms[1], "value", None)
+
+
+def test_contacts_are_people_with_a_role_email_or_phone():
+    from types import SimpleNamespace as N
+
+    from app.core.c3_brief import contacts
+
+    st = "stakeholder"
+    atoms = [N(id="1", atom_type=st, raw_text="Nicole Tomasik 312.705.9059",
+               value={"name": "Nicole Tomasik", "role": "Project Manager", "email": "n@cdw.com"}),
+             N(id="2", atom_type=st, raw_text="Nicole Tomasik", value={"name": "Nicole Tomasik"}),
+             N(id="3", atom_type=st, raw_text="Hi Tanner", value={"name": "Hi Tanner", "role": "x"}),
+             N(id="4", atom_type=st, raw_text="Brooksource Cleveland OH site",
+               value={"name": "Brooksource Cleveland OH site", "role": "y"}),
+             N(id="5", atom_type=st, raw_text="Sep 30", value={"name": "B Chase Smith", "role": "filler"}),
+             N(id="6", atom_type=st, raw_text="Rob Cole office manager 419-376-8767", value={"name": "Rob Cole"})]
+    got = contacts(atoms)
+    assert [c["name"] for c in got] == ["Nicole Tomasik", "Rob Cole"]
+    assert got[0]["line"] == "Nicole Tomasik (Project Manager, n@cdw.com, 312.705.9059)" or "Project Manager" in got[0]["line"]
+    assert "419-376-8767" in got[1]["line"]
