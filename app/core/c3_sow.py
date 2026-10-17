@@ -63,10 +63,9 @@ _BASE = (
     "states something about THIS deal and cites the facts that state it, adding nothing (plain arithmetic is fine); "
     "a method item is standard practice for this kind of work and carries no number, brand, model, name, place or "
     "date the facts do not give. A later fact replaces an earlier one. [under: ...] is the heading or lead-in above "
-    "a line. WHO: in a line written by the reseller or PurTera, \"we/us\" is the side doing the work (\"he will need "
-    "us to run the cabling\" = Provider runs it); in a line written by the customer or under a customer heading "
-    "(\"Customer notes:\"), \"we\" is the customer (\"We will preconfigure all items\" = the customer does). A request "
-    "form asking the reseller to provide materials (\"CDW to provide backer board, Cat6 cable\") means Provider "
+    "a line. WHO: in a line written by the reseller or PurTera, \"we/us\" is the side doing the work (\"he will need us to <do the work>\" = Provider does it); in a line written by the customer or under a customer heading "
+    "(\"Customer notes:\"), \"we\" is the customer (\"We will <do X>\" = the customer does X). A request "
+    "form asking the reseller to provide materials (\"<reseller> to provide <items>\") means Provider "
     "supplies them. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
     "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
     "A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
@@ -77,8 +76,8 @@ _BASE = (
 
 _PARTS = {
     "header": (
-        "TASK: the SOW header. Return {\"project_name\": PurTera's title (end customer + work + place, e.g. \"Sodexo "
-        "Decomm Delta Atlanta\"), \"end_customer\": who the work is for, from a request form, a site sheet header, a "
+        "TASK: the SOW header. Return {\"project_name\": PurTera's title (end customer + work + place, e.g. \"<End Customer> "
+        "<Work> <Place>\"), \"end_customer\": who the work is for, from a request form, a site sheet header, a "
         "signature or the CRM deal name, or \"\", \"services\": [implementation for installs; custom_work for "
         "decommission, packing, smart-hands or labor-only support], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
@@ -89,10 +88,10 @@ _PARTS = {
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is; empty when no "
         "fact gives one]}"),
     "scope": (
-        "TASK: the task list. Return {\"scope_lead\": one line introducing the tasks (\"Provider will dispatch two "
-        "(2) cabling technicians to perform the following:\"; a count only when a fact states the staffing, never "
+        "TASK: the task list. Return {\"scope_lead\": one line introducing the tasks (\"Provider will dispatch <N> (<n>) <trade> "
+        "technicians to perform the following:\"; a count only when a fact states the staffing, never "
         "from meeting attendees), \"scope\": [the tasks in the order the work is done: arrive and check in; each "
-        "piece of work with its counts, lengths and locations kept together (\"side door: approximately 154 ft\"); "
+        "piece of work with its counts, lengths and locations kept together (\"<location>: approximately <N> ft\"); "
         "routing, termination, mounting and testing; when runs end at an IDF or rack, terminate and connect them "
         "there; cleanup; completion confirmed with the onsite contact. When the request says assist the customer's "
         "staff, the tasks assist as directed. Never claim a route or a device-to-location pairing no fact gives], "
@@ -122,6 +121,16 @@ _PARTS = {
         "DRAFT: %s"),
 }
 
+_PARTY_PROMPT = (
+    "Each numbered item is assigned to a party (Provider = PurTera, the field-services firm; Customer = the customer "
+    "or end customer). Say which assignments the cited lines STATE: the line must say that party supplies, ships, "
+    "orders, brings or already has the item (a heading such as \"we'd ship out:\" written by the customer; \"<reseller> "
+    "to provide\" for Provider, since Provider delivers the reseller's work; \"tech to provide\"; an item ordered by "
+    "the customer; a reseller's order or quote line to the customer, with ITEM / QTY / part numbers, is the customer's "
+    "purchase, so Customer; a supplier-head tag). A line that only names the item does not. Return JSON only: "
+    "{\"stated\": [item numbers]}.\n%s"
+)
+
 _COVER_PROMPT = (
     "Below is a PurTera SOW draft (JSON) and deal facts it does not use yet. For each unused fact that a PM would "
     "put in the SOW (a count, length, location, model, access condition, date, staffing, who supplies what, a "
@@ -142,8 +151,8 @@ _VERIFY_PROMPT = (
     "means Provider runs it: it does NOT support the customer supplying cable, nor cabling being excluded). Return JSON only: {\"supported\": [bullet numbers]}.\n%s"
 )
 
-LISTS = ("locations", "overview", "schedule", "arrival_protocol", "scope", "provider_materials", "provider_tools",
-         "customer_materials", "customer_responsibilities", "assumptions", "out_of_scope")
+LISTS = ("locations", "overview", "schedule", "arrival_protocol", "scope", "equipment_in_scope", "provider_materials",
+         "provider_tools", "customer_materials", "customer_responsibilities", "assumptions", "out_of_scope")
 
 _NUM_WORDS = ("one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|"
               "hundred")
@@ -277,9 +286,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content = _normalise(got)
     content["overview"] = content["overview"][:4]
     pool_text = " ".join(f["text"] for f in fs).lower()
-    if content.get("scope_lead") and (_unsupported_specifics(str(content["scope_lead"]), pool_text)
-                                      or (_STAFF.search(str(content["scope_lead"])) and not _STAFF.search(pool_text))):
-        content["scope_lead"] = "Provider will perform the following:"
+    content["scope_lead"] = _lead(str(content.get("scope_lead") or ""), pool_text)
     lines = {f["id"]: (f"[under: {f['under']}] " if f["under"] else "") + f["text"]
              + (f" [supplier head: {_SUPPLIER.get(f['supplier'][0], f['supplier'][0])}]"
                 if f.get("supplier") and float(f["supplier"][1] or 0) >= SUPPLIER_BAR
@@ -287,6 +294,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["added"] = _cover(content, fs, model)
     content["checks"] = check(content, lines)
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
+    content["unassigned"] = _party_check(content, lines)
+    _dedupe_items(content)
     content["facts_given"] = len(fs)
     return content
 
@@ -322,6 +331,82 @@ def _cover(content: dict[str, Any], fs: list[dict[str, Any]], model: str | None)
 _ITEM_LINE = re.compile(r"^(?!(?:we|they|he|she|i|you|the team|delivery|provider|customer)\b)[^.!?]{2,90}$", re.I)
 _ITEM_TYPES = frozenset({"bom_line"})
 _SUPPLY_VERB = re.compile(r"^(?:provide|supply|bring|furnish|deliver|use)s?\s+", re.I)
+
+
+_LEAD = re.compile(r"^Provider will (?:dispatch|provide) (?:(%s) \((\d+)\) )?(?:[a-z]+ ){0,2}(?:field )?"
+                   r"(?:technicians?|technician|resources?|engineers?) to perform the following:?$" % _NUM_WORDS, re.I)
+
+
+def _lead(lead: str, pool: str) -> str:
+    """PurTera's one task-list lead, or the plain one: a crew count only when a
+    fact states it (010082's lead named the meeting's attendees as the crew)."""
+    lead = lead.strip()
+    m = _LEAD.match(lead)
+    if not m:
+        return "Provider will perform the following:"
+    if m.group(2) and not re.search(r"\b(%s|%s)\s+(?:\(\d+\)\s+)?(?:\w+\s+)?(?:techs?|technicians?|resources?)"
+                                    % (m.group(1), m.group(2)), pool, re.I):
+        return "Provider will perform the following:"
+    return lead if lead.endswith(":") else lead + ":"
+
+
+_STOPWORDS = frozenset("""and the for with from per all any each other standard required needed install installation
+materials material equipment items item supplies supply provided provide customer provider onsite site""".split())
+_NOT_SUPPLY = re.compile(r"(?i)^(timeline|schedule|date)\b|\b\d+\s*(days?|weeks?)\b|\binstallation of\b|\bpictures?\b|"
+                         r"\bphotos?\b|\breuse\b|\bsurvey\b")
+
+
+def _grounded(x: dict[str, Any], lines: dict[str, str]) -> bool:
+    """A supply item names things its cited lines name: at least half its
+    words are in them (010043's writer listed a "backer board" off a line about
+    running the cabling)."""
+    words = [w for w in re.findall(r"[a-z0-9]{3,}", x["text"].lower()) if w not in _STOPWORDS]
+    if not words:
+        return True
+    cited = " ".join(lines.get(c, "") for c in x["cites"]).lower()
+    return sum(1 for w in words if w in cited or w.rstrip("s") in cited) >= max(1, (len(words) + 1) // 2)
+
+
+def _party_check(content: dict[str, Any], lines: dict[str, str]) -> int:
+    """A supply item stays with a party only when a cited line says that party
+    supplies it; the rest go to the neutral Equipment in Scope list, as
+    000123's SOW lists hardware "provided by SHI, the customer, or another
+    party" (the writer gave Provider its printers on a bare "Printer")."""
+    for k in ("provider_materials", "customer_materials", "equipment_in_scope"):
+        content[k] = [x for x in content.get(k) or []
+                      if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines))]
+    items = [(k, x) for k in ("provider_materials", "customer_materials") for x in content.get(k) or []
+             if x.get("by") != "col:supplier"]
+    if not items:
+        return 0
+    body = "\n".join(f"{i}. [{('Provider' if k == 'provider_materials' else 'Customer')}] {x['text']}\n"
+                     + "\n".join(f"   [{c}] {lines.get(c, '')[:300]}" for c in x["cites"])
+                     for i, (k, x) in enumerate(items))
+    got = _json_of(_complete(_PARTY_PROMPT % body, None, 300)) or {}
+    ok = {int(i) for i in got.get("stated") or [] if str(i).isdigit()}
+    moved = 0
+    for i, (k, x) in enumerate(items):
+        if i in ok:
+            continue
+        content[k] = [y for y in content[k] if y is not x]
+        content.setdefault("equipment_in_scope", []).append(x)
+        moved += 1
+    return moved
+
+
+def _dedupe_items(content: dict[str, Any]) -> None:
+    """One line per thing in each list: the writer and the coverage pass both
+    wrote 010082's drop-off arrangement."""
+    for k in LISTS:
+        seen, keep = set(), []
+        for x in content.get(k) or []:
+            key = re.sub(r"\W+", " ", x["text"].lower()).strip()
+            short = " ".join(key.split()[:8])
+            if key in seen or short in seen:
+                continue
+            seen.update({key, short})
+            keep.append(x)
+        content[k] = keep
 
 
 def _follow_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
@@ -372,7 +457,12 @@ def _item(x: Any) -> dict[str, Any] | None:
     if not isinstance(x, dict) or not str(x.get("text") or "").strip():
         return None
     cites = [str(c) for c in x.get("cites") or [] if str(c).strip()]
-    return {"text": strip_cites(str(x["text"])).strip(), "cites": cites,
+    text = strip_cites(str(x["text"]))
+    # Ids the writer put in the text itself: "(atm_6c5ab..., atm_8cde...)".
+    text = re.sub(r"\s*[\(\[]?\b(?:atm|pmq|ent|q|declared_scope)_[0-9A-Za-z_]+(?:\s*,\s*(?:atm|pmq|ent|q|declared_scope)_[0-9A-Za-z_]+)*[\)\]]?", "", text)
+    # "(Provider responsibility)" tags: the list says whose it is.
+    text = re.sub(r"\s*\((?:provider|customer|end customer)(?: duty| responsibility)?[^)]*\)", "", text, flags=re.I)
+    return {"text": re.sub(r"\s+", " ", text).strip(), "cites": cites,
             "kind": "fact" if str(x.get("kind")) == "fact" else "method"}
 
 
@@ -423,7 +513,11 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                 continue
             keep.append(x)
         content[k] = keep
-        to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact"]
+        # Supply items are checked by _party_check (who) and _grounded (what):
+        # judged here too, a bare order line "does not say" the customer
+        # supplies it and 010043's cameras were dropped outright.
+        if k not in ("provider_materials", "customer_materials", "equipment_in_scope"):
+            to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact"]
     ok = _verified([x for _, _, x in to_verify], lines)
     bad = {id(x) for _, _, x in to_verify} - {id(x) for x in ok}
     gone = content.setdefault("dropped", [])
