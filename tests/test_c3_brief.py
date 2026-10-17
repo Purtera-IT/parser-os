@@ -344,7 +344,8 @@ def test_the_coverage_pass_adds_cited_missing_facts(monkeypatch):
     brief = {"sections": {"scope_of_work": [{"id": "atm_a1", "text": "Move the APs"}]},
              "figures": [{"id": "atm_f1", "text": "3 Aruba APs are marked."}],
              "written": {"summary": "Move APs.", "sections": {"scope": [{"text": "Move the APs.", "cites": ["atm_a1"]}]}}}
-    monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"add": [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]},'
+    monkeypatch.setattr(B, "_complete", lambda p, m, t: '{"supported": [0]}' if "numbered sentence" in p else
+                        '{"add": [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]},'
                         ' {"text": "Invented.", "cites": ["atm_zz"]}]}')
     assert B._cover_missing_facts(brief) == 1
     assert brief["written"]["sections"]["job_details"] == [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]}]

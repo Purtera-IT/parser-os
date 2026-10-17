@@ -628,7 +628,8 @@ _PROMPT = (
     "deadline, a contact, a count, what is being asked for, or a change to the scope such as work added): %s\n"
     "OPEN QUESTIONS (asked in the deal; return under open_questions only those a PM must still get answered to "
     "price the job, reworded plainly; drop nudges and chasers such as 'have you had a chance to review', 'any "
-    "update', and notes or labels copied from a spreadsheet): %s\nCONFLICTS: %s"
+    "update', questions the account asks PurTera (turnaround, availability; PurTera answers those), and notes or "
+    "labels copied from a spreadsheet): %s\nCONFLICTS: %s"
 )
 
 _ASK_PROMPT = (
@@ -1206,13 +1207,33 @@ _COVER_PROMPT = (
     "List the facts a PM needs to price the job that the brief does NOT already state: counts (also counts "
     "read off figures), equipment and materials PurTera must supply or the customer supplies, extra work "
     "asked for (anything PurTera is asked to supply or install), access windows, dates and deadlines, site "
-    "conditions, and the on-site contact. A line's [under: ...] heading says what list it is in ('What We Ask "
-    "YOU Provide' means PurTera supplies it). Never write that something is unknown, not stated or not given. "
+    "conditions, and an on-site contact a line names as such. Add only what a line actually states; when no "
+    "line states something, add nothing for it. A line's [under: ...] heading says what list it is in ('What We "
+    "Ask YOU Provide' means PurTera supplies it). Never write that something is unknown, not stated, not given, "
+    "not mentioned or not requested, and never call a salesperson the on-site contact. "
     "Write each as "
     "one short third-person sentence that cites the [ids] it comes from and says nothing more than they do; "
     "a later fact replaces an earlier one; never restate what the brief already says. At most 8. Return JSON "
     "only: {\"add\": [{\"text\": str, \"cites\": [id]}]}.\nBRIEF:\n%s\nFACTS:\n%s"
 )
+
+
+_VERIFY_PROMPT = (
+    "For each numbered sentence, say whether the lines it cites state exactly what it says (no more, no "
+    "guessing, no merging). Return JSON only: {\"supported\": [sentence numbers]}.\n%s"
+)
+
+
+def _verified(sentences: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[str, Any]]:
+    """Keep only added sentences their cited lines state exactly: on 010426 the
+    added ones called the reseller's salesperson the on-site contact."""
+    if not sentences:
+        return []
+    body = "\n".join(f"{i}. {x['text']}\n" + "\n".join(f"   [{c}] {lines.get(c, '')[:300]}" for c in x["cites"])
+                     for i, x in enumerate(sentences))
+    got = _json_of(_complete(_VERIFY_PROMPT % body, None, 300)) or {}
+    ok = {int(i) for i in got.get("supported") or [] if str(i).isdigit()}
+    return [x for i, x in enumerate(sentences) if i in ok]
 
 
 def _cover_missing_facts(brief: dict[str, Any]) -> int:
@@ -1240,8 +1261,9 @@ def _cover_missing_facts(brief: dict[str, Any]) -> int:
         t = strip_cites(str(x.get("text") or "") if isinstance(x, dict) else "")
         if t and cites:
             add.append({"text": t, "cites": cites})
+    add = _verified(add[:8], {str(x["id"]): str(x["text"]) for x in items})
     if add:
-        secs["job_details"] = list(secs.get("job_details") or []) + add[:8]
+        secs["job_details"] = list(secs.get("job_details") or []) + add
         w["covered_added"] = len(add[:8])
     return len(add)
 
@@ -1382,7 +1404,7 @@ _JUNK_ROLE = re.compile(r"linkedin|^\w+\s*-$|^\W*$", re.I)
 _EMAIL = re.compile(r"(?!image\d)[\w.+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
 
-_ONSITE = re.compile(r"(?i:\b(?:site|on-?site|onsite|point of|local)?\s*contact(?: person)?\s+(?:is|will be|:))\s*"
+_ONSITE = re.compile(r"(?i:\b(?:(?:site|on-?site|onsite|local)\s+contact|contact\s+person|point\s+of\s+contact)\s*(?:is|will be|:)?)\s+"
                      r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'-]+){1,2})")
 
 
