@@ -2321,6 +2321,11 @@ class XlsxParser(BaseParser):
                 artifact_type=ArtifactType.xlsx,
                 parser_version=self.parser_version,
             )
+        try:
+            atoms = list(atoms) + sheet_count_rollups(atoms, project_id=project_id, artifact_id=artifact_id,
+                                                      filename=path.name, parser_version=self.parser_version)
+        except Exception as exc:  # pragma: no cover - a rollup never costs the parse
+            warnings.append(f"WARNING: sheet rollup failed: {type(exc).__name__}")
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
@@ -6553,3 +6558,70 @@ class XlsxParser(BaseParser):
         )
 
         return atoms
+
+
+#: A column that counts things a job is priced by.
+_COUNT_COL = re.compile(r"\b(aps?|access points?|devices?|cameras?|drops?|runs?|cables?|qty|quantity|count|tvs?|"
+                        r"monitors?|displays?|units?|readers?|phones?|desks?|seats?)\b", re.I)
+_CELL = re.compile(r"\s*([^:|]{1,60}):\s*([^|]*)")
+
+
+def sheet_count_rollups(atoms: list[Any], *, project_id: str, artifact_id: str, filename: str,
+                        parser_version: str) -> list[Any]:
+    """One line per counting column of a sheet: its total and each row's value.
+
+    A sheet's rows are read one by one, so no line says what they add up to:
+    010428's "Proposed Summary - AP LAG" gives "AP LAG Ports Added" per closet
+    (one per AP), and the brief never knew it was 82 APs across 17 closets."""
+    by_sheet: dict[str, list[dict[str, str]]] = {}
+    for a in atoms:
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        sheet = str((loc or {}).get("sheet") or "")
+        text = str(getattr(a, "raw_text", "") or "")
+        if not sheet or text.count("|") < 3:
+            continue
+        cells = {k.strip(): v.strip() for k, v in _CELL.findall(text) if k.strip()}
+        if len(cells) >= 3:
+            rows_here = by_sheet.setdefault(sheet, [])
+            # The same row comes back more than once (a row atom and its
+            # copies); count each row once.
+            if cells not in rows_here:
+                rows_here.append(cells)
+    out = []
+    for sheet, rows in by_sheet.items():
+        if len(rows) < 3 or len(rows) > 200:
+            continue
+        key = next(iter(rows[0]))
+        for col in rows[0]:
+            if col == key or not _COUNT_COL.search(col):
+                continue
+            vals, seen_keys = [], set()
+            for r in rows:
+                k = r.get(key, "")
+                if not k or k in seen_keys or re.search(r"\btotal\b", k, re.I):
+                    continue
+                seen_keys.add(k)
+                v = r.get(col, "")
+                if re.fullmatch(r"-?\d+(\.\d+)?", v.replace(",", "")):
+                    vals.append((r.get(key, ""), float(v.replace(",", ""))))
+            if len(vals) < 3 or not sum(v for _, v in vals):
+                continue
+            total = sum(v for _, v in vals)
+            each = ", ".join(f"{k} {int(v) if v.is_integer() else v}" for k, v in vals if v)[:900]
+            nz = sum(1 for _, v in vals if v)
+            text = (f"{sheet}: {col} totals {int(total) if total.is_integer() else round(total, 2)} across "
+                    f"{nz} {key} rows ({each}).")
+            atom_id = stable_id("atm", artifact_id, "sheet_rollup", sheet, col)
+            src = SourceRef(id=stable_id("src", atom_id), artifact_id=artifact_id, artifact_type=ArtifactType.xlsx,
+                            filename=filename, locator={"sheet": sheet, "rollup": col},
+                            extraction_method="xlsx_count_rollup_v1", parser_version=parser_version)
+            out.append(EvidenceAtom(
+                id=atom_id, project_id=project_id, artifact_id=artifact_id, atom_type=AtomType.quantity,
+                raw_text=text, normalized_text=normalize_text(text),
+                value={"kind": "sheet_rollup", "sheet": sheet, "column": col, "total": total, "rows": len(vals)},
+                entity_keys=[], source_refs=[src], receipts=[], authority_class=AuthorityClass.meeting_note,
+                confidence=0.8, confidence_raw=0.8, calibrated_confidence=0.8,
+                review_status=ReviewStatus.needs_review, review_flags=["sheet_rollup"], parser_version=parser_version,
+            ))
+    return out
