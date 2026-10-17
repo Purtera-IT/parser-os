@@ -468,3 +468,24 @@ def test_quoted_history_dedup_noop_without_threads() -> None:
     out, dropped = dedup_quoted_history([], project_id="proj")
     assert out == []
     assert dropped == []
+
+
+def test_a_forwarded_paste_folds_into_the_original_message_below_it() -> None:
+    """One file holds a forward (message 1) that pastes the customer's note and
+    the customer's own email quoted under it (message 2). The customer wrote
+    the words: their message keeps the line (live 010387, "I need to get our AV
+    company out" read as CDW's words)."""
+    from types import SimpleNamespace as NS
+
+    text = "I need to get our AV company out to our Suwanee GA branch to repair a video wall."
+
+    def line(mi, author, ls):
+        return NS(raw_text=text, normalized_text=text, artifact_id="f1",
+                  source_refs=[NS(locator={"line_start": ls})],
+                  value={"quoted": True, "message_index": mi,
+                         "email_thread": {"thread_id": "t1", "thread_index": 0,
+                                          "message": {"index": mi, "author": author, "quoted": True}}})
+    forward = line(1, "Chris Heist <chris.heist@cdw.com>", 10)
+    original = line(2, "Bill Ort <ortw@vystarcu.org>", 40)
+    kept, dropped = dedup_quoted_history([forward, original], project_id="p")
+    assert kept == [original] and dropped == [forward]

@@ -207,3 +207,67 @@ def test_a_deal_question_the_deal_answers_is_dropped(monkeypatch):
     w = brief["written"]
     assert [q["question"] for q in w["open_questions"]] == ["Who supplies the mounts?"]
     assert w["answered_open_questions"][0]["answered_by"] == ["atm_b"]
+
+
+def _trusted_all(monkeypatch):
+    monkeypatch.setenv("SOWSMITH_C3_BRIEF_TRUST", "read:co_action,read:sow_section,read:co_reason")
+
+
+def test_a_line_the_base_reads_as_answered_or_a_heading_stays_out(monkeypatch):
+    from app.core import c3_type_base as T
+
+    _trusted_all(monkeypatch)
+    monkeypatch.setitem(T._DEAL, "types", {"a1": ["answered_question", 0.9985], "a2": ["list_header", 0.997]})
+    atoms = [_atom(1, "open_question", "Do you happen to have the model of the camera?"),
+             _atom(2, "deal_metadata", "Site Contacts:"), _atom(3, "scope_item", "Mount 3 cameras")]
+    reads = {a.id: {"read:co_action": ["keep", 0.99], "read:sow_section": ["customer_responsibilities", 0.6]}
+             for a in atoms}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    kept = [x["id"] for v in b["sections"].values() for x in v]
+    assert kept == ["a3"]
+    assert b["left_out"]["by_reason"] == {"base type answered_question": 1, "base type list_header": 1}
+    assert "a1" not in [q["id"] for q in b["questions"]]
+
+
+def test_the_owner_head_wins_when_surer_than_the_section_head(monkeypatch):
+    _trusted_all(monkeypatch)
+    atoms = [_atom(1, "dependency", "Mount the Aruba APs at the NEW site")]
+    reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["customer_responsibilities", 0.65],
+                    "read:task_owner_role": ["technician", 0.70]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert [x["id"] for x in b["sections"]["scope_of_work"]] == ["a1"]
+    assert "customer_responsibilities" not in b["sections"]
+
+
+def test_a_document_the_customer_furnishes_is_not_our_fees(monkeypatch):
+    _trusted_all(monkeypatch)
+    atoms = [NS(id=f"a{i}", atom_type=t, raw_text=x, review_status="approved", artifact_id="cdw_order")
+             for i, (t, x) in enumerate([("vendor_line_item", "ITEM: CF83-E camera | QTY: 1 | $1,325.27"),
+                                         ("vendor_line_item", "ITEM: CD53-E dome | QTY: 2 | $2,797.86"),
+                                         ("vendor_line_item", "ITEM: license | QTY: 3 | $1,313.79"),
+                                         ("commercial_total", "GRAND TOTAL: $6,184.28")], 1)]
+    sup = {"a1": ["customer", 0.76], "a2": ["customer", 0.73], "a3": ["us", 0.88], "a4": ["us", 0.59]}
+    reads = {a.id: {"read:co_action": ["keep", 0.99], "read:sow_section": ["fees", 0.8],
+                    "col:supplier": sup[a.id]} for a in atoms}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert not b["sections"].get("fees")
+    assert {x["id"] for x in b["sections"]["customer_furnished"]} == {"a1", "a2", "a3", "a4"}
+
+
+def test_the_writer_keeps_each_sentence_in_its_heads_section(monkeypatch):
+    B = c3_brief
+    brief = {"service": {"value": "low_voltage_cabling"}, "conflicts": [], "questions": [],
+             "sections": {"scope_of_work": [{"id": "a1", "text": "Mount 3 APs"}],
+                          "overview": [{"id": "a2", "text": "Ladders on site; no backboard, please install one"}]}}
+    out = ('{"summary": "Three APs. [a1]", "sections": {"scope": [{"text": "Mount three APs.", "cites": ["a1"]}],'
+           ' "out_of_scope": [{"text": "Painting the backboard is not included.", "cites": ["a2"]}]}}')
+    monkeypatch.setattr(B, "_complete", lambda p, m, t: out)
+    w = B.write(brief)
+    assert list(w["sections"]) == ["scope"]
+    assert w["moved_dropped"] == 1
+
+
+def test_job_details_come_only_from_lines_the_heads_kept():
+    atoms = [_atom(1, "scope_item", "IDF to side door 154ft"), _atom(2, "scope_item", "concrete ceiling")]
+    got = c3_brief.job_details(atoms, {"a1"})
+    assert [d["cites"] for d in got] == [["a1"]]

@@ -51,6 +51,18 @@ EVIDENCE_LINES = 5
 #: of 13. SOWSMITH_C3_QUESTION_BAR overrides.
 QUESTION_CATALOG_BAR = float(os.environ.get("SOWSMITH_C3_QUESTION_BAR", "0.33"))
 CONFLICT_BAR = 0.5
+#: Line types the base reads that are never brief material, whatever co_action
+#: says: a question the deal already answered, a heading. On the graded
+#: pre-quote deals the base read "Do you have the model of the camera?" as
+#: answered_question at 0.9985 and "Site Contacts:" as list_header at 0.997,
+#: and the brief still filed them as a customer responsibility and overview.
+NOT_BRIEF_TYPES = frozenset({"answered_question", "list_header", "internal_question"})
+BASE_TYPE_BAR = 0.5
+#: The supplier head (col:supplier) at or above this says who furnishes a
+#: priced line. A document whose priced lines the customer furnishes is the
+#: customer's own order (010043: the CDW order confirmation for the cameras the
+#: customer bought), not this job's fees.
+SUPPLIER_BAR = 0.6
 MAX_FACTS_PER_SECTION = 25
 MAX_LABEL_TASKS = 40
 
@@ -133,6 +145,25 @@ def _deal_kit(atom: Any) -> bool:
         return skipped(atom, _DEAL.get("sha"))
     except Exception:
         return False
+
+
+def _base_type(atom_id: str) -> tuple[str, float]:
+    """The base's own type reading of a line (its one read of the deal)."""
+    try:
+        from app.core.c3_type_base import _DEAL
+
+        v = (_DEAL.get("types") or {}).get(atom_id)
+    except Exception:
+        v = None
+    return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else ("_absent", 0.0)
+
+
+def _not_brief(atom: Any) -> str:
+    """The type that keeps a line out of the brief, or ''."""
+    bt, pb = _base_type(str(atom.id))
+    if bt in NOT_BRIEF_TYPES and pb >= BASE_TYPE_BAR:
+        return bt
+    return _type(atom) if _type(atom) in NOT_BRIEF_TYPES else ""
 
 
 def _attach_evidence(questions: list[dict[str, Any]], atoms: list[Any]) -> None:
@@ -236,6 +267,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                              "by": "rule:type"})
             why["rule:never"] += 1
             continue
+        nb = _not_brief(a)
+        if nb:
+            left_out.append({"id": aid, "reason": f"base type {nb}", "by": "base:type"})
+            why["base:type"] += 1
+            continue
         if act != "_absent":
             if act == "keep" and p >= KEEP_BAR:
                 kept.append((a, p, _by("read:co_action")))
@@ -274,10 +310,14 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # technician at >= 0.75 on 82 of 94 scope lines and on no customer line.
         if sec == "customer_responsibilities" and have_reads:
             own, po = r(aid, "read:task_owner_role")
-            if own == "technician" and po >= OWNER_BAR:
+            # Also when the owner head is surer than the section head: "Mount
+            # the Aruba APs" (010038) read technician 0.70, customer
+            # responsibility 0.65, and the brief gave our work to the customer.
+            if own == "technician" and (po >= OWNER_BAR or po > ps):
                 sec, sec_by = "scope_of_work", "base:read:task_owner_role"
         sections[sec].append({"id": aid, "text": a.raw_text[:400], "type": _type(a),
                               "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by})
+    _customer_furnished(sections, by_id, r if have_reads else None)
     for sec in sections:
         sections[sec].sort(key=lambda x: -(x["keep_p"] or 0.5))
 
@@ -357,6 +397,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             act, pa = r(aid, "read:co_action") if use["read:co_action"] else ("keep", 1.0)
             if act == "keep" and pa >= MAYBE_BAR and not _deal_kit(a) and not _PLACEHOLDER.match(a.raw_text):
                 hit = ("open_question", "rule:type+" + _by("read:co_action") if use["read:co_action"] else "rule:type")
+        # A question the base reads as already answered is not asked.
+        if hit and _not_brief(a):
+            hit = None
         if hit:
             owner = r(aid, "read:needed_by")[0] if use["read:needed_by"] else "_absent"
             questions.append({"id": aid, "text": a.raw_text[:300], "wants": hit[0], "by": hit[1],
@@ -372,7 +415,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             continue
         a = by_id[ids[0]]
         act, pa = r(ids[0], "read:co_action") if use["read:co_action"] else ("keep", 1.0)
-        if act != "keep" or pa < MAYBE_BAR or _deal_kit(a) or _PLACEHOLDER.match(a.raw_text):
+        if act != "keep" or pa < MAYBE_BAR or _deal_kit(a) or _PLACEHOLDER.match(a.raw_text) or _not_brief(a):
             continue
         seen_q.add(ids[0])
         # The packet's reason is boilerplate ("Open question from transcript
@@ -420,6 +463,46 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
     return brief
 
 
+_PRICE = re.compile(r"\$\s?\d")
+_PRICED_TYPES = frozenset({"vendor_line_item", "bom_line", "commercial_total", "rate_card"})
+
+
+def _customer_furnished(sections: dict[str, list[dict[str, Any]]], by_id: dict[str, Any], r) -> int:
+    """Move a document's priced lines out of fees and scope when the supplier
+    head says the customer furnishes them: the document is the customer's own
+    order, and its totals are what the customer paid, not this job's price.
+    Decided per document by the head's sure answers on its priced lines
+    (010043's CDW order: both camera models and the junction box customer,
+    the mount and license us; the grader read the $6,184 as our fee).
+    Returns lines moved."""
+    if r is None or not sections.get("fees"):
+        return 0
+    doc_of = {iid: str(getattr(by_id.get(iid), "artifact_id", "") or "") for v in sections.values()
+              for iid in (x["id"] for x in v)}
+    fee_docs = {doc_of[x["id"]] for x in sections["fees"] if doc_of.get(x["id"])}
+    priced: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
+    for sec, items in sections.items():
+        for it in items:
+            d = doc_of.get(it["id"])
+            if d in fee_docs and (sec == "fees" or it.get("type") in _PRICED_TYPES or _PRICE.search(it.get("text") or "")):
+                priced[d].append((sec, it))
+    moved: list[tuple[str, dict[str, Any]]] = []
+    for d, items in priced.items():
+        sure = [(sec, it, r(it["id"], "col:supplier")) for sec, it in items]
+        sure = [(sec, it, v) for sec, it, v in sure if v[0] in ("customer", "us") and v[1] >= SUPPLIER_BAR]
+        cust = [x for x in sure if x[2][0] == "customer"]
+        if sure and len(cust) * 2 > len(sure):
+            moved.extend(items)
+    if not moved:
+        return 0
+    gone = {id(it) for _, it in moved}
+    for sec in list(sections):
+        sections[sec] = [x for x in sections[sec] if id(x) not in gone]
+    for _, it in moved:
+        sections["customer_furnished"].append({**it, "section_by": "base:col:supplier"})
+    return len(moved)
+
+
 def _layer_of(by: str) -> str:
     """base: decided by a universal head (any company); purtera: by a
     company head; rule: by a fallback rule until a head is trusted."""
@@ -437,14 +520,33 @@ def _stamp_layers(brief: dict[str, Any]) -> None:
     brief["decided_by"]["layers"] = dict(counts)
 
 
+#: The written sections and the head sections each one is written from. A
+#: sentence may only cite its own section's lines: the writer was handed every
+#: line and six fixed headings, and on the graded deals it moved 12 of 15
+#: sentences out of the section the heads chose and wrote "painting the
+#: backboard is not included" under out of scope from an overview line.
+WRITER_SECTIONS: dict[str, tuple[str, ...]] = {
+    "scope": ("scope_of_work", "deliverables", "provider_responsibilities"),
+    "customer_responsibilities": ("customer_responsibilities",),
+    "customer_furnished": ("customer_furnished",),
+    "out_of_scope": ("out_of_scope",),
+    "schedule": ("timeline",),
+    "assumptions": ("assumptions",),
+    "fees": ("fees",),
+    "terms": ("terms", "change_control", "acceptance"),
+}
+
 _PROMPT = (
-    "Write a short project manager's brief from these facts: a summary of at most 3 sentences, and at most 3 "
-    "short sentences for each of at most 6 sections (the ones a PM reads first: scope, customer "
-    "responsibilities, out of scope, schedule, fees, terms) (the facts themselves are listed under the brief, so do not restate every "
-    "one). Every sentence must cite the [ids] of the facts it uses, and say nothing that is not in a fact. "
+    "Write a short project manager's brief. The summary: at most 3 sentences about the whole job, from any "
+    "facts. Then each section given under SECTIONS, at most 3 short sentences, written ONLY from that "
+    "section's own facts: never write a section that is not given, never move a fact to another section, and "
+    "never say something is excluded or not included unless that section's fact says so. "
+    "customer_furnished means equipment the customer already bought or supplies; it is not this job's price. "
+    "Every sentence must cite the [ids] of the facts it uses and say nothing that is not in them. "
     "Return JSON only: {\"summary\": str, \"sections\": "
     "{section: [{\"text\": str, \"cites\": [id]}]}, \"open_questions\": [{\"question\": str, \"owner\": str, "
-    "\"cites\": [id]}]}.\n\nSERVICE: %s\nFACTS BY SECTION: %s\nOPEN QUESTIONS: %s\nCONFLICTS: %s"
+    "\"cites\": [id]}]}.\n\nSERVICE: %s\nOVERVIEW FACTS (summary only): %s\nSECTIONS: %s\n"
+    "OPEN QUESTIONS: %s\nCONFLICTS: %s"
 )
 
 _ASK_PROMPT = (
@@ -545,10 +647,17 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     so a failed or partial call loses nothing."""
     from concurrent.futures import ThreadPoolExecutor
 
-    facts = {s: [f"[{x['id']}] {x['text']}" for x in v[:MAX_FACTS_PER_SECTION]]
-             for s, v in brief["sections"].items()}
+    heads = brief["sections"]
+    facts: dict[str, list[str]] = {}
+    own: dict[str, set[str]] = {}
+    for ws, srcs in WRITER_SECTIONS.items():
+        items = [x for src in srcs for x in heads.get(src) or []][:MAX_FACTS_PER_SECTION]
+        if items:
+            facts[ws] = [f"[{x['id']}] {x['text']}" for x in items]
+            own[ws] = {x["id"] for x in items}
+    overview = [f"[{x['id']}] {x['text']}" for x in (heads.get("overview") or [])[:MAX_FACTS_PER_SECTION]]
     cs = [x["ids"] for x in brief["conflicts"][:15]]
-    known = {x["id"] for v in brief["sections"].values() for x in v} | {q["id"] for q in brief["questions"]}
+    known = {x["id"] for k, v in heads.items() if k != "job_details" for x in v} | {q["id"] for q in brief["questions"]}
     catalog = [q for q in brief["questions"] if q["id"].startswith("q:")]
     qs = [f"[{q['id']}] (owner: {q['owner']}) {q['text']}" for q in brief["questions"]
           if not q["id"].startswith("q:")][:30]
@@ -557,7 +666,8 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     batches = [catalog[i:i + ASK_BATCH] for i in range(0, len(catalog), ASK_BATCH)]
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1 + len(batches)) as pool:
-        prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(facts), json.dumps(qs), json.dumps(cs)),
+        prose_f = pool.submit(_complete, _PROMPT % (service, json.dumps(overview), json.dumps(facts),
+                                                    json.dumps(qs), json.dumps(cs)),
                               model, PROSE_TOKENS)
         ask_f = [pool.submit(_complete, _ASK_PROMPT % (service, json.dumps(
             [{"id": q["id"], "q": q["text"],
@@ -575,15 +685,23 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     if doc is None:
         out["error"] = "the prose call returned no usable JSON"
         doc = {}
+    moved = 0
     for sec, sentences in list((doc.get("sections") or {}).items()):
         keep = []
+        allowed = own.get(sec, set())
         for s in sentences or []:
             cites = [str(c).strip("[]") for c in (s.get("cites") or [])] if isinstance(s, dict) else []
-            if cites and all(c in known for c in cites):
+            if cites and all(c in allowed for c in cites):
                 keep.append({"text": s.get("text", ""), "cites": cites})
+            elif cites and all(c in known for c in cites):
+                moved += 1  # a fact the heads put in another section
             else:
                 dropped += 1
-        doc["sections"][sec] = keep
+        if keep:
+            doc["sections"][sec] = keep
+        else:
+            doc["sections"].pop(sec, None)
+    out["moved_dropped"] = moved
     by_qid = {q["id"]: q for q in catalog}
     asked, answered, failed = [], [], 0
 
@@ -761,7 +879,12 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         str(a.id): _types[str(a.id)] for a in atoms
         if str(a.id) in _types and any(str(k).startswith("site:") for k in (getattr(a, "entity_keys", None) or []))}
     brief["contacts"] = contacts(atoms)
-    details = job_details(atoms)
+    # Only lines the heads kept (body or "also mentioned"): picked by wording
+    # alone it put back lines co_action dropped -- 9 of 15 on 010038, among
+    # them "concrete" and the stale "if they have a scissor lift/ ladder".
+    kept_ids = {str(x["id"]) for v in (brief.get("sections") or {}).values() for x in v} | {
+        str(x["id"]) for x in brief.get("also_mentioned") or []}
+    details = job_details(atoms, kept_ids)
     brief["job_details"] = details
     if details:
         # The writer words these as facts (counts, models, conditions); pasted
@@ -895,7 +1018,7 @@ _VENDOR_TOTAL = re.compile(r"\b(sub ?total|grand total|sales tax|tax|shipping|le
 _PLACEHOLDER_LINE = re.compile(r"^\[(image|drawing|figure|table)[^\]]*\]", re.I)
 
 
-def job_details(atoms: list[Any]) -> list[dict[str, Any]]:
+def job_details(atoms: list[Any], kept: set[str] | None = None) -> list[dict[str, Any]]:
     """The concrete lines a PM prices from: quantities, equipment and models,
     lengths, site conditions, access windows and deadlines, in document order,
     one per distinct line, each citing itself. Chosen by what the line says,
@@ -904,7 +1027,7 @@ def job_details(atoms: list[Any]) -> list[dict[str, Any]]:
     first, rest, seen = [], [], set()
     for a in atoms:
         t = _type(a)
-        if t in _NOT_DETAIL:
+        if t in _NOT_DETAIL or (kept is not None and str(a.id) not in kept) or _not_brief(a):
             continue
         v = a.value if isinstance(getattr(a, "value", None), dict) else {}
         if v.get("superseded_by") or _deal_kit(a):

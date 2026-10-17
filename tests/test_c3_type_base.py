@@ -785,3 +785,25 @@ def test_a_site_line_gets_its_own_address_key_and_drops_another_streets():
     assert C.own_site_keys([a]) == 1
     assert "site:323_lakeside_ave_suite_403_cleveland_oh_44113" in a.entity_keys
     assert "site:1220_w_6th_street_suite_502" not in a.entity_keys and "org:cdw" in a.entity_keys
+
+
+def test_the_base_answer_wins_at_the_end_even_when_a_stage_lost_its_lock(monkeypatch):
+    from types import SimpleNamespace as N
+
+    from app.core import c3_type_base as C
+    from app.core.schemas import AtomType
+
+    monkeypatch.setattr(C, "authority_enabled", lambda: True)
+    C.set_deal([], {})
+    C._DEAL["types"] = {"t1": ["small_talk", 0.97], "s1": ["physical_site", 0.99],
+                        "q1": ["answered_question", 0.9985]}
+    t = N(id="t1", atom_type=AtomType("scope_item"), value={}, review_flags=[])
+    s = N(id="s1", atom_type=AtomType("deal_metadata"), value={}, review_flags=[])
+    q = N(id="q1", atom_type=AtomType("open_question"), value={}, review_flags=[])
+    assert C.apply_authority([t, s, q], final=True) == 1
+    assert t.atom_type == AtomType("small_talk")
+    assert s.atom_type == AtomType("deal_metadata")  # needs values: not forced
+    # No parser type for it: the line keeps its type and carries the answer.
+    assert q.atom_type == AtomType("open_question")
+    assert q.value["c3_base_type"] == {"type": "answered_question", "p": 0.999}
+    C._DEAL.clear()

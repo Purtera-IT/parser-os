@@ -537,7 +537,9 @@ BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "rea
                     "read:blocked_on", "read:superseded", "read:task_owner_role",
                     # Site role for site_geo_fallback (line_reading): on the labeled
                     # deals the base was right 241/243, the LLM/parser 234/243.
-                    "jdg:site_role", "jdg:geo_mention")
+                    "jdg:site_role", "jdg:geo_mention",
+                    # Who furnishes a priced line (c3_brief._customer_furnished).
+                    "col:supplier")
 
 
 def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
@@ -1198,7 +1200,11 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         for a in atoms:
             v = getattr(a, "value", None)
             lab = v.get("c3_label") if isinstance(v, dict) else None
-            if not isinstance(lab, dict) or lab.get("act") not in ("fill", "assign") or not lab.get("type"):
+            # "keep" too: the base agreed with the parser's type, so it is the
+            # base's decision as much as a fill is ("Some additional
+            # information from Raf-" was kept list_header at 0.945 and a later
+            # rule made it scope_item, so it reached the brief's scope).
+            if not isinstance(lab, dict) or lab.get("act") not in ("fill", "assign", "keep") or not lab.get("type"):
                 continue
             t = getattr(a, "atom_type", None)
             if str(getattr(t, "value", t) or "") == lab["type"]:
@@ -1231,7 +1237,12 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         t = getattr(a, "atom_type", None)
         before = str(getattr(t, "value", t) or "")
         v = dict(getattr(a, "value", None) or {}) if isinstance(getattr(a, "value", None), dict) else {}
-        if final and not is_locked(a):
+        # At the end the base's answer wins for every type that needs no
+        # values, locked or not: a later stage rebuilds a line's value and
+        # loses its lock (010043's "Do you have the model of the camera?" was
+        # read answered_question at 0.9985 and ended open_question, so the
+        # brief made it a customer responsibility).
+        if final and not is_locked(a) and ans not in _VALUELESS:
             continue
         if before == ans:
             if not final and not is_locked(a):
@@ -1248,6 +1259,12 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         try:
             a.atom_type = AtomType(ans)
         except ValueError:
+            # A base type the parser has no type for (answered_question,
+            # list_header, rate_card, commitment ...): the line keeps its type,
+            # and the base's answer rides on it for every reader after (the
+            # brief leaves an answered question or a heading out).
+            v["c3_base_type"] = {"type": ans, "p": round(p, 3)}
+            a.value = v
             continue
         alt = list(v.get("alt_atom_types") or [])
         if before and before not in alt:
