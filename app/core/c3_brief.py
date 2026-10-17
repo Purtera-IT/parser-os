@@ -1366,6 +1366,16 @@ _ONSITE = re.compile(r"(?i:\b(?:site|on-?site|onsite|point of|local)?\s*contact(
                      r"(?P<name>[A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'-]+){1,2})")
 
 
+def _line_of(atom: Any) -> int | None:
+    refs = getattr(atom, "source_refs", None) or []
+    loc = getattr(refs[0], "locator", None) if refs else None
+    loc = loc if isinstance(loc, dict) else {}
+    try:
+        return int(loc.get("line_start")) if loc.get("line_start") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
     """The deal's people, from the lines read as stakeholders: a real name with
     a role, email or phone, one entry per person, most-mentioned first. No LLM.
@@ -1373,6 +1383,9 @@ def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
     Fernandez ...) already on stakeholder lines; the writer just dropped them.
     A greeting ("Hi Tanner"), a place or a date is not a person."""
     people: dict[str, dict[str, Any]] = {}
+    by_art: dict[str, list[Any]] = {}
+    for a in atoms:
+        by_art.setdefault(str(getattr(a, "artifact_id", "")), []).append(a)
     for i, a in enumerate(atoms):
         m = _ONSITE.search(str(getattr(a, "raw_text", "") or ""))
         if m:
@@ -1385,19 +1398,21 @@ def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
                 p["n"] += 2
                 p["role"] = "on-site contact"
                 p["cites"].append(str(a.id))
-                # Their number is the next line of the same document
-                # ("Cell Number: 904-386-5066", 010387).
-                for b in atoms[i + 1:i + 3]:
-                    if str(getattr(b, "artifact_id", "")) != str(getattr(a, "artifact_id", "")):
-                        break
-                    bt = str(getattr(b, "raw_text", "") or "").strip()
-                    ph = _PHONE.search(bt)
-                    # Only a line that is just their number ("Cell Number:
-                    # 904-386-5066"), never someone's signature block.
-                    if ph and not p["phone"] and re.fullmatch(
-                            r"(?i)\s*(cell|mobile|phone|tel|direct)?\s*(number|no\.?|#)?\s*:?\s*[\d()+.\s-]{10,20}\s*", bt):
-                        p["phone"] = ph.group(0)
-                        break
+                # Their number is the next line of the same document by line
+                # number ("Cell Number: 904-386-5066", 010387); the compile's
+                # own atom order is not the document's.
+                here = _line_of(a)
+                if here is not None:
+                    for b in by_art.get(str(getattr(a, "artifact_id", "")), []):
+                        lb = _line_of(b)
+                        if lb is None or not here < lb <= here + 3:
+                            continue
+                        bt = str(getattr(b, "raw_text", "") or "").strip()
+                        ph = _PHONE.search(bt)
+                        if ph and not p["phone"] and re.fullmatch(
+                                r"(?i)\s*(cell|mobile|phone|tel|direct)?\s*(number|no\.?|#)?\s*:?\s*[\d()+.\s-]{10,20}\s*", bt):
+                            p["phone"] = ph.group(0)
+                            break
         if _type(a) != "stakeholder":
             continue
         v = a.value if isinstance(getattr(a, "value", None), dict) else {}

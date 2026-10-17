@@ -308,8 +308,11 @@ def test_a_named_contact_person_is_the_on_site_contact():
 
 
 def test_a_phone_before_a_name_is_not_that_persons():
-    atoms = [NS(id="a1", atom_type="stakeholder", raw_text="Contact Person is Rafael Fernandez", value={}, artifact_id="d"),
-             NS(id="a2", atom_type="deal_metadata", raw_text="Cell Number:  904-386-5066", value={}, artifact_id="d"),
+    loc = lambda n: [NS(locator={"line_start": n})]
+    atoms = [NS(id="a1", atom_type="stakeholder", raw_text="Contact Person is Rafael Fernandez", value={}, artifact_id="d",
+                source_refs=loc(205)),
+             NS(id="a2", atom_type="deal_metadata", raw_text="Cell Number:  904-386-5066", value={}, artifact_id="d",
+                source_refs=loc(207)),
              NS(id="a3", atom_type="stakeholder", raw_text="Cell Number: 904-386-5066, Bill Ort, AVP | ortw@vystarcu.org",
                 value={"name": "Bill Ort", "role": "AVP", "email": "ortw@vystarcu.org"}, artifact_id="n")]
     got = {c["name"]: c for c in c3_brief.contacts(atoms)}
