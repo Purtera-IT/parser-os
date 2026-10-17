@@ -468,7 +468,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "version": 2,
         "service": service,
         "sections": dict(sections),
-        "also_mentioned": [{"id": str(a.id), "text": a.raw_text[:200], "keep_p": round(p, 3)}
+        "also_mentioned": [{"id": str(a.id), "text": a.raw_text[:200], "keep_p": round(p, 3), "when": _when_of(a)}
                            for a, p in sorted(maybe, key=lambda x: -x[1])[:150]],
         "questions": questions,
         "conflicts": conflicts[:40],
@@ -580,12 +580,17 @@ _PROMPT = (
     "sentences. Cover every distinct fact a PM would price from once in the whole brief: never repeat a fact "
     "another sentence already gave, and merge facts that say the same thing. Never write a section that is not "
     "given, never move a fact to another section, and never say something is excluded unless that section's "
-    "fact says so. job_details: the counts, models, sizes, lengths, site conditions and access or timing limits, "
-    "in the third person; never restate a fact Scope already gave. customer_furnished: equipment the customer already bought or "
+    "fact says so. job_details (up to 10 sentences): every count (including counts read off the figures), "
+    "model, size, length, material PurTera must supply, extra work asked for, site condition, and access window "
+    "or deadline the facts give, in the third person; never restate a fact Scope already gave. customer_furnished: equipment the customer already bought or "
     "supplies; it is not this job's price: say what was bought, how many, and its total by the label the "
     "fact gives (GRAND TOTAL), never whether that total includes tax.\n"
     "PRICING QUESTIONS: up to 10 questions a PM must ask before pricing THIS job that the facts leave open: "
-    "specific to its work, site, counts, access, materials, who supplies what, and timing. Never ask what ANY "
+    "specific to its work, site, counts, access, materials, who supplies what, and timing. Consider, and ask only "
+    "when the facts leave it open: the street address and floor; union or prevailing-wage labor; mounting "
+    "height and lift or ladder; who supplies, receives and stages the equipment; whether PurTera connects, "
+    "configures and tests or only mounts; removal and disposal of old equipment; one trip or several; site "
+    "hours, escort and access. Never ask what ANY "
     "fact given here (overview, sections or also kept) already answers, never ask contract boilerplate; cite "
     "the facts each question comes from.\n"
     "RULES: every sentence cites the [ids] of the facts it uses and says nothing that is not in them. Never "
@@ -619,12 +624,13 @@ _ASK_PROMPT = (
 )
 #: Questions per answered-check call. At 40, one 010038 call answered 9 and
 #: the same call again answered none; at 12 it answered 6-8 every time.
-SECTION_SENTENCES = 6
+SECTION_SENTENCES = 8
+DETAIL_SENTENCES = 10
 #: Catalog families shown under the pricing questions: the ones about this
 #: job. Contract terms and compliance are asked of every deal (labeled valid on
 #: every one), so they stay for labeling and the SOW, not the pre-quote page.
 SHOWN_FAMILIES = frozenset({"site_access", "schedule", "quantities_scope", "network_it", "people_contacts"})
-CATALOG_SHOW = int(os.environ.get("SOWSMITH_C3_BRIEF_CATALOG_SHOW", "3"))
+CATALOG_SHOW = int(os.environ.get("SOWSMITH_C3_BRIEF_CATALOG_SHOW", "0"))
 ASK_BATCH = int(os.environ.get("SOWSMITH_C3_BRIEF_ASK_BATCH", "12"))
 #: The prose answer's token cap. 2,000 cut off 010043's brief (it runs ~1,800).
 PROSE_TOKENS = int(os.environ.get("SOWSMITH_C3_BRIEF_PROSE_TOKENS", "3500"))
@@ -784,7 +790,8 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
             own[ws] = {x["id"] for x in items}
     overview = [f"[{x['id']}] {x['text']}" for x in (heads.get("overview") or [])[:MAX_FACTS_PER_SECTION]]
     also_items = list(brief.get("also_mentioned") or [])[:30] + list(brief.get("figures") or [])
-    also = [f"[{x['id']}] {x['text']}" for x in also_items]
+    also = [f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "") + _dated(x["text"], x.get("when"))
+            for x in also_items]
     if also_items:
         own.setdefault("job_details", set()).update(x["id"] for x in also_items)
     # An overview line can carry the job's details (010038's follow-up email:
@@ -834,7 +841,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
             else:
                 dropped += 1
         if keep:
-            doc["sections"][sec] = keep[:SECTION_SENTENCES]
+            doc["sections"][sec] = keep[:DETAIL_SENTENCES if sec == "job_details" else SECTION_SENTENCES]
         else:
             doc["sections"].pop(sec, None)
     out["moved_dropped"] = moved
@@ -1054,7 +1061,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         key = re.sub(r"\W+", " ", str(a.raw_text).lower()).strip()
         if v.get("kind") == "image_fact" and str(a.id) not in kept_now and key not in seen_f:
             seen_f.add(key)
-            figs.append({"id": str(a.id), "text": a.raw_text[:300]})
+            figs.append({"id": str(a.id), "text": a.raw_text[:300], "when": _when_of(a)})
     brief["figures"] = figs[:24]
     brief.setdefault("label_next", []).extend(
         {"id": f["id"], "head": "read:co_action", "base_says": "figure", "p": None, "text": f["text"][:200]}

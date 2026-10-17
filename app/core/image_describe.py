@@ -74,7 +74,24 @@ def describe(image_bytes: bytes, filename: str, context: str = "") -> list[str]:
     if not got.get("meaningful"):
         return []
     facts = [re.sub(r"\s+", " ", str(f)).strip() for f in got.get("facts") or [] if str(f).strip()]
-    return [f for f in facts if 6 <= len(f) <= 300][:MAX_FACTS]
+    legend = bool(_LEGEND.search(context or ""))
+    keep = []
+    for f in facts:
+        if not 6 <= len(f) <= 300:
+            continue
+        # A picture cannot show that something is absent.
+        if re.match(r"(?i)\s*(no|none|there (is|are) no|nothing)\b", f):
+            continue
+        # Counted marks need the document's legend to say what they are; without
+        # one the model counted 12 "black squares" on 010043's plan that are not there.
+        if not legend and re.search(r"(?i)\b(marked|symbol|square|circle|triangle|diamond|hexagon|icon)s?\b", f):
+            continue
+        keep.append(f)
+    return keep[:MAX_FACTS]
+
+
+#: A legend line in the document's text: "Red Hexagons are Aruba APs".
+_LEGEND = re.compile(r"(?i)\b(red|blue|green|yellow|orange|black|white|purple|pink|grey|gray)\s+\w+\s+(is|are)\b")
 
 
 __all__ = ["enabled", "describe", "MAX_PER_FILE"]
