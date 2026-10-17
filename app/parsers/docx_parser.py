@@ -3801,4 +3801,51 @@ class DocxParser(BaseParser):
                     review_flags=["binary_region_marker"],
                     parser_version=self.parser_version,
                 ))
+                if kind == "image_marker":
+                    atoms.extend(self._image_fact_atoms(zf, name, rel, filename, artifact_id, project_id))
         return atoms
+
+    def _image_fact_atoms(self, zf: Any, name: str, rel: str, filename: str, artifact_id: str,
+                          project_id: str) -> list[EvidenceAtom]:
+        """What an embedded image shows, one line per fact (image_describe):
+        010038's floor plans hold the only AP, TV and printer counts."""
+        from app.core import image_describe
+
+        if not image_describe.enabled():
+            return []
+        done = getattr(self, "_described_images", 0)
+        if done >= image_describe.MAX_PER_FILE:
+            return []
+        try:
+            data = zf.read(name)
+        except Exception:  # pragma: no cover
+            return []
+        ctx = getattr(self, "_doc_text_for_images", None)
+        if ctx is None:
+            try:
+                xml = zf.read("word/document.xml").decode("utf-8", "ignore")
+                ctx = " ".join(re.sub(r"<[^>]+>", " ", xml.replace("</w:p>", "\n")).split())
+            except Exception:
+                ctx = ""
+            self._doc_text_for_images = ctx
+        facts = image_describe.describe(data, filename, ctx)
+        self._described_images = done + 1
+        out: list[EvidenceAtom] = []
+        for i, fact in enumerate(facts):
+            atom_id = stable_id("atm", artifact_id, "docx_image_fact", rel, str(i))
+            src = SourceRef(
+                id=stable_id("src", atom_id), artifact_id=artifact_id, artifact_type=ArtifactType.docx,
+                filename=filename,
+                locator={"region_ref": rel, "extraction": "docx_image_vision_v1", "sentence_index": i},
+                extraction_method="docx_image_vision_v1", parser_version=self.parser_version,
+            )
+            out.append(EvidenceAtom(
+                id=atom_id, project_id=project_id, artifact_id=artifact_id, atom_type=AtomType.scope_item,
+                raw_text=fact, normalized_text=normalize_text(fact),
+                value={"kind": "image_fact", "region_ref": rel, "from_image": True},
+                entity_keys=[], source_refs=[src], receipts=[], authority_class=AuthorityClass.meeting_note,
+                confidence=0.6, confidence_raw=0.6, calibrated_confidence=0.6,
+                review_status=ReviewStatus.needs_review, review_flags=["image_vision_fact"],
+                parser_version=self.parser_version,
+            ))
+        return out

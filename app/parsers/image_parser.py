@@ -158,6 +158,22 @@ class ImageParser(BaseParser):
                 value_extra={"kind": "image_ocr_text"},
                 confidence=0.55,  # OCR is lower-confidence than text-layer
             ))
+        # What the picture shows (image_describe): 010043's door photos hold
+        # the only sign that the cameras go on exterior brick above existing
+        # devices. One line per fact; the heads decide what each is.
+        try:
+            from app.core import image_describe
+
+            if image_describe.enabled():
+                for i, fact in enumerate(image_describe.describe(path.read_bytes(), path.name, ocr_text or "")):
+                    atoms.append(self._make_atom(
+                        project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                        text=fact, atom_type=AtomType.scope_item,
+                        value_extra={"kind": "image_fact", "from_image": True, "fact_index": i},
+                        confidence=0.6,
+                    ))
+        except Exception:
+            pass
         return ParserOutput(atoms=atoms, derived_files=[])
 
     def _try_ocr(self, path: Path) -> str:
