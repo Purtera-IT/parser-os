@@ -1144,6 +1144,40 @@ def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
     return assigned, filled
 
 
+_ADDRESS = re.compile(r"\b(\d{1,6})\s+[A-Za-z0-9][^\n|]*?\b[A-Z]{2}\s+\d{5}(?:-\d{4})?")
+
+
+def own_site_keys(atoms: list[Any]) -> int:
+    """A line the base types physical_site names its own place: it gets the
+    site key of the address it states, and loses site keys of other street
+    numbers. Keys are minted at parse time, so a line that became a site later
+    had none of its own; on 010038 "NEW Site: 323 Lakeside Ave, Suite 403,
+    Cleveland, OH 44113" carried only the OLD office's key, and the new office
+    never reached the roster. Returns lines changed."""
+    n = 0
+    for a in atoms:
+        t = getattr(a, "atom_type", None)
+        if str(getattr(t, "value", t) or "") != "physical_site":
+            continue
+        m = _ADDRESS.search(str(getattr(a, "raw_text", "") or ""))
+        if not m:
+            continue
+        house = m.group(1)
+        mine = "site:" + re.sub(r"[^a-z0-9]+", "_", m.group(0).lower()).strip("_")
+        keys = list(getattr(a, "entity_keys", None) or [])
+        kept = [k for k in keys if not k.startswith("site:")
+                or not re.match(r"site:(\d{1,6})_", k) or re.match(rf"site:{house}_", k)]
+        if mine not in kept:
+            kept.append(mine)
+        if kept != keys:
+            try:
+                a.entity_keys = kept
+                n += 1
+            except Exception:
+                pass
+    return n
+
+
 def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
     """Give each line the base's type where it is sure. Before typing
     (``final=False``) and again at the end (``final=True``: a locked line a
@@ -1152,10 +1186,31 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
 
     if not authority_enabled():
         return 0
+    n = 0
+    if final:
+        # A line typing gave the base's type (filled or assigned) is the
+        # base's decision too: a rule that re-typed it after typing loses. On
+        # 010038 "NEW Site: 323 Lakeside Ave" was filled as physical_site
+        # (base 0.999) and a later rule turned it back into deal_metadata, so
+        # the new office never reached the roster.
+        from app.core.schemas import AtomType as _AT
+
+        for a in atoms:
+            v = getattr(a, "value", None)
+            lab = v.get("c3_label") if isinstance(v, dict) else None
+            if not isinstance(lab, dict) or lab.get("act") not in ("fill", "assign") or not lab.get("type"):
+                continue
+            t = getattr(a, "atom_type", None)
+            if str(getattr(t, "value", t) or "") == lab["type"]:
+                continue
+            try:
+                a.atom_type = _AT(lab["type"])
+                n += 1
+            except ValueError:
+                continue
     readings = _DEAL.get("types") or {}
     if not readings:
-        return 0
-    n = 0
+        return n
     sha = _DEAL.get("sha")
     for a in atoms:
         got = readings.get(str(getattr(a, "id", "") or ""))

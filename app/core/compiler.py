@@ -3643,6 +3643,9 @@ def compile_project(
         _fa = _c3_final.apply_authority(atoms, final=True)
         if _fa:
             warnings.append(f"INFO: C3 base restored {_fa} line(s) a rule had re-typed (authority)")
+        _ok = _c3_final.own_site_keys(atoms)
+        if _ok:
+            warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")
     except Exception as exc:
         warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
 

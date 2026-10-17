@@ -757,3 +757,31 @@ def test_value_fill_survives_nanos_malformed_json():
     got = _parse_response(two_objects)
     assert set(got) == {"a1", "a2"} and got["a2"]["value"] == {"name": "Ann"}
 
+
+
+def test_final_pass_restores_a_filled_line_a_rule_retyped(monkeypatch):
+    from types import SimpleNamespace as N
+
+    from app.core import c3_type_base as C
+    from app.core.schemas import AtomType
+
+    monkeypatch.setenv("SOWSMITH_C3_AUTHORITY", "on")
+    monkeypatch.setattr(C, "authority_enabled", lambda: True)
+    C.set_deal([], {})
+    a = N(id="n1", atom_type=AtomType("deal_metadata"),
+          value={"c3_label": {"type": "physical_site", "act": "fill"}})
+    assert C.apply_authority([a], final=True) == 1
+    assert a.atom_type == AtomType("physical_site")
+
+
+def test_a_site_line_gets_its_own_address_key_and_drops_another_streets():
+    from types import SimpleNamespace as N
+
+    from app.core import c3_type_base as C
+    from app.core.schemas import AtomType
+
+    a = N(atom_type=AtomType("physical_site"), raw_text="NEW Site: 323 Lakeside Ave, Suite 403, Cleveland, OH 44113",
+          entity_keys=["site:1220_w_6th_street_suite_502", "site:eight_eleven_group_cleveland_office", "org:cdw"])
+    assert C.own_site_keys([a]) == 1
+    assert "site:323_lakeside_ave_suite_403_cleveland_oh_44113" in a.entity_keys
+    assert "site:1220_w_6th_street_suite_502" not in a.entity_keys and "org:cdw" in a.entity_keys
