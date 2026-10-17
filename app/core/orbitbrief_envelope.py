@@ -3970,6 +3970,19 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
             at = body.find(probe) if len(probe) >= 6 else -1
             inside[id(a)] = at + 1 if at >= 0 else len(body) + 1
 
+    # A thread position orders a document only when its lines carry one. In
+    # a CRM note with an email pasted into it, a few lines had one and the
+    # rest did not, so those few jumped ahead of the note's own first line
+    # (live 010387: "Gents-", line 37 of Trent's note, read first; training
+    # had it where it is).
+    lined: dict[str, list[bool]] = {}
+    for a in atoms or []:
+        if _line(_loc(a)) is None:
+            continue
+        aid = str(getattr(a, "artifact_id", "") or "")
+        lined.setdefault(aid, []).append(_thread(a).get("position_in_file") is not None)
+    no_pos = {aid for aid, flags in lined.items() if flags and sum(flags) < 0.9 * len(flags)}
+
     # A workbook's sheets in the order the parser met them.
     sheet_rank: dict[tuple[str, str], int] = {}
     for a in atoms or []:
@@ -3992,7 +4005,7 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
             pos = pos_by_line.get((aid, line))
         if pos is None and line is None:
             pos = own_pos.get(aid)
-        pos = _int(pos, 10**6)
+        pos = 0 if aid in no_pos else _int(pos, 10**6)
         page = _int(loc.get("page"))
         if loc.get("sheet") is not None:
             page = sheet_rank.get((aid, str(loc.get("sheet"))), 0)

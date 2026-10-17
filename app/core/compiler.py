@@ -1529,9 +1529,15 @@ def compile_project(
             # threading, so every downstream stage (and the labeler) can tell
             # our own account exec from the reseller's rep.
             try:
-                from app.core.deal_parties import stamp_parties
+                from app.core.deal_parties import stamp_note_parties, stamp_parties
 
                 _stamped = stamp_parties(atoms)
+                # A HubSpot note's lines too, here and not only in the
+                # envelope: the base reads the deal mid-compile, and it was
+                # trained on the labeling page, which shows the envelope's
+                # speakers. Read before this, every note line had no speaker
+                # (live 010387: 58 lines the training record had as ours).
+                _stamped += stamp_note_parties(atoms)
                 if _stamped:
                     warnings.append(f"INFO: deal_parties stamped who-said-it on {_stamped} atom(s)")
             except Exception as exc:
