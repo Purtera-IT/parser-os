@@ -812,3 +812,14 @@ def test_work_scope_item_is_the_parsers_scope_item():
     assert C._aliased({"a": ["work_scope_item", 0.8], "b": ["task", 0.6]}) == {
         "a": ["scope_item", 0.8], "b": ["task", 0.6]}
     C._DEAL.clear()
+
+
+def test_a_town_only_site_line_gets_a_site_id_and_key():
+    from types import SimpleNamespace as N
+
+    from app.core import c3_type_base as C
+    from app.core.schemas import AtomType
+
+    a = N(atom_type=AtomType("physical_site"), raw_text="Location is Fairfield, CA.", entity_keys=[], value={})
+    assert C.own_site_keys([a]) == 1
+    assert a.value["site_id"] == "fairfield_ca" and "site:fairfield_ca" in a.entity_keys

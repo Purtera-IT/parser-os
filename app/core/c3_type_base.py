@@ -1158,6 +1158,7 @@ def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
     return assigned, filled
 
 
+_CITY = re.compile(r"\b([A-Z][a-z.']+(?:\s+[A-Z][a-z.']+){0,2}),\s*([A-Z]{2})\b")
 _ADDRESS = re.compile(r"\b(\d{1,6})\s+[A-Za-z0-9][^\n|]*?\b[A-Z]{2}\s+\d{5}(?:-\d{4})?")
 
 
@@ -1173,8 +1174,26 @@ def own_site_keys(atoms: list[Any]) -> int:
         t = getattr(a, "atom_type", None)
         if str(getattr(t, "value", t) or "") != "physical_site":
             continue
-        m = _ADDRESS.search(str(getattr(a, "raw_text", "") or ""))
+        text = str(getattr(a, "raw_text", "") or "")
+        m = _ADDRESS.search(text)
         if not m:
+            # A site the base reads that gives only its town ("Location is
+            # Fairfield, CA.", 010440): the roster takes a site line only
+            # with a site id and key, and one it had neither, so the deal's
+            # only job site never reached it.
+            c = _CITY.search(text)
+            v = getattr(a, "value", None)
+            if c and isinstance(v, dict) and not (v.get("id") or v.get("site_id")):
+                slug = re.sub(r"[^a-z0-9]+", "_", f"{c.group(1)} {c.group(2)}".lower()).strip("_")
+                keys = list(getattr(a, "entity_keys", None) or [])
+                if not any(str(k).startswith("site:") for k in keys):
+                    keys.append("site:" + slug)
+                try:
+                    a.value = {**v, "site_id": slug, "name": v.get("name") or f"{c.group(1)}, {c.group(2)}"}
+                    a.entity_keys = keys
+                    n += 1
+                except Exception:
+                    pass
             continue
         house = m.group(1)
         mine = "site:" + re.sub(r"[^a-z0-9]+", "_", m.group(0).lower()).strip("_")
