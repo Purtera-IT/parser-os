@@ -325,6 +325,13 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # and mounts from the OLD site" there while the owner head said
         # technician at 0.80-0.94; on the labeled deal the owner head said
         # technician at >= 0.75 on 82 of 94 scope lines and on no customer line.
+        # The same for a task the section head filed as out of scope or an
+        # assumption: "Remove the Printer from the OLD site" (010038) read
+        # out_of_scope 0.54 and technician 0.84; it is our requested task.
+        if sec in ("out_of_scope", "assumptions") and have_reads:
+            own, po = r(aid, "read:task_owner_role")
+            if own == "technician" and po > ps:
+                sec, sec_by = "scope_of_work", "base:read:task_owner_role"
         if sec == "customer_responsibilities" and have_reads:
             own, po = r(aid, "read:task_owner_role")
             # Also when the owner head is surer than the section head: "Mount

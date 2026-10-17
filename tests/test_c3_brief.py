@@ -314,3 +314,12 @@ def test_a_phone_before_a_name_is_not_that_persons():
                 value={"name": "Bill Ort", "role": "AVP", "email": "ortw@vystarcu.org"}, artifact_id="n")]
     got = {c["name"]: c for c in c3_brief.contacts(atoms)}
     assert got["Rafael Fernandez"]["phone"] == "904-386-5066" and got["Bill Ort"]["phone"] == ""
+
+
+def test_our_task_filed_out_of_scope_goes_back_to_scope(monkeypatch):
+    _trusted_all(monkeypatch)
+    atoms = [_atom(1, "scope_item", "Remove the Printer from the OLD site")]
+    reads = {"a1": {"read:co_action": ["keep", 0.95], "read:sow_section": ["out_of_scope", 0.54],
+                    "read:task_owner_role": ["technician", 0.84]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert [x["id"] for x in b["sections"]["scope_of_work"]] == ["a1"]
