@@ -5736,6 +5736,16 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     # other meaningful word from the phrase are
                     # both present in the atom text+headings.
                     longest = max(words, key=len)
+                    # A site named by its street number is that street: the
+                    # line must carry the same number. On 010038 "OLD Site:
+                    # 1220 W 6th Street, Suite 502, Cleveland" took the new
+                    # site's key from "cleveland" + "suite", and the roster
+                    # then merged the old and new offices into one.
+                    # The house number, not the ZIP: both offices are in
+                    # 44113.
+                    house = re.match(r"\s*(\d{1,6})\b", phrase)
+                    if house and not re.search(rf"\b{house.group(1)}\b", full):
+                        continue
                     if longest in full:
                         hits = sum(1 for w in words if w in full)
                         if hits >= min(2, len(words)):
