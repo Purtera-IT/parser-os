@@ -602,7 +602,8 @@ _PROMPT = (
     "\"open_questions\": [{\"question\": str, \"owner\": str, \"cites\": [id]}], "
     "\"pricing_questions\": [{\"question\": str, \"cites\": [id]}]}.\n\n"
     "SERVICE: %s\nCRM RECORD: %s\nOVERVIEW FACTS (summary only): %s\nSECTIONS: %s\n"
-    "ALSO KEPT (less sure; use them only in the summary and job_details, and only when they add a date, a "
+    "ALSO KEPT (less sure, or read off the job's figures and photos by a vision pass; use them only in the "
+    "summary and job_details, and only when they add a date, a "
     "deadline, a contact, a count, what is being asked for, or a change to the scope such as work added): %s\n"
     "OPEN QUESTIONS (asked in the deal): %s\nCONFLICTS: %s"
 )
@@ -782,7 +783,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
                          for x in items]
             own[ws] = {x["id"] for x in items}
     overview = [f"[{x['id']}] {x['text']}" for x in (heads.get("overview") or [])[:MAX_FACTS_PER_SECTION]]
-    also_items = list(brief.get("also_mentioned") or [])[:30]
+    also_items = list(brief.get("also_mentioned") or [])[:30] + list(brief.get("figures") or [])
     also = [f"[{x['id']}] {x['text']}" for x in also_items]
     if also_items:
         own.setdefault("job_details", set()).update(x["id"] for x in also_items)
@@ -1042,6 +1043,22 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     # (contact_from_crm); the writer is told what the CRM calls the deal and
     # who the account is, or the brief names neither (5 of 6 graded deals).
     brief["deal"] = _crm_deal(project_dir)
+    # Lines a vision pass read off the job's own figures and photos. The heads
+    # never saw such lines in training and file them as parser-derived; until
+    # they are labeled, the writer gets them as what they are (010038's floor
+    # plans: 3 APs, 2 TVs, 1 NUC/TAP, 1 printer), and each is a label task.
+    kept_now = {str(x["id"]) for v in (brief.get("sections") or {}).values() for x in v}
+    figs, seen_f = [], set()
+    for a in atoms:
+        v = a.value if isinstance(getattr(a, "value", None), dict) else {}
+        key = re.sub(r"\W+", " ", str(a.raw_text).lower()).strip()
+        if v.get("kind") == "image_fact" and str(a.id) not in kept_now and key not in seen_f:
+            seen_f.add(key)
+            figs.append({"id": str(a.id), "text": a.raw_text[:300]})
+    brief["figures"] = figs[:24]
+    brief.setdefault("label_next", []).extend(
+        {"id": f["id"], "head": "read:co_action", "base_says": "figure", "p": None, "text": f["text"][:200]}
+        for f in figs[:10])
     try:
         _drop_superseded(brief, atoms, c3_type_base._DEAL.get("documents") or [])
     except Exception as exc:  # pragma: no cover - never lose the brief over this
@@ -1072,6 +1089,10 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         except Exception as exc:
             brief["written"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         w = brief.get("written")
+        try:
+            _drop_questions_the_facts_answer(brief)
+        except Exception as exc:  # pragma: no cover
+            log.info("C3 brief pricing-question check skipped: %s", type(exc).__name__)
         try:
             _drop_answered_open_questions(brief, atoms)
         except Exception as exc:  # pragma: no cover - a check never costs the brief
@@ -1129,6 +1150,39 @@ def _write_job_details(brief: dict[str, Any], details: list[dict[str, Any]]) -> 
         if text and cites and all(c in ids for c in cites) and not re.search(r"\b(I|we|our)\b", text):
             out.append({"text": text, "cites": cites})
     return out[:8]
+
+
+_FACTS_ANSWER_PROMPT = (
+    "Here are a field-services deal's facts and a list of questions. Which questions do the facts ALREADY "
+    "answer (state the answer, or settle it: a fact that ladders are on site answers whether a lift is needed)? "
+    "Return JSON only: {\"answered\": [question id, ...]}.\nFACTS:\n%s\nQUESTIONS: %s"
+)
+
+
+def _drop_questions_the_facts_answer(brief: dict[str, Any]) -> int:
+    """The writer's pricing questions checked against every fact it was given:
+    on 010038, 9 of 12 asked what the deal's own lines already said (ladders on
+    site, no COI, the access window)."""
+    w = brief.get("written") or {}
+    qs = w.get("open_questions") or []
+    pricing = [(i, q) for i, q in enumerate(qs) if q.get("kind") == "pricing"]
+    if not pricing:
+        return 0
+    lines = []
+    for v in (brief.get("sections") or {}).values():
+        lines += [x["text"] for x in v]
+    lines += [x["text"] for x in (brief.get("also_mentioned") or [])[:30]]
+    lines += [x["text"] for x in brief.get("figures") or []]
+    facts = "\n".join(f"- {t[:300]}" for t in dict.fromkeys(lines))[:24000]
+    raw = _complete(_FACTS_ANSWER_PROMPT % (facts, json.dumps({f"p{i}": q["question"] for i, q in pricing})),
+                    None, 400)
+    got = _json_of(raw) or {}
+    gone = {str(x) for x in got.get("answered") or []}
+    if not gone:
+        return 0
+    w["open_questions"] = [q for i, q in enumerate(qs) if f"p{i}" not in gone]
+    w["pricing_answered_in_deal"] = [q for i, q in enumerate(qs) if f"p{i}" in gone]
+    return len(gone)
 
 
 def _drop_answered_open_questions(brief: dict[str, Any], atoms: list[Any]) -> int:
@@ -1269,8 +1323,12 @@ def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
                 for b in atoms[i + 1:i + 3]:
                     if str(getattr(b, "artifact_id", "")) != str(getattr(a, "artifact_id", "")):
                         break
-                    ph = _PHONE.search(str(getattr(b, "raw_text", "") or ""))
-                    if ph and not p["phone"]:
+                    bt = str(getattr(b, "raw_text", "") or "").strip()
+                    ph = _PHONE.search(bt)
+                    # Only a line that is just their number ("Cell Number:
+                    # 904-386-5066"), never someone's signature block.
+                    if ph and not p["phone"] and re.fullmatch(
+                            r"(?i)\s*(cell|mobile|phone|tel|direct)?\s*(number|no\.?|#)?\s*:?\s*[\d()+.\s-]{10,20}\s*", bt):
                         p["phone"] = ph.group(0)
                         break
         if _type(a) != "stakeholder":
