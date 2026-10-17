@@ -1284,6 +1284,31 @@ def build_orbitbrief_envelope(
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
     envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+    # A deal whose only place is a town named in its scope ("a potential
+    # monitor install in Philadelphia", 010426) had no site at all: the roster
+    # takes site lines only. With nothing else, the place its lines name most
+    # is the job site, marked as having no address yet.
+    try:
+        _sr = envelope["site_readiness"]
+        if isinstance(_sr, dict) and not (_sr.get("sites") or []):
+            from collections import Counter as _Ctr
+
+            _named = _Ctr()
+            for _a in atoms:
+                _v = getattr(_a, "value", None)
+                if isinstance(_v, dict) and _v.get("kind") in ("image_ocr_text", "image_fact"):
+                    continue
+                for _k in getattr(_a, "entity_keys", None) or []:
+                    if isinstance(_k, str) and _k.startswith("site:") and not re.search(r"\d", _k):
+                        _named[_k] += 1
+            if _named:
+                _key, _n = _named.most_common(1)[0]
+                _sr.setdefault("sites", []).append({
+                    "site": _key, "display_name": _key.split(":", 1)[1].replace("_", " ").title() + " (address not given)",
+                    "readiness": 0.0, "maturity": "named", "band": "red", "anchored": False, "signal_count": _n,
+                    "named_only": True})
+    except Exception:
+        pass
     # Does the number of sites we RESOLVED match the number the deal SAYS it has?
     #
     # On 010215 the emails stated "10" nine times and a quantity entity of 10 was
