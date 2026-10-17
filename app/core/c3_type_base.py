@@ -453,16 +453,6 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     sha = artifact_sha256 if artifact_sha256 is not None else _DEAL.get("sha")
     docs = list(documents if documents is not None else (_DEAL.get("documents") or []))
     have = {str(d.get("doc_id")) for d in docs}
-    # The lines the compile set aside (quoted history, signatures, separators)
-    # are read as context after the deal's own lines: the base was trained on
-    # records that hold them (the labeling export keeps every line), and on
-    # 010387 the live read saw 1,467 of the 7,822 lines it learned that deal
-    # from, and lost 12 points (task 0.87 offline -> dependency 0.30 live).
-    # Callers zip their atoms with the first keys, so context changes nothing
-    # they map back; no decision is made about a context line.
-    live_ids = {str(getattr(a, "id", "") or "") for a in atoms}
-    context = [c for c in (_DEAL.get("context") or []) if str(getattr(c, "id", "") or "") not in live_ids]
-    atoms = list(atoms) + context
     lines, keys, seen = [], [], set()
     extra: dict[str, dict[str, Any]] = {}
     seen_ids: set[str] = set()
@@ -595,13 +585,6 @@ def _keep_full(got: dict[str, Any]) -> None:
 def full_read() -> dict[str, Any]:
     """This compile's readings beyond types: ``{"reads", "links", "deal"}``."""
     return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions", "question_bar")}
-
-
-def set_context(atoms: list[Any] | None) -> None:
-    """The compile's set-aside lines, read beside the deal's own (``_rows``).
-    Holds the list itself, so lines set aside later are read too."""
-    if os.environ.get("SOWSMITH_C3_READ_CONTEXT", "on").strip().lower() in _TRUE:
-        _DEAL["context"] = atoms if atoms is not None else []
 
 
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
@@ -1102,8 +1085,16 @@ def reread_if_new(atoms: list[Any]) -> int:
         new += 1
     if not new:
         return 0
+    # A failed re-read must not cost the first read: keep it, and take the
+    # new one only when it came back (010038 lost every base reading when a
+    # re-read timed out, 2026-10-17).
+    kept = {k: _DEAL.get(k) for k in ("docs", "reads", "links", "deal", "questions", "question_bar", "types")}
     _DEAL.update(docs={}, reads={}, links=[], deal={}, questions=[])
+    _DEAL["types"] = dict(kept["types"] or {})
     documents(atoms)
+    if not _DEAL.get("reads"):
+        _DEAL.update({k: v for k, v in kept.items() if v is not None})
+        return 0
     return new
 
 

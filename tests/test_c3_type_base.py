@@ -757,25 +757,3 @@ def test_value_fill_survives_nanos_malformed_json():
     got = _parse_response(two_objects)
     assert set(got) == {"a1", "a2"} and got["a2"]["value"] == {"name": "Ann"}
 
-
-def test_set_aside_lines_are_read_as_context_after_the_deals_own(monkeypatch):
-    from types import SimpleNamespace as N
-
-    from app.core import c3_type_base as C
-
-    def atom(i, text):
-        return N(id=i, raw_text=text, artifact_id="art_e", source_refs=[], value={}, atom_type=None,
-                 entity_keys=[], project_id="p")
-
-    C.set_deal([], {})
-    live, aside = [atom("a1", "Connect the displays"), atom("a2", "Mount the TV")], [atom("q1", "> quoted reply")]
-    monkeypatch.setenv("SOWSMITH_C3_READ_CONTEXT", "on")
-    C.set_context(aside)
-    try:
-        _deal, rows, keys = C._rows(live, {})
-    except Exception as exc:  # the record builder needs more of a real atom
-        import pytest
-        pytest.skip(f"record builder: {exc}")
-    ids = [r.get("atom_id") for r in rows]
-    assert "q1" in ids and len(keys) == 3
-    C.set_context([])
