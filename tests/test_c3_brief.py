@@ -154,3 +154,38 @@ def test_contacts_are_people_with_a_role_email_or_phone():
     assert [c["name"] for c in got] == ["Nicole Tomasik", "Rob Cole"]
     assert got[0]["line"] == "Nicole Tomasik (Project Manager, n@cdw.com, 312.705.9059)" or "Project Manager" in got[0]["line"]
     assert "419-376-8767" in got[1]["line"]
+
+
+def test_job_details_keep_the_lines_a_pm_prices_from():
+    from types import SimpleNamespace as N
+
+    from app.core.c3_brief import job_details
+
+    def at(i, t, text, **v):
+        return N(id=i, atom_type=t, raw_text=text, value=v, source_refs=[], review_flags=[])
+
+    atoms = [at("1", "quantity", "Side door 154 ft cable run from the IDF"),
+             at("2", "site_attribute", "All three cameras mount on brick above the doors"),
+             at("3", "quantity", "Side door 154 ft cable run from the IDF"),
+             at("4", "task", "Is there a lift on site?"),
+             at("5", "bom_line", "Old draft line", superseded_by="SOW.pdf"),
+             at("6", "task", "Hi team, thanks"),
+             at("7", "commercial_total", "SALES TAX: $329.23")]
+    got = job_details(atoms)
+    assert [d["cites"] for d in got] == [["1"], ["2"]]
+
+
+def test_a_cut_run_admits_only_pm_answers_given_by_the_cutoff(monkeypatch):
+    import app.core.pm_answer_blob as B
+
+    monkeypatch.setattr(B, "load_answer_events", lambda d: [
+        {"created_at": "2026-06-20T10:00:00Z", "x": 1}, {"created_at": "2026-10-16T10:00:00Z", "x": 2}])
+    seen = {}
+
+    def fake(events, project_id):
+        seen["n"] = len(list(events))
+        return []
+    import app.core.pm_answer_atoms as A
+    monkeypatch.setattr(A, "pm_answers_to_atoms", fake)
+    B.load_pm_answer_atoms(project_id="p", as_of="2026-06-23T14:48:50Z")
+    assert seen["n"] == 1

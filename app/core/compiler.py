@@ -756,6 +756,16 @@ def _attach_rule_decisions(atoms: "list[Any]") -> int:
         return 0
 
 
+def _run_as_of(project_dir: Any) -> str | None:
+    """The cutoff this run was given (manifest context.as_of), or None."""
+    try:
+        from app.core.orbitbrief_envelope import _load_manifest_run_cutoff
+
+        return _load_manifest_run_cutoff(Path(project_dir))
+    except Exception:
+        return None
+
+
 def compile_project(
     project_dir: Path,
     project_id: str | None = None,
@@ -3423,7 +3433,8 @@ def compile_project(
             pm_atoms = [
                 a
                 for a in load_pm_answer_atoms(
-                    project_id=resolved_project_id, deal_id=resolved_project_id
+                    project_id=resolved_project_id, deal_id=resolved_project_id,
+                    as_of=_run_as_of(project_dir),
                 )
                 if a.id not in existing_ids
             ]

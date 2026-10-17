@@ -90,14 +90,24 @@ def load_answer_events(deal_id: str) -> list[dict[str, Any]]:
     return parse_ledger(raw)
 
 
-def load_pm_answer_atoms(*, project_id: str, deal_id: str = "") -> list[Any]:
+def load_pm_answer_atoms(*, project_id: str, deal_id: str = "", as_of: str | None = None) -> list[Any]:
     """The deal's answered questions as :class:`EvidenceAtom` rows.
+
+    ``as_of``: a run cut to a moment (pre-quote) admits only answers given by
+    then. A PM answering a question after the deal closed is not something the
+    deal knew when it was quoted: on 010043's pre-quote run, October answers
+    ("Cutover window ... PM answer: normal business hours") reached a brief
+    cut at 23 June.
 
     Returns ``[]`` on any failure — a compile must never depend on the ledger
     being reachable.
     """
     try:
         events = load_answer_events(deal_id or project_id)
+        if as_of:
+            cut = str(as_of)[:19]
+            events = [e for e in events if str((e.get("created_at") if isinstance(e, dict)
+                                                 else getattr(e, "created_at", "")) or "")[:19] <= cut]
         if not events:
             return []
         from app.core.pm_answer_atoms import pm_answers_to_atoms

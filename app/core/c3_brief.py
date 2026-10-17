@@ -767,9 +767,75 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         except Exception as exc:
             brief["written"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         w = brief.get("written")
-        if isinstance(w, dict) and brief["contacts"] and isinstance(w.get("sections"), dict):
-            w["sections"]["contacts"] = [{"text": c["line"], "cites": c["cites"]} for c in brief["contacts"]]
+        if isinstance(w, dict) and isinstance(w.get("sections"), dict):
+            details = job_details(atoms)
+            brief["job_details"] = details
+            if details:
+                # Right after scope: the lines a PM prices from.
+                secs = dict(w["sections"])
+                ordered = {}
+                for k, v in secs.items():
+                    ordered[k] = v
+                    if k in ("scope", "scope_of_work"):
+                        ordered["job_details"] = details
+                if "job_details" not in ordered:
+                    ordered = {"job_details": details, **ordered}
+                w["sections"] = ordered
+            if brief["contacts"]:
+                w["sections"]["contacts"] = [{"text": c["line"], "cites": c["cites"]} for c in brief["contacts"]]
     return brief
+
+
+#: Line types a PM prices from. The written brief is three sentences a
+#: section, so on the graded pre-quote deals it dropped what drives the price:
+#: 010043's cable runs (154 / 88 / 146 ft), camera models and brick mounting;
+#: 010038's ceiling, backboard and access window. These are the deal's own
+#: lines, cited, no LLM wording.
+DETAIL_TYPES = ("quantity", "bom_line", "vendor_line_item", "site_attribute", "site_infrastructure",
+                "site_access_window", "site_access_restriction", "site_implementation_note", "deadline",
+                "lead_time_constraint", "blackout_date_range", "material", "site_room_mix")
+MAX_DETAILS = 15
+#: Lines that are never a pricing detail, whatever they mention.
+_NOT_DETAIL = frozenset({"small_talk", "stakeholder", "deal_metadata", "deal_state", "entity", "list_header",
+                         "raw_utterance", "signatory", "approval_authority", "answered_question",
+                         # Questions are asked in the questions list; terms are fees.
+                         "open_question", "internal_question", "payment_term", "commercial_total",
+                         "contract_term", "pricing_assumption"})
+_DETAIL_SIGNAL = re.compile(
+    r"\b\d+(\.\d+)?\s*(ft|feet|foot|'|in|inch|u|units?|x|qty|aps?|tvs?|cameras?|drops?|runs?|sites?|days?|hours?)\b"
+    r"|\bqty\b|\bmodel\b|\b(ceiling|vaulted|brick|concrete|drop[- ]tile|lift|ladder|scissor|rack|backboard|"
+    r"plywood|mount(s|ing)?|conduit|idf|mdf|poe|outlet|power|access|window|after[- ]hours|escort|badge|"
+    r"elevator|loading dock|move[- ]in|deadline|asap|urgent|week of)\b", re.I)
+_VENDOR_TOTAL = re.compile(r"\b(sub ?total|grand total|sales tax|tax|shipping|lease|fmv)\b", re.I)
+_PLACEHOLDER_LINE = re.compile(r"^\[(image|drawing|figure|table)[^\]]*\]", re.I)
+
+
+def job_details(atoms: list[Any]) -> list[dict[str, Any]]:
+    """The concrete lines a PM prices from: quantities, equipment and models,
+    lengths, site conditions, access windows and deadlines, in document order,
+    one per distinct line, each citing itself. Chosen by what the line says,
+    not its type: on 010038 the ceiling, access window and rack lines were
+    typed scope_item / dependency."""
+    first, rest, seen = [], [], set()
+    for a in atoms:
+        t = _type(a)
+        if t in _NOT_DETAIL:
+            continue
+        v = a.value if isinstance(getattr(a, "value", None), dict) else {}
+        if v.get("superseded_by") or _deal_kit(a):
+            continue
+        text = re.sub(r"\s+", " ", (getattr(a, "raw_text", "") or "")).strip()
+        if len(text) < 6 or len(text) > 300 or _PLACEHOLDER_LINE.match(text) or _VENDOR_TOTAL.search(text) \
+                or text.rstrip().endswith("?"):
+            continue
+        if not (_DETAIL_SIGNAL.search(text) or t in ("bom_line", "vendor_line_item")):
+            continue
+        key = re.sub(r"\W+", " ", text.lower()).strip()[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        (first if t in DETAIL_TYPES else rest).append({"text": text, "cites": [str(a.id)]})
+    return (first + rest)[:MAX_DETAILS]
 
 
 _NOT_A_NAME = re.compile(r"^(hi|hey|hello|dear|thanks|thank you|regards)\b|\d|@|\b(site|facility|office|"
