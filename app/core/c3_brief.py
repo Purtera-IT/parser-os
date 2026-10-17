@@ -1082,6 +1082,13 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     # (contact_from_crm); the writer is told what the CRM calls the deal and
     # who the account is, or the brief names neither (5 of 6 graded deals).
     brief["deal"] = _crm_deal(project_dir)
+    # Who furnishes each kept line, as the supplier head reads it: the SOW's
+    # supply lists follow it (c3_sow) instead of guessing from wording.
+    for v in list((brief.get("sections") or {}).values()) + [brief.get("also_mentioned") or []]:
+        for x in v:
+            r = c3_type_base.line_reading(str(x["id"]), "col:supplier")
+            if r:
+                x["supplier"] = [r[0], round(r[1], 3)]
     # Lines a vision pass read off the job's own figures and photos. The heads
     # never saw such lines in training and file them as parser-derived; until
     # they are labeled, the writer gets them as what they are (010038's floor

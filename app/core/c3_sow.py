@@ -30,7 +30,16 @@ from app.core.c3_brief import _complete, _dated, _json_of, strip_cites
 #: kept is a fact wherever they filed it (000123's "four register lanes" sat
 #: under acceptance and a narrower list lost it).
 NOT_FACT_SECTIONS = frozenset({"contacts", "other"})
-MAX_FACTS = int(os.environ.get("SOWSMITH_C3_SOW_MAX_FACTS", "140"))
+#: 010082 has 438 kept lines; at 140 its whole materials list was cut off.
+MAX_FACTS = int(os.environ.get("SOWSMITH_C3_SOW_MAX_FACTS", "450"))
+#: The order facts reach the writer in, so a cap never costs the task list.
+SECTION_ORDER = ("scope_of_work", "customer_responsibilities", "customer_furnished", "assumptions", "out_of_scope",
+                 "timeline", "schedule", "deliverables", "provider_responsibilities", "fees", "overview",
+                 "job_details", "site", "acceptance", "terms", "change_control", "figure", "also_kept", "unsure")
+#: The supplier head's answers as the writer reads them, and how sure it must
+#: be for its answer to decide a supply line.
+_SUPPLIER = {"us": "Provider", "customer": "Customer", "partner": "reseller"}
+SUPPLIER_BAR = float(os.environ.get("SOWSMITH_C3_SOW_SUPPLIER_BAR", "0.85"))
 UNSURE_BAR = float(os.environ.get("SOWSMITH_C3_SOW_UNSURE_BAR", "0.6"))
 SOW_TOKENS = int(os.environ.get("SOWSMITH_C3_SOW_TOKENS", "7000"))
 
@@ -45,61 +54,82 @@ STANDING = (
     "cancellation and reschedule fees; quote validity; tax; rates in USD."
 )
 
-_PROMPT = (
-    "You write the deal-specific part of a PurTera Statement of Work (SOW). PurTera (\"Provider\") does the field "
-    "work. The account in the CRM record is who PurTera contracts with (a reseller such as CDW or SHI, or the "
-    "customer itself on a direct deal); the end customer is who the work is for. The template already prints "
-    "the standing boilerplate, so never write any of: %s\n"
-    "Write in PurTera's SOW voice: short imperative task bullets that start with a verb (\"Install three (3) "
-    "Verkada cameras at the side, back and front doors.\"), counts written as words with the numeral "
-    "(\"two (2)\"), \"Provider\" for PurTera and \"Customer\" for the customer, plain declarative assumptions "
-    "(\"No lift is required.\", \"The IDF is accessible and has a usable pathway to each camera location.\"), "
-    "and out-of-scope items as noun phrases (\"Lift rental or lift operation.\"). A PM signs this and prices "
-    "from it, so it is specific and complete: every count, length, location, model, access condition, date, "
-    "material and who-supplies-what the facts give belongs in it, once.\n"
-    "Return JSON only, every list item an object {\"text\": str, \"cites\": [fact ids], \"kind\": \"fact\"|"
-    "\"method\"}:\n"
-    "{\"project_name\": short title of the work (e.g. \"Verkada Camera Install\"), \"end_customer\": name or "
-    "\"\", \"services\": [any of assessment, configuration, design, implementation, knowledge_transfer, "
-    "project_management, reconfiguration, reinstallation, staff_augmentation, support, training, custom_work], "
-    "\"pricing_model\": \"fixed\"|\"tm\"|\"\", "
-    "\"overview\": [2-4 sentences: what Provider will do, for whom, where, with counts; on a job with many sites "
-    "give the site count the facts state and never single one site out as the primary site], "
-    "\"schedule\": [requested dates, windows, arrival time, number of resources, duration, when given], "
-    "\"scope_lead\": one line introducing the task list (e.g. \"Provider will dispatch two (2) cabling "
-    "technicians to perform the following:\"; give a count only when a fact gives it), "
-    "\"scope\": [the task list, in the order the work is done: arrival and check-in, each piece of work with its "
-    "counts and locations, routing/termination/mounting/testing steps, cleanup, photos and sign-off], "
-    "\"provider_materials\": [materials and tools Provider supplies], \"customer_materials\": [equipment and "
-    "materials the customer or reseller supplies], \"customer_responsibilities\": [deal-specific ones only], "
-    "\"assumptions\": [6-12 assumptions that bound the price: each condition a fact settles (a ladder confirmed "
-    "-> no lift is required; the longest run -> all cable runs are under that length; the work hours) and the "
-    "standard conditions a PM always states for this trade (pathways and work areas accessible, equipment and "
-    "mounting hardware on site before arrival, power or PoE capacity available, permits or landlord approvals by "
-    "the customer)], \"out_of_scope\": [6-10 exclusions: those a fact states and the standard ones for this "
-    "trade (lift rental, electrical work, core drilling or structural work, patching or painting, configuration "
-    "or licensing the facts leave to others, after-hours work)], "
-    "\"deliverables\": [{\"item\": e.g. \"Work Completion\", \"description\": [the finished outcomes, one per line, "
-    "with their counts: what is installed, each cable run completed, terminations labeled at both ends, connectivity "
-    "or function verified, photos], \"format\": \"PDF\"}]}\n"
-    "RULES: kind \"fact\" = it states something about THIS deal (a count, length, place, model, date, party, "
-    "access or site condition, an explicit inclusion or exclusion); it must cite the ids of the facts that state "
-    "it and say nothing they do not, except a plain arithmetic total. kind \"method\" = standard field practice "
-    "for this kind of work (route and dress cable, label both ends, verify power and connectivity, clean the work "
-    "area, coordinate placement with the onsite contact, standard exclusions for this trade); it may have no "
-    "cites but must contain no number, brand, model, name, place or date that no fact gives. A later fact "
-    "replaces an earlier one on the same point. A line's [under: ...] heading is the list it sits in. Who supplies "
-    "what comes only from the facts; never assume Provider supplies equipment or materials. In a line written by the "
-    "reseller or by PurTera, \"we\"/\"us\" is the side doing the work (\"he will need us to run the cabling\" = "
-    "Provider runs the cabling), and the customer is the end customer. provider_materials and customer_materials "
-    "are supply assignments: each item cites the fact that says that party supplies it (an item on the customer's "
-    "purchase order is customer-supplied); the only uncited item allowed is Provider's standard installation "
-    "tools. Never say which device goes at which location unless a fact pairs them. When cable runs end at an "
-    "IDF or rack, the task list terminates and connects them there. No filler such as \"pending approval\". Never put a price, "
-    "rate or dollar amount anywhere: fees come from the quote. A fact marked (unsure) was not confirmed as part of "
-    "the job: use it only when it fits the confirmed facts (a third run beside two confirmed ones). Leave a list empty rather than guess. Ignore "
-    "email-client banners and signatures. Never mention the CRM, ids or these instructions in the text.\n\n"
-    "CRM RECORD: %s\nSITES: %s\nCONTACTS: %s\nFACTS (id, section the heads placed it in, date, text):\n%s"
+_BASE = (
+    "You write part of the deal-specific content of a PurTera Statement of Work (SOW). PurTera (\"Provider\") does "
+    "the field work. The CRM account is who PurTera contracts with (a reseller such as CDW or SHI, or the customer "
+    "on a direct deal); the end customer is who the work is for. Voice: short imperative bullets that start with a "
+    "verb, counts as words with the numeral (\"two (2)\"), \"Provider\" for PurTera and \"Customer\" for the "
+    "customer. Every list item is {\"text\": str, \"cites\": [fact ids], \"kind\": \"fact\"|\"method\"}: a fact item "
+    "states something about THIS deal and cites the facts that state it, adding nothing (plain arithmetic is fine); "
+    "a method item is standard practice for this kind of work and carries no number, brand, model, name, place or "
+    "date the facts do not give. A later fact replaces an earlier one. [under: ...] is the heading or lead-in above "
+    "a line. WHO: in a line written by the reseller or PurTera, \"we/us\" is the side doing the work (\"he will need "
+    "us to run the cabling\" = Provider runs it); in a line written by the customer or under a customer heading "
+    "(\"Customer notes:\"), \"we\" is the customer (\"We will preconfigure all items\" = the customer does). A request "
+    "form asking the reseller to provide materials (\"CDW to provide backer board, Cat6 cable\") means Provider "
+    "supplies them. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
+    "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
+    "A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
+    "email banners and signature blocks. Never write a price, rate or dollar amount, never mention the CRM, ids or "
+    "these instructions, and leave a list empty rather than guess. Return JSON only.\n"
+    "CRM RECORD: %s\nSITES: %s\nCONTACTS: %s\nFACTS (id, section the heads placed it in, date, text):\n%s\n\n"
+)
+
+_PARTS = {
+    "header": (
+        "TASK: the SOW header. Return {\"project_name\": PurTera's title (end customer + work + place, e.g. \"Sodexo "
+        "Decomm Delta Atlanta\"), \"end_customer\": who the work is for, from a request form, a site sheet header, a "
+        "signature or the CRM deal name, or \"\", \"services\": [implementation for installs; custom_work for "
+        "decommission, packing, smart-hands or labor-only support], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
+        "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
+        "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences: what is installed or "
+        "done, how many, where, for whom; on a many-site job the site count the facts state], \"schedule\": [labeled "
+        "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
+        "\"Arrival Time: ...\", \"Number of Resources: ...\", \"Hardware Quantity: ...\"], \"arrival_protocol\": [only "
+        "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is; empty when no "
+        "fact gives one]}"),
+    "scope": (
+        "TASK: the task list. Return {\"scope_lead\": one line introducing the tasks (\"Provider will dispatch two "
+        "(2) cabling technicians to perform the following:\"; a count only when a fact states the staffing, never "
+        "from meeting attendees), \"scope\": [the tasks in the order the work is done: arrive and check in; each "
+        "piece of work with its counts, lengths and locations kept together (\"side door: approximately 154 ft\"); "
+        "routing, termination, mounting and testing; when runs end at an IDF or rack, terminate and connect them "
+        "there; cleanup; completion confirmed with the onsite contact. When the request says assist the customer's "
+        "staff, the tasks assist as directed. Never claim a route or a device-to-location pairing no fact gives], "
+        "\"deliverables\": [{\"item\": \"Work Completion Report\", \"description\": [the finished outcomes with their "
+        "counts], \"format\": \"PDF\"}]}"),
+    "supply": (
+        "TASK: who supplies what. Return {\"provider_materials\": [materials Provider supplies, one item each, each "
+        "citing the fact that assigns it], \"provider_tools\": [tools Provider brings; standard hand tools may be "
+        "uncited], \"customer_materials\": [equipment and materials the customer or end customer supplies, each "
+        "citing the fact that assigns it; an item on the customer's purchase order is customer-supplied], "
+        "\"customer_responsibilities\": [duties a fact gives the customer or end customer, e.g. providing an "
+        "escort, a staging area, packing materials, directions; never power or PoE, which is an assumption]}"),
+    "bounds": (
+        "TASK: assumptions and exclusions, written against the DRAFT below so they never contradict it. The template "
+        "already prices after-hours, weekend and holiday work and travel, and already states business hours, "
+        "billing and cancellation terms: never repeat or exclude those. Return {\"assumptions\": [5-10 conditions "
+        "that bound the price: each one a fact settles (a ladder confirmed -> \"No lift is required.\" and "
+        "\"Standard ladders reach every work location.\"; the longest run -> \"All cable runs are under N feet.\" with "
+        "N the longest rounded up to 50; a PurTera person's own stated assumption, reworded as a SOW assumption) and "
+        "the standard ones for THIS trade only (cabling or devices: pathways accessible, PoE ports available on the "
+        "IDF switch, equipment on site before arrival; decommission or packing: equipment powered down and released, "
+        "the customer directs what is packed; any job: permits by the customer)], \"out_of_scope\": [5-9 exclusions as "
+        "noun phrases: those a fact states and the standard ones for THIS trade (cabling or devices: lift rental, "
+        "electrical work, core drilling or structural work, patching or painting, switch or firewall work, licensing "
+        "or cloud setup; decommission or packing: transport, shipping, disposal, data destruction or asset "
+        "disposition, configuration); never anything the draft's scope includes or the customer is said to supply]}\n"
+        "DRAFT: %s"),
+}
+
+_COVER_PROMPT = (
+    "Below is a PurTera SOW draft (JSON) and deal facts it does not use yet. For each unused fact that a PM would "
+    "put in the SOW (a count, length, location, model, access condition, date, staffing, who supplies what, a "
+    "stated assumption or exclusion, a requested task), add ONE bullet to the list it belongs in, citing it. Skip "
+    "facts that are chatter, already covered, about another job, or pricing. Same voice and WHO rules as the draft "
+    "(\"we\" under a customer heading is the customer; a reseller asked to provide materials means Provider "
+    "supplies them). Return JSON only: {\"add\": [{\"list\": one of %s, \"text\": str, \"cites\": [ids], "
+    "\"kind\": \"fact\"}]}. Return {\"add\": []} if nothing is missing.\nDRAFT: %s\nUNUSED FACTS:\n%s"
 )
 
 _VERIFY_PROMPT = (
@@ -112,8 +142,8 @@ _VERIFY_PROMPT = (
     "means Provider runs it: it does NOT support the customer supplying cable, nor cabling being excluded). Return JSON only: {\"supported\": [bullet numbers]}.\n%s"
 )
 
-LISTS = ("overview", "schedule", "scope", "provider_materials", "customer_materials",
-         "customer_responsibilities", "assumptions", "out_of_scope")
+LISTS = ("locations", "overview", "schedule", "arrival_protocol", "scope", "provider_materials", "provider_tools",
+         "customer_materials", "customer_responsibilities", "assumptions", "out_of_scope")
 
 _NUM_WORDS = ("one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|"
               "hundred")
@@ -139,7 +169,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": x.get("under") or "",
-                        "text": str(x["text"])})
+                        "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or ""})
     # A line the keep head rejected at a coin flip has not been decided: the
     # SOW is where a dropped cable run becomes an unpriced one (010043's
     # "IDF to Front door 146ft", reject 0.53), so the writer sees it, marked.
@@ -153,9 +183,18 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": "",
-                        "text": str(x["text"])})
+                        "text": str(x["text"]), "supplier": x.get("supplier")})
     _lead_ins(out, envelope.get("atoms") or [])
-    return out[:MAX_FACTS]
+    rank = {k: i for i, k in enumerate(SECTION_ORDER)}
+    seen_text: set[str] = set()
+    uniq = []
+    for f in sorted(out, key=lambda f: rank.get(f["section"], len(rank))):
+        key = re.sub(r"\W+", " ", f["text"].lower()).strip()
+        if key in seen_text:
+            continue
+        seen_text.add(key)
+        uniq.append(f)
+    return uniq[:MAX_FACTS]
 
 
 _LEAD_IN = re.compile(r":\s*$")
@@ -181,15 +220,19 @@ def _lead_ins(fs: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> None:
         if f["under"] or f["id"] not in where:
             continue
         art, ln = where[f["id"]]
-        for pln, txt in reversed([x for x in by_art[art] if ln - 12 <= x[0] < ln]):
-            t = txt.strip()
-            if _LEAD_IN.search(t) and len(t) < 200:
-                f["under"] = t[:160]
-                break
+        # The two nearest lead-ins: "Customer notes:" above "...we'd ship
+        # out:" says whose list it is.
+        heads = [t.strip() for _, t in by_art[art] if ln - 12 <= _ < ln and _LEAD_IN.search(t.strip())
+                 and len(t.strip()) < 200]
+        if heads:
+            f["under"] = " > ".join(h[:120] for h in heads[-2:])
 
 
 def _fact_line(f: dict[str, Any]) -> str:
-    return (f"[{f['id']}] ({f['section']}" + (f", {f['when']}" if f["when"] else "") + ") "
+    sup = f.get("supplier")
+    who = (f" supplied-by:{_SUPPLIER.get(sup[0], sup[0])}" if sup and float(sup[1] or 0) >= SUPPLIER_BAR
+           and sup[0] in _SUPPLIER and f.get("type") in _ITEM_TYPES else "")
+    return (f"[{f['id']}] ({f['section']}" + (f", {f['when']}" if f["when"] else "") + who + ") "
             + (f"[under: {f['under']}] " if f["under"] else "") + _dated(f["text"], f["when"] or None)[:400])
 
 
@@ -206,7 +249,12 @@ def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[
 
 def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
           model: str | None = None) -> dict[str, Any]:
-    """The SOW content for one deal: the writer's lists, each item checked."""
+    """The SOW content for one deal: four focused calls (header, tasks, who
+    supplies what, then the assumptions and exclusions against that draft),
+    a pass over the facts still unused, and every item checked. One call
+    asked for all of it dropped a different rule each run."""
+    from concurrent.futures import ThreadPoolExecutor
+
     fs = facts(envelope)
     brief = envelope.get("c3_brief") or {}
     crm = envelope.get("crm") or {}
@@ -216,21 +264,106 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     sites = _sites(envelope, pm_handoff)
     rows = len([x for x in (brief.get("sections") or {}).get("contacts") or [] if x.get("type") == "physical_site"])
     site_info = {"count_in_site_lists": max(rows, len(sites)), "sites": sites[:15]}
-    prompt = _PROMPT % (STANDING, json.dumps(crm_rec), json.dumps(site_info),
-                        json.dumps(contacts), "\n".join(_fact_line(f) for f in fs))
-    raw = _complete(prompt, model, SOW_TOKENS)
-    got = _json_of(raw) or {}
+    base = _BASE % (json.dumps(crm_rec), json.dumps(site_info), json.dumps(contacts),
+                    "\n".join(_fact_line(f) for f in fs))
+    got: dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futs = {k: pool.submit(_complete, base + _PARTS[k], model, 3500) for k in ("header", "scope", "supply")}
+        for k, fut in futs.items():
+            got.update(_json_of(fut.result()) or {})
+    draft = {k: [str((x or {}).get("text") if isinstance(x, dict) else x) for x in got.get(k) or []]
+             for k in ("overview", "scope", "provider_materials", "customer_materials", "customer_responsibilities")}
+    got.update(_json_of(_complete(base + _PARTS["bounds"] % json.dumps(draft)[:10000], model, 2500)) or {})
     content = _normalise(got)
-    pool = " ".join(f["text"] for f in fs).lower()
-    if content.get("scope_lead") and (_unsupported_specifics(str(content["scope_lead"]), pool)
-                                      or (_STAFF.search(str(content["scope_lead"])) and not _STAFF.search(pool))):
-        # "two (2) technicians" is a staffing promise; with no fact behind it
-        # the lead stays generic.
+    content["overview"] = content["overview"][:4]
+    pool_text = " ".join(f["text"] for f in fs).lower()
+    if content.get("scope_lead") and (_unsupported_specifics(str(content["scope_lead"]), pool_text)
+                                      or (_STAFF.search(str(content["scope_lead"])) and not _STAFF.search(pool_text))):
         content["scope_lead"] = "Provider will perform the following:"
-    lines = {f["id"]: (f"[under: {f['under']}] " if f["under"] else "") + f["text"] for f in fs}
+    lines = {f["id"]: (f"[under: {f['under']}] " if f["under"] else "") + f["text"]
+             + (f" [supplier head: {_SUPPLIER.get(f['supplier'][0], f['supplier'][0])}]"
+                if f.get("supplier") and float(f["supplier"][1] or 0) >= SUPPLIER_BAR
+                and f.get("type") in _ITEM_TYPES else "") for f in fs}
+    content["added"] = _cover(content, fs, model)
     content["checks"] = check(content, lines)
+    content["moved_by_supplier_head"] = _follow_supplier(content, fs)
     content["facts_given"] = len(fs)
     return content
+
+
+COVER_FACTS = int(os.environ.get("SOWSMITH_C3_SOW_COVER_FACTS", "120"))
+
+
+def _cover(content: dict[str, Any], fs: list[dict[str, Any]], model: str | None) -> int:
+    """Offer the writer every job fact it left uncited and add the ones a SOW
+    needs: on 010043 the same "a ladder would do the trick" line made "no lift
+    is required" one run and was dropped the next."""
+    used = {c for k in LISTS for x in content.get(k) or [] for c in x["cites"]}
+    unused = [f for f in fs if f["id"] not in used and f["section"] not in ("acceptance", "terms", "change_control")]
+    if not unused:
+        return 0
+    draft = {k: [x["text"] for x in content.get(k) or []] for k in LISTS}
+    raw = _complete(_COVER_PROMPT % (json.dumps(list(LISTS)), json.dumps(draft)[:12000],
+                                     "\n".join(_fact_line(f) for f in unused[:COVER_FACTS])), model, 2500)
+    got = _json_of(raw) or {}
+    n = 0
+    for a in got.get("add") or []:
+        k = str((a or {}).get("list") or "")
+        item = _item(a)
+        if k in LISTS and item and item["cites"]:
+            item["kind"] = "fact"
+            content[k].append(item)
+            n += 1
+    return n
+
+
+#: A line that names an item rather than says something: "Samsung Tablet +
+#: Stand", "Cords for the above", never "Delivery team will bring...".
+_ITEM_LINE = re.compile(r"^(?!(?:we|they|he|she|i|you|the team|delivery|provider|customer)\b)[^.!?]{2,90}$", re.I)
+_ITEM_TYPES = frozenset({"bom_line"})
+_SUPPLY_VERB = re.compile(r"^(?:provide|supply|bring|furnish|deliver|use)s?\s+", re.I)
+
+
+def _follow_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
+    """The supplier head decides which party's list a supply item sits in: an
+    item whose cited lines the head reads, sure, as the other party's moves
+    there (000123's mounting hardware, customer 0.80, written as Provider's).
+    Items read as plain nouns, as PurTera lists them."""
+    # The supplier head is a table-column head (col:supplier): on held-out
+    # deals it equals a constant guess overall (0.659), so it decides only on
+    # BOM rows, the lines it was trained on; on 010082's sentences it read the
+    # backboard Provider brings as the customer's.
+    sup = {f["id"]: f["supplier"][0] for f in fs
+           if f.get("supplier") and float(f["supplier"][1] or 0) >= SUPPLIER_BAR and f.get("type") in _ITEM_TYPES}
+    side = {"us": "provider_materials", "partner": "provider_materials", "customer": "customer_materials"}
+    moved = 0
+    # An item line the head assigns is listed whatever the writer did: the
+    # writer dropped 000123's tablet, hub and cords on one run of two.
+    cited = {c for k in ("provider_materials", "customer_materials") for x in content.get(k) or [] for c in x["cites"]}
+    for f in fs:
+        if f["id"] in cited or sup.get(f["id"]) not in side or not _ITEM_LINE.match(f["text"].strip()):
+            continue
+        if f.get("type") not in _ITEM_TYPES:
+            continue
+        content.setdefault(side[sup[f["id"]]], []).append(
+            {"text": f["text"].strip().rstrip("."), "cites": [f["id"]], "kind": "fact", "by": "col:supplier"})
+    for k in ("provider_materials", "customer_materials"):
+        keep = []
+        for x in content.get(k) or []:
+            x["text"] = _SUPPLY_VERB.sub("", x["text"]).strip()
+            x["text"] = x["text"][:1].upper() + x["text"][1:]
+            votes = [side[sup[c]] for c in x["cites"] if sup.get(c) in side]
+            target = max(set(votes), key=votes.count) if votes else k
+            if target != k:
+                content.setdefault(target, []).append(x)
+                moved += 1
+            else:
+                keep.append(x)
+        content[k] = keep
+    for x in content.get("provider_tools") or []:
+        x["text"] = _SUPPLY_VERB.sub("", x["text"]).strip()
+        x["text"] = x["text"][:1].upper() + x["text"][1:]
+    return moved
 
 
 def _item(x: Any) -> dict[str, Any] | None:
@@ -280,8 +413,8 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                     dropped["uncited_fact"] += 1
                     continue
                 x["kind"] = "method"
-            if x["kind"] == "method" and (k == "customer_materials" or (k == "provider_materials" and not
-                                          re.search(r"(?i)\btools?\b", x["text"]))):
+            if x["kind"] == "method" and (k in ("customer_materials", "provider_materials", "locations")
+                                          or (k == "provider_tools" and _unsupported_specifics(x["text"], pool))):
                 # Who supplies what is a deal fact, never a default.
                 dropped["method"] += 1
                 continue
@@ -331,6 +464,27 @@ def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[s
     return out
 
 
+def enabled() -> bool:
+    """``SOWSMITH_C3_SOW`` is on (dev): the compile writes the SOW content."""
+    return os.environ.get("SOWSMITH_C3_SOW", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
+    """The SOW content as the envelope carries it: the writer's lists, the
+    partner's requester, the CRM record and the sites."""
+    sites = [{"address": s.get("address") or s.get("display_name") or "", "city": s.get("city") or "",
+              "state": s.get("state") or "", "postal_code": s.get("postal_code") or "",
+              "name": s.get("display_name") or ""}
+             for s in (envelope.get("site_readiness") or {}).get("sites") or []]
+    c = write(envelope, {"sites": sites})
+    c["requested_by"] = requested_by(envelope)
+    c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
+    c["sites"] = _sites(envelope, {"sites": sites})
+    c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
+    c["version"] = "c3_sow_v1"
+    return c
+
+
 def requested_by(envelope: dict[str, Any]) -> dict[str, str]:
     """The partner's salesperson who asked for the quote: the account-side
     person who wrote most, with the contact card the brief built for them."""
@@ -377,4 +531,4 @@ def as_markdown(content: dict[str, Any]) -> tuple[str, str]:
     return "\n".join(lead), "\n".join(tasks)
 
 
-__all__ = ["facts", "write", "check", "requested_by", "as_markdown"]
+__all__ = ["enabled", "for_envelope", "facts", "write", "check", "requested_by", "as_markdown"]
