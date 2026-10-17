@@ -37,6 +37,7 @@ authoritative starting points; the PM cockpit renders them directly.
 """
 from __future__ import annotations
 
+import os
 import re
 
 from collections import Counter, defaultdict
@@ -1562,6 +1563,19 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
     return out
 
 
+#: How sure the type head must be that a line is a site for it to make a row.
+SITE_HEAD_BAR = float(os.environ.get("SOWSMITH_SITE_HEAD_BAR", "0.5"))
+
+
+def _head_says_site(val: Any) -> bool:
+    """The C3 type head labeled this line a physical site."""
+    lab = val.get("c3_label") if isinstance(val, dict) else None
+    if not (isinstance(lab, dict) and lab.get("type") == "physical_site"):
+        return False
+    # A label the head filled in carries no score (000123's last 15 stores).
+    return lab.get("p") is None or float(lab.get("p") or 0) >= SITE_HEAD_BAR
+
+
 def build_site_readiness(
     *,
     atoms: list[EvidenceAtom],
@@ -1607,10 +1621,12 @@ def build_site_readiness(
             sid = ""
             if isinstance(val, dict):
                 sid = val.get("id") or val.get("site_id") or ""
-            if not sid or not re.search(r"[A-Za-z]{2}", str(sid)):
-                # No explicit site code → skip. Don't pollute site_readiness.
-                # A bare number is never a place: 010043's "34" (a count off
-                # a floor plan) read as a site took the Charlotte office's place.
+            if not (sid and re.search(r"[A-Za-z]{2}", str(sid))) and not _head_says_site(val):
+                # The type head decides what a site line is. A line it labeled
+                # physical_site is one whatever its id looks like: an id-shape
+                # test here threw away 142 of 000123's 157 BevMo stores (store
+                # numbers like "407"). A line the head did not label keeps the
+                # old guard: 010043's bare "34" and 010387's signature address.
                 continue
             # The atom's OWN entity key is the one the rest of the system uses.
             #
@@ -1632,9 +1648,14 @@ def build_site_readiness(
                 k for k in (getattr(atom, "entity_keys", None) or [])
                 if isinstance(k, str) and k.startswith("site:")
             ]
+            # A store number's own key ("site:407") is a second name for the
+            # row the full key already makes: one store, one row.
+            if len(site_keys) > 1:
+                site_keys = [k for k in site_keys if not re.fullmatch(r"site:\d+", k)] or site_keys[:1]
             if not site_keys:
                 import re as _re_sid
-                site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+                base = sid or (val.get("facility_name") or val.get("name") or val.get("address") or "")
+                site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", str(base).lower()).strip("_")
                 site_keys = [f"site:{site_slug}"] if site_slug else []
         else:
             # v49.1: skip v49 schema atom types entirely — they're
@@ -1724,15 +1745,16 @@ def build_site_readiness(
             if not isinstance(_val, dict):
                 continue
             _sid = _val.get("id") or _val.get("site_id") or ""
-            if not _sid or not re.search(r"[A-Za-z]{2}", str(_sid)):
+            if not (_sid and re.search(r"[A-Za-z]{2}", str(_sid))) and not _head_says_site(_val):
                 continue
+            # A store number names its row only through the row's own key
+            # (000123's "407" is the store, "site:407" also a count's shape).
             _canon_slug = "site:" + _re_canon.sub(
                 r"[^a-z0-9]+", "_", str(_sid).lower()
-            ).strip("_")
-            if not _canon_slug or _canon_slug == "site:":
-                continue
-            canonical_set.add(_canon_slug)
-            anchored_set.add(_canon_slug)
+            ).strip("_") if _sid and re.search(r"[A-Za-z]{2}", str(_sid)) else ""
+            if _canon_slug and _canon_slug != "site:":
+                canonical_set.add(_canon_slug)
+                anchored_set.add(_canon_slug)
             # The atom's own entity key is canonical too.
             #
             # This set is a STRICT final gate — anything not in it is dropped —
