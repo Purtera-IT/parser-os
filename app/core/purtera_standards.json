@@ -1,7 +1,7 @@
 {
   "_about": "PurTera's fixed handling per job type: SOW items a PM writes on every job of that type whether or not the deal states them (template content, not deal facts). Owner-reviewed. The writer writes every item unless a deal fact contradicts it. Sections match sow_method_library.json.",
   "decommission_packing": {
-    "_source": "owner, 2026-10-18 (010115 v1 grade: PM-habit items are PurTera standard handling)",
+    "_source": "owner, 2026-10-18 (010115 v1 grade: PM-habit items are PurTera standard handling); items added from the 010115 v1 TEMPLATE list (grade round 12)",
     "method_steps": [
       "Meet the onsite contact on arrival and review the hardware to be dismantled and packed.",
       "Power down and disconnect the equipment as directed by the onsite contact.",
@@ -15,15 +15,23 @@
       "Provide sufficient packing materials (boxes, pallets, tape and labels) onsite before the technician arrives.",
       "Designate a staging or shipment area for the packed equipment.",
       "Provide packing and labeling instructions for the equipment.",
-      "Provide any additional security, dock or escort requirements before arrival."
+      "Provide any additional security, dock or escort requirements before arrival.",
+      "Disconnect or arrange for the safe disconnection of any electrical, building, security, or specialized connections that require a licensed trade or manufacturer-authorized resource.",
+      "Accept responsibility for the transportation, shipment, storage, and disposal of all equipment and materials.",
+      "Ensure equipment is accessible and free from obstructions.",
+      "Provide any specialized tools, carts, pallets, shipping equipment, lifting equipment and packing materials (boxes, labels, foam, packing paper, tape)."
     ],
     "assumptions": [
       "Equipment is powered down and released for removal before the technician arrives.",
-      "Onsite parking is available; any parking fee is reimbursable."
+      "Onsite parking is available; any parking fee is reimbursable.",
+      "The engagement is limited to onsite physical labor and smart hands support.",
+      "The hardware can be safely dismantled using common hand tools.",
+      "No specialized lifting equipment or powered material handling equipment is required."
     ],
     "exclusions": [
       "Transport, shipping or freight of packed equipment.",
-      "Disposal, recycling, data destruction or asset disposition."
+      "Hardware installation, configuration, programming, troubleshooting, data migration, network changes, or system testing.",
+      "Inventory audit, asset reconciliation, disposal, recycling, data destruction, or certified IT asset disposition."
     ]
   }
 }
