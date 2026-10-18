@@ -1810,9 +1810,14 @@ def build_site_readiness(
                     _nslug = "site:" + _re_canon.sub(
                         r"[^a-z0-9]+", "_", str(_nm).lower()
                     ).strip("_")
-                    if _nslug and _nslug != _canon_slug:
-                        _name_targets.setdefault(_nslug, set()).add(_canon_slug)
-                        canonical_map[_nslug] = _canon_slug
+                    # A store numbered "6" has no id slug of its own; its names
+                    # alias its own key, never a blank one (010279: every store
+                    # name mapped to "" and the roster emptied).
+                    _target = _canon_slug or next((str(k) for k in (getattr(_a, "entity_keys", None) or [])
+                                                   if str(k).startswith("site:") and len(str(k)) > 5), "")
+                    if _nslug and _target and _nslug != _target:
+                        _name_targets.setdefault(_nslug, set()).add(_target)
+                        canonical_map[_nslug] = _target
 
         # A name two rows with their own ids share names neither: 000123's
         # roster lists Glendale (locid 495) under Point Loma's facility name,
