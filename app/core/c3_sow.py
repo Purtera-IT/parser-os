@@ -591,6 +591,15 @@ def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> Non
     content["provider_materials"] = [x for x in content.get("provider_materials") or [] if not _said(tx(x), cm, 0.6)]
     we_provide = any(re.search(r"(?i)\bwe (are|will|'ll|will be) (be )?(providing|provide|supplying|ship)", f["text"])
                      and _HARDWARE.search(f["text"] + " display mount") for f in fs)
+    # The customer ships the gear ("we'd ship out:", "provides all hardware"):
+    # its cables and mounting hardware come with it (000123 put "associated
+    # mounting hardware / cables" on Provider with no owner stated).
+    if any(re.search(r"(?i)\bwe'?d ship( out)?\b|we (will|'ll) ship( out)?\b|provides? all (the )?(hardware|equipment)", f["text"]) for f in fs):
+        pm = content.get("provider_materials") or []
+        assoc = [x for x in pm if re.search(r"(?i)associated|mounting hardware|\bcables?\b|\bcords?\b", tx(x)) and not (isinstance(x, dict) and x.get("cites"))]
+        if assoc:
+            content["provider_materials"] = [x for x in pm if x not in assoc]
+            content.setdefault("customer_materials", []).extend(assoc)
     if we_provide or any(_RESELLER_SHIPS.search(f["text"]) for f in fs):
         pm = content.get("provider_materials") or []
         hw = [x for x in pm if _HARDWARE.search(tx(x))]
@@ -1150,7 +1159,8 @@ def _apply_standards(content: dict[str, Any], family: str) -> int:
 _ACCESS = re.compile(r"(?i)\b(badges?|parking|pass(es)?|escort|keys?|access cards?)\b")
 _LEDGER = re.compile(r"(?i)tax[- ]exempt|cost cent(er|re)|\bcorp(orate)? service\b|\bsegment\b|\bgl code\b|"
                      r"request date|\bSR ?#|unified sr|\bproject name\s*:|\bticket\s*#")
-_FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination")}
+_FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination"),
+                     "pos_install_refresh": re.compile(r"(?i)network testing|validation tools|certifier|toner")}
 
 
 def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
@@ -1657,6 +1667,20 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         stated = max(near) if near else len(table)
     c["site_summary"] = {"stated": stated, "resolved": len(sites), "from_table": bool(table)}
     c["requested_by"] = requested_by(envelope)
+    # A count near the resolved site count is that count (000123: the roster
+    # holds 161 stores; a note said "about 160" and the scope printed 160).
+    n_sites = int(c["site_summary"].get("stated") or 0) or len(sites)
+    if n_sites >= 10:
+        def _snap(m: re.Match) -> str:
+            n = int(m.group(1))
+            return (str(n_sites) if n != n_sites and abs(n - n_sites) <= max(2, 0.1 * n_sites) else m.group(1)) + m.group(2)
+        for k in ("overview", "scope", "schedule"):
+            for x in c.get(k) or []:
+                if isinstance(x, dict):
+                    x["text"] = re.sub(r"\b(\d{2,4})(\s+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
+        for d in c.get("deliverables") or []:
+            if isinstance(d, dict):
+                d["description"] = [re.sub(r"\b(\d{2,4})(\s+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t)) for t in d.get("description") or []]
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
     c["sites"] = [x for x in _sites(envelope, {"sites": sites}) if (x.get("address") or x.get("name"))]
     # On a job of a few sites the writer's own cited locations are the table:
@@ -1704,6 +1728,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     dn = str((envelope.get("crm") or {}).get("deal_name") or "").strip()
     dn = re.sub(r"^\s*\d{5,6}\s*[-–:]?\s*", "", dn)
     dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s+", "", dn).strip(" -–")
+    dn = re.sub(r"(?i)\s+w/\s*\w+.*$|\s+with\s+[A-Z][a-z]+$", "", dn).strip()  # "161 Site POS install w/ Ahmed"
     if len(dn.split()) >= 2:
         c["project_name"] = dn
     # On a one-address job, a place the request names inside it ("Specific
