@@ -2016,14 +2016,23 @@ def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[s
             # asks for it) and its service date, and 000123's 161-store count.
             cited = " ".join(lines.get(c, "") for c in x["cites"])
             explicit_absence = re.match(r"(?i)\s*[\w ]{3,30}:\s*not (provided|stated|specified)\b", x["text"])
-            if i in okn or explicit_absence or _stated_by(x["text"], cited):
+            # An equipment-list row ("Printer", "Credit card reader (pin pad)")
+            # is the thing to install: "Install the printer" states it (000123).
+            short = [lines.get(c, "") for c in x["cites"] if 0 < len(lines.get(c, "").split()) <= 6]
+            install_row = bool(short) and re.match(r"(?i)\s*(install|mount|connect|set up|place)\b", x["text"]) and all(
+                {w for w in _toks(r) if len(w) > 2} <= _toks(x["text"]) for r in short) and len(short) == len(x["cites"]) \
+                and set(re.findall(r"\d+", x["text"])) <= set(re.findall(r"\d+", cited))
+            # "about 160" stated, 161 resolved from the roster (000123's count).
+            approx = re.search(r"(?i)\b(about|approximately|approx\.?|around|roughly|~)\s*\d", cited) and _stated_by(
+                re.sub(r"\d+", lambda m: next((n for n in re.findall(r"\d+", cited) if abs(int(n) - int(m.group(0))) <= 2), m.group(0)), x["text"]), cited)
+            if i in okn or explicit_absence or install_row or approx or _stated_by(x["text"], cited):
                 out.append(x)
     return out
 
 
 def _stated_by(text: str, cited: str) -> bool:
     """Most of a bullet's content words, and every number in it, appear in its cited lines."""
-    want = {w for w in _toks(text) if len(w) > 2}
+    want = {w for w in _toks(text) if len(w) > 2} - {"provider", "will", "customer"}  # framing, not content
     have = _toks(cited)
     nums = set(re.findall(r"\d+", text))
     parts = set(re.findall(r"\b[A-Z]{1,6}\d{1,5}(?:-[A-Z0-9]{1,6})?\b", text))
