@@ -54,13 +54,23 @@
       "Perform functional testing of each installed device before leaving the site.",
       "Clean the immediate work area of installation packaging and loose cabling created by Provider.",
       "Notify the onsite contact of any material, access or site readiness issues and any incomplete work items.",
+      "{when:kitchen printer|receipt printer|printer} Connect each printer to power and the applicable network connection and perform a test print.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Connect the existing internet service to the router's WAN connection and the POS network to its LAN.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Perform the basic router configuration required to support the POS installation.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Configure basic failover from the primary internet connection to the cellular backup connection.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Validate primary internet connectivity and test cellular failover where the active cellular service allows.",
+      "Confirm the installed POS components communicate across the network before leaving site.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
       "{when:preconfigur|pre-configur|(customer|they|their|end user).{0,40}configur|configur.{0,40}(by|from) (the )?(customer|them)} Perform all device configurations and troubleshooting, if required.",
       "Ensure onsite personnel are available to assist with functional validation where required.",
       "Provide escalation contacts for technical, access, hardware and schedule related issues.",
-      "Provide approval criteria for completed installation and functional testing."
+      "Provide approval criteria for completed installation and functional testing.",
+      "{when:square} Provide the required Square account credentials and administrative access.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Provide router administrative credentials or authorization to create the required local configuration.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Provide an active cellular service, SIM and data plan for the backup internet connection.",
+      "Authorize test transactions or test prints where required for final validation."
     ],
     "assumptions": [
       "Cable management is required.",
@@ -77,13 +87,20 @@
       "Hardware, software or accessory procurement.",
       "Electrical or low-voltage cabling work.",
       "Core drilling, wall construction or structural modification.",
-      "Repair or replacement of defective customer equipment."
+      "Repair or replacement of defective customer equipment.",
+      "Major structured cabling installation.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Advanced firewall rules, VPN configuration, content filtering, network segmentation or custom security policies.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Cellular carrier account creation, billing changes or carrier-level troubleshooting.",
+      "Troubleshooting of unrelated existing network equipment.",
+      "Integration with third-party applications not identified in this scope."
     ],
     "deliverable_outcomes": [
       "Installed devices connected, powered and functionally tested.",
       "Completion photos of each installed location.",
       "Notes on material, access or site readiness issues and incomplete work items encountered onsite.",
-      "Completion confirmed with the onsite contact."
+      "Completion confirmed with the onsite contact.",
+      "{when:kitchen printer|receipt printer|printer} Printer test print validated.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Primary internet connectivity and cellular failover validated where supported."
     ]
   },
   "low_voltage_cabling": {
@@ -180,23 +197,32 @@
       "Provide rack ears, power supplies, power cords, stack cables, optics, patch cables, rack hardware and any other materials required for installation, where applicable.",
       "Perform final network validation, connectivity testing and acceptance testing.",
       "Identify the customer-designated area where removed legacy switches should be staged.",
-      "Confirm any site-specific requirements where a dedicated rack is not available or the existing rack, cabinet, cabling or layout may affect the installation."
+      "Confirm any site-specific requirements where a dedicated rack is not available or the existing rack, cabinet, cabling or layout may affect the installation.",
+      "Provide the final site list, site addresses, store contacts and number of replacement switches for each location.",
+      "Supply, configure, label and deliver all replacement equipment to each location before the technician arrives.",
+      "Identify any special access, security, insurance or site-specific requirements before technician scheduling."
     ],
     "assumptions": [
       "Provider's role is limited to onsite physical labor and field support.",
       "Provider is not responsible for switch configuration, programming, network engineering or final network acceptance.",
-      "Removed legacy switches will be left onsite in a customer-designated area."
+      "Removed legacy switches will be left onsite in a customer-designated area.",
+      "Existing power, racks, shelves, patch panels and supporting infrastructure are functional and suitable for the replacement equipment.",
+      "Provider's scope is limited to physical onsite services at each location; Provider does not procure, receive, stage, configure, package or ship equipment.",
+      "Provider's responsibility for decommissioned equipment ends once it is placed in the Customer-designated onsite location."
     ],
     "exclusions": [
       "Switch configuration and programming.",
       "Network troubleshooting.",
       "Return logistics for removed equipment.",
-      "Structured cabling installation, cable certification, electrical work, rack replacement or circuit troubleshooting unless added by written change order."
+      "Structured cabling installation, cable certification, electrical work, rack replacement or circuit troubleshooting unless added by written change order.",
+      "Shipping, freight coordination or logistics for replacement equipment.",
+      "Return logistics, packaging, shipping or transportation of decommissioned equipment."
     ],
     "deliverable_outcomes": [
       "New switches installed and cabled one-for-one where practical.",
       "Removed switches staged onsite in the designated area.",
-      "Completion confirmed with the onsite contact or remote engineer."
+      "Completion confirmed with the onsite contact or remote engineer.",
+      "Updated or supplemented port mapping documentation, when applicable."
     ]
   },
   "av_conference_room": {
