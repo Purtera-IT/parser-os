@@ -783,6 +783,22 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                                 if not (isinstance(x, dict) and x.get("cites") and all(c in ours for c in x["cites"]))]
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
+    # A customer duty every cited line of which the supplier head gives to us
+    # is Provider work (010279: proof of delivery, inventory recap); and one
+    # atom is never both Provider scope and a customer duty.
+    sup = {f["id"]: f.get("supplier") for f in fs}
+    ours_cite = lambda c: bool(sup.get(c)) and sup[c][0] == "us" and float(sup[c][1] or 0) >= SUPPLIER_BAR
+    scope_cites = {c for x in content.get("scope") or [] if isinstance(x, dict) for c in x.get("cites") or []}
+    moved = []
+    for x in list(content.get("customer_responsibilities") or []):
+        if not isinstance(x, dict) or x.get("standard") or not x.get("cites"):
+            continue
+        if set(x["cites"]) <= scope_cites:
+            content["customer_responsibilities"].remove(x)
+        elif all(ours_cite(c) for c in x["cites"]):
+            content["customer_responsibilities"].remove(x)
+            moved.append(x)
+    content.setdefault("scope", []).extend(moved)
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
     content["withheld"] = _scrub(content)
@@ -796,6 +812,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         for k in LISTS:
             content[k] = [x for x in content.get(k) or []
                           if not (isinstance(x, dict) and count_of.search(str(x.get("text") or "")))]
+        for d in content.get("deliverables") or []:  # 010279: "the 785 replaced POS terminals" in the report
+            if isinstance(d, dict):
+                d["description"] = [t for t in d.get("description") or [] if not count_of.search(str(t))]
     # A heading whose tasks the checks dropped is an empty promise in the SOW
     # (010043: "Camera mounting" with nothing under it).
     sc = content.get("scope") or []
