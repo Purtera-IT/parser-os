@@ -87,9 +87,14 @@ def identity_groups(rows: list[dict[str, Any]]) -> list[list[int]]:
     for i, r in enumerate(rows):
         code = _site_code(str(r.get("site") or ""), r)
         if code:
-            if code in by_code:
-                join(by_code[code], i)
-            else:
+            # A code read off a shared name is not the same place when the two
+            # streets differ: 000123's roster lists Glendale (200 S. Brand
+            # Blvd) under Point Loma's "SAN_Point-Loma_446" name.
+            other = by_code.get(code)
+            if other is not None and not (_street(rows[other]) and _street(r)
+                                          and _street(rows[other]) != _street(r)):
+                join(other, i)
+            elif other is None:
                 by_code[code] = i
         st = _street(r)
         if st:
