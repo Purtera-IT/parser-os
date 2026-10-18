@@ -2545,6 +2545,23 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         head, sep, rest = nm.partition(" — ")
         if sep and rest and (rest.split(",")[0].strip().lower() in str(x.get("address") or "").lower()):
             x["name"] = head.strip()
+    # A line naming most of the sites names them all (000132: weekly visits "at
+    # Plymouth, Hudson, Wilmington, Troy and Tupelo", Delphos left out).
+    cities = [(str(x.get("city") or "").strip(), str(x.get("state") or "").strip()) for x in c["sites"]]
+    cities = [(ci, st) for ci, st in cities if ci]
+    if len(cities) >= 3:
+        for k in ("overview", "scope", "schedule"):
+            for x in c.get(k) or []:
+                if not isinstance(x, dict):
+                    continue
+                t = str(x.get("text") or "")
+                hits = [m for ci, st in cities for m in re.finditer(r"\b" + re.escape(ci) + r"\b(?:,\s*" + re.escape(st) + r"\b)?", t)] if True else []
+                named = {m.group(0).split(",")[0] for m in hits}
+                if 2 <= len(named) < len(cities):
+                    a, b = min(m.start() for m in hits), max(m.end() for m in hits)
+                    full = ", ".join(f"{ci}, {st}" if st else ci for ci, st in cities[:-1]) + ", and " + \
+                        (f"{cities[-1][0]}, {cities[-1][1]}" if cities[-1][1] else cities[-1][0])
+                    x["text"] = t[:a] + full + t[b:]
     for x in c["sites"]:  # 010198: a blank name left the Location cell empty
         if not str(x.get("name") or "").strip():
             x["name"] = str(x.get("address") or "")
