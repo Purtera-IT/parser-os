@@ -1861,6 +1861,30 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             first_work = next((i for i, x in enumerate(rest) if isinstance(x, dict) and x.get("kind") == "heading" and i > 0), at)
             at = first_work + 1
         content["scope"] = rest[:at] + pre_ph + rest[at:]
+    # A task the SOW also excludes goes (010326: "Provide help with racking/
+    # stacking/wall mounting" beside rack-and-stack in Out of Scope).
+    oos_items = [x for x in content.get("out_of_scope") or [] if isinstance(x, dict)]
+    content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
+                        and not x.get("standard") and oos_items and _said(re.sub(r"(?i)^\s*(provide help with|assist with|help with)\s*", "", str(x.get("text"))), oos_items, 0.6))]
+    # Vendor lease or financing terms are not SOW terms (010326 CDW lease text).
+    for k in LISTS:
+        content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)residual value|lease term|end of the lease|financing (terms|agreement)",
+                                                                         str(x.get("text") if isinstance(x, dict) else x))]
+    # "Labor only" overrides an RFP's vendor logistics (010279: "We are pricing
+    # physical installation labor only"; the SOW still accepted delivery,
+    # stored, tagged and transported gear to 113 stores).
+    if any(re.search(r"(?i)\blabor[- ]only\b|\blabor only\b|installation labor only|onsite labor only|field labor only", f["text"]) for f in fs):
+        logi = re.compile(r"(?i)accept (the )?deliver|receiv(e|ing) (the )?(equipment|hardware|shipments?)|\bwarehous|\bstor(e|ing|age) (the )?(equipment|hardware)|"
+                          r"asset[- ]tag|transport|\bkitting\b|\bstaging (area|facility|center|warehouse)|proof of delivery|inventory recap")
+        for k in ("scope", "customer_responsibilities", "deliverables_text"):
+            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and logi.search(str(x.get("text"))))]
+        asm = content.setdefault("assumptions", [])
+        if not any(re.search(r"(?i)labor only|onsite (field )?labor", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
+            asm.insert(0, {"text": "Pricing covers onsite installation labor only; hardware is delivered to each location before technicians arrive.", "cites": [], "kind": "method"})
+    # The customer is not given the configuration Provider's own scope does.
+    if re.search(r"(?i)\bconfigur", " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading")):
+        content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
+                                                if not re.search(r"(?i)perform all device configurations", str(x.get("text") if isinstance(x, dict) else x))]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
@@ -2539,6 +2563,11 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 sites = [{"address": street, "city": city, "state": st, "postal_code": z,
                           "name": ", ".join(p for p in (street, city, (st + " " + z).strip()) if p)}]
                 break
+    # Roster rows named by a trunk or circuit id ("SIP-6522-0134...") are not
+    # sites; the writer's own location list with names and addresses is
+    # (010326: 18 garbled rows against 30 clean locations).
+    if any(re.match(r"(?i)\s*(sip|ckt|circuit|trunk)[-_ ]?\d", str(x.get("name") or "")) for x in sites):
+        sites = [x for x in sites if not re.match(r"(?i)\s*(sip|ckt|circuit|trunk)[-_ ]?\d", str(x.get("name") or ""))]
     table = location_table(envelope)
     if len(table) > len(sites):
         sites = table
@@ -2617,6 +2646,20 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     # On a job of a few sites the writer's own cited locations are the table:
     # the roster kept SHI's Austin office (a signature) on 010376 and lost
     # 010147's Denver origin, while the writer's locations had both right.
+    # A writer location list of "Name (street, City, ST 12345) - N phones" rows
+    # longer than the roster is the site table (010326: 30 clean rows, 18
+    # roster rows with trunk ids for names).
+    parsed = []
+    for x in c.get("locations") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        m = re.match(r"(?i)\s*(.+?)\s*\((\d{1,6}\s+[^,()]+?\b(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|blvd|boulevard|way|court|ct|place|pl|"
+                     r"parkway|pkwy|highway|hwy|circle|cir|trail|terrace)\.?)\s*,?\s+([A-Za-z .]+?),\s*([A-Z]{2})\s+(\d{5})\)", t) or \
+            re.match(r"\s*(.+?)\s*\((\d{1,6}\s+[^,()]+?),\s*([A-Za-z .]+?),\s*([A-Z]{2})\s+(\d{5})\)", t)
+        if m:
+            name, street, city, st, z = (g.strip() for g in m.groups())
+            parsed.append({"name": name, "address": f"{street}, {city}, {st} {z}", "street": street, "city": city, "state": st, "postal_code": z})
+    if len(parsed) >= 6 and len(parsed) > len(c["sites"]) and len(parsed) >= 0.8 * len(c.get("locations") or []):
+        c["sites"] = parsed
     locs = [str(x.get("text") or "") for x in c.get("locations") or [] if isinstance(x, dict) and x.get("cites")]
     if locs and len(c["sites"]) <= 5 and not table:
         rows = []
