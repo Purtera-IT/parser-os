@@ -82,7 +82,7 @@ _BASE = (
     "work. A request phrased as a wish or a question (\"I would also like to add <X>\", \"can you also <do Y>?\") is "
     "scope. The customer saying \"I will provide <X>\" means the Customer supplies <X>. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
     "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
-    "A fact marked (type head: a prerequisite or condition) is a condition the work depends on; whose duty it is follows its wording and its heading (a customer's 'we will unrack' is the customer's; 'drilling rules must be followed' binds whoever drills). A question is never scope by itself: only its answer is, and a later decision overrides the question ('Do we need a site survey?' answered 'probably not' is not a task). A fact marked (quoted earlier email) is older thread context: time slots offered there for a call or meeting are never install dates. A hedge or a habit ('24/7 can be tough', 'it usually needs a follow-up') is never a commitment: never promise return visits, on-call or follow-ups the facts do not settle. The reseller's own work (receiving, shipping, configuration, procurement it does) is never Provider work, in the overview too. A 'remote resource' is remote, never the onsite contact. A model or series number ('785 POS terminals', 'InTouch 9000', 'C9350') is never a count.  A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
+    "A fact marked (type head: a prerequisite or condition) is a condition the work depends on; whose duty it is follows its wording and its heading (a customer's 'we will unrack' is the customer's; 'drilling rules must be followed' binds whoever drills). A question is never scope by itself: only its answer is, and a later decision overrides the question ('Do we need a site survey?' answered 'probably not' is not a task). A fact marked (quoted earlier email) is older thread context: time slots offered there for a call or meeting are never install dates. A hedge or a habit ('24/7 can be tough', 'it usually needs a follow-up') is never a commitment: never promise return visits, on-call or follow-ups the facts do not settle. The reseller's own work (receiving, shipping, configuration, procurement it does) is never Provider work, in the overview too. A 'remote resource' is remote, never the onsite contact. A model or series number ('785 POS terminals', 'InTouch 9000', 'C9350') is never a count.  A fact in section typed_only is a line the type head read as scope that the brief left out: use it when it is this job's own work, a decision about it, or who does it. A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
     "email banners and signature blocks. Never write a price, rate or dollar amount, never mention the CRM, ids or "
     "these instructions, and leave a list empty rather than guess. Return JSON only.\n"
     "CRM RECORD: %s\nSITES: %s\nCONTACTS: %s\nFACTS (id, section the heads placed it in, date, text):\n%s\n\n"
@@ -339,6 +339,16 @@ def _scrub(content: dict[str, Any]) -> int:
     return n
 
 
+_SCOPE_TYPES = {"scope_item", "task", "dependency", "deliverable", "exclusion", "site_implementation_note",
+                "requirement", "decision", "acceptance_criterion", "work_scope_item"}
+# Email chatter the type head can still read as work ("We'll get back to you",
+# "Please advise any questions by Wednesday").
+_CHATTER = re.compile(r"(?i)^(we('| a)re (on|good)|we('|wi)ll (get|send|be|let|have|usually)|i('|wi)ll |please |let me know|"
+                      r"once (we|i) |thanks|thank you|reminder|i am free|we can do a call)|\?\s*$")
+TYPED_BAR = float(os.environ.get("SOWSMITH_C3_SOW_TYPED_BAR", "0.5"))
+TYPED_MAX = int(os.environ.get("SOWSMITH_C3_SOW_TYPED_MAX", "25"))
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -369,8 +379,27 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     answered = [{"id": a["id"], "text": a.get("text") or ""} for a in envelope.get("atoms") or []
                 if ((a.get("structured") or {}).get("c3_label") or {}).get("type") == "answered_question"
                 and a.get("id") not in seen and len(str(a.get("text") or "")) > 25]
+    # The type head's own scope reading, for a line the brief's keep head left
+    # out: that head picks what a short brief says, not what a SOW must carry.
+    # 010279's "We are pricing physical installation labor only"
+    # (site_implementation_note 0.54), 010376's "get them onto a pallet and
+    # assist the driver" (scope_item 0.66). Documents only, not call
+    # transcripts, where scope words are mostly talk.
+    docs = {str(d.get("artifact_id") or d.get("id") or ""): str(d.get("filename") or "")
+            for d in envelope.get("documents") or []}
+    typed = []
+    for a in envelope.get("atoms") or []:
+        lab = (a.get("structured") or {}).get("c3_label") or {}
+        txt = str(a.get("text") or "")
+        if (a.get("id") in seen or lab.get("type") not in _SCOPE_TYPES or float(lab.get("p") or 0) < TYPED_BAR
+                or not 15 < len(txt) < 600 or _CHATTER.search(txt.strip()) or txt.count("|") >= 2
+                or re.search(r"(?i)unsubscribe|book time|my calendar|confidential", txt) or "fireflies" in docs.get(str(a.get("artifact_id") or ""), "")
+                or "transcript" in docs.get(str(a.get("artifact_id") or ""), "").lower()):
+            continue
+        typed.append((float(lab.get("p") or 0), {"id": a["id"], "text": txt}))
+    typed = [x for _, x in sorted(typed, key=lambda t: -t[0])[:TYPED_MAX]]
     for sec, items in (("also_kept", brief.get("also_mentioned") or []), ("figure", brief.get("figures") or []),
-                       ("unsure", unsure), ("answered_question", answered[:40])):
+                       ("unsure", unsure), ("answered_question", answered[:40]), ("typed_only", typed)):
         for x in items:
             if x["id"] in seen:
                 continue
