@@ -681,6 +681,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     weak = {f["id"] for f in fs if f["section"] in ("also_kept", "unsure", "typed_only", "answered_question")}
     content["schedule"] = [x for x in content.get("schedule") or []
                            if not x.get("cites") or not all(c in weak for c in x["cites"])]
+    # The summary commits only what the brief commits: a line the brief merely
+    # mentioned (000132's "24/7 on-call", whose caveat sat beside it) is not a
+    # promise in the overview.
+    ov_kept = [x for x in content.get("overview") or [] if not x.get("cites") or not all(c in weak for c in x["cites"])]
+    content["overview"] = ov_kept or content.get("overview") or []
     # A date from a quoted earlier email is history, not this job's schedule
     # (010043: CDW's May meeting slots became a "work window").
     quoted = {f["id"] for f in fs if f.get("quoted")}

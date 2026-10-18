@@ -239,6 +239,15 @@ def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
             aside.append({**r, "set_aside": "mention_only",
                           "reason": f"no line naming it reads as a job site ({len(reads)} read; "
                                     f"most sure: {top[0]} {float(top[1] or 0):.2f})"})
+    # A city in the deal's own Locations list is a site when its siblings in
+    # that list are: 000132's "Tupelo, MS" read deal_metadata 0.30 and was set
+    # aside while the five cities beside it passed (the brief kept it at 0.84).
+    in_list = lambda r: any("city_site_list" in (flags.get(i) or []) for i in site_atoms.get(str(r.get("site") or ""), []))
+    if sum(1 for r in kept if in_list(r)) >= 2:
+        back = [r for r in aside if in_list(r) and not _all_stakeholder(r, site_atoms, line_types)]
+        if back:
+            kept += [{k: v for k, v in r.items() if k not in ("set_aside", "reason")} for r in back]
+            aside = [r for r in aside if r not in back]
     if not kept:
         # Nothing reads as a site (010387: the real address lines read "keep
         # the current type" / entity). Keep every row but the signatures: a row
