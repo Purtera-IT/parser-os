@@ -268,6 +268,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 return n, _by("read:noise_class")
         return fallback, "rule"
 
+    kept_unsure: list[dict[str, Any]] = []
     for a in atoms:
         aid, t = str(a.id), _type(a)
         status = str(getattr(getattr(a, "review_status", ""), "value", getattr(a, "review_status", "")))
@@ -312,6 +313,12 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 reason, rby = _reason(aid, act)
                 left_out.append({"id": aid, "reason": reason, "by": rby, "p": round(p, 3)})
                 why["head:" + act] += 1
+                # The head's own choice was keep, only below the bar: 010171's
+                # "We would like to have the Logitech Sight installed in this
+                # specific room" (keep 0.39). The brief body leaves it out; the
+                # SOW writer sees it, marked unsure.
+                if act == "keep":
+                    kept_unsure.append({"id": aid, "text": a.raw_text[:400], "p": round(p, 3)})
             # The lines the head is least sure of are the best ones to label.
             if 0.3 <= p < 0.9 and act == "keep" or 0.3 <= p < 0.6:
                 label_tasks.append({"id": aid, "head": "read:co_action", "base_says": act, "p": round(p, 3),
@@ -485,6 +492,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                            for a, p in sorted(maybe, key=lambda x: -x[1])[:150]],
         "questions": questions,
         "conflicts": conflicts[:40],
+        "kept_unsure": sorted(kept_unsure, key=lambda x: -x["p"])[:120],
         "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12))},
         "decided_by": {
             "heads_used": sorted(k for k, v in use.items() if v),

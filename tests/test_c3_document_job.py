@@ -198,3 +198,20 @@ def test_a_full_read_returns_links_and_whole_deal_answers():
     assert out["deal"]["deal:primary_service"] == ["low_voltage_cabling", 0.7]
     assert out["deal"]["deal:declared_site_count"] == [3.0, None]
     assert base.read(deal, 30.0)["types"] and seen["lines_only"] is True
+
+
+def test_a_sure_base_other_job_acts_with_no_deal_name(monkeypatch):
+    """Live dev compiles carried no CRM deal name to this stage; the base's
+    sure call needs none (010279's Lineage transcript reached the SOW)."""
+    monkeypatch.setenv("SOWSMITH_C3_DOCUMENT_JOB", "on")
+    monkeypatch.setenv("SOWSMITH_DOCUMENT_JOB_MODEL_JUDGE", "on")
+    monkeypatch.setattr(semantic_role, "classify_role", lambda *a, **k: pytest.fail("asked the model"))
+    prev = decide_mod.get_store()
+    decide_mod.set_store(None)
+    try:
+        _base(monkeypatch, {"art_kiosk": {KEY: ("other_job", 0.999)}, "art_sdwan": {KEY: ("other_job", 0.6)}})
+        kept, dropped, _ = judge_documents(SDWAN + KIOSK, deal_name="")
+    finally:
+        decide_mod.set_store(prev)
+    assert [a.artifact_id for a in dropped] == ["art_kiosk"]
+    assert {a.artifact_id for a in kept} == {"art_sdwan"}

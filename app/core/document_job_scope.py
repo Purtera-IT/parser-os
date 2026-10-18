@@ -586,7 +586,12 @@ def judge_documents(
     them. Without a deal name there is nothing to compare against, so nothing
     is judged.
     """
-    if not deal_name or not atoms:
+    # Without a deal name the model has nothing to compare against, but the
+    # base's own call needs none: on live dev compiles the worker's manifest
+    # carried no CRM deal name, this stage returned here in 15 ms, and
+    # 010279's Lineage transcript (other_job 0.99) and 010264's Marion County
+    # school job reached the SOW. With no name, only a sure base call acts.
+    if not atoms or (not deal_name and c3_mode() != "on"):
         return list(atoms), [], []
     try:
         from app.core.decide import DecisionScope, decide
@@ -673,7 +678,7 @@ def judge_documents(
                 d = None
             if getattr(d, "verdict", None) is None:
                 d = _C3Decision(c3_p, "other_job")
-        if d is None and not model_enabled():
+        if d is None and (not model_enabled() or not deal_line):
             d = _C3Decision(c3_p or 0.0)
         if d is None:
             try:

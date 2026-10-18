@@ -82,7 +82,7 @@ _BASE = (
     "work. A request phrased as a wish or a question (\"I would also like to add <X>\", \"can you also <do Y>?\") is "
     "scope. The customer saying \"I will provide <X>\" means the Customer supplies <X>. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
     "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
-    "A fact marked (type head: a prerequisite the Customer must meet) goes to the Customer's responsibilities or materials, never to Provider's tasks, whatever section it sits in. A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
+    "A fact marked (type head: a prerequisite or condition) is a condition the work depends on; whose duty it is follows its wording and its heading (a customer's 'we will unrack' is the customer's; 'drilling rules must be followed' binds whoever drills). A question is never scope by itself: only its answer is, and a later decision overrides the question ('Do we need a site survey?' answered 'probably not' is not a task). A fact marked (quoted earlier email) is older thread context: time slots offered there for a call or meeting are never install dates. A hedge or a habit ('24/7 can be tough', 'it usually needs a follow-up') is never a commitment: never promise return visits, on-call or follow-ups the facts do not settle. The reseller's own work (receiving, shipping, configuration, procurement it does) is never Provider work, in the overview too. A 'remote resource' is remote, never the onsite contact. A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
     "email banners and signature blocks. Never write a price, rate or dollar amount, never mention the CRM, ids or "
     "these instructions, and leave a list empty rather than guess. Return JSON only.\n"
     "CRM RECORD: %s\nSITES: %s\nCONTACTS: %s\nFACTS (id, section the heads placed it in, date, text):\n%s\n\n"
@@ -92,13 +92,16 @@ _PARTS = {
     "header": (
         "TASK: the SOW header. Return {\"job_family\": one of " + ", ".join(FAMILIES) + ", \"project_name\": PurTera's title (end customer + work + place, e.g. \"<End Customer> "
         "<Work> <Place>\"), \"end_customer\": who the work is for, from a request form, a site sheet header, a "
-        "signature or the CRM deal name, or \"\"; never a name taken from an email address's domain, \"services\": [implementation for installs; custom_work for "
-        "decommission, packing, smart-hands or labor-only support], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
+        "signature or the CRM deal name, or \"\"; never a name taken from an email address's domain, \"services\": [implementation for installs; "
+        "reinstallation for a replacement or refresh of existing devices; custom_work for decommission, packing or "
+        "relocation; staff_augmentation and support for ongoing or on-call IT support and smart hands; assessment for "
+        "surveys, audits and validation of what exists], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
         "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences: what is installed or "
         "done, how many, where, for whom; on a many-site job the site count the facts state], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
-        "\"Arrival Time: ...\", \"Number of Resources: ...\", \"Hardware Quantity: ...\"], \"arrival_protocol\": [only "
+        "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
+        "\"Number of Resources: ...\", \"Hardware Quantity: ...\"; a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is; empty when no "
         "fact gives one]}"),
     "scope": (
@@ -148,7 +151,7 @@ _PARTS = {
         "noun phrases: those a fact states and the standard ones for THIS trade (cabling or devices: lift rental, "
         "electrical work, core drilling or structural work, patching or painting, switch or firewall work, licensing "
         "or cloud setup; decommission or packing: transport, shipping, disposal, data destruction or asset "
-        "disposition, configuration); never anything the draft's scope includes or the customer is said to supply]}\n"
+        "disposition, configuration); never anything the draft's scope includes, any equipment it lists as in scope, or what the customer is said to supply]}\n"
         "DRAFT: %s"),
 }
 
@@ -353,6 +356,9 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     unsure = [{"id": x["id"], "text": x["text"]} for x in brief.get("label_next") or []
               if x.get("head") == "read:co_action" and x.get("base_says") == "reject"
               and float(x.get("p") or 1) < UNSURE_BAR]
+    # And a line the keep head chose to keep below the brief's bar (010171's
+    # Logitech Sight request, keep 0.39): the head said keep; the SOW sees it.
+    unsure += [{"id": x["id"], "text": x["text"]} for x in brief.get("kept_unsure") or []]
     # A question the deal already answered is not an open question, so the
     # brief leaves it out; for a SOW it is often the request itself: 010198's
     # "I would also like to add a Ubiquiti router with cellular backup - is
@@ -375,8 +381,14 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # "mat with a red lane logo" became a scope task).
     pictured = {a.get("id") for a in envelope.get("atoms") or []
                 if (a.get("structured") or {}).get("kind") in ("image_fact", "image_ocr_text")}
+    quoted = {a.get("id") for a in envelope.get("atoms") or [] if (a.get("structured") or {}).get("quoted")}
+    asked = {a.get("id") for a in envelope.get("atoms") or []
+             if ((a.get("structured") or {}).get("c3_label") or {}).get("type") in ("open_question", "answered_question")
+             or str(a.get("text") or "").rstrip().endswith("?")}
     for f in out:
         f["pictured"] = f["id"] in pictured or f["section"] == "figure"
+        f["quoted"] = f["id"] in quoted
+        f["asked"] = f["id"] in asked
     # The heading a line was written under says whose voice "we" is: 000123's
     # "We will preconfigure all items" sat under "Customer notes:" and became a
     # Provider task because the brief kept no heading for it.
@@ -435,7 +447,7 @@ def _lead_ins(fs: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> None:
 
 
 # The type head's label, where it settles whose duty a line is.
-_TYPE_ROLE = {"dependency": "type head: a prerequisite the Customer must meet",
+_TYPE_ROLE = {"dependency": "type head: a prerequisite or condition",
               "exclusion": "type head: excluded", "deliverable": "type head: a deliverable",
               "acceptance_criterion": "type head: an acceptance criterion",
               "pricing_assumption": "type head: a pricing assumption"}
@@ -447,6 +459,7 @@ def _fact_line(f: dict[str, Any]) -> str:
            and sup[0] in _SUPPLIER and f.get("type") in _ITEM_TYPES else "")
     role = _TYPE_ROLE.get(f.get("type") or "")
     return (f"[{f['id']}] ({f['section']}" + (f", {role}" if role else "") + (", from a photo" if f.get("pictured") else "")
+            + (", quoted earlier email" if f.get("quoted") else "") + (", a question" if f.get("asked") else "")
             + (f", {f['when']}" if f["when"] else "") + who + ") "
             + (f"[under: {f['under']}] " if f["under"] else "") + _dated(f["text"], f["when"] or None)[:FACT_CHARS])
 
@@ -458,7 +471,8 @@ def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[
         street, city, st, zp = (str(s.get(k) or "").strip() for k in ("address", "city", "state", "postal_code"))
         tail = ", ".join(x for x in (city, " ".join(x for x in (st, zp) if x)) if x)
         full = ", ".join(x for x in (street, tail) if x) if street and street.lower() not in tail.lower() else tail
-        out.append({"name": str(s.get("name") or ""), "city": city, "address": full or str(s.get("name") or "")})
+        out.append({"name": str(s.get("name") or ""), "city": city, "address": full or str(s.get("name") or ""),
+                    "street": street, "state": st, "postal_code": zp})
     return out
 
 
@@ -752,7 +766,12 @@ def _item(x: Any) -> dict[str, Any] | None:
 def _normalise(got: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {k: got.get(k) or "" for k in ("project_name", "end_customer", "scope_lead",
                                                           "pricing_model", "job_family")}
-    out["services"] = [str(s).strip().lower() for s in got.get("services") or [] if str(s).strip()]
+    # The writer sometimes returns services as items ({"text": "implementation", ...}); the
+    # checkbox row matches on the bare name, so every box printed empty.
+    svc = got.get("services") or []
+    svc = [svc] if isinstance(svc, (str, dict)) else svc
+    out["services"] = [t for t in (str(s.get("text") if isinstance(s, dict) else s).strip().lower().replace(" ", "_")
+                                   for s in svc) if t]
     for k in LISTS:
         v = got.get(k) or []
         # A list returned as one string is one item: 000123's overview came back
@@ -898,7 +917,7 @@ def location_table(envelope: dict[str, Any]) -> list[dict[str, str]]:
     for r in best:
         name = r.get("store") or r.get("locationname") or r.get("location name") or r.get("site") or r.get("name") or ""
         street = r.get("address") or r.get("street") or ""
-        key = (name.lower(), street.lower(), r["city"].lower())
+        key = (r.get("locid") or r.get("store #") or r.get("store number") or name).lower(), street.lower(), r["city"].lower()
         if key in seen:
             continue
         seen.add(key)
