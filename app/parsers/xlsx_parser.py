@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import os
 import re
 from functools import lru_cache
@@ -2054,6 +2055,16 @@ def _emit_scope_constraint_atoms(
 _PRICING_BOOK = re.compile(r"(?i)deal ?kit|rate ?card|pricing|quote|estimat|cost")
 
 
+
+def _is_tsv(text: str) -> bool:
+    """At least three lines, nearly all with the same number (>= 2) of tabs."""
+    lines = [ln for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
+    if len(lines) < 3:
+        return False
+    counts = [ln.count("\t") for ln in lines[:60]]
+    top = max(set(counts), key=counts.count)
+    return top >= 2 and counts.count(top) >= 0.8 * len(counts)
+
 class XlsxParser(BaseParser):
     #: Per-WORKBOOK state on a parser the registry SHARES between threads.
     #: These accumulate through a parse and are drained at the end, so a second
@@ -2111,10 +2122,17 @@ class XlsxParser(BaseParser):
         notes.append(message)
 
     def match(self, path: Path, sample_text: str | None, domain_pack: DomainPack | None) -> ParserMatch:
-        del sample_text, domain_pack
+        del domain_pack
         suffix = path.suffix.lower()
         confidence = 0.0
         reasons: list[str] = []
+        # A .txt that is a tab-separated table is a table: 000123's BevMo
+        # roster ("Bevmo locations 1.txt", 161 rows of store, address, city,
+        # state) went to the plain-text parser as one paragraph, and sentence
+        # splitting glued each row's county onto the next row's number.
+        if suffix == ".txt" and _is_tsv(sample_text or ""):
+            return ParserMatch(parser_name=self.parser_name, confidence=0.9,
+                               reasons=["tab_separated_text"], artifact_type=ArtifactType.csv)
         # A legacy binary workbook is claimed on its extension alone. The
         # sniffers below open the file with openpyxl, which cannot read .xls at
         # all, so they stay OOXML-only -- but a pricing sheet saved in 2003 is
@@ -2247,7 +2265,7 @@ class XlsxParser(BaseParser):
             # None means no reader is installed or the book is unreadable.
             # Falling through leaves today's behaviour rather than raising.
 
-        if suffix == ".csv":
+        if suffix in (".csv", ".txt"):
             atoms, sheets, parse_error = self._parse_csv(
                 project_id=project_id, artifact_id=artifact_id, path=path
             )
@@ -2768,8 +2786,9 @@ class XlsxParser(BaseParser):
     ) -> tuple[list[EvidenceAtom], list[dict[str, Any]], str | None]:
         try:
             with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
-                reader = csv.reader(handle)
-                rows = [list(row) for row in reader]
+                text = handle.read()
+            reader = csv.reader(io.StringIO(text), delimiter="\t" if _is_tsv(text[:4000]) else ",")
+            rows = [list(row) for row in reader]
         except Exception as exc:
             code = self._tabular_read_error_code(exc, tabular="csv")
             return [], [], f"{code}:{type(exc).__name__}:{exc}"
