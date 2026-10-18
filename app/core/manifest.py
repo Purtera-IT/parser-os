@@ -42,7 +42,7 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
         return ArtifactType.xlsx
     if suffix == ".csv":
         return ArtifactType.csv
-    if suffix == ".docx":
+    if suffix in (".docx", ".doc", ".dot"):
         return ArtifactType.docx
     if suffix == ".pdf":
         return ArtifactType.pdf
