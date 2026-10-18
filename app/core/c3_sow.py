@@ -799,6 +799,15 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["schedule"] = [x for x in content.get("schedule") or []
                            if not re.match(r"(?i)\s*number of resources", str(x.get("text")))
                            or any(_STAFF.search(text_of.get(c, "")) for c in x.get("cites") or [])]
+    # An empty schedule takes the job's dated window from a milestone fact
+    # (010209: "install period 10/13 - 11/19", milestone_phase 0.94).
+    if not content.get("schedule"):
+        for f in fs:
+            if f.get("type") == "milestone_phase" or f["section"] == "timeline":
+                m = re.search(r"\b(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*(?:-|–|to|through|thru)\s*(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b", f["text"])
+                if m:
+                    content["schedule"] = [{"text": f"Work Window: {m.group(1)} through {m.group(2)}", "cites": [f["id"]], "kind": "fact"}]
+                    break
     # A date from a quoted earlier email is history, not this job's schedule
     # (010043: CDW's May meeting slots became a "work window").
     quoted = {f["id"] for f in fs if f.get("quoted")}
@@ -1596,6 +1605,16 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # The template already asks for a point of contact.
     content["customer_responsibilities"] = [c for c in cr if not re.search(r"(?i)point of contact|onsite contact for", tx(c))
                                             and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
+    # The standards win a conflict: removed gear left onsite and return
+    # logistics excluded, so no writer line packs and ships it (010209).
+    std_all = " ".join(tx(x) for k in ("assumptions", "out_of_scope") for x in content.get(k) or []
+                       if isinstance(x, dict) and x.get("standard")).lower()
+    if re.search(r"left onsite|return logistics", std_all):
+        ship = re.compile(r"(?i)return ship|ship(ping|ped)? (it |them |back|for return|to )|pack .{0,40}ship|shipping documentation|"
+                          r"coordinate .{0,40}ship")
+        for k in ("scope", "overview", "deliverables", "assumptions"):
+            content[k] = [x for x in content.get(k) or [] if (isinstance(x, dict) and x.get("standard"))
+                          or not ship.search(str(x.get("text") or x.get("item") or "") if isinstance(x, dict) else str(x))]
     # One "limited to" assumption: the standard one stands.
     asm = content.get("assumptions") or []
     if any(isinstance(a, dict) and a.get("standard") and "limited to" in tx(a).lower() for a in asm):
@@ -2045,6 +2064,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s+", "", dn).strip(" -–")
     dn = re.sub(r"(?i)\s+w/\s*\w+.*$|\s+with\s+[A-Z][a-z]+$", "", dn).strip()  # "161 Site POS install w/ Ahmed"
     dn = re.sub(r"\s+-(\d+)\b", r" \1", dn)  # "NYC -48 monitor mounting"
+    rq = str((c.get("requested_by") or {}).get("name") or "").strip()
+    if rq and rq.lower() in dn.lower():
+        dn = re.sub(r"\s*[-–]?\s*" + re.escape(rq) + r"\s*", " ", dn, flags=re.I).strip(" -–")  # "... Dan Tighe"
     if len(dn.split()) >= 2:
         c["project_name"] = dn
     # On a one-address job, a place the request names inside it ("Specific
