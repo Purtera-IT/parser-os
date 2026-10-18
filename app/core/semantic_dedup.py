@@ -858,6 +858,12 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
                 # Both know their street, and the streets differ.
                 continue
             same_street = bool(s1 and s2 and (s1 & s2))
+            # Two keys that each carry their own number are two coded places
+            # (010279's "Store 64" and "Store 33", both Greensboro): a shared
+            # town or a missing name never makes them one.
+            d1, d2 = re.findall(r"\d+", c1), re.findall(r"\d+", c2)
+            if d1 and d2 and set(d1).isdisjoint(d2) and not s1 and not s2:
+                continue
             if all(b.startswith("town:") for b in shared):
                 # Only the town is shared: the names alone must say one place.
                 i1, i2 = _identity(c1), _identity(c2)
