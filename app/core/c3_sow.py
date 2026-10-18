@@ -590,6 +590,12 @@ def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> Non
         if hw:
             content["provider_materials"] = [x for x in pm if x not in hw]
             content.setdefault("customer_materials", []).extend(hw)
+    if any(_RESELLER_SHIPS.search(f["text"]) for f in fs):
+        # A customer's request to the reseller ("receive the switches at central
+        # receiving and schedule shipment to each site") is not Provider work
+        # once the reseller says it ships everything (010083).
+        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
+                            and re.search(r"(?i)central receiving|schedule (the )?shipment|receive the .{0,30}(switch|equipment|hardware)", tx(x)))]
     if any(_NO_RACK.search(f["text"]) for f in fs):
         content["assumptions"] = [a for a in content.get("assumptions") or []
                                   if not re.search(r"(?i)sufficient rack|rack space is available|no rack modification", tx(a))]
@@ -1079,8 +1085,8 @@ def _apply_standards(content: dict[str, Any], family: str) -> int:
         if not dl:
             dl.append({"item": "Work Completion Report", "description": [], "format": "PDF"})
         d0 = dl[0] if isinstance(dl[0], dict) else {"item": "Work Completion Report", "description": [], "format": "PDF"}
-        own = [t for t in d0.get("description") or [] if re.search(r"\d", str(t))]
-        d0["description"] = own + list(outcomes)
+        own = [str(t) for t in d0.get("description") or [] if str(t).strip()]
+        d0["description"] = own + [o for o in outcomes if not _said(o, own, 0.5)]
         dl[0] = d0
     content["standards_added"] = n
     return n
@@ -1244,7 +1250,8 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # dropped the writer's badge line, 010115 round 16).
     arr_text = " ".join(tx(a) for a in content.get("arrival_protocol") or []).lower()
     cr = content.setdefault("customer_responsibilities", [])
-    if re.search(r"badge|parking pass", arr_text) and not any(re.search(r"(?i)badge|parking pass", tx(c)) for c in cr):
+    cited_arr = " ".join(tx(a) for a in content.get("arrival_protocol") or [] if isinstance(a, dict) and a.get("cites")).lower()
+    if re.search(r"badge|parking pass", cited_arr) and not any(re.search(r"(?i)badge|parking pass", tx(c)) for c in cr):
         cr.append({"text": "Provide visitor badges and parking passes upon technician arrival.", "cites": [], "kind": "method"})
     if "security" in arr_text and not any(re.search(r"(?i)security", tx(c)) and re.search(r"(?i)access|coordinat", tx(c)) for c in cr):
         cr.append({"text": "Coordinate site access with security.", "cites": [], "kind": "method"})
@@ -1253,6 +1260,19 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     arr_cites = {c for a in content.get("arrival_protocol") or [] if isinstance(a, dict) for c in a.get("cites") or []}
     cr[:] = [c for c in cr if not (isinstance(c, dict) and c.get("cites") and set(c["cites"]) <= arr_cites
                                    and re.search(r"(?i)\bname\b", tx(c)))]
+    # Photos and serial numbers are the technician's deliverables, not a
+    # customer duty (010083); and a duty that contradicts a standard
+    # stage-onsite assumption goes ("identify a single site for disposal").
+    photo = [c for c in cr if re.search(r"(?i)\b(photo|picture|serial)", tx(c)) and not (isinstance(c, dict) and c.get("standard"))]
+    if photo:
+        cr[:] = [c for c in cr if c not in photo]
+        dl = content.setdefault("deliverables", [])
+        if not dl:
+            dl.append({"item": "Work Completion Report", "description": [], "format": "PDF"})
+        if isinstance(dl[0], dict):
+            dl[0].setdefault("description", []).extend(re.sub(r"(?i)^provide\s+", "", tx(c)).rstrip(".") + "." for c in photo)
+    if any(re.search(r"(?i)left onsite|staged? onsite|stage the removed", tx(a)) for a in (content.get("assumptions") or []) + (content.get("scope") or [])):
+        cr[:] = [c for c in cr if not re.search(r"(?i)site for disposal|ship (the )?removed|return (the )?removed", tx(c))]
     # The template already asks for a point of contact.
     content["customer_responsibilities"] = [c for c in cr if not re.search(r"(?i)point of contact|onsite contact for", tx(c))
                                             and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
