@@ -712,7 +712,7 @@ def _in_failed(q: dict[str, Any], batches: list[list[dict[str, Any]]], raws: lis
     return False
 
 
-def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
+def _complete(prompt: str, model: str | None, max_tokens: int, effort: str | None = None) -> str:
     """One call, retried once when it comes back empty or unparseable
     (llm_client returns "" on any failure, a throttled burst included: one of
     010043's two question batches came back empty and its 32 went unchecked)."""
@@ -722,7 +722,8 @@ def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
     for attempt in range(tries):
         raw = llm_client.complete(prompt, max_tokens=max_tokens,
                                   model=model or os.environ.get("SOWSMITH_C3_BRIEF_MODEL") or None,
-                                  timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "60")))
+                                  timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "60")),
+                                  reasoning_effort=effort)
         if _json_of(raw) is not None:
             return raw
         if attempt < tries - 1:

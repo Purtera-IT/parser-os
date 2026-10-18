@@ -351,13 +351,13 @@ def _reasoning_model(model: str | None) -> bool:
 
 
 def complete(prompt: str, *, max_tokens: int = 1024, model: str | None = None,
-             timeout: int | None = None) -> str:
+             timeout: int | None = None, reasoning_effort: str | None = None) -> str:
     """One OpenAI-compatible ``/chat/completions`` text call. Returns the
     assistant text, or ``""`` on any failure (so callers degrade exactly as they
     do for a local Ollama miss). No-op (``""``) if no hosted teacher configured."""
     return _chat(
         [{"role": "user", "content": prompt}],
-        max_tokens=max_tokens, model=model, timeout=timeout,
+        max_tokens=max_tokens, model=model, timeout=timeout, reasoning_effort=reasoning_effort,
     )
 
 
@@ -461,14 +461,18 @@ def _small_model_for_stage() -> str | None:
 
 def _chat(messages: list, *, max_tokens: int, model: str | None,
           timeout: int | None, base: str | None = None,
-          key: str | None = None) -> str:
+          key: str | None = None, reasoning_effort: str | None = None) -> str:
     """Timed per compile stage (telemetry.charge), then ``_chat_inner``."""
     import time as _t
 
     started = _t.perf_counter()
-    model = _small_model_for_stage() or model
+    # The stage's small model replaces the default teacher only: a caller that
+    # names a model (the SOW writer's gpt-5.4-mini, a judge's ollama: route)
+    # keeps it, whatever stage label is current when it runs.
+    model = model or _small_model_for_stage()
     try:
-        return _chat_inner(messages, max_tokens=max_tokens, model=model, timeout=timeout, base=base, key=key)
+        return _chat_inner(messages, max_tokens=max_tokens, model=model, timeout=timeout, base=base, key=key,
+                           reasoning_effort=reasoning_effort)
     finally:
         try:
             from app.core import telemetry as _tel
@@ -480,7 +484,7 @@ def _chat(messages: list, *, max_tokens: int, model: str | None,
 
 def _chat_inner(messages: list, *, max_tokens: int, model: str | None,
                 timeout: int | None, base: str | None = None,
-                key: str | None = None) -> str:
+                key: str | None = None, reasoning_effort: str | None = None) -> str:
     """Shared OpenAI-compatible chat-completions transport for text and vision:
     bounded retry on 429/5xx/transport errors, global concurrency semaphore,
     usage metering. Returns assistant text or ``""``.
@@ -508,7 +512,7 @@ def _chat_inner(messages: list, *, max_tokens: int, model: str | None,
         payload.pop("max_tokens", None)
         payload.pop("temperature", None)
         payload["max_completion_tokens"] = int(max_tokens) * _REASONING_HEADROOM
-        effort = os.environ.get("TEACHER_REASONING_EFFORT", "low").strip()
+        effort = (reasoning_effort or os.environ.get("TEACHER_REASONING_EFFORT", "low")).strip()
         if effort:
             payload["reasoning_effort"] = effort
     # Preemptively drop params this provider has already told us it rejects, so
