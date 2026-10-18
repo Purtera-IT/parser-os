@@ -5,7 +5,8 @@ from app.parsers.registry import choose_parser
 
 
 def test_a_tab_separated_text_file_yields_one_site_per_row(tmp_path: Path) -> None:
-    rows = ["Store\tAddress\tCity\tState\tZip"] + [f"{i}\t{i} Main St\tTown{i}\tCA\t9000{i}" for i in range(1, 6)]
+    rows = ["Store\tLocationName\tAddress\tCity\tState\tZip Code"] + [
+        f"{i}\tShop_{i}\t{i}0 Main Street\tTown{i}\tCA\t9000{i}" for i in range(1, 6)]
     path = tmp_path / "locations.txt"
     path.write_text("\r\n".join(rows) + "\r\n", encoding="utf-8")
     parser, match, _ = choose_parser(path)
