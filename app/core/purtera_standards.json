@@ -252,6 +252,12 @@
   "smart_hands_general": {
     "_source": "owner standards loop 2026-10-18: conditional handling, monitor-arm/desk mounting from the 010373 v1 TEMPLATE list",
     "method_steps": [
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Coordinate visit priorities with the customer's designated IT contact before or during each visit.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Validate reported issues and document observed site conditions, findings and recommended next steps.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Assist with workstation, peripheral, printer, phone and connectivity issues and desk-side support.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Perform hands-on support for network equipment, servers, power connections, rack placement and cabling as directed.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Document each incident's symptoms, actions taken, status and recommended follow-up.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Escalate work requiring elevated privileges, advanced engineering, remote administration or vendor support to the customer's IT contacts.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Install each monitor arm on its desk at the location the customer designates.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Mount the monitors on each arm, then align and secure them.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Perform basic cable management of the monitor power and video cables along the arm.",
@@ -261,14 +267,23 @@
     ],
     "customer_responsibilities": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Provide all monitor arms, monitors, mounting hardware and cables.",
-      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Ensure the desks are installed and accessible before technician arrival."
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Ensure the desks are installed and accessible before technician arrival.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide direction on task priority during each visit.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide required administrative access, credentials, vendor contacts and escalation paths.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Approve any equipment removal, cable removal or material change to the site environment.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide any replacement hardware, parts, cables or materials required; Provider supplies labor only."
     ],
     "assumptions": [
-      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Cable work is limited to physical routing of the provided power and video cables."
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Cable work is limited to physical routing of the provided power and video cables.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} All work under this SOW is performed on site; remote IT support is not included.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provider technicians work within the limits of available access, tools, documentation and approved scope.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} There is no service-level objective for ad-hoc requests, which are subject to availability."
     ],
     "exclusions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Furniture assembly or desk modification.",
-      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Procurement of monitors, arms or accessories."
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Procurement of monitors, arms or accessories.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Advanced engineering, architecture, security response, application support or remote system administration.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Procurement or supply of parts or replacement hardware."
     ],
     "deliverable_outcomes": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Monitor arms installed and monitors mounted, aligned and secured.",
