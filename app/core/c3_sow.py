@@ -949,6 +949,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     _grounding(content, fs)
+    _materials_hygiene(content, family)
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
     # became scope), unless it asks the customer to confirm.
@@ -1489,6 +1490,33 @@ _LEDGER = re.compile(r"(?i)tax[- ]exempt|tax status|\bexempt\b|cost cent(er|re)|
 _FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination"),
                      "pos_install_refresh": re.compile(r"(?i)network testing|validation tools|certifier|toner"),
                      "av_conference_room": re.compile(r"(?i)termination tools?|cable testers?|certifier|toner|punch")}
+
+
+_CONSUMABLE = re.compile(r"(?i)\b(cat ?5e?|cat ?6a?|cable|wire|anchors?|screws?|nuts?|bolts?|fasteners?|j-?hooks?|velcro|zip ties?|"
+                         r"rj-?45|connectors?|keystones?|jacks?|faceplates?|biscuit|backing board|plywood|supports?|labels?)\b")
+
+
+def _materials_hygiene(content: dict[str, Any], family: str) -> None:
+    """Equipment in Scope is the gear worked on; on a cabling job the cable and
+    fasteners are Provider's materials, and one line per thing (010082: Cat6
+    listed twice, anchors as equipment). Who carries the materials to site is
+    PurTera logistics, never a material line ('Chase Smith will handle small
+    material runs')."""
+    for k in ("provider_materials", "customer_materials", "equipment_in_scope"):
+        content[k] = [x for x in content.get(k) or []
+                      if not re.search(r"\b(?!Provider\b|Customer\b|The\b)[A-Z][a-z]+ [A-Z][a-z]+ will (?i:handle|bring|pick up|deliver|run)\b|(?i:\bmaterial runs?\b)",
+                                       str(x.get("text") if isinstance(x, dict) else x))]
+    if family == "low_voltage_cabling":
+        pm = content.setdefault("provider_materials", [])
+        keep = []
+        for x in content.get("equipment_in_scope") or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if _CONSUMABLE.search(t):
+                if not _said(t, pm, 0.6):
+                    pm.append(x)
+            else:
+                keep.append(x)
+        content["equipment_in_scope"] = keep
 
 
 def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
