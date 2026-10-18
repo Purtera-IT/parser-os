@@ -946,7 +946,7 @@ class DocxParser(BaseParser):
             # the first data row, and not in a merged-title property block
             # ("City | Marion | State | SC" is label/value pairs, not names).
             from app.parsers.table_headers import (
-                bind_lone_cell, is_banner_row, is_caption_row, is_header_only_row, merge_header,
+                bind_lone_cell, is_banner_row, is_caption_row, is_header_only_row, is_label_cell, merge_header,
             )
 
             active_header = list(header_cells)
@@ -1017,8 +1017,12 @@ class DocxParser(BaseParser):
                         not any(_pos_cells[i] for i in range(1, len(_pos_cells), 2))
                         # or one title repeated across every merged cell
                         # ("Response | Response | Response | Response"): a
-                        # section heading, not a fact.
-                        or len(set(_pos_cells)) == 1
+                        # section heading, not a fact. Only a short title:
+                        # a paragraph merged across the row is a fact (010115:
+                        # CDW's "Additional Terms & Conditions / Technician
+                        # Arrival Protocol ..." clause was dropped as a heading).
+                        or (len(set(_pos_cells)) == 1 and (is_label_cell(_pos_cells[0]) or (
+                            len(_pos_cells[0].split()) <= 8 and not re.search(r"[.;:!?]", _pos_cells[0]))))
                     )
                 ):
                     continue

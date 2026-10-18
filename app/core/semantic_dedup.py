@@ -955,6 +955,26 @@ def _states_more_than_the_site(atom: Any, winner: Any) -> bool:
     return bool(extra & _STATEMENT_VERBS)
 
 
+_PLACE_LABEL_RE = re.compile(r"^[^|]{1,40}\|\s*")
+
+
+def _names_a_place_the_site_does_not(atom: Any, winner: Any) -> bool:
+    """Does this alias name a place inside the site that the site never names?
+
+    A request form's "Specific Location(s) | Sodexo Dining CAFE" is typed
+    physical_site and points at the one address on the deal, so it folded in as
+    an alias and the room the work happens in was gone (010115: the only line
+    saying where in the Delta building). A name the address does not carry is a
+    detail of the site, not a second spelling of it: keep its words.
+    """
+    raw = str(getattr(atom, "raw_text", "") or "")
+    name = _PLACE_LABEL_RE.sub("", raw, count=1) if "|" in raw else raw
+    words = set(re.sub(r"[^a-z0-9 ]+", " ", name.lower()).split())
+    other = set(_norm_for_containment(winner).split())
+    extra = {w for w in words - other if len(w) > 2 and not w.isdigit()}
+    return len(extra) >= 2 and not (extra & _ADDRESS_WORDS)
+
+
 def _covered_by_a_site(atom: Any, sites: list[Any]) -> bool:
     """Does some site in ``sites`` state every ZIP, phone, email and
     instruction ``atom`` does, so dropping ``atom`` loses nothing?
@@ -1064,7 +1084,8 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                     continue
                 if target is not None:
                     _merge_physical_site_alias_metadata(target, alias_atom)
-                    if _states_more_than_the_site(alias_atom, target) or _detail_lost(target, alias_atom):
+                    if (_states_more_than_the_site(alias_atom, target) or _detail_lost(target, alias_atom)
+                            or _names_a_place_the_site_does_not(alias_atom, target)):
                         _demote_from_site(alias_atom)
                         kept_for_words.add(id(alias_atom))
             name_only_ids -= kept_for_words
