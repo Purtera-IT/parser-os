@@ -76,7 +76,8 @@ _BASE = (
     "a line. WHO: in a line written by the reseller or PurTera, \"we/us\" is the side doing the work (\"he will need us to <do the work>\" = Provider does it); in a line written by the customer or under a customer heading "
     "(\"Customer notes:\"), \"we\" is the customer (\"We will <do X>\" = the customer does X). A request "
     "form asking the reseller to provide materials (\"<reseller> to provide <items>\") means Provider "
-    "supplies them. In a question-and-answer email the ANSWER is the fact (\"... ? [Betty] After hours, no weekends\"); "
+    "supplies them. A fact marked (from a photo) only tells a mounting surface, height or device count; never "
+    "describe a picture or turn what it shows into a task. In a question-and-answer email the ANSWER is the fact (\"... ? [Betty] After hours, no weekends\"); "
     "the latest answer wins. What the customer has today or had before is context, never work to do: scope is the new "
     "work. A request phrased as a wish or a question (\"I would also like to add <X>\", \"can you also <do Y>?\") is "
     "scope. The customer saying \"I will provide <X>\" means the Customer supplies <X>. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
@@ -177,7 +178,8 @@ _COVER_PROMPT = (
 _MUST_PROMPT = (
     "These deal facts carry specifics (counts, sizes, models, products, materials, who supplies what) that the PurTera "
     "SOW draft below does not mention. Place EACH one where it belongs in the SOW, as one bullet citing it, unless it "
-    "is about existing equipment that is not part of the new work, another job, or a question still unanswered. Same "
+    "is about existing equipment that is not part of the new work or another job. A fact in section answered_question "
+    "was answered: a request in it (\"I would also like to add <X> - can you help?\") is scope to write. Same "
     "WHO rules: \"we\" under a customer heading is the customer; a reseller asked to provide materials means Provider "
     "supplies them; \"tech to provide <X>\" means Provider supplies <X>. Return JSON only: {\"add\": [{\"list\": one "
     "of %s, \"text\": str, \"cites\": [ids], \"kind\": \"fact\"}]}.\nDRAFT: %s\nFACTS:\n%s"
@@ -323,6 +325,13 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                         "text": str(x["text"]), "supplier": x.get("supplier")})
     # The brief keeps a short copy of each line; the writer reads the whole one.
     full = {a.get("id"): str(a.get("text") or "") for a in envelope.get("atoms") or []}
+    # A line a vision pass read off a photo or plan describes a picture; it is
+    # context, never something the coverage passes must place (010043's
+    # "mat with a red lane logo" became a scope task).
+    pictured = {a.get("id") for a in envelope.get("atoms") or []
+                if (a.get("structured") or {}).get("kind") in ("image_fact", "image_ocr_text")}
+    for f in out:
+        f["pictured"] = f["id"] in pictured or f["section"] == "figure"
     for f in out:
         if len(full.get(f["id"], "")) > len(f["text"]):
             f["text"] = full[f["id"]]
@@ -374,7 +383,8 @@ def _fact_line(f: dict[str, Any]) -> str:
     sup = f.get("supplier")
     who = (f" supplied-by:{_SUPPLIER.get(sup[0], sup[0])}" if sup and float(sup[1] or 0) >= SUPPLIER_BAR
            and sup[0] in _SUPPLIER and f.get("type") in _ITEM_TYPES else "")
-    return (f"[{f['id']}] ({f['section']}" + (f", {f['when']}" if f["when"] else "") + who + ") "
+    return (f"[{f['id']}] ({f['section']}" + (", from a photo" if f.get("pictured") else "")
+            + (f", {f['when']}" if f["when"] else "") + who + ") "
             + (f"[under: {f['under']}] " if f["under"] else "") + _dated(f["text"], f["when"] or None)[:FACT_CHARS])
 
 
@@ -474,7 +484,7 @@ def _must_include(content: dict[str, Any], fs: list[dict[str, Any]], model: str 
     used = {c for k in LISTS for x in content.get(k) or [] for c in x["cites"]}
     missing = []
     for f in fs:
-        if f["section"] not in MUST_SECTIONS or f["id"] in used:
+        if f["section"] not in MUST_SECTIONS or f["id"] in used or f.get("pictured"):
             continue
         toks = {m.group(1).lower().strip() for m in _SALIENT.finditer(f["text"])}
         toks |= {m.group(1).lower() for m in _PRODUCT.finditer(f["text"]) if m.start() > 0}
@@ -504,7 +514,8 @@ def _cover(content: dict[str, Any], fs: list[dict[str, Any]], model: str | None)
     from concurrent.futures import ThreadPoolExecutor
 
     used = {c for k in LISTS for x in content.get(k) or [] for c in x["cites"]}
-    unused = [f for f in fs if f["id"] not in used and f["section"] not in ("acceptance", "terms", "change_control")]
+    unused = [f for f in fs if f["id"] not in used and f["section"] not in ("acceptance", "terms", "change_control")
+              and not f.get("pictured")]
     # A PurTera person's own "assume ..." goes first: 010115's "assume they will
     # have all the packing materials onsite" was left out run after run.
     unused.sort(key=lambda f: 0 if re.search(r"(?i)\bassum", f["text"]) else 1)
@@ -779,6 +790,58 @@ def enabled() -> bool:
     return os.environ.get("SOWSMITH_C3_SOW", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+_KV = re.compile(r"\s*([A-Za-z][A-Za-z #/]{1,24}?)\s*:\s*([^|]*)")
+
+
+def location_table(envelope: dict[str, Any]) -> list[dict[str, str]]:
+    """The deal's own location list, read off a table whose rows carry a City
+    and a State: 010279's store list ("Store: 3 | Region: Southern | City:
+    Charlotte | State: NC") and 000123's tab-separated BevMo roster. The type
+    head is unsure of such rows one at a time (keep 0.27-0.69); as a table they
+    are the job's sites, and the SOW's location count and exhibit come from
+    them, not from a count some other conversation mentions."""
+    by_doc: dict[str, list[dict[str, str]]] = {}
+    headers: dict[str, list[str]] = {}
+    for a in envelope.get("atoms") or []:
+        t = str(a.get("text") or "")
+        art = str(a.get("artifact_id") or "")
+        row: dict[str, str] = {}
+        if "|" in t and re.search(r"(?i)\bcity\s*:", t) and re.search(r"(?i)\bstate\s*:", t):
+            for cell in t.split("|"):
+                m = _KV.match(cell)
+                if m:
+                    row[m.group(1).strip().lower()] = m.group(2).strip()
+        elif "\t" in t:
+            cells = [c.strip() for c in t.split("\t")]
+            low = [c.lower() for c in cells]
+            if "city" in low and "state" in low:
+                headers[art] = low
+                # The header row can carry the first data row after it.
+                continue
+            if art in headers and len(cells) >= 4:
+                # A header row can run on into the first data row ("... Zip Code
+                # Counties 1 406 OAK_Walnut-Creek_406"): its leading names fit.
+                head = headers[art][:len(cells)]
+                if "city" in head and "state" in head:
+                    row = dict(zip(head, cells))
+        if row.get("city") and row.get("state"):
+            by_doc.setdefault(art, []).append(row)
+    best = max(by_doc.values(), key=len, default=[])
+    if len(best) < 3:
+        return []
+    out, seen = [], set()
+    for r in best:
+        name = r.get("store") or r.get("locationname") or r.get("location name") or r.get("site") or r.get("name") or ""
+        street = r.get("address") or r.get("street") or ""
+        key = (name.lower(), street.lower(), r["city"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": (f"Store {name}" if name.isdigit() else name), "address": street, "city": r["city"],
+                    "state": r.get("state", ""), "postal_code": r.get("zip code") or r.get("zip") or ""})
+    return out
+
+
 def _reseller_streets(envelope: dict[str, Any]) -> set[str]:
     """Street addresses the account's own people sign with: a contact line or
     signature from the reseller's domain. 010083's only "site" was CDW's sales
@@ -811,9 +874,20 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
              for s in (envelope.get("site_readiness") or {}).get("sites") or []]
     offices = _reseller_streets(envelope)
     sites = [x for x in sites if not any(o in re.sub(r"\W+", " ", x["address"].lower()) for o in offices)]
+    table = location_table(envelope)
+    if len(table) > len(sites):
+        sites = table
     c = write(envelope, {"sites": sites})
     rec = envelope.get("site_count_reconciliation") or {}
-    c["site_summary"] = {"stated": rec.get("stated"), "resolved": len(sites)}
+    stated = rec.get("stated")
+    if table:
+        # A count the documents state that the table nearly bears out (010279:
+        # "113" stores, 98 rows read whole) beats both the rows and a count
+        # some other conversation gave.
+        seen = [int(k) for k in (rec.get("all_counts_seen") or {}) if str(k).isdigit()]
+        near = [n for n in seen if len(table) <= n <= len(table) * 1.4]
+        stated = max(near) if near else len(table)
+    c["site_summary"] = {"stated": stated, "resolved": len(sites), "from_table": bool(table)}
     c["requested_by"] = requested_by(envelope)
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
     c["sites"] = _sites(envelope, {"sites": sites})
