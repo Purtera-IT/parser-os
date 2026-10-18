@@ -186,7 +186,7 @@
       "{when:existing (display )?mount|reuse|re-use} Install plywood backing as required to securely support each wall mount.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mount each display at the approved location and height.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Dress and secure accessible cabling associated with each display.",
-      "Connect accessible power where a Customer-provided power source is available.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Connect accessible power where a Customer-provided power source is available.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power on each display and verify basic operation and an available video source.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Review each room's install location for the video bar and table controller with the onsite contact.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Verify the equipment for each room is present and undamaged before installation.",
@@ -199,7 +199,7 @@
     "customer_responsibilities": [
       "Provide all displays, hardware, cables and mounts.",
       "Ensure the work areas are reasonably clear and accessible before technician arrival.",
-      "Provide access to existing electrical power required for display operation.",
+      "Provide access to existing electrical power required for the installed equipment.",
       "Ensure Customer-furnished AV, network and source systems are operational and available for testing.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Provide the final display locations and mounting heights before drilling or permanent installation.",
       "Provide current photographs of the rooms and proposed mounting walls before deployment when available.",
@@ -220,7 +220,8 @@
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",
-      "Power-on and video-source verification for each display.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power-on and video-source verification for each display.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Each video bar and table controller installed, powered on and connected.",
       "Completion confirmed with the onsite contact."
     ]
   },
