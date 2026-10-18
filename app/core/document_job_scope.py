@@ -43,6 +43,7 @@ written to the compile trace. No store and no model means nothing moves.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections import OrderedDict
@@ -53,6 +54,7 @@ from typing import Any
 from app.core import telemetry as _telemetry
 from app.core.utterance_typing import is_untyped_speech as _untyped_speech
 
+log = logging.getLogger(__name__)
 RELATION = "document_job"
 CANDIDATES = ["this_deal", "other_job"]
 INSTRUCTION = (
@@ -263,6 +265,15 @@ def c3_aside() -> float:
         return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_ASIDE", "0.98"))
     except ValueError:
         return 0.98
+
+
+def c3_max_share() -> float:
+    """The share of a deal's conversations above which the base's other_job
+    calls are taken as confusion, not strays (SOWSMITH_C3_DOCUMENT_JOB_MAX_SHARE)."""
+    try:
+        return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_MAX_SHARE", "0.4"))
+    except ValueError:
+        return 0.4
 
 
 def model_enabled() -> bool:
@@ -668,7 +679,7 @@ def judge_documents(
                 d = None
             if getattr(d, "verdict", None) is None:
                 d = _C3Decision(c3_p)
-        elif mode == "on" and c3_verdict == "other_job" and c3_p >= c3_aside():
+        elif mode == "on" and c3_verdict == "other_job" and c3_p >= c3_aside() and aside_ok:
             # The base is sure this conversation is another job. A PM's taught
             # verdict still decides first; otherwise the base's word stands.
             try:
@@ -695,6 +706,24 @@ def judge_documents(
     # parallel (the judge is an LLM call for every conversation the base does
     # not keep) and applied below in the original order, so nothing changes
     # but the time (010043, 2026-10-15: 13.5 s, one call after another).
+    # A deal is never mostly another job. When the base would set aside a large
+    # share of the deal's conversations it is confused about which job the deal
+    # is, not finding strays: live 2026-10-18, it set aside 13 of 20 of 010264's
+    # conversations (the program plan calls and the clock inventory) and 11 of 19
+    # of 010284's install discussions at 0.98-1.00, while its right calls
+    # (010082's SD-WAN documents, 010279's Lineage documents) were 3 of 12 and
+    # 2 of 9. Above the share, its word alone sets nothing aside.
+    aside_ok = True
+    if mode == "on" and c3_docs and bundles:
+        _calls = [c3_bundle_verdict([by_doc[k] for k in b["docs"]], c3_docs, sure) for b in bundles.values()]
+        _n_aside = sum(1 for v, p in _calls if v == "other_job" and p >= c3_aside())
+        # A small deal (under four conversations) is never emptied; a larger one
+        # keeps the share rule.
+        if (_n_aside >= len(bundles)) if len(bundles) < 4 else (_n_aside / len(bundles) >= c3_max_share()):
+            aside_ok = False
+            log.warning("document_job_scope: base would set aside %d of %d conversations; "
+                        "too many to be strays, none set aside on its word", _n_aside, len(bundles))
+
     import concurrent.futures as _cf
 
     _par = max(1, int(os.environ.get("SOWSMITH_DOCUMENT_JOB_PARALLEL", "8") or 8))

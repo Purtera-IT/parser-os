@@ -100,12 +100,12 @@ def test_a_sure_base_other_job_sets_the_conversation_aside(monkeypatch):
     prev = decide_mod.get_store()
     decide_mod.set_store(None)
     try:
-        _base(monkeypatch, {"art_kiosk": {KEY: ("other_job", 0.999)}})
-        _, dropped, verdicts = judge_documents(KIOSK, deal_name=DEAL)
+        _base(monkeypatch, {"art_kiosk": {KEY: ("other_job", 0.999)}, "art_sdwan": {KEY: ("this_deal", 0.95)}})
+        _, dropped, verdicts = judge_documents(SDWAN + KIOSK, deal_name=DEAL)
     finally:
         decide_mod.set_store(prev)
     assert [a.artifact_id for a in dropped] == ["art_kiosk"]
-    assert verdicts[0]["source"] == "c3"
+    assert any(v["source"] == "c3" and v["verdict"] == "other_job" for v in verdicts)
 
 
 def test_an_unsure_base_leaves_the_conversation_to_the_model(judge, monkeypatch):
@@ -215,3 +215,19 @@ def test_a_sure_base_other_job_acts_with_no_deal_name(monkeypatch):
         decide_mod.set_store(prev)
     assert [a.artifact_id for a in dropped] == ["art_kiosk"]
     assert {a.artifact_id for a in kept} == {"art_sdwan"}
+
+
+def test_a_base_that_would_set_aside_most_of_the_deal_sets_none_aside(monkeypatch):
+    """010264 / 010284: the base called most of the deal's own conversations
+    another job at 0.98-1.00; that is confusion, not strays."""
+    monkeypatch.setenv("SOWSMITH_C3_DOCUMENT_JOB", "on")
+    monkeypatch.setenv("SOWSMITH_DOCUMENT_JOB_MODEL_JUDGE", "off")
+    monkeypatch.setattr(semantic_role, "classify_role", lambda *a, **k: pytest.fail("asked the model"))
+    prev = decide_mod.get_store()
+    decide_mod.set_store(None)
+    try:
+        _base(monkeypatch, {"art_kiosk": {KEY: ("other_job", 0.999)}, "art_sdwan": {KEY: ("other_job", 0.99)}})
+        kept, dropped, _ = judge_documents(SDWAN + KIOSK, deal_name=DEAL)
+    finally:
+        decide_mod.set_store(prev)
+    assert dropped == [] and len(kept) == len(SDWAN + KIOSK)
