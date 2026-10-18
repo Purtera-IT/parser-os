@@ -1567,13 +1567,17 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
 SITE_HEAD_BAR = float(os.environ.get("SOWSMITH_SITE_HEAD_BAR", "0.5"))
 
 
-def _head_says_site(val: Any) -> bool:
+def _head_says_site(val: Any, keys: Any = ()) -> bool:
     """The C3 type head labeled this line a physical site, or never read it and
     the parser's own reading names a place (000132's six "City, ST" lines under
     a Locations heading carried no head label and three of six sites vanished).
     A line the head read as something else stays out."""
     lab = val.get("c3_label") if isinstance(val, dict) else None
     if not lab:
+        # Except a row keyed only off an address string: the old ghost-site shape.
+        sk = [str(k) for k in (keys or []) if str(k).startswith("site:")]
+        if sk and all(k.startswith("site:address_") for k in sk):
+            return False
         place = " ".join(str(val.get(k) or "") for k in ("name", "city", "address", "display_name", "facility_name"))
         return bool(re.search(r"[A-Za-z]{3}", place))
     if not (isinstance(lab, dict) and lab.get("type") == "physical_site"):
@@ -1627,7 +1631,7 @@ def build_site_readiness(
             sid = ""
             if isinstance(val, dict):
                 sid = val.get("id") or val.get("site_id") or ""
-            if not (sid and re.search(r"[A-Za-z]{2}", str(sid))) and not _head_says_site(val):
+            if not (sid and re.search(r"[A-Za-z]{2}", str(sid))) and not _head_says_site(val, getattr(atom, "entity_keys", None)):
                 # The type head decides what a site line is. A line it labeled
                 # physical_site is one whatever its id looks like: an id-shape
                 # test here threw away 142 of 000123's 157 BevMo stores (store
@@ -1751,7 +1755,7 @@ def build_site_readiness(
             if not isinstance(_val, dict):
                 continue
             _sid = _val.get("id") or _val.get("site_id") or ""
-            if not (_sid and re.search(r"[A-Za-z]{2}", str(_sid))) and not _head_says_site(_val):
+            if not (_sid and re.search(r"[A-Za-z]{2}", str(_sid))) and not _head_says_site(_val, getattr(_a, "entity_keys", None)):
                 continue
             # A store number names its row only through the row's own key
             # (000123's "407" is the store, "site:407" also a count's shape).

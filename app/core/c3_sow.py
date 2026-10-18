@@ -82,7 +82,7 @@ _BASE = (
     "work. A request phrased as a wish or a question (\"I would also like to add <X>\", \"can you also <do Y>?\") is "
     "scope. The customer saying \"I will provide <X>\" means the Customer supplies <X>. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
     "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
-    "A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
+    "A fact marked (type head: a prerequisite the Customer must meet) goes to the Customer's responsibilities or materials, never to Provider's tasks, whatever section it sits in. A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
     "email banners and signature blocks. Never write a price, rate or dollar amount, never mention the CRM, ids or "
     "these instructions, and leave a list empty rather than guess. Return JSON only.\n"
     "CRM RECORD: %s\nSITES: %s\nCONTACTS: %s\nFACTS (id, section the heads placed it in, date, text):\n%s\n\n"
@@ -288,6 +288,51 @@ def standard_items(family: str, deal_no: str = "", query: list[str] | None = Non
     return _relevant(out, list(query or []))
 
 
+# A SOW is sent to customers and resellers; a credential never belongs in one.
+# 010264's Wi-Fi setup doc gave the writer a clock maintenance password and an
+# SSID, and both were printed under Testing and Closeout. The value is withheld
+# before the writer sees the line, and any item still carrying one is dropped.
+_SECRET = re.compile(r"(?i)\b(pass(?:word|code|phrase)?|pwd|pin|ssid|wpa2?(?:[- ]?psk)?|psk|network key|"
+                     r"security key|api[- ]?key|secret|token|username|user ?id|login)\b(\s*(?:is|=|:|-)?\s*)"
+                     r"([^\s,;]+)")
+_IP = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?\b")
+_WORD = re.compile(r"(?i)[a-z]+[.,;:]?")
+
+
+def _is_secret(m: re.Match) -> bool:
+    """A value follows the keyword: after a colon/equals, or one with a digit
+    or symbol in it ("password 8812ab"); "password reset" is a task, not one."""
+    sep, val = m.group(2).strip(), m.group(3)
+    if val.startswith("["):
+        return False
+    if sep in (":", "=") or sep.lower() == "is" and not _WORD.fullmatch(val):
+        return True
+    return bool(re.search(r"\d|[^A-Za-z.,;:'\")-]", val))
+
+
+def _withhold(text: str) -> str:
+    text = _SECRET.sub(lambda m: m.group(1) + m.group(2) + "[withheld]" if _is_secret(m) else m.group(0), text)
+    return _IP.sub("[address withheld]", text)
+
+
+def _scrub(content: dict[str, Any]) -> int:
+    """Drop every item that still carries a credential or an address."""
+    n = 0
+    for k, v in list(content.items()):
+        if not isinstance(v, list):
+            continue
+        keep = []
+        for x in v:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if "[withheld]" in t or "address withheld" in t or _IP.search(t) or \
+                    any(_is_secret(m) for m in _SECRET.finditer(t)):
+                n += 1
+                continue
+            keep.append(x)
+        content[k] = keep
+    return n
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -332,9 +377,19 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                 if (a.get("structured") or {}).get("kind") in ("image_fact", "image_ocr_text")}
     for f in out:
         f["pictured"] = f["id"] in pictured or f["section"] == "figure"
+    # The heading a line was written under says whose voice "we" is: 000123's
+    # "We will preconfigure all items" sat under "Customer notes:" and became a
+    # Provider task because the brief kept no heading for it.
+    label = {a.get("id"): str((a.get("structured") or {}).get("list_label")
+                              or (a.get("structured") or {}).get("parent_field") or "").strip()
+             for a in envelope.get("atoms") or []}
+    for f in out:
+        if not f["under"] and label.get(f["id"]):
+            f["under"] = label[f["id"]]
     for f in out:
         if len(full.get(f["id"], "")) > len(f["text"]):
             f["text"] = full[f["id"]]
+        f["text"] = _withhold(f["text"])
     _lead_ins(out, envelope.get("atoms") or [])
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
     seen_text: set[str] = set()
@@ -379,11 +434,19 @@ def _lead_ins(fs: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> None:
             f["under"] = " > ".join(h[:120] for h in heads[-2:])
 
 
+# The type head's label, where it settles whose duty a line is.
+_TYPE_ROLE = {"dependency": "type head: a prerequisite the Customer must meet",
+              "exclusion": "type head: excluded", "deliverable": "type head: a deliverable",
+              "acceptance_criterion": "type head: an acceptance criterion",
+              "pricing_assumption": "type head: a pricing assumption"}
+
+
 def _fact_line(f: dict[str, Any]) -> str:
     sup = f.get("supplier")
     who = (f" supplied-by:{_SUPPLIER.get(sup[0], sup[0])}" if sup and float(sup[1] or 0) >= SUPPLIER_BAR
            and sup[0] in _SUPPLIER and f.get("type") in _ITEM_TYPES else "")
-    return (f"[{f['id']}] ({f['section']}" + (", from a photo" if f.get("pictured") else "")
+    role = _TYPE_ROLE.get(f.get("type") or "")
+    return (f"[{f['id']}] ({f['section']}" + (f", {role}" if role else "") + (", from a photo" if f.get("pictured") else "")
             + (f", {f['when']}" if f["when"] else "") + who + ") "
             + (f"[under: {f['under']}] " if f["under"] else "") + _dated(f["text"], f["when"] or None)[:FACT_CHARS])
 
@@ -460,6 +523,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
+    content["withheld"] = _scrub(content)
     content["facts_given"] = len(fs)
     return content
 
