@@ -1545,6 +1545,19 @@ def _materials_hygiene(content: dict[str, Any], family: str) -> None:
         content[k] = [x for x in content.get(k) or []
                       if not re.search(r"\b(?!Provider\b|Customer\b|The\b)[A-Z][a-z]+ [A-Z][a-z]+ will (?i:handle|bring|pick up|deliver|run)\b|(?i:\bmaterial runs?\b)",
                                        str(x.get("text") if isinstance(x, dict) else x))]
+    # The customer ships the POS gear: one Customer Provided list, not a split
+    # with an ownerless Equipment in Scope (000123: printer and pin pad apart
+    # from the tablet and hub, all shipped by the customer).
+    if family == "pos_install_refresh" and content.get("customer_materials") and content.get("equipment_in_scope"):
+        cm = content["customer_materials"]
+        for x in content["equipment_in_scope"]:
+            if not _said(str(x.get("text") if isinstance(x, dict) else x), cm, 0.7):
+                cm.append(x)
+        content["equipment_in_scope"] = []
+    for k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+        for x in content.get(k) or []:
+            if isinstance(x, dict):
+                x["text"] = re.sub(r"(?i)\bthe above( gear| equipment| items)?\b", "the listed equipment", str(x.get("text")))
     if family == "low_voltage_cabling":
         pm = content.setdefault("provider_materials", [])
         keep = []
@@ -2587,6 +2600,15 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     full = ", ".join(f"{ci}, {st}" if st else ci for ci, st in cities[:-1]) + ", and " + \
                         (f"{cities[-1][0]}, {cities[-1][1]}" if cities[-1][1] else cities[-1][0])
                     x["text"] = t[:a] + full + t[b:]
+    # The site-count summary line the fact check set aside comes back when its
+    # count is the resolved roster (000123: "161 customer locations" dropped
+    # against a note's "about 160").
+    n_sites = len(c["sites"])
+    if n_sites >= 10 and not any(str(n_sites) in str(x.get("text") if isinstance(x, dict) else x) for x in c.get("overview") or []):
+        back = [x for x in c.get("dropped") or [] if isinstance(x, dict) and x.get("list") == "overview"
+                and re.search(r"\b%d\b" % n_sites, str(x.get("text")))]
+        if back:
+            c.setdefault("overview", []).insert(0, {k: v for k, v in back[0].items() if k != "list"})
     for x in c["sites"]:  # 010198: a blank name left the Location cell empty
         if not str(x.get("name") or "").strip():
             x["name"] = str(x.get("address") or "")
