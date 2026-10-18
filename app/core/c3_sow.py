@@ -592,6 +592,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
     content["withheld"] = _scrub(content)
+    # A heading whose tasks the checks dropped is an empty promise in the SOW
+    # (010043: "Camera mounting" with nothing under it).
+    sc = content.get("scope") or []
+    content["scope"] = [x for i, x in enumerate(sc)
+                        if not (isinstance(x, dict) and x.get("kind") == "heading")
+                        or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     content["facts_given"] = len(fs)
     return content
 
