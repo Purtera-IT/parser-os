@@ -699,6 +699,18 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # promise in the overview.
     ov_kept = [x for x in content.get("overview") or [] if not x.get("cites") or not all(c in weak for c in x["cites"])]
     content["overview"] = ov_kept or content.get("overview") or []
+    # A start date before the cutoff is a document's date, not the job's
+    # (010120 printed the survey deck's 7/9 as the requested start).
+    cut = str((envelope.get("run_scope") or {}).get("as_of") or "")[:10]
+    def _before_cut(t: str) -> bool:
+        m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d{2,4})", t)
+        if not (m and cut):
+            return False
+        y, mo, d = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(6), m.group(4), m.group(5))
+        y = ("20" + y) if len(y) == 2 else y
+        return f"{y}-{int(mo):02d}-{int(d):02d}" < cut
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not (re.match(r"(?i)\s*requested start", str(x.get("text"))) and _before_cut(str(x.get("text"))))]
     # A date from a quoted earlier email is history, not this job's schedule
     # (010043: CDW's May meeting slots became a "work window").
     quoted = {f["id"] for f in fs if f.get("quoted")}
@@ -1324,7 +1336,7 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     asm = content.get("assumptions") or []
     if any(isinstance(a, dict) and a.get("standard") and "limited to" in tx(a).lower() for a in asm):
         content["assumptions"] = [a for a in asm if (isinstance(a, dict) and a.get("standard")) or "limited to" not in tx(a).lower()]
-    scope_text = " ".join(tx(x) for x in content.get("scope") or []).lower()
+    scope_text = " ".join(tx(x) for k in ("scope", "equipment_in_scope") for x in content.get(k) or []).lower()
     excludes_scope = []
     for dev, words in (("router", r"switch|firewall|network device|router"), ("firewall", r"firewall"),
                        ("switch", r"\bswitch"), ("access point", r"access point|wireless"), ("camera", r"camera"),
