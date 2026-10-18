@@ -1484,7 +1484,9 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         if generic:
             items[work[0] + 1:work[0] + 1] = lead
         elif work:
-            items[work[0]:work[0]] = [{"text": "Installation", "cites": [], "kind": "heading"}] + lead
+            name = {"decommission_packing": "Dismantle and Pack", "relocation_move": "Pack and Move",
+                    "low_voltage_cabling": "Cabling", "network_switch_refresh": "Switch Replacement"}.get(family, "Installation")
+            items[work[0]:work[0]] = [{"text": name, "cites": [], "kind": "heading"}] + lead
         else:
             items[arrival_end:arrival_end] = lead
         close = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
@@ -1626,6 +1628,35 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         for x in content.get(k) or []:
             if isinstance(x, dict) and isinstance(x.get("text"), str) and x["text"][:1].islower():
                 x["text"] = x["text"][0].upper() + x["text"][1:]
+    # A tools line in the task list is a tool (010115: "common tools" alone
+    # under a "POS Hardware" heading).
+    tl = [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"
+          and re.match(r"(?i)\s*(use |bring |carry )?(common|standard|basic|general|hand)\b.{0,40}\btools?\b", str(x.get("text")))]
+    for x in tl:
+        content["scope"].remove(x)
+        if not _said(str(x["text"]), content.setdefault("provider_tools", []), 0.5):
+            content["provider_tools"].append(x)
+    # Site hours are the template's business-hours line, not a customer duty.
+    content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
+                                            if not re.search(r"(?i)\b(operates|open|hours)\b.{0,30}monday.{0,15}friday", str(x.get("text") if isinstance(x, dict) else x))]
+    # A deliverable the exclusions rule out (010115: "Chain of custody for boxed
+    # equipment transported from site" beside "transport ... excluded").
+    oos = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("out_of_scope") or []).lower()
+    for d in content.get("deliverables") or []:
+        if isinstance(d, dict):
+            desc, seen_d = [], []
+            for t in d.get("description") or []:
+                if re.search(r"(?i)chain of custody|transport|shipp?(ed|ing)|freight", str(t)) and re.search(r"transport|ship|freight|logistic", oos):
+                    continue
+                if _said(str(t), seen_d, 0.6):
+                    continue
+                desc.append(t); seen_d.append(str(t))
+            d["description"] = desc
+    # A heading left with nothing under it goes.
+    sc = content.get("scope") or []
+    content["scope"] = [x for i, x in enumerate(sc)
+                        if not (isinstance(x, dict) and x.get("kind") == "heading")
+                        or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
@@ -2156,7 +2187,10 @@ def _reseller_streets(envelope: dict[str, Any]) -> set[str]:
     # A street repeated in the suppressed signature chrome, or on a line with a
     # phone number, is the sender's card (010373: CDW's Rosemont office typed
     # physical_site 6 times, 18 copies in chrome, printed as the location).
-    chrome = " ".join(str(c.get("text") or "") for c in envelope.get("suppressed_chrome") or [] if isinstance(c, dict)).lower()
+    # Only the reseller's own cards: the customer signs with its site address
+    # too (010043: Lane's Tyvola office, 47 signature copies, is the site).
+    by_dom = lambda r: dom in str((r.get("locator") or {}).get("sender") if isinstance(r.get("locator"), dict) else r.get("locator") or "").lower()
+    chrome = " ".join(str(c.get("text") or "") for c in envelope.get("suppressed_chrome") or [] if isinstance(c, dict) and by_dom(c)).lower()
     for a in envelope.get("atoms") or []:
         t = str(a.get("text") or "")
         m = re.search(r"\b\d{2,6}\s+[A-Za-z0-9 .'-]+?\b(?:way|st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|"
@@ -2165,7 +2199,7 @@ def _reseller_streets(envelope: dict[str, Any]) -> set[str]:
             continue
         street = m.group(0)
         phone = re.search(r"\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}", t)
-        if phone or (chrome and chrome.count(street.lower()) >= 2):
+        if (phone and by_dom(a)) or (chrome and chrome.count(street.lower()) >= 2):
             out.add(re.sub(r"\W+", " ", street.lower()).strip())
             # The glued form ("9754 5505 Pearl St") the address parser made of it.
             m2 = re.search(r"\d{2,6}\s+[A-Za-z].*", street)

@@ -30,12 +30,15 @@
       "Onsite parking is available; any parking fee is reimbursable.",
       "The engagement is limited to onsite physical labor and smart hands support.",
       "The hardware can be safely dismantled using common hand tools.",
-      "No specialized lifting equipment or powered material handling equipment is required."
+      "No specialized lifting equipment or powered material handling equipment is required.",
+      "Provider does not supply packing materials or transport, ship or dispose of equipment.",
+      "Services are limited to onsite smart hands support for the dismantle and packing."
     ],
     "exclusions": [
       "Transport, shipping or freight of packed equipment.",
       "Hardware installation, configuration, programming, troubleshooting, data migration, network changes, or system testing.",
-      "Inventory audit, asset reconciliation, disposal, recycling, data destruction, or certified IT asset disposition."
+      "Inventory audit, asset reconciliation, disposal, recycling, data destruction, or certified IT asset disposition.",
+      "Packing materials, transportation, shipping or disposal of equipment."
     ],
     "deliverable_outcomes": [
       "Hardware dismantled as directed by the onsite contact.",
