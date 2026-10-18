@@ -867,9 +867,31 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # became scope), unless it asks the customer to confirm.
     # By the words, not only the label: 010085's "Assume 2 boom lifts are
     # needed?" was typed quantity and became "Two boom lifts are assumed".
-    asked = {f["id"] for f in fs if f.get("asked") or f.get("type") == "open_question"
+    # A question that asks for work is a request, not an open question
+    # (010198: "I would also like to add a Ubiquiti router ... - is that
+    # something you can help with?" is half the job).
+    requests_work = lambda t: re.search(r"(?i)\b(would (also )?like|i'?d like|we need|need (you|us|to)|want to add|add (a|an|the)|can you help|could you|please (install|add|quote))\b", t)
+    asked = {f["id"] for f in fs if (f.get("asked") or f.get("type") == "open_question"
              or re.search(r"\?\s*$", f["text"].strip())
-             or re.match(r"(?i)\s*(\d+[.)]\s*)?(assume|is|are|do|does|can|could|will|would|should|how|what|which|who|when)\b[^.]{0,200}\?", f["text"])}
+             or re.match(r"(?i)\s*(\d+[.)]\s*)?(assume|is|are|do|does|can|could|will|would|should|how|what|which|who|when)\b[^.]{0,200}\?", f["text"]))
+             and f.get("type") != "answered_question" and not requests_work(f["text"])}
+    # No "only the listed devices" assumption while a request adds another.
+    if any(requests_work(f["text"]) for f in fs):
+        content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.match(r"(?i)\s*only the listed", str(x.get("text")))]
+    # A dated service day the writer left out ("scheduled for Sunday morning,
+    # August 16, 2026") is the requested start (010198 lost its date twice).
+    sched = content.setdefault("schedule", [])
+    if not any(str(x.get("text")).lower().startswith("requested start") for x in sched if isinstance(x, dict)):
+        months = "January|February|March|April|May|June|July|August|September|October|November|December"
+        for f in fs:
+            if f["section"] in ("timeline", "job_details", "scope_of_work", "schedule"):
+                m = re.search(r"(?i)\b(?:on|for)\s+((?:mon|tues|wednes|thurs|fri|satur|sun)day[\w\s,]{0,12}?)?(" + months + r")\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?", f["text"])
+                if m:
+                    day = (m.group(1) or "").strip(" ,")
+                    sched.insert(0, {"text": "Requested Start Date: " + ((day.split()[0].capitalize() + ", ") if day else "")
+                                     + f"{m.group(2).capitalize()} {m.group(3)}" + (f", {m.group(4)}" if m.group(4) else ""),
+                                     "cites": [f["id"]], "kind": "fact"})
+                    break
     for k in LISTS:
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
                       and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]

@@ -57,7 +57,7 @@
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
-      "Perform all device configurations and troubleshooting, if required.",
+      "{when:(customer|they|their|end user).{0,40}configur|configur.{0,40}(by|from) (the )?(customer|them)} Perform all device configurations and troubleshooting, if required.",
       "Ensure onsite personnel are available to assist with functional validation where required.",
       "Provide escalation contacts for technical, access, hardware and schedule related issues.",
       "Provide approval criteria for completed installation and functional testing."
