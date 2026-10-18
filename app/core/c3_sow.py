@@ -485,7 +485,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     contacts = [c.get("line") for c in brief.get("contacts") or [] if c.get("line")][:12]
     sites = _sites(envelope, pm_handoff)
     rows = len([x for x in (brief.get("sections") or {}).get("contacts") or [] if x.get("type") == "physical_site"])
-    site_info = {"count_in_site_lists": max(rows, len(sites)), "sites": sites[:15]}
+    site_info = {"count_in_site_lists": max(rows, len(sites), int((pm_handoff or {}).get("site_count") or 0)),
+                 "sites": sites[:15]}
     base = _BASE % (json.dumps(crm_rec), json.dumps(site_info), json.dumps(contacts),
                     "\n".join(_fact_line(f) for f in fs))
     effort = os.environ.get("SOWSMITH_C3_SOW_EFFORT", "medium")
@@ -929,6 +930,42 @@ def _reseller_streets(envelope: dict[str, Any]) -> set[str]:
     return out
 
 
+_SHEET_SITES = re.compile(r"This sheet can supply ([\d,]+) distinct site addresses")
+
+
+def sheet_site_count(envelope: dict[str, Any]) -> int | None:
+    """How many places an inventory workbook puts the job at: the parser's
+    "This sheet can supply N distinct site addresses" finding, from the sheet
+    that matches its workbook. 010264's clock inventory has two: the 9000-series
+    device list (797 addresses, the PM's "up to 795") and Sodexo's whole cost
+    centre directory (65,902). The sheet sharing the workbook's model token
+    ("9000_Clocks_Inventory" / "DeviceList-08-06_9000") is the one in scope; with
+    no shared token, the smallest list is, since a directory is the largest."""
+    names = {str(d.get("artifact_id") or d.get("id") or ""): str(d.get("filename") or "")
+             for d in envelope.get("documents") or []}
+    found: list[tuple[int, int, str]] = []
+    for a in envelope.get("atoms") or []:
+        st = a.get("structured") or {}
+        m = _SHEET_SITES.search(str(a.get("text") or ""))
+        if not (st.get("finding") == "supplies:site_address" or m):
+            continue
+        try:
+            n = int(str(st.get("value") or (m.group(1) if m else "")).replace(",", ""))
+        except ValueError:
+            continue
+        loc = ((a.get("source_refs") or [{}])[0] or {}).get("locator") or {}
+        sheet = str(st.get("sheet") or loc.get("sheet") or a.get("sheet") or "")
+        book = names.get(str(a.get("artifact_id") or ""), "")
+        tokens = lambda x: {t for t in re.findall(r"[a-z]*\d+[a-z0-9]*|[a-z]{4,}", x.lower()) if not t.isdigit() or len(t) >= 3}
+        shared = len(tokens(sheet) & tokens(re.sub(r"\.\w+$", "", book)) - {"list", "sheet", "review"})
+        if n >= 3:
+            found.append((shared, n, sheet))
+    if not found:
+        return None
+    best = max(found, key=lambda f: (f[0], -f[1]))
+    return best[1]
+
+
 def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """The SOW content as the envelope carries it: the writer's lists, the
     partner's requester, the CRM record and the sites."""
@@ -941,9 +978,12 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     table = location_table(envelope)
     if len(table) > len(sites):
         sites = table
-    c = write(envelope, {"sites": sites})
+    from_sheet = None if table else sheet_site_count(envelope)
+    c = write(envelope, {"sites": sites, "site_count": from_sheet})
     rec = envelope.get("site_count_reconciliation") or {}
     stated = rec.get("stated")
+    if from_sheet and from_sheet > len(sites):
+        stated = from_sheet
     if table:
         # A count the documents state that the table nearly bears out (010279:
         # "113" stores, 98 rows read whole) beats both the rows and a count

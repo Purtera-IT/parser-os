@@ -2074,7 +2074,7 @@ class XlsxParser(BaseParser):
     capability = ParserCapability(
         parser_name=parser_name,
         parser_version=parser_version,
-        supported_extensions=[".xlsx", ".csv", ".xls", ".xlsb", ".ods"],
+        supported_extensions=[".xlsx", ".xlsm", ".csv", ".xls", ".xlsb", ".ods"],
         # .xls/.xlsb/.ods are converted to .xlsx on entry (see
         # legacy_spreadsheet). Claimed here so routing sends them to the
         # spreadsheet parser instead of the `unread` fallback -- a 1.9MB
@@ -2144,7 +2144,10 @@ class XlsxParser(BaseParser):
                 reasons=reasons,
                 artifact_type=ArtifactType.xlsx,
             )
-        if suffix in {".xlsx", ".csv"}:
+        # A macro workbook (.xlsm) is the same container; openpyxl reads its
+        # sheets and leaves the macros alone. 010264's 1,563-clock inventory
+        # was one, and the compile read it as nothing.
+        if suffix in {".xlsx", ".xlsm", ".csv"}:
             from app.parsers.spreadsheet_route_signals import (
                 path_roster_schedule_hint,
                 sniff_operations_workbook_strength,
@@ -2158,7 +2161,7 @@ class XlsxParser(BaseParser):
             # detection. Wins decisively over QuoteParser when the
             # workbook has asset / site / port / circuit / risk /
             # cutover sheets (even if it ALSO has a BOM sheet).
-            if suffix == ".xlsx":
+            if suffix in (".xlsx", ".xlsm"):
                 ops_score, ops_reasons = sniff_operations_workbook_strength(path)
                 reasons.extend(ops_reasons)
                 if ops_score >= 0.55:
@@ -2182,7 +2185,7 @@ class XlsxParser(BaseParser):
             parser_name=self.parser_name,
             confidence=confidence,
             reasons=reasons,
-            artifact_type=ArtifactType.xlsx if suffix == ".xlsx" else ArtifactType.csv,
+            artifact_type=ArtifactType.csv if suffix == ".csv" else ArtifactType.xlsx,
         )
 
     def parse(self, artifact_path: Path) -> list[EvidenceAtom]:

@@ -38,7 +38,7 @@ def _artifact_type_for_path(path: Path) -> ArtifactType:
     from app.core.filetype import content_suffix
 
     suffix = content_suffix(path)
-    if suffix == ".xlsx":
+    if suffix in (".xlsx", ".xlsm"):
         return ArtifactType.xlsx
     if suffix == ".csv":
         return ArtifactType.csv

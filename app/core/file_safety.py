@@ -18,6 +18,7 @@ ALLOWED_EXTENSIONS = {
     ".zip",                        # ZIP container; contents listed via parser
     ".msg",                        # Outlook native email
     ".odt", ".ods",                # OpenDocument writer / spreadsheet
+    ".xlsm",                       # macro workbook (010264's clock inventory)
     ".vsdx", ".vsd",               # Visio diagrams
     ".mpp",                        # Microsoft Project schedule
 }
