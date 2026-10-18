@@ -1051,7 +1051,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     scope_text = " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict))
     for f in fs:
         m = re.match(r"(?i)\s*(.{2,40}?)\s*[:\-–]?\s*(?:approx(?:imately)?\.?\s*)?(\d{2,4})\s*(?:ft|feet|')\b", f["text"])
-        if m and re.search(r"(?i)\bto\b|run|drop|idf|mdf", m.group(1)) and not re.search(r"\b" + m.group(2) + r"\b", scope_text):
+        if m and re.search(r"(?i)\bto\b|run|drop|idf|mdf", m.group(1)) and not re.search(r"\b" + m.group(2) + r"\b", scope_text) \
+                and not re.search(r"(?i)provi|estim|\btech\b|\bneed|quote|price|materials?", m.group(1)):  # 010082 "Tech to provdie estiamted 100ft"
             sc = content.setdefault("scope", [])
             close = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"
                           and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), len(sc))
@@ -1545,6 +1546,54 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             and not re.search(r"(?i)\b(install|mount|cabling|run cable|decommission)\w*", facts_all):
         content["assumptions"] = [x for x in content.get("assumptions") or []
                                   if not re.search(r"(?i)hidden site conditions|undocumented cabling", str(x.get("text") if isinstance(x, dict) else x))]
+    # The overview is PurTera's summary, never a pasted email (010198: "Hope
+    # you're both doing well ... this Sunday morning, 8/2").
+    greet = re.compile(r"(?i)^\s*(hi|hello|hey|good (morning|afternoon)|hope (you|all|everyone)|thanks|thank you|happy)\b|hope you'?re|\bboth doing well\b")
+    ov = content.get("overview") or []
+    keep = [x for x in ov if not greet.search(str(x.get("text") if isinstance(x, dict) else x))]
+    if not keep and ov:
+        # Every line was a pasted email: the writer's own summary drafts the
+        # fact check set aside are the better overview.
+        keep = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+                if isinstance(x, dict) and x.get("list") == "overview" and x.get("text") and not greet.search(str(x["text"]))][:2]
+    if keep:
+        content["overview"] = keep
+    # A site condition is an assumption, not a closing step (010082: the 12 ft
+    # ceiling and the safe under Closeout).
+    cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
+    for x in cond:
+        content["scope"].remove(x)
+        x["text"] = re.sub(r"(?i)^\s*site condition:\s*", "", str(x["text"]))
+        content.setdefault("assumptions", []).append(x)
+    # "Only one (1) register and one (1) printer are included" contracts out
+    # the rest of the job (010198's router).
+    content["assumptions"] = [x for x in content.get("assumptions") or []
+                              if not re.match(r"(?i)\s*only\b.{0,120}\b(is|are) included\b", str(x.get("text") if isinstance(x, dict) else x))]
+    # "Provider-supplied" hardware when Provider supplies nothing (000123).
+    if not content.get("provider_materials"):
+        content["assumptions"] = [x for x in content.get("assumptions") or []
+                                  if not re.search(r"(?i)provider[- ]supplied", str(x.get("text") if isinstance(x, dict) else x))]
+    # A weekend date is weekend work, not "regular business hours" (010198 Sunday).
+    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or [])
+    if re.search(r"(?i)\b(saturday|sunday)\b", sched):
+        for k in ("schedule", "assumptions"):
+            content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)regular business hours|monday.{0,12}friday", str(x.get("text") if isinstance(x, dict) else x))]
+        asm = content.setdefault("assumptions", [])
+        if not any(re.search(r"(?i)weekend", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
+            day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
+            asm.append({"text": f"Work is performed on {day} as scheduled; site access is available that day.", "cites": [], "kind": "method"})
+    # Work steps written after the closing heading go before it (010198: the
+    # router install after "Confirm completion before leaving site").
+    sc = content.get("scope") or []
+    close = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"
+                  and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), None)
+    if close is not None:
+        late = [x for x in sc[close + 1:] if isinstance(x, dict) and x.get("kind") != "heading"
+                and re.match(r"(?i)\s*(install|mount|run|replace|configure|connect|deploy|set up|terminate|remove|pack|unbox)\b", str(x.get("text")))]
+        if late:
+            rest = [x for x in sc if not any(x is y for y in late)]
+            ci = next(i for i, x in enumerate(rest) if x is sc[close])
+            content["scope"] = rest[:ci] + late + rest[ci:]
     # A survey the facts call optional or conditional is not a task.
     if any(re.search(r"(?i)survey.{0,60}\b(optional|contingent|if needed|as needed|if required|probably not|not needed|may not)\b|"
                      r"\b(optional|contingent)\b.{0,40}survey", f["text"]) for f in fs):
