@@ -578,6 +578,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                             if f["section"] in ("scope_of_work", "customer_responsibilities",
                                                                 "assumptions", "out_of_scope")][:40])
     fixed = purtera_standards(family)
+    # Visible in every SOW: an install without the library wrote with none and
+    # nothing failed (the data files were not shipped).
+    library_counts = {"library_items": sum(len(v) for v in std.values()), "standards_items": sum(len(v) for v in fixed.values())}
     pick = lambda *secs: json.dumps({**{k: std.get(k, []) for k in secs},
                                      **{f"purtera_standard_{k}": fixed[k] for k in secs if fixed.get(k)}})
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -631,6 +634,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     _apply_standards(content, family)
     _tidy(content)
+    content.update(library_counts)
     content["facts_given"] = len(fs)
     return content
 
