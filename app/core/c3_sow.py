@@ -91,7 +91,7 @@ _BASE = (
 _PARTS = {
     "header": (
         "TASK: the SOW header. Return {\"job_family\": one of " + ", ".join(FAMILIES) + ", \"project_name\": PurTera's title (end customer + work + place, e.g. \"<End Customer> "
-        "<Work> <Place>\"), \"end_customer\": who the work is for, from a request form, a site sheet header, a "
+        "<Work> <Place>\"), \"end_customer\": who the work is for, from a request form, a site sheet header or file title, a "
         "signature or the CRM deal name, or \"\"; never a name taken from an email address's domain, \"services\": [implementation for installs; "
         "reinstallation for a replacement or refresh of existing devices; custom_work for decommission, packing or "
         "relocation; staff_augmentation and support for ongoing or on-call IT support and smart hands; assessment for "
@@ -527,7 +527,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     brief = envelope.get("c3_brief") or {}
     crm = envelope.get("crm") or {}
     crm_rec = {"deal_name": crm.get("deal_name") or (brief.get("deal") or {}).get("deal_name"),
-               "account_name": crm.get("account_name") or (brief.get("deal") or {}).get("account_name")}
+               "account_name": crm.get("account_name") or (brief.get("deal") or {}).get("account_name"),
+               # A file's own name can be the only place the end customer is
+               # written (000123: "Bevmo locations 1.txt").
+               "document_titles": sorted({re.sub(r"^\d{6}-(hs|fireflies)-[\w-]*?-", "", str(d.get("filename") or ""))[:80]
+                                          for d in envelope.get("documents") or [] if d.get("filename")})[:25]}
     contacts = [c.get("line") for c in brief.get("contacts") or [] if c.get("line")][:12]
     sites = _sites(envelope, pm_handoff)
     rows = len([x for x in (brief.get("sections") or {}).get("contacts") or [] if x.get("type") == "physical_site"])
