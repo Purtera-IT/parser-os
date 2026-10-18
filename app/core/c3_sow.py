@@ -785,7 +785,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["scope"] = [x for i, x in enumerate(sc)
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
-    _apply_standards(content, family)
+    _apply_standards(content, family, [f["text"] for f in fs])
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     # An unanswered question is not a fact: a bullet cited only to open
@@ -1136,7 +1136,7 @@ def _said(text: str, items: list[Any], share: float = 0.5) -> bool:
                               for x in items)
 
 
-def _apply_standards(content: dict[str, Any], family: str) -> int:
+def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str] | None = None) -> int:
     """Write PurTera's fixed handling of the job type (purtera_standards.json)
     into the SOW. Offered to the writer as hints they came back missing,
     paraphrased or out of order (010115 rounds 12-14), so the standards are the
@@ -1145,8 +1145,26 @@ def _apply_standards(content: dict[str, Any], family: str) -> int:
     date or name of its own: the deal's facts stay)."""
     fixed = purtera_standards(family)
     n = 0
+    # A standard item a deal fact contradicts is not written (the file's own
+    # rule): 010120's survey says the TVs stay in place, and the AV standards
+    # wrote "mount each display" and plywood backing.
+    stays = " ".join(str(f) for f in facts_text if re.search(r"(?i)\b(stay|stays|remain|remains|no change|left in place|"
+                                                                r"keep (the )?existing|not (be )?(moved|replaced|removed))\b", str(f))).lower()
+    def contradicted(t: str) -> bool:
+        if not stays:
+            return False
+        nouns = {w for w in re.findall(r"[a-z]+", t.lower()) if w in ("display", "displays", "tv", "tvs", "mount", "mounts", "backing",
+                                                                       "monitor", "monitors", "speaker", "speakers", "camera",
+                                                                       "cameras", "rack", "switch", "switches", "phone", "phones")}
+        verbs = re.search(r"(?i)\b(mount|install|remove|replace|relocate|backing|dismantle)", t)
+        groups = [r"display|tv|television|monitor|screen", r"mount|bracket", r"speaker", r"camera", r"rack",
+                  r"switch", r"phone|handset"]
+        pats = [g for g in groups if any(re.fullmatch(r"(?:" + g + r")s?", n) for n in nouns)]
+        if re.search(r"(?i)backing|wall mount", t):
+            pats.append(groups[0])  # backing and wall mounts exist for the displays
+        return bool(nouns and verbs and any(re.search(r"\b(?:" + g + r")(?:'?s)?\b", stays) for g in pats))
     for sec, lst in _STD_LIST.items():
-        std = [{"text": t, "cites": [], "kind": "method", "standard": True} for t in fixed.get(sec) or []]
+        std = [{"text": t, "cites": [], "kind": "method", "standard": True} for t in fixed.get(sec) or [] if not contradicted(t)]
         if not std:
             continue
         items = content.setdefault(lst, [])
@@ -1155,6 +1173,8 @@ def _apply_standards(content: dict[str, Any], family: str) -> int:
             if not isinstance(x, dict) or x.get("kind") == "heading" or x.get("standard"):
                 return False
             t = str(x.get("text"))
+            if x.get("cites") and re.search(r"(?i)\b(stay|remain|retain|except|unless|existing|reuse|no|not)\b", t):
+                return False  # a deal line carrying an exception is never a duplicate of a standard
             return (lst != "scope" or not re.search(r"\d", t)) and _said(t, std, share)
         items[:] = [x for x in items if not covered(x) and not (isinstance(x, dict) and x.get("standard"))]
         n += len(std)
