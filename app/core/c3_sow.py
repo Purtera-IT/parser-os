@@ -1653,6 +1653,27 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         for x in content.get("scope") or []:
             if isinstance(x, dict) and re.match(r"(?i)\s*provide and install\b", str(x.get("text"))):
                 x["text"] = re.sub(r"(?i)^\s*provide and install", "Install", str(x["text"]))
+    # Customer duties are the customer's: a Provider action moves to scope, an
+    # open question or the quote's approval route goes (010082: 21 duties with
+    # 5 provider tasks, 2 questions and the sign-off route).
+    keep_cr = []
+    for x in content.get("customer_responsibilities") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if t.rstrip().endswith("?") or re.search(r"(?i)\b(quote|pricing|proposal|purchase order|po)\b.{0,40}\b(approv|sign|review)|\b(approv|sign)\w*\b.{0,30}\b(quote|pricing|proposal)\b", t):
+            continue
+        if isinstance(x, dict) and re.match(r"(?i)\s*(provider|technician|tech|purtera|our tech)s? (will|to|shall|must)\b", t):
+            x["text"] = re.sub(r"(?i)^\s*(provider|technician|tech|purtera|our tech)s? (will|to|shall|must)\s+", "", t)
+            x["text"] = x["text"][:1].upper() + x["text"][1:]
+            sc = content.setdefault("scope", [])
+            close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                          and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
+            if not _said(x["text"], sc, 0.6):
+                sc.insert(close, x)
+            continue
+        if _said(t, keep_cr, 0.7):
+            continue
+        keep_cr.append(x)
+    content["customer_responsibilities"] = keep_cr
     # Site hours are the template's business-hours line, not a customer duty.
     content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                             if not re.search(r"(?i)\b(operates|open|hours)\b.{0,30}monday.{0,15}friday", str(x.get("text") if isinstance(x, dict) else x))]
