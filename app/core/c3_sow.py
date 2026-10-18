@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from app.core.c3_brief import _complete, _dated, _json_of, strip_cites
@@ -58,6 +59,10 @@ STANDING = (
     "cancellation and reschedule fees; quote validity; tax; rates in USD."
 )
 
+#: Job families and the families whose standard items also fit them.
+FAMILIES = ("low_voltage_cabling", "wireless_ap", "cameras_security", "av_conference_room", "pos_install_refresh",
+            "network_switch_refresh", "decommission_packing", "relocation_move", "time_clock_kiosk",
+            "smart_hands_general", "data_center", "site_survey", "imac_deskside", "other")
 _BASE = (
     "You write part of the deal-specific content of a PurTera Statement of Work (SOW). PurTera (\"Provider\") does "
     "the field work. The CRM account is who PurTera contracts with (a reseller such as CDW or SHI, or the customer "
@@ -70,7 +75,10 @@ _BASE = (
     "a line. WHO: in a line written by the reseller or PurTera, \"we/us\" is the side doing the work (\"he will need us to <do the work>\" = Provider does it); in a line written by the customer or under a customer heading "
     "(\"Customer notes:\"), \"we\" is the customer (\"We will <do X>\" = the customer does X). A request "
     "form asking the reseller to provide materials (\"<reseller> to provide <items>\") means Provider "
-    "supplies them. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
+    "supplies them. In a question-and-answer email the ANSWER is the fact (\"... ? [Betty] After hours, no weekends\"); "
+    "the latest answer wins. What the customer has today or had before is context, never work to do: scope is the new "
+    "work. A request phrased as a wish or a question (\"I would also like to add <X>\", \"can you also <do Y>?\") is "
+    "scope. The customer saying \"I will provide <X>\" means the Customer supplies <X>. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
     "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
     "A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
     "email banners and signature blocks. Never write a price, rate or dollar amount, never mention the CRM, ids or "
@@ -80,7 +88,7 @@ _BASE = (
 
 _PARTS = {
     "header": (
-        "TASK: the SOW header. Return {\"project_name\": PurTera's title (end customer + work + place, e.g. \"<End Customer> "
+        "TASK: the SOW header. Return {\"job_family\": one of " + ", ".join(FAMILIES) + ", \"project_name\": PurTera's title (end customer + work + place, e.g. \"<End Customer> "
         "<Work> <Place>\"), \"end_customer\": who the work is for, from a request form, a site sheet header, a "
         "signature or the CRM deal name, or \"\", \"services\": [implementation for installs; custom_work for "
         "decommission, packing, smart-hands or labor-only support], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
@@ -92,9 +100,14 @@ _PARTS = {
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is; empty when no "
         "fact gives one]}"),
     "scope": (
+        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (method steps, tools, deliverables PurTera writes on such jobs; "
+        "use, as kind method, every one that fits THIS job's facts, reworded to them, never one the facts contradict "
+        "or one about work this job does not include): %s\n"
         "TASK: the task list. Return {\"scope_lead\": one line introducing the tasks (\"Provider will dispatch <N> (<n>) <trade> "
         "technicians to perform the following:\"; a count only when a fact states the staffing, never "
-        "from meeting attendees), \"scope\": [the tasks in the order the work is done: arrive and check in; each "
+        "from meeting attendees), \"scope\": [group the tasks under short headings, one per area, system or room (an item "
+        "{\"text\": \"<Heading>\", \"kind\": \"heading\", \"cites\": []} of at most six words, then that group's tasks); "
+        "the tasks in the order the work is done: arrive and check in; each "
         "piece of work with its counts, lengths and locations kept together (\"<location>: approximately <N> ft\"); "
         "routing, termination, mounting and testing; when runs end at an IDF or rack, terminate and connect them "
         "there; cleanup; completion confirmed with the onsite contact. When the request says assist the customer's "
@@ -102,6 +115,8 @@ _PARTS = {
         "\"deliverables\": [{\"item\": \"Work Completion Report\", \"description\": [the finished outcomes with their "
         "counts], \"format\": \"PDF\"}]}"),
     "supply": (
+        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (tools Provider brings; customer duties PurTera writes on such "
+        "jobs; use those that fit THIS job's facts, never one the facts contradict): %s\n"
         "TASK: who supplies what. Return {\"provider_materials\": [materials Provider supplies, one item each, each "
         "citing the fact that assigns it], \"provider_tools\": [tools Provider brings; standard hand tools may be "
         "uncited], \"customer_materials\": [equipment and materials the customer or end customer supplies, each "
@@ -109,6 +124,9 @@ _PARTS = {
         "\"customer_responsibilities\": [duties a fact gives the customer or end customer, e.g. providing an "
         "escort, a staging area, packing materials, directions; never power or PoE, which is an assumption]}"),
     "bounds": (
+        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (assumptions and exclusions PurTera writes on such jobs; use "
+        "every one that fits THIS job, reworded to it, never one that excludes work the draft includes or contradicts "
+        "a fact): %s\n"
         "TASK: assumptions and exclusions, written against the DRAFT below so they never contradict it. The template "
         "already prices after-hours, weekend and holiday work and travel, and already states business hours, "
         "billing and cancellation terms: never repeat or exclude those. Return {\"assumptions\": [5-10 conditions "
@@ -167,6 +185,50 @@ _STAFF = re.compile(r"\b(\d+|%s)\b(\s*\(\d+\))?\s+(\w+\s+)?(technicians?|techs?|
 #: Words a method bullet may capitalise without a fact naming them.
 _STOCK = frozenset("""provider customer the a an all any each this these those cat5 cat5e cat6 cat6a rj45 idf mdf
 poe ups av it pos sow pm pmo onsite on-site usb hdmi vesa wi-fi wifi tv tvs ap aps lan wan ip coi""".split())
+
+
+_NEIGHBOURS = {
+    "cameras_security": ("low_voltage_cabling", "wireless_ap"),
+    "pos_install_refresh": ("smart_hands_general", "imac_deskside"),
+    "time_clock_kiosk": ("smart_hands_general", "low_voltage_cabling"),
+    "network_switch_refresh": ("data_center", "smart_hands_general"),
+    "decommission_packing": ("smart_hands_general", "relocation_move"),
+    "relocation_move": ("data_center", "smart_hands_general"),
+    "site_survey": ("wireless_ap",),
+    "imac_deskside": ("smart_hands_general",),
+    "wireless_ap": ("low_voltage_cabling",),
+    "data_center": ("smart_hands_general",),
+    "other": ("smart_hands_general",),
+}
+_BOILERPLATE = re.compile(r"(?i)business hours|cancel|reschedul|change order|out of scope\b.*not specified|not expressly|"
+                          r"billed|invoice|travel|purchase order|\bPMO\b|standardized report|point of contact for the project")
+LIBRARY_ITEMS = int(os.environ.get("SOWSMITH_C3_SOW_LIBRARY_ITEMS", "18"))
+
+
+def _library() -> dict[str, Any]:
+    try:
+        return json.loads((Path(__file__).parent / "sow_method_library.json").read_text())
+    except Exception:
+        return {}
+
+
+def standard_items(family: str, deal_no: str = "") -> dict[str, list[str]]:
+    """PurTera's standard items for a job family, from its own past SOWs (each
+    item written on two or more deals): the method steps, tools and terms a PM
+    writes from experience, which no deal line states. An item only this deal's
+    own SOW wrote is left out, so a deal is never written from its own answer."""
+    lib = _library()
+    out: dict[str, list[str]] = {}
+    for fam in (family,) + _NEIGHBOURS.get(family, ()):
+        for sec, items in (lib.get(fam) or {}).items():
+            for it in items:
+                deals = [d for d in it.get("deals") or [] if d != deal_no]
+                if not deals or _BOILERPLATE.search(it["text"]):
+                    continue
+                lst = out.setdefault(sec, [])
+                if it["text"] not in lst and len(lst) < LIBRARY_ITEMS:
+                    lst.append(it["text"])
+    return out
 
 
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
@@ -284,14 +346,23 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     site_info = {"count_in_site_lists": max(rows, len(sites)), "sites": sites[:15]}
     base = _BASE % (json.dumps(crm_rec), json.dumps(site_info), json.dumps(contacts),
                     "\n".join(_fact_line(f) for f in fs))
-    got: dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futs = {k: pool.submit(_complete, base + _PARTS[k], model, 3500) for k in ("header", "scope", "supply")}
-        for k, fut in futs.items():
-            got.update(_json_of(fut.result()) or {})
+    got: dict[str, Any] = dict(_json_of(_complete(base + _PARTS["header"], model, 3500)) or {})
+    family = str(got.get("job_family") or "other")
+    family = family if family in FAMILIES else "other"
+    deal_no = (re.match(r"\s*(\d{6})", str(crm_rec.get("deal_name") or "")) or [None, ""])[1]
+    std = standard_items(family, deal_no)
+    pick = lambda *secs: json.dumps({k: std.get(k, []) for k in secs})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f_scope = pool.submit(_complete, base + _PARTS["scope"] % pick("method_steps", "deliverables"), model, 4000)
+        f_supply = pool.submit(_complete, base + _PARTS["supply"] % pick("tools", "customer_responsibilities"),
+                               model, 3000)
+        for fut in (f_scope, f_supply):
+            got.update({k: v for k, v in (_json_of(fut.result()) or {}).items() if k != "job_family"})
     draft = {k: [str((x or {}).get("text") if isinstance(x, dict) else x) for x in got.get(k) or []]
              for k in ("overview", "scope", "provider_materials", "customer_materials", "customer_responsibilities")}
-    got.update(_json_of(_complete(base + _PARTS["bounds"] % json.dumps(draft)[:10000], model, 2500)) or {})
+    got.update(_json_of(_complete(base + _PARTS["bounds"] % (pick("assumptions", "exclusions"),
+                                                              json.dumps(draft)[:10000]), model, 3000)) or {})
+    got["job_family"] = family
     content = _normalise(got)
     content["overview"] = content["overview"][:4]
     pool_text = " ".join(f["text"] for f in fs).lower()
@@ -471,13 +542,14 @@ def _item(x: Any) -> dict[str, Any] | None:
     text = re.sub(r"\s*[\(\[]?\b(?:atm|pmq|ent|q|declared_scope)_[0-9A-Za-z_]+(?:\s*,\s*(?:atm|pmq|ent|q|declared_scope)_[0-9A-Za-z_]+)*[\)\]]?", "", text)
     # "(Provider responsibility)" tags: the list says whose it is.
     text = re.sub(r"\s*\((?:provider|customer|end customer)(?: duty| responsibility)?[^)]*\)", "", text, flags=re.I)
+    kind = str(x.get("kind"))
     return {"text": re.sub(r"\s+", " ", text).strip(), "cites": cites,
-            "kind": "fact" if str(x.get("kind")) == "fact" else "method"}
+            "kind": kind if kind in ("fact", "heading") else "method"}
 
 
 def _normalise(got: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {k: got.get(k) or "" for k in ("project_name", "end_customer", "scope_lead",
-                                                          "pricing_model")}
+                                                          "pricing_model", "job_family")}
     out["services"] = [str(s).strip().lower() for s in got.get("services") or [] if str(s).strip()]
     for k in LISTS:
         out[k] = [i for i in (_item(x) for x in got.get(k) or []) if i]
@@ -504,6 +576,10 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     for k in LISTS:
         keep = []
         for i, x in enumerate(content.get(k) or []):
+            if x["kind"] == "heading":
+                if k == "scope" and len(x["text"].split()) <= 7:
+                    keep.append(x)
+                continue
             x["cites"] = [c for c in x["cites"] if c in lines]
             if x["kind"] == "fact" and not x["cites"]:
                 # A deal claim with nothing behind it reads as method only if
