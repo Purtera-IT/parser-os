@@ -16,6 +16,8 @@ PM. Nothing is deleted: the kept row lists every row folded into it under
 """
 from __future__ import annotations
 
+import os
+
 import re
 from typing import Any
 
@@ -164,7 +166,14 @@ def merge_roster(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]
 #: center") put five such places on both rosters; the base read those lines as
 #: small_talk / stakeholder / deal_metadata (<= 0.65 site), and every real
 #: address line as physical_site at 0.73-1.00.
-MENTION_SITE_BAR = 0.7
+# A site line at this bar; at MENTION_SITE_FLOOR when nothing on the row reads
+# more surely as something else. 0.7 alone overrode the head's own top answer on
+# 000132's "Delphos, OH" (0.56) and "Troy, MI" (0.53).
+MENTION_SITE_BAR = float(os.environ.get("SOWSMITH_MENTION_SITE_BAR", "0.7"))
+#: Between this and MENTION_SITE_BAR a site read counts when no other line of
+#: the row reads more surely as something else (010082's "Easterling, 600":
+#: physical_site 0.65 beside small_talk 0.71 stays out).
+MENTION_SITE_FLOOR = float(os.environ.get("SOWSMITH_MENTION_SITE_FLOOR", "0.5"))
 #: A line a rule flagged as a vendor's or sender's address (email signature)
 #: counts as a site line only above this. On 010038 four of six roster rows
 #: were signature addresses (CDW Chicago, SG Buford ...): rows that had a
@@ -198,12 +207,21 @@ def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
             t, p = line_types[i]
             if t != "physical_site":
                 continue
-            vendor = "vendor_address_suspected" in (flags.get(i) or [])
+            # A bare "City, ST" in a list of the deal's locations has no street
+            # to be a signature's: 000132's internal "Locations" note was flagged
+            # vendor and held to the signature bar.
+            _fl = flags.get(i) or []
+            vendor = "vendor_address_suspected" in _fl and "city_site_list" not in _fl
             if vendor and signature:
                 continue
             bar = VENDOR_SITE_BAR if vendor else MENTION_SITE_BAR
             if float(p or 0) >= bar:
                 best = max(best, float(p or 0))
+            elif not vendor and float(p or 0) >= MENTION_SITE_FLOOR:
+                other = max((float(q or 0) for j in ids for (u, q) in [line_types[j]] if u != "physical_site"),
+                            default=0.0)
+                if float(p or 0) > other:
+                    best = max(best, float(p or 0))
         if best:
             kept.append(r)
         else:
