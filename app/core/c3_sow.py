@@ -2441,6 +2441,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         head, sep, rest = nm.partition(" — ")
         if sep and rest and (rest.split(",")[0].strip().lower() in str(x.get("address") or "").lower()):
             x["name"] = head.strip()
+    for x in c["sites"]:  # 010198: a blank name left the Location cell empty
+        if not str(x.get("name") or "").strip():
+            x["name"] = str(x.get("address") or "")
     if len(c["sites"]) == 1:
         site_words = _toks(" ".join(str(c["sites"][0].get(k) or "") for k in ("name", "address")))
         c["scope"] = [x for x in c.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") == "heading"
