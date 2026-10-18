@@ -65,14 +65,19 @@
     "assumptions": [
       "Cable management is required.",
       "Functional testing will be performed before the technician leaves the site.",
-      "Onsite parking is available; any parking fee is reimbursable."
+      "Onsite parking is available; any parking fee is reimbursable.",
+      "No construction, wall modification or electrical work is required at any site."
     ],
     "exclusions": [
       "Disposal, recycling, shipping or offsite removal of legacy equipment.",
       "Inventory reconciliation beyond basic identification of the equipment for the installation.",
       "POS application programming (menus, product database, pricing or tax configuration).",
       "Troubleshooting or repair of the customer's internet service provider infrastructure.",
-      "Return visits caused by missing equipment, unavailable site access or contacts, or customer-directed schedule changes."
+      "Return visits caused by missing equipment, unavailable site access or contacts, or customer-directed schedule changes.",
+      "Hardware, software or accessory procurement.",
+      "Electrical or low-voltage cabling work.",
+      "Core drilling, wall construction or structural modification.",
+      "Repair or replacement of defective customer equipment."
     ],
     "deliverable_outcomes": [
       "Installed devices connected, powered and functionally tested.",

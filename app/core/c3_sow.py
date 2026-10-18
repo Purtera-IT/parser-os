@@ -1667,6 +1667,9 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
                                      if not re.search(r"(?i)console|tester|troubleshoot|network|crimp|punch|toner", tx(x))]
         content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if (isinstance(x, dict) and x.get("standard"))
                                    or not re.search(r"(?i)lift|network|firewall|switch|cloud|licens|core drill|portal", tx(x))]
+    if fam == "pos_install_refresh":  # 000123: uncited "basic troubleshooting" filler
+        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("cites")
+                            and not x.get("standard") and re.search(r"(?i)troubleshoot", tx(x)))]
     if fam in oos_not:
         content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if (isinstance(x, dict) and (x.get("standard") or x.get("cites")))
                                    or not re.search(oos_not[fam], tx(x))]
