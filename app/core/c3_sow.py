@@ -391,9 +391,19 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     for a in envelope.get("atoms") or []:
         lab = (a.get("structured") or {}).get("c3_label") or {}
         txt = str(a.get("text") or "")
-        if (a.get("id") in seen or lab.get("type") not in _SCOPE_TYPES or float(lab.get("p") or 0) < TYPED_BAR
+        # When the type head abstains (_keep), the parser's own scope type
+        # stands at a looser bar: 010171's "We would like to have the Logitech
+        # Sight installed in this specific room" (_keep 0.39, parsed scope_item).
+        abstained = lab.get("type") == "_keep" and str(a.get("atom_type") or "") in ("scope_item", "task", "requirement")
+        if (a.get("id") in seen or (lab.get("type") not in _SCOPE_TYPES and not abstained)
+                or float(lab.get("p") or 0) < (0.35 if abstained else TYPED_BAR)
                 or not 15 < len(txt) < 600 or _CHATTER.search(txt.strip()) or txt.count("|") >= 2
-                or re.search(r"(?i)unsubscribe|book time|my calendar|confidential", txt) or "fireflies" in docs.get(str(a.get("artifact_id") or ""), "")
+                or re.search(r"(?i)unsubscribe|book time|my calendar|confidential|don.t often get email|"
+                             r"external sender|contents of this email|intended only for|^(start|end|recorded-at|url|"
+                             r"join-url|location|title|organizer|attendees|subject|from|to|sent)\s*:|https?://|"
+                             r"^(hey|hi|hello|thanks|happy to|u the best|looping in)\b", txt.strip())
+                or re.search(r"(?i)^\[ocr|^enter .* here$|\|\s*$|rolled up\)|^\d+(\.\d+)*\s+[A-Z]", txt.strip())
+                or (abstained and len(txt) < 25) or "fireflies" in docs.get(str(a.get("artifact_id") or ""), "")
                 or "transcript" in docs.get(str(a.get("artifact_id") or ""), "").lower()):
             continue
         typed.append((float(lab.get("p") or 0), {"id": a["id"], "text": txt}))
