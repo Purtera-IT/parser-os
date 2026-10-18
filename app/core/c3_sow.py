@@ -2260,6 +2260,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     dn = re.sub(r"(?i)\s+w/\s*\w+.*$|\s+with\s+[A-Z][a-z]+$", "", dn).strip()  # "161 Site POS install w/ Ahmed"
     dn = re.sub(r"\s+-(\d+)\b", r" \1", dn)  # "NYC -48 monitor mounting"
     rq = str((c.get("requested_by") or {}).get("name") or "").strip()
+    # The rep named at the end of the deal name, after the reseller, is who asked
+    # (010012: "CFGI - Conference Room Install CDW Frank Lapp", Requested By TBD).
+    m_rep = re.search(r"\s+(?i:cdw|shi|insight|presidio|computacenter)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z'-]+){1,2})\s*$", dn)
+    if m_rep:
+        if not rq:
+            c["requested_by"] = {**(c.get("requested_by") or {}), "name": m_rep.group(1)}
+        dn = dn[:m_rep.start()].strip(" -–")
     if rq and rq.lower() in dn.lower():
         dn = re.sub(r"\s*[-–]?\s*" + re.escape(rq) + r"\s*", " ", dn, flags=re.I).strip(" -–")  # "... Dan Tighe"
     if len(dn.split()) >= 2:
