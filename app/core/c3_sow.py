@@ -2028,7 +2028,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 r0 = roster[0]
                 rows.append({"name": place, "city": r0.get("city") or "", "address": r0.get("address") or "",
                              "street": r0.get("street") or r0.get("address") or "", "state": r0.get("state") or "",
-                             "postal_code": r0.get("postal_code") or ""})
+                             "postal_code": r0.get("postal_code") or "", "_named": True})
                 continue
             zipped = [r for r in roster if re.search(r"\b\d{5}\b", f"{r.get('address')} {r.get('postal_code')}")]
             if len(roster) == 1 and zipped and not re.search(r"\b\d{5}\b", t) and \
@@ -2055,6 +2055,17 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
             key = " ".join(re.sub(r"\W+", " ", str(r0.get("address") or r0.get("name") or "").lower()).split()[:3])
             if key and not any(key in re.sub(r"\W+", " ", f"{r.get('address')} {r.get('name')}".lower()) for r in rows):
                 rows.append(dict(r0))
+        # One row per address: a named place inside the site and the roster row
+        # for the same street are one location (010115 printed both).
+        by_addr: dict[str, dict] = {}
+        for r in rows:
+            k = " ".join(re.sub(r"\W+", " ", str(r.get("address") or r.get("name") or "").lower()).split()[:4])
+            if k in by_addr:
+                if r.get("_named") and not by_addr[k].get("_named"):
+                    by_addr[k] = r
+            else:
+                by_addr[k] = r
+        rows = [{kk: vv for kk, vv in r.items() if kk != "_named"} for r in by_addr.values()]
         c["sites"] = rows
     # The project is named as the deal is: PurTera's v1 titles are the CRM deal
     # name without its number and the reseller ("010115 - CDW Sodexo Decomm
