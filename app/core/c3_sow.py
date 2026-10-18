@@ -1469,7 +1469,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
 
 
 _ACCESS = re.compile(r"(?i)\b(badges?|parking|pass(es)?|escort|keys?|access cards?)\b")
-_LEDGER = re.compile(r"(?i)tax[- ]exempt|cost cent(er|re)|\bcorp(orate)? service\b|\bsegment\b|\bgl code\b|"
+_LEDGER = re.compile(r"(?i)tax[- ]exempt|tax status|\bexempt\b|cost cent(er|re)|\bcorp(orate)? service\b|\bsegment\b|\bgl code\b|"
                      r"request date|\bSR ?#|unified sr|\bproject name\s*:|\bticket\s*#")
 _FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination"),
                      "pos_install_refresh": re.compile(r"(?i)network testing|validation tools|certifier|toner"),
@@ -1665,6 +1665,19 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # The template already has "Ensure all customer-provided equipment is on site".
     cr[:] = [c for c in cr if (isinstance(c, dict) and c.get("standard"))
              or not re.search(r"(?i)customer[- ]provided equipment.{0,40}on ?site|equipment is on ?site and available", tx(c))]
+    # The site, not Provider, hands the technician credentials, badges or passes
+    # (010115: a passive "must be provided with credentials" read as Provider's).
+    for k in ("arrival_protocol", "scope"):
+        moved = [x for x in content.get(k) or [] if isinstance(x, dict) and re.match(
+            r"(?i)\s*provider (provides|issues|will provide|supplies)\b.{0,40}\b(credentials?|badges?|passes?|access cards?)", tx(x))]
+        for x in moved:
+            content[k].remove(x)
+            x["text"] = re.sub(r"(?i)^\s*provider (provides|issues|will provide|supplies)", "Provide", tx(x))
+            if not _said(tx(x), cr, 0.5):
+                cr.append(x)
+    # Standard 8-5 site hours repeat the template's Business Hours line.
+    content["assumptions"] = [a for a in content.get("assumptions") or [] if (isinstance(a, dict) and a.get("standard"))
+                              or not re.search(r"(?i)monday.{0,15}friday.{0,30}8:?0?0?\s*(am|a\.m\.).{0,10}5:?0?0?\s*(pm|p\.m\.)", tx(a))]
     # The template already asks for a point of contact.
     content["customer_responsibilities"] = [c for c in cr if not re.search(r"(?i)point of contact|onsite contact for", tx(c))
                                             and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
