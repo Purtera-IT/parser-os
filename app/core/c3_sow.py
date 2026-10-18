@@ -260,6 +260,18 @@ def purtera_standards(family: str) -> dict[str, list[str]]:
     return {k: [str(t) for t in v] for k, v in fam.items() if not k.startswith("_") and isinstance(v, list)}
 
 
+_WHEN = re.compile(r"^\{when:([^}]+)\}\s*")
+
+
+def _standard_applies(t: str, facts_text: list[str]) -> tuple[bool, str]:
+    """A standard item may carry "{when:<regex>}": written only when a deal fact matches."""
+    m = _WHEN.match(t)
+    if not m:
+        return True, t
+    pat = re.compile(m.group(1), re.I)
+    return any(pat.search(f) for f in facts_text), t[m.end():]
+
+
 LIBRARY_PER_SECTION = {"tools": 6}
 LIBRARY_DEFAULT = int(os.environ.get("SOWSMITH_C3_SOW_LIBRARY_PICK", "8"))
 
@@ -778,6 +790,28 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                 sched.append({"text": f"Requested Completion Date: {m.group(2)}", "cites": [f["id"]], "kind": "fact"})
                 break
     _reseller_supplies(content, fs)
+    # Every member of the customer's ship-out list is customer-provided
+    # material (000123: "we'd ship out: ... Printer" and the printer vanished).
+    cm = content.setdefault("customer_materials", [])
+    # Short item lines right beside a cited customer-provided item, in the
+    # same document, are its list siblings (000123: "Printer", "Credit card
+    # reader (pin pad)" beside "Samsung Tablet"; the keep head left them out).
+    atoms = envelope.get("atoms") or []
+    pos = {str(a.get("id")): (str(a.get("artifact_id") or ""), a.get("order")) for a in atoms}
+    anchors = [pos.get(c) for x in cm if isinstance(x, dict) for c in x.get("cites") or [] if pos.get(c)]
+    for a in atoms:
+        t = str(a.get("text") or "").strip()
+        art, order = str(a.get("artifact_id") or ""), a.get("order")
+        if not t or len(t) > 60 or re.search(r"[.!?]\s|\b(will|we|you|please)\b", t, re.I):
+            continue
+        if any(art == aa for aa, _oo in anchors) and not _said(t, cm, 0.6) \
+                and re.fullmatch(r"(?i)[\w\s()/+&.-]{3,60}", t) \
+                and re.search(r"(?i)\b(printer|reader|pin ?pad|scanner|cash drawer|tablet|terminal|stand|hub|cords? for|cables?)\b", t):
+            cm.append({"text": t, "cites": [str(a.get("id"))], "kind": "fact"})
+    for f in fs:
+        if re.search(r"(?i)we'?d ship( out)?|we (will|'ll) (ship|provide)|customer (will )?provide|provided by (the )?customer|ship(ping)? out", f.get("under") or "") \
+                and len(f["text"]) <= 120 and not _said(f["text"], cm, 0.6):
+            cm.append({"text": f["text"].strip().rstrip(".") , "cites": [f["id"]], "kind": "fact"})
     # A customer duty cannot rest only on what PurTera itself wrote (010217:
     # Trent's sales intro "deep familiarity with Certinia, Agiloft" became a
     # CDW responsibility).
@@ -1204,7 +1238,11 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             pats.append(groups[0])  # backing and wall mounts exist for the displays
         return bool(nouns and verbs and any(re.search(r"\b(?:" + g + r")(?:'?s)?\b", stays) for g in pats))
     for sec, lst in _STD_LIST.items():
-        std = [{"text": t, "cites": [], "kind": "method", "standard": True} for t in fixed.get(sec) or [] if not contradicted(t)]
+        std = []
+        for t0 in fixed.get(sec) or []:
+            ok, t = _standard_applies(t0, facts_text or [])
+            if ok and not contradicted(t):
+                std.append({"text": t, "cites": [], "kind": "method", "standard": True})
         if not std:
             continue
         items = content.setdefault(lst, [])
@@ -1240,7 +1278,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         items[close]["text"] = "Closeout"
         items[:] = [x for i, x in enumerate(items) if not (i > close and isinstance(x, dict) and x.get("kind") == "heading"
                     and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text"))))]
-    outcomes = fixed.get("deliverable_outcomes") or []
+    outcomes = [t for ok, t in (_standard_applies(o, facts_text or []) for o in fixed.get("deliverable_outcomes") or []) if ok]
     if outcomes:
         dl = content.setdefault("deliverables", [])
         if not dl:

@@ -175,8 +175,8 @@
     "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list",
     "method_steps": [
       "Review each intended display mounting location with the onsite contact before installation.",
-      "Inspect existing display mounts and confirm they suit the new display size, weight and VESA pattern before reuse.",
-      "Install plywood backing as required to securely support each wall mount.",
+      "{when:existing (display )?mount|reuse|re-use} Inspect existing display mounts and confirm they suit the new display size, weight and VESA pattern before reuse.",
+      "{when:existing (display )?mount|reuse|re-use} Install plywood backing as required to securely support each wall mount.",
       "Mount each display at the approved location and height.",
       "Dress and secure accessible cabling associated with each display.",
       "Connect accessible power where a Customer-provided power source is available.",
