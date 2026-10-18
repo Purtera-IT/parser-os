@@ -1095,10 +1095,14 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     if len(runs) >= 2:
         content["assumptions"] = [x for x in content.get("assumptions") or [] if not (isinstance(x, dict) and not x.get("cites")
                                   and re.search(r"(?i)cable runs? (are|is|will be) (under|less than|not exceed)", str(x.get("text"))))]
-    if len(runs) >= 2 and not any(re.search(r"(?i)cable runs? (are|is) under", str(x.get("text"))) for x in content.get("assumptions") or []):
+    # Any line already bounding the runs is the bound (010082: "will be no more
+    # than 100 ft" plus a derived "under 150 feet").
+    bound = re.compile(r"(?i)(no more than|under|less than|not (to )?exceed|maximum|max\.?|up to)\s*\d{2,4}\s*(ft|feet|')")
+    if len(runs) >= 2 and not any(bound.search(str(x.get("text") if isinstance(x, dict) else x))
+                                  for k in ("assumptions", "scope") for x in content.get(k) or []):
         cap = -(-max(runs) // 50) * 50
-        cap = cap + 50 if cap == max(runs) else cap
-        content.setdefault("assumptions", []).append({"text": f"All cable runs are under {cap} feet.", "cites": [], "kind": "method"})
+        text = f"All cable runs are no more than {cap} feet." if cap == max(runs) else f"All cable runs are under {cap} feet."
+        content.setdefault("assumptions", []).append({"text": text, "cites": [], "kind": "method"})
     if not content.get("overview"):
         # Never an empty Project Summary: the request's own description of the
         # work (010115 round 17 printed the heading with nothing under it).
