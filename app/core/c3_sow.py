@@ -1052,7 +1052,8 @@ def _tidy(content: dict[str, Any]) -> None:
             if not _said(line, cr, 0.5):
                 cr.append({"text": line, "cites": x.get("cites") or [] if isinstance(x, dict) else [], "kind": "fact"})
             continue
-        if not t or _LEDGER.search(t) or _said(t, cr, 0.5) or _said(t, asm, 0.7):
+        std = isinstance(x, dict) and x.get("standard")
+        if not t or _LEDGER.search(t) or (not std and _said(t, cr, 0.5)) or _said(t, asm, 0.6):
             continue
         t = t[:1].upper() + t[1:]
         if isinstance(x, dict):
@@ -1077,6 +1078,42 @@ def _tidy(content: dict[str, Any]) -> None:
            for x in content.get("scope") or []):
         content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
                             and x.get("kind") != "heading" and re.match(r"(?i)\s*(arrive\b.*\band\s+)?meet\b", tx(x)))]
+    # Schedule: only its labeled lines once start and end dates are there (the
+    # form's raw "Timeline/Schedule: 8/8 and 8/7" contradicted them, 010115).
+    labels = ("requested start date", "requested completion date", "arrival time", "work window",
+              "number of resources", "hardware quantity")
+    sched = content.get("schedule") or []
+    if sum(1 for x in sched if tx(x).lower().startswith(labels[:2])) == 2:
+        content["schedule"] = [x for x in sched if tx(x).lower().startswith(labels)]
+    sched_dates = set(re.findall(r"\d{1,2}/\d{1,2}", " ".join(tx(x) for x in content.get("schedule") or [])))
+    std_scope = [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("standard")]
+    std_words = set().union(*[_toks(tx(x)) for x in std_scope]) if std_scope else set()
+    def repeats(x: Any) -> bool:
+        if not isinstance(x, dict) or x.get("standard") or x.get("kind") == "heading":
+            return False
+        t = tx(x)
+        if re.search(r"(?i)\b(complete|finish)", t) and set(re.findall(r"\d{1,2}/\d{1,2}", t)) & sched_dates:
+            return True  # restates the schedule
+        if content.get("provider_tools") and re.search(r"(?i)\btools?\b|screwdriver|wrench", t):
+            return True  # the tools list says it
+        w = _toks(t)
+        return bool(std_words) and not re.search(r"\d", t) and len(w) >= 3 and len(w & std_words) >= 0.55 * len(w)
+    content["scope"] = [x for x in content.get("scope") or [] if not repeats(x)]
+    # The site's own access duties, from the arrival protocol (the fact check
+    # dropped the writer's badge line, 010115 round 16).
+    arr_text = " ".join(tx(a) for a in content.get("arrival_protocol") or []).lower()
+    cr = content.setdefault("customer_responsibilities", [])
+    if re.search(r"badge|parking pass", arr_text) and not any(re.search(r"(?i)badge|parking pass", tx(c)) for c in cr):
+        cr.append({"text": "Provide visitor badges and parking passes upon technician arrival.", "cites": [], "kind": "method"})
+    if "security" in arr_text and not any(re.search(r"(?i)security", tx(c)) and re.search(r"(?i)access|coordinat", tx(c)) for c in cr):
+        cr.append({"text": "Coordinate site access with security.", "cites": [], "kind": "method"})
+    # The template already asks for a point of contact.
+    content["customer_responsibilities"] = [c for c in cr if not re.search(r"(?i)point of contact|onsite contact for", tx(c))
+                                            and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
+    # One "limited to" assumption: the standard one stands.
+    asm = content.get("assumptions") or []
+    if any(isinstance(a, dict) and a.get("standard") and "limited to" in tx(a).lower() for a in asm):
+        content["assumptions"] = [a for a in asm if (isinstance(a, dict) and a.get("standard")) or "limited to" not in tx(a).lower()]
     # A heading whose tasks all went (repeats of the arrival protocol) is empty.
     sc = content.get("scope") or []
     content["scope"] = [x for i, x in enumerate(sc)
