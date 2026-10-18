@@ -1101,7 +1101,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """The SOW content as the envelope carries it: the writer's lists, the
     partner's requester, the CRM record and the sites."""
     sites = [{"address": s.get("address") or s.get("display_name") or "", "city": s.get("city") or "",
-              "state": s.get("state") or "", "postal_code": s.get("postal_code") or "",
+              "state": s.get("state") or "", "postal_code": s.get("postal_code") or s.get("zip") or "",
               "name": s.get("display_name") or ""}
              for s in (envelope.get("site_readiness") or {}).get("sites") or []]
     offices = _reseller_streets(envelope)
