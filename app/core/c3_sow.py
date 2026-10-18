@@ -103,7 +103,8 @@ _PARTS = {
         "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is (the technician's "
-        "name is sent ahead by Provider and the site adds it to its security list; the site issues badges and passes); "
+        "name is sent ahead by Provider and the site adds it to its security list, so a name-in-advance rule reads "
+        "\"Provider submits the technician's name <when> before arrival.\"; the site issues badges and passes); "
         "empty when no fact gives one]}"),
     "scope": (
         "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (a purtera_standard_* list is PurTera's fixed handling of this job "
@@ -879,6 +880,10 @@ def _normalise(got: dict[str, Any]) -> dict[str, Any]:
     # ticks nothing; the job family gives the box.
     if not out["services"]:
         out["services"] = [_FAMILY_SERVICE.get(str(got.get("job_family") or ""), "implementation")]
+    # A decommission or packing job is Custom Work only, as PurTera ticks it
+    # (010115 v1); the writer also ticked Staff Augmentation for "one tech, two days".
+    if str(got.get("job_family") or "") == "decommission_packing":
+        out["services"] = ["custom_work"]
     for k in LISTS:
         v = got.get(k) or []
         # A list returned as one string is one item: 000123's overview came back
@@ -923,29 +928,53 @@ def _apply_standards(content: dict[str, Any], family: str) -> int:
     none of the standard steps (010115 round 12)."""
     fixed = purtera_standards(family)
     n = 0
+    pending: list[dict[str, Any]] = []
     for sec, lst in _STD_LIST.items():
         items = content.setdefault(lst, [])
+        if lst == "scope":
+            # The writer copies some standard steps from its hints, in its own
+            # order: those join the block too, so the steps read in work order.
+            items[:] = [x for x in items if not (isinstance(x, dict) and x.get("kind") != "heading"
+                                                 and any(_said(str(x.get("text")), [t], 0.8) for t in fixed.get(sec) or []))]
         for t in fixed.get(sec) or []:
             if _said(t, items):
                 continue
             item = {"text": t, "cites": [], "kind": "method", "standard": True}
             if lst == "scope":
-                # Before the closing group, so the steps read in work order.
-                close = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
-                              and re.search(r"(?i)clos|complet|wrap", str(x.get("text")))), len(items))
-                if close == len(items) and t.lower().startswith("confirm completion"):
-                    items.append(item)
-                else:
-                    items.insert(close, item)
+                pending.append(item)
+                n += 1
+                continue
             else:
                 items.append(item)
             n += 1
+    if pending:
+        sc = content.setdefault("scope", [])
+        # A writer step the standard steps already say goes, unless it carries a
+        # count, date or name of its own (the deal's facts stay).
+        sc[:] = [x for x in sc if not (isinstance(x, dict) and x.get("kind") != "heading"
+                                       and not re.search(r"\d", str(x.get("text")))
+                                       and _said(str(x.get("text")), pending, 0.5))]
+        # The standard steps lead the work: after the first heading that is not
+        # the arrival group, else after the arrival group.
+        heads = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
+        work = [i for i in heads if not re.search(r"(?i)arriv|access|check", str(sc[i].get("text")))]
+        at = work[0] + 1 if work else (heads[1] if len(heads) > 1 else len(sc))
+        close = next((i for i in heads if re.search(r"(?i)clos|complet|wrap", str(sc[i].get("text")))), None)
+        tail = [it for it in pending if it["text"].lower().startswith(("confirm completion", "notify"))]
+        lead = [it for it in pending if it not in tail]
+        sc[at:at] = lead
+        if tail:
+            close = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"
+                          and re.search(r"(?i)clos|complet|wrap", str(x.get("text")))), len(sc))
+            sc[close:close] = [it for it in tail if not _said(it["text"], sc[close:], 0.5)]
     content["standards_added"] = n
     return n
 
 
 _ACCESS = re.compile(r"(?i)\b(badges?|parking|pass(es)?|escort|keys?|access cards?)\b")
-_LEDGER = re.compile(r"(?i)tax[- ]exempt|cost cent(er|re)|\bcorp(orate)? service\b|\bsegment\b|\bgl code\b")
+_LEDGER = re.compile(r"(?i)tax[- ]exempt|cost cent(er|re)|\bcorp(orate)? service\b|\bsegment\b|\bgl code\b|"
+                     r"request date|\bSR ?#|unified sr|\bproject name\s*:|\bticket\s*#")
+_FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination")}
 
 
 def _tidy(content: dict[str, Any]) -> None:
@@ -975,6 +1004,7 @@ def _tidy(content: dict[str, Any]) -> None:
         others = [y for y in oos if y is not x and len(_toks(y.get("text") if isinstance(y, dict) else y)) > 2]
         if len(t.split()) <= 2 and _said(t, others, 1.0):
             continue
+        t = re.sub(r"(?i)^exclud(e|es|ed|ing)\s*:?\s+", "", t)
         t = t[:1].upper() + t[1:]
         if not t.endswith((".", "!", "?")):
             t += "."
@@ -982,6 +1012,26 @@ def _tidy(content: dict[str, Any]) -> None:
             x["text"] = t
         kept.append(x if isinstance(x, dict) else {"text": t, "cites": [], "kind": "method"})
     content["out_of_scope"] = kept
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    # Said once: a scope step the arrival protocol states, an assumption a
+    # customer responsibility states (010115 said "packing materials" four times).
+    arr = content.get("arrival_protocol") or []
+    content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
+                        and not x.get("standard") and _said(tx(x), arr, 0.6))]
+    cr = content.get("customer_responsibilities") or []
+    asm = []
+    for x in content.get("assumptions") or []:
+        t = re.sub(r"(?i)^assume(s|d)?\s+(that\s+)?", "", tx(x)).strip()
+        if not t or _LEDGER.search(t) or _said(t, cr, 0.5) or _said(t, asm, 0.7):
+            continue
+        t = t[:1].upper() + t[1:]
+        if isinstance(x, dict):
+            x["text"] = t
+        asm.append(x if isinstance(x, dict) else {"text": t, "cites": [], "kind": "method"})
+    content["assumptions"] = asm
+    fam = str(content.get("job_family") or "")
+    if fam in _FAMILY_TOOLS_NOT:
+        content["provider_tools"] = [x for x in content.get("provider_tools") or [] if not _FAMILY_TOOLS_NOT[fam].search(tx(x))]
 
 
 def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
@@ -1272,6 +1322,15 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 x for x in (street.strip(), place.strip()) if x)
             # The roster's record of the same street keeps its name and ZIP: the
             # cited line alone blanked both (010115 "Delta Admin", 30309).
+            place = re.sub(r"(?i)^\s*specific location\(?s?\)?\s*[:|]\s*", "", place).strip(" .")
+            if not re.search(r"\d", f"{place} {street}") and len(roster) == 1 and roster[0].get("address"):
+                # A named place inside the one addressed site (010115 "Sodexo Dining CAFE"):
+                # it names the site; the address stays the roster's.
+                r0 = roster[0]
+                rows.append({"name": place, "city": r0.get("city") or "", "address": r0.get("address") or "",
+                             "street": r0.get("street") or r0.get("address") or "", "state": r0.get("state") or "",
+                             "postal_code": r0.get("postal_code") or ""})
+                continue
             key = " ".join(re.sub(r"\W+", " ", (street or place).lower()).split()[:3])
             same = next((r for r in roster if key and key in re.sub(r"\W+", " ", str(r.get("address") or "").lower())), {})
             # The roster's display name carries the address after a dash ("Delta Admin — 1030 Delta

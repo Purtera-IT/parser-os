@@ -7,11 +7,14 @@
       "Power down and disconnect the equipment as directed by the onsite contact.",
       "Dismantle the hardware and organize it for packing.",
       "Pack the equipment in the customer-provided boxes and packing materials, labeling each box.",
+      "Package the equipment as instructed by the customer's representative.",
       "Place the packed equipment in the customer's designated staging or shipment area.",
       "Notify the onsite contact of any damage, missing materials or access issues.",
+      "Maintain a clean and orderly work area and remove packing debris.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
+      "Identify all hardware in scope for dismantling and packing.",
       "Provide sufficient packing materials (boxes, pallets, tape and labels) onsite before the technician arrives.",
       "Designate a staging or shipment area for the packed equipment.",
       "Provide packing and labeling instructions for the equipment.",
