@@ -69,23 +69,43 @@ def test_a_sure_this_deal_keeps_the_conversation_without_the_model(judge, monkey
     kept, dropped, verdicts = judge_documents(SDWAN + KIOSK, deal_name=DEAL)
     by = {v["filename"]: v for v in verdicts}
     assert by["art_sdwan.eml"]["source"] == "c3" and by["art_sdwan.eml"]["verdict"] == "this_deal"
-    # The base's other_job is not acted on: the model judges that one, as before.
-    assert len(judge) == 1 and "Delta" in judge[0]
+    # The base's sure other_job (at or above the 0.98 aside bar) is acted on
+    # without the model, like its sure this_deal.
+    assert len(judge) == 0
     assert [a.artifact_id for a in dropped] == ["art_kiosk"]
-    assert by["art_kiosk.eml"]["source"] != "c3" and by["art_kiosk.eml"]["c3_verdict"] == "other_job"
+    assert by["art_kiosk.eml"]["source"] == "c3" and by["art_kiosk.eml"]["c3_verdict"] == "other_job"
 
 
-def test_the_base_never_sets_a_document_aside_on_its_own(monkeypatch):
+def test_a_base_other_job_below_the_aside_bar_sets_nothing_aside(monkeypatch):
+    """Below SOWSMITH_C3_DOCUMENT_JOB_ASIDE (0.98) the base's other_job removes
+    nothing on its own: 010082's own Smarthands notes read other_job 0.85/0.78."""
     monkeypatch.setenv("SOWSMITH_C3_DOCUMENT_JOB", "on")
     monkeypatch.setattr(semantic_role, "classify_role", lambda *a, **k: (None, 0.0))
     prev = decide_mod.get_store()
     decide_mod.set_store(None)
     try:
-        _base(monkeypatch, {"art_kiosk": {KEY: ("other_job", 0.999)}})
+        _base(monkeypatch, {"art_kiosk": {KEY: ("other_job", 0.95)}})
         kept, dropped, _ = judge_documents(SDWAN + KIOSK, deal_name=DEAL)
     finally:
         decide_mod.set_store(prev)
     assert not dropped and len(kept) == 2
+
+
+def test_a_sure_base_other_job_sets_the_conversation_aside(monkeypatch):
+    """At the aside bar the base's word stands: 010279's Lineage transcript
+    (0.99) and 010082's SD-WAN opportunity documents (0.99+)."""
+    monkeypatch.setenv("SOWSMITH_C3_DOCUMENT_JOB", "on")
+    monkeypatch.setenv("SOWSMITH_DOCUMENT_JOB_MODEL_JUDGE", "off")
+    monkeypatch.setattr(semantic_role, "classify_role", lambda *a, **k: pytest.fail("asked the model"))
+    prev = decide_mod.get_store()
+    decide_mod.set_store(None)
+    try:
+        _base(monkeypatch, {"art_kiosk": {KEY: ("other_job", 0.999)}})
+        _, dropped, verdicts = judge_documents(KIOSK, deal_name=DEAL)
+    finally:
+        decide_mod.set_store(prev)
+    assert [a.artifact_id for a in dropped] == ["art_kiosk"]
+    assert verdicts[0]["source"] == "c3"
 
 
 def test_an_unsure_base_leaves_the_conversation_to_the_model(judge, monkeypatch):
