@@ -98,7 +98,7 @@ _PARTS = {
         "surveys, audits and validation of what exists], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
         "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences: what is installed or "
-        "done, how many, where, for whom; on a many-site job the site count the facts state], \"schedule\": [labeled "
+        "done, how many, where, for whom; on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\"; a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
@@ -1057,6 +1057,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     stated = rec.get("stated")
     if from_sheet and from_sheet > len(sites):
         stated = from_sheet
+    # A roster that resolves more sites than a count some message stated is the
+    # count (000123: the note said 160, the store list holds 161).
+    if len(sites) >= 10 and len(sites) > int(stated or 0):
+        stated = len(sites)
     if table:
         # A count the documents state that the table nearly bears out (010279:
         # "113" stores, 98 rows read whole) beats both the rows and a count
