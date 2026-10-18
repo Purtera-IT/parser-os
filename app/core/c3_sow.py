@@ -1493,6 +1493,12 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
             rows.append({"name": same.get("name") or "", "city": city.strip(), "address": full or place.strip(),
                          "street": street.strip(), "state": st.strip(),
                          "postal_code": same.get("postal_code") or (zp.group(0) if zp else "")})
+        # A roster site the writer did not cite is still a site (000132: Delphos,
+        # OH was parsed with its site id and left out of the six-site list).
+        for r0 in roster:
+            key = " ".join(re.sub(r"\W+", " ", str(r0.get("address") or r0.get("name") or "").lower()).split()[:3])
+            if key and not any(key in re.sub(r"\W+", " ", f"{r.get('address')} {r.get('name')}".lower()) for r in rows):
+                rows.append(dict(r0))
         c["sites"] = rows
     # The project is named as the deal is: PurTera's v1 titles are the CRM deal
     # name without its number and the reseller ("010115 - CDW Sodexo Decomm
