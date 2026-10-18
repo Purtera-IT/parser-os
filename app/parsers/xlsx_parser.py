@@ -2050,6 +2050,10 @@ def _emit_scope_constraint_atoms(
         )
 
 
+#: Workbooks whose hidden sheets carry real figures (rates, cost lookups).
+_PRICING_BOOK = re.compile(r"(?i)deal ?kit|rate ?card|pricing|quote|estimat|cost")
+
+
 class XlsxParser(BaseParser):
     #: Per-WORKBOOK state on a parser the registry SHARES between threads.
     #: These accumulate through a parse and are drained at the end, so a second
@@ -2683,6 +2687,13 @@ class XlsxParser(BaseParser):
                 sheet.reset_dimensions()
             except Exception:
                 pass
+            # A sheet the author hid is the workbook's machinery, not what it
+            # says: 010147's questionnaire hid a "Lists" sheet of dropdown
+            # options, and "Dedicated Direct Truck/Climate Controlled" (the
+            # first option) went into the SOW over the answer the customer
+            # chose. A pricing workbook keeps its hidden rate sheets.
+            if getattr(sheet, "sheet_state", "visible") != "visible" and not _PRICING_BOOK.search(path.name):
+                continue
             _grids.append((sheet.title, [list(r) for r in sheet.iter_rows(values_only=True)]))
         _mined = {t for t, r in _grids if not self._reads_as_a_table(t, r)}
         hidden = self._hidden_dims(path, _mined) if _mined else {}
