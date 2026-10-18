@@ -617,6 +617,37 @@ def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> Non
                                   if not re.search(r"(?i)sufficient rack|rack space is available|no rack modification", tx(a))]
 
 
+_ONES = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+_TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+_NUMW = "(?:" + "|".join(sorted(set(_ONES + _TENS[2:] + ["hundred"]), key=len, reverse=True)) + ")"
+
+
+def _words(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ("" if n % 10 == 0 else "-" + _ONES[n % 10])
+    if n < 1000:
+        return _ONES[n // 100] + " hundred" + ("" if n % 100 == 0 else " " + _words(n % 100))
+    return str(n)
+
+
+def _words_value(t: str) -> int | None:
+    """The number a run of number words spells ("one hundred sixty" -> 160), else None."""
+    words = re.findall(r"[a-z]+", t.lower())
+    total, cur, seen = 0, 0, False
+    for w in words:
+        if w in _ONES:
+            cur += _ONES.index(w); seen = True
+        elif w in _TENS:
+            cur += 10 * _TENS.index(w); seen = True
+        elif w == "hundred":
+            cur = max(cur, 1) * 100; seen = True
+        elif seen:
+            total, cur, seen = 0, 0, False  # number words ended before; restart on the last run
+    return total + cur if seen else None
+
+
 def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[dict[str, str]]:
     rows = (pm_handoff or {}).get("sites") or []
     out = []
@@ -1691,7 +1722,12 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         for k in ("overview", "scope", "schedule"):
             for x in c.get(k) or []:
                 if isinstance(x, dict):
-                    x["text"] = re.sub(r"\b(\d{2,4})(\s+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
+                    x["text"] = re.sub(r"\b(\d{2,4})(\)?\s+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
+                    # The spelled number before "(161)" says the same count.
+                    x["text"] = re.sub(r"(?i)\b(" + _NUMW + r"(?:[\s-]+" + _NUMW + r"){0,4})\s*\((\d{2,4})\)",
+                                       lambda m: (_words(int(m.group(2))) + f" ({m.group(2)})")
+                                       if int(m.group(2)) == n_sites and _words_value(m.group(1)) not in (None, n_sites) else m.group(0),
+                                       x["text"])
         for d in c.get("deliverables") or []:
             if isinstance(d, dict):
                 d["description"] = [re.sub(r"\b(\d{2,4})(\s+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t)) for t in d.get("description") or []]
