@@ -181,6 +181,12 @@
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Dress and secure accessible cabling associated with each display.",
       "Connect accessible power where a Customer-provided power source is available.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power on each display and verify basic operation and an available video source.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Review each room's install location for the video bar and table controller with the onsite contact.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Verify the equipment for each room is present and undamaged before installation.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Mount each video bar on or below its existing display and connect it to the display.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Place each table controller and route and dress its cable to the video bar.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Connect each device to power and to the network or Wi-Fi the customer provides.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Power on each video bar and controller and verify video, audio and controller operation.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
@@ -189,16 +195,20 @@
       "Provide access to existing electrical power required for display operation.",
       "Ensure Customer-furnished AV, network and source systems are operational and available for testing.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Provide the final display locations and mounting heights before drilling or permanent installation.",
-      "Provide current photographs of the rooms and proposed mounting walls before deployment when available."
+      "Provide current photographs of the rooms and proposed mounting walls before deployment when available.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provide network or Wi-Fi access and credentials for each device.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Complete device registration, account and software configuration."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
       "Standard commercial wall construction and fastening methods can be used.",
-      "No asbestos, hazardous materials, concealed utilities or structural obstructions are present in the work areas."
+      "No asbestos, hazardous materials, concealed utilities or structural obstructions are present in the work areas.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provider's work is limited to physical installation and connection of the video bars and controllers."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
-      "Electrical work or new power circuits."
+      "Electrical work or new power circuits.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Video conferencing platform configuration, licensing or account setup."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",

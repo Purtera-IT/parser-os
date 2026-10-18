@@ -843,6 +843,22 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     if ours:
         content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                                 if not (isinstance(x, dict) and x.get("cites") and all(c in ours for c in x["cites"]))]
+    # What the customer says it will provide stays the customer's (010171:
+    # "I will provide HDMI and USB cabling" became a Provider task).
+    by_id_a = {str(a.get("id")): a for a in envelope.get("atoms") or []}
+    def _customer_provides(c: str) -> bool:
+        a = by_id_a.get(c) or {}
+        sender = str((a.get("locator") or {}).get("sender") or "").lower()
+        return bool(re.search(r"(?i)\b(i|we)\s*(will|'ll|am going to|are going to)\s+(be\s+)?provid", str(a.get("text") or ""))) \
+            and "purtera" not in sender
+    for k in ("scope", "provider_materials"):
+        hit = [x for x in content.get(k) or [] if isinstance(x, dict) and x.get("cites") and all(_customer_provides(c) for c in x["cites"])]
+        if hit:
+            content[k] = [x for x in content.get(k) or [] if x not in hit]
+            for x in hit:
+                x["text"] = re.sub(r"(?i)^\s*provide( and use)?\s+", "", str(x["text"])).rstrip(".")
+                x["text"] = x["text"][:1].upper() + x["text"][1:] + "."
+            content.setdefault("customer_materials", []).extend(hit)
     # An equipment line that is a task belongs in the scope (010198: "Install
     # one (1) Ubiquiti router with cellular backup" sat only under equipment).
     eq = content.get("equipment_in_scope") or []
@@ -973,9 +989,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                       and not doc_promise.search(pool_text))]
     # A library line ruling out in-wall work the deal asks for (010120: the
     # survey moves the replication cable behind the wall, no visible cables).
-    if re.search(r"(?i)behind (the )?wall|in-?wall|inside (the )?wall|concealed|no cables? (should be |will be )?visible", pool_text):
+    if re.search(r"(?i)behind (the )?wall|in-?wall|inside (the )?wall|concealed|pass-?through|no cables? (should be |will be )?visible", pool_text):
         for k in ("scope", "assumptions", "out_of_scope"):
-            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("cites")
+            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict)
                           and re.search(r"(?i)without in-?wall|no (in-?wall|concealed)|in-?wall .{0,20}(routing|cabling).{0,20}(excluded|not included)|concealed routing", str(x.get("text"))))]
     # "All cable runs are under N feet" when the runs are stated (PurTera writes
     # it from the longest run, rounded up to 50).
@@ -1384,7 +1400,8 @@ _ACCESS = re.compile(r"(?i)\b(badges?|parking|pass(es)?|escort|keys?|access card
 _LEDGER = re.compile(r"(?i)tax[- ]exempt|cost cent(er|re)|\bcorp(orate)? service\b|\bsegment\b|\bgl code\b|"
                      r"request date|\bSR ?#|unified sr|\bproject name\s*:|\bticket\s*#")
 _FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination"),
-                     "pos_install_refresh": re.compile(r"(?i)network testing|validation tools|certifier|toner")}
+                     "pos_install_refresh": re.compile(r"(?i)network testing|validation tools|certifier|toner"),
+                     "av_conference_room": re.compile(r"(?i)termination tools?|cable testers?|certifier|toner|punch")}
 
 
 def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
@@ -1909,6 +1926,30 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         stated = max(near) if near else len(table)
     c["site_summary"] = {"stated": stated, "resolved": len(sites), "from_table": bool(table)}
     c["requested_by"] = requested_by(envelope)
+    # The end customer the documents name outranks the CRM account (010171:
+    # "A different customer, APWireless Infrastructure Partners LLC"; the SOW said SHI).
+    for a in envelope.get("atoms") or []:
+        m = re.search(r"(?i)\b(?:end[- ]customer|different customer|the customer is|for (?:our|the) (?:end )?customer)[,:]?\s+"
+                      r"([A-Z][\w&.,' -]{2,60}?(?:LLC|L\.L\.C\.|Inc\.?|Corp(?:oration)?\.?|Partners|Company|Co\.|Group|Holdings))\b",
+                      str(a.get("text") or ""))
+        if m:
+            c["end_customer"] = m.group(1).strip(" ,")
+            break
+    else:
+        # A reseller's deal names its end customer as "the X Team" / "<person>
+        # from X" (010171: "answers from the APWireless Team", "Ben from APWireless").
+        acct = str((envelope.get("crm") or {}).get("account_name") or "")
+        if re.search(r"(?i)\b(cdw|shi|insight|presidio|connection|computacenter|paragon)\b", acct) and \
+                (not c.get("end_customer") or str(c.get("end_customer")).strip().lower() == acct.strip().lower()):
+            seen: dict[str, int] = {}
+            for a in envelope.get("atoms") or []:
+                for m2 in re.finditer(r"\b(?:the\s+)?([A-Z][A-Za-z0-9&]{2,30})\s+[Tt]eam\b|\b[A-Z][a-z]+ from ([A-Z][A-Za-z0-9&]{2,30})\b",
+                                      str(a.get("text") or "")):
+                    org = m2.group(1) or m2.group(2)
+                    if not re.search(r"(?i)^(cdw|shi|purtera|insight|presidio|the|our|your|this|sales|delivery|project|support|it)$", org):
+                        seen[org] = seen.get(org, 0) + 1
+            if seen:
+                c["end_customer"] = max(seen, key=seen.get)
     # A count near the resolved site count is that count (000123: the roster
     # holds 161 stores; a note said "about 160" and the scope printed 160).
     n_sites = int(c["site_summary"].get("stated") or 0) or len(sites)
@@ -1952,6 +1993,14 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 rows.append({"name": place, "city": r0.get("city") or "", "address": r0.get("address") or "",
                              "street": r0.get("street") or r0.get("address") or "", "state": r0.get("state") or "",
                              "postal_code": r0.get("postal_code") or ""})
+                continue
+            zipped = [r for r in roster if re.search(r"\b\d{5}\b", f"{r.get('address')} {r.get('postal_code')}")]
+            if len(roster) == 1 and zipped and not re.search(r"\b\d{5}\b", t) and \
+                    not any(w in str(zipped[0].get("address") or "").lower() for w in re.findall(r"[a-z]{4,}", (street or place).lower())):
+                # A cited place with no ZIP that the one fully addressed roster site does
+                # not name is a caption, not the site (010012: "1 Landmark Square, office
+                # space" from a leasing brochure over 1 Lincoln St, Boston 02111).
+                rows.append(dict(zipped[0]))
                 continue
             key = " ".join(re.sub(r"\W+", " ", (street or place).lower()).split()[:3])
             same = next((r for r in roster if key and key in re.sub(r"\W+", " ", str(r.get("address") or "").lower())), {})
