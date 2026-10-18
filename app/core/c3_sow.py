@@ -1800,6 +1800,27 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
                       and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
         sc.insert(close, x)
+    # PurTera's sales pitch is never a term of the job (010217: "Customer has
+    # deep familiarity with Certinia ... so no handholding is required", from
+    # our own capability email).
+    pitch = re.compile(r"(?i)handholding|hand-holding|deep familiarity|engineers? (onsite|on site) within|do not charge for (pm|project man)|"
+                       r"\bvetted\b|\d+\+? countries|nationwide coverage|we pride|our (capabilities|team has)|white[- ]glove")
+    for k in LISTS:
+        content[k] = [x for x in content.get(k) or [] if not pitch.search(str(x.get("text") if isinstance(x, dict) else x))] \
+            if k != "overview" else ([x for x in content.get(k) or [] if not pitch.search(str(x.get("text") if isinstance(x, dict) else x))] or content.get(k))
+    # Closing steps written inside a room group go under Closeout (010217:
+    # "verify displays", "remove debris" under Room 247).
+    sc = content.get("scope") or []
+    ci = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"
+               and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), None)
+    if ci is not None:
+        early = [x for x in sc[:ci] if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+                 and re.match(r"(?i)\s*(clean|remove (all )?(debris|packaging|trash)|dispose|haul away|perform a (final )?walk|walk ?through|"
+                              r"confirm completion|obtain sign)", str(x.get("text")))]
+        if early:
+            rest = [x for x in sc if not any(x is y for y in early)]
+            ci2 = next(i for i, x in enumerate(rest) if x is sc[ci])
+            content["scope"] = rest[:ci2 + 1] + early + rest[ci2 + 1:]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
