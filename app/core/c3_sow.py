@@ -915,6 +915,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if isinstance(x, dict):
             x["text"] = re.sub(r"(?i)(?<!wall )\bpatching or painting\b", "wall patching or painting", str(x["text"]))
     svc = content.get("services") or []
+    if "implementation" in svc and "custom_work" in svc and family not in ("decommission_packing", "relocation_move"):
+        content["services"] = svc = [v for v in svc if v != "custom_work"]  # 010373: haul-away read as packing
     if "implementation" in svc and "reinstallation" in svc:
         content["services"] = [v for v in svc if v != "implementation"]
     # A library method item that promises a document nobody asked for (as-built
@@ -1922,6 +1924,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     dn = re.sub(r"^\s*\d{5,6}\s*[-–:]?\s*", "", dn)
     dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s+", "", dn).strip(" -–")
     dn = re.sub(r"(?i)\s+w/\s*\w+.*$|\s+with\s+[A-Z][a-z]+$", "", dn).strip()  # "161 Site POS install w/ Ahmed"
+    dn = re.sub(r"\s+-(\d+)\b", r" \1", dn)  # "NYC -48 monitor mounting"
     if len(dn.split()) >= 2:
         c["project_name"] = dn
     # On a one-address job, a place the request names inside it ("Specific
