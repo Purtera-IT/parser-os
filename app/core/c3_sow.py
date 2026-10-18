@@ -1379,7 +1379,7 @@ def sheet_site_count(envelope: dict[str, Any]) -> int | None:
     return best[1]
 
 
-WRITER_RUNS = int(os.environ.get("SOWSMITH_C3_SOW_RUNS", "2"))
+WRITER_RUNS = int(os.environ.get("SOWSMITH_C3_SOW_RUNS", "3"))
 
 
 def _coverage_score(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
@@ -1388,7 +1388,10 @@ def _coverage_score(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
     body = {f["id"] for f in fs if f["section"] not in ("also_kept", "unsure", "typed_only", "figure")}
     cited = {c for k in LISTS for x in content.get(k) or [] if isinstance(x, dict) for c in x.get("cites") or []}
     dropped = sum(int(v or 0) for v in (content.get("checks") or {}).values() if isinstance(v, (int, float)))
-    return len(cited & body) - dropped
+    # A draft missing a section a PM always reads loses outright to one that has it.
+    missing = sum(1 for k in ("overview", "scope", "customer_responsibilities", "assumptions", "out_of_scope")
+                  if not content.get(k))
+    return len(cited & body) - dropped - 25 * missing
 
 
 def _best_of(envelope: dict[str, Any], pm_handoff: dict[str, Any]) -> dict[str, Any]:
