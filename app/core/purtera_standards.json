@@ -92,6 +92,7 @@
       "Review the work areas and the cable pathway with the onsite point of contact.",
       "Confirm each mounting and termination location with the onsite point of contact before drilling or mounting equipment.",
       "Use fastening methods suited to the existing wall and stud conditions, with anchors or toggle bolts where approved and no stud is available.",
+      "Verify each backboard, cabinet and mounted device is level and securely fastened.",
       "Maintain proper cable support and never rest cable directly on ceiling tiles, electrical fixtures, plumbing or ductwork.",
       "Terminate and label each cable run at both ends.",
       "Test each cable run for 4-pair continuity.",
@@ -103,13 +104,33 @@
       "Provide device and termination locations before the technician arrives."
     ],
     "assumptions": [
-      "The work can be completed from an appropriate A-frame ladder; powered lifts, scaffolding or specialty access equipment are not included and may require a change order."
+      "The work can be completed from an appropriate A-frame ladder; powered lifts, scaffolding or specialty access equipment are not included and may require a change order.",
+      "Final mounting methods are based on the existing wall conditions, available studs, equipment weight and customer approval.",
+      "The cable pathway is accessible and free from major obstructions."
     ],
-    "exclusions": [],
+    "exclusions": [
+      "Electrical work, new power circuits or modification of existing power infrastructure.",
+      "Fire-stopping, core drilling, conduit installation or structural modification.",
+      "Network configuration, programming or active equipment setup."
+    ],
     "deliverable_outcomes": [
       "Cable runs installed, terminated and labeled at both ends.",
       "Continuity test results for each run.",
       "Completion photographs of terminations and visible cable routing."
+    ],
+    "tools": [
+      "Appropriate A-frame ladder.",
+      "Drill and driver.",
+      "Stud finder.",
+      "Wood, metal and masonry drill bits as conditions require.",
+      "Screwdrivers, hand tools and socket tools.",
+      "Cable pulling tools.",
+      "Cable termination and testing tools.",
+      "Labeling and basic cable management tools."
+    ],
+    "materials": [
+      "Screws, anchors, washers and standard mounting hardware.",
+      "Standard low-voltage consumables, labels, tape and installation hardware."
     ]
   },
   "cameras_security": {
@@ -262,6 +283,7 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Perform hands-on support for network equipment, servers, power connections, rack placement and cabling as directed.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Document each incident's symptoms, actions taken, status and recommended follow-up.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Escalate work requiring elevated privileges, advanced engineering, remote administration or vendor support to the customer's IT contacts.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Check in with the onsite contact and confirm the work areas and monitor placement before beginning work.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Install each monitor arm on its desk at the location the customer designates.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Mount the monitors on each arm, then align and secure them.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Perform basic cable management of the monitor power and video cables along the arm.",
@@ -275,23 +297,33 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide direction on task priority during each visit.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide required administrative access, credentials, vendor contacts and escalation paths.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Approve any equipment removal, cable removal or material change to the site environment.",
-      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide any replacement hardware, parts, cables or materials required; Provider supplies labor only."
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide any replacement hardware, parts, cables or materials required; Provider supplies labor only.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Provide the final desk and monitor placement instructions before installation begins.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Ensure required electrical power, workstation equipment, video sources, docks and data connectivity are installed and available."
     ],
     "assumptions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Cable work is limited to physical routing of the provided power and video cables.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} All work under this SOW is performed on site; remote IT support is not included.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provider technicians work within the limits of available access, tools, documentation and approved scope.",
-      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} There is no service-level objective for ad-hoc requests, which are subject to availability."
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} There is no service-level objective for ad-hoc requests, which are subject to availability.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} The desks are fully assembled, stable and compatible with the monitor arms without drilling, cutting or modification by Provider.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Trash removal is limited to packaging and installation debris from the equipment installed under this SOW."
     ],
     "exclusions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Furniture assembly or desk modification.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Procurement of monitors, arms or accessories.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Advanced engineering, architecture, security response, application support or remote system administration.",
-      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Procurement or supply of parts or replacement hardware."
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Procurement or supply of parts or replacement hardware.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Configuration, software installation or troubleshooting of monitors, computers, docks or related devices.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Electrical work, data cabling, cable termination or modification of existing power or data infrastructure.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Removal or disposal of existing monitors, arms, computers, furniture or unrelated site waste."
     ],
     "deliverable_outcomes": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Monitor arms installed and monitors mounted, aligned and secured.",
       "Completion confirmed with the onsite contact."
+    ],
+    "tools": [
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Standard hand and installation tools for monitor arm and monitor mounting."
     ]
   }
 }

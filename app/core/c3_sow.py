@@ -1366,7 +1366,8 @@ def _normalise(got: dict[str, Any]) -> dict[str, Any]:
 
 
 _STD_LIST = {"method_steps": "scope", "customer_responsibilities": "customer_responsibilities",
-             "assumptions": "assumptions", "exclusions": "out_of_scope"}
+             "assumptions": "assumptions", "exclusions": "out_of_scope", "tools": "provider_tools",
+             "materials": "provider_materials"}
 _TOK = re.compile(r"[a-z0-9]+")
 _FILLER = frozenset("the a an and or of to for in on at by with is are be any all each its their".split())
 
@@ -1443,6 +1444,11 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             counted = [x for x in items if isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"\d", str(x.get("text")))]
             std = [it for it in std if not _said(it["text"], counted, 0.6)]
         n += len(std)
+        if lst == "provider_tools":
+            # The family's tool list is the list: the writer's own tool lines were
+            # wrong-job ("equipment moves", 010373) or someone else's ("Delivery
+            # team will bring its own tools", 010082).
+            items[:] = []
         if lst != "scope":
             items.extend(std)
             continue
@@ -1595,6 +1601,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     for x in desc:
         content["scope"].remove(x)
         content.setdefault("assumptions", []).append(x)
+    # Every line starts with a capital ("wall patching or painting.", 010373).
+    for k in LISTS:
+        for x in content.get(k) or []:
+            if isinstance(x, dict) and isinstance(x.get("text"), str) and x["text"][:1].islower():
+                x["text"] = x["text"][0].upper() + x["text"][1:]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
