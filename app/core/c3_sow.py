@@ -633,7 +633,7 @@ def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> Non
         # once the reseller says it ships everything (010083).
         for k in ("scope", "overview", "deliverables", "assumptions"):
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("standard")
-                          and re.search(r"(?i)central(ly)? receiv|schedule(d)? (the )?ship|receive the .{0,30}(switch|equipment|hardware)",
+                          and re.search(r"(?i)central(ly)? receiv|schedule(d)? (the )?ship|receive,? schedule,? (and )?ship|receive the .{0,30}(switch|equipment|hardware)",
                                         str(x.get("text") or x.get("item") or "")))]
     if any(_NO_RACK.search(f["text"]) for f in fs):
         content["assumptions"] = [a for a in content.get("assumptions") or []
@@ -868,6 +868,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                 x["text"] = re.sub(r"(?i)^\s*provide( and use)?\s+", "", str(x["text"])).rstrip(".")
                 x["text"] = x["text"][:1].upper() + x["text"][1:] + "."
             content.setdefault("customer_materials", []).extend(hit)
+    # A "Provider will ..." sentence under Customer Provided Materials is the
+    # customer's (reseller's) supply (010083: "Provider will acquire, configure,
+    # and ship all required equipment" where CDW said it would).
+    for x in content.get("customer_materials") or []:
+        if isinstance(x, dict) and re.match(r"(?i)\s*provider will\b", str(x.get("text"))):
+            x["text"] = re.sub(r"(?i)^\s*provider will\b", "Customer will", str(x["text"]))
     # An equipment line that is a task belongs in the scope (010198: "Install
     # one (1) Ubiquiti router with cellular backup" sat only under equipment).
     eq = content.get("equipment_in_scope") or []
@@ -949,9 +955,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if f.get("section") == "answered_question" or f.get("type") in ("answered_question", "constraint", "dependency",
                                                                         "milestone_phase", "scope_item"):
             return False
+        if "?" in t and len(re.sub(r"\W+", "", t.rsplit("?", 1)[1])) >= 3:
+            return False  # an answer follows the question (010083's site-list duty)
         if f.get("type") == "open_question":
             return True
-        return "?" in t and len(re.sub(r"\W+", "", t.rsplit("?", 1)[1])) < 3
+        return "?" in t
     asked = {f["id"] for f in fs if _unanswered(f) and not requests_work(f["text"])}
     # No "only the listed devices" assumption while a request adds another.
     if any(requests_work(f["text"]) for f in fs):
