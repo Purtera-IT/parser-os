@@ -441,6 +441,23 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         typed.append((float(lab.get("p") or 0), {"id": a["id"], "text": txt}))
     typed = [x for _, x in sorted(typed, key=lambda t: -t[0])[:TYPED_MAX]]
+    # A written instruction about the work is the job whatever its type label:
+    # 010120's survey slides ("this should be moved behind wall to not be
+    # visible", "No cables should be visible after mount") never reached the
+    # writer (types _keep / assumption, below every bar).
+    directive = re.compile(r"(?i)\b(should|will need to|needs? to|must|has to|have to)\s+(be\s+)?(moved|mounted|installed|run|placed|hidden|"
+                           r"routed|relocated|replaced|removed|visible|concealed|reused)\b|\bno cables? (should|will) be visible|"
+                           r"\b(stay|stays|remain|remains) (in place|as is)\b")
+    got = {x["id"] for x in typed}
+    for a in envelope.get("atoms") or []:
+        txt = str(a.get("text") or "")
+        name = docs.get(str(a.get("artifact_id") or ""), "").lower()
+        if (a.get("id") in seen or a.get("id") in got or not 15 < len(txt) < 600 or not directive.search(txt)
+                or "fireflies" in name or "transcript" in name or (a.get("structured") or {}).get("quoted")
+                or txt.rstrip().endswith("?")):
+            continue
+        typed.append({"id": a["id"], "text": txt})
+        got.add(a["id"])
     for sec, items in (("also_kept", brief.get("also_mentioned") or []), ("figure", brief.get("figures") or []),
                        ("unsure", unsure), ("answered_question", answered[:40]), ("typed_only", typed)):
         for x in items:
