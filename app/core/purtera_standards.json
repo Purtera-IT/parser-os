@@ -205,5 +205,33 @@
       "Power-on and video-source verification for each display.",
       "Completion confirmed with the onsite contact."
     ]
+  },
+  "relocation_move": {
+    "_source": "owner standards loop 2026-10-18: generic relocation handling from the 010147 v1 TEMPLATE list (transport mode and audit/ITAD items are deal facts, left out)",
+    "method_steps": [
+      "Safely pack all equipment designated for relocation, labeling each package.",
+      "Coordinate transportation of the packed equipment from the origin location to the designated destination.",
+      "Document proof of delivery by photographing the sealed container and its security tag.",
+      "Confirm completion with the onsite contact before leaving site."
+    ],
+    "customer_responsibilities": [
+      "Power down all equipment before the technicians arrive.",
+      "Unrack all applicable devices before packing begins.",
+      "Centralize all equipment in an accessible staging area.",
+      "Ensure the equipment is ready for packing and transportation during the scheduled service window."
+    ],
+    "assumptions": [
+      "No equipment requires a ladder or lift to remove."
+    ],
+    "exclusions": [
+      "Furniture, shelving or white boards.",
+      "Powering down, disconnecting or unracking equipment at the origin location.",
+      "Installation, configuration, cabling or activation of equipment at the destination unless added by written change order."
+    ],
+    "deliverable_outcomes": [
+      "Equipment packed and labeled for transport.",
+      "Proof-of-delivery photographs of the sealed container and security tag.",
+      "Completion confirmed with the onsite contact."
+    ]
   }
 }
