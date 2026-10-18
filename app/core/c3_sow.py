@@ -101,7 +101,7 @@ _PARTS = {
         "done, how many, where, for whom; on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
-        "\"Number of Resources: ...\", \"Hardware Quantity: ...\"; a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
+        "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is; empty when no "
         "fact gives one]}"),
     "scope": (
@@ -133,7 +133,10 @@ _PARTS = {
         "uncited], \"customer_materials\": [equipment and materials the customer or end customer supplies, each "
         "citing the fact that assigns it; an item on the customer's purchase order is customer-supplied], "
         "\"customer_responsibilities\": [duties a fact gives the customer or end customer, e.g. providing an "
-        "escort, a staging area, packing materials, directions; never power or PoE, which is an assumption]}"),
+        "escort, a staging area, packing materials, directions; never power or PoE, which is an assumption. A site "
+        "rule the customer sets for Provider's technician (send the technician's name ahead, check in with security) "
+        "is Provider's duty and belongs in the arrival protocol, never here; what the customer hands over for it "
+        "(visitor badges, parking passes, an escort) IS a customer responsibility]}"),
     "bounds": (
         "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (assumptions and exclusions PurTera writes on such jobs; use "
         "every one that fits THIS job, reworded to it, never one that excludes work the draft includes or contradicts "
@@ -154,7 +157,7 @@ _PARTS = {
         "noun phrases: those a fact states and the standard ones for THIS trade (cabling or devices: lift rental, "
         "electrical work, core drilling or structural work, patching or painting, switch or firewall work, licensing "
         "or cloud setup; decommission or packing: transport, shipping, disposal, data destruction or asset "
-        "disposition, configuration); never anything the draft's scope includes, any equipment it lists as in scope, or what the customer is said to supply]}\n"
+        "disposition, configuration, and never a cabling or construction exclusion on such a job); never anything the draft's scope includes, any equipment it lists as in scope, or what the customer is said to supply]}\n"
         "DRAFT: %s"),
 }
 
@@ -1152,13 +1155,23 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     locs = [str(x.get("text") or "") for x in c.get("locations") or [] if isinstance(x, dict) and x.get("cites")]
     if locs and len(c["sites"]) <= 5 and not table:
         rows = []
+        roster = list(c["sites"])
         for t in locs:
             place, _, street = t.partition("|")
             city, _, st = place.strip().partition(",")
             full = street.strip() if place.strip().lower() in street.lower() else ", ".join(
                 x for x in (street.strip(), place.strip()) if x)
-            rows.append({"name": "", "city": city.strip(), "address": full or place.strip(),
-                         "street": street.strip(), "state": st.strip(), "postal_code": ""})
+            # The roster's record of the same street keeps its name and ZIP: the
+            # cited line alone blanked both (010115 "Delta Admin", 30309).
+            key = " ".join(re.sub(r"\W+", " ", (street or place).lower()).split()[:3])
+            same = next((r for r in roster if key and key in re.sub(r"\W+", " ", str(r.get("address") or "").lower())), {})
+            # The roster's display name carries the address after a dash ("Delta Admin — 1030 Delta
+            # Blvd ..."), which printed the address twice in the Location cell.
+            same = dict(same, name=re.split(r"\s+[—–-]\s+", str(same.get("name") or ""), maxsplit=1)[0]) if same else {}
+            zp = re.search(r"\b\d{5}(?:-\d{4})?\b", full or "")
+            rows.append({"name": same.get("name") or "", "city": city.strip(), "address": full or place.strip(),
+                         "street": street.strip(), "state": st.strip(),
+                         "postal_code": same.get("postal_code") or (zp.group(0) if zp else "")})
         c["sites"] = rows
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
