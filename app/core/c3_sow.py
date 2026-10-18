@@ -984,6 +984,23 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if isinstance(x, dict):
             x["text"] = re.sub(r"(?i)(?<!wall )\bpatching or painting\b", "wall patching or painting", str(x["text"]))
     svc = content.get("services") or []
+    # Recurring onsite support is staff augmentation and support (000132).
+    if family in ("smart_hands_general", "other") and re.search(r"(?i)once (a|per) week|weekly (on-?site|visit)|recurring|"
+                                                                r"staff aug|dedicated (tech|resource)|on-?site support", pool_text):
+        content["services"] = svc = ["staff_augmentation", "support"]
+    text_by = {f["id"]: f["text"] for f in fs}
+    neg = re.compile(r"(?i)\b(not|no|exclud|outside|except|without)\b")
+    for x in list(content.get("assumptions") or []):
+        t = str(x.get("text")) if isinstance(x, dict) else str(x)
+        if isinstance(x, dict) and x.get("cites") and re.search(r"(?i)excluded from|outside (of )?the (work )?scope|not (included|in scope)", t) \
+                and not any(neg.search(text_by.get(c, "")) for c in x["cites"]):
+            content["assumptions"].remove(x)  # a negation the source lacks (000132 excluded end-user support)
+            content.setdefault("scope", []).append({"text": text_by.get(x["cites"][0], t).strip().rstrip(".") + ".", "cites": x["cites"], "kind": "fact"})
+    prov = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict) and not x.get("standard")
+            and re.match(r"(?i)\s*(provide\s+)?(troubleshoot|incident response|end-user support|support for|patch|monitor(ing)? and)", str(x.get("text")))]
+    if prov and family in ("smart_hands_general", "other"):
+        content["customer_responsibilities"] = [x for x in content["customer_responsibilities"] if x not in prov]
+        content.setdefault("scope", []).extend(prov)
     if "implementation" in svc and "custom_work" in svc and family not in ("decommission_packing", "relocation_move"):
         content["services"] = svc = [v for v in svc if v != "custom_work"]  # 010373: haul-away read as packing
     if "implementation" in svc and "reinstallation" in svc:
@@ -1036,8 +1053,10 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         # work (010115 round 17 printed the heading with nothing under it).
         bg = None
         for pat in (r"(?i)project background", r"(?i)description of work|scope of work requested|work requested"):
-            bg = bg or next((f for f in fs if re.search(pat, f["text"]) and len(f["text"].split("|")[-1].split()) >= 4), None)
-        bg = bg or next((f for f in fs if f["section"] == "scope_of_work"), None)
+            bg = bg or next((f for f in fs if re.search(pat, f["text"]) and len(f["text"].split("|")[-1].split()) >= 4
+                             and not re.search(r"…|\.\.\.", f["text"])), None)
+        bg = bg or next((f for f in fs if f["section"] == "scope_of_work" and not re.search(r"…|\.\.\.", f["text"])
+                         and len(f["text"].split()) >= 5), None)
         if bg:
             text = bg["text"].split("|")[-1].strip().rstrip(".") + "."
             content["overview"] = [{"text": text[:1].upper() + text[1:], "cites": [bg["id"]], "kind": "fact"}]
