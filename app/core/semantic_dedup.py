@@ -1048,6 +1048,7 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         if not physical:
             return atoms
 
+    kept_lines: set[int] = set()  # alias lines kept for their words; never dropped below
     # If a real location-backed site exists, weak name-only prose guesses ("new
     # office/workshop location") are aliases at best and should not become the
     # canonical site shown to PMs. Authoritative roster-only rows still survive:
@@ -1078,7 +1079,8 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 if target is None:
                     # An alias of nothing has no survivor: it may go only
                     # when a located site already states its details.
-                    if not _covered_by_a_site(alias_atom, location_backed):
+                    if (all(_names_a_place_the_site_does_not(alias_atom, s) for s in location_backed)
+                            or not _covered_by_a_site(alias_atom, location_backed)):
                         _demote_from_site(alias_atom)
                         kept_for_words.add(id(alias_atom))
                     continue
@@ -1089,7 +1091,12 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                         _demote_from_site(alias_atom)
                         kept_for_words.add(id(alias_atom))
             name_only_ids -= kept_for_words
-            physical = [a for a in physical if id(a) not in name_only_ids]
+            kept_lines |= kept_for_words
+            # A kept line also stays out of the site-id grouping below. The base
+            # may have typed it (locked: _demote_from_site leaves it a site), and
+            # grouping would fold it into the address after all (010115 Dining
+            # CAFE, p 0.993 physical_site, kept here and merged two steps later).
+            physical = [a for a in physical if id(a) not in name_only_ids and id(a) not in kept_for_words]
             atoms = [
                 a
                 for a in atoms
@@ -1298,6 +1305,9 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             out.append(atom)
             continue
         aid = id(atom)
+        if aid in kept_lines and aid not in merged_by_id:
+            out.append(atom)  # a base-typed line kept for its words stays (it was not demoted)
+            continue
         if aid in consumed_ids:
             continue
         if aid in merged_by_id:
