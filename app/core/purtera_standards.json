@@ -120,13 +120,17 @@
     ],
     "customer_responsibilities": [],
     "assumptions": [
+      "Existing pathways are accessible and usable for each cable run.",
       "The IDF is accessible and has a usable pathway to each camera location.",
       "Lift requirements, if needed, will be handled through a change request.",
       "Any required permits, building or landlord approvals will be handled by the customer unless otherwise stated."
     ],
     "exclusions": [
       "Advanced camera analytics configuration.",
-      "Work above inaccessible ceilings, in hazardous areas, or in areas requiring special access equipment."
+      "Work above inaccessible ceilings, in hazardous areas, or in areas requiring special access equipment.",
+      "Electrical work.",
+      "Camera licensing, cloud portal administration or video management configuration.",
+      "After-hours work unless previously approved."
     ],
     "deliverable_outcomes": [
       "Cameras mounted at the confirmed locations.",

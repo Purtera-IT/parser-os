@@ -729,6 +729,22 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _apply_standards(content, family)
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
+    # A library method item that promises a document nobody asked for (as-built
+    # floor plans, cable inventory spreadsheets, certification reports) needs a
+    # fact behind it (010043: a cabling item pulled into a camera job).
+    doc_promise = re.compile(r"(?i)as-built|floor plans?|inventory records?|spreadsheet|certification report")
+    for k in ("scope", "deliverables"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("cites")
+                      and not x.get("standard") and doc_promise.search(str(x.get("text") or x.get("item") or ""))
+                      and not doc_promise.search(pool_text))]
+    # "All cable runs are under N feet" when the runs are stated (PurTera writes
+    # it from the longest run, rounded up to 50).
+    runs = [int(m.group(1)) for f in fs if f["section"] not in ("also_kept", "typed_only")
+            for m in [re.search(r"(?i)\b(\d{2,4})\s*(?:ft|feet|')\b", f["text"])] if m]
+    if len(runs) >= 2 and not any(re.search(r"(?i)cable runs? (are|is) under", str(x.get("text"))) for x in content.get("assumptions") or []):
+        cap = -(-max(runs) // 50) * 50
+        cap = cap + 50 if cap == max(runs) else cap
+        content.setdefault("assumptions", []).append({"text": f"All cable runs are under {cap} feet.", "cites": [], "kind": "method"})
     if not content.get("overview"):
         # Never an empty Project Summary: the request's own description of the
         # work (010115 round 17 printed the heading with nothing under it).
@@ -1213,7 +1229,8 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     content["overview"] = voiced or content["overview"]
     # A permit assumption needs a fact behind it.
     content["assumptions"] = [x for x in content.get("assumptions") or []
-                              if not (re.search(r"(?i)\bpermit", tx(x)) and not facts_say_permit)
+                              if not (re.search(r"(?i)\bpermit", tx(x)) and not facts_say_permit
+                                      and not (isinstance(x, dict) and x.get("standard")))
                               and not (not (isinstance(x, dict) and x.get("standard"))
                                        and re.match(r"(?i)\s*(limit|support|have|provide|ensure|use|send|keep|make)\b", tx(x)))]
     # A scope step that meets a named person repeats the standard meet step.
@@ -1415,6 +1432,9 @@ def _stated_by(text: str, cited: str) -> bool:
     want = {w for w in _toks(text) if len(w) > 2}
     have = _toks(cited)
     nums = set(re.findall(r"\d+", text))
+    parts = set(re.findall(r"\b[A-Z]{1,6}\d{1,5}(?:-[A-Z0-9]{1,6})?\b", text))
+    if parts and parts <= set(re.findall(r"\b[A-Z]{1,6}\d{1,5}(?:-[A-Z0-9]{1,6})?\b", cited)):
+        return True  # a line built on the cited order line's part number (010043's CF83-E)
     return bool(want) and len(want & have) >= 0.7 * len(want) and nums <= set(re.findall(r"\d+", cited))
 
 
