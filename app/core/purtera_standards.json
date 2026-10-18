@@ -128,14 +128,16 @@
       "Existing pathways are accessible and usable for each cable run.",
       "The IDF is accessible and has a usable pathway to each camera location.",
       "Lift requirements, if needed, will be handled through a change request.",
-      "Any required permits, building or landlord approvals will be handled by the customer unless otherwise stated."
+      "Any required permits, building or landlord approvals will be handled by the customer unless otherwise stated.",
+      "Available PoE ports on the IDF switch support each camera."
     ],
     "exclusions": [
       "Advanced camera analytics configuration.",
       "Work above inaccessible ceilings, in hazardous areas, or in areas requiring special access equipment.",
       "Electrical work.",
       "Camera licensing, cloud portal administration or video management configuration.",
-      "After-hours work unless previously approved."
+      "After-hours work unless previously approved.",
+      "Network switch or firewall configuration."
     ],
     "deliverable_outcomes": [
       "Cameras mounted at the confirmed locations.",

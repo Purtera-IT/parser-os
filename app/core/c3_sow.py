@@ -1041,9 +1041,19 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     for f in fs:
         m = re.match(r"(?i)\s*(.{2,40}?)\s*[:\-–]?\s*(?:approx(?:imately)?\.?\s*)?(\d{2,4})\s*(?:ft|feet|')\b", f["text"])
         if m and re.search(r"(?i)\bto\b|run|drop|idf|mdf", m.group(1)) and not re.search(r"\b" + m.group(2) + r"\b", scope_text):
-            content.setdefault("scope", []).append({"text": f"Run and terminate cabling for {m.group(1).strip()}: approximately {m.group(2)} feet.",
-                                                    "cites": [f["id"]], "kind": "fact"})
+            sc = content.setdefault("scope", [])
+            close = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"
+                          and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), len(sc))
+            sc.insert(close, {"text": f"Run cabling from {m.group(1).strip()}: approximately {m.group(2)} ft.",
+                              "cites": [f["id"]], "kind": "fact"})
             scope_text += " " + m.group(2)
+    # A ladder and no lift: say so (010043; PurTera writes both lines).
+    if re.search(r"(?i)\bladders?\b", pool_text) and not re.search(r"(?i)\b(lift|boom|scissor)\b(?!\s*(is|are)?\s*not)", " ".join(
+            str(x.get("text")) for k in ("scope", "provider_tools", "provider_materials") for x in content.get(k) or [] if isinstance(x, dict))):
+        asm = content.setdefault("assumptions", [])
+        for t in ("No lift is required.", "Standard ladders reach every work location."):
+            if not _said(t, asm, 0.6):
+                asm.append({"text": t, "cites": [], "kind": "method"})
     # "All cable runs are under N feet" when the runs are stated (PurTera writes
     # it from the longest run, rounded up to 50).
     runs = [int(m.group(1)) for f in fs if f["section"] not in ("also_kept", "typed_only")
