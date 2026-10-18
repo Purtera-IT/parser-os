@@ -1667,6 +1667,26 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     content["scope"] = [x for i, x in enumerate(sc)
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
+    # A standard step says "each <thing>"; the deal says how many: write the
+    # count in (010373: "Install each monitor arm" where the facts say 16
+    # Humanscale arms, 48 monitors).
+    facts_txt = " ".join(f["text"] for f in fs)
+    for x in content.get("scope") or []:
+        if not (isinstance(x, dict) and x.get("standard")):
+            continue
+        m = re.search(r"(?i)\beach (monitor arm|monitor|display|tv|camera|video bar|table controller|switch|register|printer|access point|speaker)\b", x["text"])
+        if not m:
+            continue
+        noun = m.group(1).lower()
+        counts = [int(n) for n, b in re.findall(r"(?i)\b(\d{1,4})\s+(?:new\s+|existing\s+)?(?:[A-Z][\w-]+\s+)?(?:\d+\"?\s*)?" + re.escape(noun) + r"(s)?\b", facts_txt) if 1 < int(n) < 1000]
+        if counts:
+            n = max(counts, key=counts.count)
+            x["text"] = x["text"][:m.start()] + f"each of the {_words(n)} ({n}) {noun}s" + x["text"][m.end():]
+    # A ladder or lift line on a job with no height in the sources (010373 is
+    # desk-height work).
+    if not re.search(r"(?i)\b(ladder|lift|ceiling|height|high|ft|feet|foot|elevated|scissor|boom)\b", facts_txt):
+        content["assumptions"] = [x for x in content.get("assumptions") or []
+                                  if not re.search(r"(?i)\bladders?\b|\bno lift\b", str(x.get("text") if isinstance(x, dict) else x))]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
