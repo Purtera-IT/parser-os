@@ -948,6 +948,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _apply_standards(content, family, [f["text"] for f in fs])
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
+    _grounding(content, fs)
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
     # became scope), unless it asks the customer to confirm.
@@ -1442,13 +1443,22 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             continue
         # Scope: the standard steps lead the work group; the closing steps go
         # under the closing heading.
-        tail = [it for it in std if it["text"].lower().startswith(("notify", "confirm completion"))]
+        tail = [it for it in std if it["text"].lower().startswith(("notify", "confirm completion", "clean", "inform", "remove debris",
+                                                                     "remove all debris", "dispose", "haul"))]
         lead = [it for it in std if it not in tail]
         heads = [i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"]
         work = [i for i in heads if not re.search(r"(?i)arriv|access|check|start|prep|clos|clean|wrap|complet", str(items[i].get("text")))]
         arrival_end = next((i for i in heads if i > 0), len(items)) if heads and heads[0] == 0 else 0
-        at = work[0] + 1 if work else arrival_end
-        items[at:at] = lead
+        # Their own group ahead of the deal's room or area groups, never inside
+        # the first one (010012: seven generic steps under "Shared Office").
+        generic = work and re.search(r"(?i)install|work|mount|cabl|scope|procedure|task|decommission|pack|replace|refresh|deploy|run",
+                                     str(items[work[0]].get("text")))
+        if generic:
+            items[work[0] + 1:work[0] + 1] = lead
+        elif work:
+            items[work[0]:work[0]] = [{"text": "Installation", "cites": [], "kind": "heading"}] + lead
+        else:
+            items[arrival_end:arrival_end] = lead
         close = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
                       and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), None)
         if close is None:
@@ -1479,6 +1489,27 @@ _LEDGER = re.compile(r"(?i)tax[- ]exempt|tax status|\bexempt\b|cost cent(er|re)|
 _FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination"),
                      "pos_install_refresh": re.compile(r"(?i)network testing|validation tools|certifier|toner"),
                      "av_conference_room": re.compile(r"(?i)termination tools?|cable testers?|certifier|toner|punch")}
+
+
+def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """Lines whose only support is not the job (010012 round K: the summary
+    built from a leasing render's captions; 010082: a request-form 'Project
+    survey' row written as a firm task the notes call optional)."""
+    by = {f["id"]: f for f in fs}
+    pictured = lambda x: bool(x.get("cites")) and all(by.get(c, {}).get("pictured") for c in x.get("cites") or [])
+    ov = [x for x in content.get("overview") or [] if isinstance(x, dict)]
+    keep = [x for x in ov if not pictured(x)]
+    if keep and len(keep) < len(ov):
+        content["overview"] = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and pictured(x))]
+    # "The attached floor plan": nothing is attached to a SOW.
+    for k in LISTS:
+        content[k] = [x for x in content.get(k) or []
+                      if not re.search(r"(?i)\battached (floor ?plan|drawing|diagram|layout|map)", str(x.get("text") if isinstance(x, dict) else x))]
+    # A survey the facts call optional or conditional is not a task.
+    if any(re.search(r"(?i)survey.{0,60}\b(optional|contingent|if needed|as needed|if required|probably not|not needed|may not)\b|"
+                     r"\b(optional|contingent)\b.{0,40}survey", f["text"]) for f in fs):
+        content["scope"] = [x for x in content.get("scope") or []
+                            if not (isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"(?i)\bsurvey\b", str(x.get("text"))))]
 
 
 def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
