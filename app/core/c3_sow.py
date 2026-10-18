@@ -571,6 +571,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["added"] = _cover(content, fs, model)
     content["added"] += _must_include(content, fs, model)
     content["checks"] = check(content, lines)
+    # A schedule or work-window line is a commitment: it needs a line the brief
+    # kept, not only one it mentioned in passing (000132's "24/7 on-call",
+    # keep 0.21, became "Work Window: 24/7 on-call availability").
+    weak = {f["id"] for f in fs if f["section"] in ("also_kept", "unsure", "typed_only", "answered_question")}
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not x.get("cites") or not all(c in weak for c in x["cites"])]
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
