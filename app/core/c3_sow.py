@@ -791,7 +791,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         y = ("20" + y) if len(y) == 2 else y
         return f"{y}-{int(mo):02d}-{int(d):02d}" < cut
     content["schedule"] = [x for x in content.get("schedule") or []
-                           if not (re.match(r"(?i)\s*requested start", str(x.get("text"))) and _before_cut(str(x.get("text"))))]
+                           if not (re.search(r"(?i)\b(start|service|install|scheduled)\b.{0,20}\bdate\b|^\s*requested start", str(x.get("text")))
+                                   and _before_cut(str(x.get("text"))))]
     # A resource count needs a line that states staffing ("one tech for two
     # days"), not a named delivery team (010082: "Kelly, Octavian and Chase are
     # our delivery team" became "Number of Resources: three").
@@ -1753,6 +1754,14 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
         cited = " ".join(lines.get(c, "") for c in x["cites"])
         if head != str(x["text"]).strip() and len(head.split()) >= 4 and _stated_by(head, cited):
             x["text"] = head.rstrip(".,;") + "."
+            bad.discard(id(x))
+            continue
+        # Rejected only for a count its lines do not state: keep the step, drop the
+        # count (010120: "Install two (2) suspended Neat camera devices" went whole).
+        bare = re.sub(r"(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*(\(\d+\)\s*)?(?=[a-z])", "", str(x["text"])).strip()
+        bare = re.sub(r"\s{2,}", " ", bare)
+        if k == "scope" and bare != str(x["text"]).strip() and len(bare.split()) >= 3 and _stated_by(bare, cited):
+            x["text"] = bare[:1].upper() + bare[1:]
             bad.discard(id(x))
     gone = content.setdefault("dropped", [])
     for k in LISTS:
