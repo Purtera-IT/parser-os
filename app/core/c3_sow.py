@@ -739,6 +739,10 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # The summary commits only what the brief commits: a line the brief merely
     # mentioned (000132's "24/7 on-call", whose caveat sat beside it) is not a
     # promise in the overview.
+    promise = re.compile(r"(?i)24\s*/\s*7|on-?call|\bsla\b|guarantee|response time|within \d+ (hours?|minutes?)")
+    for k in ("scope", "schedule", "assumptions"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
+                      and all(c in weak for c in x["cites"]) and promise.search(str(x.get("text"))))]
     ov_kept = [x for x in content.get("overview") or [] if not x.get("cites") or not all(c in weak for c in x["cites"])]
     content["overview"] = ov_kept or content.get("overview") or []
     # A start date before the cutoff is a document's date, not the job's
