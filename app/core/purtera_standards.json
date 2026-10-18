@@ -43,5 +43,41 @@
       "Damage, missing materials or access issues reported to the onsite contact.",
       "Completion confirmed with the onsite contact."
     ]
+  },
+  "pos_install_refresh": {
+    "_source": "owner standards loop 2026-10-18: generic POS handling common to the 000123 and 010198 v1 TEMPLATE lists (device-specific steps left to the deal)",
+    "method_steps": [
+      "Confirm the installation locations and identify the register lanes in scope with the onsite contact.",
+      "Verify that the required equipment, power and network connectivity are available before beginning installation.",
+      "Perform cable management and organize unused cabling as reasonable within the allotted onsite time.",
+      "Perform functional testing of each installed device before leaving the site.",
+      "Clean the immediate work area of installation packaging and loose cabling created by Provider.",
+      "Notify the onsite contact of any material, access or site readiness issues and any incomplete work items.",
+      "Confirm completion with the onsite contact before leaving site."
+    ],
+    "customer_responsibilities": [
+      "Perform all device configurations and troubleshooting, if required.",
+      "Ensure onsite personnel are available to assist with functional validation where required.",
+      "Provide escalation contacts for technical, access, hardware and schedule related issues.",
+      "Provide approval criteria for completed installation and functional testing."
+    ],
+    "assumptions": [
+      "Cable management is required.",
+      "Functional testing will be performed before the technician leaves the site.",
+      "Onsite parking is available; any parking fee is reimbursable."
+    ],
+    "exclusions": [
+      "Disposal, recycling, shipping or offsite removal of legacy equipment.",
+      "Inventory reconciliation beyond basic identification of the equipment for the installation.",
+      "POS application programming (menus, product database, pricing or tax configuration).",
+      "Troubleshooting or repair of the customer's internet service provider infrastructure.",
+      "Return visits caused by missing equipment, unavailable site access or contacts, or customer-directed schedule changes."
+    ],
+    "deliverable_outcomes": [
+      "Installed devices connected, powered and functionally tested.",
+      "Completion photos of each installed location.",
+      "Notes on material, access or site readiness issues and incomplete work items encountered onsite.",
+      "Completion confirmed with the onsite contact."
+    ]
   }
 }
