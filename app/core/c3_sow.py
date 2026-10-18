@@ -41,6 +41,10 @@ SECTION_ORDER = ("scope_of_work", "customer_responsibilities", "customer_furnish
 _SUPPLIER = {"us": "Provider", "customer": "Customer", "partner": "reseller"}
 SUPPLIER_BAR = float(os.environ.get("SOWSMITH_C3_SOW_SUPPLIER_BAR", "0.85"))
 UNSURE_BAR = float(os.environ.get("SOWSMITH_C3_SOW_UNSURE_BAR", "0.6"))
+#: A fact line's length in the prompt. 010083's answers ride inline after
+#: each question ("...? [Betty] We will have a Webex bridge open...") and ran
+#: past a 400-character cut.
+FACT_CHARS = int(os.environ.get("SOWSMITH_C3_SOW_FACT_CHARS", "1200"))
 SOW_TOKENS = int(os.environ.get("SOWSMITH_C3_SOW_TOKENS", "7000"))
 
 #: Lines every template already prints; the writer must not repeat them.
@@ -193,6 +197,11 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": "",
                         "text": str(x["text"]), "supplier": x.get("supplier")})
+    # The brief keeps a short copy of each line; the writer reads the whole one.
+    full = {a.get("id"): str(a.get("text") or "") for a in envelope.get("atoms") or []}
+    for f in out:
+        if len(full.get(f["id"], "")) > len(f["text"]):
+            f["text"] = full[f["id"]]
     _lead_ins(out, envelope.get("atoms") or [])
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
     seen_text: set[str] = set()
@@ -242,7 +251,7 @@ def _fact_line(f: dict[str, Any]) -> str:
     who = (f" supplied-by:{_SUPPLIER.get(sup[0], sup[0])}" if sup and float(sup[1] or 0) >= SUPPLIER_BAR
            and sup[0] in _SUPPLIER and f.get("type") in _ITEM_TYPES else "")
     return (f"[{f['id']}] ({f['section']}" + (f", {f['when']}" if f["when"] else "") + who + ") "
-            + (f"[under: {f['under']}] " if f["under"] else "") + _dated(f["text"], f["when"] or None)[:400])
+            + (f"[under: {f['under']}] " if f["under"] else "") + _dated(f["text"], f["when"] or None)[:FACT_CHARS])
 
 
 def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[dict[str, str]]:
@@ -563,6 +572,29 @@ def enabled() -> bool:
     return os.environ.get("SOWSMITH_C3_SOW", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _reseller_streets(envelope: dict[str, Any]) -> set[str]:
+    """Street addresses the account's own people sign with: a contact line or
+    signature from the reseller's domain. 010083's only "site" was CDW's sales
+    office, 310 Seven Springs Way, off the rep's contact card and signatures."""
+    account = str((envelope.get("crm") or {}).get("account_name") or "").lower().split()
+    dom = account[0] if account else ""
+    out: set[str] = set()
+    if not dom:
+        return out
+    for a in envelope.get("atoms") or []:
+        v = a.get("structured") or {}
+        t = str(a.get("text") or "")
+        said = (v.get("said_by") or {}).get("company") or (a.get("locator") or {}).get("sender") or ""
+        contact_line = bool(re.search(r"[\w.+-]+@([\w-]+)\.", t)) and dom in t.lower()
+        signature = a.get("atom_type") == "stakeholder" and dom in str(said).lower()
+        if contact_line or signature:
+            m = re.search(r"\b\d{2,6}\s+[A-Za-z0-9 .'-]+?\b(?:way|st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|"
+                          r"ln|lane|pkwy|parkway|ct|court|pl|place|hwy|highway)\b", t, re.I)
+            if m:
+                out.add(re.sub(r"\W+", " ", m.group(0).lower()).strip())
+    return out
+
+
 def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """The SOW content as the envelope carries it: the writer's lists, the
     partner's requester, the CRM record and the sites."""
@@ -570,7 +602,11 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
               "state": s.get("state") or "", "postal_code": s.get("postal_code") or "",
               "name": s.get("display_name") or ""}
              for s in (envelope.get("site_readiness") or {}).get("sites") or []]
+    offices = _reseller_streets(envelope)
+    sites = [x for x in sites if not any(o in re.sub(r"\W+", " ", x["address"].lower()) for o in offices)]
     c = write(envelope, {"sites": sites})
+    rec = envelope.get("site_count_reconciliation") or {}
+    c["site_summary"] = {"stated": rec.get("stated"), "resolved": len(sites)}
     c["requested_by"] = requested_by(envelope)
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
     c["sites"] = _sites(envelope, {"sites": sites})
@@ -579,33 +615,78 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     return c
 
 
+def _when_sent(raw: str) -> float | None:
+    """A header date ("Thu, 08 Oct 2026 14:09:23 +0000") or a quoted one
+    ("Wednesday, October 7, 2026 10:07 PM"), as a timestamp."""
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+
+    try:
+        return parsedate_to_datetime(raw).timestamp()
+    except Exception:
+        pass
+    for fmt in ("%A, %B %d, %Y %I:%M %p", "%B %d, %Y %I:%M %p", "%A, %B %d, %Y at %I:%M %p"):
+        try:
+            return datetime.strptime(raw.strip(), fmt).replace(tzinfo=timezone.utc).timestamp()
+        except Exception:
+            continue
+    return None
+
+
 def requested_by(envelope: dict[str, Any]) -> dict[str, str]:
-    """The partner's salesperson who asked for the quote: the account-side
-    person who wrote most, with the contact card the brief built for them."""
-    account = str((envelope.get("crm") or {}).get("account_name") or "").lower()
+    """The partner's salesperson who asked PurTera for the work: the account-side
+    sender of the earliest email that went to PurTera (010419's request came from
+    Tim George with Juli Bonner on copy; the most prolific writer was the copy)."""
+    account = str((envelope.get("crm") or {}).get("account_name") or "").lower().split()
+    dom = account[0] if account else ""
     roster = (envelope.get("deal_roster") or {}).get("people") or []
     cards = {str(c.get("name") or "").lower(): c for c in (envelope.get("c3_brief") or {}).get("contacts") or []}
-    best = None
-    for p in roster:
-        if p.get("side") != "theirs":
+    first: tuple[float, str] | None = None
+    last_quoted: tuple[float, str] | None = None
+    for a in envelope.get("atoms") or []:
+        loc = a.get("locator") or {}
+        raw_sender = str(loc.get("sender") or "").lower()
+        m_addr = re.search(r"[\w.+-]+@[\w.-]+", raw_sender)
+        sender = m_addr.group(0) if m_addr else ""
+        # A quoted message counts: the request often reaches PurTera only as the
+        # quote under a forward (010419: Tim George at cdwg.com).
+        if not sender or not dom or dom not in sender.split("@")[-1]:
             continue
-        dom = str(p.get("domain") or "")
-        if account and account.split()[0] not in dom:
+        thread = (a.get("structured") or {}).get("email_thread") or {}
+        to = " ".join(thread.get("to") or []).lower()
+        if to and "purtera" not in to:
             continue
-        if best is None or int(p.get("messages_sent") or 0) > int(best.get("messages_sent") or 0):
-            best = p
-    if not best:
-        return {"name": "", "phone": "", "email": ""}
-    name = best.get("name") or ""
+        t = _when_sent(str(loc.get("sent_at") or ""))
+        if t is None:
+            continue
+        if loc.get("quoted"):
+            # Quoted history reaches back to earlier contacts (010043's May
+            # thread with a former account manager): only the latest counts,
+            # and only when no one wrote directly.
+            if last_quoted is None or t > last_quoted[0]:
+                last_quoted = (t, sender)
+        elif first is None or t < first[0]:
+            first = (t, sender)
+    first = first or last_quoted
+    if first is None:
+        people = [p for p in roster if p.get("side") == "theirs" and dom and dom in str(p.get("domain") or "")]
+        if not people:
+            return {"name": "", "phone": "", "email": ""}
+        best = max(people, key=lambda p: int(p.get("messages_sent") or 0))
+        email = str(best.get("email") or "")
+    else:
+        email = first[1]
+    person = next((p for p in roster if str(p.get("email") or "").lower() == email), {})
+    name = str(person.get("name") or "")
+    local = email.split("@")[0]
     if not name:
-        local = str(best.get("email") or "").split("@")[0]
         for k, c in cards.items():
-            if k and all(part in local for part in k.split()[:1]) and k.split()[-1] in local:
-                name = c.get("name") or ""
+            parts = k.split()
+            if parts and parts[-1] in local and (parts[0][:3] in local or parts[0][0] == local[0]):
+                name = str(c.get("name") or "")
                 break
     card = cards.get(name.lower(), {})
-    return {"name": name, "phone": str(best.get("phone") or card.get("phone") or ""),
-            "email": str(best.get("email") or card.get("email") or "")}
+    return {"name": name, "phone": str(person.get("phone") or card.get("phone") or ""), "email": email}
 
 
 def as_markdown(content: dict[str, Any]) -> tuple[str, str]:
