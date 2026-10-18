@@ -57,6 +57,12 @@ HEADER_ALIASES: dict[str, set[str]] = {
         "labor item",
         "cable type",
         "line",
+        # An inventory's own name column (010147's questionnaire: "Device Name"
+        # held "Network Switch"; without it each row read "Line item Unknown").
+        "device name",
+        "item name",
+        "equipment name",
+        "asset name",
     },
     "quantity": {
         "qty",
@@ -1706,6 +1712,9 @@ class QuoteParser(BaseParser):
         raw_row: list[str] | None = None,
     ) -> list[EvidenceAtom]:
         part_number = values.get("part_number", "")
+        # "Unknown" / "N/A" in a model column is a blank, not a part number.
+        if part_number.strip().lower() in {"unknown", "n/a", "na", "none", "tbd", "-", "--", "?"}:
+            part_number = ""
         description = values.get("description", "")
         quantity_raw = values.get("quantity", "")
         unit_price_raw = values.get("unit_price", "")
@@ -1922,7 +1931,7 @@ class QuoteParser(BaseParser):
         if has_line and row_kind in {"real_line_item", "allowance", "alternate", "option", "excluded", "included_no_qty", "malformed"}:
             append_atom(
                 AtomType.vendor_line_item,
-                (f"Line item {part_number} {description}".strip()
+                (" ".join(x for x in ("Line item", part_number, description) if x).strip()
                  + (f" at {site_id_value}" if site_id_value else "")
                  + (f" [{region_value}]" if region_value else "")
                  + (f" {currency_value} {amount_value}".strip() if (currency_value and amount_value) else "")
