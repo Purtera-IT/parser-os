@@ -885,7 +885,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         months = "January|February|March|April|May|June|July|August|September|October|November|December"
         for f in fs:
             if f["section"] in ("timeline", "job_details", "scope_of_work", "schedule"):
-                m = re.search(r"(?i)\b(?:on|for)\s+((?:mon|tues|wednes|thurs|fri|satur|sun)day[\w\s,]{0,12}?)?(" + months + r")\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?", f["text"])
+                m = re.search(r"(?i)\b(?:on|for)\s+(?:next\s+|this\s+)?((?:mon|tues|wednes|thurs|fri|satur|sun)day[\w\s,]{0,12}?)?(" + months + r")\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?", f["text"])
                 if m:
                     day = (m.group(1) or "").strip(" ,")
                     sched.insert(0, {"text": "Requested Start Date: " + ((day.split()[0].capitalize() + ", ") if day else "")
