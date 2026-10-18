@@ -895,6 +895,15 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     cust = lambda c: bool(sup_of.get(c)) and sup_of[c][0] == "customer" and float(sup_of[c][1] or 0) >= SUPPLIER_BAR
     eq = content.get("equipment_in_scope") or []
     to_cust = [x for x in eq if isinstance(x, dict) and x.get("cites") and all(cust(c) for c in x["cites"])]
+    # A BOM block the supplier head reads as the customer's is the customer's,
+    # row by row (010116: three rows read "customer" at the bar, the rest none).
+    bom_row = re.compile(r"^\s*\d{1,4}\s*[:|x]\s*(?:\d{1,4}\s*\|\s*)?\|?\s*[A-Z0-9][A-Z0-9./_-]{3,30}\b")
+    bom_facts = [f for f in fs if bom_row.match(f["text"])]
+    if bom_facts and any(cust(f["id"]) for f in bom_facts):
+        cm = content.setdefault("customer_materials", [])
+        for f in bom_facts:
+            if not _said(f["text"], cm, 0.6):
+                cm.append({"text": re.sub(r"^\s*(\d+)\s*[:|]\s*", r"\1 x ", f["text"]).strip(), "cites": [f["id"]], "kind": "fact"})
     if to_cust:  # 010116: the supplier head read "customer" on every BOM line
         content["equipment_in_scope"] = [x for x in eq if x not in to_cust]
         content.setdefault("customer_materials", []).extend(to_cust)

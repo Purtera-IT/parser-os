@@ -210,7 +210,7 @@
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
       "Standard commercial wall construction and fastening methods can be used.",
       "No asbestos, hazardous materials, concealed utilities or structural obstructions are present in the work areas.",
-      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provider's work is limited to physical installation and connection of the video bars and controllers."
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provider's work is limited to physical installation and connection of the listed equipment."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
