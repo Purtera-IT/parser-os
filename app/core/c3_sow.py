@@ -1514,6 +1514,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     named.append(place)
         if len(named) == 1:
             c["sites"][0]["name"] = named[0]
+    # A roster display name carries the address after a dash ("SAN_La-Jolla_1016 —
+    # 844 Pearl Street, ..."), which printed it twice in every location cell.
+    for x in c["sites"]:
+        nm = str(x.get("name") or "")
+        head, sep, rest = nm.partition(" — ")
+        if sep and rest and (rest.split(",")[0].strip().lower() in str(x.get("address") or "").lower()):
+            x["name"] = head.strip()
     if len(c["sites"]) == 1:
         site_words = _toks(" ".join(str(c["sites"][0].get(k) or "") for k in ("name", "address")))
         c["scope"] = [x for x in c.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") == "heading"
