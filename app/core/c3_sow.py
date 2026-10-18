@@ -1636,6 +1636,16 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         content["scope"].remove(x)
         if not _said(str(x["text"]), content.setdefault("provider_tools", []), 0.5):
             content["provider_tools"].append(x)
+    # A license is not an install material (010043: Verkada license increases
+    # under Customer Provided Materials beside the licensing exclusion).
+    for k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+        content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)\blicen[cs]e", str(x.get("text") if isinstance(x, dict) else x))]
+    # "Provide and install" claims Provider supplies it: only with a Provider
+    # materials line saying so (010043's cable runs).
+    if not content.get("provider_materials"):
+        for x in content.get("scope") or []:
+            if isinstance(x, dict) and re.match(r"(?i)\s*provide and install\b", str(x.get("text"))):
+                x["text"] = re.sub(r"(?i)^\s*provide and install", "Install", str(x["text"]))
     # Site hours are the template's business-hours line, not a customer duty.
     content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                             if not re.search(r"(?i)\b(operates|open|hours)\b.{0,30}monday.{0,15}friday", str(x.get("text") if isinstance(x, dict) else x))]
