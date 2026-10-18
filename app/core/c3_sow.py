@@ -269,7 +269,8 @@ def _standard_applies(t: str, facts_text: list[str]) -> tuple[bool, str]:
     if not m:
         return True, t
     pat = re.compile(m.group(1), re.I)
-    return any(pat.search(f) for f in facts_text), t[m.end():]
+    keep_words = re.compile(r"(?i)\b(stay|stays|remain|remains|no change|already|left in place|existing)\b")
+    return any(pat.search(f) and not keep_words.search(f) for f in facts_text), t[m.end():]
 
 
 LIBRARY_PER_SECTION = {"tools": 6}
@@ -916,6 +917,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("cites")
                       and not x.get("standard") and doc_promise.search(str(x.get("text") or x.get("item") or ""))
                       and not doc_promise.search(pool_text))]
+    # A library line ruling out in-wall work the deal asks for (010120: the
+    # survey moves the replication cable behind the wall, no visible cables).
+    if re.search(r"(?i)behind (the )?wall|in-?wall|inside (the )?wall|concealed|no cables? (should be |will be )?visible", pool_text):
+        for k in ("scope", "assumptions", "out_of_scope"):
+            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("cites")
+                          and re.search(r"(?i)without in-?wall|no (in-?wall|concealed)|in-?wall .{0,20}(routing|cabling).{0,20}(excluded|not included)|concealed routing", str(x.get("text"))))]
     # "All cable runs are under N feet" when the runs are stated (PurTera writes
     # it from the longest run, rounded up to 50).
     runs = [int(m.group(1)) for f in fs if f["section"] not in ("also_kept", "typed_only")
@@ -1300,7 +1307,8 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         items[close]["text"] = "Closeout"
         items[:] = [x for i, x in enumerate(items) if not (i > close and isinstance(x, dict) and x.get("kind") == "heading"
                     and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text"))))]
-    outcomes = [t for ok, t in (_standard_applies(o, facts_text or []) for o in fixed.get("deliverable_outcomes") or []) if ok]
+    outcomes = [t for ok, t in (_standard_applies(o, facts_text or []) for o in fixed.get("deliverable_outcomes") or [])
+                if ok and not contradicted(t)]
     if outcomes:
         dl = content.setdefault("deliverables", [])
         if not dl:
