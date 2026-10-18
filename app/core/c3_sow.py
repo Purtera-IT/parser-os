@@ -102,8 +102,9 @@ _PARTS = {
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
-        "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is; empty when no "
-        "fact gives one]}"),
+        "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is (the technician's "
+        "name is sent ahead by Provider and the site adds it to its security list; the site issues badges and passes); "
+        "empty when no fact gives one]}"),
     "scope": (
         "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (a purtera_standard_* list is PurTera's fixed handling of this job "
         "type: write every one of its items, reworded to this job, unless a fact contradicts it; the other lists: method steps, tools, deliverables PurTera writes on such jobs; "
@@ -628,6 +629,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["scope"] = [x for i, x in enumerate(sc)
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
+    _apply_standards(content, family)
+    _tidy(content)
     content["facts_given"] = len(fs)
     return content
 
@@ -890,6 +893,91 @@ def _normalise(got: dict[str, Any]) -> dict[str, Any]:
                      "format": str(d.get("format") or "PDF")})
     out["deliverables"] = dels
     return out
+
+
+_STD_LIST = {"method_steps": "scope", "customer_responsibilities": "customer_responsibilities",
+             "assumptions": "assumptions", "exclusions": "out_of_scope"}
+_TOK = re.compile(r"[a-z0-9]+")
+_FILLER = frozenset("the a an and or of to for in on at by with is are be any all each its their".split())
+
+
+def _toks(t: str) -> set[str]:
+    return {w for w in _TOK.findall(str(t).lower()) if w not in _FILLER}
+
+
+def _said(text: str, items: list[Any], share: float = 0.5) -> bool:
+    """Does some item already say ``text`` (most of its words)?"""
+    want = _toks(text)
+    return bool(want) and any(len(want & _toks(x.get("text") if isinstance(x, dict) else x)) >= share * len(want)
+                              for x in items)
+
+
+def _apply_standards(content: dict[str, Any], family: str) -> int:
+    """Write PurTera's fixed handling of the job type (purtera_standards.json)
+    into the SOW, each item the writer did not already say. Offered to the
+    writer as a hint, it came back with empty customer responsibilities and
+    none of the standard steps (010115 round 12)."""
+    fixed = purtera_standards(family)
+    n = 0
+    for sec, lst in _STD_LIST.items():
+        items = content.setdefault(lst, [])
+        for t in fixed.get(sec) or []:
+            if _said(t, items):
+                continue
+            item = {"text": t, "cites": [], "kind": "method", "standard": True}
+            if lst == "scope":
+                # Before the closing group, so the steps read in work order.
+                close = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
+                              and re.search(r"(?i)clos|complet|wrap", str(x.get("text")))), len(items))
+                if close == len(items) and t.lower().startswith("confirm completion"):
+                    items.append(item)
+                else:
+                    items.insert(close, item)
+            else:
+                items.append(item)
+            n += 1
+    content["standards_added"] = n
+    return n
+
+
+_ACCESS = re.compile(r"(?i)\b(badges?|parking|pass(es)?|escort|keys?|access cards?)\b")
+_LEDGER = re.compile(r"(?i)tax[- ]exempt|cost cent(er|re)|\bcorp(orate)? service\b|\bsegment\b|\bgl code\b")
+
+
+def _tidy(content: dict[str, Any]) -> None:
+    """Deterministic placement the writer kept getting wrong (010115 round 12)."""
+    # A visitor badge or parking pass is something the site hands over, not
+    # equipment worked on.
+    eq = content.get("equipment_in_scope") or []
+    access = [x for x in eq if _ACCESS.search(str(x.get("text") if isinstance(x, dict) else x))]
+    if access:
+        content["equipment_in_scope"] = [x for x in eq if x not in access]
+        names = " and ".join(str(x.get("text") if isinstance(x, dict) else x).strip(" .").lower() for x in access)
+        cr = content.setdefault("customer_responsibilities", [])
+        line = f"Provide the {names} at check-in."
+        if not _said(line, cr):
+            cr.append({"text": line, "cites": sum((x.get("cites") or [] for x in access if isinstance(x, dict)), []),
+                       "kind": "fact"})
+    # Internal accounting fields (cost center, segment, tax status) are not a
+    # description of the work.
+    content["overview"] = [x for x in content.get("overview") or []
+                           if not _LEDGER.search(str(x.get("text") if isinstance(x, dict) else x))]
+    # Exclusions read as sentences: a bare word another exclusion already
+    # covers goes; the rest start with a capital and end with a period.
+    oos = content.get("out_of_scope") or []
+    kept = []
+    for x in oos:
+        t = str(x.get("text") if isinstance(x, dict) else x).strip()
+        others = [y for y in oos if y is not x and len(_toks(y.get("text") if isinstance(y, dict) else y)) > 2]
+        if len(t.split()) <= 2 and _said(t, others, 1.0):
+            continue
+        t = t[:1].upper() + t[1:]
+        if not t.endswith((".", "!", "?")):
+            t += "."
+        if isinstance(x, dict):
+            x["text"] = t
+        kept.append(x if isinstance(x, dict) else {"text": t, "cites": [], "kind": "method"})
+    content["out_of_scope"] = kept
 
 
 def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
@@ -1190,6 +1278,26 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                          "street": street.strip(), "state": st.strip(),
                          "postal_code": same.get("postal_code") or (zp.group(0) if zp else "")})
         c["sites"] = rows
+    # The project is named as the deal is: PurTera's v1 titles are the CRM deal
+    # name without its number and the reseller ("010115 - CDW Sodexo Decomm
+    # Delta Atlanta" -> "Sodexo Decomm Delta Atlanta"); the writer coined its own.
+    dn = str((envelope.get("crm") or {}).get("deal_name") or "").strip()
+    dn = re.sub(r"^\s*\d{5,6}\s*[-–:]?\s*", "", dn)
+    dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s+", "", dn).strip(" -–")
+    if len(dn.split()) >= 2:
+        c["project_name"] = dn
+    # On a one-address job, a place the request names inside it ("Specific
+    # Location(s) | Sodexo Dining CAFE") is where the work is: it names the site.
+    if len(c["sites"]) == 1:
+        named = []
+        for a in envelope.get("atoms") or []:
+            t = str(a.get("raw_text") or a.get("text") or "")
+            if str(a.get("atom_type") or "") == "physical_site" and "|" in t and not re.search(r"\d", t):
+                place = t.rsplit("|", 1)[1].strip()
+                if 2 <= len(place.split()) <= 6 and place not in named:
+                    named.append(place)
+        if len(named) == 1:
+            c["sites"][0]["name"] = named[0]
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
