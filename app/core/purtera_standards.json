@@ -132,5 +132,38 @@
       "Cable terminations labeled at both ends.",
       "Power and network connectivity verified for each camera."
     ]
+  },
+  "network_switch_refresh": {
+    "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list",
+    "method_steps": [
+      "Review the existing switch location, rack layout, cabling and available rack space.",
+      "Install the new switches in the existing rack, cabinet or customer-designated network area.",
+      "Move cables to the new switches one-for-one where practical.",
+      "Stage the removed legacy switches onsite in a customer-designated area.",
+      "Confirm completion with the onsite contact or remote engineer before leaving site."
+    ],
+    "customer_responsibilities": [
+      "Provide the switch configuration before onsite installation.",
+      "Provide rack ears, power supplies, power cords, stack cables, optics, patch cables, rack hardware and any other materials required for installation, where applicable.",
+      "Perform final network validation, connectivity testing and acceptance testing.",
+      "Identify the customer-designated area where removed legacy switches should be staged.",
+      "Confirm any site-specific requirements where a dedicated rack is not available or the existing rack, cabinet, cabling or layout may affect the installation."
+    ],
+    "assumptions": [
+      "Provider's role is limited to onsite physical labor and field support.",
+      "Provider is not responsible for switch configuration, programming, network engineering or final network acceptance.",
+      "Removed legacy switches will be left onsite in a customer-designated area."
+    ],
+    "exclusions": [
+      "Switch configuration and programming.",
+      "Network troubleshooting.",
+      "Return logistics for removed equipment.",
+      "Structured cabling installation, cable certification, electrical work, rack replacement or circuit troubleshooting unless added by written change order."
+    ],
+    "deliverable_outcomes": [
+      "New switches installed and cabled one-for-one.",
+      "Removed switches staged onsite in the designated area.",
+      "Completion confirmed with the onsite contact or remote engineer."
+    ]
   }
 }

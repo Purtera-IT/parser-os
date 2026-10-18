@@ -570,6 +570,31 @@ def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> in
     return n
 
 
+_RESELLER_SHIPS = re.compile(r"(?i)\b(cdw|shi|insight|presidio|connection|zones|the reseller|distributor)\b[^.]{0,60}?"
+                             r"\b(acquire|ship|provid|order|procur|configur|supply|supplies|deliver)")
+_HARDWARE = re.compile(r"(?i)\b(switch(es)?|router|firewall|access points?|aps?\b|power suppl|power cords?|stack(ing)? cables?|"
+                       r"sfps?|optics?|rack ears?|transceivers?|licen[cs]|cameras?|phones?|displays?|tvs?|ups\b|batter(y|ies))")
+_NO_RACK = re.compile(r"(?i)\b(no (dedicated )?rack|without a rack|not enough rack|rack space (may|might) not|may need .{0,20}rack)")
+
+
+def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """When a fact says the reseller acquires/ships/configures the equipment,
+    the hardware is the customer's to furnish, never Provider's materials
+    (010083: CDW ships 194 switches, the SOW listed switches, power supplies
+    and SFPs as technician-provided). And an assumption a fact contradicts
+    goes ("sufficient rack space" where sites have no rack)."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    if any(_RESELLER_SHIPS.search(f["text"]) for f in fs):
+        pm = content.get("provider_materials") or []
+        hw = [x for x in pm if _HARDWARE.search(tx(x))]
+        if hw:
+            content["provider_materials"] = [x for x in pm if x not in hw]
+            content.setdefault("customer_materials", []).extend(hw)
+    if any(_NO_RACK.search(f["text"]) for f in fs):
+        content["assumptions"] = [a for a in content.get("assumptions") or []
+                                  if not re.search(r"(?i)sufficient rack|rack space is available|no rack modification", tx(a))]
+
+
 def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[dict[str, str]]:
     rows = (pm_handoff or {}).get("sites") or []
     out = []
@@ -669,6 +694,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             if m:
                 sched.append({"text": f"Requested Completion Date: {m.group(2)}", "cites": [f["id"]], "kind": "fact"})
                 break
+    _reseller_supplies(content, fs)
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
