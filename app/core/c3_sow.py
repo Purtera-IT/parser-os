@@ -1345,6 +1345,14 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
             dl[0].setdefault("description", []).extend(re.sub(r"(?i)^provide\s+", "", tx(c)).rstrip(".") + "." for c in photo)
     if any(re.search(r"(?i)left onsite|staged? onsite|stage the removed", tx(a)) for a in (content.get("assumptions") or []) + (content.get("scope") or [])):
         cr[:] = [c for c in cr if not re.search(r"(?i)site for disposal|ship (the )?removed|return (the )?removed", tx(c))]
+    # Hardware Quantity belongs in the Schedule only where PurTera puts it
+    # there (a decommission job); elsewhere the count lives in the scope
+    # (010043, 010083, 010085: "Schedule: Hardware Quantity" flagged misplaced).
+    if str(content.get("job_family") or "") != "decommission_packing":
+        content["schedule"] = [x for x in content.get("schedule") or [] if not tx(x).lower().startswith("hardware quantity")]
+    # The template already has "Ensure all customer-provided equipment is on site".
+    cr[:] = [c for c in cr if (isinstance(c, dict) and c.get("standard"))
+             or not re.search(r"(?i)customer[- ]provided equipment.{0,40}on ?site|equipment is on ?site and available", tx(c))]
     # The template already asks for a point of contact.
     content["customer_responsibilities"] = [c for c in cr if not re.search(r"(?i)point of contact|onsite contact for", tx(c))
                                             and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
