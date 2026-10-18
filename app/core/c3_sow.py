@@ -573,7 +573,8 @@ def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> in
 _RESELLER_SHIPS = re.compile(r"(?i)\b(cdw|shi|insight|presidio|connection|zones|the reseller|distributor)\b[^.]{0,60}?"
                              r"\b(acquire|ship|provid|order|procur|configur|supply|supplies|deliver)")
 _HARDWARE = re.compile(r"(?i)\b(switch(es)?|router|firewall|access points?|aps?\b|power suppl|power cords?|stack(ing)? cables?|"
-                       r"sfps?|optics?|rack ears?|transceivers?|licen[cs]|cameras?|phones?|displays?|tvs?|ups\b|batter(y|ies))")
+                       r"sfps?|optics?|rack ears?|transceivers?|licen[cs]|cameras?|phones?|displays?|tvs?|ups\b|batter(y|ies)|"
+                       r"mounts?|monitors?|screens?|soundbars?|speakers?|printers?|tablets?)")
 _NO_RACK = re.compile(r"(?i)\b(no (dedicated )?rack|without a rack|not enough rack|rack space (may|might) not|may need .{0,20}rack)")
 
 
@@ -584,7 +585,13 @@ def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> Non
     and SFPs as technician-provided). And an assumption a fact contradicts
     goes ("sufficient rack space" where sites have no rack)."""
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
-    if any(_RESELLER_SHIPS.search(f["text"]) for f in fs):
+    # One item, one party: what the customer side furnishes is not also
+    # Provider's (010217 listed the mounts under both).
+    cm = content.get("customer_materials") or []
+    content["provider_materials"] = [x for x in content.get("provider_materials") or [] if not _said(tx(x), cm, 0.6)]
+    we_provide = any(re.search(r"(?i)\bwe (are|will|'ll|will be) (be )?(providing|provide|supplying|ship)", f["text"])
+                     and _HARDWARE.search(f["text"] + " display mount") for f in fs)
+    if we_provide or any(_RESELLER_SHIPS.search(f["text"]) for f in fs):
         pm = content.get("provider_materials") or []
         hw = [x for x in pm if _HARDWARE.search(tx(x))]
         if hw:
@@ -729,6 +736,26 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _apply_standards(content, family)
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
+    # An unanswered question is not a fact: a bullet cited only to open
+    # questions goes (010085: PurTera's own "no remote access or console work?"
+    # became scope), unless it asks the customer to confirm.
+    asked = {f["id"] for f in fs if f.get("asked") or f.get("type") == "open_question"}
+    for k in LISTS:
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
+                      and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]
+    # A lift in scope: no "lift by change request" assumption, no "specialty
+    # lifting" exclusion (010085 rented a 40 ft lift and excluded lifts).
+    lift_in = re.search(r"(?i)\b(lift|boom|scissor)\b", " ".join(str(x.get("text")) for k in ("scope", "provider_materials", "provider_tools")
+                                                             for x in content.get(k) or [] if isinstance(x, dict)))
+    if lift_in:
+        content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.search(r"(?i)lift.{0,60}change (request|order)|no (lift|specialized lifting)", str(x.get("text")))]
+        content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if not re.search(r"(?i)lift|rigging", str(x.get("text")))]
+    for x in content.get("out_of_scope") or []:
+        if isinstance(x, dict):
+            x["text"] = re.sub(r"(?i)(?<!wall )\bpatching or painting\b", "wall patching or painting", str(x["text"]))
+    svc = content.get("services") or []
+    if "implementation" in svc and "reinstallation" in svc:
+        content["services"] = [v for v in svc if v != "implementation"]
     # A library method item that promises a document nobody asked for (as-built
     # floor plans, cable inventory spreadsheets, certification reports) needs a
     # fact behind it (010043: a cabling item pulled into a camera job).
