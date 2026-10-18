@@ -610,8 +610,10 @@ def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> Non
         # A customer's request to the reseller ("receive the switches at central
         # receiving and schedule shipment to each site") is not Provider work
         # once the reseller says it ships everything (010083).
-        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
-                            and re.search(r"(?i)central receiving|schedule (the )?shipment|receive the .{0,30}(switch|equipment|hardware)", tx(x)))]
+        for k in ("scope", "overview", "deliverables", "assumptions"):
+            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("standard")
+                          and re.search(r"(?i)central(ly)? receiv|schedule(d)? (the )?ship|receive the .{0,30}(switch|equipment|hardware)",
+                                        str(x.get("text") or x.get("item") or "")))]
     if any(_NO_RACK.search(f["text"]) for f in fs):
         content["assumptions"] = [a for a in content.get("assumptions") or []
                                   if not re.search(r"(?i)sufficient rack|rack space is available|no rack modification", tx(a))]
