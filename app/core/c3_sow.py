@@ -641,7 +641,18 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     _apply_standards(content, family)
-    _tidy(content)
+    _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
+    _arrival_name_rule(content, fs)
+    if not content.get("overview"):
+        # Never an empty Project Summary: the request's own description of the
+        # work (010115 round 17 printed the heading with nothing under it).
+        bg = None
+        for pat in (r"(?i)project background", r"(?i)description of work|scope of work requested|work requested"):
+            bg = bg or next((f for f in fs if re.search(pat, f["text"]) and len(f["text"].split("|")[-1].split()) >= 4), None)
+        bg = bg or next((f for f in fs if f["section"] == "scope_of_work"), None)
+        if bg:
+            text = bg["text"].split("|")[-1].strip().rstrip(".") + "."
+            content["overview"] = [{"text": text[:1].upper() + text[1:], "cites": [bg["id"]], "kind": "fact"}]
     content.update(library_counts)
     content["facts_given"] = len(fs)
     return content
@@ -922,6 +933,8 @@ def _stem(w: str) -> str:
         if len(w) > len(suf) + 3 and w.endswith(suf):
             w = w[: -len(suf)]
             break
+    if len(w) > 4 and w[-1] == w[-2]:
+        w = w[:-1]
     return w[:-1] if len(w) > 4 and w.endswith("e") else w
 
 
@@ -999,7 +1012,25 @@ _LEDGER = re.compile(r"(?i)tax[- ]exempt|cost cent(er|re)|\bcorp(orate)? service
 _FAMILY_TOOLS_NOT = {"decommission_packing": re.compile(r"(?i)\brack\b|\bcable\b|crimp|punch|tester|toner|termination")}
 
 
-def _tidy(content: dict[str, Any]) -> None:
+def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A facility rule that the technician's name be sent ahead is written once,
+    as Provider's duty, with its notice period (010115: 'Need Name provided 48
+    Hours Prior'; the writer dropped it, then inverted it, then dropped it)."""
+    arr = content.setdefault("arrival_protocol", [])
+    if any(re.search(r"(?i)\bname\b", str(x.get("text") if isinstance(x, dict) else x)) for x in arr):
+        return
+    cands = [f for f in fs if re.search(r"(?i)\bname\b", f["text"]) and re.search(r"(?i)prior|in advance|ahead|before", f["text"])]
+    cands.sort(key=lambda f: 0 if re.search(r"(?i)\d+\s*(hours?|hrs?|days?)", f["text"]) else 1)
+    for f in cands:
+        t = f["text"]
+        if True:
+            m = re.search(r"(?i)(\d+)\s*(hours?|hrs?|days?|business days?)", t)
+            when = f"{m.group(1)} {m.group(2).lower().replace('hrs', 'hours').replace('hr', 'hour')}" if m else "in advance"
+            arr.insert(0, {"text": f"Provider submits the technician's name {when} before arrival.", "cites": [f["id"]], "kind": "fact"})
+            return
+
+
+def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     """Deterministic placement the writer kept getting wrong (010115 round 12)."""
     # A visitor badge or parking pass is something the site hands over, not
     # equipment worked on.
@@ -1068,11 +1099,15 @@ def _tidy(content: dict[str, Any]) -> None:
         content[k] = [x for x in content.get(k) or [] if not form_label.search(tx(x))]
     # Contacts belong in the contacts block, never the overview (a phone in the
     # summary was read off a form label with no value, 010115 round 15).
-    content["overview"] = [x for x in content.get("overview") or []
-                           if not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}|\bcontact\b", tx(x), re.I)]
+    ov = content.get("overview") or []
+    kept_ov = [x for x in ov if not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}|escalation|backup contact|"
+                                               r"\b(main|primary|tech) contact\b", tx(x), re.I)]
+    content["overview"] = kept_ov or ov  # an empty Project Summary is worse than a contact in it
     # A permit assumption needs a fact behind it.
     content["assumptions"] = [x for x in content.get("assumptions") or []
-                              if not (re.search(r"(?i)\bpermit", tx(x)) and not (isinstance(x, dict) and x.get("cites")))]
+                              if not (re.search(r"(?i)\bpermit", tx(x)) and not facts_say_permit)
+                              and not (not (isinstance(x, dict) and x.get("standard"))
+                                       and re.match(r"(?i)\s*(limit|support|have|provide|ensure|use|send|keep|make)\b", tx(x)))]
     # A scope step that meets a named person repeats the standard meet step.
     if any(isinstance(x, dict) and x.get("standard") and tx(x).lower().startswith("meet the onsite contact")
            for x in content.get("scope") or []):
@@ -1088,12 +1123,16 @@ def _tidy(content: dict[str, Any]) -> None:
     sched_dates = set(re.findall(r"\d{1,2}/\d{1,2}", " ".join(tx(x) for x in content.get("schedule") or [])))
     std_scope = [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("standard")]
     std_words = set().union(*[_toks(tx(x)) for x in std_scope]) if std_scope else set()
+    std_verbs = {_stem(re.findall(r"[a-z]+", tx(x).lower())[0]) for x in std_scope if re.findall(r"[a-z]+", tx(x).lower())}
     def repeats(x: Any) -> bool:
         if not isinstance(x, dict) or x.get("standard") or x.get("kind") == "heading":
             return False
         t = tx(x)
-        if re.search(r"(?i)\b(complete|finish)", t) and set(re.findall(r"\d{1,2}/\d{1,2}", t)) & sched_dates:
+        if set(re.findall(r"\d{1,2}/\d{1,2}", t)) & sched_dates and not re.search(r"(?i)\b\d+\s*(ft|feet|x|units?|pcs)\b", t):
             return True  # restates the schedule
+        first = next(iter(re.findall(r"[a-z]+", t.lower())), "")
+        if first and _stem(first) in std_verbs and len(_toks(t) & std_words) >= 0.35 * max(1, len(_toks(t))):
+            return True  # the standard step with that verb says it
         if content.get("provider_tools") and re.search(r"(?i)\btools?\b|screwdriver|wrench", t):
             return True  # the tools list says it
         w = _toks(t)
@@ -1114,6 +1153,11 @@ def _tidy(content: dict[str, Any]) -> None:
     asm = content.get("assumptions") or []
     if any(isinstance(a, dict) and a.get("standard") and "limited to" in tx(a).lower() for a in asm):
         content["assumptions"] = [a for a in asm if (isinstance(a, dict) and a.get("standard")) or "limited to" not in tx(a).lower()]
+    std_oos = [x for x in content.get("out_of_scope") or [] if isinstance(x, dict) and x.get("standard")]
+    if std_oos:
+        oos_words = set().union(*[_toks(tx(x)) for x in std_oos])
+        content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if (isinstance(x, dict) and x.get("standard"))
+                                   or len(_toks(tx(x)) & oos_words) < 0.6 * max(1, len(_toks(tx(x))))]
     # A heading whose tasks all went (repeats of the arrival protocol) is empty.
     sc = content.get("scope") or []
     content["scope"] = [x for i, x in enumerate(sc)
