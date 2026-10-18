@@ -237,10 +237,14 @@
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power on each display and verify basic operation and an available video source.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Review each room's install location for the video bar and table controller with the onsite contact.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Verify the equipment for each room is present and undamaged before installation.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Unbox and inspect each room's video bar, controller, mount kit, cabling and accessories.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Mount each video bar at its designated location and connect it to its display.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Place each table controller and route and dress its cable to the video bar.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Connect each device to power and to the network or Wi-Fi the customer provides.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Power on each video bar and controller and confirm they power up and connect.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Route and dress visible cabling using existing pathways or Customer-approved surface raceway.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Confirm display connection, camera, microphone, speaker and controller function as site access allows.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Remove installation debris to the Customer-designated area onsite.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
@@ -251,25 +255,42 @@
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Provide the final display locations and mounting heights before drilling or permanent installation.",
       "Provide current photographs of the rooms and proposed mounting walls before deployment when available.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provide network or Wi-Fi access and credentials for each device.",
-      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Complete device registration, account and software configuration."
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Complete device registration, account and software configuration.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provide an in-floor or in-wall pathway to the table controller location, or approve surface raceway for that cable.",
+      "Ensure furniture required for installation is assembled and in its final position."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
       "Standard commercial wall construction and fastening methods can be used.",
       "No asbestos, hazardous materials, concealed utilities or structural obstructions are present in the work areas.",
-      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provider's work is limited to physical installation and connection of the listed equipment."
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provider's work is limited to physical installation and connection of the listed equipment.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} All required equipment and accessories are onsite before the scheduled installation date.",
+      "Customer-provided equipment is complete, compatible, undamaged and ready for installation.",
+      "No new structured network cabling or structural reinforcement is required."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
       "Electrical work or new power circuits.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Video conferencing platform configuration, licensing or account setup.",
-      "Core drilling, conduit installation or structural modification."
+      "Core drilling, conduit installation or structural modification.",
+      "New structured cabling or network drops.",
+      "Major wall modification."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power-on and video-source verification for each display.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Each video bar and table controller installed, powered on and connected.",
       "Completion confirmed with the onsite contact."
+    ],
+    "tools": [
+      "Cordless drill or driver and bits for approved mounting surfaces.",
+      "Screwdriver set.",
+      "Level.",
+      "Tape measure.",
+      "Stud finder.",
+      "Spare wall anchors and fasteners.",
+      "Velcro cable ties.",
+      "Step ladder."
     ]
   },
   "relocation_move": {
@@ -309,6 +330,10 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Perform hands-on support for network equipment, servers, power connections, rack placement and cabling as directed.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Document each incident's symptoms, actions taken, status and recommended follow-up.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Escalate work requiring elevated privileges, advanced engineering, remote administration or vendor support to the customer's IT contacts.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Support network equipment moves, reconnects, replacements and basic physical adjustments as directed by Customer.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Assist with cable identification, labeling, patch tracing and physical network documentation.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Support server and endpoint validation after approved patching or upgrade work.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Coordinate configuration changes, escalation and advanced troubleshooting with Customer's IT team.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Check in with the onsite contact and confirm the work areas and monitor placement before beginning work.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Install each monitor arm on its desk at the location the customer designates.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Mount the monitors on each arm, then align and secure them.",
@@ -325,7 +350,9 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Approve any equipment removal, cable removal or material change to the site environment.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide any replacement hardware, parts, cables or materials required; Provider supplies labor only.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Provide the final desk and monitor placement instructions before installation begins.",
-      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Ensure required electrical power, workstation equipment, video sources, docks and data connectivity are installed and available."
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Ensure required electrical power, workstation equipment, video sources, docks and data connectivity are installed and available.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide site access, building access, parking instructions and security requirements.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide a Customer point of contact available by phone during scheduled visits."
     ],
     "assumptions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Cable work is limited to physical routing of the provided power and video cables.",
@@ -333,7 +360,8 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provider technicians work within the limits of available access, tools, documentation and approved scope.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} There is no service-level objective for ad-hoc requests, which are subject to availability.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} The desks are fully assembled, stable and compatible with the monitor arms without drilling, cutting or modification by Provider.",
-      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Trash removal is limited to packaging and installation debris from the equipment installed under this SOW."
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Trash removal is limited to packaging and installation debris from the equipment installed under this SOW.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Services are performed during standard business hours unless otherwise approved."
     ],
     "exclusions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Furniture assembly or desk modification.",
