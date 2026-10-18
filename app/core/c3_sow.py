@@ -806,6 +806,13 @@ def _item(x: Any) -> dict[str, Any] | None:
             "kind": kind if kind in ("fact", "heading") else "method"}
 
 
+SERVICES = {"assessment", "configuration", "design", "implementation", "knowledge_transfer", "project_management",
+            "reconfiguration", "reinstallation", "staff_augmentation", "support", "training", "custom_work"}
+_FAMILY_SERVICE = {"network_switch_refresh": "reinstallation", "pos_install_refresh": "reinstallation",
+                   "time_clock_kiosk": "reinstallation", "decommission_packing": "custom_work",
+                   "relocation_move": "custom_work", "smart_hands_general": "custom_work", "site_survey": "assessment"}
+
+
 def _normalise(got: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {k: got.get(k) or "" for k in ("project_name", "end_customer", "scope_lead",
                                                           "pricing_model", "job_family")}
@@ -814,7 +821,11 @@ def _normalise(got: dict[str, Any]) -> dict[str, Any]:
     svc = got.get("services") or []
     svc = [svc] if isinstance(svc, (str, dict)) else svc
     out["services"] = [t for t in (str(s.get("text") if isinstance(s, dict) else s).strip().lower().replace(" ", "_")
-                                   for s in svc) if t]
+                                   for s in svc) if t in SERVICES]
+    # The writer can answer in prose ("install_three_(3)_verkada_cameras"), which
+    # ticks nothing; the job family gives the box.
+    if not out["services"]:
+        out["services"] = [_FAMILY_SERVICE.get(str(got.get("job_family") or ""), "implementation")]
     for k in LISTS:
         v = got.get(k) or []
         # A list returned as one string is one item: 000123's overview came back
