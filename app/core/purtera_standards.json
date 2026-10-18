@@ -79,5 +79,58 @@
       "Notes on material, access or site readiness issues and incomplete work items encountered onsite.",
       "Completion confirmed with the onsite contact."
     ]
+  },
+  "low_voltage_cabling": {
+    "_source": "owner standards loop 2026-10-18: generic cabling handling from the 010082 v1 TEMPLATE list (job-specific hardware left to the deal)",
+    "method_steps": [
+      "Review the work areas and the cable pathway with the onsite point of contact.",
+      "Confirm each mounting and termination location with the onsite point of contact before drilling or mounting equipment.",
+      "Use fastening methods suited to the existing wall and stud conditions, with anchors or toggle bolts where approved and no stud is available.",
+      "Maintain proper cable support and never rest cable directly on ceiling tiles, electrical fixtures, plumbing or ductwork.",
+      "Terminate and label each cable run at both ends.",
+      "Test each cable run for 4-pair continuity.",
+      "Inform the onsite point of contact of each cable's location.",
+      "Clean the immediate work area and remove Provider-generated installation debris.",
+      "Confirm completion with the onsite contact before leaving site."
+    ],
+    "customer_responsibilities": [
+      "Provide device and termination locations before the technician arrives."
+    ],
+    "assumptions": [
+      "The work can be completed from an appropriate A-frame ladder; powered lifts, scaffolding or specialty access equipment are not included and may require a change order."
+    ],
+    "exclusions": [],
+    "deliverable_outcomes": [
+      "Cable runs installed, terminated and labeled at both ends.",
+      "Continuity test results for each run.",
+      "Completion photographs of terminations and visible cable routing."
+    ]
+  },
+  "cameras_security": {
+    "_source": "owner standards loop 2026-10-18: generic camera handling from the 010043 v1 TEMPLATE list",
+    "method_steps": [
+      "Coordinate with the customer or authorized representative to confirm final camera placement before mounting.",
+      "Route, dress and secure cabling in a professional manner where accessible.",
+      "Terminate and label each cable run at the camera location and the IDF.",
+      "Mount each camera at its confirmed location.",
+      "Connect each camera to the network infrastructure in the IDF.",
+      "Verify that each camera powers on and has network connectivity.",
+      "Confirm completion with the onsite contact before leaving site."
+    ],
+    "customer_responsibilities": [],
+    "assumptions": [
+      "The IDF is accessible and has a usable pathway to each camera location.",
+      "Lift requirements, if needed, will be handled through a change request.",
+      "Any required permits, building or landlord approvals will be handled by the customer unless otherwise stated."
+    ],
+    "exclusions": [
+      "Advanced camera analytics configuration.",
+      "Work above inaccessible ceilings, in hazardous areas, or in areas requiring special access equipment."
+    ],
+    "deliverable_outcomes": [
+      "Cameras mounted at the confirmed locations.",
+      "Cable terminations labeled at both ends.",
+      "Power and network connectivity verified for each camera."
+    ]
   }
 }
