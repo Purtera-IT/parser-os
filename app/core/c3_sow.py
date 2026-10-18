@@ -872,10 +872,18 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # (010198: "I would also like to add a Ubiquiti router ... - is that
     # something you can help with?" is half the job).
     requests_work = lambda t: re.search(r"(?i)\b(would (also )?like|i'?d like|we need|need (you|us|to)|want to add|add (a|an|the)|can you help|could you|please (install|add|quote))\b", t)
-    asked = {f["id"] for f in fs if (f.get("asked") or f.get("type") == "open_question"
-             or re.search(r"\?\s*$", f["text"].strip())
-             or re.match(r"(?i)\s*(\d+[.)]\s*)?(assume|is|are|do|does|can|could|will|would|should|how|what|which|who|when)\b[^.]{0,200}\?", f["text"]))
-             and f.get("type") != "answered_question" and not requests_work(f["text"])}
+    # Unanswered only when nothing follows the last "?": a Q&A fact is stored as
+    # "question? [Betty] answer" and every one of 010083's answers was dropped
+    # when any "?" counted (schedule, hours, site mix: 30 items).
+    def _unanswered(f: dict[str, Any]) -> bool:
+        t = f["text"].strip()
+        if f.get("section") == "answered_question" or f.get("type") in ("answered_question", "constraint", "dependency",
+                                                                        "milestone_phase", "scope_item"):
+            return False
+        if f.get("type") == "open_question":
+            return True
+        return "?" in t and len(re.sub(r"\W+", "", t.rsplit("?", 1)[1])) < 3
+    asked = {f["id"] for f in fs if _unanswered(f) and not requests_work(f["text"])}
     # No "only the listed devices" assumption while a request adds another.
     if any(requests_work(f["text"]) for f in fs):
         content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.match(r"(?i)\s*only the listed", str(x.get("text")))]
