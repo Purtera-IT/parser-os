@@ -1431,6 +1431,11 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
                 return False  # a deal line carrying an exception is never a duplicate of a standard
             return (lst != "scope" or not re.search(r"\d", t)) and _said(t, std, share)
         items[:] = [x for x in items if not covered(x) and not (isinstance(x, dict) and x.get("standard"))]
+        if lst == "scope":
+            # A counted deal step is the standard step with the deal's numbers:
+            # keep it, not both (010373: install/mount/cable/trash written twice).
+            counted = [x for x in items if isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"\d", str(x.get("text")))]
+            std = [it for it in std if not _said(it["text"], counted, 0.6)]
         n += len(std)
         if lst != "scope":
             items.extend(std)
@@ -1941,12 +1946,40 @@ def _reseller_streets(envelope: dict[str, Any]) -> set[str]:
         t = str(a.get("text") or "")
         said = (v.get("said_by") or {}).get("company") or (a.get("locator") or {}).get("sender") or ""
         contact_line = bool(re.search(r"[\w.+-]+@([\w-]+)\.", t)) and dom in t.lower()
-        signature = a.get("atom_type") == "stakeholder" and dom in str(said).lower()
+        # A signature carries contact detail; a bare quoted address said by a rep
+        # is not one (010373: "530 Fifth Avenue" typed stakeholder filtered the site).
+        signature = (a.get("atom_type") == "stakeholder" and dom in str(said).lower()
+                     and bool(re.search(r"@|\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}|\b(manager|engineer|director|"
+                                        r"account|specialist|executive|consultant)\b", t, re.I)))
         if contact_line or signature:
             m = re.search(r"\b\d{2,6}\s+[A-Za-z0-9 .'-]+?\b(?:way|st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|"
                           r"ln|lane|pkwy|parkway|ct|court|pl|place|hwy|highway)\b", t, re.I)
             if m:
                 out.add(re.sub(r"\W+", " ", m.group(0).lower()).strip())
+    # A street repeated in the suppressed signature chrome, or on a line with a
+    # phone number, is the sender's card (010373: CDW's Rosemont office typed
+    # physical_site 6 times, 18 copies in chrome, printed as the location).
+    chrome = " ".join(str(c.get("text") or "") for c in envelope.get("suppressed_chrome") or [] if isinstance(c, dict)).lower()
+    for a in envelope.get("atoms") or []:
+        t = str(a.get("text") or "")
+        m = re.search(r"\b\d{2,6}\s+[A-Za-z0-9 .'-]+?\b(?:way|st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|"
+                      r"ln|lane|pkwy|parkway|ct|court|pl|place|hwy|highway)\b", t, re.I)
+        if not m:
+            continue
+        street = m.group(0)
+        phone = re.search(r"\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}", t)
+        if phone or (chrome and chrome.count(street.lower()) >= 2):
+            out.add(re.sub(r"\W+", " ", street.lower()).strip())
+            # The glued form ("9754 5505 Pearl St") the address parser made of it.
+            m2 = re.search(r"\d{2,6}\s+[A-Za-z].*", street)
+            if m2:
+                out.add(re.sub(r"\W+", " ", m2.group(0).lower()).strip())
+    # Never an office: a street the sources call the customer's site.
+    for a in envelope.get("atoms") or []:
+        t = str(a.get("text") or "")
+        if re.search(r"(?i)\b(customer|end[- ]user|client)'?s?\b.{0,25}\b(site|address|location)\b", t):
+            low = re.sub(r"\W+", " ", t.lower())
+            out = {o for o in out if o not in low}
     return out
 
 
@@ -2028,6 +2061,18 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
              for s in (envelope.get("site_readiness") or {}).get("sites") or []]
     offices = _reseller_streets(envelope)
     sites = [x for x in sites if not any(o in re.sub(r"\W+", " ", x["address"].lower()) for o in offices)]
+    if not sites:
+        # Every resolved site was an office: the address a message names as the
+        # customer's site is the site (010373: "The customer's site address will
+        # be 530 Fifth Avenue, New York, NY 10036").
+        for a in envelope.get("atoms") or []:
+            m = re.search(r"(?i)\b(?:customer|end[- ]user|client)'?s?\b.{0,25}\b(?:site|address|location)\b.{0,20}?"
+                          r"(\d{2,6}\s+[^,\n]+),\s*([A-Za-z .]+),\s*([A-Z]{2})\s+(\d{5})", str(a.get("text") or ""))
+            if m:
+                street, city, st, z = (g.strip() for g in m.groups())
+                sites = [{"address": street, "city": city, "state": st, "postal_code": z,
+                          "name": f"{street}, {city}, {st} {z}"}]
+                break
     table = location_table(envelope)
     if len(table) > len(sites):
         sites = table
