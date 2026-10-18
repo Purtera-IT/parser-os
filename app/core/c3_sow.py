@@ -1393,7 +1393,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         tail = [it for it in std if it["text"].lower().startswith(("notify", "confirm completion"))]
         lead = [it for it in std if it not in tail]
         heads = [i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"]
-        work = [i for i in heads if not re.search(r"(?i)arriv|access|check|clos|clean|wrap|complet", str(items[i].get("text")))]
+        work = [i for i in heads if not re.search(r"(?i)arriv|access|check|start|prep|clos|clean|wrap|complet", str(items[i].get("text")))]
         arrival_end = next((i for i in heads if i > 0), len(items)) if heads and heads[0] == 0 else 0
         at = work[0] + 1 if work else arrival_end
         items[at:at] = lead
@@ -1661,6 +1661,12 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     oos_not = {"av_conference_room": r"(?i)network|switch|firewall|licens|portal|cloud",
                "decommission_packing": r"(?i)licens|portal|cloud|network redesign",
                "pos_install_refresh": r"(?i)network redesign|firewall|licens"}
+    # A desk/monitor mounting job: no network tools, no lift/network/cloud exclusions (010373).
+    if re.search(r"(?i)monitor arm|monitor mount|desk mount", " ".join(tx(x) for x in content.get("scope") or [])):
+        content["provider_tools"] = [x for x in content.get("provider_tools") or []
+                                     if not re.search(r"(?i)console|tester|troubleshoot|network|crimp|punch|toner", tx(x))]
+        content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if (isinstance(x, dict) and x.get("standard"))
+                                   or not re.search(r"(?i)lift|network|firewall|switch|cloud|licens|core drill|portal", tx(x))]
     if fam in oos_not:
         content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if (isinstance(x, dict) and (x.get("standard") or x.get("cites")))
                                    or not re.search(oos_not[fam], tx(x))]
