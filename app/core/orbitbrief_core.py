@@ -1568,8 +1568,14 @@ SITE_HEAD_BAR = float(os.environ.get("SOWSMITH_SITE_HEAD_BAR", "0.5"))
 
 
 def _head_says_site(val: Any) -> bool:
-    """The C3 type head labeled this line a physical site."""
+    """The C3 type head labeled this line a physical site, or never read it and
+    the parser's own reading names a place (000132's six "City, ST" lines under
+    a Locations heading carried no head label and three of six sites vanished).
+    A line the head read as something else stays out."""
     lab = val.get("c3_label") if isinstance(val, dict) else None
+    if not lab:
+        place = " ".join(str(val.get(k) or "") for k in ("name", "city", "address", "display_name", "facility_name"))
+        return bool(re.search(r"[A-Za-z]{3}", place))
     if not (isinstance(lab, dict) and lab.get("type") == "physical_site"):
         return False
     # A label the head filled in carries no score (000123's last 15 stores).
