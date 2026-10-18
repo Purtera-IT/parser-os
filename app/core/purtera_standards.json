@@ -1,0 +1,29 @@
+{
+  "_about": "PurTera's fixed handling per job type: SOW items a PM writes on every job of that type whether or not the deal states them (template content, not deal facts). Owner-reviewed. The writer writes every item unless a deal fact contradicts it. Sections match sow_method_library.json.",
+  "decommission_packing": {
+    "_source": "owner, 2026-10-18 (010115 v1 grade: PM-habit items are PurTera standard handling)",
+    "method_steps": [
+      "Meet the onsite contact on arrival and review the hardware to be dismantled and packed.",
+      "Power down and disconnect the equipment as directed by the onsite contact.",
+      "Dismantle the hardware and organize it for packing.",
+      "Pack the equipment in the customer-provided boxes and packing materials, labeling each box.",
+      "Place the packed equipment in the customer's designated staging or shipment area.",
+      "Notify the onsite contact of any damage, missing materials or access issues.",
+      "Confirm completion with the onsite contact before leaving site."
+    ],
+    "customer_responsibilities": [
+      "Provide sufficient packing materials (boxes, pallets, tape and labels) onsite before the technician arrives.",
+      "Designate a staging or shipment area for the packed equipment.",
+      "Provide packing and labeling instructions for the equipment.",
+      "Provide any additional security, dock or escort requirements before arrival."
+    ],
+    "assumptions": [
+      "Equipment is powered down and released for removal before the technician arrives.",
+      "Onsite parking is available; any parking fee is reimbursable."
+    ],
+    "exclusions": [
+      "Transport, shipping or freight of packed equipment.",
+      "Disposal, recycling, data destruction or asset disposition."
+    ]
+  }
+}

@@ -105,7 +105,8 @@ _PARTS = {
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is; empty when no "
         "fact gives one]}"),
     "scope": (
-        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (method steps, tools, deliverables PurTera writes on such jobs; "
+        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (a purtera_standard_* list is PurTera's fixed handling of this job "
+        "type: write every one of its items, reworded to this job, unless a fact contradicts it; the other lists: method steps, tools, deliverables PurTera writes on such jobs; "
         "use, as kind method, every one that fits THIS job's facts, reworded to them, never one the facts contradict "
         "or one about work this job does not include): %s\n"
         "TASK: the task list. Return {\"scope_lead\": one line introducing the tasks (\"Provider will dispatch <N> (<n>) <trade> "
@@ -125,7 +126,8 @@ _PARTS = {
         "\"deliverables\": [{\"item\": \"Work Completion Report\", \"description\": [the finished outcomes with their "
         "counts], \"format\": \"PDF\"}]}"),
     "supply": (
-        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (tools Provider brings; customer duties PurTera writes on such "
+        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (a purtera_standard_* list is PurTera's fixed handling of this job "
+        "type: write every one of its items, reworded to this job, unless a fact contradicts it; the other lists: tools Provider brings; customer duties PurTera writes on such "
         "jobs; use those that fit THIS job's facts, never one the facts contradict): %s\n"
         "TASK: who supplies what. Tools must agree with the job's facts: no lift or scissor lift in the tools when a "
         "ladder is confirmed. Return {\"provider_materials\": [materials Provider supplies, one item each, each "
@@ -138,7 +140,8 @@ _PARTS = {
         "is Provider's duty and belongs in the arrival protocol, never here; what the customer hands over for it "
         "(visitor badges, parking passes, an escort) IS a customer responsibility]}"),
     "bounds": (
-        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (assumptions and exclusions PurTera writes on such jobs; use "
+        "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (a purtera_standard_* list is PurTera's fixed handling of this job "
+        "type: write every one of its items, reworded to this job, unless a fact contradicts it; the other lists: assumptions and exclusions PurTera writes on such jobs; use "
         "every one that fits THIS job, reworded to it, never one that excludes work the draft includes or contradicts "
         "a fact): %s\n"
         "TASK: assumptions and exclusions, written against the DRAFT below so they never contradict it. An assumption is "
@@ -241,6 +244,18 @@ def _library() -> dict[str, Any]:
         return json.loads((Path(__file__).parent / "sow_method_library.json").read_text())
     except Exception:
         return {}
+
+
+def purtera_standards(family: str) -> dict[str, list[str]]:
+    """PurTera's fixed handling of a job type (purtera_standards.json): items a
+    PM writes on every job of the type whether or not the deal states them.
+    Template content, owner-reviewed, so not subject to the two-deal rule."""
+    try:
+        data = json.loads((Path(__file__).parent / "purtera_standards.json").read_text())
+    except Exception:
+        return {}
+    fam = data.get(family) or {}
+    return {k: [str(t) for t in v] for k, v in fam.items() if not k.startswith("_") and isinstance(v, list)}
 
 
 LIBRARY_PER_SECTION = {"tools": 6}
@@ -561,7 +576,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     std = standard_items(family, deal_no, [f["text"][:300] for f in fs
                                             if f["section"] in ("scope_of_work", "customer_responsibilities",
                                                                 "assumptions", "out_of_scope")][:40])
-    pick = lambda *secs: json.dumps({k: std.get(k, []) for k in secs})
+    fixed = purtera_standards(family)
+    pick = lambda *secs: json.dumps({**{k: std.get(k, []) for k in secs},
+                                     **{f"purtera_standard_{k}": fixed[k] for k in secs if fixed.get(k)}})
     with ThreadPoolExecutor(max_workers=2) as pool:
         f_scope = pool.submit(_complete, base + _PARTS["scope"] % pick("method_steps", "deliverables"), model, 4000,
                               effort)
