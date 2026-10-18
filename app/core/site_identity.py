@@ -212,7 +212,11 @@ def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
             # vendor and held to the signature bar.
             _fl = flags.get(i) or []
             vendor = "vendor_address_suspected" in _fl and "city_site_list" not in _fl
-            if vendor and signature:
+            # The vendor flag comes and goes between runs (010038's CDW Chicago
+            # signature had it on one compile and not the next); an address read
+            # out of an email body on a row with a sure person line is the same
+            # signature either way. Across 17 deals this matches that one row.
+            if (vendor or "email_note_physical_site" in _fl) and signature:
                 continue
             bar = VENDOR_SITE_BAR if vendor else MENTION_SITE_BAR
             if float(p or 0) >= bar:
