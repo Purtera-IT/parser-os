@@ -592,6 +592,16 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
     content["withheld"] = _scrub(content)
+    # A number that names a document ("785 POS Termainal Refresh RFP.doc") is a
+    # model or project number: an item using it as a count is wrong (010279
+    # "Remove the existing seven hundred eighty-five (785) POS terminals").
+    titled = {n for d in envelope.get("documents") or [] for n in re.findall(r"\b(\d{3,4})\b", str(d.get("filename") or ""))
+              if not re.fullmatch(r"(19|20)\d\d", n)}
+    if titled:
+        count_of = re.compile(r"\((%s)\)|\b(%s)\s+(existing\s+)?[A-Za-z]" % ("|".join(titled), "|".join(titled)))
+        for k in LISTS:
+            content[k] = [x for x in content.get(k) or []
+                          if not (isinstance(x, dict) and count_of.search(str(x.get("text") or "")))]
     # A heading whose tasks the checks dropped is an empty promise in the SOW
     # (010043: "Camera mounting" with nothing under it).
     sc = content.get("scope") or []
