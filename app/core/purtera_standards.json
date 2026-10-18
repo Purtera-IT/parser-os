@@ -70,13 +70,19 @@
       "{when:square} Provide the required Square account credentials and administrative access.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Provide router administrative credentials or authorization to create the required local configuration.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Provide an active cellular service, SIM and data plan for the backup internet connection.",
-      "Authorize test transactions or test prints where required for final validation."
+      "Authorize test transactions or test prints where required for final validation.",
+      "Provide all hardware, cables, adapters, accessories, labels and asset tags required for installation.",
+      "{when:retire|retired|removed|old (pos|terminals?|registers?)|existing (pos|terminals?|registers?)|replace} Provide pallets, boxes, shrink wrap and straps for retired equipment.",
+      "Provide store access during the scheduled deployment windows."
     ],
     "assumptions": [
       "Cable management is required.",
       "Functional testing will be performed before the technician leaves the site.",
       "Onsite parking is available; any parking fee is reimbursable.",
-      "No construction, wall modification or electrical work is required at any site."
+      "No construction, wall modification or electrical work is required at any site.",
+      "Customer-provided equipment is complete, functional and suitable for installation.",
+      "Existing cabling, electrical and peripherals are functional; no new structured cabling is required.",
+      "{when:runbook|run book|install guide|playbook|procedure} Technicians follow the Customer's runbook; engineering of procedures is not included."
     ],
     "exclusions": [
       "Disposal, recycling, shipping or offsite removal of legacy equipment.",
@@ -92,7 +98,10 @@
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Advanced firewall rules, VPN configuration, content filtering, network segmentation or custom security policies.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Cellular carrier account creation, billing changes or carrier-level troubleshooting.",
       "Troubleshooting of unrelated existing network equipment.",
-      "Integration with third-party applications not identified in this scope."
+      "Integration with third-party applications not identified in this scope.",
+      "Procurement or furnishing of hardware or materials.",
+      "Staging, warehousing, kitting, transport or freight of equipment.",
+      "Repair of defective existing cabling."
     ],
     "deliverable_outcomes": [
       "Installed devices connected, powered and functionally tested.",
