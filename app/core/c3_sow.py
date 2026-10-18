@@ -82,7 +82,7 @@ _BASE = (
     "work. A request phrased as a wish or a question (\"I would also like to add <X>\", \"can you also <do Y>?\") is "
     "scope. The customer saying \"I will provide <X>\" means the Customer supplies <X>. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
     "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
-    "A fact marked (type head: a prerequisite or condition) is a condition the work depends on; whose duty it is follows its wording and its heading (a customer's 'we will unrack' is the customer's; 'drilling rules must be followed' binds whoever drills). A question is never scope by itself: only its answer is, and a later decision overrides the question ('Do we need a site survey?' answered 'probably not' is not a task). A fact marked (quoted earlier email) is older thread context: time slots offered there for a call or meeting are never install dates. A hedge or a habit ('24/7 can be tough', 'it usually needs a follow-up') is never a commitment: never promise return visits, on-call or follow-ups the facts do not settle. The reseller's own work (receiving, shipping, configuration, procurement it does) is never Provider work, in the overview too. A 'remote resource' is remote, never the onsite contact. A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
+    "A fact marked (type head: a prerequisite or condition) is a condition the work depends on; whose duty it is follows its wording and its heading (a customer's 'we will unrack' is the customer's; 'drilling rules must be followed' binds whoever drills). A question is never scope by itself: only its answer is, and a later decision overrides the question ('Do we need a site survey?' answered 'probably not' is not a task). A fact marked (quoted earlier email) is older thread context: time slots offered there for a call or meeting are never install dates. A hedge or a habit ('24/7 can be tough', 'it usually needs a follow-up') is never a commitment: never promise return visits, on-call or follow-ups the facts do not settle. The reseller's own work (receiving, shipping, configuration, procurement it does) is never Provider work, in the overview too. A 'remote resource' is remote, never the onsite contact. A model or series number ('785 POS terminals', 'InTouch 9000', 'C9350') is never a count.  A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
     "email banners and signature blocks. Never write a price, rate or dollar amount, never mention the CRM, ids or "
     "these instructions, and leave a list empty rather than guess. Return JSON only.\n"
     "CRM RECORD: %s\nSITES: %s\nCONTACTS: %s\nFACTS (id, section the heads placed it in, date, text):\n%s\n\n"
@@ -117,7 +117,10 @@ _PARTS = {
         "every device to be installed gets an install or mount task with its count, model and location; every count, "
         "length and model the job lines give appears in a task; routing, termination, mounting and testing; when runs end at an IDF or rack, terminate and connect them "
         "there; cleanup; completion confirmed with the onsite contact. When the request says assist the customer's "
-        "staff, the tasks assist as directed. A request the customer made to the reseller or to its own team (receiving, "
+        "staff, the tasks assist as directed. A manufacturer's install or setup guide tells how, not what: write the "
+        "SOW-level work it supports (mount, connect, power, enroll or test the device, as the job needs), never its "
+        "numbered steps, menus, settings or values. On a replacement job, removing the old unit is a task and where it "
+        "goes (left onsite, boxed, returned) follows the facts. A request the customer made to the reseller or to its own team (receiving, "
         "staging, shipping, procurement, configuration the reseller does) is not Provider work. Never claim a route or a device-to-location pairing no fact gives], "
         "\"deliverables\": [{\"item\": \"Work Completion Report\", \"description\": [the finished outcomes with their "
         "counts], \"format\": \"PDF\"}]}"),
@@ -1058,7 +1061,10 @@ def requested_by(envelope: dict[str, Any]) -> dict[str, str]:
             continue
         thread = (a.get("structured") or {}).get("email_thread") or {}
         to = " ".join(thread.get("to") or []).lower()
-        if to and "purtera" not in to:
+        # A direct message must have gone to PurTera; a quoted one went to
+        # whoever forwarded it (010419: Tim George's request, quoted under
+        # the forward, lists only his own colleagues).
+        if to and "purtera" not in to and not loc.get("quoted"):
             continue
         t = _when_sent(str(loc.get("sent_at") or ""))
         if t is None:
