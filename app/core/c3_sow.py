@@ -843,8 +843,26 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     return dropped
 
 
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december")
+
+
+def _date_stated(y: str, mo: str, d: str, pool: str) -> bool:
+    """The pool states this date in some form: "August 16", "Aug 16", "8/16"."""
+    m, dd = int(mo), int(d)
+    if not (1 <= m <= 12):
+        return False
+    name = _MONTHS[m - 1]
+    return bool(re.search(rf"\b({name}|{name[:3]})\.?\s+{dd}(st|nd|rd|th)?\b", pool)
+                or re.search(rf"\b0?{m}[/-]0?{dd}\b", pool) or f"{y}-{mo}-{d}" in pool)
+
+
 def _unsupported_specifics(text: str, pool: str) -> bool:
     """A number, or a capitalised name mid-sentence, that no fact line has."""
+    # A date the writer normalised (010198's "Sunday, August 16" written as
+    # "Requested Start Date: 2026-08-16") is the fact's own date.
+    text = re.sub(r"\b(\d{4})-(\d{2})-(\d{2})\b",
+                  lambda m: "" if _date_stated(m.group(1), m.group(2), m.group(3), pool) else m.group(0), text)
     for m in _NUM.finditer(text):
         tok = m.group(1).lower().rstrip(".,")
         if tok in ("one",) and re.search(r"\bone\s+(of|or|end|side|another)\b", text, re.I):
