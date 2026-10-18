@@ -843,6 +843,21 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     if ours:
         content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                                 if not (isinstance(x, dict) and x.get("cites") and all(c in ours for c in x["cites"]))]
+    # An equipment line that is a task belongs in the scope (010198: "Install
+    # one (1) Ubiquiti router with cellular backup" sat only under equipment).
+    eq = content.get("equipment_in_scope") or []
+    tasks = [x for x in eq if isinstance(x, dict) and re.match(r"(?i)\s*(install|mount|replace|configure|connect|deploy|set up)\b", str(x.get("text")))]
+    if tasks:
+        content["equipment_in_scope"] = [x for x in eq if x not in tasks]
+        content.setdefault("scope", []).extend(tasks)
+    # Remote tools only when the facts mention remote work (010198, 010082, 000132).
+    if not re.search(r"(?i)\bremote(ly)?\b", pool_text):
+        content["provider_tools"] = [x for x in content.get("provider_tools") or [] if not re.search(r"(?i)remote|hotspot", str(x.get("text") if isinstance(x, dict) else x))]
+    # A start date without a year takes the cutoff's year.
+    yr = str((envelope.get("run_scope") or {}).get("as_of") or "")[:4]
+    for x in content.get("schedule") or []:
+        if isinstance(x, dict) and yr.isdigit() and re.match(r"(?i)\s*requested (start|completion) date: [A-Za-z, ]+\d{1,2}\s*$", str(x.get("text"))):
+            x["text"] = str(x["text"]).rstrip() + f", {yr}"
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
     sup_of = {f["id"]: f.get("supplier") for f in fs}
     cust = lambda c: bool(sup_of.get(c)) and sup_of[c][0] == "customer" and float(sup_of[c][1] or 0) >= SUPPLIER_BAR
@@ -966,6 +981,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # it from the longest run, rounded up to 50).
     runs = [int(m.group(1)) for f in fs if f["section"] not in ("also_kept", "typed_only")
             for m in [re.search(r"(?i)\b(\d{2,4})\s*(?:ft|feet|')\b", f["text"])] if m]
+    # One max-run assumption: a library "under 100 feet" beside the deal's own
+    # runs gives way to the derived one (010082 printed 100 and 150 ft).
+    if len(runs) >= 2:
+        content["assumptions"] = [x for x in content.get("assumptions") or [] if not (isinstance(x, dict) and not x.get("cites")
+                                  and re.search(r"(?i)cable runs? (are|is|will be) (under|less than|not exceed)", str(x.get("text"))))]
     if len(runs) >= 2 and not any(re.search(r"(?i)cable runs? (are|is) under", str(x.get("text"))) for x in content.get("assumptions") or []):
         cap = -(-max(runs) // 50) * 50
         cap = cap + 50 if cap == max(runs) else cap
@@ -1873,8 +1893,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         stated = from_sheet
     # A roster that resolves more sites than a count some message stated is the
     # count (000123: the note said 160, the store list holds 161).
-    if len(sites) >= 10 and len(sites) > int(stated or 0):
-        stated = len(sites)
+    # Only addressed rows count (010082: twelve address-less placeholders from
+    # a set-aside SD-WAN conversation raised a one-site job to 13).
+    addressed = [x for x in sites if re.search(r"\d", str(x.get("address") or ""))]
+    if len(addressed) >= 10 and len(addressed) > int(stated or 0):
+        stated = len(addressed)
+    if len(sites) >= 10 and len(addressed) < 0.5 * len(sites):
+        sites = addressed or sites[:max(1, int(stated or 1))]
     if table:
         # A count the documents state that the table nearly bears out (010279:
         # "113" stores, 98 rows read whole) beats both the rows and a count
