@@ -1717,7 +1717,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                          "postal_code": same.get("postal_code") or (zp.group(0) if zp else "")})
         # A roster site the writer did not cite is still a site (000132: Delphos,
         # OH was parsed with its site id and left out of the six-site list).
-        for r0 in roster:
+        # Only on a multi-site list: beside a single cited site, the one extra
+        # roster row was a reseller rep's signature (010373: Rosemont, IL).
+        for r0 in (roster if len(rows) >= 2 or len(roster) >= 3 else []):
             key = " ".join(re.sub(r"\W+", " ", str(r0.get("address") or r0.get("name") or "").lower()).split()[:3])
             if key and not any(key in re.sub(r"\W+", " ", f"{r.get('address')} {r.get('name')}".lower()) for r in rows):
                 rows.append(dict(r0))
