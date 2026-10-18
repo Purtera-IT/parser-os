@@ -1477,7 +1477,12 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         # under the closing heading.
         tail = [it for it in std if it["text"].lower().startswith(("notify", "confirm completion", "clean", "inform", "remove debris",
                                                                      "remove all debris", "dispose", "haul"))]
-        lead = [it for it in std if it not in tail]
+        # Test and validation steps follow the work they test (000123: tests
+        # and the test print ahead of the device installs).
+        checks = [it for it in std if it not in tail and re.match(
+            r"(?i)(perform (functional |basic )?test|test |verify|validate|confirm (the installed|display|each)|power on each)", it["text"])
+            and not re.search(r"(?i)\b(required|present|onsite|on site|available|undamaged|before installation)\b", it["text"])]
+        lead = [it for it in std if it not in tail and it not in checks]
         heads = [i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"]
         work = [i for i in heads if not re.search(r"(?i)arriv|access|check|start|prep|clos|clean|wrap|complet", str(items[i].get("text")))]
         arrival_end = next((i for i in heads if i > 0), len(items)) if heads and heads[0] == 0 else 0
@@ -1501,6 +1506,8 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         if close is None:
             items.append({"text": "Closeout", "cites": [], "kind": "heading"})
             close = len(items) - 1
+        items[close:close] = [it for it in checks if not _said(it["text"], items, 0.6)]
+        close += len([it for it in checks if any(y is it for y in items)])
         items[close + 1:close + 1] = [it for it in tail if not _said(it["text"], items[close + 1:], 0.5)]
         # One closing group: "Cleanup" and "Closeout" both held closing steps.
         items[close]["text"] = "Closeout"
