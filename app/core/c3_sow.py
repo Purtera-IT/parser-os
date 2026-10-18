@@ -82,7 +82,7 @@ _BASE = (
     "work. A request phrased as a wish or a question (\"I would also like to add <X>\", \"can you also <do Y>?\") is "
     "scope. The customer saying \"I will provide <X>\" means the Customer supplies <X>. A fact tagged supplied-by:X is the supplier head's decision of who furnishes that item: "
     "follow it (supplied-by:reseller means Provider supplies it, since Provider delivers the reseller's work). "
-    "A fact marked (type head: a prerequisite or condition) is a condition the work depends on; whose duty it is follows its wording and its heading (a customer's 'we will unrack' is the customer's; 'drilling rules must be followed' binds whoever drills). A question is never scope by itself: only its answer is, and a later decision overrides the question ('Do we need a site survey?' answered 'probably not' is not a task). A fact marked (quoted earlier email) is older thread context: time slots offered there for a call or meeting are never install dates. A hedge or a habit ('24/7 can be tough', 'it usually needs a follow-up') is never a commitment: never promise return visits, on-call or follow-ups the facts do not settle. The reseller's own work (receiving, shipping, configuration, procurement it does) is never Provider work, in the overview too. A 'remote resource' is remote, never the onsite contact. A model or series number ('785 POS terminals', 'InTouch 9000', 'C9350') is never a count.  A fact in section typed_only is a line the type head read as scope that the brief left out: use it when it is this job's own work, a decision about it, or who does it. A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
+    "A fact marked (type head: a prerequisite or condition) is a condition the work depends on; whose duty it is follows its wording and its heading (a customer's 'we will unrack' is the customer's; 'drilling rules must be followed' binds whoever drills). A question is never scope by itself: only its answer is, and a later decision overrides the question ('Do we need a site survey?' answered 'probably not' is not a task). A fact marked (quoted earlier email) is older thread context: time slots offered there for a call or meeting are never install dates. A hedge or a habit ('24/7 can be tough', 'it usually needs a follow-up') is never a commitment: never promise return visits, on-call or follow-ups the facts do not settle. The reseller's own work (receiving, shipping, configuration, procurement it does) is never Provider work, in the overview too. A 'remote resource' is remote, never the onsite contact. A model or series number ('785 POS terminals', 'InTouch 9000', 'C9350') is never a count. A license, subscription or cloud/portal setup is never an install task or onsite material: it is the customer's, or out of scope.  A fact in section typed_only is a line the type head read as scope that the brief left out: use it when it is this job's own work, a decision about it, or who does it. A fact marked (unsure) is unconfirmed: use it only when it fits the confirmed facts. Ignore "
     "email banners and signature blocks. Never write a price, rate or dollar amount, never mention the CRM, ids or "
     "these instructions, and leave a list empty rather than guess. Return JSON only.\n"
     "CRM RECORD: %s\nSITES: %s\nCONTACTS: %s\nFACTS (id, section the heads placed it in, date, text):\n%s\n\n"
@@ -1045,6 +1045,36 @@ def sheet_site_count(envelope: dict[str, Any]) -> int | None:
     return best[1]
 
 
+WRITER_RUNS = int(os.environ.get("SOWSMITH_C3_SOW_RUNS", "2"))
+
+
+def _coverage_score(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
+    """How many of the brief's kept facts a draft cites (also-mentioned, unsure
+    and typed-only lines count for nothing), less what its checks dropped."""
+    body = {f["id"] for f in fs if f["section"] not in ("also_kept", "unsure", "typed_only", "figure")}
+    cited = {c for k in LISTS for x in content.get(k) or [] if isinstance(x, dict) for c in x.get("cites") or []}
+    dropped = sum(int(v or 0) for v in (content.get("checks") or {}).values() if isinstance(v, (int, float)))
+    return len(cited & body) - dropped
+
+
+def _best_of(envelope: dict[str, Any], pm_handoff: dict[str, Any]) -> dict[str, Any]:
+    """The writer drafts more than once and the draft that carries more of the
+    brief wins. One run of two dropped 010043's camera install line, its
+    under-200-ft assumption and its licensing exclusion that the other kept
+    (grade B+ on one, B- on the next)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if WRITER_RUNS <= 1:
+        return write(envelope, pm_handoff)
+    fs = facts(envelope)
+    with ThreadPoolExecutor(max_workers=WRITER_RUNS) as pool:
+        drafts = [f.result() for f in [pool.submit(write, envelope, pm_handoff) for _ in range(WRITER_RUNS)]]
+    scored = sorted(((_coverage_score(d, fs), i) for i, d in enumerate(drafts)), reverse=True)
+    best = drafts[scored[0][1]]
+    best["drafts_scored"] = [sc for sc, _ in scored]
+    return best
+
+
 def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """The SOW content as the envelope carries it: the writer's lists, the
     partner's requester, the CRM record and the sites."""
@@ -1058,7 +1088,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     if len(table) > len(sites):
         sites = table
     from_sheet = None if table else sheet_site_count(envelope)
-    c = write(envelope, {"sites": sites, "site_count": from_sheet})
+    c = _best_of(envelope, {"sites": sites, "site_count": from_sheet})
     rec = envelope.get("site_count_reconciliation") or {}
     stated = rec.get("stated")
     if from_sheet and from_sheet > len(sites):
@@ -1077,7 +1107,19 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     c["site_summary"] = {"stated": stated, "resolved": len(sites), "from_table": bool(table)}
     c["requested_by"] = requested_by(envelope)
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
-    c["sites"] = _sites(envelope, {"sites": sites})
+    c["sites"] = [x for x in _sites(envelope, {"sites": sites}) if (x.get("address") or x.get("name"))]
+    # On a job of a few sites the writer's own cited locations are the table:
+    # the roster kept SHI's Austin office (a signature) on 010376 and lost
+    # 010147's Denver origin, while the writer's locations had both right.
+    locs = [str(x.get("text") or "") for x in c.get("locations") or [] if isinstance(x, dict) and x.get("cites")]
+    if locs and len(c["sites"]) <= 5 and not table:
+        rows = []
+        for t in locs:
+            place, _, street = t.partition("|")
+            city, _, st = place.strip().partition(",")
+            rows.append({"name": "", "city": city.strip(), "address": (street.strip() or place.strip()),
+                         "street": street.strip(), "state": st.strip(), "postal_code": ""})
+        c["sites"] = rows
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
