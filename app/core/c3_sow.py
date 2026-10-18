@@ -1486,6 +1486,9 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         elif work:
             name = {"decommission_packing": "Dismantle and Pack", "relocation_move": "Pack and Move",
                     "low_voltage_cabling": "Cabling", "network_switch_refresh": "Switch Replacement"}.get(family, "Installation")
+            if any(re.search(r"(?i)once (a|per) week|weekly|recurring|staff aug|on-?site (it )?support", t) for t in facts_text or []) \
+                    and family == "smart_hands_general":
+                name = "Onsite Support"
             items[work[0]:work[0]] = [{"text": name, "cites": [], "kind": "heading"}] + lead
         else:
             items[arrival_end:arrival_end] = lead
@@ -1687,6 +1690,40 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if not re.search(r"(?i)\b(ladder|lift|ceiling|height|high|ft|feet|foot|elevated|scissor|boom)\b", facts_txt):
         content["assumptions"] = [x for x in content.get("assumptions") or []
                                   if not re.search(r"(?i)\bladders?\b|\bno lift\b", str(x.get("text") if isinstance(x, dict) else x))]
+    # A hedged ask is not a promise (000132: "24/7 on-call can be tough ...
+    # depending on volume" became "24/7 on-call availability" in the summary,
+    # beside its own no-SLO and business-hours assumptions).
+    promise = re.compile(r"(?i)24\s*/\s*7|24x7|on-?call|guaranteed response|response time|\bsla\b")
+    hedged = any(promise.search(f["text"]) and re.search(r"(?i)tough|depend|might|may |not sure|tbd|hard to|difficult|\?", f["text"]) for f in fs)
+    no_slo = any(re.search(r"(?i)no (service[- ]level|slo|sla)|business hours", str(x.get("text") if isinstance(x, dict) else x))
+                 for x in content.get("assumptions") or [])
+    if hedged or no_slo:
+        for k in ("overview", "scope", "schedule"):
+            kept = []
+            for x in content.get(k) or []:
+                t = str(x.get("text") if isinstance(x, dict) else x)
+                if isinstance(x, dict) and promise.search(t):
+                    t2 = re.sub(r"(?i),?\s*(including |and |with |provide |offer |providing )*(24\s*/\s*7|24x7)?\s*on-?call( availability| support| coverage)?"
+                                r"|,?\s*(with |and |provide |providing )*24\s*/\s*7( availability| support| coverage)?", "", t).strip()
+                    t2 = re.sub(r"\s+,", ",", re.sub(r",\s*,", ",", t2))
+                    if len(t2) < 25 or promise.search(t2):
+                        continue
+                    x["text"] = t2
+                kept.append(x)
+            if kept or not content.get(k):
+                content[k] = kept
+    # A service the writer filed as an assumption is a task (000132: "End-user
+    # support includes O365/M365 clients").
+    svc = [x for x in content.get("assumptions") or [] if isinstance(x, dict)
+           and re.match(r"(?i)\s*[\w /-]{0,30}\bsupport (includes|covers|will include)\b", str(x.get("text")))]
+    for x in svc:
+        content["assumptions"].remove(x)
+        x["text"] = "Provide " + re.sub(r"(?i)\bsupport (includes|covers|will include)\b", "support, including", str(x["text"]))[0].lower() + \
+            re.sub(r"(?i)\bsupport (includes|covers|will include)\b", "support, including", str(x["text"]))[1:]
+        sc = content.setdefault("scope", [])
+        close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                      and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
+        sc.insert(close, x)
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
