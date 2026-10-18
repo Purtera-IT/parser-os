@@ -2526,6 +2526,19 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 sites = [{"address": street, "city": city, "state": st, "postal_code": z,
                           "name": f"{street}, {city}, {st} {z}"}]
                 break
+    if not sites:
+        # A form or sheet row naming the location (010116: "Location | 1221
+        # Brickell Ave, Miami, Florida", no ZIP, no site row).
+        doc_lines = [ln for d in envelope.get("documents") or [] for pg in ((d.get("structured") or {}).get("pages") or [])
+                     for sec in pg.get("sections") or [] for b in sec.get("blocks") or [] for ln in str(b.get("text") or "").splitlines()]
+        for a in list(envelope.get("atoms") or []) + [{"text": ln} for ln in doc_lines]:
+            m = re.match(r"(?i)\s*(?:location|site address|address|site location|install location)\s*[|:]\s*"
+                         r"(\d{2,6}\s+[^,|\n]+),\s*([A-Za-z .]+?),\s*([A-Za-z .]+?)(?:\s+(\d{5}))?\s*$", str(a.get("text") or ""))
+            if m:
+                street, city, st, z = (str(g or "").strip() for g in m.groups())
+                sites = [{"address": street, "city": city, "state": st, "postal_code": z,
+                          "name": ", ".join(p for p in (street, city, (st + " " + z).strip()) if p)}]
+                break
     table = location_table(envelope)
     if len(table) > len(sites):
         sites = table
