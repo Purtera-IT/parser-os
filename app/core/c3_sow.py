@@ -917,8 +917,16 @@ _TOK = re.compile(r"[a-z0-9]+")
 _FILLER = frozenset("the a an and or of to for in on at by with is are be any all each its their".split())
 
 
+def _stem(w: str) -> str:
+    for suf in ("ing", "ed", "es", "s"):
+        if len(w) > len(suf) + 3 and w.endswith(suf):
+            w = w[: -len(suf)]
+            break
+    return w[:-1] if len(w) > 4 and w.endswith("e") else w
+
+
 def _toks(t: str) -> set[str]:
-    return {w for w in _TOK.findall(str(t).lower()) if w not in _FILLER}
+    return {_stem(w) for w in _TOK.findall(str(t).lower()) if w not in _FILLER}
 
 
 def _said(text: str, items: list[Any], share: float = 0.5) -> bool:
@@ -972,6 +980,15 @@ def _apply_standards(content: dict[str, Any], family: str) -> int:
         items[close]["text"] = "Closeout"
         items[:] = [x for i, x in enumerate(items) if not (i > close and isinstance(x, dict) and x.get("kind") == "heading"
                     and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text"))))]
+    outcomes = fixed.get("deliverable_outcomes") or []
+    if outcomes:
+        dl = content.setdefault("deliverables", [])
+        if not dl:
+            dl.append({"item": "Work Completion Report", "description": [], "format": "PDF"})
+        d0 = dl[0] if isinstance(dl[0], dict) else {"item": "Work Completion Report", "description": [], "format": "PDF"}
+        own = [t for t in d0.get("description") or [] if re.search(r"\d", str(t))]
+        d0["description"] = own + list(outcomes)
+        dl[0] = d0
     content["standards_added"] = n
     return n
 
@@ -1020,14 +1037,16 @@ def _tidy(content: dict[str, Any]) -> None:
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
     # Said once: a scope step the arrival protocol states, an assumption a
     # customer responsibility states (010115 said "packing materials" four times).
-    arr = content.get("arrival_protocol") or []
+    arr = [re.sub(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", "", tx(a), flags=re.I) for a in content.get("arrival_protocol") or []]
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
-                        and not x.get("standard") and _said(tx(x), arr, 0.6))]
+                        and not x.get("standard")
+                        and _said(re.sub(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", "", tx(x), flags=re.I), arr, 0.5))]
     cr = content.setdefault("customer_responsibilities", [])
     asm = []
     for x in content.get("assumptions") or []:
         t = re.sub(r"(?i)^assume(s|d)?\s+(that\s+)?", "", tx(x)).strip()
-        if _ACCESS.search(t) and re.search(r"(?i)\b(provid|issue|furnish|receive|available)", t):
+        if not (isinstance(x, dict) and x.get("standard")) and _ACCESS.search(t) \
+                and re.search(r"(?i)\b(provid|issue|furnish|receive)", t):
             # The site handing over a badge or pass is the customer's duty.
             line = "Provide the visitor badge and parking pass at check-in."
             if not _said(line, cr, 0.5):
@@ -1043,8 +1062,26 @@ def _tidy(content: dict[str, Any]) -> None:
     if any(re.search(r"(?i)powered down", tx(a)) for a in content.get("assumptions") or []):
         content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
                             and re.search(r"(?i)\bpower(s|ing)? down\b", tx(x)))]
-    content["equipment_in_scope"] = [x for x in content.get("equipment_in_scope") or []
-                                     if not re.search(r"(?i)\bN/?A\b|to be installed, by category|no hardware is to be installed", tx(x))]
+    form_label = re.compile(r"(?i)\bN/A\b|to be installed,? by category|no hardware is to be installed")
+    for k in ("equipment_in_scope", "out_of_scope"):
+        content[k] = [x for x in content.get(k) or [] if not form_label.search(tx(x))]
+    # Contacts belong in the contacts block, never the overview (a phone in the
+    # summary was read off a form label with no value, 010115 round 15).
+    content["overview"] = [x for x in content.get("overview") or []
+                           if not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}|\bcontact\b", tx(x), re.I)]
+    # A permit assumption needs a fact behind it.
+    content["assumptions"] = [x for x in content.get("assumptions") or []
+                              if not (re.search(r"(?i)\bpermit", tx(x)) and not (isinstance(x, dict) and x.get("cites")))]
+    # A scope step that meets a named person repeats the standard meet step.
+    if any(isinstance(x, dict) and x.get("standard") and tx(x).lower().startswith("meet the onsite contact")
+           for x in content.get("scope") or []):
+        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
+                            and x.get("kind") != "heading" and re.match(r"(?i)\s*(arrive\b.*\band\s+)?meet\b", tx(x)))]
+    # A heading whose tasks all went (repeats of the arrival protocol) is empty.
+    sc = content.get("scope") or []
+    content["scope"] = [x for i, x in enumerate(sc)
+                        if not (isinstance(x, dict) and x.get("kind") == "heading")
+                        or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     fam = str(content.get("job_family") or "")
     if fam in _FAMILY_TOOLS_NOT:
         content["provider_tools"] = [x for x in content.get("provider_tools") or [] if not _FAMILY_TOOLS_NOT[fam].search(tx(x))]

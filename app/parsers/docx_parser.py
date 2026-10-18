@@ -1028,6 +1028,18 @@ class DocxParser(BaseParser):
                     continue
                 _seen_data = True
                 row_text = " | ".join(cell_texts)
+                # A form row of label/value pairs with a blank value ("TECH
+                # Contact | Bernie 404-918-0783 | Escalation Contact | ''") read
+                # as "... 404-918-0783 | Escalation Contact": the orphan label
+                # sat beside the previous value and the writer called Bernie's
+                # phone the escalation number (010115). Drop a label whose value
+                # cell is blank.
+                _uniq = _row_texts_once(row_cells)
+                if len(_uniq) >= 4 and len(_uniq) % 2 == 0:
+                    _pairs = [(_uniq[i], _uniq[i + 1]) for i in range(0, len(_uniq), 2)]
+                    if all(lbl and len(lbl) <= 40 and not re.search(r"\d", lbl) for lbl, _v in _pairs if lbl) \
+                            and any(not v for lbl, v in _pairs if lbl) and any(v for _l, v in _pairs):
+                        row_text = " | ".join(f"{lbl} | {v}" for lbl, v in _pairs if lbl and v)
                 # One value alone on its row ("Chase Smith", the rest blank)
                 # says nothing without its column's name: "Name: Chase Smith".
                 if row_idx > 0:

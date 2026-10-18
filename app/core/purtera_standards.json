@@ -35,6 +35,13 @@
       "Transport, shipping or freight of packed equipment.",
       "Hardware installation, configuration, programming, troubleshooting, data migration, network changes, or system testing.",
       "Inventory audit, asset reconciliation, disposal, recycling, data destruction, or certified IT asset disposition."
+    ],
+    "deliverable_outcomes": [
+      "Hardware dismantled as directed by the onsite contact.",
+      "Equipment packed in customer-provided materials and labeled.",
+      "Packed equipment staged in the designated shipment area.",
+      "Damage, missing materials or access issues reported to the onsite contact.",
+      "Completion confirmed with the onsite contact."
     ]
   }
 }
