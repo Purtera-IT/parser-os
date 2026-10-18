@@ -1145,7 +1145,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         for t in locs:
             place, _, street = t.partition("|")
             city, _, st = place.strip().partition(",")
-            rows.append({"name": "", "city": city.strip(), "address": (street.strip() or place.strip()),
+            full = street.strip() if place.strip().lower() in street.lower() else ", ".join(
+                x for x in (street.strip(), place.strip()) if x)
+            rows.append({"name": "", "city": city.strip(), "address": full or place.strip(),
                          "street": street.strip(), "state": st.strip(), "postal_code": ""})
         c["sites"] = rows
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
