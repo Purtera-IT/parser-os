@@ -341,6 +341,15 @@ def pool_budget_seconds(default_per_call: int = _DEFAULT_API_TIMEOUT) -> int:
     return max(per * 3, 600)
 
 
+_REASONING_HEADROOM = 3
+
+
+def _reasoning_model(model: str | None) -> bool:
+    """A model that takes max_completion_tokens and no temperature."""
+    m = str(model or "").lower()
+    return m.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
 def complete(prompt: str, *, max_tokens: int = 1024, model: str | None = None,
              timeout: int | None = None) -> str:
     """One OpenAI-compatible ``/chat/completions`` text call. Returns the
@@ -493,6 +502,15 @@ def _chat_inner(messages: list, *, max_tokens: int, model: str | None,
         "max_tokens": int(max_tokens),
         "stream": False,
     }
+    if _reasoning_model(model):
+        # gpt-5 / o-series: the cap is max_completion_tokens and covers the
+        # model's reasoning too, temperature is fixed, and effort is a knob.
+        payload.pop("max_tokens", None)
+        payload.pop("temperature", None)
+        payload["max_completion_tokens"] = int(max_tokens) * _REASONING_HEADROOM
+        effort = os.environ.get("TEACHER_REASONING_EFFORT", "low").strip()
+        if effort:
+            payload["reasoning_effort"] = effort
     # Preemptively drop params this provider has already told us it rejects, so
     # we don't re-pay a failed round-trip on every call after the first.
     with _UNSUPPORTED_LOCK:

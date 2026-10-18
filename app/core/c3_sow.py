@@ -109,7 +109,8 @@ _PARTS = {
         "{\"text\": \"<Heading>\", \"kind\": \"heading\", \"cites\": []} of at most six words, then that group's tasks); "
         "the tasks in the order the work is done: arrive and check in; each "
         "piece of work with its counts, lengths and locations kept together (\"<location>: approximately <N> ft\"); "
-        "routing, termination, mounting and testing; when runs end at an IDF or rack, terminate and connect them "
+        "every device to be installed gets an install or mount task with its count, model and location; every count, "
+        "length and model the job lines give appears in a task; routing, termination, mounting and testing; when runs end at an IDF or rack, terminate and connect them "
         "there; cleanup; completion confirmed with the onsite contact. When the request says assist the customer's "
         "staff, the tasks assist as directed. Never claim a route or a device-to-location pairing no fact gives], "
         "\"deliverables\": [{\"item\": \"Work Completion Report\", \"description\": [the finished outcomes with their "
@@ -127,7 +128,9 @@ _PARTS = {
         "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (assumptions and exclusions PurTera writes on such jobs; use "
         "every one that fits THIS job, reworded to it, never one that excludes work the draft includes or contradicts "
         "a fact): %s\n"
-        "TASK: assumptions and exclusions, written against the DRAFT below so they never contradict it. The template "
+        "TASK: assumptions and exclusions, written against the DRAFT below so they never contradict it. A fact from a "
+        "figure or photo is a site condition only when it bears on the work (a mounting surface, a height); never "
+        "describe what a photo shows. The template "
         "already prices after-hours, weekend and holiday work and travel, and already states business hours, "
         "billing and cancellation terms: never repeat or exclude those. Return {\"assumptions\": [5-10 conditions "
         "that bound the price: each one a fact settles (a ladder confirmed -> \"No lift is required.\" and "
@@ -212,7 +215,42 @@ def _library() -> dict[str, Any]:
         return {}
 
 
-def standard_items(family: str, deal_no: str = "") -> dict[str, list[str]]:
+LIBRARY_PER_SECTION = {"tools": 6}
+LIBRARY_DEFAULT = int(os.environ.get("SOWSMITH_C3_SOW_LIBRARY_PICK", "8"))
+
+
+def _relevant(items: dict[str, list[str]], query: list[str]) -> dict[str, list[str]]:
+    """The standard items closest to this deal's own job lines: a camera job
+    took "standard key door locks are precut" from a cabling SOW when every
+    item of its family was offered."""
+    if not query:
+        return {k: v[:LIBRARY_PER_SECTION.get(k, LIBRARY_DEFAULT)] for k, v in items.items()}
+    try:
+        import numpy as np
+
+        from app.core.embedding_retrieval import _embed_azure
+
+        flat = [(k, t) for k, v in items.items() for t in v]
+        vecs = _embed_azure([t for _, t in flat] + query[:40])
+        q = [v for v in vecs[len(flat):] if v]
+        if not q:
+            raise ValueError("no query vectors")
+        Q = np.array(q, dtype=np.float32)
+        Q /= np.linalg.norm(Q, axis=1, keepdims=True) + 1e-9
+        scored: dict[str, list[tuple[float, str]]] = {}
+        for (k, t), v in zip(flat, vecs[:len(flat)]):
+            if not v:
+                continue
+            x = np.array(v, dtype=np.float32)
+            x /= np.linalg.norm(x) + 1e-9
+            scored.setdefault(k, []).append((float((Q @ x).max()), t))
+        return {k: [t for _, t in sorted(v, reverse=True)[:LIBRARY_PER_SECTION.get(k, LIBRARY_DEFAULT)]]
+                for k, v in scored.items()}
+    except Exception:
+        return {k: v[:LIBRARY_PER_SECTION.get(k, LIBRARY_DEFAULT)] for k, v in items.items()}
+
+
+def standard_items(family: str, deal_no: str = "", query: list[str] | None = None) -> dict[str, list[str]]:
     """PurTera's standard items for a job family, from its own past SOWs (each
     item written on two or more deals): the method steps, tools and terms a PM
     writes from experience, which no deal line states. An item only this deal's
@@ -226,9 +264,9 @@ def standard_items(family: str, deal_no: str = "") -> dict[str, list[str]]:
                 if not deals or _BOILERPLATE.search(it["text"]):
                     continue
                 lst = out.setdefault(sec, [])
-                if it["text"] not in lst and len(lst) < LIBRARY_ITEMS:
+                if it["text"] not in lst and len(lst) < LIBRARY_ITEMS * 2:
                     lst.append(it["text"])
-    return out
+    return _relevant(out, list(query or []))
 
 
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
@@ -327,6 +365,12 @@ def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[
     return out
 
 
+def sow_model() -> str | None:
+    """``SOWSMITH_C3_SOW_MODEL``: the deployment the SOW writer and its checks
+    use (dev: gpt-5.4-mini); unset, the teacher model."""
+    return os.environ.get("SOWSMITH_C3_SOW_MODEL", "").strip() or None
+
+
 def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
           model: str | None = None) -> dict[str, Any]:
     """The SOW content for one deal: four focused calls (header, tasks, who
@@ -335,6 +379,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     asked for all of it dropped a different rule each run."""
     from concurrent.futures import ThreadPoolExecutor
 
+    model = model or sow_model()
     fs = facts(envelope)
     brief = envelope.get("c3_brief") or {}
     crm = envelope.get("crm") or {}
@@ -350,7 +395,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     family = str(got.get("job_family") or "other")
     family = family if family in FAMILIES else "other"
     deal_no = (re.match(r"\s*(\d{6})", str(crm_rec.get("deal_name") or "")) or [None, ""])[1]
-    std = standard_items(family, deal_no)
+    std = standard_items(family, deal_no, [f["text"][:300] for f in fs
+                                            if f["section"] in ("scope_of_work", "customer_responsibilities",
+                                                                "assumptions", "out_of_scope")][:40])
     pick = lambda *secs: json.dumps({k: std.get(k, []) for k in secs})
     with ThreadPoolExecutor(max_workers=2) as pool:
         f_scope = pool.submit(_complete, base + _PARTS["scope"] % pick("method_steps", "deliverables"), model, 4000)
@@ -462,7 +509,7 @@ def _party_check(content: dict[str, Any], lines: dict[str, str]) -> int:
     body = "\n".join(f"{i}. [{('Provider' if k == 'provider_materials' else 'Customer')}] {x['text']}\n"
                      + "\n".join(f"   [{c}] {lines.get(c, '')[:300]}" for c in x["cites"])
                      for i, (k, x) in enumerate(items))
-    got = _json_of(_complete(_PARTY_PROMPT % body, None, 300)) or {}
+    got = _json_of(_complete(_PARTY_PROMPT % body, sow_model(), 800)) or {}
     ok = {int(i) for i in got.get("stated") or [] if str(i).isdigit()}
     moved = 0
     for i, (k, x) in enumerate(items):
@@ -637,7 +684,7 @@ def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[s
         batch = items[start:start + 40]
         body = "\n".join(f"{i}. {x['text']}\n" + "\n".join(f"   [{c}] {lines.get(c, '')[:300]}" for c in x["cites"])
                          for i, x in enumerate(batch))
-        got = _json_of(_complete(_VERIFY_PROMPT % body, None, 400)) or {}
+        got = _json_of(_complete(_VERIFY_PROMPT % body, sow_model(), 1200)) or {}
         okn = {int(i) for i in got.get("supported") or [] if str(i).isdigit()}
         out += [x for i, x in enumerate(batch) if i in okn]
     return out
