@@ -1042,7 +1042,10 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                                     and not re.search(r"(?i)drawing", pool_text))]
     # A library line ruling out in-wall work the deal asks for (010120: the
     # survey moves the replication cable behind the wall, no visible cables).
-    if re.search(r"(?i)behind (the )?wall|in-?wall|inside (the )?wall|concealed|pass-?through|no cables? (should be |will be )?visible", pool_text):
+    # Read every atom, not only the facts: 010120's "moved behind wall" and "No
+    # cables should be visible" never reached the facts, and the line came back.
+    all_text = pool_text + " " + " ".join(str(a.get("text") or "") for a in envelope.get("atoms") or []).lower()
+    if re.search(r"(?i)behind (the )?walls?|in-?wall|inside (the )?wall|concealed|pass-?through|no cables? (should be |will be )?visible", all_text):
         for k in ("scope", "assumptions", "out_of_scope"):
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict)
                           and re.search(r"(?i)without in-?wall|no (in-?wall|concealed)|in-?wall .{0,20}(routing|cabling).{0,20}(excluded|not included)|concealed routing", str(x.get("text"))))]
@@ -1558,6 +1561,40 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                 if isinstance(x, dict) and x.get("list") == "overview" and x.get("text") and not greet.search(str(x["text"]))][:2]
     if keep:
         content["overview"] = keep
+    # The reseller's warehouse work in the summary (010209: "Provider will
+    # manage hardware receipt, benching, configuration, shipping ...") against
+    # the SOW's own onsite-only lines.
+    wh = r"(?i)\b(receipt|receiving|bench\w*|staging warehouse|configuration|shipping|disposal|serial numbers?)\b"
+    content["overview"] = [x for x in content.get("overview") or []
+                           if len(set(m.lower() for m in re.findall(wh, str(x.get("text") if isinstance(x, dict) else x)))) < 3] or content.get("overview")
+    for k in ("scope", "deliverables", "customer_responsibilities"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and re.search(r"(?i)\bbenched\b|\bbenching\b", str(x.get("text"))))]
+    # Gear the job does not touch is not Equipment in Scope (010171: the main
+    # room's existing Rally Plus kit).
+    content["equipment_in_scope"] = [x for x in content.get("equipment_in_scope") or []
+                                     if not re.search(r"(?i)\bexisting\b", str(x.get("text") if isinstance(x, dict) else x))]
+    # "Provider will supply no external microphones" is an exclusion, not a duty.
+    for k in ("provider_materials", "scope", "assumptions"):
+        for x in list(content.get(k) or []):
+            t = str(x.get("text") if isinstance(x, dict) else "")
+            m = re.match(r"(?i)\s*provider will (?:supply|provide|install|include) no ([^.]+)\.?$", t)
+            if m:
+                content[k].remove(x)
+                x["text"] = m.group(1)[0].upper() + m.group(1)[1:] + " are not included."
+                content.setdefault("out_of_scope", []).append(x)
+    # PurTera's sales blurb is not this job's overview (010120 "3,500 vetted
+    # engineers across 80+ countries").
+    content["overview"] = [x for x in content.get("overview") or []
+                           if not re.search(r"(?i)\bvetted\b|\d+\+? countries|engineers across|our capabilities|global (network|footprint)",
+                                            str(x.get("text") if isinstance(x, dict) else x))] or content.get("overview")
+    # A description of the room is not a task (010120: "Two large TVs are
+    # mounted on the front wall" under Closeout): it is an assumption.
+    desc = [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"
+            and not x.get("standard") and re.match(r"(?i)\s*(the |two |three |one |an? |\d+ |existing )?[\w ()-]{0,40}\b(is|are) "
+                                                 r"(currently |already )?(mounted|installed|located|present|in place)\b", str(x.get("text")))]
+    for x in desc:
+        content["scope"].remove(x)
+        content.setdefault("assumptions", []).append(x)
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
