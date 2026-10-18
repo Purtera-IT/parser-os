@@ -97,14 +97,14 @@ _PARTS = {
         "relocation; staff_augmentation and support for ongoing or on-call IT support and smart hands; assessment for "
         "surveys, audits and validation of what exists], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
-        "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences: what is installed or "
+        "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences in third-person proposal voice (\"Provider will ...\", never an order, never a \"Label: value\" line): what is installed or "
         "done, how many, where, for whom; on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is (the technician's "
         "name is sent ahead by Provider and the site adds it to its security list, so a name-in-advance rule reads "
-        "\"Provider submits the technician's name <when> before arrival.\"; the site issues badges and passes); "
+        "\"Provider submits the technician's name <when> before arrival.\"; the site issues badges and passes; a greeting happens on arrival, credentials come in advance: one rule per line); "
         "empty when no fact gives one]}"),
     "scope": (
         "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (a purtera_standard_* list is PurTera's fixed handling of this job "
@@ -1090,7 +1090,11 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         if isinstance(x, dict):
             x["text"] = t
         asm.append(x if isinstance(x, dict) else {"text": t, "cites": [], "kind": "method"})
-    content["assumptions"] = asm
+    arr_items = content.get("arrival_protocol") or []
+    window = any(tx(x).lower().startswith("work window") for x in content.get("schedule") or [])
+    content["assumptions"] = [a for a in asm if (isinstance(a, dict) and a.get("standard"))
+                              or not (_said(tx(a), arr_items, 0.5)
+                                      or (window and re.search(r"(?i)monday|business hours|\d+:\d{2}\s*(am|pm)", tx(a))))]
     if any(re.search(r"(?i)powered down", tx(a)) for a in content.get("assumptions") or []):
         content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
                             and re.search(r"(?i)\bpower(s|ing)? down\b", tx(x)))]
@@ -1103,6 +1107,18 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     kept_ov = [x for x in ov if not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}|escalation|backup contact|"
                                                r"\b(main|primary|tech) contact\b", tx(x), re.I)]
     content["overview"] = kept_ov or ov  # an empty Project Summary is worse than a contact in it
+    voiced = []
+    for x in content["overview"]:
+        t = tx(x).strip()
+        if re.match(r"^[A-Z][\w /&-]{1,30}:\s", t) and len(content["overview"]) > 1:
+            continue  # a "Label: value" line is form residue, not a summary sentence
+        if re.match(r"(?i)(dismantle|provide|install|assist|box|pack|send|remove|mount|run|perform|replace|deploy|survey)\b", t):
+            t = "Provider will " + t[:1].lower() + t[1:]
+        t = re.sub(r"\b(\d+\)?|one|two|three)\s+techs?\b", lambda m: m.group(1) + " technician" + ("s" if m.group(0).endswith("s") else ""), t)
+        if isinstance(x, dict):
+            x["text"] = t
+        voiced.append(x if isinstance(x, dict) else {"text": t, "cites": [], "kind": "fact"})
+    content["overview"] = voiced or content["overview"]
     # A permit assumption needs a fact behind it.
     content["assumptions"] = [x for x in content.get("assumptions") or []
                               if not (re.search(r"(?i)\bpermit", tx(x)) and not facts_say_permit)
