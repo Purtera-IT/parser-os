@@ -252,11 +252,31 @@ def c3_bundle_verdict(docs: list[list[Any]], verdicts: dict[str, dict[str, tuple
     return None, min(p for _, p in seen.values())
 
 
-class _C3Decision:
-    """The base's ``this_deal``, shaped like decide()'s answer."""
+def c3_aside() -> float:
+    """How sure the base must be that a conversation is another job for that
+    alone to set it aside (``SOWSMITH_C3_DOCUMENT_JOB_ASIDE``). At 0.98 it set
+    aside 010279's Lineage transcript and "rack and stack with UPS" note
+    (0.99 / 0.98) and 010082's three SD-WAN opportunity documents
+    (0.998 / 0.993 / 0.990), and nothing of this deal's own on six deals; its
+    lower other_job calls (010082's own Smarthands notes, 0.85 / 0.78) keep."""
+    try:
+        return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_ASIDE", "0.98"))
+    except ValueError:
+        return 0.98
 
-    def __init__(self, confidence: float):
-        self.verdict = "this_deal"
+
+def model_enabled() -> bool:
+    """``SOWSMITH_DOCUMENT_JOB_MODEL_JUDGE``: whether a conversation the base is
+    not sure about goes to the LLM judge (default on). Off, it is kept: the base
+    decides alone."""
+    return os.environ.get("SOWSMITH_DOCUMENT_JOB_MODEL_JUDGE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+class _C3Decision:
+    """The base's call, shaped like decide()'s answer."""
+
+    def __init__(self, confidence: float, verdict: str = "this_deal"):
+        self.verdict = verdict
         self.confidence = confidence
         self.source = "c3"
         self.correction_id = None
@@ -643,6 +663,18 @@ def judge_documents(
                 d = None
             if getattr(d, "verdict", None) is None:
                 d = _C3Decision(c3_p)
+        elif mode == "on" and c3_verdict == "other_job" and c3_p >= c3_aside():
+            # The base is sure this conversation is another job. A PM's taught
+            # verdict still decides first; otherwise the base's word stands.
+            try:
+                d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
+                           scope=scope, llm=False, exclude_created_by=("teacher",))
+            except Exception:
+                d = None
+            if getattr(d, "verdict", None) is None:
+                d = _C3Decision(c3_p, "other_job")
+        if d is None and not model_enabled():
+            d = _C3Decision(c3_p or 0.0)
         if d is None:
             try:
                 # Judgments only: a person's or a Deal Kit's verdict decides; the
