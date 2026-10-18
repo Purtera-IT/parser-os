@@ -465,6 +465,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             f["text"] = full[f["id"]]
         f["text"] = _withhold(f["text"])
     _lead_ins(out, envelope.get("atoms") or [])
+    _list_siblings(out, envelope.get("atoms") or [])
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
     seen_text: set[str] = set()
     uniq = []
@@ -525,6 +526,48 @@ def _fact_line(f: dict[str, Any]) -> str:
             + (", quoted earlier email" if f.get("quoted") else "") + (", a question" if f.get("asked") else "")
             + (f", {f['when']}" if f["when"] else "") + who + ") "
             + (f"[under: {f['under']}] " if f["under"] else "") + _dated(f["text"], f["when"] or None)[:FACT_CHARS])
+
+
+_MEASURED = re.compile(r"(?i)^\s*(.{2,40}?)\s*[:\-–]?\s*(?:approx(?:imately)?\.?\s*)?(\d[\d,.]*)\s*(ft|feet|foot|'|m|meters?|units?|x)\b")
+
+
+def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> int:
+    """A line of the same measured list as a kept line shares its fate. Of
+    010043's "IDF to side door 154ft / IDF to back door 88ft / IDF to Front
+    door 146ft", the keep head kept one and rejected two at a coin flip, so the
+    SOW priced one cable run of three. Same document, same opening words, a
+    measurement: the sibling joins its kept line's section."""
+    by_id = {a.get("id"): a for a in atoms}
+    weak = ("unsure", "also_kept", "typed_only")
+    key_of = lambda f: (str((by_id.get(f["id"]) or {}).get("artifact_id") or ""),
+                        " ".join(_MEASURED.match(str(f["text"])).group(1).lower().split()[:2]))
+    kept = {}
+    for f in out:
+        if _MEASURED.match(str(f["text"])) and f["section"] not in weak:
+            kept.setdefault(key_of(f), f)
+    if not kept:
+        return 0
+    n = 0
+    for f in out:
+        if f["section"] in weak and _MEASURED.match(str(f["text"])) and key_of(f) in kept:
+            f["section"] = kept[key_of(f)]["section"]  # an unsure sibling is decided by its kept one
+            n += 1
+    have = {f["id"] for f in out}
+    for a in atoms:
+        if a.get("id") in have:
+            continue
+        t = str(a.get("text") or "")
+        m = _MEASURED.match(t)
+        if not m:
+            continue
+        sib = kept.get((str(a.get("artifact_id") or ""), " ".join(m.group(1).lower().split()[:2])))
+        if sib:
+            out.append({"id": a.get("id"), "section": sib["section"], "when": sib.get("when") or "",
+                        "under": sib.get("under") or "", "text": t, "supplier": sib.get("supplier"),
+                        "type": sib.get("type") or ""})
+            have.add(a.get("id"))
+            n += 1
+    return n
 
 
 def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[dict[str, str]]:
@@ -613,6 +656,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     weak = {f["id"] for f in fs if f["section"] in ("also_kept", "unsure", "typed_only", "answered_question")}
     content["schedule"] = [x for x in content.get("schedule") or []
                            if not x.get("cites") or not all(c in weak for c in x["cites"])]
+    # A date from a quoted earlier email is history, not this job's schedule
+    # (010043: CDW's May meeting slots became a "work window").
+    quoted = {f["id"] for f in fs if f.get("quoted")}
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not (x.get("cites") and all(c in quoted for c in x["cites"])
+                                   and not re.match(r"(?i)\s*(number of resources|hardware quantity)", str(x.get("text"))))]
     sched = content.setdefault("schedule", [])
     if not any("completion date" in str(x.get("text", "")).lower() for x in sched if isinstance(x, dict)):
         for f in fs:
