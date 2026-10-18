@@ -2019,8 +2019,11 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         # A reseller's deal names its end customer as "the X Team" / "<person>
         # from X" (010171: "answers from the APWireless Team", "Ben from APWireless").
         acct = str((envelope.get("crm") or {}).get("account_name") or "")
+        ec = str(c.get("end_customer") or "").strip()
+        plain = " ".join(re.sub(r"\S+@\S+|https?://\S+", " ", str(a.get("text") or "")) for a in envelope.get("atoms") or []).lower()
+        only_domain = bool(ec) and ec.lower() not in plain  # 010171: "Radius Global" only as radiusglobal.com
         if re.search(r"(?i)\b(cdw|shi|insight|presidio|connection|computacenter|paragon)\b", acct) and \
-                (not c.get("end_customer") or str(c.get("end_customer")).strip().lower() == acct.strip().lower()):
+                (not ec or ec.lower() == acct.strip().lower() or only_domain):
             seen: dict[str, int] = {}
             for a in envelope.get("atoms") or []:
                 for m2 in re.finditer(r"\b(?:the\s+)?([A-Z][A-Za-z0-9&]{2,30})\s+[Tt]eam\b|\b[A-Z][a-z]+ from ([A-Z][A-Za-z0-9&]{2,30})\b",

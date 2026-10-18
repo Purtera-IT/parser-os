@@ -188,10 +188,10 @@
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power on each display and verify basic operation and an available video source.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Review each room's install location for the video bar and table controller with the onsite contact.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Verify the equipment for each room is present and undamaged before installation.",
-      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Mount each video bar on or below its existing display and connect it to the display.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Mount each video bar at its designated location and connect it to its display.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Place each table controller and route and dress its cable to the video bar.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Connect each device to power and to the network or Wi-Fi the customer provides.",
-      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Power on each video bar and controller and verify video, audio and controller operation.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Power on each video bar and controller and confirm they power up and connect.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
@@ -213,7 +213,8 @@
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
       "Electrical work or new power circuits.",
-      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Video conferencing platform configuration, licensing or account setup."
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Video conferencing platform configuration, licensing or account setup.",
+      "Core drilling, conduit installation or structural modification."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",
