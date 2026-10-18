@@ -1623,6 +1623,12 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     fam = str(content.get("job_family") or "")
+    oos_not = {"av_conference_room": r"(?i)network|switch|firewall|licens|portal|cloud",
+               "decommission_packing": r"(?i)licens|portal|cloud|network redesign",
+               "pos_install_refresh": r"(?i)network redesign|firewall|licens"}
+    if fam in oos_not:
+        content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if (isinstance(x, dict) and (x.get("standard") or x.get("cites")))
+                                   or not re.search(oos_not[fam], tx(x))]
     if fam in _FAMILY_TOOLS_NOT:
         content["provider_tools"] = [x for x in content.get("provider_tools") or [] if not _FAMILY_TOOLS_NOT[fam].search(tx(x))]
 
@@ -1666,6 +1672,17 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
             to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact"]
     ok = _verified([x for _, _, x in to_verify], lines)
     bad = {id(x) for _, _, x in to_verify} - {id(x) for x in ok}
+    # A scope line rejected for one trailing clause keeps its main claim
+    # (010217: Training Room 250's whole install line went over "after
+    # confirming fit").
+    for k, _i, x in to_verify:
+        if id(x) not in bad or k != "scope":
+            continue
+        head = re.split(r",?\s+(?:after|once|provided|if|when|so that|pending|subject to)\b", str(x["text"]), maxsplit=1)[0].strip()
+        cited = " ".join(lines.get(c, "") for c in x["cites"])
+        if head != str(x["text"]).strip() and len(head.split()) >= 4 and _stated_by(head, cited):
+            x["text"] = head.rstrip(".,;") + "."
+            bad.discard(id(x))
     gone = content.setdefault("dropped", [])
     for k in LISTS:
         before = len(content[k])
