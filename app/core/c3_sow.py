@@ -710,6 +710,20 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     got: dict[str, Any] = dict(_json_of(_complete(base + _PARTS["header"], model, 3500, effort)) or {})
     family = str(got.get("job_family") or "other")
     family = family if family in FAMILIES else "other"
+    # The writer's family call wobbles run to run (010082: low_voltage_cabling,
+    # then smart_hands_general, losing the cabling standards). A generic call
+    # yields to what the facts plainly are.
+    if family in ("smart_hands_general", "other"):
+        blob = " ".join(f["text"] for f in fs).lower()
+        for fam_, pat in (("low_voltage_cabling", r"\bcat ?6a?\b|\bcat ?5e?\b|cable runs?|\bdrops?\b.{0,30}\b(cable|run|data)|terminat"),
+                          ("cameras_security", r"\bcameras?\b.{0,40}\b(install|mount)|verkada|axis camera"),
+                          ("network_switch_refresh", r"\bswitch(es)?\b.{0,40}\b(replace|refresh|swap)|replace .{0,20}switch"),
+                          ("decommission_packing", r"\bdecommission|dismantl|pack(ing)? up|box(ing)? up"),
+                          ("pos_install_refresh", r"\bpos\b|point of sale|register lanes?|kitchen printer")):
+            if re.search(pat, blob) and len(re.findall(pat, blob)) >= 2:
+                family = fam_
+                break
+        got["job_family"] = family
     deal_no = (re.match(r"\s*(\d{6})", str(crm_rec.get("deal_name") or "")) or [None, ""])[1]
     std = standard_items(family, deal_no, [f["text"][:300] for f in fs
                                             if f["section"] in ("scope_of_work", "customer_responsibilities",
