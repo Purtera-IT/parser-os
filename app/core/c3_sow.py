@@ -1505,6 +1505,18 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     for k in LISTS:
         content[k] = [x for x in content.get(k) or []
                       if not re.search(r"(?i)\battached (floor ?plan|drawing|diagram|layout|map)", str(x.get("text") if isinstance(x, dict) else x))]
+    # An exclusion needs a source that excludes: 000132's requested end-user
+    # O365 support (a service in both notes) came out as Out of Scope.
+    neg = re.compile(r"(?i)\b(not|no|exclud\w*|except|outside|without|won'?t|n't|never|customer'?s? (team|staff|it)|by (the )?customer|handled by|responsib)")
+    content["out_of_scope"] = [x for x in content.get("out_of_scope") or []
+                               if not (isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
+                                       and not any(neg.search(by[c]["text"]) for c in x["cites"]))]
+    # Recurring onsite support has no install site conditions to price.
+    facts_all = " ".join(f["text"] for f in fs)
+    if re.search(r"(?i)\b(weekly|monthly|recurring|break[/ -]?fix|staff aug|ongoing (it )?support|onsite (it )?support)\b", facts_all) \
+            and not re.search(r"(?i)\b(install|mount|cabling|run cable|decommission)\w*", facts_all):
+        content["assumptions"] = [x for x in content.get("assumptions") or []
+                                  if not re.search(r"(?i)hidden site conditions|undocumented cabling", str(x.get("text") if isinstance(x, dict) else x))]
     # A survey the facts call optional or conditional is not a task.
     if any(re.search(r"(?i)survey.{0,60}\b(optional|contingent|if needed|as needed|if required|probably not|not needed|may not)\b|"
                      r"\b(optional|contingent)\b.{0,40}survey", f["text"]) for f in fs):
