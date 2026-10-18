@@ -993,15 +993,31 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # fact behind it (010043: a cabling item pulled into a camera job).
     doc_promise = re.compile(r"(?i)as-built|floor plans?|inventory records?|spreadsheet|certification report")
     for k in ("scope", "deliverables"):
-        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("cites")
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict)
                       and not x.get("standard") and doc_promise.search(str(x.get("text") or x.get("item") or ""))
                       and not doc_promise.search(pool_text))]
+        for d in content.get("deliverables") or []:
+            if isinstance(d, dict) and not doc_promise.search(pool_text):
+                d["description"] = [t for t in d.get("description") or [] if not doc_promise.search(str(t))]
+    content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
+                                            if not (isinstance(x, dict) and not x.get("standard")
+                                                    and re.search(r"(?i)construction drawings|cabling paths and idf", str(x.get("text")))
+                                                    and not re.search(r"(?i)drawing", pool_text))]
     # A library line ruling out in-wall work the deal asks for (010120: the
     # survey moves the replication cable behind the wall, no visible cables).
     if re.search(r"(?i)behind (the )?wall|in-?wall|inside (the )?wall|concealed|pass-?through|no cables? (should be |will be )?visible", pool_text):
         for k in ("scope", "assumptions", "out_of_scope"):
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict)
                           and re.search(r"(?i)without in-?wall|no (in-?wall|concealed)|in-?wall .{0,20}(routing|cabling).{0,20}(excluded|not included)|concealed routing", str(x.get("text"))))]
+    # Every stated cable run is a scope line, in code: the writer dropped or
+    # mis-cited 010043's back and front door runs two rounds of three.
+    scope_text = " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict))
+    for f in fs:
+        m = re.match(r"(?i)\s*(.{2,40}?)\s*[:\-–]?\s*(?:approx(?:imately)?\.?\s*)?(\d{2,4})\s*(?:ft|feet|')\b", f["text"])
+        if m and re.search(r"(?i)\bto\b|run|drop|idf|mdf", m.group(1)) and not re.search(r"\b" + m.group(2) + r"\b", scope_text):
+            content.setdefault("scope", []).append({"text": f"Run and terminate cabling for {m.group(1).strip()}: approximately {m.group(2)} feet.",
+                                                    "cites": [f["id"]], "kind": "fact"})
+            scope_text += " " + m.group(2)
     # "All cable runs are under N feet" when the runs are stated (PurTera writes
     # it from the longest run, rounded up to 50).
     runs = [int(m.group(1)) for f in fs if f["section"] not in ("also_kept", "typed_only")
@@ -1695,9 +1711,9 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     # (010217: Training Room 250's whole install line went over "after
     # confirming fit").
     for k, _i, x in to_verify:
-        if id(x) not in bad or k != "scope":
+        if id(x) not in bad or k not in ("scope", "assumptions"):
             continue
-        head = re.split(r",?\s+(?:after|once|provided|if|when|so that|pending|subject to)\b", str(x["text"]), maxsplit=1)[0].strip()
+        head = re.split(r",?\s+(?:after|once|provided|if|when|so that|pending|subject to)\b|;\s*", str(x["text"]), maxsplit=1)[0].strip()
         cited = " ".join(lines.get(c, "") for c in x["cites"])
         if head != str(x["text"]).strip() and len(head.split()) >= 4 and _stated_by(head, cited):
             x["text"] = head.rstrip(".,;") + "."
