@@ -187,9 +187,11 @@
     "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list",
     "method_steps": [
       "Review the existing switch location, rack layout, cabling and available rack space.",
+      "Confirm the switches, power cords, rack ears, optics and stacking and patch cables are onsite before starting.",
       "Install the new switches in the existing rack, cabinet or customer-designated network area.",
       "Move cables to the new switches one-for-one where practical.",
       "Stage the removed legacy switches onsite in a customer-designated area.",
+      "Connect power to each new switch and confirm it powers on.",
       "Confirm completion with the onsite contact or remote engineer before leaving site."
     ],
     "customer_responsibilities": [
@@ -200,7 +202,13 @@
       "Confirm any site-specific requirements where a dedicated rack is not available or the existing rack, cabinet, cabling or layout may affect the installation.",
       "Provide the final site list, site addresses, store contacts and number of replacement switches for each location.",
       "Supply, configure, label and deliver all replacement equipment to each location before the technician arrives.",
-      "Identify any special access, security, insurance or site-specific requirements before technician scheduling."
+      "Identify any special access, security, insurance or site-specific requirements before technician scheduling.",
+      "Provide site access, escorts, badges and keys as required.",
+      "Confirm whether existing patch cables may be reused.",
+      "Provide available power and approved maintenance windows.",
+      "Provide clear access to the MDF, IDF and rack areas.",
+      "Provide a site contact authorized to approve and sign off the work.",
+      "{when:\\b(lift|boom|scissor)s?\\b} Confirm each lift type suits the work area, and have lifts delivered, charged or fueled, with clear and safe access paths."
     ],
     "assumptions": [
       "Provider's role is limited to onsite physical labor and field support.",
@@ -208,7 +216,8 @@
       "Removed legacy switches will be left onsite in a customer-designated area.",
       "Existing power, racks, shelves, patch panels and supporting infrastructure are functional and suitable for the replacement equipment.",
       "Provider's scope is limited to physical onsite services at each location; Provider does not procure, receive, stage, configure, package or ship equipment.",
-      "Provider's responsibility for decommissioned equipment ends once it is placed in the Customer-designated onsite location."
+      "Provider's responsibility for decommissioned equipment ends once it is placed in the Customer-designated onsite location.",
+      "Access, escorts and maintenance windows are ready as scheduled; Provider is not responsible for delays caused by them."
     ],
     "exclusions": [
       "Switch configuration and programming.",
@@ -233,6 +242,7 @@
       "{when:existing (display )?mount|reuse|re-use} Inspect existing display mounts and confirm they suit the new display size, weight and VESA pattern before reuse.",
       "{when:existing (display )?mount|reuse|re-use} Install plywood backing as required to securely support each wall mount.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mount each display at the approved location and height.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Adjust the mounts for alignment and spacing.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Dress and secure accessible cabling associated with each display.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Connect accessible power where a Customer-provided power source is available.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power on each display and verify basic operation and an available video source.",
@@ -271,7 +281,8 @@
       "Provide remote AV or network engineering support during testing without delay.",
       "{when:ceiling|suspended|hanging|pendant} Provide replacement ceiling tiles or blanking plates where needed.",
       "Provide technician access to the rooms, common areas, telecom spaces, elevators and corridors the work requires.",
-      "Have onsite personnel available for access and approvals during the work."
+      "Have onsite personnel available for access and approvals during the work.",
+      "Provide onsite parking and a trash area for installation debris."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
@@ -283,7 +294,9 @@
       "No new structured network cabling or structural reinforcement is required.",
       "{when:ceiling|suspended|hanging|pendant} No device is supported solely by the ceiling grid or tiles.",
       "{when:ceiling|suspended|hanging|pendant} Ceilings are 12 ft or lower and reachable from A-frame ladders; no powered lift is required.",
-      "Normal building access is available and no specialty rigging is required."
+      "Normal building access is available and no specialty rigging is required.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power receptacles and cabling are operational and long enough for the installed display positions.",
+      "Standard working conditions and reasonable access are available in each work area."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
