@@ -1496,7 +1496,19 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         # the first one (010012: seven generic steps under "Shared Office").
         generic = work and re.search(r"(?i)install|work|mount|cabl|scope|procedure|task|decommission|pack|replace|refresh|deploy|run",
                                      str(items[work[0]].get("text")))
-        if generic:
+        # When the deal has its own work groups, preparation leads and the
+        # standard follow-on steps (router configuration, failover) come after
+        # the deal's installs (010198: router config ahead of the register).
+        pre = [it for it in lead if re.match(r"(?i)(review|confirm (the |each )?(install|mount|location)|verify|unbox|unpack|inspect|check in|meet)", it["text"])]
+        post = [it for it in lead if it not in pre]
+        deal_work = work and sum(1 for x in items if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+                                    and re.match(r"(?i)\s*(install|mount|replace|connect|set up|deploy|place)\b", str(x.get("text")))) >= 1
+        if deal_work and post and family in ("pos_install_refresh", "av_conference_room", "network_switch_refresh"):
+            items[work[0] + 1:work[0] + 1] = pre
+            close0 = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
+                           and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), len(items))
+            items[close0:close0] = post
+        elif generic:
             items[work[0] + 1:work[0] + 1] = lead
         elif work:
             name = {"decommission_packing": "Dismantle and Pack", "relocation_move": "Pack and Move",
@@ -1805,6 +1817,17 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                                   if not re.search(r"(?i)provider[- ]supplied", str(x.get("text") if isinstance(x, dict) else x))]
     # A weekend date is weekend work, not "regular business hours" (010198 Sunday).
     sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or [])
+    # The calendar date says the weekday when the line does not (010198:
+    # "August 16, 2026" is a Sunday).
+    from datetime import date as _date
+    for mo, dy, yr_ in re.findall(r"(?i)\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(20\d\d)", sched):
+        try:
+            wd = _date(int(yr_), ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+                                  "october", "november", "december"].index(mo.lower()) + 1, int(dy)).weekday()
+        except ValueError:
+            continue
+        if wd >= 5:
+            sched += " " + ("saturday" if wd == 5 else "sunday")
     if re.search(r"(?i)\b(saturday|sunday)\b", sched):
         for k in ("schedule", "assumptions"):
             content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)regular business hours|monday.{0,12}friday", str(x.get("text") if isinstance(x, dict) else x))]
