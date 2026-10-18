@@ -718,14 +718,17 @@ def _complete(prompt: str, model: str | None, max_tokens: int) -> str:
     010043's two question batches came back empty and its 32 went unchecked)."""
     from app.core import llm_client
 
-    for attempt in range(2):
+    tries = max(1, int(os.environ.get("SOWSMITH_C3_LLM_TRIES", "4")))
+    for attempt in range(tries):
         raw = llm_client.complete(prompt, max_tokens=max_tokens,
                                   model=model or os.environ.get("SOWSMITH_C3_BRIEF_MODEL") or None,
                                   timeout=int(os.environ.get("SOWSMITH_C3_BRIEF_TIMEOUT", "60")))
         if _json_of(raw) is not None:
             return raw
-        if attempt == 0:
-            time.sleep(1.0)
+        if attempt < tries - 1:
+            # A throttled burst comes back empty: three deals compiling at once
+            # left 010082's SOW task list with one line (2026-10-18).
+            time.sleep(2.0 * (attempt + 1))
     return raw
 
 
