@@ -1541,6 +1541,18 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
             alias_groups = []
     out: dict[str, str] = {}
     _n_groups = len(list(alias_groups or []))
+    # site key -> (its row's explicit id, its street), for rows that state both.
+    _own: dict[str, tuple[str, str]] = {}
+    for _a in atoms or []:
+        _v = getattr(_a, "value", None)
+        if not isinstance(_v, dict):
+            continue
+        _sid = str(_v.get("site_id") or _v.get("id") or "").strip().lower()
+        _st = re.sub(r"\W+", " ", str(_v.get("street_address") or _v.get("address") or "").lower()).strip()
+        if _sid and _st:
+            for _k in getattr(_a, "entity_keys", None) or []:
+                if str(_k).startswith("site:"):
+                    _own.setdefault(str(_k), (_sid, _st))
     for group in alias_groups or []:
         keys = sorted(
             k for k in group
@@ -1550,6 +1562,12 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
             continue
         canon = keys[0]
         for k in keys:
+            # Two rows that each carry their own id and a different street are
+            # two places, whatever name they share: 000123's roster lists
+            # Glendale (locid 495, 200 S. Brand Blvd) under Point Loma's
+            # facility name (locid 446, 3210 Rosecrans Pl).
+            if k != canon and k in _own and canon in _own and _own[k] != _own[canon]:
+                continue
             out[k] = canon
     # The other half of the same question: the roster saw N groups and
     # collapsed M keys. A group formed upstream and lost here looks identical
@@ -1748,6 +1766,7 @@ def build_site_readiness(
         # These are the ONLY truly canonical sites — every other slug
         # must alias into one of these or be dropped (if it has no
         # substantive signal).
+        _name_targets: dict[str, set[str]] = {}
         for _a in atoms:
             if _atom_type_str(_a) != "physical_site":
                 continue
@@ -1792,7 +1811,15 @@ def build_site_readiness(
                         r"[^a-z0-9]+", "_", str(_nm).lower()
                     ).strip("_")
                     if _nslug and _nslug != _canon_slug:
+                        _name_targets.setdefault(_nslug, set()).add(_canon_slug)
                         canonical_map[_nslug] = _canon_slug
+
+        # A name two rows with their own ids share names neither: 000123's
+        # roster lists Glendale (locid 495) under Point Loma's facility name,
+        # and the alias folded Glendale into Point Loma.
+        for _nslug, _targets in _name_targets.items():
+            if len(_targets) > 1 and canonical_map.get(_nslug) in _targets:
+                canonical_map.pop(_nslug, None)
 
         # (a) LLM cache aliases (v48 structured site extraction)
         if _llm_site_attr_cache:

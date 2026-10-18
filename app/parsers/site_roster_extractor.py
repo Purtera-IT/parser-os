@@ -274,6 +274,8 @@ def detect_site_id_column(
     n = len(rows)
     if n < 3:
         return None
+    found: list[int] = []
+    rank: dict[int, tuple] = {}
     for i, _col in enumerate(columns):
         if i in field_map:
             continue
@@ -288,8 +290,18 @@ def detect_site_id_column(
         if (len(widths) == 1 and all(v.isdigit() for v in vals)
                 and next(iter(widths)) in _NON_ID_UNIFORM_DIGIT_WIDTHS):
             continue  # uniform-width digits: phone / ZIP / EIN, not a site code
-        return i
-    return None
+        found.append(i)
+        rank[i] = (
+            len(set(vals)) == len(vals),                          # every row its own value
+            not (all(v.isdigit() for v in vals)                   # not a 1..N row counter
+                 and sorted(set(int(v) for v in vals)) == list(range(1, len(set(vals)) + 1))),
+            -i,
+        )
+    # 000123's BevMo roster: "BevMo Store" (1..161, one number typed twice)
+    # and "locid" (the store number, unique) both qualify; the leftmost was
+    # taken, two stores shared BEVMOSTO-155 and one was folded away. A column
+    # whose every value is unique, and one that is not a row counter, wins.
+    return max(found, key=lambda c: rank[c]) if found else None
 
 
 def _id_prefix_for(header: str) -> str:
