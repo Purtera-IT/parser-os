@@ -211,7 +211,7 @@
       "Perform final network validation, connectivity testing and acceptance testing.",
       "Identify the customer-designated area where removed legacy switches should be staged.",
       "Confirm any site-specific requirements where a dedicated rack is not available or the existing rack, cabinet, cabling or layout may affect the installation.",
-      "Provide the final site list, site addresses, store contacts and number of replacement switches for each location.",
+      "{when:\\b(\\d{2,}|several|multiple|all) (stores|sites|locations|branches)\\b|site list|per (store|site|location)} Provide the final site list, site addresses, store contacts and number of replacement switches for each location.",
       "Supply, configure, label and deliver all replacement equipment to each location before the technician arrives.",
       "Identify any special access, security, insurance or site-specific requirements before technician scheduling.",
       "Provide site access, escorts, badges and keys as required.",
@@ -235,8 +235,7 @@
       "Network troubleshooting.",
       "Return logistics for removed equipment.",
       "Structured cabling installation, cable certification, electrical work, rack replacement or circuit troubleshooting unless added by written change order.",
-      "Shipping, freight coordination or logistics for replacement equipment.",
-      "Return logistics, packaging, shipping or transportation of decommissioned equipment."
+      "Shipping, freight coordination or logistics for replacement equipment."
     ],
     "deliverable_outcomes": [
       "New switches installed and cabled one-for-one where practical.",

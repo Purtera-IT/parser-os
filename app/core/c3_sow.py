@@ -2658,6 +2658,14 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 and re.search(r"\b%d\b" % n_sites, str(x.get("text")))]
         if back:
             c.setdefault("overview", []).insert(0, {k: v for k, v in back[0].items() if k != "list"})
+    if len(c["sites"]) == 1:  # 010085: multi-site standards wording in a one-site SOW
+        for k in LISTS:
+            for x in c.get(k) or []:
+                if isinstance(x, dict) and isinstance(x.get("text"), str):
+                    x["text"] = re.sub(r"(?i)\b(at |to |for )?each (customer |store |site )?location\b", lambda m: (m.group(1) or "") + "the site", x["text"])
+        for x in c.get("provider_tools") or []:
+            if isinstance(x, dict) and re.search(r"(?i)rack hardware|all materials", " ".join(str(y.get("text")) for y in c.get("customer_responsibilities") or [] if isinstance(y, dict))):
+                x["text"] = re.sub(r"(?i)\s+and hardware\b", "", str(x.get("text")))
     for x in c["sites"]:  # 010198: a blank name left the Location cell empty
         if not str(x.get("name") or "").strip():
             x["name"] = str(x.get("address") or "")
