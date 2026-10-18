@@ -2715,7 +2715,15 @@ class XlsxParser(BaseParser):
             # chose. A pricing workbook keeps its hidden rate sheets.
             if getattr(sheet, "sheet_state", "visible") != "visible" and not _PRICING_BOOK.search(path.name):
                 continue
-            _grids.append((sheet.title, [list(r) for r in sheet.iter_rows(values_only=True)]))
+            _rows = [list(r) for r in sheet.iter_rows(values_only=True)]
+            # The same machinery left visible (010147's other questionnaire
+            # copy): a sheet named for dropdown options whose cells are short
+            # option values, no sentence, is not something the customer said.
+            if re.fullmatch(r"(?i)\s*(lists?|lookups?|drop ?downs?|options|validation|ref(erence)? ?data|picklists?)\s*", sheet.title or ""):
+                _vals = [str(c).strip() for r in _rows for c in r if c is not None and str(c).strip()]
+                if _vals and all(len(v) <= 60 and not re.search(r"[.!?]\s", v) for v in _vals) and not _PRICING_BOOK.search(path.name):
+                    continue
+            _grids.append((sheet.title, _rows))
         _mined = {t for t, r in _grids if not self._reads_as_a_table(t, r)}
         hidden = self._hidden_dims(path, _mined) if _mined else {}
         styles_by_sheet = self._sheet_styles(path, _mined) if _mined else {}
