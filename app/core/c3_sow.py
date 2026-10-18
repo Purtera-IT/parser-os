@@ -1118,6 +1118,12 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         if isinstance(x, dict):
             x["text"] = t
         voiced.append(x if isinstance(x, dict) else {"text": t, "cites": [], "kind": "fact"})
+    fam_words = str(content.get("job_family") or "").replace("_", " ").strip()
+    if fam_words:
+        for x in voiced:
+            if isinstance(x, dict):
+                x["text"] = re.sub(r"(?i)\bthe " + re.escape(fam_words) + r"\b", "the work", x["text"])
+                x["text"] = re.sub(r"(?i)\b" + re.escape(fam_words) + r"\b", "the work", x["text"])
     content["overview"] = voiced or content["overview"]
     # A permit assumption needs a fact behind it.
     content["assumptions"] = [x for x in content.get("assumptions") or []
@@ -1162,6 +1168,11 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         cr.append({"text": "Provide visitor badges and parking passes upon technician arrival.", "cites": [], "kind": "method"})
     if "security" in arr_text and not any(re.search(r"(?i)security", tx(c)) and re.search(r"(?i)access|coordinat", tx(c)) for c in cr):
         cr.append({"text": "Coordinate site access with security.", "cites": [], "kind": "method"})
+    # A rule the arrival protocol gives Provider is not also a customer duty
+    # (010115: "Provide name 48 hours prior" in both, from the same cites).
+    arr_cites = {c for a in content.get("arrival_protocol") or [] if isinstance(a, dict) for c in a.get("cites") or []}
+    cr[:] = [c for c in cr if not (isinstance(c, dict) and c.get("cites") and set(c["cites"]) <= arr_cites
+                                   and re.search(r"(?i)\bname\b", tx(c)))]
     # The template already asks for a point of contact.
     content["customer_responsibilities"] = [c for c in cr if not re.search(r"(?i)point of contact|onsite contact for", tx(c))
                                             and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
@@ -1169,6 +1180,18 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     asm = content.get("assumptions") or []
     if any(isinstance(a, dict) and a.get("standard") and "limited to" in tx(a).lower() for a in asm):
         content["assumptions"] = [a for a in asm if (isinstance(a, dict) and a.get("standard")) or "limited to" not in tx(a).lower()]
+    scope_text = " ".join(tx(x) for x in content.get("scope") or []).lower()
+    excludes_scope = []
+    for dev, words in (("router", r"switch|firewall|network device|router"), ("firewall", r"firewall"),
+                       ("switch", r"\bswitch"), ("access point", r"access point|wireless"), ("camera", r"camera"),
+                       ("cabl", r"cabl"), ("printer", r"printer"), ("tv|display|monitor", r"display|monitor|\btv\b")):
+        if re.search(dev, scope_text):
+            excludes_scope.append(words)
+    content["out_of_scope"] = [x for x in content.get("out_of_scope") or []
+                               if (isinstance(x, dict) and x.get("standard"))
+                               or not (re.search(r"(?i)additional devices not listed", tx(x))
+                                       or any(re.search(w, tx(x), re.I) and not re.search(r"(?i)\b(existing|other|new)\b.*\b(configur|programm)", tx(x))
+                                              for w in excludes_scope))]
     std_oos = [x for x in content.get("out_of_scope") or [] if isinstance(x, dict) and x.get("standard")]
     if std_oos:
         oos_words = set().union(*[_toks(tx(x)) for x in std_oos])
@@ -1275,8 +1298,24 @@ def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[s
                          for i, x in enumerate(batch))
         got = _json_of(_complete(_VERIFY_PROMPT % body, sow_model(), 1200)) or {}
         okn = {int(i) for i in got.get("supported") or [] if str(i).isdigit()}
-        out += [x for i, x in enumerate(batch) if i in okn]
+        for i, x in enumerate(batch):
+            # A bullet whose content words its own cited lines state is kept even
+            # when the judge says no: it deleted 010198's router install ("Install
+            # a Ubiquiti router with cellular backup", cited to the request that
+            # asks for it) and its service date, and 000123's 161-store count.
+            cited = " ".join(lines.get(c, "") for c in x["cites"])
+            explicit_absence = re.match(r"(?i)\s*[\w ]{3,30}:\s*not (provided|stated|specified)\b", x["text"])
+            if i in okn or explicit_absence or _stated_by(x["text"], cited):
+                out.append(x)
     return out
+
+
+def _stated_by(text: str, cited: str) -> bool:
+    """Most of a bullet's content words, and every number in it, appear in its cited lines."""
+    want = {w for w in _toks(text) if len(w) > 2}
+    have = _toks(cited)
+    nums = set(re.findall(r"\d+", text))
+    return bool(want) and len(want & have) >= 0.7 * len(want) and nums <= set(re.findall(r"\d+", cited))
 
 
 def enabled() -> bool:
