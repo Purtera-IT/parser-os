@@ -2955,6 +2955,20 @@ class XlsxParser(BaseParser):
                 data_rows.append(cells)
         if not data_rows:
             return []
+        # A bill of materials is not a roster: rows of quantity | part number |
+        # description (010116's "Location | 1221 Brickell Ave" title row over
+        # "1 | QM75C | Samsung 75IN 4K UHD LED Display") became 17 sites named
+        # after part numbers and the descriptions were lost.
+        def _bom_row(r: list[Any]) -> bool:
+            vals = [str(v).strip() for v in (r or ()) if v is not None and str(v).strip()]
+            if len(vals) < 3:
+                return False
+            qty = re.fullmatch(r"\d{1,4}(\.0)?", vals[0])
+            part = re.fullmatch(r"[A-Z0-9][A-Z0-9./_-]{3,30}", vals[1]) and re.search(r"\d", vals[1])
+            return bool(qty and part and len(vals[2]) >= 8)
+        filled = [r for r in body[1:] if any(v is not None and str(v).strip() for v in (r or ()))]
+        if filled and sum(1 for r in filled if _bom_row(r)) >= max(3, 0.5 * len(filled)):
+            return []
         try:
             if not looks_like_site_roster(
                 columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
