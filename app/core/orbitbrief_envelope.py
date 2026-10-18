@@ -2900,7 +2900,26 @@ def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
         if not isinstance(ctx, dict):
             return None
         crm = ctx.get("crm")
-        return dict(crm) if isinstance(crm, dict) else None
+        if not isinstance(crm, dict):
+            return None
+        crm = dict(crm)
+        if ctx.get("as_of") or ctx.get("quote_asof"):
+            # A run cut to a date carries no CRM amount: today's amount is the
+            # price set AFTER the cutoff, and Core cited it as every question's
+            # impact basis (010115: "deal value 3,830", the post-cutoff v3 price,
+            # in a pre-quote PM_HANDOFF). The CRM deal amount never reaches a
+            # pre-quote brief.
+            crm.pop("amount", None)
+            # Nor the stages the deal reached after it (010115 read "closedwon").
+            cut = str(ctx.get("as_of") or ctx.get("quote_asof"))
+            tl = crm.get("stage_timeline")
+            if isinstance(tl, dict):
+                tl = dict(tl)
+                kept = [t for t in tl.get("transitions") or [] if isinstance(t, dict) and str(t.get("ts") or "") <= cut]
+                tl["transitions"] = kept
+                tl["current_stage"] = (kept[-1].get("label") or kept[-1].get("stage_id")) if kept else None
+                crm["stage_timeline"] = tl
+        return crm
     except (json.JSONDecodeError, OSError, TypeError):
         return None
 
