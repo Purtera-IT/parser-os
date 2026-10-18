@@ -753,6 +753,13 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         return f"{y}-{int(mo):02d}-{int(d):02d}" < cut
     content["schedule"] = [x for x in content.get("schedule") or []
                            if not (re.match(r"(?i)\s*requested start", str(x.get("text"))) and _before_cut(str(x.get("text"))))]
+    # A resource count needs a line that states staffing ("one tech for two
+    # days"), not a named delivery team (010082: "Kelly, Octavian and Chase are
+    # our delivery team" became "Number of Resources: three").
+    text_of = {f["id"]: f["text"] for f in fs}
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not re.match(r"(?i)\s*number of resources", str(x.get("text")))
+                           or any(_STAFF.search(text_of.get(c, "")) for c in x.get("cites") or [])]
     # A date from a quoted earlier email is history, not this job's schedule
     # (010043: CDW's May meeting slots became a "work window").
     quoted = {f["id"] for f in fs if f.get("quoted")}
