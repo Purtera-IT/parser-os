@@ -962,7 +962,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["scope"] = [x for i, x in enumerate(sc)
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
-    _apply_standards(content, family, [f["text"] for f in fs])
+    # Picture captions never trigger standards (010120: "Two large TVs are
+    # mounted on the front wall" fired the display-mounting block).
+    _apply_standards(content, family, [f["text"] for f in fs if not f.get("pictured")])
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     _grounding(content, fs)
@@ -1434,11 +1436,11 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         nouns = {w for w in re.findall(r"[a-z]+", t.lower()) if w in ("display", "displays", "tv", "tvs", "mount", "mounts", "backing",
                                                                        "monitor", "monitors", "speaker", "speakers", "camera",
                                                                        "cameras", "rack", "switch", "switches", "phone", "phones")}
-        verbs = re.search(r"(?i)\b(mount|install|remove|replace|relocate|backing|dismantle|dress|connect|power)", t)
+        verbs = re.search(r"(?i)\b(mount|install|remove|replace|relocate|backing|dismantle|dress|connect|power|adjust|align)", t)
         groups = [r"display|tv|television|monitor|screen", r"mount|bracket", r"speaker", r"camera", r"rack",
                   r"switch", r"phone|handset"]
         pats = [g for g in groups if any(re.fullmatch(r"(?:" + g + r")s?", n) for n in nouns)]
-        if re.search(r"(?i)backing|wall mount", t):
+        if re.search(r"(?i)backing|wall mount|\bmounts?\b", t):
             pats.append(groups[0])  # backing and wall mounts exist for the displays
         return bool(nouns and verbs and any(re.search(r"\b(?:" + g + r")(?:'?s)?\b", stays) for g in pats))
     # The customer doing its own testing or configuration rules out the test
@@ -1821,6 +1823,44 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             rest = [x for x in sc if not any(x is y for y in early)]
             ci2 = next(i for i, x in enumerate(rest) if x is sc[ci])
             content["scope"] = rest[:ci2 + 1] + early + rest[ci2 + 1:]
+    # A "no new cabling" term beside the job's own cable runs (010120: "Route
+    # cable drops from the ceiling" and "No new structured network cabling").
+    scope_txt = " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict))
+    if re.search(r"(?i)cable drops?|run (new )?cable|pull (new )?cable|new cat ?6|cable run", scope_txt):
+        for k in ("assumptions", "out_of_scope"):
+            content[k] = [x for x in content.get(k) or [] if not re.search(
+                r"(?i)no new (structured )?(network )?cabling|new (structured )?cabling (or|and) (network )?drops|new network drops|new structured cabling",
+                str(x.get("text") if isinstance(x, dict) else x))]
+    # "Visible cable routing" against a no-visible-cables instruction.
+    if any(re.search(r"(?i)no cables? (should|will) be visible|not (be )?visible", f["text"]) for f in fs):
+        for d in content.get("deliverables") or []:
+            if isinstance(d, dict):
+                d["description"] = [re.sub(r"(?i)\bvisible cable routing\b", "concealed cable routing", str(t)) for t in d.get("description") or []]
+        for k in ("scope", "assumptions"):
+            for x in content.get(k) or []:
+                if isinstance(x, dict):
+                    x["text"] = re.sub(r"(?i)\broute and dress visible cabling\b", "Route and conceal cabling", str(x.get("text")))
+    # Removed gear the SOW leaves onsite is not shipped (010083: "stage them
+    # for shipment ... for disposal" beside "does not ship" and "left onsite").
+    terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope") for x in content.get(k) or [])
+    if re.search(r"(?i)does not (package|ship)|not ship|left onsite|remain onsite|placed in the customer-designated onsite|return logistics", terms):
+        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
+                            and re.search(r"(?i)for shipment|ship (them |it )?to|shipping to|for disposal", str(x.get("text"))))]
+    # After-hours work is not business hours (010083).
+    if any(re.search(r"(?i)after[- ]hours|after (store |branch )?clos|overnight|before (store |branch )?open", f["text"]) for f in fs):
+        content["assumptions"] = [x for x in content.get("assumptions") or []
+                                  if not re.search(r"(?i)(normal|regular|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
+    # Before-work photos and checks lead the work (010083: prework photos last).
+    sc = content.get("scope") or []
+    pre_ph = [x for x in sc if isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"(?i)\b(pre-?work|before (starting|work|removal)|existing condition)\b.{0,40}photo|photo.{0,40}\b(before (starting|work|removal)|pre-?work|existing condition)", str(x.get("text")))]
+    if pre_ph:
+        heads_i = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
+        rest = [x for x in sc if not any(x is y for y in pre_ph)]
+        at = 1 if rest and isinstance(rest[0], dict) and rest[0].get("kind") == "heading" else 0
+        if len(heads_i) > 1:
+            first_work = next((i for i, x in enumerate(rest) if isinstance(x, dict) and x.get("kind") == "heading" and i > 0), at)
+            at = first_work + 1
+        content["scope"] = rest[:at] + pre_ph + rest[at:]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
@@ -2264,6 +2304,13 @@ def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[s
                 re.sub(r"\d+", lambda m: next((n for n in re.findall(r"\d+", cited) if abs(int(n) - int(m.group(0))) <= 2), m.group(0)), x["text"]), cited)
             if i in okn or explicit_absence or install_row or approx or _stated_by(x["text"], cited):
                 out.append(x)
+            else:
+                # Cited to the wrong line but stated by another: re-cite, do not
+                # drop (010120's MS120 switch line cited the cleanup sentence).
+                other = next((c for c, t in lines.items() if c not in x["cites"] and len(t) < 400 and _stated_by(x["text"], t)), None)
+                if other:
+                    x["cites"] = [other]
+                    out.append(x)
     return out
 
 
