@@ -228,6 +228,7 @@
   "av_conference_room": {
     "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list",
     "method_steps": [
+      "{when:decommission|remove (the )?existing|removal of|to be removed|replace (the )?existing} Disconnect and remove the existing equipment designated for removal, including brackets, power supplies and unused cabling.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Review each intended display mounting location with the onsite contact before installation.",
       "{when:existing (display )?mount|reuse|re-use} Inspect existing display mounts and confirm they suit the new display size, weight and VESA pattern before reuse.",
       "{when:existing (display )?mount|reuse|re-use} Install plywood backing as required to securely support each wall mount.",
@@ -245,6 +246,12 @@
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Route and dress visible cabling using existing pathways or Customer-approved surface raceway.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Confirm display connection, camera, microphone, speaker and controller function as site access allows.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Remove installation debris to the Customer-designated area onsite.",
+      "{when:decommission|remove (the )?existing|removal of|to be removed|replace (the )?existing} Stage removed equipment in the Customer-designated onsite location.",
+      "{when:ceiling|suspended|hanging|pendant} Secure ceiling-mounted devices to structure above the grid with manufacturer hardware and a secondary safety attachment.",
+      "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Connect the network switch to the Customer network and patch the installed devices.",
+      "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Label new and reused cables at both ends.",
+      "{when:video bar|rally|neat|poly|camera|teams room|zoom room} Test camera, microphone, speaker and audio function with one Customer-assisted test call where the platform allows.",
+      "Correct any workmanship deficiencies identified during testing before leaving site.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
@@ -257,7 +264,12 @@
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provide network or Wi-Fi access and credentials for each device.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Complete device registration, account and software configuration.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provide an in-floor or in-wall pathway to the table controller location, or approve surface raceway for that cable.",
-      "Ensure furniture required for installation is assembled and in its final position."
+      "Ensure furniture required for installation is assembled and in its final position.",
+      "{when:decommission|remove (the )?existing|removal of|to be removed|replace (the )?existing} Confirm the equipment approved for removal and provide an onsite location for removed equipment.",
+      "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Provide the network port, VLAN, DHCP, firewall and internet access the installed devices require.",
+      "Complete device enrollment, management dashboard, tenant and licensing setup.",
+      "Provide remote AV or network engineering support during testing without delay.",
+      "{when:ceiling|suspended|hanging|pendant} Provide replacement ceiling tiles or blanking plates where needed."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
@@ -266,7 +278,9 @@
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Provider's work is limited to physical installation and connection of the listed equipment.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} All required equipment and accessories are onsite before the scheduled installation date.",
       "Customer-provided equipment is complete, compatible, undamaged and ready for installation.",
-      "No new structured network cabling or structural reinforcement is required."
+      "No new structured network cabling or structural reinforcement is required.",
+      "{when:ceiling|suspended|hanging|pendant} No device is supported solely by the ceiling grid or tiles.",
+      "{when:ceiling|suspended|hanging|pendant} Ceilings are 12 ft or lower and reachable from A-frame ladders; no powered lift is required."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
@@ -274,13 +288,17 @@
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Video conferencing platform configuration, licensing or account setup.",
       "Core drilling, conduit installation or structural modification.",
       "New structured cabling or network drops.",
-      "Major wall modification."
+      "Major wall modification.",
+      "Troubleshooting of defective existing or Customer-provided equipment.",
+      "Return visits caused by missing equipment, unavailable access or Customer delays."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power-on and video-source verification for each display.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Each video bar and table controller installed, powered on and connected.",
-      "Completion confirmed with the onsite contact."
+      "Completion confirmed with the onsite contact.",
+      "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Cabling tested, terminated, organized and labeled.",
+      "Functional test results documented."
     ],
     "tools": [
       "Cordless drill or driver and bits for approved mounting surfaces.",

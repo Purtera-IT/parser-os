@@ -1430,7 +1430,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         nouns = {w for w in re.findall(r"[a-z]+", t.lower()) if w in ("display", "displays", "tv", "tvs", "mount", "mounts", "backing",
                                                                        "monitor", "monitors", "speaker", "speakers", "camera",
                                                                        "cameras", "rack", "switch", "switches", "phone", "phones")}
-        verbs = re.search(r"(?i)\b(mount|install|remove|replace|relocate|backing|dismantle)", t)
+        verbs = re.search(r"(?i)\b(mount|install|remove|replace|relocate|backing|dismantle|dress|connect|power)", t)
         groups = [r"display|tv|television|monitor|screen", r"mount|bracket", r"speaker", r"camera", r"rack",
                   r"switch", r"phone|handset"]
         pats = [g for g in groups if any(re.fullmatch(r"(?:" + g + r")s?", n) for n in nouns)]
