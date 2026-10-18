@@ -760,7 +760,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
     # became scope), unless it asks the customer to confirm.
-    asked = {f["id"] for f in fs if f.get("asked") or f.get("type") == "open_question"}
+    # By the words, not only the label: 010085's "Assume 2 boom lifts are
+    # needed?" was typed quantity and became "Two boom lifts are assumed".
+    asked = {f["id"] for f in fs if f.get("asked") or f.get("type") == "open_question"
+             or re.search(r"\?\s*$", f["text"].strip())
+             or re.match(r"(?i)\s*(\d+[.)]\s*)?(assume|is|are|do|does|can|could|will|would|should|how|what|which|who|when)\b[^.]{0,200}\?", f["text"])}
     for k in LISTS:
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
                       and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]
@@ -1052,6 +1056,8 @@ def _normalise(got: dict[str, Any]) -> dict[str, Any]:
     # (010115 v1); the writer also ticked Staff Augmentation for "one tech, two days".
     if str(got.get("job_family") or "") == "decommission_packing":
         out["services"] = ["custom_work"]
+    elif str(got.get("job_family") or "") == "network_switch_refresh":
+        out["services"] = ["reinstallation"]  # as PurTera ticks a switch swap (010083, 010085 v1s)
     for k in LISTS:
         v = got.get(k) or []
         # A list returned as one string is one item: 000123's overview came back
