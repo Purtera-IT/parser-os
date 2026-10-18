@@ -613,6 +613,13 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     weak = {f["id"] for f in fs if f["section"] in ("also_kept", "unsure", "typed_only", "answered_question")}
     content["schedule"] = [x for x in content.get("schedule") or []
                            if not x.get("cites") or not all(c in weak for c in x["cites"])]
+    sched = content.setdefault("schedule", [])
+    if not any("completion date" in str(x.get("text", "")).lower() for x in sched if isinstance(x, dict)):
+        for f in fs:
+            m = re.search(r"(?i)\b(end|completion|finish)\s*date\s*[:|]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})", f["text"])
+            if m:
+                sched.append({"text": f"Requested Completion Date: {m.group(2)}", "cites": [f["id"]], "kind": "fact"})
+                break
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
@@ -923,50 +930,48 @@ def _said(text: str, items: list[Any], share: float = 0.5) -> bool:
 
 def _apply_standards(content: dict[str, Any], family: str) -> int:
     """Write PurTera's fixed handling of the job type (purtera_standards.json)
-    into the SOW, each item the writer did not already say. Offered to the
-    writer as a hint, it came back with empty customer responsibilities and
-    none of the standard steps (010115 round 12)."""
+    into the SOW. Offered to the writer as hints they came back missing,
+    paraphrased or out of order (010115 rounds 12-14), so the standards are the
+    list: every item goes in, in the file's order, and a writer item saying the
+    same thing goes (a scope step keeps its place only when it carries a count,
+    date or name of its own: the deal's facts stay)."""
     fixed = purtera_standards(family)
     n = 0
-    pending: list[dict[str, Any]] = []
     for sec, lst in _STD_LIST.items():
+        std = [{"text": t, "cites": [], "kind": "method", "standard": True} for t in fixed.get(sec) or []]
+        if not std:
+            continue
         items = content.setdefault(lst, [])
-        if lst == "scope":
-            # The writer copies some standard steps from its hints, in its own
-            # order: those join the block too, so the steps read in work order.
-            items[:] = [x for x in items if not (isinstance(x, dict) and x.get("kind") != "heading"
-                                                 and any(_said(str(x.get("text")), [t], 0.8) for t in fixed.get(sec) or []))]
-        for t in fixed.get(sec) or []:
-            if _said(t, items):
-                continue
-            item = {"text": t, "cites": [], "kind": "method", "standard": True}
-            if lst == "scope":
-                pending.append(item)
-                n += 1
-                continue
-            else:
-                items.append(item)
-            n += 1
-    if pending:
-        sc = content.setdefault("scope", [])
-        # A writer step the standard steps already say goes, unless it carries a
-        # count, date or name of its own (the deal's facts stay).
-        sc[:] = [x for x in sc if not (isinstance(x, dict) and x.get("kind") != "heading"
-                                       and not re.search(r"\d", str(x.get("text")))
-                                       and _said(str(x.get("text")), pending, 0.5))]
-        # The standard steps lead the work: after the first heading that is not
-        # the arrival group, else after the arrival group.
-        heads = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
-        work = [i for i in heads if not re.search(r"(?i)arriv|access|check", str(sc[i].get("text")))]
-        at = work[0] + 1 if work else (heads[1] if len(heads) > 1 else len(sc))
-        close = next((i for i in heads if re.search(r"(?i)clos|complet|wrap", str(sc[i].get("text")))), None)
-        tail = [it for it in pending if it["text"].lower().startswith(("confirm completion", "notify"))]
-        lead = [it for it in pending if it not in tail]
-        sc[at:at] = lead
-        if tail:
-            close = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"
-                          and re.search(r"(?i)clos|complet|wrap", str(x.get("text")))), len(sc))
-            sc[close:close] = [it for it in tail if not _said(it["text"], sc[close:], 0.5)]
+        share = 0.4 if lst == "scope" else 0.5
+        def covered(x: Any) -> bool:
+            if not isinstance(x, dict) or x.get("kind") == "heading" or x.get("standard"):
+                return False
+            t = str(x.get("text"))
+            return (lst != "scope" or not re.search(r"\d", t)) and _said(t, std, share)
+        items[:] = [x for x in items if not covered(x) and not (isinstance(x, dict) and x.get("standard"))]
+        n += len(std)
+        if lst != "scope":
+            items.extend(std)
+            continue
+        # Scope: the standard steps lead the work group; the closing steps go
+        # under the closing heading.
+        tail = [it for it in std if it["text"].lower().startswith(("notify", "confirm completion"))]
+        lead = [it for it in std if it not in tail]
+        heads = [i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"]
+        work = [i for i in heads if not re.search(r"(?i)arriv|access|check|clos|clean|wrap|complet", str(items[i].get("text")))]
+        arrival_end = next((i for i in heads if i > 0), len(items)) if heads and heads[0] == 0 else 0
+        at = work[0] + 1 if work else arrival_end
+        items[at:at] = lead
+        close = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
+                      and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), None)
+        if close is None:
+            items.append({"text": "Closeout", "cites": [], "kind": "heading"})
+            close = len(items) - 1
+        items[close + 1:close + 1] = [it for it in tail if not _said(it["text"], items[close + 1:], 0.5)]
+        # One closing group: "Cleanup" and "Closeout" both held closing steps.
+        items[close]["text"] = "Closeout"
+        items[:] = [x for i, x in enumerate(items) if not (i > close and isinstance(x, dict) and x.get("kind") == "heading"
+                    and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text"))))]
     content["standards_added"] = n
     return n
 
@@ -1018,10 +1023,16 @@ def _tidy(content: dict[str, Any]) -> None:
     arr = content.get("arrival_protocol") or []
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
                         and not x.get("standard") and _said(tx(x), arr, 0.6))]
-    cr = content.get("customer_responsibilities") or []
+    cr = content.setdefault("customer_responsibilities", [])
     asm = []
     for x in content.get("assumptions") or []:
         t = re.sub(r"(?i)^assume(s|d)?\s+(that\s+)?", "", tx(x)).strip()
+        if _ACCESS.search(t) and re.search(r"(?i)\b(provid|issue|furnish|receive|available)", t):
+            # The site handing over a badge or pass is the customer's duty.
+            line = "Provide the visitor badge and parking pass at check-in."
+            if not _said(line, cr, 0.5):
+                cr.append({"text": line, "cites": x.get("cites") or [] if isinstance(x, dict) else [], "kind": "fact"})
+            continue
         if not t or _LEDGER.search(t) or _said(t, cr, 0.5) or _said(t, asm, 0.7):
             continue
         t = t[:1].upper() + t[1:]
@@ -1029,6 +1040,11 @@ def _tidy(content: dict[str, Any]) -> None:
             x["text"] = t
         asm.append(x if isinstance(x, dict) else {"text": t, "cites": [], "kind": "method"})
     content["assumptions"] = asm
+    if any(re.search(r"(?i)powered down", tx(a)) for a in content.get("assumptions") or []):
+        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
+                            and re.search(r"(?i)\bpower(s|ing)? down\b", tx(x)))]
+    content["equipment_in_scope"] = [x for x in content.get("equipment_in_scope") or []
+                                     if not re.search(r"(?i)\bN/?A\b|to be installed, by category|no hardware is to be installed", tx(x))]
     fam = str(content.get("job_family") or "")
     if fam in _FAMILY_TOOLS_NOT:
         content["provider_tools"] = [x for x in content.get("provider_tools") or [] if not _FAMILY_TOOLS_NOT[fam].search(tx(x))]
@@ -1361,6 +1377,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     named.append(place)
         if len(named) == 1:
             c["sites"][0]["name"] = named[0]
+    if len(c["sites"]) == 1:
+        site_words = _toks(" ".join(str(c["sites"][0].get(k) or "") for k in ("name", "address")))
+        c["scope"] = [x for x in c.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") == "heading"
+                      and _toks(x.get("text")) and _toks(x.get("text")) <= site_words)]
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
@@ -1440,7 +1460,19 @@ def requested_by(envelope: dict[str, Any]) -> dict[str, str]:
                 name = str(c.get("name") or "")
                 break
     card = cards.get(name.lower(), {})
-    return {"name": name, "phone": str(person.get("phone") or card.get("phone") or ""), "email": email}
+    phone = str(person.get("phone") or card.get("phone") or "")
+    if not phone and email:
+        # The requester's own signature line carries it; signatures are set
+        # aside as chrome, so read them there (010115: Quinton James's
+        # "Office: 312.705.1872 | ... | Email: quinton.james@cdw.com").
+        for r in (envelope.get("suppressed_chrome") or []) + (envelope.get("atoms") or []):
+            t = str(r.get("text") or r.get("raw_text") or "")
+            if email in t.lower():
+                m = re.search(r"(?:office|direct|o|p|phone|tel)?\s*[:.]?\s*(\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4})", t, re.I)
+                if m:
+                    phone = m.group(1)
+                    break
+    return {"name": name, "phone": phone, "email": email}
 
 
 def as_markdown(content: dict[str, Any]) -> tuple[str, str]:
