@@ -1441,10 +1441,16 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         if re.search(r"(?i)backing|wall mount", t):
             pats.append(groups[0])  # backing and wall mounts exist for the displays
         return bool(nouns and verbs and any(re.search(r"\b(?:" + g + r")(?:'?s)?\b", stays) for g in pats))
+    # The customer doing its own testing or configuration rules out the test
+    # steps (010171: "I will do the device configuration and testing").
+    self_test = any(re.search(r"(?i)\b(i|we|customer|our (team|it))\b.{0,25}\b(will|'ll|would)\b.{0,15}\b(do|handle|perform|take care of)\b.{0,40}\btest", str(f))
+                    for f in facts_text or [])
     for sec, lst in _STD_LIST.items():
         std = []
         for t0 in fixed.get(sec) or []:
             ok, t = _standard_applies(t0, facts_text or [])
+            if self_test and re.search(r"(?i)\btest|confirm .{0,40}\bfunction|verify (basic )?operation", t):
+                continue
             if ok and not contradicted(t):
                 std.append({"text": t, "cites": [], "kind": "method", "standard": True})
         if not std:
@@ -1694,6 +1700,19 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             continue
         keep_cr.append(x)
     content["customer_responsibilities"] = keep_cr
+    # A statement of fact filed as a duty is an assumption (010171: "Customer
+    # states there is no existing equipment in place").
+    facts_as_duty = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict)
+                     and re.match(r"(?i)\s*(customer (states|confirms|says|notes)|there (is|are)|no existing)\b", str(x.get("text")))]
+    for x in facts_as_duty:
+        content["customer_responsibilities"].remove(x)
+        x["text"] = re.sub(r"(?i)^\s*customer (states|confirms|says|notes)( that)?\s*", "", str(x["text"]))
+        x["text"] = x["text"][:1].upper() + x["text"][1:]
+        content.setdefault("assumptions", []).append(x)
+    # A priced maybe is not a task (010171: "Zoom support available ...
+    # depending on cost").
+    content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
+                        and re.search(r"(?i)depending on (cost|price|budget)|if (the )?budget|for an additional (cost|fee)", str(x.get("text"))))]
     # Site hours are the template's business-hours line, not a customer duty.
     content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                             if not re.search(r"(?i)\b(operates|open|hours)\b.{0,30}monday.{0,15}friday", str(x.get("text") if isinstance(x, dict) else x))]
