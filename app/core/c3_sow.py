@@ -260,7 +260,7 @@ def purtera_standards(family: str) -> dict[str, list[str]]:
     return {k: [str(t) for t in v] for k, v in fam.items() if not k.startswith("_") and isinstance(v, list)}
 
 
-_WHEN = re.compile(r"^\{when:([^}]+)\}\s*")
+_WHEN = re.compile(r"^\{when:(.*?)\}\s+(?=[A-Z])")  # the regex may hold {n,m}: end at "} " before the item
 
 
 def _standard_applies(t: str, facts_text: list[str]) -> tuple[bool, str]:
@@ -1222,7 +1222,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     # A standard item a deal fact contradicts is not written (the file's own
     # rule): 010120's survey says the TVs stay in place, and the AV standards
     # wrote "mount each display" and plywood backing.
-    stays = " ".join(str(f) for f in facts_text if re.search(r"(?i)\b(stay|stays|remain|remains|no change|left in place|"
+    stays = " ".join(str(f) for f in facts_text if re.search(r"(?i)\b(stay|stays|remain|remains|no change|left in place|already (mounted|installed|on the wall|in place)|"
                                                                 r"keep (the )?existing|not (be )?(moved|replaced|removed))\b", str(f))).lower()
     def contradicted(t: str) -> bool:
         if not stays:
@@ -1385,6 +1385,11 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
                             and re.search(r"(?i)\bpower(s|ing)? down\b", tx(x)))]
     form_label = re.compile(r"(?i)\bN/A\b|to be installed,? by category|no hardware is to be installed")
+    # A described picture is not material (010012: "Abstract metal sculpture with
+    # spiral and spherical elements", a leasing brochure photo, as customer material).
+    pictured = re.compile(r"(?i)\b(sculpture|artwork|abstract|photograph|image of|picture of|logo|illustration|rendering)\b")
+    for k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+        content[k] = [x for x in content.get(k) or [] if not pictured.search(tx(x))]
     for k in ("equipment_in_scope", "out_of_scope"):
         content[k] = [x for x in content.get(k) or [] if not form_label.search(tx(x))]
     # Contacts belong in the contacts block, never the overview (a phone in the

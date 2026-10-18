@@ -174,13 +174,13 @@
   "av_conference_room": {
     "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list",
     "method_steps": [
-      "Review each intended display mounting location with the onsite contact before installation.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Review each intended display mounting location with the onsite contact before installation.",
       "{when:existing (display )?mount|reuse|re-use} Inspect existing display mounts and confirm they suit the new display size, weight and VESA pattern before reuse.",
       "{when:existing (display )?mount|reuse|re-use} Install plywood backing as required to securely support each wall mount.",
-      "Mount each display at the approved location and height.",
-      "Dress and secure accessible cabling associated with each display.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mount each display at the approved location and height.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Dress and secure accessible cabling associated with each display.",
       "Connect accessible power where a Customer-provided power source is available.",
-      "Power on each display and verify basic operation and an available video source.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power on each display and verify basic operation and an available video source.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
@@ -188,11 +188,11 @@
       "Ensure the work areas are reasonably clear and accessible before technician arrival.",
       "Provide access to existing electrical power required for display operation.",
       "Ensure Customer-furnished AV, network and source systems are operational and available for testing.",
-      "Provide the final display locations and mounting heights before drilling or permanent installation.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Provide the final display locations and mounting heights before drilling or permanent installation.",
       "Provide current photographs of the rooms and proposed mounting walls before deployment when available."
     ],
     "assumptions": [
-      "Mounting walls can structurally support the displays, mounts and backing materials.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
       "Standard commercial wall construction and fastening methods can be used.",
       "No asbestos, hazardous materials, concealed utilities or structural obstructions are present in the work areas."
     ],
@@ -201,7 +201,7 @@
       "Electrical work or new power circuits."
     ],
     "deliverable_outcomes": [
-      "Displays mounted at the approved locations and heights.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",
       "Power-on and video-source verification for each display.",
       "Completion confirmed with the onsite contact."
     ]
