@@ -765,6 +765,14 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                 sched.append({"text": f"Requested Completion Date: {m.group(2)}", "cites": [f["id"]], "kind": "fact"})
                 break
     _reseller_supplies(content, fs)
+    # A customer duty cannot rest only on what PurTera itself wrote (010217:
+    # Trent's sales intro "deep familiarity with Certinia, Agiloft" became a
+    # CDW responsibility).
+    ours = {str(a.get("id")) for a in envelope.get("atoms") or []
+            if "purtera" in str((a.get("locator") or {}).get("sender") or "").lower()}
+    if ours:
+        content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
+                                                if not (isinstance(x, dict) and x.get("cites") and all(c in ours for c in x["cites"]))]
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
     content["unassigned"] = _party_check(content, lines)
     _dedupe_items(content)
