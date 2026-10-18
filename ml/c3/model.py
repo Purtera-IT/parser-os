@@ -551,12 +551,14 @@ class C3Model(nn.Module):
         share one projection. This lets a busy head (line type) separate them.
         It reads the head's input and the line's deal-graph state ``h``, which
         carries the line's own text features straight through the residual
-        stream: a plain linear read of those features already types lines."""
+        stream: a plain linear read of those features already types lines.
+        A company-layer class head (read:co_action) takes one too; conduct()
+        adds it to that head's logits the same way."""
         if key in self.free_heads:
             return self.free_heads[key]
         opp = self.schema.by_key()[key]
-        if not opp.universal or opp.kind == RELATION:
-            raise ValueError(f"{key} is not a universal class head")
+        if opp.kind == RELATION or opp.kind == NUMBER:
+            raise ValueError(f"{key} is not a class head")
         lin = nn.Linear(self.cfg.d_head + self.cfg.d, len(opp.answers))
         nn.init.zeros_(lin.weight)
         nn.init.zeros_(lin.bias)
@@ -612,6 +614,9 @@ class C3Model(nn.Module):
             out.logits[o.key] = lg
             if o.kind == NUMBER:
                 out.numbers[o.key] = nums[:, j]
+            elif o.key in self.free_heads:  # a refit's free row, read like the universal ones
+                free = self.free_heads[o.key](torch.cat([y, out.h.to(y.dtype)], -1))
+                out.logits[o.key] = lg + free.to(lg.dtype)
         self._read(out, y, opps, desc, bank, bank_emb, "company", company,
                    self.reader_company, self.compiler_company, self.conduct_head)
         out.alpha = alpha

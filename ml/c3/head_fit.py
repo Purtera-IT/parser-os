@@ -67,7 +67,8 @@ def _cache(model, parts, keys, device):
                     y = torch.tensor([b.targets[k][j] for j in sel])
                 ix = torch.tensor(sel)
                 parser = b.parser_targets.get(k) or [IGNORE] * len(b)
-                rows[k]["x"].append(grabbed[space_of[k]].float().cpu()[ix].half())
+                x = grabbed.get(space_of[k]) if space_of[k] in grabbed else out.conduct_x  # company heads read conduct
+                rows[k]["x"].append(x.float().cpu()[ix].half())
                 rows[k]["h"].append(h[ix].half())
                 rows[k]["base"].append(out.logits[k].float().cpu()[ix])
                 rows[k]["y"].append(y)
@@ -210,6 +211,8 @@ def main() -> None:
     p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     p.add_argument("--device", default="auto")
+    p.add_argument("--extra-keys", nargs="*", default=[],
+                   help="company-layer heads to refit beside the universal ones (e.g. read:co_action)")
     args = p.parse_args()
     from .gates import load_checkpoint, save_checkpoint
 
@@ -226,6 +229,7 @@ def main() -> None:
     model.eval()
     keys = [o.key for o in schema.select(layer="universal")
             if o.kind not in (RELATION, NUMBER) and len(o.answers) > 1]
+    keys += [k for k in args.extra_keys if k in schema.by_key() and k not in keys]
     train, _ = load_split(args.train, schema, args.max_atoms)
     val, _ = load_split(args.validation, schema, args.max_atoms)
     print(f"parts train={len(train)} validation={len(val)}", flush=True)
