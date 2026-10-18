@@ -552,17 +552,26 @@ def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> in
     measurement: the sibling joins its kept line's section."""
     by_id = {a.get("id"): a for a in atoms}
     weak = ("unsure", "also_kept", "typed_only")
-    key_of = lambda f: (str((by_id.get(f["id"]) or {}).get("artifact_id") or ""),
-                        " ".join(_MEASURED.match(str(f["text"])).group(1).lower().split()[:2]))
+    # A BOM row ("1: QM75C Samsung 75IN ...", "2 | TS525TU | Chief ...") is a
+    # list member too: 010116's matrix switcher and serial cable were rejected
+    # beside identical kept rows of the same block.
+    bom = re.compile(r"^\s*\d{1,4}\s*[:|x]\s*(?:\d{1,4}\s*\|\s*)?\|?\s*[A-Z0-9][A-Z0-9./_-]{3,30}\b")
+    def shape(t: str):
+        m = _MEASURED.match(t)
+        if m:
+            return " ".join(m.group(1).lower().split()[:2])
+        return "bom-row" if bom.match(t) else None
+    _MEASURED_OR_BOM = type("_M", (), {"match": staticmethod(lambda t: shape(str(t)))})
+    key_of = lambda f: (str((by_id.get(f["id"]) or {}).get("artifact_id") or ""), shape(str(f["text"])))
     kept = {}
     for f in out:
-        if _MEASURED.match(str(f["text"])) and f["section"] not in weak:
+        if shape(str(f["text"])) and f["section"] not in weak:
             kept.setdefault(key_of(f), f)
     if not kept:
         return 0
     n = 0
     for f in out:
-        if f["section"] in weak and _MEASURED.match(str(f["text"])) and key_of(f) in kept:
+        if f["section"] in weak and shape(str(f["text"])) and key_of(f) in kept:
             f["section"] = kept[key_of(f)]["section"]  # an unsure sibling is decided by its kept one
             n += 1
     have = {f["id"] for f in out}
@@ -570,10 +579,9 @@ def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> in
         if a.get("id") in have:
             continue
         t = str(a.get("text") or "")
-        m = _MEASURED.match(t)
-        if not m:
+        if not shape(t):
             continue
-        sib = kept.get((str(a.get("artifact_id") or ""), " ".join(m.group(1).lower().split()[:2])))
+        sib = kept.get((str(a.get("artifact_id") or ""), shape(t)))
         if sib:
             out.append({"id": a.get("id"), "section": sib["section"], "when": sib.get("when") or "",
                         "under": sib.get("under") or "", "text": t, "supplier": sib.get("supplier"),
@@ -836,6 +844,13 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                                 if not (isinstance(x, dict) and x.get("cites") and all(c in ours for c in x["cites"]))]
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
+    sup_of = {f["id"]: f.get("supplier") for f in fs}
+    cust = lambda c: bool(sup_of.get(c)) and sup_of[c][0] == "customer" and float(sup_of[c][1] or 0) >= SUPPLIER_BAR
+    eq = content.get("equipment_in_scope") or []
+    to_cust = [x for x in eq if isinstance(x, dict) and x.get("cites") and all(cust(c) for c in x["cites"])]
+    if to_cust:  # 010116: the supplier head read "customer" on every BOM line
+        content["equipment_in_scope"] = [x for x in eq if x not in to_cust]
+        content.setdefault("customer_materials", []).extend(to_cust)
     # A customer duty every cited line of which the supplier head gives to us
     # is Provider work (010279: proof of delivery, inventory recap); and one
     # atom is never both Provider scope and a customer duty.
