@@ -269,7 +269,9 @@
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Provide the network port, VLAN, DHCP, firewall and internet access the installed devices require.",
       "Complete device enrollment, management dashboard, tenant and licensing setup.",
       "Provide remote AV or network engineering support during testing without delay.",
-      "{when:ceiling|suspended|hanging|pendant} Provide replacement ceiling tiles or blanking plates where needed."
+      "{when:ceiling|suspended|hanging|pendant} Provide replacement ceiling tiles or blanking plates where needed.",
+      "Provide technician access to the rooms, common areas, telecom spaces, elevators and corridors the work requires.",
+      "Have onsite personnel available for access and approvals during the work."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
@@ -280,7 +282,8 @@
       "Customer-provided equipment is complete, compatible, undamaged and ready for installation.",
       "No new structured network cabling or structural reinforcement is required.",
       "{when:ceiling|suspended|hanging|pendant} No device is supported solely by the ceiling grid or tiles.",
-      "{when:ceiling|suspended|hanging|pendant} Ceilings are 12 ft or lower and reachable from A-frame ladders; no powered lift is required."
+      "{when:ceiling|suspended|hanging|pendant} Ceilings are 12 ft or lower and reachable from A-frame ladders; no powered lift is required.",
+      "Normal building access is available and no specialty rigging is required."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
@@ -290,7 +293,9 @@
       "New structured cabling or network drops.",
       "Major wall modification.",
       "Troubleshooting of defective existing or Customer-provided equipment.",
-      "Return visits caused by missing equipment, unavailable access or Customer delays."
+      "Return visits caused by missing equipment, unavailable access or Customer delays.",
+      "Procurement of hardware not provided by the Customer.",
+      "Troubleshooting of Customer network issues."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",
@@ -298,6 +303,8 @@
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board)|soundbar|logitech (rally|meetup)} Each video bar and table controller installed, powered on and connected.",
       "Completion confirmed with the onsite contact.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Cabling tested, terminated, organized and labeled.",
+      "Completion photographs of all newly installed hardware.",
+      "Missing equipment, damage and readiness issues documented and reported.",
       "Functional test results documented."
     ],
     "tools": [

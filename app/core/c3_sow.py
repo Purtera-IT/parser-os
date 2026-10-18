@@ -1506,6 +1506,9 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         d0 = dl[0] if isinstance(dl[0], dict) else {"item": "Work Completion Report", "description": [], "format": "PDF"}
         own = [str(t) for t in d0.get("description") or [] if str(t).strip()]
         d0["description"] = own + [o for o in outcomes if not _said(o, own, 0.5)]
+        # Photographs ship as images beside the report (010116, 010209: "PDF, Jpeg").
+        if any(re.search(r"(?i)photo", str(t)) for t in d0["description"]) and "JPEG" not in str(d0.get("format") or "").upper():
+            d0["format"] = (str(d0.get("format") or "PDF").strip() or "PDF") + ", JPEG"
         dl[0] = d0
     content["standards_added"] = n
     return n
