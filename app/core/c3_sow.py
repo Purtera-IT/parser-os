@@ -1554,6 +1554,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _boundary_verbs(content)
     _traced(content, "partner_phase", _partner_phase, content, fs)
     _contact_roles(content, fs)
+    _traced(content, "form_chrome", _form_chrome, content, fs)
     _planning_basis(content, fs)
     _room_counts(content)
     # "the above" points into the source note's list, not the SOW (000123
@@ -2847,7 +2848,10 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         # Said by a line about the same thing: "Serial numbers of each new
         # switch" is not "New switches installed and cabled".
         head = lambda u: _stem((re.findall(r"[a-z]+", str(u).lower()) or [""])[0])
-        said_o = lambda o: _said(o, own, 0.5) and (head(o) in {head(t) for t in own} or not o.lower().startswith(("serial", "posted", "photo")))
+        # Said only by a line that carries most of it: "Hardware dismantled as
+        # directed by the onsite contact" is not "Document completion
+        # confirmation from the onsite contact" (010115 pass U).
+        said_o = lambda o: _said(o, own, 0.7) and (head(o) in {head(t) for t in own} or not o.lower().startswith(("serial", "posted", "photo")))
         for o in outcomes:
             if said_o(o):
                 suppressed("deliverable_outcomes", o, "the report already says it")
@@ -3769,6 +3773,35 @@ def _partner_phase(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if serial and all(f["id"] in hit for f in serial):
         content["scope"] = [x for x in content.get("scope") or [] if not (
             isinstance(x, dict) and x.get("standard") and re.match(r"(?i)\s*(capture|record|provide)\b[^.]{0,30}\bserial", str(x.get("text"))))]
+
+
+#: A form row: "Label | value" (the value may be empty).
+_FORM_ROW = re.compile(r"^\s*([^|\n]{2,60}?)\s*\|\s*(.*)$", re.S)
+
+
+def _form_chrome(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A request form's empty or N/A field, and the footnote of a field left
+    blank, are not terms of this job (010115 pass U: "Hardware to be
+    Installed (By Category) | N/A" became "No hardware is to be installed
+    ...; the category is N/A", and the blank "Rush?*" field's footnote "*A
+    rush fee is added ..." a 20% rush-fee assumption). A line resting only
+    on such rows goes from the assumptions, duties and exclusions."""
+    by = {f["id"]: f for f in fs}
+    def chrome(c: str) -> bool:
+        f = by.get(c)
+        if not f:
+            return False
+        mm = _FORM_ROW.match(str(f["text"]))
+        if not mm:
+            return False
+        label, value = mm.group(1).strip(), mm.group(2).strip()
+        if re.fullmatch(r"(?i)(n/?a|none|tbd|-+|—)?\.?", value):
+            return True
+        # The field is blank and the cell holds only its own footnote.
+        return label.endswith("*") and value.startswith("*")
+    for k in ("assumptions", "customer_responsibilities", "out_of_scope"):
+        content[k] = [x for x in content.get(k) or [] if not (
+            isinstance(x, dict) and not x.get("standard") and x.get("cites") and all(chrome(c) for c in x["cites"]))]
 
 
 def _contact_roles(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
@@ -4826,9 +4859,18 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
     gone = [g for g in gone if not any(_said(g, [t], 0.8) for t in report)]
     terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope")
                      for x in content.get(k) or []).lower()
-    excl = [(r"(?i)\bship(ment|ped|ping)?\b|\bfreight\b|\btransport", r"ship|freight|transport|logistic"),
+    # A place named for shipping ("the designated shipment area") is where
+    # packed gear waits onsite, not shipping work (010115 pass U lost
+    # "Packed equipment staged in the designated shipment area").
+    excl = [(r"(?i)\bship(ment|ped|ping)?\b(?!\s+(area|zone|location|cage|room|dock))|\bfreight\b|\btransport", r"ship|freight|transport|logistic"),
             (r"(?i)\bdispos|\bwipe\b|data destruction|recycl", r"dispos|recycl|wipe|destruction"),
             (r"(?i)\bbench(ed|ing)?\b", r"bench|stag")]
+    # A standard outcome this removes says so (standards_suppressed).
+    try:
+        std_out = {_standard_applies(o, [], [])[1] for o in purtera_standards(str(content.get("job_family") or "")).get("deliverable_outcomes") or []}
+    except Exception:  # noqa: BLE001 - the record is a courtesy, never a failure
+        std_out = set()
+    why = content.setdefault("standards_suppressed", [])
     for d in content.get("deliverables") or []:
         if not isinstance(d, dict):
             continue
@@ -4836,6 +4878,8 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
         for t in d.get("description") or []:
             t = str(t)
             if any(_said(t, [g], 0.6) for g in gone):
+                if t in std_out:
+                    why.append({"section": "deliverable_outcomes", "text": t, "reason": "deliverables: restates a dropped line"})
                 continue
             hit = [pat for pat, ex in excl if re.search(pat, t) and re.search(ex, terms)]
             if hit:
@@ -4845,6 +4889,8 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
                 if len(parts) >= 2:
                     t2 = ", ".join(p_.strip() for p_ in parts[:-1]) + ", and " + parts[-1].strip().rstrip(".")
                 if len(t2.split()) < 3:
+                    if t in std_out:
+                        why.append({"section": "deliverable_outcomes", "text": t, "reason": "deliverables: the SOW's own terms exclude it"})
                     continue
                 t = t2 + "."
             keep.append(t[:1].upper() + t[1:])
@@ -4942,7 +4988,11 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
                 cr.append({"text": line, "cites": x.get("cites") or [] if isinstance(x, dict) else [], "kind": "fact"})
             continue
         std = isinstance(x, dict) and x.get("standard")
-        if not t or _LEDGER.search(t) or (not std and _said(t, cr, 0.5)) or _said(t, asm, 0.6):
+        # A standard goes only for a line that says it back: a standard item
+        # nothing else carries stays (010115 pass U: "Onsite parking is
+        # available; any parking fee is reimbursable" went as a repeat).
+        twin = [y for y in asm if _said(t, [y], 0.6) and (not std or _said(tx(y), [t], 0.6))]
+        if not t or _LEDGER.search(t) or (not std and _said(t, cr, 0.5)) or twin:
             continue
         t = t[:1].upper() + t[1:]
         if isinstance(x, dict):

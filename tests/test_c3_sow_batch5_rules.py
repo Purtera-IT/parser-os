@@ -253,3 +253,33 @@ def test_lines_naming_different_rooms_are_two_lines():
     c["overview"] = [{"text": "Provider will install two (2) Poly X72 bars with TC10s.", "cites": ["x"], "kind": "fact"}]
     m._overview_covers_scope(c, [])
     assert len(c["overview"]) == 1  # one room's share is not the job's count
+
+
+# --- 010115 A-: standards nothing else carries stay; form chrome ---------------
+
+def test_a_standard_assumption_goes_only_for_a_line_that_says_it_back():
+    c = {"scope": [], "schedule": [], "assumptions": [
+        {"text": "Onsite packing materials are available for boxing the removed hardware.", "cites": [], "kind": "method"},
+        {"text": "Onsite parking is available; any parking fee is reimbursable.", "cites": [], "kind": "method", "standard": True}]}
+    m._tidy(c)
+    assert any("parking" in x["text"] for x in c["assumptions"])
+
+
+def test_a_shipment_area_is_not_shipping_work():
+    c = {"job_family": "decommission_packing", "rule_decisions": [], "dropped": [],
+         "out_of_scope": [{"text": "Transport, shipping or freight.", "cites": [], "kind": "method", "standard": True}],
+         "deliverables": [{"item": "Work Completion Report", "description": [
+             "Packed equipment staged in the designated shipment area.", "Equipment shipped to the depot."]}]}
+    m._deliverables_hygiene(c)
+    assert c["deliverables"][0]["description"] == ["Packed equipment staged in the designated shipment area."]
+
+
+def test_empty_form_fields_and_blank_field_footnotes_are_not_terms():
+    fs = [_fact("n", "Hardware to be Installed (By Category) | N/A"),
+          _fact("r", "Rush?* | *A rush fee is added if a location requires installation within 10 days."),
+          _fact("d", "Days of Operation | Monday – Friday")]
+    c = {"assumptions": [{"text": "No hardware is to be installed; the category is N/A.", "cites": ["n"], "kind": "fact"},
+                         {"text": "A rush fee of 20% applies.", "cites": ["r"], "kind": "fact"},
+                         {"text": "Work is performed Monday through Friday.", "cites": ["d"], "kind": "fact"}]}
+    m._form_chrome(c, fs)
+    assert [x["cites"] for x in c["assumptions"]] == [["d"]]
