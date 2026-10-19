@@ -119,3 +119,18 @@ def test_access_is_the_sites_and_the_work_stays_providers():
     m._tidy(content)
     assert content["scope"][0]["text"] == "Perform terminal identification and configuration tasks."
     assert content["customer_responsibilities"][0]["text"].startswith("Provide POS access for")
+
+
+def test_location_table_rows_are_not_cut_to_a_stated_count(monkeypatch):
+    rows = [{"id": f"r{i}", "artifact_id": "sheet", "text": f"Store: {i} | Region: South | City: Town{i} | State: NC"}
+            for i in range(1, 112)]
+    env = {"atoms": rows + [{"id": "c", "text": "113 sites in total"}],
+           "site_count_reconciliation": {"stated": 6, "all_counts_seen": {"6": 5, "113": 4}},
+           "site_readiness": {"sites": []}}
+    monkeypatch.setattr(m, "_best_of", lambda e, pm: {"overview": [{"text": "Provider will install terminals.", "cites": [], "kind": "fact"}],
+                                                     "deliverables": [{"description": ["PDF for the 110-location rollout."]}]})
+    c = m.for_envelope(env)
+    assert c["site_summary"] == {"stated": 113, "resolved": 111, "from_table": True}
+    assert len(c["sites"]) == 111
+    assert any("113" in x["text"] for x in c["overview"])
+    assert c["deliverables"][0]["description"][0] == "PDF for the 113-location rollout."

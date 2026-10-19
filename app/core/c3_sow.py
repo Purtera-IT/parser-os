@@ -3281,7 +3281,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     addressed = [x for x in sites if re.search(r"\d", str(x.get("address") or ""))]
     if len(addressed) >= 10 and len(addressed) > int(stated or 0):
         stated = len(addressed)
-    if len(sites) >= 10 and len(addressed) < 0.5 * len(sites):
+    # Not the rows of the deal's own location table, which carry a store and a
+    # city but no street: 010279's 111 store rows were cut to the six sites a
+    # set-aside SmartHands call mentioned.
+    if len(sites) >= 10 and len(addressed) < 0.5 * len(sites) and not (table and sites is table):
         sites = addressed or sites[:max(1, int(stated or 1))]
     if table:
         # A count the documents state that the table nearly bears out (010279:
@@ -3326,10 +3329,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         def _snap(m: re.Match) -> str:
             n = int(m.group(1))
             return (str(n_sites) if n != n_sites and abs(n - n_sites) <= max(2, 0.1 * n_sites) else m.group(1)) + m.group(2)
-        for k in ("overview", "scope", "schedule"):
+        for k in ("overview", "scope", "schedule", "assumptions", "customer_responsibilities"):
             for x in c.get(k) or []:
                 if isinstance(x, dict):
-                    x["text"] = re.sub(r"\b(\d{2,4})(\)?\s+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
+                    x["text"] = re.sub(r"\b(\d{2,4})(\)?[\s-]+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
                     # "160 (one hundred sixty) Customer locations" (000123).
                     x["text"] = re.sub(r"(?i)\b(\d{2,4})\s*\((?:[a-z -]+)\)(\s+(?:\w+\s+){0,2}(?:locations?|stores?|sites?|restaurants?|branches))",
                                        lambda m: (f"{n_sites} ({_words(n_sites)})" if int(m.group(1)) != n_sites and abs(int(m.group(1)) - n_sites) <= max(2, 0.1 * n_sites)
@@ -3344,7 +3347,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 d["description"] = [re.sub(r"(?i)\b(\d{2,4})\s*\((?:[a-z -]+)\)(\s+(?:\w+\s+){0,2}(?:locations?|stores?|sites?))",
                                            lambda m: (f"{n_sites} ({_words(n_sites)})" if int(m.group(1)) != n_sites and abs(int(m.group(1)) - n_sites) <= max(2, 0.1 * n_sites)
                                                       else m.group(0)[:m.start(2) - m.start(0)]) + m.group(2),
-                                           re.sub(r"\b(\d{2,4})(\s+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t))) for t in d.get("description") or []]
+                                           re.sub(r"\b(\d{2,4})([\s-]+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t))) for t in d.get("description") or []]
+        # A many-site job states its site count in the summary (010279: no
+        # "113" anywhere in the SOW, which read as a six-store job).
+        ov = c.setdefault("overview", [])
+        if not any(re.search(r"\b%d\b" % n_sites, str(x.get("text") if isinstance(x, dict) else x)) for x in ov):
+            ov.insert(min(1, len(ov)), {"text": f"The work covers {_words(n_sites)} ({n_sites}) Customer locations, listed in the "
+                                                f"location table.", "cites": [], "kind": "fact"})
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
     c["sites"] = [x for x in _sites(envelope, {"sites": sites}) if (x.get("address") or x.get("name"))]
     # On a job of a few sites the writer's own cited locations are the table:
