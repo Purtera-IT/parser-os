@@ -3505,12 +3505,62 @@ def _follow_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
     return moved
 
 
+_CITE_ID = re.compile(r"\b(?:atm|pmq|ent|declared_scope|q)_[0-9A-Za-z]+(?:_[0-9A-Za-z]+)*")
+
+
+def _cite_ids(v: Any) -> list[str]:
+    """A line's cites as a list of ids, however the writer sent them: a
+    list, one string, or a list holding a stringified list (010115 pass Y:
+    ``["['atm_8e8d8cc3134002fb']"]``, whose line the check then dropped as
+    uncited although the atom exists)."""
+    if v is None:
+        return []
+    vals = [v] if isinstance(v, (str, int)) else list(v) if isinstance(v, (list, tuple)) else []
+    out: list[str] = []
+    for c in vals:
+        c = str(c).strip()
+        if not c:
+            continue
+        found = _CITE_ID.findall(c)
+        if found and (len(found) > 1 or found[0] != c):
+            out += found
+        else:
+            c = c.strip("[]'\" ,")
+            if c:
+                out.append(c)
+    return list(dict.fromkeys(out))
+
+
+def _near_cite(c: str, known) -> str | None:
+    """The one known id a mistyped cite means: same long prefix (seven or
+    more characters after the type) or same long suffix (ten or more), and
+    no other known id shares it (010115 pass Y: atm_3c0f824d0a8fe246 for
+    atm_3c0f824b78b9c2c3)."""
+    m_ = re.match(r"([a-z_]+?_)([0-9a-f]{12,})$", c)
+    if not m_:
+        return None
+    kind, hx = m_.groups()
+    for n in range(len(hx) - 1, 6, -1):
+        hits = {k for k in known if k.startswith(kind + hx[:n])}
+        if len(hits) == 1:
+            return next(iter(hits))
+        if len(hits) > 1:
+            break
+    for n in range(len(hx) - 1, 9, -1):
+        hits = {k for k in known if k.startswith(kind) and k.endswith(hx[-n:])}
+        if len(hits) == 1:
+            return next(iter(hits))
+        if len(hits) > 1:
+            break
+    return None
+
+
 def _item(x: Any) -> dict[str, Any] | None:
     if isinstance(x, str):
         x = {"text": x, "cites": [], "kind": "method"}
     if not isinstance(x, dict) or not str(x.get("text") or "").strip():
         return None
-    cites = [str(c) for c in x.get("cites") or [] if str(c).strip()]
+    cites = _cite_ids(x.get("cites"))
     text = strip_cites(str(x["text"]))
     # Ids the writer put in the text itself: "(atm_6c5ab..., atm_8cde...)".
     text = re.sub(r"\s*[\(\[]?\b(?:atm|pmq|ent|q|declared_scope)_[0-9A-Za-z_]+(?:\s*,\s*(?:atm|pmq|ent|q|declared_scope)_[0-9A-Za-z_]+)*[\)\]]?", "", text)
@@ -9721,6 +9771,8 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
             # A line whose cites name no fact at all (010279 pass W: the
             # writer's garbled "atm_b395ab78b2e1db30f") is an uncited line; the
             # ledger says so rather than blaming a silent rule.
+            # A mistyped id names the one fact it nearly spells (010115 pass Y).
+            x["cites"] = list(dict.fromkeys(c if c in lines else (_near_cite(c, lines) or c) for c in _cite_ids(x["cites"])))
             if x["cites"] and not any(c in lines for c in x["cites"]):
                 content.setdefault("_unknown_cites", []).append(str(x["text"]).strip())
             x["cites"] = [c for c in x["cites"] if c in lines]
@@ -10243,6 +10295,21 @@ def _no_site_multiples(c: dict[str, Any], n_sites: int, atom_text: dict[str, str
             d["description"] = [fix(str(t)) for t in d.get("description") or []]
 
 
+def _dropped_not_rendered(c: dict[str, Any]) -> None:
+    """A line the check dropped never renders: a later pass that wrote the
+    same line again loses it (000123 pass Y: the 161-locations summary line
+    sat in dropped and in the overview)."""
+    norm = lambda t: re.sub(r"\W+", " ", str(t).lower()).strip()
+    gone = {(str(x.get("list") or ""), norm(x.get("text"))) for k in ("dropped", "dropped_unsupported")
+            for x in c.get(k) or [] if isinstance(x, dict)}
+    if not gone:
+        return
+    for k in LISTS:
+        if isinstance(c.get(k), list):
+            c[k] = [x for x in c[k] if not (isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"
+                                            and (k, norm(x.get("text"))) in gone)]
+
+
 def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """The SOW content as the envelope carries it: the writer's lists, the
     partner's requester, the CRM record and the sites."""
@@ -10359,8 +10426,11 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         # "across 160 stores") is the job's site count even when the cited
         # note gives it (000123 pass V: the note's "about 160" beside the
         # 161-store roster); a subset ("83 sites will be singles") is not.
-        whole = lambda m: bool(re.search(r"(?i)\b(at|across|for|over|throughout|to|all|in)\s+(approximately\s+|about\s+|~\s*)?$",
-                                         m.string[max(0, m.start() - 24):m.start()]))
+        # A spelled count before the digits is the same span (000123 pass Y:
+        # "at one hundred sixty (160) customer locations" beside 161 stores).
+        whole_rx = re.compile(r"(?i)\b(at|across|for|over|throughout|to|all|in)\s+(approximately\s+|about\s+|up to\s+|~\s*)?"
+                              r"(?:%s(?:[\s-]+%s)*\s*\(?)?\s*$" % (_NUMW, _NUMW))
+        whole = lambda m: bool(whole_rx.search(m.string[max(0, m.start() - 60):m.start()]))
         def _snap(m: re.Match) -> str:
             n = int(m.group(1))
             return (str(n_sites) if n != n_sites and (n not in stated_here or whole(m)) and abs(n - n_sites) <= max(2, 0.1 * n_sites)
@@ -10371,7 +10441,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     stated_here.clear()
                     stated_here.update(int(n) for cc in x.get("cites") or [] for n in re.findall(r"(?<![\w.])(\d{2,4})(?![\w.])", atom_text.get(str(cc), "")))
                     if x.get("cites") and re.search(r"\(\d{2,4}\)", str(x.get("text"))) and any(
-                            int(n) in stated_here and int(n) != n_sites for n in re.findall(r"\((\d{2,4})\)", str(x.get("text")))):
+                            int(mm.group(1)) in stated_here and int(mm.group(1)) != n_sites and not whole(mm)
+                            for mm in re.finditer(r"\((\d{2,4})\)", str(x.get("text")))):
                         continue
                     x["text"] = re.sub(r"\b(\d{2,4})(\)?[\s-]+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
                     # "160 (one hundred sixty) Customer locations" (000123).
@@ -10623,7 +10694,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         back = [x for x in c.get("dropped") or [] if isinstance(x, dict) and x.get("list") == "overview"
                 and re.search(r"\b%d\b" % n_sites, str(x.get("text")))]
         if back:
+            # Re-checked against the resolved table, it leaves the dropped
+            # list: a line in dropped never renders (000123 pass Y).
+            c["dropped"] = [x for x in c.get("dropped") or [] if x is not back[0]]
             c.setdefault("overview", []).insert(0, {k: v for k, v in back[0].items() if k not in ("list", "reason")})
+            c.setdefault("rule_decisions", []).append(
+                {"rule": "site_count_line", "head": "sow_keep", "atom_ids": list(back[0].get("cites") or []), "value": "keep",
+                 "was": "overview", "text": str(back[0].get("text"))[:300], "why": f"its count is the resolved site table's ({n_sites})"})
     # Not on a job the documents state is many sites (010209: 30 locations,
     # one signature address left as the only row).
     one_site = len(c["sites"]) == 1 and int((c.get("site_summary") or {}).get("stated") or 1) <= 1
@@ -10782,6 +10859,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _report_counts(c)
     _title_spelling(c, atoms_)
     _traced(c, "sentence_integrity", _sentence_integrity, c)
+    _traced(c, "dropped_not_rendered", _dropped_not_rendered, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
     c.pop("_merged", None)
