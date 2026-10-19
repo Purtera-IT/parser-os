@@ -1309,7 +1309,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if f.get("type") == "open_question":
             return True
         return "?" in t
-    asked = {f["id"] for f in fs if _unanswered(f) and not requests_work(f["text"])}
+    # A working assumption put as a question ("Safe to assume no spotter is
+    # required while lifts are in use?") is still the assumption the price
+    # rests on (010085 pass T dropped it); a quantity guess is not.
+    working = lambda t: re.search(r"(?i)\b(safe to )?assum\w*\b[^?]{0,20}\b(no|not|none|without)\b", t)
+    asked = {f["id"] for f in fs if _unanswered(f) and not requests_work(f["text"]) and not working(f["text"])}
     # No "only the listed devices" assumption while a request adds another.
     if any(requests_work(f["text"]) for f in fs):
         content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.match(r"(?i)\s*only the listed", str(x.get("text")))]
@@ -3578,8 +3582,11 @@ def _hours_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                           "cites": [mix["id"]], "kind": "fact"})
         content["assumptions"] = [x for x in content.get("assumptions") or []
                                   if not re.search(r"(?i)(normal|regular|standard) business hours|during business hours", tx(x))]
-        content["assumptions"].append({"text": "Work is performed during a mix of Business Hours and Customer-approved after-hours "
-                                               "windows, not during Business Hours only.", "cites": [mix["id"]], "kind": "fact"})
+        # First, where the template's business-hours basis stands (010085: the
+        # corrective line came last, after the line it corrects).
+        content["assumptions"].insert(0, {"text": "Work is performed during a mix of Business Hours and Customer-approved after-hours "
+                                                  "windows, not during Business Hours only.", "cites": [mix["id"]], "kind": "fact"})
+        content["hours_basis"] = "mixed"
         cr = content.setdefault("customer_responsibilities", [])
         line = "Confirm which areas may be worked during Business Hours and which require after-hours windows."
         if not _said(line, cr, 0.6):
@@ -3594,6 +3601,7 @@ def _hours_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         line = "All Services will be performed After Hours" + (" during the week" if re.search(r"(?i)no weekends?", tx(win)) else "") + "."
         if not any(re.search(r"(?i)performed after hours", tx(x)) for x in content["assumptions"]):
             content["assumptions"].insert(0, {"text": line, "cites": list(win.get("cites") or []), "kind": "fact"})
+        content["hours_basis"] = "after_hours"
         content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                                 if not re.search(r"(?i)during business hours and which require after", tx(x))]
     m = win and re.search(_CLOCK + r"\s*(?:-|–|to|until)\s*" + _CLOCK, tx(win), re.I)
@@ -5445,6 +5453,14 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         for x in c.get("provider_tools") or []:
             if isinstance(x, dict) and re.search(r"(?i)rack hardware|all materials", " ".join(str(y.get("text")) for y in c.get("customer_responsibilities") or [] if isinstance(y, dict))):
                 x["text"] = re.sub(r"(?i)\s+and hardware\b", "", str(x.get("text")))
+    # A parenthetical the writer added to a site name that no source line
+    # gives is not the site's name (000123 pass T: "SAN_Point-Loma_446 (Diego)").
+    pool_all = " ".join(str(a.get("text") or "") for a in envelope.get("atoms") or [])
+    for x in c["sites"]:
+        nm = str(x.get("name") or "")
+        mm = re.match(r"^(.*\S)\s*\(([^()]{1,40})\)\s*$", nm)
+        if mm and f"({mm.group(2)})" not in pool_all and f"{mm.group(1)} {mm.group(2)}" not in pool_all:
+            x["name"] = mm.group(1)
     for x in c["sites"]:  # 010198: a blank name left the Location cell empty
         if not str(x.get("name") or "").strip():
             x["name"] = str(x.get("address") or "")

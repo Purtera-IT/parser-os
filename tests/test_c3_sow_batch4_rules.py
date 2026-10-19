@@ -402,3 +402,14 @@ def test_existing_registers_moved_away_gate_the_removal_standard():
     content = {"scope": [], "assumptions": [], "customer_responsibilities": [], "out_of_scope": []}
     m._apply_standards(content, "pos_install_refresh", ["The existing registers will be moved to the back room."])
     assert any(x["text"] == "Disconnect and remove the existing POS equipment being replaced." for x in content["scope"])
+
+
+def test_mixed_hours_lead_the_assumptions_and_mark_the_basis():
+    fs = [_fact("h", "This would ideally be done during a mix of business hours and after hours.")]
+    content = {"assumptions": [{"text": "All cable runs are under 100 feet.", "cites": [], "kind": "method"},
+                               {"text": "Services are performed during standard business hours.", "cites": [], "kind": "method"}],
+               "schedule": []}
+    m._hours_basis(content, fs)
+    assert content["assumptions"][0]["text"].startswith("Work is performed during a mix of Business Hours")
+    assert content["hours_basis"] == "mixed"
+    assert not any("standard business hours" in x["text"] for x in content["assumptions"])
