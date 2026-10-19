@@ -2776,6 +2776,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     # (010326: 18 garbled rows against 30 clean locations).
     if any(re.match(r"(?i)\s*(sip|ckt|circuit|trunk)[-_ ]?\d", str(x.get("name") or "")) for x in sites):
         sites = [x for x in sites if not re.match(r"(?i)\s*(sip|ckt|circuit|trunk)[-_ ]?\d", str(x.get("name") or ""))]
+    # On a many-site deal a signature address is a head office, not a site
+    # (010209: Ralph Lauren's Nutley, NJ signature beside "30 locations").
+    stated0 = int(((envelope.get("site_count_reconciliation") or {}).get("stated")) or 0)
+    if stated0 >= 5 and sites:
+        chrome_all = " ".join(str(c.get("text") or "") for c in envelope.get("suppressed_chrome") or [] if isinstance(c, dict)).lower()
+        sites = [x for x in sites if not (str(x.get("address") or "").strip()
+                 and chrome_all.count(re.sub(r"\s+", " ", str(x.get("address")).split(",")[0].lower()).strip()) >= 2)]
     table = location_table(envelope)
     if len(table) > len(sites):
         sites = table
