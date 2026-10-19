@@ -2038,6 +2038,7 @@ def _room_from_section(content: dict[str, Any], envelope: dict[str, Any]) -> Non
         return "" if not last or re.fullmatch(r"(?i)sheet\s*\d*|table\s*\d*|summary|totals?|bom|quote", last) else last
     sc = content.get("scope") or []
     heads = {str(x.get("text")).strip().lower(): x for x in sc if isinstance(x, dict) and x.get("kind") == "heading"}
+    all_areas = {area(c).lower() for x in sc if isinstance(x, dict) for c in x.get("cites") or []} - {""}
     for x in list(sc):
         if not (isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading"):
             continue
@@ -2047,7 +2048,38 @@ def _room_from_section(content: dict[str, Any], envelope: dict[str, Any]) -> Non
         a = areas.pop()
         t = str(x.get("text"))
         mm = re.search(r"\s+in the ([A-Z][\w-]*(?: [A-Z][\w-]*){0,3})(?=[.,;]|$)", t)
-        if not mm or mm.group(1).lower() == a.lower() or a.lower() in t.lower():
+        if not mm:
+            # No room in the words, but under another area's heading: the line
+            # moves to its own area's heading (010116 pass V: the two QM65C
+            # displays, rows under "Common Area Displays", sat under the
+            # "Boardroom" heading, so three displays went to the boardroom).
+            i = next(j for j, y in enumerate(sc) if y is x)
+            cur = next((y for y in reversed(sc[:i]) if isinstance(y, dict) and y.get("kind") == "heading"), None)
+            if cur is None or str(cur.get("text")).strip().lower() not in all_areas or str(cur.get("text")).strip().lower() == a.lower():
+                continue
+            j0 = next(j for j, y in enumerate(sc) if y is cur)
+            end = next((j for j, y in enumerate(sc) if j > j0 and isinstance(y, dict) and y.get("kind") == "heading"), len(sc))
+            sc.remove(x)
+            end -= 1
+            h = heads.get(a.lower())
+            if h is not None:
+                k = next(j for j, y in enumerate(sc) if y is h)
+                nxt = next((j for j, y in enumerate(sc) if j > k and isinstance(y, dict) and y.get("kind") == "heading"), len(sc))
+                sc.insert(nxt, x)
+                continue
+            # The new area's block goes after the last deal line of the block
+            # it left; the shared standard steps after that line keep a
+            # heading of their own.
+            last = max((j for j in range(j0 + 1, end) if isinstance(sc[j], dict) and sc[j].get("cites") and not sc[j].get("standard")), default=end - 1)
+            # Named for the place, not its gear ("Common Area", not "Common
+            # Area Displays"), so the shared display steps stay shared.
+            h = {"text": re.sub(r"(?i)\s+(displays?|devices|equipment|items)$", "", a), "cites": [], "kind": "heading"}
+            heads[a.lower()] = h
+            tail = sc[last + 1:end]
+            block = [h, x] + ([{"text": "All work areas", "cites": [], "kind": "heading"}] + tail if tail else [])
+            sc[last + 1:end] = block
+            continue
+        if mm.group(1).lower() == a.lower() or a.lower() in t.lower():
             continue
         place = re.sub(r"(?i)\s+(displays?|devices|equipment|items)$", "", a)
         x["text"] = t[:mm.start()] + f" in the {place}" + t[mm.end():]
@@ -5510,6 +5542,120 @@ def _supply_assumption_back(c: dict[str, Any]) -> None:
 _DISPOSAL = re.compile(r"(?i)\be-?waste\b|\bdispos(e|al|ing)\b|\brecycl\w*|\bscrap\b|\bhaul (it |them )?away\b|\bitad\b|asset disposition")
 
 
+_BOM_ONE = re.compile(r"^\s*(\d{1,5})\s*(?:x\s+|:\s*|\s+)(?=[A-Za-z0-9./_-]*\d)(?=[A-Za-z0-9./_-]*[A-Z0-9]{2})([A-Z0-9][A-Z0-9./_-]{2,30})\s+(\S.{2,160}?)\s*$")
+
+
+def _bom_rows(text: str) -> list[tuple[int, str, str]]:
+    """The BOM rows a line holds, as (quantity, part, description): "1:
+    QM75C Samsung 75IN 4K UHD LED Display", "33 C9350-48U with Stack module
+    and cable", and two sheet rows the parser fused cell by cell ("2: 2 |
+    QM65C: TS525TU | Samsung ... Display: Chief ... Wall Mount")."""
+    t = re.sub(r"\s+", " ", str(text)).strip()
+    clean = lambda d: re.sub(r"\s+-\d+\s*mo\b", "", d).strip(" .;,")
+    segs = [x.strip() for x in t.split(" | ")]
+    if len(segs) == 3:
+        parts = [re.split(r":\s+", x) for x in segs]
+        k = len(parts[0])
+        if k >= 2 and all(len(p_) == k for p_ in parts) and all(q.strip().isdigit() for q in parts[0]):
+            rows = [(int(parts[0][i]), parts[1][i].strip(), clean(parts[2][i])) for i in range(k)]
+            if all(re.search(r"\d", r[1]) and not re.search(r"[a-z]", r[1]) for r in rows):
+                return rows
+    if "|" in t:
+        return []
+    m_ = _BOM_ONE.match(t)
+    if not m_ or re.search(r"[a-z]", m_.group(2)) or int(m_.group(1)) == 0:
+        return []
+    return [(int(m_.group(1)), m_.group(2), clean(m_.group(3)))]
+
+
+def _bom_lists(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """Materials and the report's equipment are built from every BOM row the
+    SOW cites, in one "N x PART Description" form, or not at all (010116
+    pass V: Customer Provided listed 8 of 10 rows in "1:" and "1 x" forms,
+    without the QM75C display and the Boardroom TS525TU; 010083 pass V: a
+    bare "33 C9350-48U ..." row with the 69 and 82 rows absent)."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    text_of = {str(a.get("id")): str(a.get("text") or "") for a in atoms if isinstance(a, dict)}
+    rows_of: dict[str, list[tuple[int, str, str]]] = {}
+    order: list[str] = []
+    for k in LISTS:
+        for x in c.get(k) or []:
+            for ci in (x.get("cites") or []) if isinstance(x, dict) else []:
+                if ci not in rows_of and ci in text_of:
+                    rows_of[ci] = _bom_rows(text_of[ci])
+                    order.append(ci)
+    rows_of = {k: v for k, v in rows_of.items() if v}
+    if not rows_of:
+        return
+    fmt = lambda r: f"{r[0]} x {r[1]} {r[2]}"
+    key = lambda r: (r[0], r[1].upper(), re.sub(r"\W+", " ", r[2].lower()).strip())
+    mats = ("customer_materials", "provider_materials", "equipment_in_scope")
+    have: dict[str, set] = {k: set() for k in mats}
+    n_lines = {k: 0 for k in mats}
+    for k in mats:
+        out = []
+        for x in c.get(k) or []:
+            cites = (x.get("cites") or []) if isinstance(x, dict) else []
+            t = tx(x)
+            # A materials line that is one BOM row: it cites only BOM rows and
+            # names one row's part.
+            if not cites or any(ci not in rows_of for ci in cites) or re.match(r"(?i)\s*(all|any|each|every|install|provide|support)\b", t):
+                out.append(x)
+                continue
+            cand = [r for ci in cites for r in rows_of[ci]]
+            named = [r for r in cand if r[1].lower() in t.lower()] or (cand if len(cand) == 1 else [])
+            if len(named) != 1:
+                out.append(x)
+                continue
+            r = named[0]
+            n_lines[k] += 1
+            if key(r) in set().union(*have.values()):
+                continue  # the same row twice
+            have[k].add(key(r))
+            out.append({**x, "text": fmt(r)})
+        c[k] = out
+    if not any(n_lines.values()):
+        return
+    primary = max(mats, key=lambda k: n_lines[k])
+    listed = set().union(*have.values())
+    for ci in order:
+        for r in rows_of.get(ci) or []:
+            if key(r) not in listed:
+                listed.add(key(r))
+                c[primary].append({"text": fmt(r), "cites": [ci], "kind": "fact"})
+    # The report's equipment: an entry that counts BOM rows and nothing else
+    # becomes the rows it names; every row a task installs is reported once.
+    work_cites = {ci for x in c.get("scope") or [] if isinstance(x, dict) for ci in x.get("cites") or []}
+    rows = []
+    for ci in order:
+        for r in rows_of.get(ci) or []:
+            if key(r) not in {key(y) for y in rows}:
+                rows.append(r)
+    installed = [r for ci in order if ci in work_cites for r in rows_of.get(ci) or []]
+    names = lambda e, r: r[1].lower() in e.lower() or (lambda k_: bool(k_) and len(k_ & _object_toks(e)) >= 0.6 * len(k_))(_object_toks(r[2]))
+    for d in c.get("deliverables") or []:
+        if not isinstance(d, dict):
+            continue
+        desc = [str(t) for t in d.get("description") or []]
+        out, at, named_any = [], None, set()
+        for e in desc:
+            hit = [r for r in rows if names(e, r)]
+            counts = [int(n) for n in re.findall(r"\((\d{1,5})\)", e)] + [int(n) for n in re.findall(r"^\s*(\d{1,5})\b", e)]
+            if hit and counts and all(any(n == r[0] for r in hit) for n in counts):
+                at = len(out) if at is None else at
+                continue
+            named_any |= {key(r) for r in hit}
+            out.append(e)
+        if at is None:
+            continue
+        new, seen = [], set()
+        for r in installed:
+            if key(r) not in named_any and key(r) not in seen:
+                seen.add(key(r))
+                new.append(fmt(r) + " installed.")
+        d["description"] = out[:at] + new + out[at:]
+
+
 def _reused_not_removed(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
     """A removal never takes what the job reuses: "Disconnect and remove the
     existing POS terminals and peripherals" beside "Existing ... peripheral
@@ -7870,6 +8016,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     str(s_.get("street") or s_.get("address") or "").split(",")[0].lower() in str(x.get("text")).lower()
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
+    _traced(c, "bom_lists", _bom_lists, c, envelope.get("atoms") or [])
     _traced(c, "disposal_not_ours", _disposal_not_ours, c)
     _traced(c, "reused_not_removed", _reused_not_removed, c, envelope.get("atoms") or [])
     _report_counts_are_outcomes(c)

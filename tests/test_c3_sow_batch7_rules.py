@@ -144,3 +144,69 @@ def test_an_unsupported_copy_of_a_live_step_does_not_strike_its_outcome():
     c["deliverables"] = [{"item": "Work Completion Report", "description": ["Completed Customer installation and testing checklists."]}]
     m._deliverables_hygiene(c)
     assert c["deliverables"][0]["description"] == ["Completed Customer installation and testing checklists."]
+
+
+# --- 010116 B-: rooms from the sheet, BOM lists whole and in one form --------
+
+def test_a_row_under_another_areas_heading_moves_to_its_own_area():
+    atoms = [{"id": "b1", "text": "1: QM75C Samsung 75IN 4K UHD LED Display", "locator": {"section_path": ["Sheet1", "Boardroom"]}},
+             {"id": "c1", "text": "2: QM65C Samsung 65IN 4K UHD LED Display", "locator": {"section_path": ["Sheet1", "Common Area Displays"]}}]
+    c = _content()
+    c["scope"] = [{"text": "Boardroom", "kind": "heading", "cites": []},
+                  {"text": "Install one (1) Samsung 75-inch QM75C display.", "cites": ["b1"]},
+                  {"text": "Install two (2) Samsung 65-inch QM65C displays.", "cites": ["c1"]},
+                  {"text": "Mount each display at the approved location and height.", "cites": [], "standard": True},
+                  {"text": "Closeout", "kind": "heading", "cites": []},
+                  {"text": "Confirm completion.", "cites": [], "standard": True}]
+    m._room_from_section(c, {"atoms": atoms})
+    assert _texts(c, "scope") == ["Boardroom", "Install one (1) Samsung 75-inch QM75C display.",
+                                  "Common Area", "Install two (2) Samsung 65-inch QM65C displays.",
+                                  "All work areas", "Mount each display at the approved location and height.",
+                                  "Closeout", "Confirm completion."]
+
+
+def test_bom_rows_read_fused_sheet_rows():
+    assert m._bom_rows("2: 2 | QM65C: TS525TU | Samsung 65IN Display: Chief Wall Mount") == [
+        (2, "QM65C", "Samsung 65IN Display"), (2, "TS525TU", "Chief Wall Mount")]
+    assert m._bom_rows("1: CS-BAR-T-C-K9 Cisco Room Bar in Carbon Black w/Navigator -36mo") == [
+        (1, "CS-BAR-T-C-K9", "Cisco Room Bar in Carbon Black w/Navigator")]
+    assert m._bom_rows("Each desk/arm will have 3 new 27 inch monitors") == []
+
+
+def test_materials_hold_every_cited_bom_row_in_one_form():
+    atoms = [{"id": "r1", "text": "33 C9350-48U with Stack module and cable"},
+             {"id": "r2", "text": "69 C9350-48U with Stack module, stack cable, and 4 SFP uplinks"},
+             {"id": "r3", "text": "82 C9350-49U no stack and no SFP"},
+             {"id": "n1", "text": "CDW will acquire, config and ship all equipment."}]
+    c = _content()
+    c["scope"] = [{"text": "Install thirty-three (33) C9350-48U switches.", "cites": ["r1"]},
+                  {"text": "Install sixty-nine (69) C9350-48U switches.", "cites": ["r2"]},
+                  {"text": "Install eighty-two (82) C9350-49U switches.", "cites": ["r3"]}]
+    c["customer_materials"] = [{"text": "All replacement switch equipment and accessories.", "cites": ["n1", "r1", "r2"]},
+                               {"text": "33 C9350-48U with Stack module and cable", "cites": ["r1"]}]
+    m._bom_lists(c, atoms)
+    assert _texts(c, "customer_materials") == ["All replacement switch equipment and accessories.",
+                                               "33 x C9350-48U with Stack module and cable",
+                                               "69 x C9350-48U with Stack module, stack cable, and 4 SFP uplinks",
+                                               "82 x C9350-49U no stack and no SFP"]
+
+
+def test_no_bom_row_line_means_no_bom_list():
+    atoms = [{"id": "r1", "text": "33 C9350-48U with Stack module and cable"}]
+    c = _content()
+    c["scope"] = [{"text": "Install thirty-three (33) C9350-48U switches.", "cites": ["r1"]}]
+    m._bom_lists(c, atoms)
+    assert c["customer_materials"] == []
+
+
+def test_the_report_lists_every_installed_row_in_the_same_form():
+    atoms = [{"id": "r1", "text": "1: QM75C Samsung 75IN Display"}, {"id": "r2", "text": "1: SW4-TPS-TX240 Lightware TPS transmitter"},
+             {"id": "r3", "text": "2: QM65C Samsung 65IN Display"}]
+    c = _content()
+    c["scope"] = [{"text": "Install the displays and the transmitter.", "cites": ["r1", "r2", "r3"]}]
+    c["customer_materials"] = [{"text": "1: QM75C Samsung 75IN Display", "cites": ["r1"]}]
+    c["deliverables"] = [{"item": "Work Completion Report", "description": [
+        "Two (2) Samsung 65-inch QM65C displays installed", "Completion confirmed with the onsite contact."]}]
+    m._bom_lists(c, atoms)
+    assert c["deliverables"][0]["description"] == ["1 x QM75C Samsung 75IN Display installed.", "1 x SW4-TPS-TX240 Lightware TPS transmitter installed.",
+                                                   "2 x QM65C Samsung 65IN Display installed.", "Completion confirmed with the onsite contact."]
