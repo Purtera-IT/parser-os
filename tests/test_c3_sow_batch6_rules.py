@@ -305,3 +305,61 @@ def test_prework_photos_never_go_under_closeout():
     m._grounding(c, [_fact("a", "Label every cable"), _fact("p", "Take before pictures")])
     got = [x["text"][:20] for x in c["scope"]]
     assert got.index("Take prework photogr") == 2 and got.index("Closeout") == 4, got
+
+
+# --- 010326 pass V -------------------------------------------------------------
+
+def test_a_helping_verb_is_not_an_object():
+    assert m._collides("Provider will assist with racking, stacking, and wall mounting the hardware.",
+                       "Customer will handle rack hardware and rack/stack gear, including gateways.")
+
+
+def test_a_question_is_never_equipment_or_a_summary_claim():
+    c = _content()
+    c["equipment_in_scope"] = [{"text": "All devices on the BOM are in scope for onsite installation.", "cites": ["q"], "kind": "fact"}]
+    c["overview"] = [{"text": "All devices on the BOM are installed onsite.", "cites": ["q"], "kind": "fact"}]
+    f = _fact("q", "Are all devices from the BOM are actually in scope for onsite installation?", section="answered_question")
+    f["asked"] = True
+    m._question_not_commitment(c, [f])
+    assert not c["equipment_in_scope"] and not c["overview"]
+
+
+def test_a_description_cell_is_not_a_task():
+    c = _content()
+    c["scope"] = [{"text": "Provider will handle the meter dial-up connection for MPU MO Harmonica.", "cites": ["d"], "kind": "fact"},
+                  {"text": "Install 242 cash drawer cables.", "cites": ["t"], "kind": "fact"}]
+    m._cell_not_task(c, [_fact("d", "Description: Dial up connection for Meter"),
+                         _fact("t", "Description | Part # | Quantity Needed | Cash Drawer Cables | 242")])
+    assert [x["text"] for x in c["scope"]] == ["Install 242 cash drawer cables."]
+
+
+def test_licenses_and_self_installed_gear_are_not_customer_materials():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Customer will handle rack hardware and rack/stack gear, including gateways.", "cites": ["r"], "kind": "fact"},
+                                      {"text": "Provide the 9U rack.", "cites": ["k"], "kind": "fact"}]
+    c["customer_materials"] = [{"text": "Customer furnishes Cisco VG400 Analog Voice Gateways, quantity 2.", "cites": ["a"], "kind": "fact"},
+                               {"text": "Customer furnishes Cisco Unified Communications Security licenses, quantity 2.", "cites": ["b"], "kind": "fact"},
+                               {"text": "Customer furnishes Cisco Smart Net Total Care service, quantity 2.", "cites": ["c"], "kind": "fact"},
+                               {"text": "Customer furnishes eighteen (18) Cisco ATA191 phone adapters.", "cites": ["d"], "kind": "fact"}]
+    m._materials_onsite_only(c)
+    assert [x["text"] for x in c["customer_materials"]] == ["Customer furnishes eighteen (18) Cisco ATA191 phone adapters."]
+
+
+def test_a_supplied_rack_stays_material():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Provide the 9U rack and ensure it is onsite.", "cites": ["k"], "kind": "fact"}]
+    c["customer_materials"] = [{"text": "One (1) 9U rack.", "cites": ["k"], "kind": "fact"}]
+    m._materials_onsite_only(c)
+    assert len(c["customer_materials"]) == 1
+
+
+def test_a_standard_exclusion_the_check_dropped_comes_back():
+    c = _content()
+    c["scope"] = [{"text": "Disconnect and remove each existing phone and install its replacement.", "cites": ["s"], "kind": "fact"}]
+    c["dropped"] = [{"list": "out_of_scope", "text": "Disposal, shipping, data destruction, or asset disposition of removed phones.",
+                     "cites": ["a"], "kind": "fact", "reason": "check: the cited lines do not state it"},
+                    {"list": "out_of_scope", "text": "Exclude the quarterly vendor meeting.", "cites": ["b"], "kind": "fact",
+                     "reason": "check: the cited lines do not state it"}]
+    m._standard_exclusion_survives(c)
+    assert [x["text"] for x in c["out_of_scope"]] == ["Disposal, shipping, data destruction, or asset disposition of removed phones."]
+    assert [d["text"] for d in c["dropped"]] == ["Exclude the quarterly vendor meeting."]

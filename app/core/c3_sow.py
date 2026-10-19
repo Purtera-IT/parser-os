@@ -1461,6 +1461,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
                       and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]
     _traced(content, "question_not_commitment", _question_not_commitment, content, fs)
+    _traced(content, "cell_not_task", _cell_not_task, content, fs)
     _traced(content, "contradiction", _scope_contradictions, content, fs)
     _keep_exceptions(content, fs)
     # A lift in scope: no "lift by change request" assumption, no "specialty
@@ -2586,9 +2587,29 @@ def _question_not_commitment(content: dict[str, Any], fs: list[dict[str, Any]]) 
         f = by.get(c)
         return bool(f) and ((bool(f.get("asked")) and _only_asks(f["text"]) and not _REQUESTS_WORK.search(f["text"]))
                             or bool(checklist.match(f["text"])))
-    for k in ("scope", "schedule", "provider_materials"):
+    # Nor is it equipment or a summary claim (010326 pass V: "Are all devices
+    # from the BOM actually in scope for onsite installation?", answered no,
+    # became "All devices on the BOM are in scope for onsite installation.").
+    for k in ("scope", "schedule", "provider_materials", "equipment_in_scope", "customer_materials", "overview"):
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
                       and not x.get("standard") and x.get("cites") and all(asks(c) for c in x["cites"]))]
+
+
+def _cell_not_task(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """An inventory row's description cell says what a line is for, never
+    work (010326 pass V: the analog-port sheet's "Description: Dial up
+    connection for Meter", "Lift pump dialers for Sewer System" and "Public
+    accessable Emergency POTS phone" became "Provider will handle ..."). A
+    task or summary line every cite of which is such a cell goes; the
+    same family as explanation_not_exclusion."""
+    by = {f["id"]: f for f in fs}
+    # One labeled cell with no count (010279's "Description | Part # |
+    # Quantity Needed | ..." is the equipment table itself).
+    cell = re.compile(r"(?i)^\s*(description|desc|purpose|usage|function)\s*:\s*[^|\d]+$")
+    is_cell = lambda c: c in by and bool(cell.match(by[c]["text"]))
+    for k in ("scope", "overview"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
+                      and not x.get("standard") and x.get("cites") and all(is_cell(c) for c in x["cites"]))]
 
 
 #: Words that say how or that work is done, not what it acts on: two lines
@@ -2610,7 +2631,11 @@ def _collides(a: str, b: str) -> bool:
     """Two lines name the same work: at least two object words in common,
     covering half of the first line's ("help with racking, stacking" and
     "rack & stack gear, including the gateways")."""
-    ta, tb = _object_toks(a), _object_toks(b)
+    # A helping verb names no work of its own (010326 pass V: "assist with
+    # racking, stacking, and wall mounting" counted "assist" as a fifth
+    # object, so rack and stack were under half and the line survived).
+    helpers = {"assist", "help", "handle", "support", "provide", "perform", "manage"}
+    ta, tb = _object_toks(a) - helpers, _object_toks(b) - helpers
     both = ta & tb
     return len(both) >= 2 and len(both) >= 0.5 * len(ta)
 
@@ -5181,6 +5206,65 @@ def _replacement_order(body: list[Any]) -> list[Any]:
     return rest
 
 
+def _standard_exclusion_survives(c: dict[str, Any]) -> None:
+    """An exclusion that is one of PurTera's standard exclusions needs no
+    source to state it, so the fact check never takes it (010326 pass V:
+    "Disposal, shipping, data destruction, or asset disposition of removed
+    phones." dropped as "the cited lines do not state it"; the standards
+    say it of removed equipment). It comes back unless a deal task does the
+    work it excludes."""
+    try:
+        data = json.loads((Path(__file__).parent / "purtera_standards.json").read_text())
+    except Exception:
+        return
+    std = [re.sub(r"^(\{(when|unless):.*?\}\s+)+", "", str(t)) for fam, v in data.items() if not fam.startswith("_") and isinstance(v, dict)
+           for t in v.get("exclusions") or []]
+    tasks = [str(x.get("text")) for x in c.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")]
+    oos = c.setdefault("out_of_scope", [])
+    back = []
+    for d in c.get("dropped") or []:
+        if not (isinstance(d, dict) and d.get("list") == "out_of_scope" and d.get("text")):
+            continue
+        t = str(d["text"])
+        if _said(t, std, 0.6) and not _said(t, oos, 0.6) and not any(_collides(t, k) for k in tasks):
+            oos.append({k: v for k, v in d.items() if k not in ("list", "reason")})
+            back.append(d)
+    if back:
+        c["dropped"] = [d for d in c.get("dropped") or [] if not any(d is b for b in back)]
+
+
+def _materials_onsite_only(c: dict[str, Any]) -> None:
+    """Materials are what is on site for the work (010326 pass V: Customer
+    Provided Materials listed "Cisco Unified Communications Security
+    licenses", "Smart Net Total Care service" and the router and VG400
+    gateways the customer racks itself). A license, subscription or service
+    contract is never a material; gear a cited customer duty has the
+    customer install or rack itself is the customer's own work, not
+    material for Provider's."""
+    contract = re.compile(r"(?i)\blicen[cs]es?\b|\bsubscriptions?\b|smart ?net|\bservice (agreement|contract)\b|\bsupport contract\b|"
+                          r"\bwarrant(y|ies)\b|\bsaas\b")
+    gear = re.compile(r"(?i)\b(gateways?|routers?|firewalls?|servers?|switch(es)?|racks?)\b")
+    # The duty must have the customer doing the work on that gear, not
+    # supplying it (010082: "Provide the 9U rack" leaves the rack material).
+    own = [m_.group(0) for d in c.get("customer_responsibilities") or [] if isinstance(d, dict) and d.get("cites")
+           for m_ in [re.search(r"(?i)\b(handle|install|rack(ing)? ?(and|&|/) ?stack|mount|manage)\w*\b.{0,60}", str(d.get("text")))] if m_]
+    own_gear = {g.group(1).lower().rstrip("s").rstrip("e") if g.group(1).lower().endswith("es") else g.group(1).lower().rstrip("s")
+                for t in own for g in gear.finditer(t)}
+    for k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+        keep = []
+        for x in c.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if isinstance(x, dict) and not x.get("standard") and contract.search(t):
+                continue
+            if k == "customer_materials" and isinstance(x, dict) and not x.get("standard"):
+                mine = {g.group(1).lower().rstrip("s").rstrip("e") if g.group(1).lower().endswith("es") else g.group(1).lower().rstrip("s")
+                        for g in gear.finditer(t)}
+                if mine and mine <= own_gear:
+                    continue
+            keep.append(x)
+        c[k] = keep
+
+
 def _schedule_not_estimates(c: dict[str, Any]) -> None:
     """A customer's per-unit hour estimate is a pricing input, never a
     schedule term (010209 pass V: "2 switches are estimated at 2.0 hours
@@ -7192,6 +7276,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     str(s_.get("street") or s_.get("address") or "").split(",")[0].lower() in str(x.get("text")).lower()
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
+    _traced(c, "standard_exclusion_survives", _standard_exclusion_survives, c)
     _traced(c, "materials_counted", _materials_counted, c)
     _locations_cover_sites(c)
     # Lines an outside sender wrote, or a pasted copy of one (010209: the
@@ -7203,6 +7288,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     theirs = {str(a.get("id")) for a in outside} | {str(a.get("id")) for a in envelope.get("atoms") or []
                                                    if not sender(a) and norm(a.get("text")) in outside_text}
     _traced(c, "schedule_voice", _schedule_voice, c, str((envelope.get("run_scope") or {}).get("as_of") or ""), theirs)
+    _traced(c, "materials_onsite_only", _materials_onsite_only, c)
     _traced(c, "schedule_not_estimates", _schedule_not_estimates, c)
     _traced(c, "window_rollover", _window_rollover, c)
     _traced(c, "qualified_over_universal", _qualified_over_universal, c)
