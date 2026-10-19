@@ -82,7 +82,7 @@
       "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Provide the full location list with addresses, site contacts, store hours, access and parking instructions.",
       "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Provide the final deployment schedule and location assignments.",
       "{when:lanes?|registers} Confirm the number of register lanes and POS setups at each location.",
-      "{when:existing|old|legacy|current (pos|registers?)|replace} Confirm the disposition of existing registers and legacy hardware."
+      "{when:old (registers?|pos|terminals?|hardware)|legacy|back ?room|disposal|dispose|retir} Confirm the disposition of existing registers and legacy hardware."
     ],
     "assumptions": [
       "Cable management is required.",
@@ -109,7 +109,7 @@
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Cellular carrier account creation, billing changes or carrier-level troubleshooting.",
       "Troubleshooting of unrelated existing network equipment.",
       "Integration with third-party applications not identified in this scope.",
-      "Staging, warehousing, kitting, transport or freight of equipment.",
+      "Offsite warehousing, kitting, transport or freight of equipment.",
       "Repair of defective existing cabling.",
       "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Preconfiguration, imaging, staging, programming or enrollment of hardware.",
       "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Network design, remediation, firewall, wireless or switch configuration.",
