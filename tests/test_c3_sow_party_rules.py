@@ -213,3 +213,51 @@ def test_the_provider_half_of_a_split_supply_line_is_written():
                          _fact("x", "The service provider will provide support as needed")])
     assert [x["text"] for x in c["provider_materials"]][1:] == ["Backing board.", "Toggle bolts."]
     assert [x["text"] for x in c["provider_tools"]] == ["Stud finder."]
+
+
+def test_a_removal_line_keeps_its_exception():
+    c = {"scope": [{"text": "Remove the existing front-facing cameras, mounted soundbar, and remaining Yealink components.",
+                    "cites": ["a"], "kind": "fact"},
+                   {"text": "Remove twelve (12) ceiling speakers.", "cites": ["b"], "kind": "fact"}]}
+    m._keep_exceptions(c, [_fact("a", "Almost all of this will be removed and is part of the Yealink system. The exception being "
+                                      "the HDMI over ethernet adapter and HDMI Replicator."),
+                           _fact("b", "12 speakers to be removed in total")])
+    assert c["scope"][0]["text"].endswith(", except the HDMI over ethernet adapter and HDMI Replicator.")
+    assert c["scope"][1]["text"] == "Remove twelve (12) ceiling speakers."
+
+
+def test_a_pre_arrival_assumption_never_contradicts_the_task_list():
+    c = {"scope": [{"text": "Disconnect and remove the existing Yealink collaboration solution.", "cites": ["a"], "kind": "fact"}],
+         "customer_responsibilities": [], "out_of_scope": [],
+         "assumptions": [{"text": "Removed Yealink equipment is powered down, disconnected, and released before Provider arrives.",
+                          "cites": [], "kind": "method"},
+                         {"text": "All Neat equipment is onsite before Provider arrives.", "cites": [], "kind": "method"}]}
+    m._scope_contradictions(c, [_fact("a", "remove the Yealink system")])
+    assert [x["text"] for x in c["assumptions"]] == ["All Neat equipment is onsite before Provider arrives."]
+
+
+def test_a_check_or_a_supply_duty_is_not_contradicted_by_what_stays():
+    c = {"job_family": "av_conference_room", "scope": [{"text": "Install Neat Platform", "cites": [], "kind": "heading"}],
+         "customer_responsibilities": [], "assumptions": [], "out_of_scope": []}
+    m._apply_standards(c, "av_conference_room", ["The two TVs in the front of the room will stay mounted in current position",
+                                                 "Install the Neat Bar and two Neat Center devices hanging from the ceiling"])
+    every = " ".join(x["text"] for k in ("scope", "customer_responsibilities", "out_of_scope") for x in c[k])
+    assert "Confirm display connection, camera, microphone" in every
+    assert "Provide all displays, hardware, cables and mounts." in every
+    assert "adjustment of the existing displays" in every  # the displays stay: their removal is excluded
+
+
+def test_directive_lines_go_to_the_must_place_pass():
+    seen = {}
+    def fake(prompt, model=None, max_tokens=0, effort=None):
+        seen["p"] = prompt
+        return '{"add": []}'
+    orig = m._complete
+    m._complete = fake
+    try:
+        m._must_include({k: [] for k in m.LISTS}, [_fact("d", "Replication Cable is run across wall - this should be moved behind wall", "also_kept"),
+                                                   _fact("s", "These 4 TV's to Stay in Place", "typed_only"),
+                                                   _fact("q", "this should be moved behind wall", "also_kept", quoted=True)], None)
+    finally:
+        m._complete = orig
+    assert "[d]" in seen["p"] and "[s]" in seen["p"] and "[q]" not in seen["p"]

@@ -313,7 +313,7 @@
     ]
   },
   "av_conference_room": {
-    "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list",
+    "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list; 010120 v1 TEMPLATE items (positioning, secure/PoE/video checks, J-hooks, room availability, final device locations, ceiling tile/structure, suspended-mount and finish exclusions, existing displays untouched)",
     "method_steps": [
       "{when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Disconnect and remove the existing equipment designated for removal, including brackets, power supplies and unused cabling.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Review each intended display mounting location with the onsite contact before installation.",
@@ -339,6 +339,11 @@
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Connect the network switch to the Customer network and patch the installed devices.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Label new and reused cables at both ends.",
       "{when:test call|teams|zoom|webex|meeting credentials|platform credentials} Test camera, microphone, speaker and audio function with one Customer-assisted test call where the platform allows.",
+      "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Install J-hooks, cable supports, Velcro and D-rings where required.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Adjust device positioning and orientation based on Customer direction and remote engineering support.",
+      "Verify that all newly installed equipment is physically secure.",
+      "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Verify network connectivity and PoE delivery to the connected devices.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Verify that the displays receive the intended video signal.",
       "Correct any workmanship deficiencies identified during testing before leaving site.",
       "Confirm completion with the onsite contact before leaving site."
     ],
@@ -360,7 +365,9 @@
       "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Provide replacement ceiling tiles or blanking plates where needed.",
       "Provide technician access to the rooms, common areas, telecom spaces, elevators and corridors the work requires.",
       "Have onsite personnel available for access and approvals during the work.",
-      "Provide onsite parking and a trash area for installation debris."
+      "Provide onsite parking and a trash area for installation debris.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Confirm the final mounting locations for all video devices before work begins.",
+      "Ensure the room is available and not occupied during the scheduled work period."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
@@ -374,7 +381,9 @@
       "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Ceilings are 12 ft or lower and reachable from A-frame ladders; no powered lift is required.",
       "Normal building access is available and no specialty rigging is required.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power receptacles and cabling are operational and long enough for the installed display positions.",
-      "Standard working conditions and reasonable access are available in each work area."
+      "Standard working conditions and reasonable access are available in each work area.",
+      "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Existing ceiling tiles can be safely removed and reinstalled.",
+      "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Suitable structural support is accessible above the suspended ceiling."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
@@ -386,7 +395,10 @@
       "Troubleshooting of defective existing or Customer-provided equipment.",
       "Return visits caused by missing equipment, unavailable access or Customer delays.",
       "Procurement of hardware not provided by the Customer.",
-      "Troubleshooting of Customer network issues."
+      "Troubleshooting of Customer network issues.",
+      "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Structural reinforcement, custom mounting engineering or certification of suspended mounting systems.",
+      "Ceiling grid repair, replacement ceiling tiles, drywall repair, painting, patching or finish work.",
+      "{unless:(install|mount|hang|replace|new|remove|removal of)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install|removed|replaced)\\b} Removal, relocation, replacement or adjustment of the existing displays."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",

@@ -98,7 +98,8 @@ _PARTS = {
         "surveys, audits and validation of what exists], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
         "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences in third-person proposal voice (\"Provider will ...\", never an order, never a \"Label: value\" line): what is installed or "
-        "done, how many, where, for whom: every device or system the job installs, including one a later request adds (a router asked for after the register and printer); the per-site facts the work is planned by when a fact states them (devices or register lanes per site, the time a fact estimates per site or per device); on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states], \"schedule\": [labeled "
+        "done, how many, where, for whom: every device or system the job installs, including one a later request adds (a router asked for after the register and printer); the per-site facts the work is planned by when a fact states them (devices or register lanes per site, the time a fact estimates per site or per device); on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states; a platform "
+        "or service migration the job is part of (the customer moving from one system to another), named as the facts name it; what stays in place], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
@@ -124,7 +125,9 @@ _PARTS = {
         "SOW-level work it supports (mount, connect, power, enroll or test the device, as the job needs), never its "
         "numbered steps, menus, settings or values. On a replacement job, removing the old unit is a task and where it "
         "goes (left onsite, boxed, returned) follows the facts. A request the customer made to the reseller or to its own team (receiving, "
-        "staging, shipping, procurement, configuration the reseller does) is not Provider work. Never claim a route or a device-to-location pairing no fact gives], "
+        "staging, shipping, procurement, configuration the reseller does) is not Provider work. Every written instruction about "
+        "where or how a device is mounted, a cable is routed, hidden or covered is its own task with its location; a removal "
+        "task names what its lines keep (\"except the HDMI adapter\"): never cite a line and leave out its exception. Never claim a route or a device-to-location pairing no fact gives], "
         "\"deliverables\": [{\"item\": \"Work Completion Report\", \"description\": [the finished outcomes with their "
         "counts, one for every device or system installed], \"format\": \"PDF\"}]}"),
     "supply": (
@@ -193,7 +196,10 @@ _COVER_PROMPT = (
 _MUST_PROMPT = (
     "These deal facts carry specifics (counts, sizes, models, products, materials, who supplies what) that the PurTera "
     "SOW draft below does not mention. Place EACH one where it belongs in the SOW, as one bullet citing it, unless it "
-    "is about existing equipment that is not part of the new work or another job. A fact in section answered_question "
+    "is about existing equipment that is not part of the new work or another job. A line saying what stays in place "
+    "(displays that remain, an item kept during the removal) is an assumption or an exclusion; an instruction about how or "
+    "where the work is done (move a cable behind the wall, no visible cables, mount the switch behind a display, cover "
+    "the floor cable) is a scope task that keeps its location. A fact in section answered_question "
     "was answered: a request in it (\"I would also like to add <X> - can you help?\") is scope to write. Same "
     "WHO rules: \"we\" under a customer heading is the customer; a reseller asked to provide materials means Provider "
     "supplies them; \"tech to provide <X>\" means Provider supplies <X>. Return JSON only: {\"add\": [{\"list\": one "
@@ -440,6 +446,13 @@ def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
     return out
 
 
+#: A written instruction about the work or what stays: "should be moved behind
+#: wall", "No cables should be visible after mount", "These 4 TVs to Stay in Place".
+_DIRECTIVE = re.compile(r"(?i)\b(should|will need to|needs? to|must|has to|have to)\s+(also\s+)?(be\s+)?(moved|mounted|installed|run|placed|hidden|"
+                        r"routed|relocated|replaced|removed|visible|concealed|reused|covered)\b|\bno cables? (should|will) be visible|"
+                        r"\b(stay|stays|remain|remains) (in place|as is|mounted)\b|\bto (stay|remain) in place\b")
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -508,9 +521,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # 010120's survey slides ("this should be moved behind wall to not be
     # visible", "No cables should be visible after mount") never reached the
     # writer (types _keep / assumption, below every bar).
-    directive = re.compile(r"(?i)\b(should|will need to|needs? to|must|has to|have to)\s+(be\s+)?(moved|mounted|installed|run|placed|hidden|"
-                           r"routed|relocated|replaced|removed|visible|concealed|reused)\b|\bno cables? (should|will) be visible|"
-                           r"\b(stay|stays|remain|remains) (in place|as is)\b")
+    directive = _DIRECTIVE
     got = {x["id"] for x in typed}
     for a in envelope.get("atoms") or []:
         txt = str(a.get("text") or "")
@@ -1248,6 +1259,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                       and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]
     _traced(content, "question_not_commitment", _question_not_commitment, content, fs)
     _traced(content, "contradiction", _scope_contradictions, content, fs)
+    _keep_exceptions(content, fs)
     # A lift in scope: no "lift by change request" assumption, no "specialty
     # lifting" exclusion (010085 rented a 40 ft lift and excluded lifts).
     lift_in = re.search(r"(?i)\b(lift|boom|scissor)\b", " ".join(str(x.get("text")) for k in ("scope", "provider_materials", "provider_tools")
@@ -1342,6 +1354,13 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         for t in ("No lift is required.", "Standard ladders reach every work location."):
             if not _said(t, asm, 0.6):
                 asm.append({"text": t, "cites": [], "kind": "method"})
+    # A run-length cap no fact gives is a priced promise nobody made (010120:
+    # "All cable runs are under 50 feet" on a job whose runs home-run to the
+    # IDF). The cap derived from the stated runs below is the only one.
+    content["assumptions"] = [x for x in content.get("assumptions") or [] if not (
+        isinstance(x, dict) and not x.get("cites") and (mm := re.search(
+            r"(?i)\b(?:cable )?runs?\b.{0,30}?\b(?:under|less than|no more than|not exceed|up to|maximum of)\s*(\d{2,4})\s*(?:feet|ft|')", str(x.get("text"))))
+        and not re.search(r"\b%s\s*(?:-?\s*)(?:feet|ft|foot|')" % mm.group(1), pool_text))]
     # "All cable runs are under N feet" when the runs are stated (PurTera writes
     # it from the longest run, rounded up to 50).
     runs = [int(m.group(1)) for f in fs if f["section"] not in ("also_kept", "typed_only")
@@ -1380,6 +1399,19 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _overview_covers_scope(content, fs)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
+    # A one-room job says "the room" (010120: "Verify the equipment for each
+    # room" on a single conference room).
+    if family == "av_conference_room" and not re.search(r"(?i)\brooms\b", pool_text):
+        def _one_room(t: str) -> str:
+            t = re.sub(r"(?i)\beach room('s)?\b", lambda m_: "the room" + (m_.group(1) or ""), t)
+            return re.sub(r"\bthe rooms\b", "the room", t)
+        for k in LISTS:
+            for x in content.get(k) or []:
+                if isinstance(x, dict) and isinstance(x.get("text"), str):
+                    x["text"] = _one_room(x["text"])
+        for d in content.get("deliverables") or []:
+            if isinstance(d, dict):
+                d["description"] = [_one_room(str(t)) for t in d.get("description") or []]
     # Assessment is ticked for assessment work the task list does: a survey
     # the summary mentions, or one offered as optional, is not it (010326's
     # "Twilio survey integration" under a separate SOW, 010082's optional survey).
@@ -1464,6 +1496,33 @@ def _provider_half(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                 item = {"text": part[:1].upper() + part[1:] + ".", "cites": [f["id"]], "kind": "fact"}
                 content.setdefault("provider_tools" if _TOOL_WORDS.search(part) else "provider_materials", []).append(item)
                 have.append(item)
+
+
+_EXCEPTION = re.compile(r"(?i)\b(?:the )?exceptions? (?:being|is|are|would be)\s+(?:the\s+)?([^.;]{3,90})|\bexcept(?: for)?\s+(?:the\s+)?([^.;]{3,90})|"
+                        r"\bother than\s+(?:the\s+)?([^.;]{3,90})|\bbut not\s+(?:the\s+)?([^.;]{3,90})")
+
+
+def _keep_exceptions(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A removal line keeps the exception its cited line states. 010120 cited
+    "Almost all of this will be removed ... The exception being the HDMI over
+    ethernet adapter and HDMI Replicator" for "Remove the existing front-facing
+    cameras, mounted soundbar, and remaining Yealink components", which told
+    the technician to strip the gear driving the displays the customer keeps."""
+    by = {f["id"]: f for f in fs}
+    for k in ("scope", "overview"):
+        for x in content.get(k) or []:
+            if not isinstance(x, dict) or x.get("kind") == "heading" or not x.get("cites"):
+                continue
+            t = str(x.get("text") or "")
+            if not re.search(r"(?i)\b(remove|removal|decommission|disconnect|dispose|haul|demo(lish)?|uninstall|take down|strip)", t):
+                continue
+            for c in x["cites"]:
+                for m_ in _EXCEPTION.finditer(by.get(c, {}).get("text", "")):
+                    obj = next(g for g in m_.groups() if g).strip(" ,")
+                    want = {w for w in _toks(obj) if len(w) > 2}
+                    if want and len(want & _toks(t)) < 0.5 * len(want):
+                        t = t.rstrip(" .") + f", except the {obj}."
+            x["text"] = t
 
 
 _REQUESTS_WORK = re.compile(r"(?i)\b(would (also )?like|i'?d like|we need|need (you|us|to)|want to add|add (a|an|the)|can you help|"
@@ -1575,6 +1634,17 @@ def _scope_contradictions(content: dict[str, Any], fs: list[dict[str, Any]]) -> 
             continue
         keep.append(x)
     content["scope"] = keep
+    # An assumption that the customer did a task before arrival while the task
+    # list has Provider doing it (010120: "Removed Yealink equipment is powered
+    # down, disconnected, and released ... before Provider arrives" beside
+    # "Disconnect and remove the existing Yealink collaboration solution").
+    leads = {m_.group(1).lower()[:6] for x in keep if isinstance(x, dict) and x.get("kind") != "heading"
+             for m_ in [re.match(r"(?i)\s*(disconnect|remove|unrack|uninstall|pack|power down|decommission|dismantle)", str(x.get("text")))] if m_}
+    if leads:
+        content["assumptions"] = [x for x in content.get("assumptions") or [] if not (
+            isinstance(x, dict) and re.search(r"(?i)before (the )?(provider|technicians?|crew|installers?)\b.{0,20}\barriv", str(x.get("text")))
+            and any(w[:6] in leads for w in re.findall(r"(?i)\b(disconnect|remov|unrack|uninstall|pack|power(?:ed)? down|decommission|dismantl)", str(x.get("text")))
+                    for w in [w.lower().replace("powered", "power")]))]
     if weak_oos:
         content["out_of_scope"] = [o for o in content.get("out_of_scope") or [] if not any(o is w for w in weak_oos)]
 
@@ -1651,7 +1721,16 @@ def _must_include(content: dict[str, Any], fs: list[dict[str, Any]], model: str 
     used = {c for k in LISTS for x in content.get(k) or [] for c in x["cites"]}
     missing = []
     for f in fs:
-        if f["section"] not in MUST_SECTIONS or f["id"] in used or f.get("pictured"):
+        if f["id"] in used or f.get("pictured"):
+            continue
+        # A written instruction about the work, or what stays in place, is
+        # placed whatever its section: 010120's survey deck lines ("should be
+        # moved behind wall", "No cables should be visible after mount", "These
+        # 4 TV's to Stay in Place") were handed over and left out.
+        if _DIRECTIVE.search(f["text"]) and not f.get("quoted"):
+            missing.append(f)
+            continue
+        if f["section"] not in MUST_SECTIONS:
             continue
         toks = {m.group(1).lower().strip() for m in _SALIENT.finditer(f["text"])}
         toks |= {m.group(1).lower() for m in _PRODUCT.finditer(f["text"]) if m.start() > 0}
@@ -1947,6 +2026,13 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     stays = " ".join(str(f)[max(0, k.start() - 45):k.end() + 30] for f in facts_text or [] for k in keep_word.finditer(str(f))).lower()
     def contradicted(t: str) -> bool:
         if not stays:
+            return False
+        # Only a line that does the work: a check, a review or a supply duty
+        # names the displays without moving them (010120: "Confirm display
+        # connection, camera, microphone, speaker ..." and "Provide all
+        # displays, hardware, cables and mounts" went because the TVs stay).
+        if not re.match(r"(?i)\s*(mount|install|remove|replace|relocate|dismantle|dress|connect|power|adjust|align|inspect|disconnect)\b", t) \
+                and not re.search(r"(?i)backing", t):
             return False
         # The object of the work is what the verb acts on, not every noun the
         # line names (010120: "Mount each video bar ... connect it to its
