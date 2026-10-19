@@ -1241,6 +1241,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "grounding", _grounding, content, fs)
     _traced(content, "hours", _hours_basis, content, fs)
     _traced(content, "materials", _materials_hygiene, content, family, fs)
+    _traced(content, "third_party", _third_party, content, envelope, fs)
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
     # became scope), unless it asks the customer to confirm.
@@ -1460,6 +1461,117 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["rule_decisions"] = (content.get("rule_decisions") or []) + [
         d for d in _decisions("writer_rules", writer_snap, _snap(content)) if (tuple(d["atom_ids"]), d["head"]) not in traced]
     return content
+
+
+_ROLE_WORDS = re.compile(r"(?i)^(customer|client|provider|we|they|it|seller|vendor|subcontractor|contractors?|service provider|"
+                         r"partner|technician|tech|team|purtera|puretera|the [a-z]+)$")
+_TP_SAYS = re.compile(r"\b([A-Z][A-Za-z0-9&.-]{1,}(?: [A-Z][A-Za-z0-9&.-]+)?) (?:will|shall|can|would) (?:also )?"
+                      r"(?:provide|supply|ship|furnish|deliver|bring|recycle|collect|pick up|transport|issue)\b")
+_QUOTE_DOC = re.compile(r"(?i)quote|proposal|invoice|estimate|\bpo\b|purchase order")
+_PRICE_TERM = re.compile(r"(?i)\btax(es)?\b|invoice|freight|\$\s?\d|\bprice|pricing|payment|quote (is )?valid|per (pound|lb)|/\s?(lb|pound)\b|"
+                         r"purchase order|\bpo\b|commodity value")
+
+
+def _third_parties(envelope: dict[str, Any], content: dict[str, Any]) -> tuple[dict[str, str], set[str]]:
+    """Named other vendors on the deal and the atoms they wrote: a company
+    that says "<Name> will provide ..." and writes from its own mail domain
+    (010376: ThinkTLS, the recycler, kgrove@thinktls.com, and its pickup
+    proposal). Not PurTera, the account, the end customer or a person."""
+    atoms = envelope.get("atoms") or []
+    crm = envelope.get("crm") or {}
+    own = " ".join(str(v or "") for v in (crm.get("account_name"), content.get("end_customer"), crm.get("deal_name"))).lower()
+    own_key = re.sub(r"[^a-z0-9]", "", own)
+    domains = {str(m_.group(1)).lower() for a in atoms for m_ in [re.search(r"@([\w.-]+)", str((a.get("locator") or {}).get("sender") or ""))] if m_}
+    names: dict[str, str] = {}
+    for a in atoms:
+        for mm in _TP_SAYS.finditer(str(a.get("text") or "")):
+            n = mm.group(1).strip()
+            key = re.sub(r"[^a-z0-9]", "", n.lower())
+            if len(key) < 3 or _ROLE_WORDS.match(n) or key in own_key or "purtera" in key:
+                continue
+            if any(key in re.sub(r"[^a-z0-9]", "", d.split(".")[0]) for d in domains if "purtera" not in d):
+                names[key] = n
+    if not names:
+        return {}, set()
+    by_doc: dict[str, list[dict[str, Any]]] = {}
+    for a in atoms:
+        by_doc.setdefault(str(a.get("artifact_id")), []).append(a)
+    ids: set[str] = set()
+    for a in atoms:
+        sender = str((a.get("locator") or {}).get("sender") or "").lower()
+        dom = (re.search(r"@([\w.-]+)", sender) or [None, ""])[1]
+        if dom and any(k in re.sub(r"[^a-z0-9]", "", dom.split(".")[0]) for k in names):
+            ids.add(str(a.get("id")))
+    for doc, group in by_doc.items():
+        # A document (not a mail thread) in which the vendor states its supply
+        # is the vendor's document, row by row ("Box Truck w/ Liftgate").
+        if any(str((a.get("locator") or {}).get("sender") or "") for a in group):
+            continue
+        if any(re.sub(r"[^a-z0-9]", "", mm.group(1).lower()) in names for a in group for mm in _TP_SAYS.finditer(str(a.get("text") or ""))):
+            ids |= {str(a.get("id")) for a in group}
+    return names, ids
+
+
+def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """Another party's supply, terms and work are never Provider's (010376:
+    the recycler's box truck, vehicles and packing supplies in Technician
+    Provided Tools and Materials; its commodity $/lb and LTL notes and the
+    hardware quote's tax line as PurTera assumptions; "Provider will ...
+    eWaste the removed UPS" while the recycler recycles). A Provider
+    materials or tools line no supplier answer stands behind goes too."""
+    sup = {f["id"]: f.get("supplier") for f in fs}
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    names, tp = _third_parties(envelope, content)
+    name = next(iter(names.values()), "")
+    asm = content.setdefault("assumptions", [])
+    for k in ("provider_materials", "provider_tools"):
+        kept = []
+        for x in content.get(k) or []:
+            cites = x.get("cites") or [] if isinstance(x, dict) else []
+            if not cites or x.get("standard"):
+                kept.append(x)
+                continue
+            if tp and all(c in tp for c in cites):
+                t = tx(x).strip().rstrip(".")
+                t = re.sub(r"(?i)^\s*(provide|supply|furnish)\s+", "", t)
+                line = {**x, "text": f"{name} provides {t[:1].lower() + t[1:]}."}
+                if not _said(line["text"], asm, 0.6):
+                    asm.append(line)
+                continue
+            if all(not sup.get(c) for c in cites):
+                continue  # no supplier answer at all: not ours to supply
+            kept.append(x)
+        content[k] = kept
+    docs = {str(d.get("artifact_id")): str(d.get("filename") or "") for d in envelope.get("documents") or []}
+    art = {str(a.get("id")): str(a.get("artifact_id")) for a in envelope.get("atoms") or []}
+    quote_term = lambda c: bool(_QUOTE_DOC.search(docs.get(art.get(c, ""), ""))) and "purtera" not in docs.get(art.get(c, ""), "").lower()
+    content["assumptions"] = [x for x in asm if not (
+        isinstance(x, dict) and x.get("cites") and not x.get("standard") and not tx(x).startswith(f"{name} provides " if name else "\0")
+        and (all(c in tp for c in x["cites"]) or (all(quote_term(c) for c in x["cites"]) and _PRICE_TERM.search(tx(x)))))]
+    if not tp:
+        return
+    said = " ".join(str(a.get("text") or "") for a in envelope.get("atoms") or [] if str(a.get("id")) in tp).lower()
+    recycles = bool(re.search(r"recycl|e-?waste|dispos|settlement|certificate of (recycling|destruction)|\besg\b", said))
+    hauls = bool(re.search(r"\btruck|transport|pick ?up|collect|vehicle", said))
+    if not (recycles or hauls):
+        return
+    work = r"e-?waste|recycl\w*|dispos\w*( of)?" if recycles else r"(?!x)x"
+    for x in content.get("overview") or []:
+        if isinstance(x, dict):
+            t = re.sub(r"(?i)\s*(,\s*|\band\s+)+(?:then\s+)?(?:" + work + r")\b[^,.;]*", "", tx(x))
+            x["text"] = t if t.endswith(".") else t.rstrip(" ,;") + "."
+    for x in content.get("scope") or []:
+        if isinstance(x, dict) and x.get("kind") != "heading":
+            x["text"] = re.sub(r"(?i)\s+(?:for|to)\s+(?:" + work + r")(?=[.,;]|$)", "", tx(x))
+    what = " and ".join(w for w, on in (("offsite transport", hauls), ("recycling", recycles)) if on)
+    line = f"{name} performs the {what} of the removed equipment."
+    if not _said(line, asm, 0.6):
+        content["assumptions"].append({"text": line, "cites": sorted(tp & {f["id"] for f in fs})[:3], "kind": "fact"})
+    oos = content.setdefault("out_of_scope", [])
+    ex = "Offsite transport, recycling, disposal and recycling certificates for the removed equipment." if recycles \
+        else "Offsite transport of the removed equipment."
+    if not _said(ex, oos, 0.5):
+        oos.append({"text": ex, "cites": [], "kind": "method"})
 
 
 def _rejected_source(content: dict[str, Any], envelope: dict[str, Any]) -> None:
@@ -1763,6 +1875,9 @@ def _must_include(content: dict[str, Any], fs: list[dict[str, Any]], model: str 
             continue
         toks = {m.group(1).lower().strip() for m in _SALIENT.finditer(f["text"])}
         toks |= {m.group(1).lower() for m in _PRODUCT.finditer(f["text"]) if m.start() > 0}
+        # An acronym names a thing too (010376: "PurTera's COI (certificate of
+        # insurance)" was kept by the brief and silently left out).
+        toks |= {m.group(1).lower() for m in re.finditer(r"\b([A-Z]{3,5})s?\b", f["text"]) if m.group(1) not in ("ASAP", "FYI", "TBD", "PST", "EST", "CST")}
         toks = {t for t in toks if len(t) >= 2 and t not in ("the", "we", "you", "and")}
         if toks and not any(t in text for t in toks):
             missing.append(f)
