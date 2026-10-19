@@ -276,7 +276,9 @@ def _standard_applies(t: str, facts_text: list[str]) -> tuple[bool, str]:
     if not m:
         return True, t
     pat = re.compile(m.group(1), re.I)
-    keep_words = re.compile(r"(?i)\b(stay|stays|remain|remains|no change|already|left in place|existing)\b")
+    # "existing" is not a keep word: "reuse the existing mounts" is exactly
+    # what the backing and inspect-mount items are for (010217, 000123).
+    keep_words = re.compile(r"(?i)\b(stay|stays|remain|remains|no change|already|left in place)\b")
     return any(pat.search(f) and not keep_words.search(f) for f in facts_text), t[m.end():]
 
 
@@ -754,6 +756,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                           ("pos_install_refresh", r"\bpos\b|point of sale|register lanes?|kitchen printer")):
             if re.search(pat, blob) and len(re.findall(pat, blob)) >= 2:
                 family = fam_
+        # A phone swap or recurring support call that came back "other" is smart
+        # hands, whose standards carry those blocks (010326 pass P: "other", no
+        # standards at all).
+        if family == "other" and re.search(r"\b(phones?|handsets?|ata'?s?)\b.{0,60}\b(swap|replace|install|deploy)|weekly (on-?site|visit)|staff aug|monitor arms?", blob):
+            family = "smart_hands_general"
                 break
         got["job_family"] = family
     deal_no = (re.match(r"\s*(\d{6})", str(crm_rec.get("deal_name") or "")) or [None, ""])[1]
@@ -1452,7 +1459,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     # rule): 010120's survey says the TVs stay in place, and the AV standards
     # wrote "mount each display" and plywood backing.
     stays = " ".join(str(f) for f in facts_text if re.search(r"(?i)\b(stay|stays|remain|remains|no change|left in place|already (mounted|installed|on the wall|in place)|"
-                                                                r"keep (the )?existing|not (be )?(moved|replaced|removed))\b", str(f))).lower()
+                                                                r"keep (the )?existing|not (be )?(moved|replaced|removed)|reuse|re-use|reusing|reused)\b", str(f))).lower()
     def contradicted(t: str) -> bool:
         if not stays:
             return False
@@ -1481,9 +1488,10 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         std = []
         for t0 in fixed.get(sec) or []:
             ok, t = _standard_applies(t0, facts_text or [])
+            about_reuse = bool(re.match(r"^\{when:[^}]*(reuse|existing)", t0))
             if self_test and re.search(r"(?i)\btest|confirm .{0,90}\bfunction|verify (basic )?operation", t):
                 continue
-            if ok and not contradicted(t):
+            if ok and (about_reuse or not contradicted(t)):
                 std.append({"text": t, "cites": [], "kind": "method", "standard": True})
         if not std:
             continue
