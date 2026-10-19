@@ -93,6 +93,11 @@ _REAL_SECTION = {"materials_customer": "customer_responsibilities", "materials_p
                  "schedule": "timeline"}
 
 
+#: A placement's party: a provider task or a customer duty (task_owner_role).
+_PARTY_OF = {"scope_of_work": "technician", "provider_responsibilities": "technician",
+             "customer_responsibilities": "customer"}
+
+
 def real_sow_reviews(paths: list[str]) -> list[dict]:
     """PurTera's own first-draft SOWs, aligned line by line to the atoms they
     came from (sow_slot/sem_g*.jsonl, kind "stated"): the strongest labels we
@@ -111,8 +116,40 @@ def real_sow_reviews(paths: list[str]) -> list[dict]:
             for aid in r["atom_ids"][:1]:
                 out.append({"deal": r["deal"], "atom_id": aid, "head": "sow_section", "value": sec,
                             "verdict": "accepted", "by": "real_sow"})
+                # Who acts is the part of a placement two SOW writers agree on
+                # (84% real vs graded, against 45% for the section itself).
+                if sec in _PARTY_OF:
+                    out.append({"deal": r["deal"], "atom_id": aid, "head": "sow_party", "value": _PARTY_OF[sec],
+                                "verdict": "accepted", "by": "real_sow"})
                 out.append({"deal": r["deal"], "atom_id": aid, "head": "sow_keep", "value": "keep",
                             "verdict": "accepted", "by": "real_sow"})
+    return out
+
+
+def outcome_reviews(envelopes: list[str]) -> list[dict]:
+    """Where the graded SOW finally put each cited fact (the writer's LLM call
+    plus every rule after it): one sow_section answer per atom, its first list
+    only. The overview is a summary of other lines, not a placement, and is
+    skipped. Silver: the SOW graders rated these drafts, they are not a PM's
+    word."""
+    from app.core.c3_sow import _LIST_SECTION
+
+    out = []
+    for path in envelopes:
+        env = json.loads(Path(path).read_text())
+        deal = str((env.get("crm") or {}).get("deal_name") or "")[:6] or Path(path).stem
+        seen = set()
+        for lst, sec in _LIST_SECTION.items():
+            if lst == "overview":
+                continue
+            for line in (env.get("c3_sow") or {}).get(lst) or []:
+                if not isinstance(line, dict) or line.get("kind") != "fact":
+                    continue
+                for aid in (line.get("cites") or [])[:1]:
+                    if aid not in seen:
+                        seen.add(aid)
+                        out.append({"deal": deal, "atom_id": aid, "head": "sow_section", "value": sec,
+                                    "verdict": "outcome", "by": "sow_outcome"})
     return out
 
 
@@ -130,7 +167,11 @@ def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, 
         rows = _rows(env)
         have = {r["key"]: r["text"] for r in rows}
         labels: dict[tuple[str, str], dict] = {}
-        rev = {(str(r.get("atom_id")), str(r.get("head"))): r for r in by_deal.get(deal, [])}
+        rev: dict[tuple[str, str], dict] = {}
+        for r in by_deal.get(deal, []):  # a human verdict beats a graded-draft outcome
+            k = (str(r.get("atom_id")), str(r.get("head")))
+            if k not in rev or rev[k].get("verdict") == "outcome":
+                rev[k] = r
         # Human reviews and PM edits first: they win.
         for (aid, head), r in rev.items():
             if aid not in have:
@@ -141,6 +182,13 @@ def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, 
                 value = "keep" if head == "sow_keep" else str(r.get("was") or "")
             read = _read(head, value, "pm")
             if not read or not read[1]:
+                continue
+            if verdict == "outcome":
+                if (aid, read[0]) in labels:
+                    continue
+                labels[(aid, read[0])] = dict(_target(read), label_key=aid, atom_id=aid, labeler="sow_outcome",
+                                              origin="labeler", text=have[aid], weight_tier="slight")
+                counts["outcome"] = counts.get("outcome", 0) + 1
                 continue
             labels[(aid, read[0])] = dict(_target(read), label_key=aid, atom_id=aid, labeler=r.get("by") or "pm@purtera-it.com",
                                           origin="labeler", text=have[aid], weight_tier="ordinary")
@@ -182,11 +230,14 @@ def main() -> None:
     p.add_argument("--envelopes", nargs="+", required=True)
     p.add_argument("--reviews", default=None)
     p.add_argument("--real-sow", nargs="*", default=[], help="sem_g*.jsonl real-SOW alignments (gold)")
+    p.add_argument("--outcomes", action="store_true", help="add the graded SOW's placements as silver")
     p.add_argument("--out", required=True)
     a = p.parse_args()
     paths = [x for pat in a.envelopes for x in glob.glob(pat)] or a.envelopes
     reviews = [json.loads(l) for l in open(a.reviews)] if a.reviews and os.path.exists(a.reviews) else []
     reviews += real_sow_reviews([x for pat in a.real_sow for x in glob.glob(pat)])
+    if a.outcomes:
+        reviews += outcome_reviews(paths)
     print(json.dumps(build(paths, reviews, a.out)))
 
 
