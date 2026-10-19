@@ -111,3 +111,96 @@ def test_a_merged_line_stays_merged_while_its_target_stands_or_is_reworded():
     std["text"] = "Coordinate visit priorities with local stakeholders before or during each onsite visit."
     m._traced(c, "plain", lambda c: None, c)
     assert _texts(c, "scope") == [std["text"]]
+
+
+# --- 010217 B: supply lines, counts, IT duty, pre-start step, onsite assumption, requester ---
+
+_ATOMS_217 = [
+    {"id": "a1", "text": "Those (2) 55” Philips displays would then need to be installed in their NOC (same location). They are ordering a 3rd 55” Philips display to be installed in a typical “3x1” design using articulating mounts."},
+    {"id": "a2", "text": "Lastly, they are buying (1) new 98” Philips display and need it installed in room 247. This will also need a backing board installed to support the display and we’re providing a new wall mount for it as well."},
+    {"id": "a3", "text": "(3) new 32-65 inch articulating TV mount"},
+    {"id": "a4", "text": "(1) new 55-100 inch VESA TV mount"},
+    {"id": "a5", "text": "IT will handle any connections outside of the display install."},
+    {"id": "a6", "text": "The existing connections will need to be reconnected to the new displays (most likely HDMI cables)."},
+] + [{"id": f"n{i}", "text": f"Filler line {i} about the wall and the project mount schedule."} for i in range(8)]
+
+
+def test_a_supply_line_is_one_item_with_its_count_and_its_own_room():
+    c = _content()
+    c["customer_materials"] = [
+        {"text": "Training Room 250: Customer will furnish (1) Chief Thinstall Large 25 Inch Extension Monitor Arm Wall Mount "
+                 "(32-65 inch articulating TV mount) and (1) Chief Fusion X-Large Tilt Wall Mount XTM1U (55-100 inch VESA TV mount) for the install.",
+         "cites": ["b1", "b2"], "kind": "fact"},
+        {"text": "One (1) new 55-100 inch VESA TV mount.", "cites": ["a4"], "kind": "fact"}]
+    m._supply_items(c, _ATOMS_217)
+    assert _texts(c, "customer_materials") == [
+        "Three (3) Chief Thinstall Large 25 Inch Extension Monitor Arm Wall Mounts (32-65 inch articulating TV mount) for the NOC.",
+        "One (1) Chief Fusion X-Large Tilt Wall Mount XTM1U (55-100 inch VESA TV mount) for Room 247."]
+    assert "a3" in c["customer_materials"][0]["cites"]
+
+
+def test_an_inherited_room_label_with_no_own_sentence_is_left_off():
+    c = _content()
+    c["customer_materials"] = [{"text": "Training Room 250: (2) Philips 86 inch displays.", "cites": ["b1"], "kind": "fact"}]
+    m._supply_items(c, [{"id": "x", "text": "Install the shelf in room 101."}])
+    assert _texts(c, "customer_materials") == ["Two (2) Philips 86 inch displays."]
+
+
+def test_a_cited_cable_type_stays_in_the_step():
+    c = _content()
+    c["scope"] = [{"text": "Reconnect the existing display cabling to the two new displays.", "cites": ["a6"], "kind": "fact"}]
+    m._cited_connector(c, _ATOMS_217)
+    assert _texts(c, "scope") == ["Reconnect the existing display cabling (most likely HDMI) to the two new displays."]
+
+
+def test_the_backing_step_names_its_rooms_and_counts():
+    c = _content()
+    c["scope"] = [{"text": "Training Room 250", "kind": "heading", "cites": []},
+                  {"text": "Install the required backing board and mount the two new 86-inch Philips displays higher on the back wall.", "cites": ["x"], "kind": "fact"},
+                  {"text": "NOC", "kind": "heading", "cites": []},
+                  {"text": "Install the new 55-inch display in the NOC using articulating mounts.", "cites": ["y"], "kind": "fact"},
+                  {"text": "Room 247", "kind": "heading", "cites": []},
+                  {"text": "Install the new 98-inch Philips display in room 247 with the required backing board and wall mount.", "cites": ["z"], "kind": "fact"},
+                  {"text": "All Work Areas", "kind": "heading", "cites": []},
+                  {"text": "Install three quarter (3/4) inch plywood backing, approximately twenty four (24) inches by forty eight (48) inches, as required to securely support each wall mount.",
+                   "cites": [], "standard": True}]
+    m._backing_counts(c)
+    assert c["scope"][-1]["text"].endswith("to securely support the wall mounts: two (2) in Training Room 250 and one (1) in Room 247.")
+
+
+def test_what_it_will_handle_is_a_customer_duty():
+    c = _content()
+    c["overview"] = [{"text": "Provider will reinstall the displays in the NOC.", "cites": ["a1", "a5"], "kind": "fact"}]
+    m._it_handles_duty(c, _ATOMS_217)
+    assert _texts(c, "customer_responsibilities") == ["Have Customer IT handle any connections outside of the display install."]
+
+
+def test_a_before_start_step_leaves_closeout():
+    c = _content()
+    line = "If needed, obtain current room photos or conduct a site survey to confirm installation conditions before starting work."
+    c["scope"] = [{"text": "Arrival", "kind": "heading", "cites": []}, {"text": "Check in with the onsite contact.", "cites": [], "kind": "method"},
+                  {"text": "Room 247", "kind": "heading", "cites": []}, {"text": "Install the display.", "cites": ["z"], "kind": "fact"},
+                  {"text": "Closeout", "kind": "heading", "cites": []}, {"text": line, "cites": ["q"], "kind": "fact"}]
+    m._before_start_not_closeout(c)
+    assert _texts(c, "scope").index(line) == 2
+
+
+def test_an_onsite_assumption_names_only_customer_supplied_items():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Provide all displays, hardware, cables and mounts.", "cites": [], "standard": True}]
+    c["assumptions"] = [{"text": "All listed displays, mounts, and backing boards are onsite and ready for installation when Provider arrives.", "cites": [], "kind": "method"}]
+    m._onsite_assumption_suppliers(c)
+    assert _texts(c, "assumptions") == ["All listed displays and mounts are onsite and ready for installation when Provider arrives."]
+    c["assumptions"].append({"text": "Customer-provided equipment is complete, compatible, undamaged and ready for installation.", "cites": [], "standard": True})
+    c["assumptions"].insert(0, {"text": "All listed displays, mounts, and backing boards are onsite and ready.", "cites": [], "kind": "method"})
+    m._onsite_assumption_suppliers(c)
+    assert not any("backing" in t for t in _texts(c, "assumptions"))
+
+
+def test_requested_by_reads_the_requesters_signature_card():
+    env = {"crm": {"account_name": "CDW"}, "atoms": [
+        {"id": "s1", "atom_type": "stakeholder", "text": "Ralph Smith III | Consulting Solutions Architect | CDW | 813.373.1644"},
+        {"id": "e1", "atom_type": "scope_item", "text": "Hey Trent,", "locator": {"sender": "Ralph Smith III <ralpsmi@cdw.com>", "sent_at": "Wednesday, August 12, 2026 1:48 PM", "quoted": True},
+         "structured": {"email_thread": {"to": ["ralpsmi@cdw.com"]}}}]}
+    rb = m.requested_by(env)
+    assert rb["name"] == "Ralph Smith III" and rb["phone"] == "813.373.1644"

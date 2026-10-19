@@ -17,6 +17,7 @@ do not give: on a SOW an invented count is a priced promise.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -5216,6 +5217,259 @@ def _decisions_match_output(c: dict[str, Any]) -> None:
                                 if not (isinstance(x, dict) and str(x.get("text") or "").strip() in shown)]
 
 
+#: A room, area or closet a sentence names ("their NOC", "room 247", "the
+#: training room"), for placing an item from its own sentence.
+_ROOM_CUE = re.compile(r"(?i)\b(?:(?:training|conference|board|break|server|telecom|meeting)\s+)?room(?:\s+numbered)?\s+#?\d+[a-z]?\b"
+                       r"|\b(?:training|conference|board|break|server|telecom|meeting)\s+room\b|\bNOC\b|\bMDF\b|\bIDF\s*#?\d*\b|\blobby\b")
+
+
+def _room_name(t: str) -> str:
+    t = re.sub(r"(?i)\s+numbered\s+", " ", t.strip())
+    return t.upper() if t.lower() in ("noc", "mdf") or re.match(r"(?i)idf", t) else t[:1].upper() + t[1:].lower() if not re.search(r"\d", t) \
+        else " ".join(w[:1].upper() + w[1:] for w in t.split())
+
+
+def _supply_items(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A supply line is one item with its count and its own room (010217 pass
+    W: "Training Room 250: Customer will furnish (1) Chief Thinstall ...
+    (32-65 inch articulating TV mount) and (1) Chief Fusion ... XTM1U
+    (55-100 inch VESA TV mount)" took its room from the note's field label,
+    stamped on every later line, while the arms are for the NOC 3x1 and the
+    tilt mount for the 98-inch display in room 247, and the source says (3)
+    arms). A line naming several counted items is split, one per item; an
+    item's count is the "(N) <its description>" row when the line says one;
+    its room is the one a sentence naming the item's kind ("articulating
+    mounts", "a new wall mount") names, never a label the line inherited; a
+    room no own sentence gives is left off."""
+    texts = [(str(a.get("id")), str(a.get("text") or "")) for a in atoms]
+    low = [t.lower() for _, t in texts]
+    n_docs = max(1, len(low))
+    def idf(w: str) -> float:
+        k = sum(1 for t in low if re.search(r"\b" + re.escape(w), t))
+        return math.log((n_docs + 1) / (k + 1))
+    generic = {"new", "the", "inch", "in", "for", "and", "a", "an", "of", "to", "with", "customer", "will", "furnish", "install"}
+    toks = lambda t: {w.rstrip("s") for w in re.findall(r"[a-z][a-z0-9]+", t.lower())} - generic
+    rooms_of = [(i, t, {_room_name(m_.group(0)) for m_ in _ROOM_CUE.finditer(t)}) for i, t in texts]
+    rooms_of = [(i, t, r) for i, t, r in rooms_of if len(r) == 1]
+    qty_rows = [(i, int(m_.group(1)), toks(m_.group(2))) for i, t in texts
+                for m_ in [re.match(r"^\s*\((\d+)\)\s+(.{6,120})$", t)] if m_]
+    item_re = re.compile(r"\((\d+)\)\s+(.+?)(?=\s+and\s+\(\d+\)|,\s*(?:and\s+)?\(\d+\)|\s+for (?:the|this) (?:install\w*|project|work)\b|\s*\.?\s*$)")
+    for k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+        out, changed = [], False
+        for x in c.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if not isinstance(x, dict) or x.get("standard"):
+                out.append(x)
+                continue
+            pre = re.match(r"^\s*([A-Z][\w #-]{2,40}?):\s+", t)
+            label = pre.group(1) if pre and _ROOM_CUE.search(pre.group(1)) else ""
+            body = t[pre.end():] if label else t
+            items = list(item_re.finditer(body))
+            if not label and len(items) < 2:
+                out.append(x)
+                continue
+            if not items:
+                out.append({**x, "text": body[:1].upper() + body[1:]})
+                changed = True
+                continue
+            for m_ in items:
+                n, desc = int(m_.group(1)), m_.group(2).strip().rstrip(".")
+                cites = list(x.get("cites") or [])
+                it = toks(desc)
+                cat = toks((re.search(r"\(([^()]+)\)\s*$", desc) or re.match(r"(.*)", desc)).group(1))
+                # Its count: the "(N) <description>" row.
+                q = next(((i, qn) for i, qn, qt in qty_rows if len(qt) >= 3 and qt <= it | {"new"}), None)
+                if q and n == 1 and q[1] != n:
+                    n = q[1]
+                if q and q[0] not in cites:
+                    cites.append(q[0])
+                # Its room: the sentence naming its kind.
+                scores: dict[str, float] = {}
+                for i, tt, r in rooms_of:
+                    shared = toks(tt) & it
+                    sc_ = sum(idf(w) * (2 if w in cat else 1) for w in shared if not re.search(r"\d", w))
+                    rn = next(iter(r))
+                    scores[rn] = max(scores.get(rn, 0.0), sc_)
+                ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+                room = ""
+                if ranked and ranked[0][1] > 0 and (len(ranked) == 1 or ranked[0][1] >= 1.25 * ranked[1][1]):
+                    room = ranked[0][0]
+                where = (" for the " + room if room.isupper() else " for " + room) if room else ""
+                if n > 1:
+                    desc = re.sub(r"(?<=[a-z])(?<!s)(\s*\([^()]+\))?$", lambda mm: "s" + (mm.group(1) or ""), desc, count=1)
+                out.append({**x, "text": f"{_words(n).capitalize()} ({n}) {desc}{where}.", "cites": cites})
+            changed = True
+        if changed:
+            # A bare counted row another line now carries goes ("One (1) new
+            # 55-100 inch VESA TV mount." beside the XTM1U line).
+            keep = []
+            for x in out:
+                tx_ = toks(str(x.get("text") if isinstance(x, dict) else x)) - {"one", "two", "three", "four", "five", "six"}
+                if isinstance(x, dict) and not x.get("standard") and any(
+                        y is not x and isinstance(y, dict) and tx_ and tx_ < toks(str(y.get("text"))) for y in out):
+                    continue
+                keep.append(x)
+            c[k] = keep
+
+
+_CONNECTOR = re.compile(r"(?i)\b(HDMI|DisplayPort|USB-C|VGA|Cat ?6a?|Cat ?5e?|coax(?:ial)?|fiber)\b")
+
+
+def _cited_connector(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A step reconnecting or running cabling keeps the cable type its cited
+    line names (010217 pass W: "The existing connections will need to be
+    reconnected to the new displays (most likely HDMI cables)" written as
+    "Reconnect the existing display cabling ..."). A hedged type reads
+    "(most likely HDMI)"."""
+    text = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    for x in c.get("scope") or []:
+        if not isinstance(x, dict) or x.get("standard") or x.get("kind") == "heading" or not x.get("cites"):
+            continue
+        t = str(x.get("text"))
+        m_ = re.search(r"(?i)\b(cabling|cables|connections)\b", t)
+        if not m_ or _CONNECTOR.search(t):
+            continue
+        for cc in x["cites"]:
+            src = text.get(str(cc), "")
+            k = _CONNECTOR.search(src)
+            if not k or not re.search(r"(?i)\b(cabl\w*|connect\w*|wir\w*)\b", src):
+                continue
+            kind = k.group(1)
+            hedged = re.search(r"(?i)\b(most likely|likely|probably|possibly|may be)\b[^.;]{0,20}" + re.escape(kind), src)
+            x["text"] = t[:m_.end()] + f" (most likely {kind})" + t[m_.end():] if hedged else t[:m_.start()] + kind + " " + t[m_.start():]
+            break
+
+
+def _backing_counts(c: dict[str, Any]) -> None:
+    """The backing-board step says how many boards go in which room (010217
+    pass W: the standard "Install three quarter (3/4) inch plywood backing
+    ... to securely support each wall mount" under All Work Areas, read onto
+    the NOC's articulating mounts too, where the PM wrote two (2) in
+    Training Room 250 and one (1) in Room 247). One board per display a
+    room's own backing-board step mounts; only when every such room's count
+    is stated."""
+    sc = c.get("scope") or []
+    std = [x for x in sc if isinstance(x, dict) and x.get("standard") and re.search(r"(?i)\bplywood\b|\bbacking\b", str(x.get("text")))
+           and re.search(r"(?i)\beach (wall )?mount|\beach display", str(x.get("text")))]
+    if len(std) != 1:
+        return
+    count_re = re.compile(r"(?i)\b(%s|\d+)\b(?:\s*\(\d+\))?\s+(?:new\s+|relocated\s+|existing\s+)?(?:[\w\"\u201d.-]+\s+){0,3}(displays?|tvs?|monitors?|screens?)\b" % _NUMW)
+    per: list[tuple[str, int]] = []
+    head = None
+    for x in sc:
+        if not isinstance(x, dict):
+            continue
+        if x.get("kind") == "heading":
+            head = str(x.get("text"))
+            continue
+        if x.get("standard") or not head or not re.search(r"(?i)backing (board|plywood)", str(x.get("text"))):
+            continue
+        if not _ROOM_CUE.search(head) and not re.search(r"(?i)\b(room|office|noc|suite)\b", head):
+            return  # a generic group: no room to name
+        t = str(x.get("text"))
+        m_ = count_re.search(t)
+        if m_:
+            n = int(m_.group(1)) if m_.group(1).isdigit() else (_words_value(m_.group(1)) or 0)
+        elif re.search(r"(?i)\b(the|a|an)\s+(?:new\s+)?(?:[\w\"\u201d.-]+\s+){0,3}(display|tv|monitor|screen)\b(?!s)", t):
+            n = 1
+        else:
+            return
+        if n <= 0 or any(h == head for h, _ in per):
+            return
+        per.append((head, n))
+    if not per:
+        return
+    parts = [f"{_words(n)} ({n}) in {h}" for h, n in per]
+    where = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + (", and " if len(parts) > 2 else " and ") + parts[-1]
+    x = std[0]
+    x["text"] = re.sub(r"(?i),?\s*(as required )?to securely support each (wall )?(mount|display)\.?$", "", str(x["text"])).rstrip(" .,") \
+        + f", to securely support the wall mounts: {where}."
+
+
+def _it_handles_duty(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """What the customer's IT will handle is a customer duty (010217 pass W:
+    "IT will handle any connections outside of the display install." was
+    cited only by a summary sentence, so no duty said it). Only a cited line
+    that hands work to IT by name."""
+    text = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    cited = list(dict.fromkeys(str(cc) for k in _LIST_SECTION for x in c.get(k) or [] if isinstance(x, dict) for cc in x.get("cites") or []))
+    cr = c.setdefault("customer_responsibilities", [])
+    for cc in cited:
+        m_ = re.match(r"(?i)^\s*(?:the\s+)?(?:customer'?s?\s+|their\s+|client'?s?\s+|on-?site\s+)?IT(?:\s+(?:team|department|staff|group))?\s+"
+                      r"(?:will|is going to|are going to)\s+(handle|take care of|manage|own|do|provide|coordinate)\s+(.{6,140}?)\.?\s*$", text.get(cc, ""))
+        if not m_:
+            continue
+        line = f"Have Customer IT {m_.group(1).lower()} {m_.group(2).strip()}."
+        if _said(line, [x for x in cr if isinstance(x, dict)], 0.6):
+            continue
+        cr.append({"text": line, "cites": [cc], "kind": "fact"})
+
+
+def _before_start_not_closeout(c: dict[str, Any]) -> None:
+    """A step done before work starts never sits under Closeout (010217 pass
+    W: "If needed, obtain current room photos or conduct a site survey to
+    confirm installation conditions before starting work." under Closeout).
+    It moves to the end of the arrival or pre-work group, else to the head
+    of the task list."""
+    sc = c.get("scope") or []
+    pre = re.compile(r"(?i)\bbefore (starting|start of|the start of|beginning) (the )?(work|installation|install)\b|\bbefore (the )?work (starts|begins)\b"
+                     r"|\bprior to (starting|beginning|the start of) (the )?(work|installation)\b")
+    head, moving = None, []
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            head = str(x.get("text"))
+        elif isinstance(x, dict) and head and _CLOSING_HEAD.search(head) and pre.search(str(x.get("text"))):
+            moving.append(x)
+    if not moving:
+        return
+    sc = [x for x in sc if not any(x is y for y in moving)]
+    heads = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
+    if heads and re.search(r"(?i)arriv|pre-?work|set-?up|pre-?install|before", str(sc[heads[0]].get("text"))):
+        end = heads[1] if len(heads) > 1 else len(sc)
+        sc[end:end] = moving
+    else:
+        sc[0:0] = moving
+    c["scope"] = sc
+
+
+def _onsite_assumption_suppliers(c: dict[str, Any]) -> None:
+    """An uncited "all listed X, Y and Z are onsite" assumption names only
+    what a supply line gives the customer (010217 pass W: "All listed
+    displays, mounts, and backing boards are onsite ..." put the backing
+    boards on the customer, though no source says who supplies them and the
+    Provider installs them). The other items leave the line; a line a
+    standard assumption already says goes."""
+    sup = " ".join(str(x.get("text")) for k in ("customer_materials", "customer_responsibilities")
+                   for x in c.get(k) or [] if isinstance(x, dict)).lower()
+    stem = lambda w: re.sub(r"(es|s)$", "", w.lower())
+    sup_toks = {stem(w) for w in re.findall(r"[a-z]+", sup)}
+    out = []
+    for x in c.get("assumptions") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        m_ = re.match(r"(?i)^\s*all (listed |required |new )?(.+?) (are|will be) (onsite|on site|delivered|on-site)\b(.*)$", t)
+        if not (isinstance(x, dict) and not x.get("standard") and not x.get("cites") and m_):
+            out.append(x)
+            continue
+        items = [i.strip() for i in re.split(r"\s*,\s*(?:and\s+)?|\s+and\s+", m_.group(2)) if i.strip()]
+        # A generic noun ("equipment", "accessories", "hardware") names no
+        # item of its own: only a named thing no supply line gives counts.
+        have = [i for i in items if stem(i.split()[-1]) in sup_toks
+                or re.search(r"(?i)\b(equipment|accessor(y|ies)|hardware|items?|materials?|gear|devices?|components?|parts?)$", i)]
+        if len(have) == len(items):
+            out.append(x)
+            continue
+        if not have:
+            continue
+        rest = have[0] if len(have) == 1 else ", ".join(have[:-1]) + " and " + have[-1]
+        line = f"All {m_.group(1) or ''}{rest} {m_.group(3)} {m_.group(4)}{m_.group(5)}"
+        std_ready = [y for y in c.get("assumptions") or [] if isinstance(y, dict) and y.get("standard")
+                     and re.search(r"(?i)customer-(provided|furnished) equipment .*ready", str(y.get("text")))]
+        if std_ready:
+            continue
+        out.append({**x, "text": line})
+    c["assumptions"] = out
+
+
 def _materials_counted(c: dict[str, Any]) -> None:
     """One line per item, with its count: an uncounted line ("The 32-65 inch
     articulating TV mount.") goes beside the counted one ("Three (3) new 32-65
@@ -8691,6 +8945,12 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _report_counts_are_outcomes(c)
     _traced(c, "standard_exclusion_survives", _standard_exclusion_survives, c)
     _traced(c, "supply_assumption_back", _supply_assumption_back, c)
+    _traced(c, "supply_items", _supply_items, c, envelope.get("atoms") or [])
+    _traced(c, "cited_connector", _cited_connector, c, envelope.get("atoms") or [])
+    _traced(c, "backing_counts", _backing_counts, c)
+    _traced(c, "it_handles_duty", _it_handles_duty, c, envelope.get("atoms") or [])
+    _traced(c, "before_start_not_closeout", _before_start_not_closeout, c)
+    _traced(c, "onsite_assumption_suppliers", _onsite_assumption_suppliers, c)
     _traced(c, "materials_counted", _materials_counted, c)
     _locations_cover_sites(c)
     # Lines an outside sender wrote, or a pasted copy of one (010209: the
@@ -8814,6 +9074,28 @@ def requested_by(envelope: dict[str, Any]) -> dict[str, str]:
                 break
     card = cards.get(name.lower(), {})
     phone = str(person.get("phone") or card.get("phone") or "")
+    # The requester's signature card, a stakeholder line "Name | Title |
+    # Company | phone", whose name the address spells (010217 pass W:
+    # "Ralph Smith III | Consulting Solutions Architect ... | 813.373.1644"
+    # for ralpsmi@cdw.com; Requested By printed TBD).
+    if local and (not name or not phone):
+        def spells(nm: str) -> bool:
+            parts = [w for w in re.findall(r"[a-z]+", nm.lower()) if w not in ("jr", "sr", "ii", "iii", "iv")]
+            return len(parts) >= 2 and local.startswith(parts[0][:3]) and (parts[-1] in local or parts[-1][:3] in local[len(parts[0][:3]):])
+        for a in envelope.get("atoms") or []:
+            if str(a.get("atom_type") or "") != "stakeholder":
+                continue
+            t = str(a.get("text") or "")
+            head = t.split("|")[0].strip()
+            if not re.fullmatch(r"[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3}", head) or not spells(head):
+                continue
+            if name and name.lower().split()[0] != head.lower().split()[0]:
+                continue
+            name = name or head
+            m_ph = re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", t)
+            if m_ph and not phone:
+                phone = m_ph.group(0)
+            break
     if not phone and email:
         # The requester's own signature line carries it; signatures are set
         # aside as chrome, so read them there (010115: Quinton James's
