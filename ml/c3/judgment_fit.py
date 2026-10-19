@@ -44,6 +44,19 @@ class JudgmentRefit(nn.Module):
         return self.net(features)
 
 
+def load_refits(path: str, device: str = "cpu") -> dict[str, JudgmentRefit]:
+    """A saved judgment_fit file as {key: add-on}, ready to correct the live
+    judgment heads (predict._judge_documents adds it to the frozen logits)."""
+    saved = torch.load(path, map_location="cpu", weights_only=False)
+    out = {}
+    for key, h in (saved.get("heads") or {}).items():
+        m = JudgmentRefit(h["d"], len(h["answers"]))
+        m.load_state_dict(h["state"])
+        m.answers = list(h["answers"])
+        out[key] = m.to(device).eval()
+    return out
+
+
 def _parser_values(path: str) -> dict[str, str]:
     d = json.loads(Path(path).read_text(encoding="utf-8"))
     out = {}

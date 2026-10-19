@@ -305,9 +305,14 @@ def _judge_documents(model: C3Model, out, batch: Batch, atoms: dict[str, Any], s
         opp = by_key.get(key)
         if opp is None:
             continue
+        subjects, queries = [tuple(rows[d]) for d in take], ["" for _ in take]
         try:
-            logits = model.judge(out, key, [tuple(rows[d]) for d in take],
-                                 queries=["" for _ in take]).float()
+            logits = model.judge(out, key, subjects, queries=queries).float()
+            # A Mac-trained add-on (judgment_fit.py) on the frozen head, as training scored it.
+            refit = (getattr(model, "judgment_refits", None) or {}).get(key)
+            if refit is not None:
+                feats = model.judgment_features(out, key, subjects, queries).float()
+                logits = logits + refit(feats.to(next(refit.parameters()).device)).float().to(logits.device)
         except (ValueError, KeyError):
             continue
         p = logits.softmax(-1)

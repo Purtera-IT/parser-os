@@ -76,6 +76,12 @@ def _load() -> tuple[Any, Any, str]:
         from .question_fit import load_refit
 
         model.question_refit = load_refit(refit, device)
+    # Judgment add-ons (judgment_fit.py, e.g. jdg:document_job) on the frozen heads.
+    jrefit = os.environ.get("SOWSMITH_C3_JUDGMENT_REFIT", "").strip()
+    if jrefit and os.path.exists(jrefit):
+        from .judgment_fit import load_refits
+
+        model.judgment_refits = load_refits(jrefit, device)
     _prewarm_questions(model, device)
     return model, schema, device
 
