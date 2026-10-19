@@ -4015,7 +4015,12 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         if not any(re.search(r"(?i)labor only|onsite (field )?labor", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
             asm.insert(0, {"text": "Pricing covers onsite installation labor only; hardware is delivered to each location before technicians arrive.", "cites": [], "kind": "method"})
     # The customer is not given the configuration Provider's own scope does.
-    if re.search(r"(?i)\bconfigur", " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading")):
+    # Only a step that configures: "Assist with pairing the printer ... where
+    # the Customer credentials and configuration support it" is not one
+    # (000123 pass V lost "Perform all device configurations" beside "We
+    # will preconfigure all items").
+    if any(re.match(r"(?i)\s*(provider will )?(configure|program|set up|perform\b[^.]{0,40}\bconfiguration)", str(x.get("text")))
+           for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"):
         content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                                 if not re.search(r"(?i)perform all device configurations", str(x.get("text") if isinstance(x, dict) else x))]
     # A device the customer asked to add gets an install line (010198: the
@@ -5164,6 +5169,93 @@ def _followup_not_promised(c: dict[str, Any], atoms: list[dict[str, Any]]) -> No
     if withheld and not any(_FOLLOWUP.search(str(x.get("text") if isinstance(x, dict) else x)) for x in oos):
         oos.append({"text": "Follow-up visits unless authorized in writing or by Change Order.",
                     "cites": [str(hedges[0].get("id"))], "kind": "fact"})
+
+
+def _clauses(t: str) -> list[tuple[str, set[str]]]:
+    """A task line's verb-led clauses as (verb, object words): "Clean the work
+    area and confirm completion with the onsite contact" is two."""
+    t = re.sub(r"(?i)^\s*provider will (also )?", "", str(t)).strip().rstrip(".")
+    parts: list[str] = []
+    for part in re.split(r",\s*(?:and\s+|then\s+)?(?=[a-z]+\b)|\s+(?:and|then)\s+(?=[a-z]+\b)", t):
+        # Only a verb starts a clause ("equipment and installation materials"
+        # is one object).
+        if parts and not _STEP_VERB.match(part):
+            parts[-1] += " and " + part
+        else:
+            parts.append(part)
+    out = []
+    for part in parts:
+        w = re.match(r"\s*([A-Za-z]+)\b(.*)$", part)
+        if w:
+            out.append((_stem(w.group(1).lower()), _object_toks(w.group(2)), bool(re.search(r"(?i)\b(each|all|every)\b", w.group(2)))))
+    return out
+
+
+_STEP_VERB = re.compile(r"(?i)\s*(verify|confirm|install|mount|remove|disconnect|connect|test|clean|arrive|check|locate|review|document|"
+                        r"label|terminate|pull|route|dress|secure|power|perform|provide|support|coordinate|escalate|stage|place|leave|"
+                        r"take|capture|notify|inform|validate|migrate|replace|unpack|record|adjust|align|configure|run|use|keep|identify|"
+                        r"inspect|tape|rough|land|patch|deliver|collect|follow|assist|request|reuse|prepare|attach|hang|set|apply|"
+                        r"update|ensure|obtain|maintain|complete|sign|meet|walk|haul|dispose|pack|wrap|move|relocate|reinstall)\b")
+
+
+#: Words that limit a claim to part of what it names, or make it a suggestion.
+_LIMITING = re.compile(r"(?i)\b(majority|most of|some of|only|recommend\w*|suggest\w*|on foot|except\w*|not all|a few of)\b")
+
+
+def _no_broader_than_source(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A line never says more than the lines it cites (010085 pass V: "The
+    one (1) MDF and thirteen (13) raised IDFs can be reached with boom or
+    scissor lifts" from "1 MDF reachable on foot" and "a majority of the
+    IDFs would be reachable with a boom/scissor lift"; "A forty-foot lift is
+    available" where one was only recommended). A deal line every cite of
+    which is a short line carrying a limiting word (majority, only,
+    recommend, on foot, except, not all) and which itself carries none has
+    dropped the limit, and goes."""
+    text = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    for k in ("overview", "scope", "assumptions", "schedule", "equipment_in_scope", "customer_responsibilities"):
+        keep = []
+        for x in c.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            cts = [text.get(i, "") for i in (x.get("cites") or [])] if isinstance(x, dict) else []
+            if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading" and cts \
+                    and all(t_ and len(t_) <= 220 and _LIMITING.search(t_) for t_ in cts) and not _LIMITING.search(t) \
+                    and not re.search(r"(?i)\bwhere (required|needed|applicable)\b", t):
+                continue
+            keep.append(x)
+        c[k] = keep
+
+
+def _one_statement(c: dict[str, Any]) -> None:
+    """Each step is said once (pass V: standards appended beside the deal
+    lines that already say them; 010082 "Arrive onsite during the
+    Customer-approved regular business hours" under the deal's own arrival
+    line, 000123 "Locate the Customer-provided equipment" beside "Notify
+    Customer of arrival on site and locate equipment"). A standard step
+    every clause of which a deal step's clause says (same verb, at least
+    half the standard clause's object words) collapses into the deal step;
+    a standard step with any clause of its own stays. Deal steps are never
+    removed here."""
+    sc = c.get("scope") or []
+    deal = [cl for x in sc if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+            for cl in _clauses(str(x.get("text")))]
+    def said(cl: tuple[str, set[str], bool]) -> bool:
+        # A standard said of each or all is broader than a deal step about
+        # one item (010198: "functional testing of each installed device"
+        # beside "of the Square register").
+        v, obj, every = cl
+        return any(v == dv and (not obj or len(obj & dobj) >= 0.5 * len(obj)) and (obj or not dobj) and (dev or not every)
+                   for dv, dobj, dev in deal)
+    gone = []
+    for x in sc:
+        if not (isinstance(x, dict) and x.get("standard") and x.get("kind") != "heading"):
+            continue
+        cls = _clauses(str(x.get("text")))
+        if cls and all(said(cl) for cl in cls):
+            gone.append(x)
+    if gone:
+        c["scope"] = [x for x in sc if not any(x is g for g in gone)]
+        c.setdefault("standards_suppressed", []).extend(
+            {"section": "method_steps", "text": str(g.get("text")), "reason": "a deal step already says it (one_statement)"} for g in gone)
 
 
 #: A closing group's heading.
@@ -6985,9 +7077,16 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         # sites will be singles" snapped to the 92-site total).
         atom_text = {str(a.get("id")): str(a.get("text") or "") for a in envelope.get("atoms") or []}
         stated_here: set[int] = set()
+        # A count the job's whole span takes ("at 160 customer locations",
+        # "across 160 stores") is the job's site count even when the cited
+        # note gives it (000123 pass V: the note's "about 160" beside the
+        # 161-store roster); a subset ("83 sites will be singles") is not.
+        whole = lambda m: bool(re.search(r"(?i)\b(at|across|for|over|throughout|to|all|in)\s+(approximately\s+|about\s+|~\s*)?$",
+                                         m.string[max(0, m.start() - 24):m.start()]))
         def _snap(m: re.Match) -> str:
             n = int(m.group(1))
-            return (str(n_sites) if n != n_sites and n not in stated_here and abs(n - n_sites) <= max(2, 0.1 * n_sites) else m.group(1)) + m.group(2)
+            return (str(n_sites) if n != n_sites and (n not in stated_here or whole(m)) and abs(n - n_sites) <= max(2, 0.1 * n_sites)
+                    else m.group(1)) + m.group(2)
         for k in ("overview", "scope", "schedule", "assumptions", "customer_responsibilities"):
             for x in c.get(k) or []:
                 if isinstance(x, dict):
@@ -7292,6 +7391,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "schedule_not_estimates", _schedule_not_estimates, c)
     _traced(c, "window_rollover", _window_rollover, c)
     _traced(c, "qualified_over_universal", _qualified_over_universal, c)
+    _traced(c, "no_broader_than_source", _no_broader_than_source, c, envelope.get("atoms") or [])
+    _traced(c, "one_statement", _one_statement, c)
     _traced(c, "field_sequence", _field_sequence, c)
     _traced(c, "no_install_wording", _no_install_wording, c, envelope.get("atoms") or [])
     _traced(c, "followup_not_promised", _followup_not_promised, c, envelope.get("atoms") or [])

@@ -363,3 +363,36 @@ def test_a_standard_exclusion_the_check_dropped_comes_back():
     m._standard_exclusion_survives(c)
     assert [x["text"] for x in c["out_of_scope"]] == ["Disposal, shipping, data destruction, or asset disposition of removed phones."]
     assert [d["text"] for d in c["dropped"]] == ["Exclude the quarterly vendor meeting."]
+
+
+# --- pass V cross-deal: one statement per step, never broader than the source -
+
+def test_a_standard_a_deal_step_already_says_collapses_into_it():
+    c = _content()
+    c["scope"] = [{"text": "Arrive onsite during regular business hours and check in through the middle gate.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Arrive onsite during the Customer-approved regular business hours.", "cites": [], "kind": "method", "standard": True},
+                  {"text": "Perform functional testing of the Square register.", "cites": ["b"], "kind": "fact"},
+                  {"text": "Perform functional testing of each installed device before leaving the site.", "cites": [], "kind": "method", "standard": True},
+                  {"text": "Clean the work area and confirm completion with the onsite contact.", "cites": ["c"], "kind": "fact"},
+                  {"text": "Clean the immediate work area and remove Provider-generated installation debris.", "cites": [], "kind": "method", "standard": True}]
+    m._one_statement(c)
+    got = [x["text"][:30] for x in c["scope"]]
+    assert "Arrive onsite during the Custo" not in got
+    # Said of each device, broader than the one register: stays.
+    assert "Perform functional testing of " in [g for g in got if g.startswith("Perform")][-1] and len([g for g in got if g.startswith("Perform")]) == 2
+    # A clause of its own (debris): stays.
+    assert "Clean the immediate work area " in got
+    assert c["standards_suppressed"][0]["reason"].endswith("(one_statement)")
+
+
+def test_a_line_that_drops_its_sources_limit_goes():
+    c = _content()
+    c["assumptions"] = [{"text": "The one (1) MDF and thirteen (13) raised IDFs can be reached with boom or scissor lifts as needed.",
+                         "cites": ["a", "b"], "kind": "fact"},
+                        {"text": "A forty-foot (40-foot) lift is available in warehouse areas.", "cites": ["b"], "kind": "fact"},
+                        {"text": "Only one (1) store per time zone is worked at a time.", "cites": ["c"], "kind": "fact"}]
+    atoms = [{"id": "a", "text": "They have 1 MDF reachable on foot but have 13 IDFs which are raised and would require some sort of lift."},
+             {"id": "b", "text": "They said a majority of the IDFs would be reachable with a boom/scissor lift but would recommend a 40ft lift for the warehouse."},
+             {"id": "c", "text": "Only 1 store per time zone"}]
+    m._no_broader_than_source(c, atoms)
+    assert [x["text"][:4] for x in c["assumptions"]] == ["Only"]
