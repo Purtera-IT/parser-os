@@ -804,7 +804,9 @@ _LIST_SECTION = {"overview": "overview", "scope": "scope_of_work", "arrival_prot
 def _snap(content: dict[str, Any]) -> dict[tuple[str, ...], tuple[str, str]]:
     """Each cited line, keyed by its cites, with the list it sits in and its text."""
     out: dict[tuple[str, ...], tuple[str, str]] = {}
-    for k in _LIST_SECTION:
+    # The summary last: a task citing what a summary sentence cites is the
+    # line that matters (it was invisible to the drop guard behind it).
+    for k in sorted(_LIST_SECTION, key=lambda k: k == "overview"):
         for x in content.get(k) or []:
             if isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading" and not x.get("standard"):
                 out.setdefault(tuple(x["cites"]), (k, str(x.get("text") or "")))
@@ -880,15 +882,26 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
     cites instead. Each guarded drop is a sow_keep "keep" label."""
     after = _snap(content)
     noise = set(content.get("_noise_atoms") or [])
-    live = lambda: [x for k in _LIST_SECTION for x in content.get(k) or [] if isinstance(x, dict) and x.get("kind") != "heading"]
+    # The summary only names the work: a fact the overview cites is not in the
+    # task list (010217: the 98" install's atom lived on in the summary, so
+    # its only task line went).
+    live = lambda own: [x for k in _LIST_SECTION if k != "overview" or own == "overview"
+                        for x in content.get(k) or [] if isinstance(x, dict) and x.get("kind") != "heading"]
     out = []
     for cites, (lst, text) in before.items():
-        if cites in after:
+        if cites in after and not (after[cites][0] == "overview" and lst != "overview"):
             continue
-        alive = {c for x in live() for c in x.get("cites") or []}
-        orphan = [c for c in cites if c not in alive]
+        alive = {c for x in live(lst) for c in x.get("cites") or []}
+        # A noise cite (a quoted copy, a picture, existing gear) does not make
+        # the line noise: only a fact that is not noise needs a home (010217:
+        # the email thread's quoted copy of "reuse the existing mounts" let
+        # tidy drop the 86" install that also cited the note's own lines).
+        # A summary sentence leaning on a quoted or pictured line stays a
+        # paraphrase of it (010209: the RFQ's quoted "manage the entire
+        # project" summary the grounding rule rightly dropped).
+        orphan = [c for c in cites if c not in alive and c not in noise]
         extra = str(content.get("_noise_re") or "")
-        if not orphan or any(c in noise for c in cites) or _NOISE_TEXT.search(text) or _FOLLOW_UP.search(text) \
+        if not orphan or (lst == "overview" and any(c in noise for c in cites)) or _NOISE_TEXT.search(text) or _FOLLOW_UP.search(text) \
                 or (extra and re.search(extra, text, re.I)):
             continue
         if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
@@ -910,7 +923,7 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
                 (lst == "assumptions" and re.match(r"(?i)\s*(provide|ensure|supply|furnish)\b", text)):
             dest = "customer_responsibilities"
         dup = next((x for x in content.get(dest) or [] if isinstance(x, dict) and x.get("kind") != "heading"
-                    and _said(text, [x], 0.6)), None)
+                    and _said(text, [x], 0.6 if dest == "scope" else 0.55)), None)  # the standards' own cover bar
         if dup is not None:
             dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + orphan))
             # The fact's own name survives the merge (010373: "Humanscale"
@@ -928,6 +941,20 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             items = content.setdefault(dest, [])
             close = next((i for i, y in enumerate(items) if isinstance(y, dict) and y.get("kind") == "heading"
                           and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(items)) if dest == "scope" else len(items)
+            # Back where it stood: after the nearest line that stood before it
+            # and is still there (010217: the Training Room 250 install came
+            # back under Room 247, the last heading before Closeout).
+            if dest == lst:
+                was = lists_before.get(lst) or []
+                at = next((i for i, y in enumerate(was) if y is orig), -1)
+                for prev in reversed(was[:max(0, at)]):
+                    j = next((i for i, y in enumerate(items) if y is prev), None)
+                    if j is not None:
+                        close = j + 1
+                        break
+                else:
+                    if at == 0:
+                        close = 0
             items.insert(close, orig)
             how = "restored" if dest == lst else "restored_to_" + dest
         out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(cites), "value": "keep", "was": _LIST_SECTION[lst],
@@ -942,7 +969,7 @@ def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     guarded = _guard_drops(content, rule, before, lists_before) if rule in GUARDED_RULES else []
     kept = {tuple(g["atom_ids"]) for g in guarded}
     content.setdefault("rule_decisions", []).extend(
-        [d for d in _decisions(rule, before, _snap(content)) if not (d["value"] == "drop" and tuple(d["atom_ids"]) in kept)] + guarded)
+        [d for d in _decisions(rule, before, _snap(content)) if tuple(d["atom_ids"]) not in kept] + guarded)
     return result
 
 
@@ -1348,7 +1375,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                               "cites": [f["id"]], "kind": "fact"})
             scope_text += " " + m.group(2)
     # A ladder and no lift: say so (010043; PurTera writes both lines).
-    if re.search(r"(?i)\bladders?\b", pool_text) and not re.search(r"(?i)\b(lift|boom|scissor)\b(?!\s*(is|are)?\s*not)", " ".join(
+    # Not where the facts talk of a lift the work may need (010284: a 60 ft
+    # pole and a boom lift).
+    if re.search(r"(?i)\bladders?\b", pool_text) and not re.search(r"(?i)\b(boom|scissor|aerial) lifts?\b|\blift\b.{0,25}\b(need|requir|rent)", pool_text) and not re.search(r"(?i)\b(lift|boom|scissor)\b(?!\s*(is|are)?\s*not)", " ".join(
             str(x.get("text")) for k in ("scope", "provider_tools", "provider_materials") for x in content.get(k) or [] if isinstance(x, dict))):
         asm = content.setdefault("assumptions", [])
         for t in ("No lift is required.", "Standard ladders reach every work location."):
@@ -2329,18 +2358,25 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                       if not re.search(r"(?i)\battached (floor ?plan|drawing|diagram|layout|map)", str(x.get("text") if isinstance(x, dict) else x))]
     # An exclusion needs a source that excludes: 000132's requested end-user
     # O365 support (a service in both notes) came out as Out of Scope.
-    neg = re.compile(r"(?i)\b(not|no|exclud\w*|except|outside|without|won'?t|n't|never|customer'?s? (team|staff|it)|by (the )?customer|handled by|responsib)")
+    # A zero-quantity row excludes too (010147: "6U-10U servers x 0").
+    neg = re.compile(r"(?i)\b(not|no|exclud\w*|except|outside|without|won'?t|n't|never|customer'?s? (team|staff|it)|by (the )?customer|handled by|responsib)|"
+                     r"(\bx|\bqty:?|\bquantity:?|[:|])\s*0\s*$|^\s*0\s*(x|\|)")
     unsourced = [x for x in content.get("out_of_scope") or []
-                 if isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
+                 if isinstance(x, dict) and x.get("cites") and not x.get("standard") and all(c in by for c in x["cites"])
                  and not any(neg.search(by[c]["text"]) for c in x["cites"])]
     content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if not any(x is y for y in unsourced)]
     # A requested service the writer flipped into an exclusion is scope.
     # Its wording turns with it: 000132's "End-user support ... is excluded
     # from the service scope." printed as "Provide end-user support ... is
-    # excluded" in the task list.
+    # excluded" in the task list. Only when a cited line names that service:
+    # 010284's lift, core-drilling and disposal exclusions cited call chatter
+    # about poles and penetrations, and became "Provide lift rental" tasks.
+    # Otherwise the exclusion stays, as the writer's own uncited line.
     for x in unsourced:
         t = _as_scope(str(x.get("text")))
-        if not t:
+        named = any(_said(re.sub(r"(?i)^provide\s+", "", t), [by[c]["text"]], 0.6) for c in x["cites"]) if t else False
+        if not named:
+            content["out_of_scope"].append({**x, "cites": [], "kind": "method"})
             continue
         x["text"] = t
         if not _said(x["text"], content.setdefault("scope", []), 0.6):
