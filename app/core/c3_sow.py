@@ -394,6 +394,12 @@ def _is_secret(m: re.Match) -> bool:
     sep, val = m.group(2).strip(), m.group(3)
     if val.startswith("["):
         return False
+    # A connector's pin count is not a PIN ("USB to 6 Pin | 42M5630", 010279
+    # pass V printed "6 Pin [withheld] 42M5630" in the report).
+    if m.group(1).lower() == "pin" and re.search(r"\d\s*-?\s*$", m.string[:m.start()]):
+        return False
+    if val == "|":
+        return False
     if sep in (":", "=") or sep.lower() == "is" and not _WORD.fullmatch(val):
         return True
     return bool(re.search(r"\d|[^A-Za-z.,;:'\")-]", val))
@@ -421,6 +427,14 @@ def _scrub(content: dict[str, Any]) -> int:
                 continue
             keep.append(x)
         content[k] = keep
+    # And the report's own lines: a withheld value never renders (010279
+    # pass V: "[withheld]" inside Table 1).
+    for d in content.get("deliverables") or []:
+        if isinstance(d, dict) and isinstance(d.get("description"), list):
+            desc = d["description"]
+            d["description"] = [t for t in desc if not ("[withheld]" in str(t) or "address withheld" in str(t) or _IP.search(str(t))
+                                                         or any(_is_secret(m) for m in _SECRET.finditer(str(t))))]
+            n += len(desc) - len(d["description"])
     return n
 
 
@@ -1349,19 +1363,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # A customer duty every cited line of which the supplier head gives to us
     # is Provider work (010279: proof of delivery, inventory recap); and one
     # atom is never both Provider scope and a customer duty.
-    sup = {f["id"]: f.get("supplier") for f in fs}
-    ours_cite = lambda c: bool(sup.get(c)) and sup[c][0] == "us" and float(sup[c][1] or 0) >= SUPPLIER_BAR
-    scope_cites = {c for x in content.get("scope") or [] if isinstance(x, dict) for c in x.get("cites") or []}
-    moved = []
-    for x in list(content.get("customer_responsibilities") or []):
-        if not isinstance(x, dict) or x.get("standard") or not x.get("cites"):
-            continue
-        if set(x["cites"]) <= scope_cites:
-            content["customer_responsibilities"].remove(x)
-        elif all(ours_cite(c) for c in x["cites"]):
-            content["customer_responsibilities"].remove(x)
-            moved.append(x)
-    content.setdefault("scope", []).extend(moved)
+    _traced(content, "duty_party", _duty_party, content, fs, envelope)
     content["unassigned"] = _party_check(content, lines)
     _provider_half(content, fs)
     _dedupe_items(content)
@@ -5508,6 +5510,60 @@ def _supply_assumption_back(c: dict[str, Any]) -> None:
 _DISPOSAL = re.compile(r"(?i)\be-?waste\b|\bdispos(e|al|ing)\b|\brecycl\w*|\bscrap\b|\bhaul (it |them )?away\b|\bitad\b|asset disposition")
 
 
+def _reused_not_removed(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A removal never takes what the job reuses: "Disconnect and remove the
+    existing POS terminals and peripherals" beside "Existing ... peripheral
+    connections are operational and can be reused" removes the terminals
+    only (010279 pass V). Only from a list of two or more things; a line
+    naming nothing else is left alone."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    said = [tx(x) for k in ("assumptions", "scope", "customer_responsibilities") for x in c.get(k) or []]
+    said += [str(a.get("text") or "") for a in atoms if isinstance(a, dict)]
+    reused: set[str] = set()
+    for t in said:
+        if re.search(r"(?i)\b(reus\w*|re-?connect\w*|remain\w* in place|stay\w* in place|to be kept)\b", t) and not re.search(r"(?i)\b(not|no|never)\b[^.]{0,20}\breus", t):
+            reused |= {w for w in _object_toks(t) if len(w) > 4}
+    if not reused:
+        return
+    for x in c.get("scope") or []:
+        if not (isinstance(x, dict) and x.get("kind") != "heading"):
+            continue
+        m_ = re.match(r"(?i)^(\s*(?:disconnect(?:,)? and )?(?:remove|de-?install|uninstall|decommission)\s+(?:all\s+)?(?:the\s+)?(?:existing\s+)?)(.+?)(\s+(?:as specified|as required|where applicable|from [^.]+))?\.?$", tx(x))
+        if not m_ or x.get("standard") or re.search(r"(?i)\b(install\w*|including|reus\w*|replac\w*)\b", m_.group(2)):
+            continue
+        items = [i.strip() for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", m_.group(2)) if i.strip()]
+        if len(items) < 2:
+            continue
+        # The head noun carries the item's words: "POS terminals and peripherals".
+        left = [i for i in items if not (_object_toks(i) & reused and not _object_toks(i) - reused - {"existing", "po"})]
+        if left and len(left) < len(items):
+            x["text"] = m_.group(1) + _join(left) + (m_.group(3) or "") + "."
+
+
+def _report_counts_are_outcomes(c: dict[str, Any]) -> None:
+    """The completion report states outcomes, not a bill of materials: a bare
+    counted item is reported installed when a task installs it, and goes when
+    none does (010279 pass V: "8 Toshiba 2X20 TCx Displays", a fuel-center
+    row the job only takes delivery of, listed as a report line)."""
+    work = [str(x.get("text")) for x in c.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"
+            and re.match(r"(?i)\s*(install|mount|replace|deploy|remove and install|connect|set up|hang)\b|.*\binstall\w*\b", str(x.get("text")))]
+    bare = re.compile(r"(?i)^\s*(\d[\d,]*|[a-z]+ \(\d+\))\s*(x\s+)?[A-Za-z0-9].{2,120}$")
+    verb = re.compile(r"(?i)\b(install|mount|replac|test|remov|configur|connect|deliver|document|captur|confirm|complet|powered|stag|pack|label|verif|record|photo)\w*")
+    for d in c.get("deliverables") or []:
+        if not isinstance(d, dict):
+            continue
+        out = []
+        for t in d.get("description") or []:
+            t = str(t)
+            if not bare.match(t) or verb.search(t):
+                out.append(t)
+                continue
+            key = {w for w in _object_toks(t) if not re.fullmatch(r"\d+\w*", w)}
+            if key and any(len(key & _object_toks(w)) >= max(1, round(0.6 * len(key))) for w in work):
+                out.append(t.rstrip(". ") + " installed.")
+        d["description"] = out
+
+
 def _disposal_not_ours(c: dict[str, Any]) -> None:
     """A Provider task never disposes of what the SOW gives another party to
     dispose of (010376 pass V: "EWaste the removed UPS and battery backup"
@@ -5996,6 +6052,90 @@ def _capability_not_supply(content: dict[str, Any], fs: list[dict[str, Any]]) ->
             content.setdefault(dest, []).append(x)
 
 
+_OUR_SUBJECT = re.compile(r"(?i)\b(we|us|our|vendors?|technicians?|techs?|installers?|provider|purtera|contractors?|the team|resources?)\b")
+
+
+def _sentence_subject(line: str, cited: str) -> str | None:
+    """Who the cited sentence that says ``line`` makes do it: the words before
+    its will/shall/to ("Harris Teeter will provide a resource at the HT
+    Corporate Office ..." -> "Harris Teeter"), or None."""
+    best, score = None, 0
+    want = _object_toks(line)
+    for sent in re.split(r"(?<=[.;!?])\s+", cited):
+        n = len(want & _object_toks(sent))
+        if n > score:
+            best, score = sent, n
+    if not best or score < 2:
+        return None
+    m_ = re.match(r"\s*([A-Za-z][\w&.'-]*(?:\s+[\w&.'-]+){0,3}?)\s+(?:will|shall|must|is to|are to|to)\s+(?:also\s+)?[a-z]", best)
+    if not m_:
+        return None
+    subj = m_.group(1).strip()
+    # A party: a proper name ("Harris Teeter", "CDW") or the customer's own
+    # words for itself, never a thing ("This securable room").
+    if re.fullmatch(r"(?:the\s+)?(?:[A-Z][\w&.'-]*)(?:\s+[A-Z][\w&.'-]*){0,3}", subj) and not re.match(r"(?i)(this|that|these|those|it|all|each)\b", subj) \
+            or re.fullmatch(r"(?i)(the\s+)?(customer|client|owner|store management|store staff|site staff|we|our \w+|vendors?|technicians?|techs?|installers?|provider|purtera)", subj):
+        return subj
+    return None
+
+
+def _duty_party(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dict[str, Any]) -> None:
+    """Whose duty a customer line is. A duty every cited line of which the
+    supplier head gives to us is Provider work (010279: proof of delivery,
+    inventory recap), unless the cited sentence that says it names the
+    customer as its subject: splitting an RFP paragraph keeps its subject
+    (010279 pass V: "Harris Teeter will provide a resource at the HT
+    Corporate Office for assistance and escalation" became a Provider
+    closeout task). A duty listed under a lead line giving the list to the
+    technician ("Technician to provide post installation support" over
+    "Verifies all tasks complete ...", "Service and resolve any hardware
+    failures") is the technician's. One atom is never both Provider scope and
+    a customer duty."""
+    sup = {f["id"]: f.get("supplier") for f in fs}
+    by = {f["id"]: f["text"] for f in fs}
+    ours_cite = lambda c: bool(sup.get(c)) and sup[c][0] == "us" and float(sup[c][1] or 0) >= SUPPLIER_BAR
+    atoms = [a for a in envelope.get("atoms") or [] if isinstance(a, dict)]
+    by_id = {str(a.get("id")): a for a in atoms}
+    def tech_list(c: str) -> bool:
+        a = by_id.get(c) or {}
+        sp, ln = a.get("section_path") or [], (a.get("locator") or {}).get("line_start")
+        if not sp or not isinstance(ln, int):
+            return False
+        lead = [b for b in atoms if b.get("artifact_id") == a.get("artifact_id") and (b.get("section_path") or []) == sp
+                and isinstance((b.get("locator") or {}).get("line_start"), int) and b["locator"]["line_start"] < ln]
+        lead.sort(key=lambda b: b["locator"]["line_start"])
+        heads = [str(b.get("text") or "") for b in lead
+                 if re.match(r"(?i)\s*(technicians?|techs?|vendors?|installers?|provider|contractors?)\s+(to|will|shall|must)\b", str(b.get("text") or ""))]
+        theirs = [b for b in lead if re.match(r"(?i)\s*(customer|client|the store|store (management|staff))\s+(to|will|shall|must)\b", str(b.get("text") or ""))]
+        return bool(heads) and not theirs
+    scope_cites = {c for x in content.get("scope") or [] if isinstance(x, dict) for c in x.get("cites") or []}
+    moved = []
+    for x in list(content.get("customer_responsibilities") or []):
+        if not isinstance(x, dict) or x.get("standard") or not x.get("cites"):
+            continue
+        if set(x["cites"]) <= scope_cites:
+            content["customer_responsibilities"].remove(x)
+            continue
+        if re.match(r"(?i)\s*(customer|client)\b", str(x.get("text"))):
+            continue
+        subj = [_sentence_subject(str(x.get("text")), by.get(c, "")) for c in x["cites"]]
+        named_theirs = any(s_ and not _OUR_SUBJECT.search(s_) for s_ in subj)
+        if named_theirs:
+            continue
+        if all(ours_cite(c) for c in x["cites"]) or all(tech_list(c) for c in x["cites"]):
+            content["customer_responsibilities"].remove(x)
+            moved.append(x)
+    if moved:
+        sc = content.setdefault("scope", [])
+        close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                      and re.search(r"(?i)clos|wrap|complet", str(y.get("text")))), None)
+        if close is None:
+            sc.extend(moved)
+        else:
+            nxt = next((i for i, y in enumerate(sc) if i > close and isinstance(y, dict) and y.get("kind") == "heading"), len(sc))
+            sc[nxt:nxt] = moved
+
+
 def _one_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     """One item is never both Provider material and customer-provided. When
     a Provider material line names an item that a customer material, a
@@ -6443,7 +6583,13 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
         keep = []
         for t in d.get("description") or []:
             t = str(t)
-            if any(_said(t, [g], 0.6) for g in gone) or any(_said(t, [g], 0.8) and _said(g, [t], 0.8) for g in unsupported):
+            # A long dropped line strikes only the outcome it is about: one
+            # clause of a five-clause summary dropped for another clause is not
+            # the outcome (010279 pass V: "... palletize old hardware for
+            # return/disposal, and complete installation and testing
+            # checklists" struck "Completed Customer installation and testing
+            # checklists").
+            if any(_said(t, [g], 0.6) and _said(g, [t], 0.35) for g in gone) or any(_said(t, [g], 0.8) and _said(g, [t], 0.8) for g in unsupported):
                 if t in std_out:
                     why.append({"section": "deliverable_outcomes", "text": t, "reason": "deliverables: restates a dropped line"})
                 continue
@@ -7720,6 +7866,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
     _traced(c, "disposal_not_ours", _disposal_not_ours, c)
+    _traced(c, "reused_not_removed", _reused_not_removed, c, envelope.get("atoms") or [])
+    _report_counts_are_outcomes(c)
     _traced(c, "standard_exclusion_survives", _standard_exclusion_survives, c)
     _traced(c, "supply_assumption_back", _supply_assumption_back, c)
     _traced(c, "materials_counted", _materials_counted, c)
