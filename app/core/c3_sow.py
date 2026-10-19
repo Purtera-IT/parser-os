@@ -2237,6 +2237,13 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         t = "Follow-up or return visits, unless authorized in writing or by Change Order."
         if not _said(t, oos, 0.5):
             oos.append({"text": t, "cites": [], "kind": "method"})
+    # An empty schedule takes back the cited schedule line the check set aside
+    # (010043: "Week of July 6, 2026" dropped with no reason).
+    if not content.get("schedule"):
+        back = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+                if isinstance(x, dict) and x.get("list") == "schedule" and x.get("cites")][:2]
+        if back:
+            content["schedule"] = back
     # Last: a heading left with nothing under it goes (010209 "Switch replacement").
     sc = content.get("scope") or []
     content["scope"] = [x for i, x in enumerate(sc)
