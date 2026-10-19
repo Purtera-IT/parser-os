@@ -292,9 +292,11 @@ def purtera_standards(family: str) -> dict[str, list[str]]:
     """PurTera's fixed handling of a job type (purtera_standards.json): items a
     PM writes on every job of the type whether or not the deal states them.
     Template content, owner-reviewed, so not subject to the two-deal rule."""
-    try:
-        data = json.loads((Path(__file__).parent / "purtera_standards.json").read_text())
-    except Exception:
+    from app.core import standards_store
+
+    # Packaged file + items added in SowSmith without a deploy (standards_store).
+    data = standards_store.load()
+    if not data:
         return {}
     # A family with no block of its own takes the generic smart-hands block
     # when that is its neighbour, as the method library does (010419 pass V:
@@ -5385,10 +5387,9 @@ def _known_exclusions() -> list[str]:
     standards', all families, their gates stripped."""
     out = [str(it.get("text") or "") for fam in _library().values() if isinstance(fam, dict)
            for it in fam.get("exclusions") or [] if isinstance(it, dict)]
-    try:
-        data = json.loads((Path(__file__).parent / "purtera_standards.json").read_text())
-    except Exception:
-        data = {}
+    from app.core import standards_store
+
+    data = standards_store.load()
     for fam in data.values():
         if isinstance(fam, dict):
             out += [re.sub(r"^(\{(when|unless):.*?\}\s+)+(?=[A-Z])", "", str(t)) for t in fam.get("exclusions") or []]
@@ -8030,9 +8031,10 @@ def _standard_exclusion_survives(c: dict[str, Any]) -> None:
     phones." dropped as "the cited lines do not state it"; the standards
     say it of removed equipment). It comes back unless a deal task does the
     work it excludes."""
-    try:
-        data = json.loads((Path(__file__).parent / "purtera_standards.json").read_text())
-    except Exception:
+    from app.core import standards_store
+
+    data = standards_store.load()
+    if not data:
         return
     std = [re.sub(r"^(\{(when|unless):.*?\}\s+)+", "", str(t)) for fam, v in data.items() if not fam.startswith("_") and isinstance(v, dict)
            for t in v.get("exclusions") or []]
