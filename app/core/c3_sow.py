@@ -1576,6 +1576,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                    r"\1 the installed equipment", x["text"])
     _traced(content, "exclusion_not_task", _no_exclusion_negates_task, content)
     _traced(content, "own_documents", _own_documents, content)
+    _traced(content, "not_job_terms", _not_job_terms, content)
+    _traced(content, "explanation_not_exclusion", _explanation_not_exclusion, content, fs)
     _traced(content, "summary_order", _summary_order, content)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
@@ -1663,6 +1665,66 @@ def _no_exclusion_negates_task(content: dict[str, Any]) -> None:
             x = {**x, "text": body[:1].upper() + body[1:] + "."}
         out.append(x)
     content["out_of_scope"] = out
+
+
+#: A source that explains data (why rows of a sheet have no address).
+_EXPLAINS_DATA = re.compile(r"(?i)\b(sheet|spreadsheet|rows?|entries|tab|columns?|listed|unaddressed|the list)\b")
+
+
+def _explanation_not_exclusion(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A source that explains data is never an exclusion (010326 pass U: "The
+    other unaddressed phones within the sheet are ... virtual extensions ...,
+    fax lines, or phones connected via ATA or RJ11" became "exclude the
+    virtual, fax, call-routing, ATA, and RJ11 entries", against the 18 ATAs
+    the job installs). The exclusion clause goes from a task; an exclusion
+    resting only on such sources goes."""
+    by = {f["id"]: f for f in fs}
+    excl = re.compile(r"(?i)\b(exclud\w*|except\w*|not (be )?(included|installed|in scope))\b")
+    def explains(c: str) -> bool:
+        t = str((by.get(c) or {}).get("text") or "")
+        return bool(_EXPLAINS_DATA.search(t)) and not re.search(r"(?i)\b(not (in|part of) (the )?scope|do not install|don'?t install|skip|out of scope)\b", t)
+    for k in ("scope", "assumptions", "out_of_scope"):
+        keep = []
+        for x in content.get(k) or []:
+            if not (isinstance(x, dict) and not x.get("standard") and x.get("cites") and excl.search(str(x.get("text")))):
+                keep.append(x)
+                continue
+            exp = [c for c in x["cites"] if explains(c)]
+            # Only when no other cite of the line states an exclusion.
+            if not exp or any(c not in exp and excl.search(str((by.get(c) or {}).get("text") or "")) for c in x["cites"]):
+                keep.append(x)
+                continue
+            if k == "scope":
+                t = _drop_clause(str(x["text"]), excl)
+                if t:
+                    keep.append({**x, "text": t})
+                continue
+            if all(c in exp for c in x["cites"]):
+                continue
+            keep.append(x)
+        content[k] = keep
+
+
+def _not_job_terms(content: dict[str, Any]) -> None:
+    """An order's billing block is not the summary, a contracting remark is not
+    the schedule, and a travel remark is an assumption, not a date (010326
+    pass U: "Project billing/shipping details are ... Accts Payable" in the
+    summary; "Quick signature of the main SOW is needed ..." and "The project
+    sites are within a 3-5 mile radius ..." under Scheduling)."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    content["overview"] = [x for x in content.get("overview") or [] if not re.search(
+        r"(?i)\b(billing|bill[- ]to|ship[- ]to|shipping details|accounts? payable|accts\.? payable|remit to)\b", tx(x))] or content.get("overview")
+    labeled = re.compile(r"^[\w /#-]{2,40}:\s")
+    keep = []
+    for x in content.get("schedule") or []:
+        t = tx(x)
+        if not labeled.match(t) and re.search(r"(?i)\bsignature\b|\bsign(ed|ing)? (the |off on the )?(main |master )?(sow|contract|agreement)\b", t):
+            continue
+        if not labeled.match(t) and re.search(r"(?i)\b(mile radius|miles? (apart|away|of each other)|travel time)\b", t):
+            content.setdefault("assumptions", []).append(x)
+            continue
+        keep.append(x)
+    content["schedule"] = keep
 
 
 def _own_documents(content: dict[str, Any]) -> None:
@@ -4461,6 +4523,12 @@ def _drop_clause(t: str, rx: re.Pattern[str]) -> str:
     right = min((x.start() for x in seps if x.start() >= m.end()), default=None)
     if left is None:
         return ""
+    # A clause the match leads ("and exclude the virtual, fax, ATA ...
+    # entries") runs to the sentence's end, list commas and all (010326).
+    lead_end = max(x.end() for x in seps if x.start() == left)
+    if len(t[lead_end:m.start()].split()) <= 2:
+        semi = t.find(";", m.end())
+        right = semi if semi >= 0 else None
     end = right if right is not None else len(t.rstrip(" ."))
     out = (t[:left] + t[end:]).strip()
     return out if out.endswith((".", "?", "!", ":")) else out.rstrip(" ,;") + "."
@@ -5387,6 +5455,16 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                     keep.append(x)
                 continue
             x["cites"] = [c for c in x["cites"] if c in lines]
+            if not x["cites"] and k not in ("overview",):
+                # An uncited line a given fact states is that fact's line:
+                # cite it, never drop it (010326 pass U: "Provide two hundred
+                # fifty-nine (259) Cisco Desk Phone 9851 units." beside the
+                # quote line "Cisco Desk Phone 9851 ... | QTY: 259").
+                dt = _digits(str(x["text"]))
+                if re.search(r"(?<![\w-])\d+(?![\w-])", dt):  # a count, not a model number
+                    src = next((i for i, ln in lines.items() if _stated_by(dt, _digits(ln))), None)
+                    if src:
+                        x["cites"], x["kind"] = [src], "fact"
             if x["kind"] == "fact" and not x["cites"]:
                 # A deal claim with nothing behind it reads as method only if
                 # it carries nothing deal-specific.
@@ -6243,8 +6321,12 @@ def _name_contradicted(name: str, c: dict[str, Any]) -> bool:
     Provider task or summary line does."""
     tasks = set().union(*[_object_toks(str(x.get("text"))) for k in ("scope", "overview") for x in c.get(k) or []
                           if isinstance(x, dict)] or [set()])
+    # The SOW's exclusions hold work too (010326 pass U: "Racking/Wall mount"
+    # beside "Rack hardware, gateways, or rack-and-stack work" out of scope).
     other = set().union(*[_object_toks(str(x.get("text"))) for x in c.get("customer_responsibilities") or []
                           if isinstance(x, dict) and x.get("cites")] or [set()])
+    other |= set().union(*[_object_toks(str(x.get("text"))) for x in c.get("out_of_scope") or []
+                           if isinstance(x, dict) and not x.get("standard")] or [set()])
     return any(w in other and w not in tasks for w in _object_toks(name))
 
 

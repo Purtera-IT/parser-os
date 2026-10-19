@@ -325,3 +325,43 @@ def test_provider_supplies_its_own_coi():
     m._own_documents(c)
     assert c["customer_responsibilities"][0]["text"] == "Provide the site's certificate of insurance (COI) requirements before site work begins."
     assert c["assumptions"][0]["text"].startswith("Provider will provide its certificate of insurance (COI)")
+
+
+# --- 010326 C+: an explanation of data is never an exclusion -------------------
+
+def test_an_explanation_of_sheet_rows_is_never_an_exclusion():
+    fs = [_fact("e", "The other unaddressed phones within the sheet are virtual extensions, fax lines, or phones connected via ATA or RJ11."),
+          _fact("n", "So, the 317 with addresses are RJ45 connected phones.")]
+    c = {"scope": [{"text": "Install the three hundred seventeen (317) physical phones at the listed sites, and exclude the virtual, fax, "
+                            "ATA, and RJ11 entries from onsite installation.", "cites": ["n", "e"], "kind": "fact"}],
+         "out_of_scope": [{"text": "ATA and RJ11 entries are excluded.", "cites": ["e"], "kind": "fact"}]}
+    m._explanation_not_exclusion(c, fs)
+    assert c["scope"][0]["text"] == "Install the three hundred seventeen (317) physical phones at the listed sites."
+    assert c["out_of_scope"] == []
+
+
+def test_an_uncited_counted_line_a_fact_states_is_cited_not_dropped(monkeypatch):
+    monkeypatch.setattr(m, "_complete", lambda *a, **k: '{"supported": [0, 1, 2, 3]}')
+    lines = {"q": "ITEM: Cisco Desk Phone 9851 - VoIP phone | QTY: 259 | UNIT PRICE: $210.00"}
+    c = {k: [] for k in m.LISTS}
+    c["customer_materials"] = [{"text": "Provide two hundred fifty-nine (259) Cisco Desk Phone 9851 units.", "cites": [], "kind": "method"}]
+    m.check(c, lines)
+    assert c["customer_materials"] and c["customer_materials"][0]["cites"] == ["q"]
+
+
+def test_billing_blocks_signatures_and_travel_remarks_leave_summary_and_schedule():
+    c = {"overview": [{"text": "Provider will install 317 phones.", "cites": [], "kind": "fact"},
+                      {"text": "Project billing/shipping details are Accts Payable and Keith Lyons.", "cites": [], "kind": "fact"}],
+         "schedule": [{"text": "Quick signature of the main SOW is needed to unlock engineering resources.", "cites": [], "kind": "fact"},
+                      {"text": "The project sites are within a 3-5 mile radius, which reduces travel time.", "cites": [], "kind": "fact"},
+                      {"text": "Requested Start Date: November 2, 2026", "cites": [], "kind": "fact"}]}
+    m._not_job_terms(c)
+    assert len(c["overview"]) == 1 and [x["text"] for x in c["schedule"]] == ["Requested Start Date: November 2, 2026"]
+    assert c["assumptions"][0]["text"].startswith("The project sites are within")
+
+
+def test_a_title_naming_excluded_work_is_contradicted():
+    c = {"scope": [{"text": "Remove the existing wall mounts and replace the phones.", "cites": ["a"], "kind": "fact"}],
+         "out_of_scope": [{"text": "Rack hardware, gateways, or rack-and-stack work.", "cites": [], "kind": "method"}]}
+    assert m._name_contradicted("Manitowoc - Racking/Wall mount", c)
+    assert not m._name_contradicted("Manitowoc Phone Deployment", c)
