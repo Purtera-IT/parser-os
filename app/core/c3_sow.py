@@ -898,7 +898,15 @@ def _sites(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None) -> list[
         street, city, st, zp = (str(s.get(k) or "").strip() for k in ("address", "city", "state", "postal_code"))
         tail = ", ".join(x for x in (city, " ".join(x for x in (st, zp) if x)) if x)
         full = ", ".join(x for x in (street, tail) if x) if street and street.lower() not in tail.lower() else tail
-        out.append({"name": str(s.get("name") or ""), "city": city, "address": full or str(s.get("name") or ""),
+        # A street that already ends in the city, state and ZIP is not given
+        # them twice (010120 pass V: "6501 Legacy Dr, Plano, TX 75024, Plano,
+        # TX 75024").
+        if street and tail and street.lower().rstrip(" ,").endswith(tail.lower()):
+            full = street
+        name = str(s.get("name") or "")
+        while tail and name.lower().endswith((", " + tail + ", " + tail).lower()):
+            name = name[: -len(", " + tail)]
+        out.append({"name": name, "city": city, "address": full or name,
                     "street": street, "state": st, "postal_code": zp})
     return out
 
@@ -3342,6 +3350,18 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         if re.search(r"(?i)backing|wall mount|\bmounts?\b", t):
             pats.append(groups[0])  # backing and wall mounts exist for the displays
         return bool(nouns and verbs and any(re.search(r"\b(?:" + g + r")(?:'?s)?\b", stays) for g in pats))
+    # When every display stays (a fact says the displays stay and no fact
+    # mounts or installs one), no line places a display: the review of
+    # mounting locations, the customer's location-and-height duty, the
+    # receptacle-reach assumption and the "Displays mounted" outcome go with
+    # the mount steps (010120 pass V: only the method steps went).
+    mounts_display = any(re.search(r"(?i)\b(mount|install|hang)\w*\s+(?:(?:the|each|all|a|an|new|both|two|three|four|\d+|\(\d+\)|[\w-]+-inch|\d+\"|large|small)\s+){0,4}"
+                                   r"(displays?|tvs?|televisions?|monitors?)\b", str(f))
+                         and not keep_word.search(str(f)) for f in facts_text or [])
+    all_stay = bool(re.search(r"\b(display|tv|television|monitor|screen)s?\b", stays_fixed)) and not mounts_display
+    display_place = lambda t: all_stay and bool(re.search(
+        r"(?i)\bdisplay (mounting )?locations?\b|\bdisplay positions?\b|\bdisplays? (are |were )?mounted\b|\bmounting heights?\b|"
+        r"\bintended display\b|\bmount(ing)? (each|the) displays?\b", t))
     # The customer doing its own testing or configuration rules out the test
     # steps (010171: "I will do the device configuration and testing").
     self_test = any(re.search(r"(?i)\b(i|we|customer|our (team|it))\b.{0,25}\b(will|'ll|would)\b.{0,15}\b(do|handle|perform|take care of)\b.{0,40}\btest", str(f))
@@ -3363,6 +3383,9 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             if ok and self_test and re.search(r"(?i)\btest|confirm .{0,90}\bfunction|verify (basic )?operation|verify\b.{0,40}\b(signal|video|source)|"
                                               r"remote (engineering|av|network) support", t):
                 suppressed(sec, t, "the customer does its own testing")
+                continue
+            if ok and display_place(t):
+                suppressed(sec, t, "every display stays in place")
                 continue
             if ok and (about_reuse or not contradicted(t)):
                 std.append({"text": t, "cites": [], "kind": "method", "standard": True})
@@ -3543,10 +3566,17 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     for ok, t in (_standard_applies(o, gate, facts_text or []) for o in fixed.get("deliverable_outcomes") or []):
         if not ok:
             continue
-        if contradicted(t) or (self_test and re.search(r"(?i)\btest|verification|verif(y|ied)", t)):
+        if contradicted(t) or display_place(t) or (self_test and re.search(r"(?i)\btest|verification|verif(y|ied)", t)):
             suppressed("deliverable_outcomes", t, "contradicted by a fact or the customer's own testing")
             continue
         outcomes.append(t)
+    if all_stay:  # the writer's own copy of the outcome too
+        for d in content.get("deliverables") or []:
+            if isinstance(d, dict) and isinstance(d.get("description"), list):
+                gone_ = [t for t in d["description"] if display_place(str(t))]
+                for t in gone_:
+                    suppressed("deliverable_outcomes", str(t), "every display stays in place")
+                d["description"] = [t for t in d["description"] if t not in gone_]
     if outcomes:
         dl = content.setdefault("deliverables", [])
         if not dl:
@@ -5651,6 +5681,24 @@ def _items_not_tasks(c: dict[str, Any]) -> None:
 
 _VERB_RUN = re.compile(r"(?i)^\s*([a-z]+(?:(?:,\s*|\s+and\s+|\s+or\s+)[a-z]+){0,2})\s+(?=(?:the\s+|all\s+|each\s+|approximately\s+|about\s+)?"
                        r"(?:[a-z]+\s+)?\(?\d|(?:the|all|each|any)\b)")
+
+
+_OBSERVED = re.compile(r"(?i)^\s*(?:there (?:is|are|was|were)\b|(?:one|two|three|four|five|six|\d+|the|a|an|this|that)\b[^.;]{0,60}?\b(?:is|are|was|were) "
+                       r"(?:currently|already|presently|wall-mounted|located|sitting|on an? \w+)\b|[^.;]{0,80}\b(?:has|have) (?:already )?been (?:completed|done|performed)\b)")
+_INTENT = re.compile(r"(?i)\b(will|shall|should|must|need(?:s|ed)?|to be|remain\w*|stay\w*|require\w*|may|if|no|not|none|never)\b")
+
+
+def _observation_not_line(c: dict[str, Any]) -> None:
+    """What a survey saw is not a task or an assumption: "There are two
+    large TVs mounted on the front wall of the room", "One TV is
+    wall-mounted with an articulating arm mount" and "Site survey and
+    assessment has already been completed" under Closeout, "One of the Neat
+    devices is currently on a tripod" as an assumption (010120 pass V). A
+    present-state sentence with no will, must, need, stay or remain goes."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    for k in ("scope", "assumptions"):
+        c[k] = [x for x in c.get(k) or [] if not (isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"
+                and _OBSERVED.search(tx(x)) and not _INTENT.search(tx(x)))]
 
 
 def _program_model(c: dict[str, Any], envelope: dict[str, Any]) -> None:
@@ -8420,6 +8468,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     str(s_.get("street") or s_.get("address") or "").split(",")[0].lower() in str(x.get("text")).lower()
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
+    _traced(c, "observation_not_line", _observation_not_line, c)
     _traced(c, "program_model", _program_model, c, envelope)
     _traced(c, "pricing_not_assumption", _pricing_not_assumption, c)
     _traced(c, "recite_exclusions", _recite_exclusions, c, envelope.get("atoms") or [])

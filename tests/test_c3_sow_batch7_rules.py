@@ -398,3 +398,51 @@ def test_a_pivot_tally_row_is_never_a_fact():
     env = {"c3_brief": {"sections": {"scope_of_work": [{"id": "a", "text": "Detail: Test Clock | Count: 1"},
                                                        {"id": "b", "text": "Install the replacement clocks at each site."}]}}, "atoms": []}
     assert [f["id"] for f in m.facts(env)] == ["b"]
+
+
+# --- 010120 B-: every display stays, observations, the doubled address -------
+
+def test_when_every_display_stays_no_line_places_a_display(monkeypatch):
+    monkeypatch.setattr(m, "purtera_standards", lambda fam: {
+        "method_steps": ["Review each intended display mounting location with the onsite contact before installation.",
+                         "Mount each video bar at its designated location and connect it to its display."],
+        "customer_responsibilities": ["Provide the final display locations and mounting heights before drilling or permanent installation."],
+        "assumptions": ["Power receptacles and cabling are operational and long enough for the installed display positions."],
+        "deliverable_outcomes": ["Displays mounted at the approved locations and heights.", "Completion confirmed with the onsite contact."]})
+    c = _content()
+    c["deliverables"] = [{"item": "Work Completion Report", "description": ["Displays mounted at the approved locations and heights."]}]
+    facts = ["The two TVs in the front of the room will stay mounted in Current Position - No Change is needed for them.",
+             "mounted on wall between both TV's"]
+    m._apply_standards(c, "av_conference_room", facts)
+    every = [t for t in _texts(c, "scope") if t != "Closeout"] + _texts(c, "customer_responsibilities") + _texts(c, "assumptions")
+    assert every == ["Mount each video bar at its designated location and connect it to its display."]
+    assert c["deliverables"][0]["description"] == ["Completion confirmed with the onsite contact."]
+
+
+def test_displays_the_job_mounts_keep_their_placement_lines(monkeypatch):
+    monkeypatch.setattr(m, "purtera_standards", lambda fam: {
+        "method_steps": ["Review each intended display mounting location with the onsite contact before installation."]})
+    c = _content()
+    m._apply_standards(c, "av_conference_room", ["The old TVs will stay in the lobby.", "Mount two (2) new 65-inch displays in Room 4."])
+    assert "Review each intended display mounting location with the onsite contact before installation." in _texts(c, "scope")
+
+
+def test_a_survey_observation_is_not_a_task_or_an_assumption():
+    c = _content()
+    c["scope"] = [{"text": "There are two large TVs mounted on the front wall of the room.", "cites": ["a"]},
+                  {"text": "One TV is wall-mounted with an articulating arm mount.", "cites": ["b"]},
+                  {"text": "Site survey and assessment has already been completed by SHI's internal team.", "cites": ["c"]},
+                  {"text": "Existing speakers are dropping down from the ceiling and are to be decommissioned.", "cites": ["d"]}]
+    c["assumptions"] = [{"text": "One of the Neat devices is currently on a tripod.", "cites": ["e"]},
+                        {"text": "There are four TVs that will remain in place on the floor.", "cites": ["f"]},
+                        {"text": "There is no impact to production during the installation.", "cites": ["g"]}]
+    m._observation_not_line(c)
+    assert _texts(c, "scope") == ["Existing speakers are dropping down from the ceiling and are to be decommissioned."]
+    assert _texts(c, "assumptions") == ["There are four TVs that will remain in place on the floor.",
+                                        "There is no impact to production during the installation."]
+
+
+def test_a_street_carrying_its_city_is_not_given_it_twice():
+    got = m._sites({}, {"sites": [{"name": "6501 Legacy Dr, Plano, TX 75024, Plano, TX 75024", "address": "6501 Legacy Dr, Plano, TX 75024",
+                                   "city": "Plano", "state": "TX", "postal_code": "75024"}]})
+    assert got[0]["name"] == "6501 Legacy Dr, Plano, TX 75024" and got[0]["address"] == "6501 Legacy Dr, Plano, TX 75024"
