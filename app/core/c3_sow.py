@@ -951,6 +951,14 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             continue
         if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
             continue  # gear the job does not touch
+        # Never a license, subscription or service contract as a material,
+        # nor a line an exclusion names (010043 pass V: "Three (3) Verkada
+        # ... License Capacity Increase licenses" restored to Customer
+        # Provided Materials beside "Camera licensing ..." out of scope).
+        if lst in ("customer_materials", "provider_materials", "equipment_in_scope") and (
+                re.search(r"(?i)\blicen[cs]es?\b|\bsubscriptions?\b|smart ?net|\bservice (agreement|contract)\b", text)
+                or any(_collides(text, str(o.get("text") if isinstance(o, dict) else o)) for o in content.get("out_of_scope") or [])):
+            continue
         # A line the SOW elsewhere calls optional is not put back as a firm
         # one (010082 pass T: "Assume a project survey is required" restored
         # beside "Determine whether a site survey is required, as survey is optional").
@@ -5225,6 +5233,70 @@ def _no_broader_than_source(c: dict[str, Any], atoms: list[dict[str, Any]]) -> N
         c[k] = keep
 
 
+def _no_repeat_lines(c: dict[str, Any]) -> None:
+    """A writer line repeating a cited line of the same list goes (010043
+    pass V: "All cable runs are under 200 feet." beside the cited "All cable
+    runs are under two hundred (200) feet."). Counts are read as digits;
+    only an uncited, non-standard line goes, never a cited one."""
+    norm = lambda t: _toks(_digits(str(t)))
+    for k in ("assumptions", "customer_responsibilities", "out_of_scope", "provider_tools", "provider_materials", "customer_materials"):
+        lst = c.get(k) or []
+        cited = [norm(x.get("text")) for x in lst if isinstance(x, dict) and (x.get("cites") or x.get("standard"))]
+        keep = []
+        for x in lst:
+            if isinstance(x, dict) and not x.get("cites") and not x.get("standard"):
+                a = norm(x.get("text"))
+                if a and any(len(a & b) >= 0.85 * max(len(a), len(b)) for b in cited):
+                    continue
+            keep.append(x)
+        c[k] = keep
+
+
+def _standards_coverage(c: dict[str, Any]) -> None:
+    """A standard step set aside because a deal step says it comes back when
+    no final step does (010043 pass V: "Terminate and label each cable run
+    at the camera location and the IDF" suppressed as "a cited deal step ...
+    says it", and the writer's own copy was gone too, so the SOW never
+    terminated a cable). Checked on the final task list; the step returns
+    to the group whose steps share the most of its objects, else before
+    Closeout."""
+    sc = c.setdefault("scope", [])
+    cover = re.compile(r"(?i)says it|takes its place|does the same work|already says|one_statement")
+    lines = [x for x in sc if isinstance(x, dict) and x.get("kind") != "heading"]
+    have = [cl for x in lines for cl in _clauses(str(x.get("text")))]
+    for e in c.get("standards_suppressed") or []:
+        if not (isinstance(e, dict) and e.get("section") == "method_steps" and cover.search(str(e.get("reason")))):
+            continue
+        t = str(e.get("text"))
+        cls = _clauses(t)
+        # Missing means its lead action is nowhere: a counted deal step that
+        # took the slot ("Mount four (4) Samsung displays") still mounts.
+        if not cls or any(cls[0][0] == dv for dv, _, _ in have) or _said(t, lines, 0.85):
+            continue
+        obj = _object_toks(t)
+        best, at, cur, score = None, None, None, 0
+        for i, x in enumerate(sc):
+            if isinstance(x, dict) and x.get("kind") == "heading":
+                cur = i
+                continue
+            n = len(obj & _object_toks(str(x.get("text"))))
+            if n > score and not (cur is not None and _CLOSING_HEAD.search(str(sc[cur].get("text")))):
+                best, score = cur, n
+        if best is not None or score:
+            end = next((j for j in range((best or 0) + 1, len(sc)) if isinstance(sc[j], dict) and sc[j].get("kind") == "heading"), len(sc))
+            # Ahead of the group's testing, unless it is a test itself.
+            test = re.compile(r"(?i)\s*(test|verify|validate|certify)\b")
+            at = next((j for j in range((best or 0) + 1, end) if not test.match(t) and test.match(str(sc[j].get("text")))), end)
+        else:
+            at = next((j for j, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading" and _CLOSING_HEAD.search(str(x.get("text")))), len(sc))
+        line = {"text": t, "cites": [], "kind": "method", "standard": True}
+        sc.insert(at, line)
+        lines.append(line)
+        have += cls
+        e["reason"] = str(e.get("reason")) + "; restored: no final step says it"
+    c["scope"] = sc
+
+
 def _one_statement(c: dict[str, Any]) -> None:
     """Each step is said once (pass V: standards appended beside the deal
     lines that already say them; 010082 "Arrive onsite during the
@@ -7396,6 +7468,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "field_sequence", _field_sequence, c)
     _traced(c, "no_install_wording", _no_install_wording, c, envelope.get("atoms") or [])
     _traced(c, "followup_not_promised", _followup_not_promised, c, envelope.get("atoms") or [])
+    _traced(c, "standards_coverage", _standards_coverage, c)
+    _traced(c, "no_repeat_lines", _no_repeat_lines, c)
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)

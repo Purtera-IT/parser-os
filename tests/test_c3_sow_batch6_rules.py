@@ -396,3 +396,32 @@ def test_a_line_that_drops_its_sources_limit_goes():
              {"id": "c", "text": "Only 1 store per time zone"}]
     m._no_broader_than_source(c, atoms)
     assert [x["text"][:4] for x in c["assumptions"]] == ["Only"]
+
+
+# --- 010043 pass V -------------------------------------------------------------
+
+def test_a_standard_suppressed_for_coverage_comes_back_when_nothing_covers_it():
+    c = _content()
+    c["scope"] = [{"text": "Cabling", "cites": [], "kind": "heading"},
+                  {"text": "Run approximately 146 ft of cable from the IDF to the front door camera location.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Test each installed cable for continuity and pinout.", "cites": ["b"], "kind": "fact"},
+                  {"text": "Mount four (4) cameras at the confirmed door locations.", "cites": ["c"], "kind": "fact"},
+                  {"text": "Closeout", "cites": [], "kind": "heading"}]
+    c["standards_suppressed"] = [
+        {"section": "method_steps", "text": "Terminate and label each cable run at the camera location and the IDF.",
+         "reason": "a cited deal step with its own count or exception says it"},
+        {"section": "method_steps", "text": "Mount each camera at its confirmed location.",
+         "reason": "a cited deal step with its own count does the same work and takes its place"}]
+    m._standards_coverage(c)
+    got = [x["text"][:20] for x in c["scope"]]
+    assert got.index("Terminate and label ") == 2 and got.count("Mount each camera at") == 0
+    assert c["standards_suppressed"][0]["reason"].endswith("restored: no final step says it")
+
+
+def test_an_uncited_repeat_of_a_cited_line_goes():
+    c = _content()
+    c["assumptions"] = [{"text": "All cable runs are under two hundred (200) feet.", "cites": ["a"], "kind": "fact"},
+                        {"text": "All cable runs are under 200 feet.", "cites": [], "kind": "method"},
+                        {"text": "Standard ladders reach every camera location.", "cites": [], "kind": "method"}]
+    m._no_repeat_lines(c)
+    assert [x["text"][:12] for x in c["assumptions"]] == ["All cable ru", "Standard lad"]
