@@ -1091,6 +1091,16 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # The writer's family call wobbles run to run (010082: low_voltage_cabling,
     # then smart_hands_general, losing the cabling standards). A generic call
     # yields to what the facts plainly are.
+    # Dismantle-and-pack is for jobs that only take gear out: a job whose
+    # scope installs new gear in its place is a replacement (010376 pass U:
+    # "Replace a 5K UPS", "install the new UPS and battery pack" routed to
+    # decommission_packing, so the UPS standards never fired and its
+    # "Hardware installation" exclusion negated the sold install).
+    if family == "decommission_packing":
+        scope_txt = " ".join(f["text"] for f in fs if f["section"] == "scope_of_work").lower()
+        if len(re.findall(r"\b(install(s|ed|ing)?|replace(s|d|ment)?|replacing|upgrade|swap)\b(?![^.]{0,20}\bnot\b)", scope_txt)) >= 2 \
+                and not re.search(r"\bno (new )?(install|installation)\b|\bnot (be )?install", scope_txt):
+            family = "smart_hands_general"
     if family in ("smart_hands_general", "other"):
         blob = " ".join(f["text"] for f in fs).lower()
         for fam_, pat in (("low_voltage_cabling", r"\bcat ?6a?\b|\bcat ?5e?\b|cable runs?|\bdrops?\b.{0,30}\b(cable|run|data)|terminat"),
@@ -1564,6 +1574,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             if isinstance(x, dict) and isinstance(x.get("text"), str):
                 x["text"] = re.sub(r"(?i)\b(for|with|to|of|on) the above(?:[- ](?:gear|items?|equipment|devices?|list|hardware))?\b",
                                    r"\1 the installed equipment", x["text"])
+    _traced(content, "exclusion_not_task", _no_exclusion_negates_task, content)
+    _traced(content, "own_documents", _own_documents, content)
     _traced(content, "summary_order", _summary_order, content)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
@@ -1605,6 +1617,71 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
 
 #: A cleanup sentence: it hauls or clears trash, debris or packaging (not
 #: "clean up the existing cabling", not disposing of replaced gear).
+_NOMINAL_VERB = {"installation": "instal", "install": "instal", "installing": "instal", "mounting": "mount", "removal": "remov",
+                 "replacement": "replac", "configuration": "configur", "cabling": "cabl", "testing": "test",
+                 "relocation": "relocat", "decommissioning": "decommission", "packing": "pack", "labeling": "label"}
+_GENERIC_OBJ = frozenset("hardware equipment device devices system systems new the any all of".split())
+
+
+def _no_exclusion_negates_task(content: dict[str, Any]) -> None:
+    """An exclusion never takes back a task the SOW sells: the item of an
+    out-of-scope list that names a cited task's work on generic gear goes
+    from the list ("Hardware installation, configuration, ..." beside
+    "Install one (1) APC Smart-UPS", 010376 pass U); an item naming other
+    gear stays ("installation of new in-wall cabling")."""
+    tasks = [str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"
+             and x.get("cites") and not re.search(r"(?i)\b(not|no|never|except)\b", str(x.get("text")))]
+    verb_of = lambda t: (lambda v: v[:-1] if v.endswith("e") else v)(_stem((re.findall(r"[a-z]+", t.lower()) or [""])[0]))
+    by_verb: dict[str, set[str]] = {}
+    for t in tasks:
+        by_verb.setdefault(verb_of(t), set()).update(_object_toks(t))
+    if not by_verb:
+        return
+    out = []
+    for x in content.get("out_of_scope") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        items = [p_ for p_ in re.split(r",\s*(?:or\s+|and\s+)?|\s+or\s+", t.rstrip(".")) if p_.strip()]
+        # A list's trailing "of the existing displays" is every item's object.
+        tail = re.search(r"(?i)\b(?:of|for)\s+(.+)$", t.rstrip("."))
+        shared = {w for w in re.findall(r"[a-z]+", tail.group(1).lower())} - _GENERIC_OBJ - set(_NOMINAL_VERB) if tail else set()
+        keep = []
+        for it in items:
+            words = re.findall(r"[a-z]+", it.lower())
+            # "packing materials" is a supply, not packing work.
+            verbs = [_NOMINAL_VERB[w] for i, w in enumerate(words) if w in _NOMINAL_VERB
+                     and not (i + 1 < len(words) and words[i + 1] in ("materials", "material", "supplies", "tape", "boxes"))]
+            own = {w for w in words if w not in _NOMINAL_VERB and w not in _GENERIC_OBJ}
+            objs = own or shared
+            hit = verbs and verbs[0] in by_verb and (not objs or {_stem(w) for w in objs} & by_verb[verbs[0]])
+            if hit and len(items) > 1 and not (shared and not own and "existing" in shared):
+                continue
+            keep.append(it.strip())
+        if len(keep) < len(items) and isinstance(x, dict):
+            body = _join(keep)
+            if re.search(r"\bor\b", t) and not re.search(r"\band\b", t):
+                body = re.sub(r",? and (?!.*\band\b)", ", or " if len(keep) > 2 else " or ", body)
+            x = {**x, "text": body[:1].upper() + body[1:] + "."}
+        out.append(x)
+    content["out_of_scope"] = out
+
+
+def _own_documents(content: dict[str, Any]) -> None:
+    """Provider supplies its own certificate of insurance; the customer gives
+    the site's requirements (010376 pass U: "Provide PurTera's certificate of
+    insurance (COI) before site work begins" as a customer duty)."""
+    own = re.compile(r"(?i)\b(purtera|provider)'?s\s+(certificate of insurance|coi|insurance certificate|w-?9)\b")
+    for x in list(content.get("customer_responsibilities") or []):
+        if not (isinstance(x, dict) and own.search(str(x.get("text")))):
+            continue
+        doc = "certificate of insurance (COI)" if re.search(r"(?i)coi|insurance", str(x["text"])) else "W-9"
+        when = " before site work begins" if re.search(r"(?i)before (site )?work|before arrival|prior to", str(x["text"])) else ""
+        x["text"] = f"Provide the site's {doc} requirements{when}."
+        asm = content.setdefault("assumptions", [])
+        line = f"Provider will provide its {doc} to the site{when}, as the site requires."
+        if not _said(line, asm, 0.6):
+            asm.append({"text": line, "cites": list(x.get("cites") or []), "kind": "fact"})
+
+
 _CLEANUP = re.compile(r"(?i)^(?!.*\b(install|mount|replace|configure|connect)(s|ed|ing)?\b).*\b(trash|debris|packing materials?|packaging)\b")
 
 
@@ -1727,7 +1804,18 @@ def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dic
     if not (recycles or hauls):
         return
     work = r"e-?waste|recycl\w*|dispos\w*( of)?" if recycles else r"(?!x)x"
+    # A summary sentence that is the other vendor's work, or rests only on
+    # its lines, is that vendor's sentence (010376 pass U: "Provider will use
+    # a box truck with liftgate ..." from "ThinkTLS will provide dedicated
+    # vehicles"; "Provider will eWaste the removed UPS").
+    theirs = r"(?:" + work + r"|use (a |the )?(box )?truck|transport\w*|haul\w*|pick ?up)" if hauls else r"(?:" + work + r")"
     for x in content.get("overview") or []:
+        if isinstance(x, dict) and name and re.match(r"(?i)\s*provider will\b", tx(x)) and (
+                (x.get("cites") and all(c in tp for c in x["cites"])) or re.match(r"(?i)\s*provider will\s+" + theirs + r"\b", tx(x))):
+            x["text"] = re.sub(r"(?i)^\s*provider will\b", f"{name} will", tx(x))
+    for x in content.get("overview") or []:
+        if isinstance(x, dict) and name and tx(x).startswith(f"{name} will"):
+            continue
         if isinstance(x, dict):
             t = re.sub(r"(?i)\s*(,\s*|\band\s+)+(?:then\s+)?(?:" + work + r")\b[^,.;]*", "", tx(x))
             x["text"] = t if t.endswith(".") else t.rstrip(" ,;") + "."
@@ -4862,6 +4950,20 @@ def _roles_and_hours(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     day = next((f for f in fs if re.search(r"(?i)\b(a |one )?full (work ?)?day\b|\bone[- ]day (visit|job|engagement)\b", f["text"])
                 and not f["text"].rstrip().endswith("?")), None)
     sch = content.setdefault("schedule", [])
+    # "two technicians for one business day" (010376 pass U: the staffing and
+    # the duration sat only inside an assumption; Duration read TBD).
+    if not roles:
+        for f in fs:
+            m2 = re.search(r"(?i)\b(one|two|three|four|\d)\s+(?:[\w-]+\s+)?(?:technicians?|techs?)\s+for\s+(?:one|a|1)\s+(?:full\s+)?"
+                           r"(?:business |work |onsite )?day\b", f["text"])
+            if m2 and not f["text"].rstrip().endswith("?"):
+                w = m2.group(1).lower()
+                techs = techs or (int(w) if w.isdigit() else "one two three four".split().index(w) + 1)
+                day = day or f
+                if not any(re.match(r"(?i)\s*number of resources", str(x.get("text"))) for x in sch if isinstance(x, dict)):
+                    sch.append({"text": f"Number of Resources: {_words(techs)} ({techs}) technician{'s' if techs > 1 else ''}",
+                                "cites": [f["id"]], "kind": "fact"})
+                break
     if day and techs and not any(re.match(r"(?i)\s*(estimated duration|duration)", str(x.get("text"))) for x in sch if isinstance(x, dict)):
         sch.append({"text": f"Estimated Duration: one (1) onsite workday of eight (8) hours per technician; {_words(techs)} ({techs}) "
                             f"technicians, {_words(8 * techs)} ({8 * techs}) combined hours",

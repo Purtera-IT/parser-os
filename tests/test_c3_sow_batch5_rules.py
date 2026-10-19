@@ -301,3 +301,27 @@ def test_labor_only_gates_the_staging_section_and_keeps_the_customers_standard_d
     m._grounding(c, fs)
     assert not any("MAC" in x["text"] for x in c["scope"])
     assert c["customer_responsibilities"] and c["customer_materials"][0]["text"] == "Asset tags for each POS terminal."
+
+
+# --- 010376 C-: replacement family, exclusions, vendor's summary, slots, COI ----
+
+def test_an_exclusion_item_never_takes_back_a_sold_task():
+    c = {"scope": [{"text": "Install one (1) APC Smart-UPS SRT 5000VA UPS.", "cites": ["a"], "kind": "fact"}],
+         "out_of_scope": [{"text": "Hardware installation, configuration, programming, or system testing.", "cites": [], "kind": "method", "standard": True},
+                          {"text": "Installation of new in-wall cabling.", "cites": [], "kind": "method"}]}
+    m._no_exclusion_negates_task(c)
+    assert [x["text"] for x in c["out_of_scope"]] == ["Configuration, programming, or system testing.", "Installation of new in-wall cabling."]
+
+
+def test_staffing_and_one_business_day_fill_the_slots():
+    c = {"schedule": []}
+    m._roles_and_hours(c, [_fact("d", "two technicians for one business day to remove the existing equipment and install the new UPS")])
+    texts = [x["text"] for x in c["schedule"]]
+    assert "Number of Resources: two (2) technicians" in texts and any(t.startswith("Estimated Duration") for t in texts)
+
+
+def test_provider_supplies_its_own_coi():
+    c = {"customer_responsibilities": [{"text": "Provide PurTera's certificate of insurance (COI) before site work begins.", "cites": ["c"], "kind": "fact"}]}
+    m._own_documents(c)
+    assert c["customer_responsibilities"][0]["text"] == "Provide the site's certificate of insurance (COI) requirements before site work begins."
+    assert c["assumptions"][0]["text"].startswith("Provider will provide its certificate of insurance (COI)")
