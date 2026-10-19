@@ -756,12 +756,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                           ("pos_install_refresh", r"\bpos\b|point of sale|register lanes?|kitchen printer")):
             if re.search(pat, blob) and len(re.findall(pat, blob)) >= 2:
                 family = fam_
+                break
         # A phone swap or recurring support call that came back "other" is smart
         # hands, whose standards carry those blocks (010326 pass P: "other", no
         # standards at all).
         if family == "other" and re.search(r"\b(phones?|handsets?|ata'?s?)\b.{0,60}\b(swap|replace|install|deploy)|weekly (on-?site|visit)|staff aug|monitor arms?", blob):
             family = "smart_hands_general"
-                break
         got["job_family"] = family
     deal_no = (re.match(r"\s*(\d{6})", str(crm_rec.get("deal_name") or "")) or [None, ""])[1]
     std = standard_items(family, deal_no, [f["text"][:300] for f in fs
