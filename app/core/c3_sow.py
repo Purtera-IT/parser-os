@@ -778,10 +778,81 @@ def _decisions(rule: str, before: dict, after: dict) -> list[dict[str, Any]]:
     return out
 
 
+#: Rules whose drops are guarded: they may not remove the only line that
+#: cites a deal fact (010171 lost its network drops and floor outlets to
+#: "standards" and its passthrough routing to "tidy"; 010198 its register
+#: install and 010279 its RFP task line to "grounding").
+GUARDED_RULES = frozenset({"standards", "tidy", "grounding"})
+#: Lines that are noise whatever they cite: a greeting, PurTera's pitch, a
+#: leasing brochure, a picture, presales paperwork, lease terms, a hedged
+#: follow-up or a priced maybe. A rule's drop of such a line stands.
+_NOISE_TEXT = re.compile(
+    r"(?i)^\s*(hi|hello|hey|good (morning|afternoon)|hope (you|all|everyone)|thanks|thank you|happy)\b|hope you'?re|both doing well|"
+    r"\bvetted\b|\d+\+? countries|engineers across|our capabilities|global (network|footprint)|handholding|hand-holding|"
+    r"deep familiarity|nationwide coverage|we pride|white[- ]glove|leasing (team|agent|office)|for lease|\brsf\b|rentable|"
+    r"\battached (floor ?plan|drawing|diagram|layout|map)|complete the sow|for the sow|to quote|for (the )?quot(e|ing)|"
+    r"pricing purposes|residual value|lease term|financing (terms|agreement)|depending on (cost|price|budget)|"
+    r"for an additional (cost|fee)|follow-?up (visit|day)|return (visit|trip)|come back|\bbench(ed|ing)\b|"
+    r"^\s*(the )?[\w ()#-]{0,40}\b(contains|features|is equipped with|is furnished with|is shown with)\b")
+
+
+def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before: dict[str, list]) -> list[dict[str, Any]]:
+    """Put back a cited line a rule removed when one of its facts is cited by
+    no surviving line, unless the line is noise (see _NOISE_TEXT, and the
+    atoms in content["_noise_atoms"]: captions, small talk, brochures, open
+    questions, existing gear, labor-only logistics). When a surviving line
+    says the same thing (a standard step), the fact moves onto that line's
+    cites instead. Each guarded drop is a sow_keep "keep" label."""
+    after = _snap(content)
+    noise = set(content.get("_noise_atoms") or [])
+    live = lambda: [x for k in _LIST_SECTION for x in content.get(k) or [] if isinstance(x, dict) and x.get("kind") != "heading"]
+    out = []
+    for cites, (lst, text) in before.items():
+        if cites in after:
+            continue
+        alive = {c for x in live() for c in x.get("cites") or []}
+        orphan = [c for c in cites if c not in alive]
+        extra = str(content.get("_noise_re") or "")
+        if not orphan or any(c in noise for c in cites) or _NOISE_TEXT.search(text) or (extra and re.search(extra, text, re.I)):
+            continue
+        if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
+            continue  # gear the job does not touch
+        if lst == "schedule" or (lst == "overview" and re.match(r"^[A-Z][\w /&-]{1,30}:\s", text)):
+            continue  # label hygiene: the schedule's own labels, form residue in the summary
+        if _LEDGER.search(text) or re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}|point of contact|\b(main|primary|tech|backup) contact\b|"
+                                            r"escalation contact|customer-side project manager|hours of operation|"
+                                            r"monday.{0,15}friday.{0,30}8:?0?0?\s*(am|a\.m\.).{0,10}5:?0?0?\s*(pm|p\.m\.)", text, re.I):
+            continue  # accounting fields, contacts and 8-5 site hours have their own template blocks
+        if any(_said(text, [str(t)], 0.6) for d in content.get("deliverables") or [] if isinstance(d, dict)
+               for t in d.get("description") or []):
+            continue  # moved into the Work Completion Report (photos, serials)
+        dup = next((x for x in content.get(lst) or [] if isinstance(x, dict) and x.get("kind") != "heading"
+                    and _said(text, [x], 0.6)), None)
+        if dup is not None:
+            dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + orphan))
+            how = "merged"
+        else:
+            orig = next((x for x in lists_before.get(lst) or [] if isinstance(x, dict) and tuple(x.get("cites") or []) == cites), None)
+            if orig is None:
+                continue
+            items = content.setdefault(lst, [])
+            close = next((i for i, y in enumerate(items) if isinstance(y, dict) and y.get("kind") == "heading"
+                          and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(items)) if lst == "scope" else len(items)
+            items.insert(close, orig)
+            how = "restored"
+        out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(cites), "value": "keep", "was": _LIST_SECTION[lst],
+                    "text": text[:300], "guard": how})
+    return out
+
+
 def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     before = _snap(content)
+    lists_before = {k: list(content.get(k) or []) for k in _LIST_SECTION}
     result = fn(*args, **kwargs)
-    content.setdefault("rule_decisions", []).extend(_decisions(rule, before, _snap(content)))
+    guarded = _guard_drops(content, rule, before, lists_before) if rule in GUARDED_RULES else []
+    kept = {tuple(g["atom_ids"]) for g in guarded}
+    content.setdefault("rule_decisions", []).extend(
+        [d for d in _decisions(rule, before, _snap(content)) if not (d["value"] == "drop" and tuple(d["atom_ids"]) in kept)] + guarded)
     return result
 
 
@@ -1028,6 +1099,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # Picture captions never trigger standards (010120: "Two large TVs are
     # mounted on the front wall" fired the display-mounting block).
     writer_snap = _snap(content)
+    content["_noise_atoms"], content["_noise_re"] = _noise(envelope, fs)
     _traced(content, "standards", _apply_standards, content, family, [f["text"] for f in fs if not f.get("pictured")],
                      [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")])
     _traced(content, "tidy", _tidy, content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
@@ -1208,6 +1280,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["facts_given"] = len(fs)
     # Everything the rules changed after the writer, rule by rule where traced,
     # the rest as "writer_rules": the queue SowSmith shows as "Teach the heads".
+    content.pop("_noise_atoms", None)
+    content.pop("_noise_re", None)
     content["teachable"] = {k: v[0] for k, v in TEACHABLE.items()}
     traced = {(tuple(d["atom_ids"]), d["head"]) for d in content.get("rule_decisions") or []}
     content["rule_decisions"] = (content.get("rule_decisions") or []) + [
@@ -1243,6 +1317,28 @@ def _ship_list_siblings(content: dict[str, Any], envelope: dict[str, Any], fs: l
         if re.search(r"(?i)we'?d ship( out)?|we (will|'ll) (ship|provide)|customer (will )?provide|provided by (the )?customer|ship(ping)? out", f.get("under") or "") \
                 and _ITEM_LINE.match(f["text"].strip()) and not _said(f["text"], cm, 0.6):
             cm.append({"text": f["text"].strip().rstrip("."), "cites": [f["id"]], "kind": "fact"})
+
+
+def _noise(envelope: dict[str, Any], fs: list[dict[str, Any]]) -> tuple[list[str], str]:
+    """Atoms (and a line pattern) whose drop by a rule is noise, never
+    guarded: pictures, small talk and signatures, brochure and floor-plan
+    documents, open questions, quoted history, existing gear, optional
+    surveys, and on a labor-only bid the RFP's logistics duties PurTera
+    declined (010279: accept delivery, store, tag, transport)."""
+    bro_ids = {str(d.get("artifact_id")) for d in envelope.get("documents") or []
+               if re.search(r"(?i)floor ?plan|concept plan|space plan|test[ -]?fit|leasing|brochure|flyer|availability|marketing", str(d.get("filename") or ""))}
+    labor_only = any(re.search(r"(?i)\blabor[- ]only\b|installation labor only|onsite labor only|field labor only", f["text"]) for f in fs)
+    logi = (r"accept,? (and )?(verify )?(the )?deliver|receiv(e|ing) (the )?(equipment|hardware|shipments?)|\bwarehous|"
+            r"\bstor(e|ed|ing|age)\b|\btransport|\bkitting\b|proof of delivery|inventory recap|asset[- ]tag") if labor_only else ""
+    noise_txt = re.compile(r"(?i)\b(we|they) (already |currently )?have\b|\balready (have|installed|in place)\b|"
+                           r"survey.{0,60}\b(optional|contingent|if needed|probably not|not needed)\b" + ("|" + logi if logi else ""))
+    ids = {f["id"] for f in fs if f.get("pictured") or f.get("quoted") or noise_txt.search(f["text"])
+           or (f.get("asked") and f.get("section") != "answered_question")
+           or re.search(r"(?i)open questions?|questions? for (the )?customer|to confirm|tbd items", str(f.get("under") or ""))}
+    ids |= {str(a.get("id")) for a in envelope.get("atoms") or []
+            if str(a.get("artifact_id")) in bro_ids
+            or str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") in ("small_talk", "signature")}
+    return sorted(ids), logi
 
 
 COVER_FACTS = int(os.environ.get("SOWSMITH_C3_SOW_COVER_FACTS", "300"))
@@ -1622,12 +1718,18 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         # Scope: the standard steps lead the work group; the closing steps go
         # under the closing heading.
         tail = [it for it in std if it["text"].lower().startswith(("notify", "confirm completion", "clean", "inform", "remove debris",
-                                                                     "remove all debris", "dispose", "haul"))]
+                                                                     "remove all debris", "dispose", "haul"))
+                or re.match(r"(?i)remove\b.{0,30}\bdebris", it["text"])]
         # Test and validation steps follow the work they test (000123: tests
         # and the test print ahead of the device installs).
         checks = [it for it in std if it not in tail and re.match(
             r"(?i)(perform (functional |basic )?test|test |verify|validate|confirm (the installed|display|each)|power on each)", it["text"])
             and not re.search(r"(?i)\b(required|present|onsite|on site|available|undamaged|before installation)\b", it["text"])]
+        # Testing comes before the fixes it finds (010012: "Correct any
+        # workmanship deficiencies identified during testing" ahead of the
+        # power-on and function checks).
+        fixes = [it for it in std if it not in tail and it not in checks and re.match(r"(?i)correct\b.{0,40}\bdeficienc", it["text"])]
+        checks = checks + fixes
         lead = [it for it in std if it not in tail and it not in checks]
         heads = [i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"]
         work = [i for i in heads if not re.search(r"(?i)arriv|access|check|start|prep|clos|clean|wrap|complet", str(items[i].get("text")))]
@@ -1919,6 +2021,17 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # requirements needed to complete the SOW").
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and re.search(
         r"(?i)complete the sow|for the sow|to quote|for (the )?quot(e|ing)|pricing purposes", str(x.get("text"))))]
+    # A verb-less description of a room or its furniture is a caption, never a
+    # task (010012: "Conference Room 2102 contains a large rectangular table
+    # with ten chairs", a leasing floor-plan caption, in the task list).
+    noise_ids = set(content.get("_noise_atoms") or [])
+    capt = [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+            and x not in desc and (room_desc(x) or re.match(r"(?i)\s*(the )?[\w ()#-]{0,40}\b(is shown with|has (a|an|two|three|\d+))\b", str(x.get("text"))))
+            and not re.match(r"(?i)\s*(install|mount|remove|replace|connect|run|place|provide|confirm|verify)\b", str(x.get("text")))]
+    for x in capt:
+        content["scope"].remove(x)
+        if not (pictured(x) or (x.get("cites") and all(c in noise_ids for c in x["cites"]))):
+            desc.append(x)  # a site condition the job states: an assumption
     for x in desc:
         if x in content["scope"]:
             content["scope"].remove(x)

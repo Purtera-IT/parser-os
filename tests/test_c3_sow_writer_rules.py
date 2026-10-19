@@ -153,3 +153,42 @@ def test_standards_conditions_compile_and_gate():
     assert m._standard_applies(park, ["Install two registers."])[0]
     cfg = next(t for t in data["network_switch_refresh"]["customer_responsibilities"] if "fully configured" in t)
     assert m._standard_applies(cfg, [])[0]
+
+
+def _drop_rule(content, text):
+    content["scope"] = [x for x in content["scope"] if x.get("text") != text]
+
+
+def test_guard_restores_the_only_line_citing_a_fact():
+    content = {"scope": [{"text": "Route cabling through the wall passthroughs.", "cites": ["a1"], "kind": "fact"},
+                         {"text": "Closeout", "cites": [], "kind": "heading"}]}
+    m._traced(content, "tidy", _drop_rule, content, "Route cabling through the wall passthroughs.")
+    assert content["scope"][0]["text"].startswith("Route cabling")
+    d = content["rule_decisions"]
+    assert [(x["value"], x["guard"]) for x in d] == [("keep", "restored")]
+
+
+def test_guard_moves_the_fact_onto_a_surviving_duplicate():
+    content = {"scope": [{"text": "Power on the installed devices.", "cites": ["a1"], "kind": "fact"},
+                         {"text": "Power on the installed devices.", "cites": [], "kind": "method", "standard": True}]}
+    m._traced(content, "standards", lambda: content.__setitem__("scope", content["scope"][1:]))
+    assert content["scope"] == [{"text": "Power on the installed devices.", "cites": ["a1"], "kind": "method", "standard": True}]
+    assert content["rule_decisions"][0]["guard"] == "merged"
+
+
+def test_guard_lets_noise_and_covered_facts_go():
+    content = {"_noise_atoms": ["n1"],
+               "scope": [{"text": "We pride ourselves on white-glove service.", "cites": ["p1"], "kind": "fact"},
+                         {"text": "Mount the camera.", "cites": ["n1"], "kind": "fact"},
+                         {"text": "Install the camera.", "cites": ["c1"], "kind": "fact"},
+                         {"text": "Install the camera on the north wall.", "cites": ["c1", "c2"], "kind": "fact"}]}
+    m._traced(content, "grounding", lambda: content.__setitem__("scope", content["scope"][3:]))
+    assert [x["text"] for x in content["scope"]] == ["Install the camera on the north wall."]
+    assert all(d["value"] == "drop" for d in content["rule_decisions"])
+
+
+def test_no_verbless_caption_in_scope():
+    content = {"overview": [], "scope": [{"text": "Conference Room 2102 contains a large rectangular table with ten chairs.",
+                                          "cites": ["c"], "kind": "fact"}]}
+    m._grounding(content, [_fact("c", "The conference room contains a large table")])
+    assert not content["scope"]
