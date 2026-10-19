@@ -1448,6 +1448,13 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     def contradicted(t: str) -> bool:
         if not stays:
             return False
+        # The object of the work is what the verb acts on, not every noun the
+        # line names (010120: "Mount each video bar ... connect it to its
+        # display" was suppressed by "the TVs stay").
+        vm = re.search(r"(?i)\b(mount|install|remove|replace|relocate|dismantle|dress|connect|power|adjust|align|inspect)\w*\b", t)
+        if vm and re.search(r"(?i)^\W*(each |the |all )?(of the )?(\w+ )?(video bars?|table controllers?|controllers?|neat|bar|soundbar|network switch|switch)\b", t[vm.end():vm.end() + 30]):
+            return False
+        t = t[max(0, vm.start() - 25):vm.end() + 60] if vm and not re.search(r"(?i)backing", t) else t
         nouns = {w for w in re.findall(r"[a-z]+", t.lower()) if w in ("display", "displays", "tv", "tvs", "mount", "mounts", "backing",
                                                                        "monitor", "monitors", "speaker", "speakers", "camera",
                                                                        "cameras", "rack", "switch", "switches", "phone", "phones")}
