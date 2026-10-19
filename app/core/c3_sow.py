@@ -1286,6 +1286,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "grounding", _grounding, content, fs)
     _traced(content, "hours", _hours_basis, content, fs)
     _traced(content, "materials", _materials_hygiene, content, family, fs)
+    _traced(content, "one_supplier", _one_supplier, content, fs)
     _traced(content, "third_party", _third_party, content, envelope, fs)
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
@@ -3994,6 +3995,44 @@ def _planning_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             continue
         asm.append({"text": line, "cites": [f["id"]], "kind": "fact"})
         added += 1
+
+
+def _one_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """One item is never both Provider material and customer-provided. When
+    a Provider material line names an item that a customer material, a
+    customer duty ("Ensure the 9U rack is on site") or an assumption
+    ("The Customer-provided 9U rack ...") also gives the customer, the side
+    whose cited line is dated later wins; undated, the side more lines give
+    it to (010082 pass T: the 9U rack the customer orders sat under Provider
+    Materials beside two lines saying the customer provides it)."""
+    when = {f["id"]: str(f.get("when") or "") for f in fs}
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    latest = lambda xs: max((when.get(c, "") for x in xs if isinstance(x, dict) for c in x.get("cites") or []), default="")
+    cust_say = re.compile(r"(?i)customer[- ](provided|supplied|furnished)|customer (will )?(provides?|supplies|orders?)|\bensure\b.{0,40}\b(on ?site|delivered|available)")
+    pm = content.get("provider_materials") or []
+    for x in list(pm):
+        if not isinstance(x, dict) or x.get("standard"):
+            continue
+        key = {w for w in _toks(tx(x)) if not re.fullmatch(r"one|two|three|four|five|\d+|provid|suppl|all|required|need", w)}
+        if not key or len(key) > 4:
+            continue
+        hits = lambda k, need_say: [y for y in content.get(k) or [] if isinstance(y, dict) and y is not x
+                                    and key <= _toks(tx(y)) and (not need_say or cust_say.search(tx(y)))]
+        theirs = hits("customer_materials", False) + hits("customer_responsibilities", False) + hits("assumptions", True)
+        if not theirs:
+            continue
+        ours = [x] + [y for y in content.get("scope") or [] if isinstance(y, dict) and key <= _toks(tx(y))
+                      and re.search(r"(?i)\b(provide|supply|furnish|bring)\b", tx(y))]
+        a, b = latest(ours), latest(theirs)
+        customer_wins = (b > a) if (a or b) and a != b else len(theirs) >= len(ours)
+        if customer_wins:
+            pm.remove(x)
+            cm = content.setdefault("customer_materials", [])
+            if not _said(tx(x), cm, 0.7):
+                cm.append(x)
+        else:
+            for k in ("customer_materials",):
+                content[k] = [y for y in content.get(k) or [] if not any(y is t for t in theirs)]
 
 
 def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:

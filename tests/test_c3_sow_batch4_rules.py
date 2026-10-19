@@ -413,3 +413,22 @@ def test_mixed_hours_lead_the_assumptions_and_mark_the_basis():
     assert content["assumptions"][0]["text"].startswith("Work is performed during a mix of Business Hours")
     assert content["hours_basis"] == "mixed"
     assert not any("standard business hours" in x["text"] for x in content["assumptions"])
+
+
+def test_one_item_is_never_both_provider_material_and_customer_provided():
+    """010082 pass T: the 9U rack the customer orders under Provider Materials
+    beside "Ensure the 9U rack is on site" and "The Customer-provided 9U rack"."""
+    fs = [_fact("o", "AJ/CDW will provide/order the 9U rack"), _fact("e", "Ensure rack is on site when provider schedules work")]
+    c = {"provider_materials": [{"text": "One (1) 9U rack.", "cites": ["o"], "kind": "fact"}],
+         "customer_responsibilities": [{"text": "Ensure the 9U rack is on site when Provider schedules the work.", "cites": ["e"]}],
+         "assumptions": [{"text": "The Customer-provided one (1) 9U rack is onsite before Provider arrives.", "cites": ["e"]}],
+         "customer_materials": [], "scope": []}
+    m._one_supplier(c, fs)
+    assert c["provider_materials"] == [] and [x["text"] for x in c["customer_materials"]] == ["One (1) 9U rack."]
+    # a later dated Provider call wins
+    fs = [{**fs[0], "when": "2026-07-02"}, {**fs[1], "when": "2026-06-01"}]
+    c = {"provider_materials": [{"text": "One (1) 9U rack.", "cites": ["o"], "kind": "fact"}],
+         "customer_materials": [{"text": "One (1) 9U rack.", "cites": ["e"], "kind": "fact"}],
+         "customer_responsibilities": [], "assumptions": [], "scope": []}
+    m._one_supplier(c, fs)
+    assert len(c["provider_materials"]) == 1 and c["customer_materials"] == []
