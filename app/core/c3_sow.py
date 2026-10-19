@@ -1488,6 +1488,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _overview_covers_scope(content, fs)
     _boundary_verbs(content)
     _planning_basis(content, fs)
+    _room_counts(content)
     # "the above" points into the source note's list, not the SOW (000123
     # pass T: "Use the cords for the above.").
     for k in LISTS:
@@ -4041,6 +4042,46 @@ def _one_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         else:
             for k in ("customer_materials",):
                 content[k] = [y for y in content.get(k) or [] if not any(y is t for t in theirs)]
+
+
+def _room_counts(content: dict[str, Any]) -> None:
+    """Per-room install counts add up to the equipment count. When the task
+    lines naming a model install fewer than Equipment in Scope lists, the
+    lines that name it (summary, tasks, report) carry the full count across
+    the rooms instead of one room's (010012 pass T: "one (1) Poly X72 bar ...
+    in the Conference Room" beside "Two (2) Poly X72 bars" and a second room)."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    num = r"(?:(%s)\s*\((\d{1,3})\)|(\d{1,3}))" % _NUMW
+    for eq in content.get("equipment_in_scope") or []:
+        mm = re.match(r"(?i)\s*" + num + r"\s+(.+)$", tx(eq))
+        if not mm:
+            continue
+        n_eq = int(mm.group(2) or mm.group(3) or 0)
+        models = [w for w in re.findall(r"\b(?=[A-Za-z0-9-]*\d)(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9-]{2,}\b", mm.group(4))]
+        if n_eq < 2 or not models:
+            continue
+        def count_in(t: str) -> int | None:
+            k = re.search(r"(?i)" + num + r"\s+(?:[\w-]+\s+){0,2}" + re.escape(models[0]) + r"\b", t)
+            return int(k.group(2) or k.group(3)) if k else None
+        tasks = [x for x in content.get("scope") or [] if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"
+                 and count_in(tx(x)) is not None]
+        total = sum(count_in(tx(x)) or 0 for x in tasks)
+        if not tasks or total >= n_eq:
+            continue
+        def fix(t: str) -> str:
+            if count_in(t) is None:
+                return t
+            t = re.sub(r"(?i)\b(one|a|an)\s*\(1\)\s+", f"{_words(n_eq)} ({n_eq}) ", t)
+            t = re.sub(r"(?i)\b(bar|controller|display|camera|unit|device|kit|mount|speaker|panel)\b(?!s)", r"\1s", t)
+            t = re.sub(r"\s+(?:in|at) the [A-Z][\w-]*(?: [A-Z][\w-]*){0,3}(?=[.,;]|$)", " across the rooms in scope", t)
+            return t[:1].upper() + t[1:]
+        for k in ("overview", "scope"):
+            for x in content.get(k) or []:
+                if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading":
+                    x["text"] = fix(tx(x))
+        for d in content.get("deliverables") or []:
+            if isinstance(d, dict):
+                d["description"] = [fix(str(t)) for t in d.get("description") or []]
 
 
 def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:

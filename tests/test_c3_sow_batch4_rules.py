@@ -440,3 +440,20 @@ def test_the_guard_never_restores_a_survey_the_sow_calls_optional():
                                               "cites": ["o"], "kind": "fact"}]}
     m._traced(content, "grounding", lambda: content.__setitem__("assumptions", []))
     assert content["assumptions"] == []
+
+
+def test_per_room_counts_add_up_to_the_equipment_count():
+    """010012 pass T: one system "in the Conference Room" beside "Two (2) Poly X72 bars"."""
+    c = {"equipment_in_scope": [{"text": "Two (2) Poly X72 bars with TC10 controllers."}],
+         "overview": [{"text": "Provider will install one (1) Poly X72 bar and one (1) TC10 controller in the Conference Room."}],
+         "scope": [{"text": "Install one (1) Poly X72 bar and one (1) TC10 controller in the Conference Room.", "cites": ["a"]}],
+         "deliverables": [{"description": ["One (1) Poly X72 bar and one (1) TC10 controller installed and tested in the Conference Room."]}]}
+    m._room_counts(c)
+    assert c["scope"][0]["text"] == "Install two (2) Poly X72 bars and two (2) TC10 controllers across the rooms in scope."
+    assert c["deliverables"][0]["description"][0].startswith("Two (2) Poly X72 bars")
+    # split across rooms already: untouched
+    c = {"equipment_in_scope": [{"text": "Two (2) Poly X72 bars."}],
+         "scope": [{"text": "Install one (1) Poly X72 bar in the Conference Room.", "cites": ["a"]},
+                   {"text": "Install one (1) Poly X72 bar in the Shared Office.", "cites": ["b"]}]}
+    m._room_counts(c)
+    assert c["scope"][1]["text"] == "Install one (1) Poly X72 bar in the Shared Office."
