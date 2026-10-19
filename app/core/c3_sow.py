@@ -1973,6 +1973,22 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     content["assumptions"] = [x for x in content.get("assumptions") or [] if not (
         isinstance(x, dict) and not x.get("cites") and not x.get("standard")
         and re.match(r"(?i)\s*(services|work|provider'?s? (work|scope|services)) (are|is) limited to (basic|general|light)\b", str(x.get("text"))))]
+    # "Only pack and deliver; we manage the destination": no destination work
+    # (010147: a Destination Office section of unpack, place, reconnect).
+    if any(re.search(r"(?i)only (be )?(a )?pack(ing)? and deliver|we will (manage|handle|take care of) (things |everything )?at the destination|"
+                     r"(customer|we) (will )?(unpack|set up) at (the )?destination", f["text"]) for f in fs):
+        sc = content.get("scope") or []
+        out, skip = [], False
+        for x in sc:
+            if isinstance(x, dict) and x.get("kind") == "heading":
+                skip = bool(re.search(r"(?i)destination|unpack|setup at|reinstall", str(x.get("text"))))
+                if skip:
+                    continue
+            if skip or (isinstance(x, dict) and re.match(r"(?i)\s*(unpack|reconnect|re-?install|place (the )?equipment at|set up)\b", str(x.get("text")))):
+                continue
+            out.append(x)
+        content["scope"] = out
+        content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.search(r"(?i)\b(unpack|reconnect)", str(x.get("text") if isinstance(x, dict) else x))]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
