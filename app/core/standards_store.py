@@ -10,7 +10,9 @@ deploy. This module merges an OVERLAY on top of the packaged file:
                 "status": "active" | "retired", "added_by", "added_at",
                 "source_deal"?, "note"?}]}
 
-An active overlay item is appended to its family/section (``{when:<regex>}``
+Items start "proposed" (a PM suggested it in SowSmith) and reach SOWs only
+once "approved" (the owner's call; "active" is read as approved). An approved
+overlay item is appended to its family/section (``{when:<regex>}``
 / ``{unless:<regex>}`` prefixes as the packaged file writes them); a retired
 item whose text matches a packaged item removes that item. The overlay lives
 in blob storage (``SOWSMITH_STANDARDS_CONTAINER``, default
@@ -150,7 +152,10 @@ def merge(packaged: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
             continue
         block = out.setdefault(fam, {})
         lst = block.setdefault(sec, [])
-        if it.get("status", "active") == "retired":
+        status = it.get("status", "approved")
+        if status == "proposed":
+            continue
+        if status == "retired":
             want = _strip(str(it.get("text")))
             block[sec] = [t for t in lst if _strip(t) != want]
         elif _strip(item_text(it)) not in {_strip(t) for t in lst}:
@@ -185,9 +190,11 @@ def _validate(it: dict[str, Any]) -> None:
 
 
 def add_item(*, family: str, section: str, text: str, added_by: str, when: str = "", unless: str = "",
-             source_deal: str = "", note: str = "") -> dict[str, Any]:
+             source_deal: str = "", note: str = "", status: str = "proposed", source_line: str = "") -> dict[str, Any]:
+    if status not in ("proposed", "approved"):
+        raise ValueError("status must be proposed or approved")
     it = {"id": "std_" + uuid.uuid4().hex[:12], "family": family, "section": section, "text": text.strip(),
-          "status": "active", "added_by": added_by, "added_at": datetime.now(timezone.utc).isoformat(),
+          "status": status, "source_line": source_line, "added_by": added_by, "added_at": datetime.now(timezone.utc).isoformat(),
           "source_deal": source_deal, "note": note}
     if when:
         it["when"] = when
@@ -198,6 +205,17 @@ def add_item(*, family: str, section: str, text: str, added_by: str, when: str =
     ov.setdefault("items", []).append(it)
     write_overlay(ov, etag)
     return it
+
+
+def approve_item(item_id: str, *, by: str) -> dict[str, Any]:
+    """A proposed item becomes part of the standards on the next compile."""
+    ov, etag = read_overlay()
+    for it in ov.get("items") or []:
+        if it.get("id") == item_id:
+            it.update(status="approved", approved_by=by, approved_at=datetime.now(timezone.utc).isoformat())
+            write_overlay(ov, etag)
+            return it
+    raise KeyError(item_id)
 
 
 def retire_item(item_id: str = "", *, family: str = "", section: str = "", text: str = "", by: str = "") -> dict[str, Any]:
@@ -218,5 +236,5 @@ def retire_item(item_id: str = "", *, family: str = "", section: str = "", text:
     return it
 
 
-__all__ = ["load", "merge", "read_overlay", "write_overlay", "add_item", "retire_item", "item_text",
+__all__ = ["load", "merge", "read_overlay", "write_overlay", "add_item", "approve_item", "retire_item", "item_text",
            "SECTIONS", "ConflictError"]

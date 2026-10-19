@@ -26,7 +26,10 @@ def main() -> None:
     for k in ("family", "section", "text", "by"):
         ad.add_argument(f"--{k}", required=True)
     ad.add_argument("--when", default=""); ad.add_argument("--unless", default=""); ad.add_argument("--deal", default="")
+    ad.add_argument("--status", default="proposed", choices=["proposed", "approved"])
     bk = sub.add_parser("bulk"); bk.add_argument("--file", required=True); bk.add_argument("--by", required=True)
+    bk.add_argument("--status", default="proposed", choices=["proposed", "approved"])
+    ap = sub.add_parser("approve"); ap.add_argument("--id", required=True); ap.add_argument("--by", required=True)
     rt = sub.add_parser("retire"); rt.add_argument("--id", required=True); rt.add_argument("--by", required=True)
     a = p.parse_args()
     if a.cmd == "list":
@@ -36,7 +39,7 @@ def main() -> None:
                 print(f"{it['id']} {it.get('status','active'):8} {it['family']}/{it['section']}: {S.item_text(it)}")
     elif a.cmd == "add":
         it = S.add_item(family=a.family, section=a.section, text=a.text, added_by=a.by, when=a.when,
-                        unless=a.unless, source_deal=a.deal)
+                        unless=a.unless, source_deal=a.deal, status=a.status)
         print("added", it["id"])
     elif a.cmd == "bulk":
         have = {(f, s, S._strip(t)) for f, b in S.load().items() if isinstance(b, dict)
@@ -47,9 +50,11 @@ def main() -> None:
                 continue
             S.add_item(family=r["family"], section=r["section"], text=r["text"], added_by=a.by,
                        when=r.get("when", ""), unless=r.get("unless", ""),
-                       source_deal=",".join(r.get("sources") or []), note=r.get("note", ""))
+                       source_deal=",".join(r.get("sources") or []), note=r.get("note", ""), status=a.status)
             n += 1
         print(f"added {n}")
+    elif a.cmd == "approve":
+        print("approved", S.approve_item(a.id, by=a.by)["id"])
     elif a.cmd == "retire":
         print("retired", S.retire_item(a.id, by=a.by)["id"])
 
