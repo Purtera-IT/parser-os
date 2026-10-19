@@ -375,3 +375,14 @@ def test_a_hardware_receipt_deadline_is_not_the_completion_date():
     content = {"overview": [{"text": "Provider will install the switches.", "cites": []}], "scope": [], "schedule": []}
     m._grounding(content, fs)
     assert not any("9/25" in x["text"] or "9/29" in x["text"] for x in content.get("schedule") or [])
+
+
+def test_a_site_count_is_never_multiplied_into_device_deliverables():
+    c = {"deliverables": [{"item": "Work Completion Report", "description": [
+        "160 printers installed and tested", "161 Customer locations completed", "Twenty (20) switches installed."]}]}
+    m._no_site_multiples(c, 161, {"a": "about 160 stores, one printer per lane"})
+    assert c["deliverables"][0]["description"] == [
+        "Printers installed and tested at each location.", "161 Customer locations completed", "Twenty (20) switches installed."]
+    c = {"deliverables": [{"description": ["160 printers installed"]}]}
+    m._no_site_multiples(c, 161, {"a": "ship 160 printers to the stores"})
+    assert c["deliverables"][0]["description"] == ["160 printers installed"]

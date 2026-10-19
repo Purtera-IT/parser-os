@@ -5048,6 +5048,31 @@ def _best_of(envelope: dict[str, Any], pm_handoff: dict[str, Any]) -> dict[str, 
     return best
 
 
+def _no_site_multiples(c: dict[str, Any], n_sites: int, atom_text: dict[str, str]) -> None:
+    """A device count that is the site count is a site count multiplied into
+    devices, unless a line states it (000123 pass T: "160 printers installed
+    and tested" on 161 stores with several register lanes each): the line
+    says the devices are done at each location instead."""
+    pool = " ".join(atom_text.values()).lower()
+    site_word = re.compile(r"(?i)^(customer |total |store |site )?(locations?|stores?|sites?|restaurants?|branches|facilities)\b")
+    def fix(t: str) -> str:
+        mm = re.match(r"^\s*(?:all\s+)?(\d{2,4})\s*(?:\([a-z -]+\)\s*)?(?:x\s+)?(.+)$", t, re.I) or \
+            re.match(r"^\s*(?:[a-z -]+)\s*\((\d{2,4})\)\s+(.+)$", t, re.I)
+        if not mm:
+            return t
+        n, rest = int(mm.group(1)), mm.group(2).strip()
+        if abs(n - n_sites) > max(2, 0.1 * n_sites) or site_word.match(rest):
+            return t
+        noun = " ".join(re.findall(r"[a-z]+", rest.lower())[:2])
+        if noun and re.search(r"\b%d\s+%s" % (n, re.escape(noun)), pool):
+            return t  # the deal states that device count
+        rest = rest.rstrip(".")
+        return rest[:1].upper() + rest[1:] + " at each location."
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict):
+            d["description"] = [fix(str(t)) for t in d.get("description") or []]
+
+
 def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """The SOW content as the envelope carries it: the writer's lists, the
     partner's requester, the CRM record and the sites."""
@@ -5187,6 +5212,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                                            lambda m: (f"{n_sites} ({_words(n_sites)})" if int(m.group(1)) != n_sites and abs(int(m.group(1)) - n_sites) <= max(2, 0.1 * n_sites)
                                                       else m.group(0)[:m.start(2) - m.start(0)]) + m.group(2),
                                            re.sub(r"\b(\d{2,4})([\s-]+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t))) for t in d.get("description") or []]
+        _no_site_multiples(c, n_sites, atom_text)
         # A many-site job states its site count in the summary (010279: no
         # "113" anywhere in the SOW, which read as a six-store job).
         ov = c.setdefault("overview", [])
