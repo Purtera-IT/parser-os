@@ -260,7 +260,9 @@ def test_roles_and_a_full_day_become_lead_and_duration():
     content = {"schedule": []}
     m._roles_and_hours(content, fs)
     assert content["scope_lead"].startswith("Provider will dispatch one (1) network technician and one (1) help desk technician")
-    assert "sixteen (16) combined hours" in content["schedule"][0]["text"]
+    # No source gives hours, so none are stated (010376 pass V: "one business
+    # day" is not "eight hours per technician").
+    assert content["schedule"][0]["text"] == "Estimated Duration: one (1) onsite business day; two (2) technicians"
 
 
 def test_deliverables_drop_what_the_sow_excludes_or_dropped():

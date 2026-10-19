@@ -951,6 +951,15 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             continue
         if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
             continue  # gear the job does not touch
+        # Never a line the deal's own exclusions or customer duties rule out
+        # (010171 pass V: the stale "3 Rally Bar ... + 2 Mic Pods" ask restored
+        # beside "exclude external mics and mic pods"); the drop stands.
+        ruled = next((str(o.get("text")) for k_ in ("out_of_scope", "customer_responsibilities") for o in content.get(k_) or []
+                      if isinstance(o, dict) and o.get("cites") and not o.get("standard") and k_ != lst
+                      and (_collides(text, str(o.get("text"))) or len(_object_toks(text) & _object_toks(str(o.get("text")))) >= 2)), None)
+        if ruled is not None and lst in ("scope", "overview", "equipment_in_scope", "customer_materials", "provider_materials"):
+            content.setdefault("guard_declined", []).append({"rule": rule, "list": lst, "text": text, "reason": f"ruled out by: {ruled}"})
+            continue
         # Never a license, subscription or service contract as a material,
         # nor a line an exclusion names (010043 pass V: "Three (3) Verkada
         # ... License Capacity Increase licenses" restored to Customer
@@ -1470,6 +1479,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                       and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]
     _traced(content, "question_not_commitment", _question_not_commitment, content, fs)
     _traced(content, "cell_not_task", _cell_not_task, content, fs)
+    _traced(content, "aside_not_block", _aside_not_block, content, fs)
     _traced(content, "contradiction", _scope_contradictions, content, fs)
     _keep_exceptions(content, fs)
     # A lift in scope: no "lift by change request" assumption, no "specialty
@@ -2603,6 +2613,19 @@ def _question_not_commitment(content: dict[str, Any], fs: list[dict[str, Any]]) 
                       and not x.get("standard") and x.get("cites") and all(asks(c) for c in x["cites"]))]
 
 
+def _aside_not_block(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A line the brief only mentioned in passing never fills the arrival
+    protocol or the equipment list (010376 pass V: the recycler's "security
+    tag number will be verified against shipping records prior to seal
+    removal" became the Technician Arrival Protocol, and its trailer-seal
+    tags the only Equipment in Scope). A line every cite of which is an
+    also-mentioned fact goes from those two blocks."""
+    aside = {f["id"] for f in fs if f["section"] == "also_kept"}
+    for k in ("arrival_protocol", "equipment_in_scope"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
+                      and all(c_ in aside for c_ in x["cites"]))]
+
+
 def _cell_not_task(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     """An inventory row's description cell says what a line is for, never
     work (010326 pass V: the analog-port sheet's "Description: Dial up
@@ -2763,8 +2786,13 @@ def _noise(envelope: dict[str, Any], fs: list[dict[str, Any]]) -> tuple[list[str
             r"\bstor(e|ed|ing|age)\b|\btransport|\bkitting\b|proof of delivery|inventory recap|asset[- ]tag") if labor_only else ""
     noise_txt = re.compile(r"(?i)\b(we|they) (already |currently )?have\b|\balready (have|installed|in place)\b|"
                            r"survey.{0,60}\b(optional|contingent|if needed|probably not|not needed)\b" + ("|" + logi if logi else ""))
+    # A question with no answer in its own text is never a statement of the
+    # deal, whatever its label (010171 pass V: "Just to confirm, there are no
+    # displays that need to be mounted as part of this project, correct?",
+    # typed answered_question and answered "We do need to mount three TVs",
+    # was restored as "No displays need to be mounted").
     ids = {f["id"] for f in fs if f.get("pictured") or f.get("quoted") or noise_txt.search(f["text"])
-           or (f.get("asked") and f.get("section") != "answered_question")
+           or (f.get("asked") and f.get("section") != "answered_question") or f["text"].rstrip().endswith("?")
            or re.search(r"(?i)open questions?|questions? for (the )?customer|to confirm|tbd items", str(f.get("under") or ""))}
     ids |= {str(a.get("id")) for a in envelope.get("atoms") or []
             if str(a.get("artifact_id")) in bro_ids
@@ -5436,6 +5464,65 @@ def _replacement_order(body: list[Any]) -> list[Any]:
     return rest
 
 
+def _supply_assumption_back(c: dict[str, Any]) -> None:
+    """The assumption that the customer's own gear is on site before arrival
+    is supported by the SOW's own customer supply lines (010171 pass V:
+    "Customer-provided televisions, TV mounts, and any needed HDMI or USB
+    cabling are complete and onsite before Provider arrival" dropped as
+    unstated beside "Provide all displays, hardware, cables and mounts",
+    "HDMI cabling if needed" and the summary's "using provided TV mounts").
+    It comes back when every thing it names is one the customer supplies."""
+    sup = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("customer_materials", "customer_responsibilities", "overview")
+                   for x in c.get(k) or [])
+    have = _toks(sup) | {"tv", "television", "display"} if re.search(r"(?i)\b(tvs?|televisions?|displays?)\b", sup) else _toks(sup)
+    asm = c.setdefault("assumptions", [])
+    back = []
+    for d in c.get("dropped") or []:
+        if not (isinstance(d, dict) and d.get("list") == "assumptions"):
+            continue
+        t = str(d.get("text"))
+        m_ = re.match(r"(?i)\s*(?:all\s+)?customer[- ](?:provided|supplied|furnished)\s+(.+?)\s+(?:are|is|will be)\s+(?:complete\s+and\s+)?(?:on ?site|onsite|available)\b", t)
+        if not m_:
+            continue
+        things = {w for w in _toks(re.sub(r"(?i)\b(any|needed|required|and|or|the|all)\b", " ", m_.group(1)))}
+        things = {("tv" if w.startswith("televis") else w) for w in things}
+        if things and things <= have and not _said(t, asm, 0.6):
+            asm.append({k: v for k, v in d.items() if k not in ("list", "reason")})
+            back.append(d)
+    if back:
+        c["dropped"] = [d for d in c.get("dropped") or [] if not any(d is b for b in back)]
+
+
+_DISPOSAL = re.compile(r"(?i)\be-?waste\b|\bdispos(e|al|ing)\b|\brecycl\w*|\bscrap\b|\bhaul (it |them )?away\b|\bitad\b|asset disposition")
+
+
+def _disposal_not_ours(c: dict[str, Any]) -> None:
+    """A Provider task never disposes of what the SOW gives another party to
+    dispose of (010376 pass V: "EWaste the removed UPS and battery backup"
+    under a "Removal and eWaste" heading, beside "ThinkTLS performs the
+    offsite transport and recycling" and the exclusion "Offsite transport,
+    recycling, disposal ..."). The task goes, a heading loses its disposal
+    words, and the summary sentence's disposal clause goes."""
+    other = [str(x.get("text")) for k in ("out_of_scope", "assumptions", "customer_responsibilities") for x in c.get(k) or []
+             if isinstance(x, dict) and _DISPOSAL.search(str(x.get("text")))
+             and (k == "out_of_scope" or not re.match(r"(?i)\s*provider\b", str(x.get("text"))))]
+    if not other:
+        return
+    keep = []
+    for x in c.get("scope") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            x["text"] = re.sub(r"(?i)\s*(and|&|/)\s*(e-?waste|disposal|recycling)\b", "", t).strip() or t
+        elif isinstance(x, dict) and not x.get("standard") and re.match(r"(?i)\s*(provider will )?(e-?waste|dispose|recycle|scrap|haul)\b", t):
+            continue
+        keep.append(x)
+    c["scope"] = keep
+    for x in c.get("overview") or []:
+        if isinstance(x, dict) and _DISPOSAL.search(str(x.get("text"))):
+            t = re.sub(r"(?i)\s+(for|to)\s+(e-?waste|disposal|recycling)\b", "", str(x["text"]))
+            x["text"] = t
+
+
 def _standard_exclusion_survives(c: dict[str, Any]) -> None:
     """An exclusion that is one of PurTera's standard exclusions needs no
     source to state it, so the fact check never takes it (010326 pass V:
@@ -6244,9 +6331,18 @@ def _roles_and_hours(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                                 "cites": [f["id"]], "kind": "fact"})
                 break
     if day and techs and not any(re.match(r"(?i)\s*(estimated duration|duration)", str(x.get("text"))) for x in sch if isinstance(x, dict)):
-        sch.append({"text": f"Estimated Duration: one (1) onsite workday of eight (8) hours per technician; {_words(techs)} ({techs}) "
-                            f"technicians, {_words(8 * techs)} ({8 * techs}) combined hours",
-                    "cites": [day["id"]] + ([roles[1]] if roles else []), "kind": "fact"})
+        # Hours only when a source gives them (010376 pass V: "one business
+        # day" became "eight (8) hours per technician, sixteen (16) combined
+        # hours" on a fixed fee whose target caps each technician at four).
+        hrs = next((m3 for f in fs for m3 in [re.search(r"(?i)\b(\d{1,2}|eight|ten|twelve)[- ]?(?:hours?|hrs?)\b(?:\s*(?:per|a|each)\s*(?:day|tech\w*))?", f["text"])]
+                    if m3 and re.search(r"(?i)\bday\b", f["text"]) and not f["text"].rstrip().endswith("?")), None)
+        if hrs:
+            h = int(hrs.group(1)) if hrs.group(1).isdigit() else {"eight": 8, "ten": 10, "twelve": 12}[hrs.group(1).lower()]
+            text = (f"Estimated Duration: one (1) onsite workday of {_words(h)} ({h}) hours per technician; {_words(techs)} ({techs}) "
+                    f"technicians, {_words(h * techs)} ({h * techs}) combined hours")
+        else:
+            text = f"Estimated Duration: one (1) onsite business day; {_words(techs)} ({techs}) technician{'s' if techs > 1 else ''}"
+        sch.append({"text": text, "cites": [day["id"]] + ([roles[1]] if roles else []), "kind": "fact"})
 
 
 def _deliverables_hygiene(content: dict[str, Any]) -> None:
@@ -7566,7 +7662,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     str(s_.get("street") or s_.get("address") or "").split(",")[0].lower() in str(x.get("text")).lower()
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
+    _traced(c, "disposal_not_ours", _disposal_not_ours, c)
     _traced(c, "standard_exclusion_survives", _standard_exclusion_survives, c)
+    _traced(c, "supply_assumption_back", _supply_assumption_back, c)
     _traced(c, "materials_counted", _materials_counted, c)
     _locations_cover_sites(c)
     # Lines an outside sender wrote, or a pasted copy of one (010209: the

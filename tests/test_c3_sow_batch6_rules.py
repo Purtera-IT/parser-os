@@ -475,3 +475,66 @@ def test_a_room_organised_list_gets_no_device_heading():
     before = [x["text"] for x in c["scope"]]
     m._device_headings(c)
     assert [x["text"] for x in c["scope"]] == before
+
+
+# --- 010171 / 010376 pass V: the guard, side lines, disposal, hours ----------
+
+def test_a_question_is_never_guarded():
+    q = _fact("q", "Just to confirm, there are no displays that need to be mounted as part of this project, correct?",
+              section="answered_question")
+    ids, _ = m._noise({"atoms": [], "documents": []}, [q, _fact("s", "We do need to mount three TVs.")])
+    assert "q" in ids and "s" not in ids
+
+
+def test_the_guard_never_restores_what_an_exclusion_rules_out():
+    c = _content()
+    c["out_of_scope"] = [{"text": "External mics and mic pods.", "cites": ["x"], "kind": "fact"}]
+    c["scope"] = [{"text": "Install three (3) Rally Bars.", "cites": ["b"], "kind": "fact"}]
+    before = {("a",): ("scope", "Install three (3) Rally Bars and two (2) mic pods.")}
+    m._guard_drops(c, "tidy", before, {"scope": []})
+    assert [x["text"] for x in c["scope"]] == ["Install three (3) Rally Bars."]
+    assert c["guard_declined"][0]["reason"].startswith("ruled out by:")
+
+
+def test_the_customers_onsite_gear_assumption_comes_back():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Provide all displays, hardware, cables and mounts.", "cites": [], "kind": "method", "standard": True}]
+    c["customer_materials"] = [{"text": "HDMI cabling if needed.", "cites": ["h"], "kind": "fact"},
+                               {"text": "USB cabling if needed.", "cites": ["u"], "kind": "fact"}]
+    c["overview"] = [{"text": "Provider will mount three (3) TVs using provided TV mounts.", "cites": ["t"], "kind": "fact"}]
+    c["dropped"] = [{"list": "assumptions", "text": "Customer-provided televisions, TV mounts, and any needed HDMI or USB cabling are complete "
+                                                    "and onsite before Provider arrival.", "cites": ["t"], "kind": "fact",
+                     "reason": "check: the cited lines do not state it"}]
+    m._supply_assumption_back(c)
+    assert len(c["assumptions"]) == 1 and not c["dropped"]
+
+
+def test_a_task_never_disposes_of_what_another_party_recycles():
+    c = _content()
+    c["assumptions"] = [{"text": "ThinkTLS performs the offsite transport and recycling of the removed equipment.", "cites": ["t"], "kind": "fact"}]
+    c["overview"] = [{"text": "Provider will remove the old UPS and battery backup for eWaste.", "cites": ["o"], "kind": "fact"}]
+    c["scope"] = [{"text": "Removal and eWaste", "cites": [], "kind": "heading"},
+                  {"text": "Move the removed equipment to the parking area for loading.", "cites": ["m"], "kind": "fact"},
+                  {"text": "EWaste the removed UPS and battery backup.", "cites": ["e"], "kind": "fact"}]
+    m._disposal_not_ours(c)
+    assert [x["text"] for x in c["scope"]] == ["Removal", "Move the removed equipment to the parking area for loading."]
+    assert c["overview"][0]["text"] == "Provider will remove the old UPS and battery backup."
+
+
+def test_an_aside_never_fills_the_arrival_protocol_or_equipment():
+    c = _content()
+    c["arrival_protocol"] = [{"text": "Verify the security tag number against shipping records before seal removal.", "cites": ["a"], "kind": "fact"}]
+    c["equipment_in_scope"] = [{"text": "Uniquely numbered security tags for trailer sealing.", "cites": ["b"], "kind": "fact"},
+                               {"text": "One (1) APC Smart-UPS SRT 5000VA UPS.", "cites": ["u"], "kind": "fact"}]
+    m._aside_not_block(c, [_fact("a", "tag verified", section="also_kept"), _fact("b", "sealed with a tag", section="also_kept"),
+                           _fact("u", "Replace a 5K UPS")])
+    assert not c["arrival_protocol"] and [x["cites"] for x in c["equipment_in_scope"]] == [["u"]]
+
+
+def test_hours_are_stated_only_when_a_source_gives_them():
+    c = {"schedule": []}
+    m._roles_and_hours(c, [_fact("d", "Two technicians for one business day to replace the UPS.")])
+    assert c["schedule"][-1]["text"] == "Estimated Duration: one (1) onsite business day; two (2) technicians"
+    c = {"schedule": []}
+    m._roles_and_hours(c, [_fact("d", "Two technicians for one full day, 4 hours per tech.")])
+    assert "four (4) hours per technician" in c["schedule"][-1]["text"]
