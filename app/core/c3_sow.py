@@ -1582,6 +1582,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "exclusion_not_task", _no_exclusion_negates_task, content)
     _traced(content, "own_documents", _own_documents, content)
     _traced(content, "not_job_terms", _not_job_terms, content)
+    _traced(content, "summary_consistent", _summary_consistent, content)
+    _traced(content, "facts_to_action_heading", _facts_to_action_heading, content)
     _traced(content, "explanation_not_exclusion", _explanation_not_exclusion, content, fs)
     _traced(content, "summary_order", _summary_order, content)
     _deliverables_hygiene(content)
@@ -1822,6 +1824,79 @@ def _role_groups(content: dict[str, Any]) -> None:
         # site name.
         out += [head("Shared" if out else "Onsite Support")] + shared
     content["scope"] = out + ([head("Closeout")] + close if close else [])
+
+
+def _summary_consistent(content: dict[str, Any]) -> None:
+    """A summary sentence never retains what the task list removes (010120
+    pass U: "... and twelve (12) speakers while retaining the existing room
+    displays, TV mounts, and ceiling speaker system")."""
+    removed = set()
+    for x in content.get("scope") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if isinstance(x, dict) and x.get("kind") != "heading" and re.match(r"(?i)\s*(also\s+)?(remove|decommission|dismantle|take down)\b", t):
+            removed |= {w.rstrip("s") for w in re.findall(r"[a-z]+", t.lower())} & {
+                "speaker", "display", "tv", "camera", "soundbar", "mount", "projector", "screen", "phone", "switch", "rack", "ups"}
+    if not removed:
+        return
+    for x in content.get("overview") or []:
+        if not isinstance(x, dict):
+            continue
+        t = str(x.get("text"))
+        m = re.search(r"(?i)(,?\s*(?:while|and)\s+(?:retaining|keeping|leaving)\s+)(.+?)([.;]|$)", t)
+        if not m:
+            continue
+        items = [i for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(2)) if i.strip()]
+        keep = [i for i in items if not ({w.rstrip("s") for w in re.findall(r"[a-z]+", i.lower())} & removed
+                                         and not re.search(r"(?i)\bmounts?\b", i))]
+        if len(keep) == len(items):
+            continue
+        x["text"] = (t[:m.start()] + (m.group(1) + _join([k.strip() for k in keep]) if keep else "") + m.group(3) + t[m.end():]).strip()
+
+
+def _facts_to_action_heading(content: dict[str, Any]) -> None:
+    """A cited deal step sits under the heading whose work it does, not under
+    a testing or closing group (010120 pass U: speaker removal and the wall
+    mount under "Installation and Testing", the cable relocation and "Also
+    remove the circular ... speakers" under Closeout)."""
+    sc = content.get("scope") or []
+    heads = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
+    if len(heads) < 3:
+        return
+    generic = re.compile(r"(?i)test|clos|clean|wrap|complet|all work areas")
+    verb = lambda t: _stem((re.findall(r"[a-z]+", re.sub(r"(?i)^\s*also\s+", "", t).lower()) or [""])[0])
+    groups: list[list[Any]] = []
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            groups.append([x])
+        elif groups:
+            groups[-1].append(x)
+        else:
+            groups.append([None, x])
+    for g in groups:
+        if not (g[0] and generic.search(str(g[0].get("text")))):
+            continue
+        for x in list(g[1:]):
+            if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")) \
+                    or re.search(r"(?i)debris|clean|trash|photo|confirm|notify|document", str(x.get("text"))):
+                continue
+            t = str(x.get("text"))
+            v = verb(t)
+            obj = _object_toks(t)
+            home = next((h for h in groups if h is not g and h[0] and not generic.search(str(h[0].get("text")))
+                         and (obj & _object_toks(str(h[0].get("text")))
+                              or any(isinstance(y, dict) and y.get("cites") and verb(str(y.get("text"))) == v
+                                     and obj & _object_toks(str(y.get("text"))) for y in h[1:]))), None)
+            if home is None and re.match(r"(?i)\s*(also\s+)?(remove|decommission|disconnect)\b", t):
+                home = next((h for h in groups if h[0] and re.search(r"(?i)decommission|removal|remove", str(h[0].get("text")))), None)
+            if home is not None:
+                g.remove(x)
+                home.append(x)
+    for g in groups:
+        for x in g[1:]:
+            if isinstance(x, dict) and isinstance(x.get("text"), str) and re.match(r"(?i)\s*also\s+\w", x["text"]):
+                body = re.sub(r"(?i)^\s*also\s+", "", x["text"])
+                x["text"] = body[:1].upper() + body[1:]
+    content["scope"] = [x for g in groups for x in g if x is not None]
 
 
 def _own_documents(content: dict[str, Any]) -> None:
@@ -6395,6 +6470,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         asm.append({"text": f"Work is performed on {day.group(1).capitalize()} as scheduled; site access is available that day.",
                     "cites": [], "kind": "method"})
         c["assumptions"] = [x for x in asm if not re.search(r"(?i)(regular|normal|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
+    # A caption or sentence is never a location (010120 pass U: "Front wall
+    # of the conference room includes two large TVs mounted in place." as a
+    # second site, glued onto the address).
+    caption = lambda t: len(str(t).split()) >= 6 and not re.search(r"\d", str(t)) and bool(
+        re.search(r"(?i)\b(includes?|is|are|has|have|shows?|contains?|mounted|located)\b", str(t)))
+    c["locations"] = [x for x in c.get("locations") or [] if not caption(x.get("text") if isinstance(x, dict) else x)]
+    c["sites"] = [x for x in c.get("sites") or [] if not caption(x.get("name") or x.get("address"))] or c.get("sites")
     _locations_cover_sites(c)
     # Lines an outside sender wrote, or a pasted copy of one (010209: the
     # RFQ pasted into a HubSpot note and also in Ralph Lauren's own email).

@@ -397,3 +397,35 @@ def test_a_transition_staffed_by_role_groups_by_role():
                    {"text": "Confirm completion.", "cites": [], "kind": "method"}]}
     m._role_groups(c)
     assert [x["text"] for x in c["scope"] if x["kind"] == "heading"] == ["Network", "End User Computing", "Shared", "Closeout"]
+
+
+# --- 010120 B-: stay-mounted TVs, captions, retained items, action headings ----
+
+def test_tvs_that_stay_mounted_do_not_fire_the_display_mount_standards():
+    std = [t for t in m.purtera_standards("av_conference_room")["method_steps"] if "Mount each display" in t][0]
+    assert not m._standard_applies(std, ["These 4 TVs to Stay in Place, they will stay mounted"], [])[0]
+    assert not m._standard_applies(std, ["Front wall includes two large TVs mounted in place."], [])[0]
+    assert m._standard_applies(std, ["Two new 65 inch displays need to be mounted"], [])[0]
+
+
+def test_the_summary_never_retains_what_the_tasks_remove():
+    c = {"scope": [{"text": "Remove twelve (12) existing speakers.", "cites": ["a"], "kind": "fact"}],
+         "overview": [{"text": "Provider will remove the cameras and twelve (12) speakers while retaining the existing room displays, "
+                                "TV mounts, and ceiling speaker system.", "cites": ["b"], "kind": "fact"}]}
+    m._summary_consistent(c)
+    assert c["overview"][0]["text"].endswith("while retaining the existing room displays and TV mounts.")
+
+
+def test_a_cited_step_leaves_the_testing_group_for_its_action_heading():
+    c = {"scope": [{"text": "Decommission", "cites": [], "kind": "heading"},
+                   {"text": "Remove twelve (12) existing speakers.", "cites": ["a"], "kind": "fact"},
+                   {"text": "Ceiling Devices", "cites": [], "kind": "heading"},
+                   {"text": "Mount the two (2) Neat cameras.", "cites": ["b"], "kind": "fact"},
+                   {"text": "Installation and Testing", "cites": [], "kind": "heading"},
+                   {"text": "Mount the center device on the wall between both TVs.", "cites": ["c"], "kind": "fact"},
+                   {"text": "Closeout", "cites": [], "kind": "heading"},
+                   {"text": "Also remove the circular speakers.", "cites": ["d"], "kind": "fact"}]}
+    m._facts_to_action_heading(c)
+    t = [x["text"] for x in c["scope"]]
+    assert t.index("Remove the circular speakers.") < t.index("Ceiling Devices")
+    assert t.index("Mount the center device on the wall between both TVs.") < t.index("Installation and Testing")
