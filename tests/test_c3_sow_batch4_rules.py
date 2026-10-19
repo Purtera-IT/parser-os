@@ -199,3 +199,42 @@ def test_a_date_the_deal_states_stays_uncited():
     content = {"schedule": [{"text": "Work Window: 10/13 through 11/19", "cites": [], "kind": "fact"}]}
     m._fix_dates(content, fs, "2026-09-01")
     assert content["schedule"][0]["text"] == "Work Window: 10/13 through 11/19"
+
+
+def test_an_exclusion_is_never_a_provider_task():
+    """010419 pass T: library exclusions citing an email subject became
+    "Provide managed IT services ...", "Provide lift rental ..." Closeout tasks."""
+    fs = [_fact("subj", "Subject: FW: Scope of Support for Techs during onboarding"),
+          _fact("day", "This is usually a full day of work, with some follow-up needed the next day.")]
+    content = {"scope": [{"text": "Closeout", "cites": [], "kind": "heading"},
+                         {"text": "Provide managed IT services or ongoing help desk coverage.", "cites": ["subj", "day"], "kind": "method"},
+                         {"text": "Provide lift rental or other specialized trade services.", "cites": ["subj"], "kind": "method"},
+                         {"text": "Lift rental is excluded.", "cites": [], "kind": "method"}],
+               "out_of_scope": [],
+               "writer_draft": {"out_of_scope": [{"text": "Lift rental or other specialized trade services.", "cites": ["subj"]}]}}
+    m._scope_polarity(content, fs)
+    m._exclusions_never_tasks(content, fs)
+    assert [x["text"] for x in content["scope"]] == ["Closeout"]
+    oos = [x["text"] for x in content["out_of_scope"]]
+    assert "Managed IT services or ongoing help desk coverage." in oos and "Lift rental." in oos
+    assert "Lift rental or other specialized trade services." in oos
+
+
+def test_a_negated_assumption_never_returns_as_a_task():
+    """010085 pass T: "No rack modification or cabinet modification." moved
+    into the task list as "Provide rack modification ..."."""
+    fs = [_fact("r", "they stated that the racks should have enough space for the new equipment regardless.")]
+    content = {"scope": [{"text": "Provide rack modification or cabinet modification.", "cites": ["r"], "kind": "method"}],
+               "out_of_scope": [],
+               "writer_draft": {"assumptions": [{"text": "No rack modification or cabinet modification.", "cites": ["r"]}]}}
+    m._exclusions_never_tasks(content, fs)
+    assert content["scope"] == []
+    assert [x["text"] for x in content["out_of_scope"]] == ["No rack modification or cabinet modification."]
+
+
+def test_a_requested_service_that_reads_like_an_exclusion_stays_a_task():
+    fs = [_fact("r", "Customer wants managed IT services or ongoing help desk coverage at the site")]
+    content = {"scope": [{"text": "Provide managed IT services or ongoing help desk coverage.", "cites": ["r"], "kind": "fact"}],
+               "out_of_scope": []}
+    m._exclusions_never_tasks(content, fs)
+    assert len(content["scope"]) == 1 and content["out_of_scope"] == []

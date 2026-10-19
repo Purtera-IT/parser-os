@@ -1446,7 +1446,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _weekend(content, fs)
     _schedule_from_facts(content, fs, envelope)
     _roles_and_hours(content, fs)
-    _traced(content, "polarity", _scope_polarity, content)
+    _traced(content, "polarity", _scope_polarity, content, fs)
+    _traced(content, "exclusions_never_tasks", _exclusions_never_tasks, content, fs)
     _traced(content, "service_groups", _service_groups, content)
     _overview_covers_scope(content, fs)
     _deliverables_hygiene(content)
@@ -3505,16 +3506,83 @@ def _as_scope(text: str) -> str:
     return t + "."
 
 
-def _scope_polarity(content: dict[str, Any]) -> None:
+def _scope_polarity(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
     """A task line never says the work is excluded: whatever rule moved it,
-    the wording turns with the section, or the line goes (000132)."""
+    the wording turns with the section, or the line goes (000132). Only a
+    line a cited source names as work turns into a task; an uncited
+    exclusion, or one citing lines that do not name the work, stays an
+    exclusion (010419 pass T: library exclusions citing an email subject
+    printed "Provide managed IT services", "Provide lift rental" under
+    Closeout)."""
+    text_of = {f["id"]: f["text"] for f in fs or []}
     kept = []
     for x in content.get("scope") or []:
         if isinstance(x, dict) and x.get("kind") != "heading" and _NEGATED.search(str(x.get("text"))):
             t = _as_scope(str(x.get("text")))
-            if not t:
+            cited = [text_of[c] for c in x.get("cites") or [] if c in text_of]
+            named = bool(t) and bool(x.get("cites")) and (fs is None or _said(re.sub(r"(?i)^provide\s+", "", t), cited, 0.6))
+            if not named:
+                ex = re.sub(r"(?i),?\s*(?:is|are|will be|remains?)\s+(?:excluded|not included|out of scope|outside (?:of )?(?:the )?(?:service |work )?scope|not part of)\b[^.;]*", "",
+                            str(x.get("text"))).strip(" ,.;")
+                ex = re.sub(r"(?i)^\s*(provide|perform)\s+", "", ex)
+                oos = content.setdefault("out_of_scope", [])
+                if ex and not _NEGATED.search(ex) and not _said(ex, oos, 0.6):
+                    oos.append({"text": ex[:1].upper() + ex[1:] + ".", "cites": [], "kind": "method"})
                 continue
             x["text"] = t
+        kept.append(x)
+    content["scope"] = kept
+
+
+def _known_exclusions() -> list[str]:
+    """Every exclusion PurTera writes: the method library's and the
+    standards', all families, their gates stripped."""
+    out = [str(it.get("text") or "") for fam in _library().values() if isinstance(fam, dict)
+           for it in fam.get("exclusions") or [] if isinstance(it, dict)]
+    try:
+        data = json.loads((Path(__file__).parent / "purtera_standards.json").read_text())
+    except Exception:
+        data = {}
+    for fam in data.values():
+        if isinstance(fam, dict):
+            out += [re.sub(r"^(\{(when|unless):.*?\}\s+)+(?=[A-Z])", "", str(t)) for t in fam.get("exclusions") or []]
+    return [t for t in out if t]
+
+
+def _exclusions_never_tasks(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A Provider task that is one of PurTera's exclusions word for word
+    ("Provide managed IT services or ongoing help desk coverage.") is that
+    exclusion, unless a line it cites names the work: it goes back to Out
+    of Scope (010419 pass T: five exclusions became Closeout tasks)."""
+    text_of = {f["id"]: f["text"] for f in fs}
+    known = _known_exclusions()
+    oos = content.setdefault("out_of_scope", [])
+    # What the writer itself wrote as an exclusion or a negated assumption,
+    # by its cites (c3_sow.writer_draft): it never comes back as a task
+    # unless a line it cites names the work (010085 pass T: "No rack
+    # modification" became "Provide rack modification or cabinet
+    # modification." in the task list).
+    draft = content.get("writer_draft") if isinstance(content.get("writer_draft"), dict) else {}
+    was_excl = {tuple(x.get("cites") or []): str(x.get("text") or "") for k in ("out_of_scope", "assumptions", "customer_responsibilities")
+                for x in draft.get(k) or [] if isinstance(x, dict) and x.get("cites")
+                and (k == "out_of_scope" or _LINE_NEG.search(str(x.get("text") or "")) or _NEGATED.search(str(x.get("text") or ""))
+                     or re.match(r"(?i)\s*(no|not|never|without)\b", str(x.get("text") or "")))}
+    kept = []
+    for x in content.get("scope") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if not isinstance(x, dict) or x.get("standard") or x.get("kind") == "heading":
+            kept.append(x)
+            continue
+        mm = re.match(r"(?i)\s*(provide|perform|handle|supply)\s+(.{6,})$", t)
+        rest = (mm.group(2) if mm else t).strip().rstrip(".")
+        cited = [text_of[c] for c in x.get("cites") or [] if c in text_of]
+        orig = was_excl.get(tuple(x.get("cites") or []))
+        library = bool(mm) and any(_said(rest, [e], 0.8) and _said(e, [rest], 0.8) for e in known)
+        if (library or orig is not None) and not _said(rest, cited, 0.6):
+            line = orig if orig is not None and not library else rest[:1].upper() + rest[1:] + "."
+            if not _said(line, oos, 0.6):
+                oos.append({**x, "text": line, "kind": "method"})
+            continue
         kept.append(x)
     content["scope"] = kept
 
