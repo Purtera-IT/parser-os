@@ -2353,7 +2353,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         content["services"] = [v for v in content["services"] if v != "assessment"] or ["implementation"]
     # A possible follow-up visit is never a planned one (010419: "some
     # follow-up needed the next day" became a scheduled return on a one-day fee).
-    fu = re.compile(r"(?i)follow-?up (visit|day)|next[- ]day (visit|follow)|return (visit|trip)|second (visit|day of)|come back")
+    fu = re.compile(r"(?i)follow-?up (visit|day)|follow[- ]?up (on )?(the )?next day|next[- ]day (visit|follow)|return (visit|trip)|second (visit|day of)|come back")
     had = False
     for k in ("overview", "schedule", "scope", "assumptions"):
         kept = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("standard") and fu.search(str(x.get("text"))))]
