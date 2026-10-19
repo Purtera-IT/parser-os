@@ -380,7 +380,8 @@
     "exclusions": [
       "Furniture, shelving or white boards.",
       "Powering down, disconnecting or unracking equipment at the origin location.",
-      "Installation, configuration, cabling or activation of equipment at the destination unless added by written change order."
+      "Installation, configuration, cabling or activation of equipment at the destination unless added by written change order.",
+      "{when:\\bltl\\b|shared truck|less than truckload} Dedicated truck."
     ],
     "deliverable_outcomes": [
       "Equipment packed and labeled for transport.",

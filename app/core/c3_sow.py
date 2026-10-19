@@ -2209,6 +2209,13 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     for x in content.get("arrival_protocol") or []:
         if isinstance(x, dict) and re.match(r"(?i)\s*require an onsite manager", str(x.get("text"))):
             x["text"] = re.sub(r"(?i)^\s*require an onsite manager", "Customer provides an onsite manager", str(x["text"]))
+    # The customer's own staff commitment is the customer's (010147: "Provide a
+    # member of the Lafayette team to meet the carrier" as a Provider step).
+    mv = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*(provide|have) (a|one) (member|representative|person) (of|from) (the|their|our) ", str(x.get("text")))]
+    for x in mv:
+        content["scope"].remove(x)
+        if not _said(str(x["text"]), content.setdefault("customer_responsibilities", []), 0.5):
+            content["customer_responsibilities"].append(x)
     # Customer duties written into the technician's arrival protocol are the
     # customer's (010082: inform Henry of the schedule, provide credentials).
     arr_keep = []
