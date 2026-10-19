@@ -1831,9 +1831,10 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # "Provide and install" claims Provider supplies it: only with a Provider
     # materials line saying so (010043's cable runs).
     if not content.get("provider_materials"):
-        for x in content.get("scope") or []:
-            if isinstance(x, dict) and re.match(r"(?i)\s*provide and install\b", str(x.get("text"))):
-                x["text"] = re.sub(r"(?i)^\s*provide and install", "Install", str(x["text"]))
+        for k in ("scope", "overview", "deliverables_text", "assumptions"):
+            for x in content.get(k) or []:
+                if isinstance(x, dict):
+                    x["text"] = re.sub(r"(?i)\b(provide|furnish|supply)(,)? and install\b", lambda m: "install" if m.group(0)[0].islower() else "Install", str(x.get("text")))
     # Customer duties are the customer's: a Provider action moves to scope, an
     # open question or the quote's approval route goes (010082: 21 duties with
     # 5 provider tasks, 2 questions and the sign-off route).
