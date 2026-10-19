@@ -88,6 +88,34 @@ def _target(read: tuple[str, str]) -> dict:
     return {name: answer, "reads_set": {}} if kind == "col" else {"reads_set": {name: answer}}
 
 
+#: Real-SOW alignment sections → read:sow_section answers.
+_REAL_SECTION = {"materials_customer": "customer_responsibilities", "materials_provider": "provider_responsibilities",
+                 "schedule": "timeline"}
+
+
+def real_sow_reviews(paths: list[str]) -> list[dict]:
+    """PurTera's own first-draft SOWs, aligned line by line to the atoms they
+    came from (sow_slot/sem_g*.jsonl, kind "stated"): the strongest labels we
+    have — the section the PM actually put the fact in, and that it belongs in
+    the SOW at all. Turned into accepted reviews so they train as gold."""
+    out = []
+    for path in paths:
+        for line in open(path):
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("kind") != "stated" or not r.get("atom_ids"):
+                continue
+            sec = _REAL_SECTION.get(r.get("label"), r.get("label"))
+            for aid in r["atom_ids"][:1]:
+                out.append({"deal": r["deal"], "atom_id": aid, "head": "sow_section", "value": sec,
+                            "verdict": "accepted", "by": "real_sow"})
+                out.append({"deal": r["deal"], "atom_id": aid, "head": "sow_keep", "value": "keep",
+                            "verdict": "accepted", "by": "real_sow"})
+    return out
+
+
 def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, int]:
     by_deal: dict[str, list[dict]] = {}
     for r in reviews:
@@ -153,10 +181,12 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--envelopes", nargs="+", required=True)
     p.add_argument("--reviews", default=None)
+    p.add_argument("--real-sow", nargs="*", default=[], help="sem_g*.jsonl real-SOW alignments (gold)")
     p.add_argument("--out", required=True)
     a = p.parse_args()
     paths = [x for pat in a.envelopes for x in glob.glob(pat)] or a.envelopes
     reviews = [json.loads(l) for l in open(a.reviews)] if a.reviews and os.path.exists(a.reviews) else []
+    reviews += real_sow_reviews([x for pat in a.real_sow for x in glob.glob(pat)])
     print(json.dumps(build(paths, reviews, a.out)))
 
 
