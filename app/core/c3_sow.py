@@ -2085,8 +2085,9 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # for shipment ... for disposal" beside "does not ship" and "left onsite").
     terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope") for x in content.get(k) or [])
     if re.search(r"(?i)does not (package|ship)|not ship|left onsite|remain onsite|placed in the customer-designated onsite|return logistics", terms):
-        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
-                            and re.search(r"(?i)for shipment|ship (them |it )?to|shipping to|for disposal", str(x.get("text"))))]
+        for k in ("scope", "customer_responsibilities"):
+            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+                          and re.search(r"(?i)for shipment|ship (them |it )?to|shipping to|for disposal|ship it to a", str(x.get("text"))))]
     # After-hours work is not business hours (010083).
     if any(re.search(r"(?i)after[- ]hours|after (store |branch )?clos|overnight|before (store |branch )?open|minutes before (store |branch )?clos", f["text"]) for f in fs):
         content["assumptions"] = [x for x in content.get("assumptions") or []
