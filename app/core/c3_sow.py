@@ -1446,6 +1446,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             r"(?i)once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|ongoing", pool_text)
     if transition:
         content["services"] = svc = ["assessment", "implementation"]
+    if transition:
+        _traced(content, "work_no_fact_names", _work_no_fact_names, content, pool_text)
+    _traced(content, "duty_owner", _duty_owner, content, fs)
     # A negation its cited source lacks reverses the source (000132: the
     # requested end-user O365 support written as "is excluded").
     n_dec = len(content.get("rule_decisions") or [])
@@ -1557,6 +1560,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _weekend(content, fs)
     _schedule_from_facts(content, fs, envelope)
     _roles_and_hours(content, fs)
+    if transition:
+        _traced(content, "role_groups", _role_groups, content)
     _traced(content, "polarity", _scope_polarity, content, fs)
     _traced(content, "exclusions_never_tasks", _exclusions_never_tasks, content, fs)
     _traced(content, "service_groups", _service_groups, content)
@@ -1725,6 +1730,98 @@ def _not_job_terms(content: dict[str, Any]) -> None:
             continue
         keep.append(x)
     content["schedule"] = keep
+
+
+#: Kinds of work a library or writer line can carry onto a job that has none.
+_WORK_KINDS = ((r"\bcabling\b|\blow[- ]voltage\b|\bcable (pathways?|organization|management|testers?)\b", r"\bcabl|\bwir(e|ing)\b|\bpatch|\bdrops?\b|low[- ]voltage|\bcat ?[56]"),
+               (r"\bmigrat\w*\b|\bequipment moves?\b|\bmoves?\b", r"\bmigrat|\bmov(e|es|ing)\b|\brelocat"))
+
+
+def _work_no_fact_names(content: dict[str, Any], pool: str) -> None:
+    """On an IT transition, a line about cabling, moves or migrations on a job
+    whose facts name none of them goes (010419 pass U: "Assist with
+    workstation cabling and cable organization", the low-voltage pathway
+    assumptions, and tools "to perform workstation migrations" and "for
+    equipment moves")."""
+    for line_pat, fact_pat in _WORK_KINDS:
+        if re.search(fact_pat, pool, re.I):
+            continue
+        for k in ("scope", "assumptions", "provider_tools", "provider_materials"):
+            keep = []
+            for x in content.get(k) or []:
+                t = str(x.get("text") if isinstance(x, dict) else x)
+                if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading" \
+                        and re.search(line_pat, t, re.I):  # no fact names it, so no cite states it
+                    # A tool line keeps its other purpose ("... for equipment
+                    # moves and cable management" goes whole; "... to perform
+                    # workstation migrations and troubleshooting" too).
+                    continue
+                keep.append(x)
+            content[k] = keep
+
+
+def _duty_owner(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
+    """A Provider task never claims the work a customer duty gives the
+    customer: with "Provide all device configurations and troubleshooting
+    support" or a remote engineer who owns configuration, "hands on
+    troubleshooting" leaves the task list (010419 pass U: "Perform basic issue
+    triage and hands on troubleshooting")."""
+    duty = " ".join(str(x.get("text")) for x in content.get("customer_responsibilities") or [] if isinstance(x, dict)).lower()
+    owned = [w for w, pat in (("troubleshoot", r"troubleshoot"), ("configur", r"configur")) if re.search(pat, duty)]
+    if not owned:
+        return
+    pat = re.compile(r"(?i)\b(?:basic |hands[- ]on |technical |advanced )*(%s)\w*" % "|".join(owned))
+    by = {f["id"]: f["text"] for f in fs or []}
+    keep = []
+    for x in content.get("scope") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        cited = " ".join(by.get(c, "") for c in (x.get("cites") or []) if isinstance(x, dict))
+        if not (isinstance(x, dict) and not x.get("standard") and not pat.search(cited) and x.get("kind") != "heading" and pat.search(t)) \
+                or re.search(r"(?i)\b(escalat|coordinat|under (the )?direction|as directed|support (the )?customer)", t):
+            keep.append(x)
+            continue
+        m = re.match(r"(?i)^(\s*\w+\s+)(.+?)\.?$", t)
+        items = [i for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(2)) if i.strip()] if m else []
+        left = [i for i in items if not pat.search(i)]
+        if left and len(left) < len(items):
+            keep.append({**x, "text": m.group(1) + _join(left) + "."})
+    content["scope"] = keep
+
+
+_ROLE_AREAS = (("Network", r"(?i)\bnetwork|switch|firewall|wireless|wi-?fi|access points?|circuit|\bisp\b|router|\brack|closet|\bidf\b|\bmdf\b|patch|uplink"),
+               ("End User Computing", r"(?i)end[- ]user|workstation|desktop|laptop|printer|\busers?\b|help ?desk|peripheral|o365|m365|e-?mail|desk-?side"))
+
+
+def _role_groups(content: dict[str, Any]) -> None:
+    """A transition staffed by role groups its tasks by role, not under
+    "Installation" or a site name (010419 pass U: one network technician and
+    one help desk technician; the PM wrote Network / EUC / Shared)."""
+    if not re.search(r"(?i)\btechnicians?\b.*\band\b.*\btechnicians?\b", str(content.get("scope_lead") or "")):
+        return
+    sc = content.get("scope") or []
+    closing = re.compile(r"(?i)clos|clean|wrap|complet")
+    groups = {name: [] for name, _ in _ROLE_AREAS}
+    shared, close, in_close = [], [], False
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            in_close = bool(closing.search(str(x.get("text"))))
+            continue
+        if in_close:
+            close.append(x)
+            continue
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        hits = [name for name, pat in _ROLE_AREAS if re.search(pat, t)]
+        (groups[hits[0]] if len(hits) == 1 else shared).append(x)
+    head = lambda n: {"text": n, "cites": [], "kind": "heading"}
+    out = []
+    for name, _ in _ROLE_AREAS:
+        if groups[name]:
+            out += [head(name)] + groups[name]
+    if shared:
+        # Nothing role-specific: one onsite group, not "Installation" and a
+        # site name.
+        out += [head("Shared" if out else "Onsite Support")] + shared
+    content["scope"] = out + ([head("Closeout")] + close if close else [])
 
 
 def _own_documents(content: dict[str, Any]) -> None:

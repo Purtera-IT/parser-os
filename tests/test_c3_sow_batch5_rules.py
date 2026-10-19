@@ -365,3 +365,35 @@ def test_a_title_naming_excluded_work_is_contradicted():
          "out_of_scope": [{"text": "Rack hardware, gateways, or rack-and-stack work.", "cites": [], "kind": "method"}]}
     assert m._name_contradicted("Manitowoc - Racking/Wall mount", c)
     assert not m._name_contradicted("Manitowoc Phone Deployment", c)
+
+
+# --- 010419 C+: transition jobs ---------------------------------------------------
+
+def test_work_no_fact_names_goes_even_when_cited():
+    c = {"scope": [{"text": "Assist with workstation cabling and cable organization.", "cites": ["s"], "kind": "method"},
+                   {"text": "Validate reported issues.", "cites": [], "kind": "method"}],
+         "assumptions": [{"text": "Cable pathways are accessible for low-voltage review.", "cites": [], "kind": "method"}],
+         "provider_tools": [{"text": "Standard IT tools to perform workstation migrations.", "cites": [], "kind": "method"}]}
+    m._work_no_fact_names(c, "one network technician and one help desk technician per community. onboarding.")
+    assert [x["text"] for x in c["scope"]] == ["Validate reported issues."] and not c["assumptions"] and not c["provider_tools"]
+
+
+def test_a_task_never_claims_the_work_a_customer_duty_holds():
+    c = {"customer_responsibilities": [{"text": "Provide all device configurations and troubleshooting support as required.", "cites": [], "kind": "method"}],
+         "scope": [{"text": "Perform basic issue triage and hands on troubleshooting.", "cites": ["s"], "kind": "method"},
+                   {"text": "Escalate advanced troubleshooting to the Customer's IT contacts.", "cites": [], "kind": "method"}]}
+    m._duty_owner(c, [_fact("s", "Typically, we need one network technician and one help desk technician per community.")])
+    assert [x["text"] for x in c["scope"]] == ["Perform basic issue triage.", "Escalate advanced troubleshooting to the Customer's IT contacts."]
+
+
+def test_a_transition_staffed_by_role_groups_by_role():
+    c = {"scope_lead": "Provider will dispatch one (1) network technician and one (1) help desk technician to perform the following:",
+         "scope": [{"text": "Installation", "cites": [], "kind": "heading"},
+                   {"text": "Trace switch uplinks with the remote engineer.", "cites": [], "kind": "method"},
+                   {"text": "Bradley Creek", "cites": [], "kind": "heading"},
+                   {"text": "Validate workstation and printer function for users.", "cites": [], "kind": "method"},
+                   {"text": "Document findings.", "cites": [], "kind": "method"},
+                   {"text": "Closeout", "cites": [], "kind": "heading"},
+                   {"text": "Confirm completion.", "cites": [], "kind": "method"}]}
+    m._role_groups(c)
+    assert [x["text"] for x in c["scope"] if x["kind"] == "heading"] == ["Network", "End User Computing", "Shared", "Closeout"]
