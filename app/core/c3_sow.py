@@ -1631,8 +1631,18 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     pictured = lambda x: bool(x.get("cites")) and all(by.get(c, {}).get("pictured") for c in x.get("cites") or [])
     ov = [x for x in content.get("overview") or [] if isinstance(x, dict)]
     keep = [x for x in ov if not pictured(x)]
-    if keep and len(keep) < len(ov):
-        content["overview"] = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and pictured(x))]
+    if len(keep) < len(ov):
+        if not keep:
+            # Only captions: the writer's own summary drafts the check set aside
+            # (010012: "Conference Room 2102 contains a large rectangular table").
+            keep = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+                    if isinstance(x, dict) and x.get("list") == "overview" and x.get("text") and not pictured(x)][:2]
+        if keep:
+            content["overview"] = keep
+    # A picture caption is no duty, assumption or material (010012: "Building
+    # access is via the central core ..." from a floor-plan caption).
+    for k in ("customer_responsibilities", "assumptions", "customer_materials", "provider_materials", "equipment_in_scope", "arrival_protocol"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and pictured(x))]
     # "The attached floor plan": nothing is attached to a SOW.
     for k in LISTS:
         content[k] = [x for x in content.get(k) or []

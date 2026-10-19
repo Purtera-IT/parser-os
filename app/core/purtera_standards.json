@@ -289,7 +289,7 @@
       "{when:ceiling|suspended|hanging|pendant} Secure ceiling-mounted devices to structure above the grid with manufacturer hardware and a secondary safety attachment.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Connect the network switch to the Customer network and patch the installed devices.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Label new and reused cables at both ends.",
-      "{when:video bar|rally|neat|poly|camera|teams room|zoom room} Test camera, microphone, speaker and audio function with one Customer-assisted test call where the platform allows.",
+      "{when:test call|teams|zoom|webex|meeting credentials|platform credentials} Test camera, microphone, speaker and audio function with one Customer-assisted test call where the platform allows.",
       "Correct any workmanship deficiencies identified during testing before leaving site.",
       "Confirm completion with the onsite contact before leaving site."
     ],
