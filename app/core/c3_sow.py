@@ -1377,6 +1377,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["_our_people"] = sorted({str(pp.get("name") or "").split()[0] for pp in (envelope.get("deal_roster") or {}).get("people") or []
                                      if pp.get("side") == "ours" and str(pp.get("name") or "").strip()})
     content["_brochure_atoms"] = [str(a.get("id")) for a in envelope.get("atoms") or [] if str(a.get("artifact_id")) in bro_docs]
+    # The deal's own hedges on round-the-clock coverage, wherever the brief
+    # filed them (000132: "The 24/7 availability can be tough ..." is a
+    # commitment atom the facts never carried; only its bare ask was a fact).
+    content["_clock_hedges"] = [{"id": str(a.get("id")), "text": str(a.get("text") or "")} for a in envelope.get("atoms") or []
+                                if re.search(r"(?i)" + _ROUND_CLOCK + r"|on-?call", str(a.get("text") or ""))
+                                and _HEDGE.search(str(a.get("text") or ""))]
     # A line the type head called small talk is never cited (010082: "This
     # work is for a new unit opening" from a signature's menu entry).
     chatter = {str(a.get("id")) for a in envelope.get("atoms") or []
@@ -3773,8 +3779,14 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # A hedged ask is not a promise (000132: "24/7 on-call can be tough ...
     # depending on volume" became "24/7 on-call availability" in the summary,
     # beside its own no-SLO and business-hours assumptions).
-    promise = re.compile(r"(?i)24\s*/\s*7|24x7|on-?call|guaranteed response|response time|\bsla\b")
-    hedged = any(promise.search(f["text"]) and re.search(r"(?i)tough|depend|might|may |not sure|tbd|hard to|difficult|\?", f["text"]) for f in fs)
+    # The round-the-clock term however it is written: the writer spells
+    # counts, and "24/7" came back "twenty-four (24) by seven (7)", which the
+    # strip below left as the whole line (000132 pass V).
+    clock = _ROUND_CLOCK
+    promise = re.compile(r"(?i)" + clock + r"|on-?call|guaranteed response|response time|\bsla\b")
+    hedge_facts = [f for f in fs if promise.search(f["text"]) and _HEDGE.search(f["text"])] + list(content.pop("_clock_hedges", []) or [])
+    hedged = bool(hedge_facts)
+    withheld = False
     no_slo = any(re.search(r"(?i)no (service[- ]level|slo|sla)|business hours", str(x.get("text") if isinstance(x, dict) else x))
                  for x in content.get("assumptions") or [])
     if hedged or no_slo:
@@ -3790,15 +3802,27 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                         x["text"] = t1
                         kept.append(x)
                         continue
-                    t2 = re.sub(r"(?i),?\s*(including |and |with |provide |offer |providing )*(24\s*/\s*7|24x7)?\s*on-?call( availability| support| coverage)?"
-                                r"|,?\s*(with |and |provide |providing )*24\s*/\s*7( availability| support| coverage)?", "", t).strip()
+                    t2 = re.sub(r"(?i),?\s*(including |and |with |provide |offer |providing )*(" + clock + r")?\s*on-?call( availability| support| coverage)?"
+                                r"|,?\s*(with |and |provide |providing )*(" + clock + r")( availability| support| coverage)?", "", t).strip()
                     t2 = re.sub(r"\s+,", ",", re.sub(r",\s*,", ",", t2))
-                    if len(t2) < 25 or promise.search(t2):
+                    withheld = True
+                    # What is left must still say some work: "Provider will
+                    # provide." is the promise's verb with nothing after it.
+                    if len(t2) < 25 or promise.search(t2) or re.match(r"(?i)\s*(provider will )?(provide|offer|maintain|be)\s*[.]?\s*$", t2):
                         continue
                     x["text"] = t2
                 kept.append(x)
             if kept or not content.get(k):
                 content[k] = kept
+        # A hedged round-the-clock ask the SOW does not promise is said as
+        # what it is: not included unless agreed (000132: "The 24/7
+        # availability can be tough because you're paying for someone to be
+        # on call"). Only when a line was withheld and nothing says it yet.
+        if hedged and withheld and not any(promise.search(str(x.get("text") if isinstance(x, dict) else x))
+                                           for k in ("assumptions", "out_of_scope") for x in content.get(k) or []):
+            content.setdefault("out_of_scope", []).append(
+                {"text": "24/7 on-call availability or guaranteed response times, unless separately agreed in writing.",
+                 "cites": [hedge_facts[0]["id"]], "kind": "fact"})
     # A service the writer filed as an assumption is a task (000132: "End-user
     # support includes O365/M365 clients").
     svc = [x for x in content.get("assumptions") or [] if isinstance(x, dict)
@@ -4949,6 +4973,16 @@ def _locations_cover_sites(c: dict[str, Any]) -> None:
     c["locations"] = locs
 
 
+#: Round-the-clock coverage however the writer puts it ("24/7", "24x7",
+#: "twenty-four (24) by seven (7)", "24 hours a day").
+_ROUND_CLOCK = (r"24\s*/\s*7|24\s*x\s*7|24\s+by\s+7|twenty-four\s*(?:\(24\)\s*)?(?:by|x|/)\s*seven(?:\s*\(7\))?"
+                r"|24 hours a day|around the clock|round-the-clock")
+
+
+#: Words that make an ask a hedge, not a commitment ("can be tough", "depending on volume").
+_HEDGE = re.compile(r"(?i)tough|depend|might|may |not sure|tbd|hard to|difficult|\?")
+
+
 #: A sentence that ends on a word that needs an object ("remain available for.").
 _DANGLING = re.compile(r"(?i)(?<![-/\w])(for|to|with|of|by|at|on|in|from|into|onto|via|than|including|and|or|the|a|an|such as)\s*[.:;]?\s*$")
 
@@ -5016,6 +5050,114 @@ _LOGISTICS = re.compile(r"(?i)\b(arriv\w*|site access|check[- ]?in|parking|badg\
 _NOMINAL = ((r"provide\s+", ""), (r"perform\s+", ""), (r"support\s+", "support for "), (r"coordinate\s+", "coordination "),
             (r"document\s+", "documentation of "), (r"troubleshoot\s+", "troubleshooting of "), (r"respond to\s+", "response to "),
             (r"maintain\s+", "maintenance of "), (r"monitor\s+", "monitoring of "))
+
+
+def _per_site_lines(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """Per-site lines are one per resolved site (000132 pass V: "Visit X once
+    per week" for five of the six sites; Delphos, OH, in the roster, the
+    locations and the summary, had no visit line). Lines that say the same
+    thing but for the one site each names are a per-site family; when the
+    family covers at least half the sites, each site it leaves out gets the
+    same line, cited to what the family shares plus the site's own line.
+    A family must end up with exactly one line per site, else nothing is
+    added."""
+    sites = [x for x in c.get("sites") or [] if isinstance(x, dict)]
+    if not 2 <= len(sites) <= 40:
+        return
+    def pats(st: dict[str, Any]) -> list[str]:
+        out = []
+        ci, sta = str(st.get("city") or "").strip(), str(st.get("state") or "").strip()
+        nm = str(st.get("name") or "").strip()
+        if ci and re.fullmatch(r"[A-Z]{2}", sta):
+            out.append(re.escape(ci) + r",\s*" + re.escape(sta) + r"\b")
+        if nm and len(nm) >= 4:
+            out.append(re.escape(nm))
+        if ci and len(ci) >= 4:
+            out.append(r"\b" + re.escape(ci) + r"\b")
+        return out
+    site_pats = [pats(st) for st in sites]
+    if any(not p for p in site_pats):
+        return
+    for k in ("scope", "schedule"):
+        lst = c.get(k) or []
+        fams: dict[str, list[tuple[int, int, str]]] = {}
+        for i, x in enumerate(lst):
+            if not isinstance(x, dict) or x.get("kind") == "heading" or x.get("standard"):
+                continue
+            t = str(x.get("text") or "")
+            hits = []
+            for j, ps in enumerate(site_pats):
+                m = next((mm for p in ps for mm in [re.search(p, t)] if mm), None)
+                if m:
+                    hits.append((j, m))
+            if len(hits) != 1:
+                continue
+            j, m = hits[0]
+            fams.setdefault(t[:m.start()] + "\x00" + t[m.end():], []).append((i, j, m.group(0)))
+        adds: list[tuple[int, dict[str, Any]]] = []
+        for tmpl, rows in fams.items():
+            have = {j for _, j, _ in rows}
+            if len(rows) < 2 or len(have) != len(rows) or len(rows) * 2 < len(sites) or len(have) == len(sites):
+                continue
+            with_state = all("," in g for _, _, g in rows)
+            group = [lst[i] for i, _, _ in rows]
+            shared = [cc for cc in group[0].get("cites") or [] if all(cc in (g.get("cites") or []) for g in group)]
+            last = max(i for i, _, _ in rows)
+            for j, st in enumerate(sites):
+                if j in have:
+                    continue
+                ci, sta = str(st.get("city") or "").strip(), str(st.get("state") or "").strip()
+                label = f"{ci}, {sta}" if with_state and ci and sta else (ci or str(st.get("name") or ""))
+                own = [str(a.get("id")) for a in atoms if str(a.get("atom_type") or "") == "physical_site"
+                       and any(re.search(p, str(a.get("text") or "")) for p in site_pats[j][:1])][:1]
+                adds.append((last, {"text": tmpl.replace("\x00", label), "cites": shared + own,
+                                    "kind": group[0].get("kind") or "fact", "from": "sites"}))
+        # After the family's last line, in roster order (a later anchor
+        # first, so an earlier anchor's index still holds).
+        for at in sorted({a for a, _ in adds}, reverse=True):
+            lst[at + 1:at + 1] = [line for a, line in adds if a == at]
+        c[k] = lst
+
+
+def _summary_services_tasked(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """On recurring support, a service the summary promises is also a task
+    (000132 pass V: "end-user support including O365/M365 clients" was in the
+    summary only; the deal's line saying it was typed deal_metadata, so no
+    fact carried it to the task list). The service is the deal's own short
+    line, every word of which the summary says, that no task says yet; it is
+    written as a task cited to that line. Never a hedged or round-the-clock
+    ask, a question, or a line the SOW excludes."""
+    if not {"support", "staff_augmentation"} & set(c.get("services") or []):
+        return
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    ov_toks = _toks(" ".join(tx(x) for x in c.get("overview") or []))
+    sc = c.setdefault("scope", [])
+    oos = [x for x in (c.get("out_of_scope") or []) + (c.get("assumptions") or [])]
+    clock = re.compile(r"(?i)" + _ROUND_CLOCK + r"|on-?call")
+    seen: list[str] = []
+    adds = []
+    for a in atoms:
+        t = re.sub(r"\s+", " ", str(a.get("text") or "")).strip().rstrip(".")
+        if not (2 <= len(t.split()) <= 10) or "?" in t or clock.search(t) or _HEDGE.search(t):
+            continue
+        if not re.search(r"(?i)\bsupport\b", t) or str(a.get("atom_type") or "") in ("physical_site", "question", "small_talk", "signature", "contact"):
+            continue
+        want = _toks(t)
+        if len(want) < 2 or not want <= ov_toks or _said(t, sc, 0.6) or _said(t, oos, 0.6) or _said(t, seen, 0.8):
+            continue
+        seen.append(t)
+        t = re.sub(r"(?i)\s+including\b", ", including", t)
+        if re.match(r"(?i)(support|perform|provide|troubleshoot|maintain|coordinate)\b", t):
+            line = t[:1].upper() + t[1:] + "."
+        else:
+            line = "Provide " + (t[:1].lower() + t[1:] if t[1:2].islower() else t) + "."
+        adds.append({"text": line, "cites": [str(a.get("id"))], "kind": "fact", "from": "overview"})
+    if not adds:
+        return
+    # Beside the deal's other cited service tasks.
+    at = max((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") != "heading" and x.get("cites")
+              and not x.get("standard") and re.match(r"(?i)\s*(support|perform|provide|troubleshoot|maintain)\b", tx(x))), default=len(sc) - 1)
+    sc[at + 1:at + 1] = adds[:3]
 
 
 def _summary_names_job(c: dict[str, Any]) -> None:
@@ -6733,7 +6875,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     full = ", ".join(f"{ci}, {st}" if st else ci for ci, st in cities[:-1]) + ", and " + \
                         (f"{cities[-1][0]}, {cities[-1][1]}" if cities[-1][1] else cities[-1][0])
                     x["text"] = t[:a] + full + t[b:]
+    _traced(c, "per_site_lines", _per_site_lines, c, envelope.get("atoms") or [])
     _summary_names_job(c)
+    _traced(c, "summary_services_tasked", _summary_services_tasked, c, envelope.get("atoms") or [])
     # The site-count summary line the fact check set aside comes back when its
     # count is the resolved roster (000123: "161 customer locations" dropped
     # against a note's "about 160").
