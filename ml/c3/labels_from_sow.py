@@ -126,6 +126,48 @@ def real_sow_reviews(paths: list[str]) -> list[dict]:
     return out
 
 
+def rubric_reviews(paths: list[str]) -> list[dict]:
+    """Lines labeled by the SOW section rubric (docs/C3_RUBRIC_SOW_SECTION.md):
+    one section and one owner per line, judged by what the line does in the
+    job. Two independent labelers agreed on 93-95% of sections and 95% of
+    owners (against 45% between a real SOW and a graded one), so these train as
+    gold. Where two labelers disagree the line is skipped. Input: the label
+    files (``<batch>.A.jsonl``, optional ``<batch>.B.jsonl``) next to the batch
+    file that carries each line's deal."""
+    out = []
+    for path in paths:
+        batch = path.rsplit(".", 2)[0] + ".jsonl"
+        if path.endswith(".B.jsonl") or not os.path.exists(batch):
+            continue
+        deal_of = {}
+        for line in open(batch):
+            r = json.loads(line)
+            deal_of[r["id"]] = r["deal"]
+        other = path[: -len(".A.jsonl")] + ".B.jsonl"
+        second = {}
+        if os.path.exists(other):
+            for line in open(other):
+                r = json.loads(line)
+                second[r["id"]] = r
+        for line in open(path):
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            aid, deal = r.get("id"), deal_of.get(r.get("id"))
+            if not aid or not deal:
+                continue
+            b = second.get(aid)
+            sec, own = r.get("section"), r.get("owner")
+            if sec and (b is None or b.get("section") == sec):
+                out.append({"deal": deal, "atom_id": aid, "head": "sow_section", "value": sec,
+                            "verdict": "accepted", "by": "rubric"})
+            if own in ("technician", "customer", "partner", "other") and (b is None or b.get("owner") == own):
+                out.append({"deal": deal, "atom_id": aid, "head": "sow_party", "value": own,
+                            "verdict": "accepted", "by": "rubric"})
+    return out
+
+
 def outcome_reviews(envelopes: list[str]) -> list[dict]:
     """Where the graded SOW finally put each cited fact (the writer's LLM call
     plus every rule after it): one sow_section answer per atom, its first list
@@ -230,11 +272,15 @@ def main() -> None:
     p.add_argument("--envelopes", nargs="+", required=True)
     p.add_argument("--reviews", default=None)
     p.add_argument("--real-sow", nargs="*", default=[], help="sem_g*.jsonl real-SOW alignments (gold)")
+    p.add_argument("--rubric", nargs="*", default=[], help="rubric label files (<batch>.A.jsonl)")
     p.add_argument("--outcomes", action="store_true", help="add the graded SOW's placements as silver")
     p.add_argument("--out", required=True)
     a = p.parse_args()
     paths = [x for pat in a.envelopes for x in glob.glob(pat)] or a.envelopes
     reviews = [json.loads(l) for l in open(a.reviews)] if a.reviews and os.path.exists(a.reviews) else []
+    # The rubric first: the first human answer for a line wins, and the rubric
+    # is the consistent one (a real SOW's placement is one writer's choice).
+    reviews += rubric_reviews([x for pat in a.rubric for x in glob.glob(pat)])
     reviews += real_sow_reviews([x for pat in a.real_sow for x in glob.glob(pat)])
     if a.outcomes:
         reviews += outcome_reviews(paths)
