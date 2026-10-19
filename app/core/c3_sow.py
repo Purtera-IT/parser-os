@@ -1740,7 +1740,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # outside of Provider's onsite support scope" from a bare service bullet).
     content["assumptions"] = [x for x in content.get("assumptions") or []
                               if not (isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
-                                      and re.search(r"(?i)outside (of )?(the )?provider'?s?|not (part of|included in) provider|customer will (provide|handle) .{0,40}support", str(x.get("text")))
+                                      and re.search(r"(?i)outside (of )?(the )?provider'?s?|not (part of|included in) provider|customer will (provide|handle) .{0,40}support|\b(is|are) (excluded|not included|out of scope)\b", str(x.get("text")))
                                       and not any(neg.search(by[c]["text"]) for c in x["cites"]))]
     # Recurring onsite support has no install site conditions to price.
     facts_all = " ".join(f["text"] for f in fs)
@@ -2061,7 +2061,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # capped as "basic on-site support, triage, equipment moves").
     content["assumptions"] = [x for x in content.get("assumptions") or [] if not (
         isinstance(x, dict) and not x.get("cites") and not x.get("standard")
-        and re.match(r"(?i)\s*(services|work|provider'?s? (work|scope|services)) (are|is) limited to (basic|general|light)\b", str(x.get("text"))))]
+        and re.match(r"(?i)\s*(services|work|provider'?s? (work|scope|services|support)|provider support|support) (are|is) limited to (basic|general|light)\b", str(x.get("text"))))]
     # "Only pack and deliver; we manage the destination": no destination work
     # (010147: a Destination Office section of unpack, place, reconnect).
     if any(re.search(r"(?i)only (be )?(a )?pack(ing)? and deliver|we will (manage|handle|take care of) (things |everything )?at the destination|"
