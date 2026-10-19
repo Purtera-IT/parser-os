@@ -1584,6 +1584,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # mounted on the front wall" fired the display-mounting block).
     writer_snap = _snap(content)
     content["_noise_atoms"], content["_noise_re"] = _noise(envelope, fs)
+    content["_inventory"] = _inventory_rows(envelope)
     # The standards' gates also read the deal lines the brief left out, from
     # the documents the facts come from: not addresses, contacts, chatter or
     # rejected lines (000123: "Gateway Road" is not a gateway).
@@ -1898,6 +1899,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # the rest as "writer_rules": the queue SowSmith shows as "Teach the heads".
     _std_gone(content, "writer rules (untraced)")
     content.pop("_noise_atoms", None)
+    content.pop("_inventory", None)
     content.pop("_slots", None)
     content.pop("_polarity_rejected", None)
     content.pop("_noise_re", None)
@@ -3055,10 +3057,19 @@ def _cell_not_task(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # One labeled cell with no count (010279's "Description | Part # |
     # Quantity Needed | ..." is the equipment table itself).
     cell = re.compile(r"(?i)^\s*(description|desc|purpose|usage|function)\s*:\s*[^|\d]+$")
-    is_cell = lambda c: c in by and bool(cell.match(by[c]["text"]))
-    for k in ("scope", "overview"):
+    inv_ids, inv_names = content.get("_inventory") or (set(), set())
+    is_cell = lambda c: c in inv_ids or (c in by and bool(cell.match(by[c]["text"])))
+    # Every row of an inventory sheet of existing lines (PORT beside USAGE /
+    # SERVICE) is a record, never a task, cited or named (010326 pass Y:
+    # fifteen dial-up meter, fax, elevator-phone and modem rows; one was a
+    # cite the writer mistyped, so the row's own name decides).
+    named = lambda t: any(re.search(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])", t.lower()) for n in inv_names)
+    for k in ("scope", "overview", "equipment_in_scope"):
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
-                      and not x.get("standard") and x.get("cites") and all(is_cell(c) for c in x["cites"]))]
+                      and not x.get("standard") and (
+                          (x.get("cites") and all(is_cell(c) for c in x["cites"]))
+                          or (inv_names and not [c for c in x.get("cites") or [] if c in by and c not in inv_ids]
+                              and named(str(x.get("text"))))))]
 
 
 #: Words that say how or that work is done, not what it acts on: two lines
@@ -3198,6 +3209,42 @@ def _ship_list_siblings(content: dict[str, Any], envelope: dict[str, Any], fs: l
             cm.append({"text": f["text"].strip().rstrip("."), "cites": [f["id"]], "kind": "fact"})
 
 
+def _inventory_rows(envelope: dict[str, Any]) -> tuple[set[str], set[str]]:
+    """The rows of an inventory sheet of existing lines (a PORT column beside
+    a USAGE / SERVICE / STATUS column), every cell fragment of them, and the
+    names their DESCRIPTION cells give. Such a sheet records what is there
+    (010326: the analog-port sheet's dial-up meters, fax lines, elevator
+    phone and modem), never work."""
+    atoms = envelope.get("atoms") or []
+    def is_row(a: dict[str, Any]) -> bool:
+        ks = {str(k).strip().lower() for k in ((a.get("structured") or {}).get("cells") or {})}
+        return any(re.fullmatch(r"port|port ?#|port no\.?|line|line ?#|ext\.?|extension", k) for k in ks) and \
+            any(re.search(r"usage|service|status|in use", k) for k in ks)
+    sheets: dict[tuple[str, str], int] = {}
+    for a in atoms:
+        if is_row(a):
+            key = (str(a.get("artifact_id")), str((a.get("structured") or {}).get("sheet") or ""))
+            sheets[key] = sheets.get(key, 0) + 1
+    arts = {k[0] for k, n in sheets.items() if n >= 2}
+    if not arts:
+        return set(), set()
+    ids: set[str] = set()
+    names: set[str] = set()
+    cell_txt = re.compile(r"(?i)^\s*(port|description|desc|usage|service|status)\s*:")
+    for a in atoms:
+        st = a.get("structured") or {}
+        if str(a.get("artifact_id")) not in arts:
+            continue
+        if is_row(a) or (str(a.get("artifact_id")), str(st.get("sheet") or "")) in sheets and cell_txt.match(str(a.get("text") or "")) \
+                or (not st.get("sheet") and cell_txt.match(str(a.get("text") or ""))):
+            ids.add(str(a.get("id")))
+            for k, v in (st.get("cells") or {}).items():
+                if str(k).strip().lower() in ("description", "desc") and len(str(v).strip()) >= 6:
+                    names.add(str(v).strip().lower())
+    ids |= {str(a.get("id")) for a in atoms if str((a.get("structured") or {}).get("_parent_atom_id") or "") in ids}
+    return ids, names
+
+
 def _noise(envelope: dict[str, Any], fs: list[dict[str, Any]]) -> tuple[list[str], str]:
     """Atoms (and a line pattern) whose drop by a rule is noise, never
     guarded: pictures, small talk and signatures, brochure and floor-plan
@@ -3219,6 +3266,7 @@ def _noise(envelope: dict[str, Any], fs: list[dict[str, Any]]) -> tuple[list[str
     ids = {f["id"] for f in fs if f.get("pictured") or f.get("quoted") or noise_txt.search(f["text"])
            or (f.get("asked") and f.get("section") != "answered_question") or f["text"].rstrip().endswith("?")
            or re.search(r"(?i)open questions?|questions? for (the )?customer|to confirm|tbd items", str(f.get("under") or ""))}
+    ids |= _inventory_rows(envelope)[0]
     ids |= {str(a.get("id")) for a in envelope.get("atoms") or []
             if str(a.get("artifact_id")) in bro_ids
             or str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") in ("small_talk", "signature")}
@@ -10295,6 +10343,297 @@ def _no_site_multiples(c: dict[str, Any], n_sites: int, atom_text: dict[str, str
             d["description"] = [fix(str(t)) for t in d.get("description") or []]
 
 
+#: A reseller's mail domain (its "they" is the end customer, as PurTera's is).
+_RESELLER_DOMAIN = re.compile(r"(?i)(?:^|[.@])(cdwg?|shi|insight|presidio|connection|computacenter|paragon|wwt|softchoice|carahsoft|zones)\.")
+#: "They will handle X" / "you guys are gonna be handling X" / "the internal
+#: team will manage X": a role statement giving X to someone other than the
+#: writer. What X runs to stops at the writer's own half (", we would be ...").
+_THEY_HANDLE = re.compile(
+    r"(?i)\b(?P<who>they|you guys|you all|y'all|(?:the |their )?internal (?:it )?team)\s+"
+    r"(?:will|'ll|are going to|are gonna|is going to|would|are|is)\s+(?:also\s+)?(?:be\s+)?"
+    r"(?:handling|handle|managing|manage|taking care of|take care of|owning|own|doing|do|performing|perform|covering|cover)\s+"
+    r"(?P<what>[^.;!?]{3,160}?)(?=\s*(?:[.;!?]|,\s*(?:and\s+|but\s+)?(?:we|i|purtera|provider|our)\b|\s+(?:and|while|but|so)\s+(?:we|i|purtera|our)\b|$))")
+_HANDLE_SKIP = frozenset("that this those these it them any like thing stuff themselv itself goe go put such kind around total about "
+                         "approximately approx".split())
+
+
+def _author_side(a: dict[str, Any], roster: dict[str, str], acct: str = "") -> str:
+    """Whose words a line is: "ours" (PurTera), "reseller" or "customer", by
+    the sender's mail domain or the speaker's roster entry; "" when unknown."""
+    loc, do = a.get("locator") or {}, a.get("doc_origin") or {}
+    email = str(do.get("sender_email") or "").lower()
+    if not email:
+        m_ = re.search(r"[\w.+-]+@[\w.-]+", str(loc.get("sender") or ""))
+        email = m_.group(0).lower() if m_ else ""
+    if not email:
+        email = roster.get(str(loc.get("speaker") or do.get("sender_name") or "").strip().lower(), "")
+    dom = email.split("@")[-1] if "@" in email else ""
+    if not dom:
+        return ""
+    if "purtera" in dom:
+        return "ours"
+    if _RESELLER_DOMAIN.search("@" + dom) or (acct and acct in re.sub(r"[^a-z0-9]", "", dom.split(".")[0])):
+        return "reseller"
+    return "customer"
+
+
+def _handle_items(what: str) -> list[tuple[str, frozenset[str]]]:
+    """The work a role statement names, item by item, with each item's key
+    words: "the gateways and the R&S" -> [("the gateways", {gateway}),
+    ("the rack and stack", {rack, stack})]."""
+    w = re.sub(r"(?i)\bR\s*&\s*S\b|\brack\s*(?:&|and|n|/)\s*stack(?:ing)?\b", "rack and stack", what)
+    w = re.sub(r"(?i)\b(\w+),\s+\1\b", r"\1", w)  # "the, the gear that, that goes"
+    w = re.sub(r"(?i)^\s*(?:any|all|some)\s+of\s+", "", w).strip(" ,")
+    w = re.sub(r"\s*\([^)]*\)", "", w)
+    out = []
+    for part in re.split(r"(?i),\s*(?:and\s+)?|\s+and\s+(?!stack)", w):
+        part = part.strip(" ,")
+        keys = frozenset(k for k in _object_toks(part) if k not in _HANDLE_SKIP and len(k) >= 4)
+        if part and keys and not re.match(r"(?i)(that|this|it|those|them)\b", part):
+            out.append((part, keys))
+    return out
+
+
+def _mentions(t: str, keys: frozenset[str]) -> bool:
+    toks = {_stem(w) for w in re.findall(r"[a-z0-9]+", str(t).lower())}
+    return any(k in toks or any(x.startswith(k) for x in toks if len(k) >= 5) for k in keys)
+
+
+def _strip_items(t: str, gone) -> str | None:
+    """The line without the list items ``gone`` holds: the text unchanged when
+    none do, "" when every item does. A kept item that lost its verb takes
+    the first item's ("two (2) ... units" after "Install eighteen ...")."""
+    body = str(t).rstrip(" .")
+    tail = ""
+    mt = re.search(r"(?i)\s+(?:at|across|in|throughout|on)\s+(?:the\s+)?(?:Customer-designated|designated|each|all|every)\b[^,]*$", body)
+    if mt:
+        body, tail = body[:mt.start()], mt.group(0)
+    parts = [p_ for p_ in re.split(r"(?i),\s*(?:and\s+)?|\s+and\s+(?!stack|stacking)", body) if p_.strip()]
+    if len(parts) < 1:
+        return None
+    keep = [p_ for p_ in parts if not gone(p_)]
+    if len(keep) == len(parts):
+        return None
+    if not keep:
+        return ""
+    verb = re.match(r"\s*((?:Provider will\s+)?[A-Z][a-z]+)\b", parts[0])
+    if verb and keep[0] is not parts[0] and not re.match(r"\s*[A-Z][a-z]+\b(?<!The)", keep[0]):
+        keep[0] = verb.group(1) + " " + keep[0].strip()
+    keep[0] = keep[0].strip()
+    keep[0] = keep[0][:1].upper() + keep[0][1:]
+    joined = keep[0] if len(keep) == 1 else ", ".join(p_.strip() for p_ in keep[:-1]) + " and " + keep[-1].strip()
+    return joined + tail + "."
+
+
+def _they_handle(c: dict[str, Any], envelope: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
+    """Who "they" is depends on who is talking. When PurTera or the reseller
+    writes "They will handle X" (or PurTera says "you guys are gonna be
+    handling X" to the customer, or "the internal team will manage X"), X is
+    the Customer's: a customer duty and an exclusion, whatever the supplier
+    head said, and never a Provider task, summary clause, deliverable or a
+    material the Provider uses. A later dated role split overrides an earlier
+    request ("need help with racking" on 9/14 gave way to "They will handle
+    the gateways and the R&S" on 9/17); only a later PurTera line taking X
+    back keeps it ours. 010326 pass Y: Provider racked hardware and
+    installed the VG400/VG410 gateways, the deliverable said "Completed
+    racking", and no customer duty or exclusion said otherwise."""
+    atoms = envelope.get("atoms") or []
+    by = {str(a.get("id")): a for a in atoms}
+    roster = {str(p_.get("name") or "").strip().lower(): str(p_.get("email") or "").lower()
+              for p_ in (envelope.get("deal_roster") or {}).get("people") or [] if p_.get("name")}
+    acct = re.sub(r"[^a-z0-9]", "", str((envelope.get("crm") or {}).get("account_name") or "").lower())[:6]
+    cited = {cc for k in _LIST_SECTION for x in c.get(k) or [] if isinstance(x, dict) for cc in x.get("cites") or []}
+    pool = [i for i in dict.fromkeys(list(cited) + [f["id"] for f in fs or [] if f.get("section") in ("scope_of_work", "customer_responsibilities")]) if i in by]
+    when = lambda a: str((a.get("doc_origin") or {}).get("sent_at") or "")
+    head_says = {str(x.get("id")): x.get("supplier") for sec in ((envelope.get("c3_brief") or {}).get("sections") or {}).values()
+                 if isinstance(sec, list) for x in sec if isinstance(x, dict)}
+    splits = []
+    for i in pool:
+        a = by[i]
+        t = str(a.get("text") or "")
+        side = _author_side(a, roster, acct)
+        for m_ in _THEY_HANDLE.finditer(t):
+            who = m_.group("who").lower()
+            if re.search(r"(?i)\b(not|never|n't)\s*$", t[:m_.start("what")]) or re.search(r"(?i)\bour\s+$", t[:m_.start()]):
+                continue
+            if "internal" in who:
+                ok = side != "ours"
+            elif who == "they":
+                ok = side in ("ours", "reseller")
+            else:  # "you guys": PurTera speaking to the customer
+                ok = side == "ours"
+            items = _handle_items(m_.group("what")) if ok else []
+            if items:
+                splits.append({"id": i, "when": when(a), "what": m_.group("what"), "items": items,
+                               "keys": frozenset().union(*(k for _, k in items))})
+    if not splits:
+        return
+    # A later PurTera line taking the work back ("we will handle the racking").
+    ours_later = [(when(a), str(a.get("text") or "")) for a in atoms if _author_side(a, roster, acct) == "ours" and when(a)]
+    def reclaimed(keys: frozenset[str], since: str) -> bool:
+        return any(w > since and re.search(r"(?i)\bwe(?:'ll| will| are going to| are gonna)\s+(?:also\s+)?(?:be\s+)?(?:handl|do|tak|perform|own)", t)
+                   and _mentions(t, keys) for w, t in ours_later if since)
+    live = [s_ for s_ in splits if not reclaimed(s_["keys"], s_["when"])]
+    if not live:
+        return
+    keys = frozenset().union(*(s_["keys"] for s_ in live))
+    gone = lambda p_: _mentions(p_, keys)
+    # Provider work: the task list, the summary, equipment and deliverables.
+    for k in ("scope", "overview", "equipment_in_scope", "provider_materials", "customer_materials"):
+        out = []
+        for x in c.get(k) or []:
+            if not isinstance(x, dict) or x.get("kind") == "heading" or x.get("standard"):
+                out.append(x)
+                continue
+            t = str(x.get("text") or "")
+            if k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+                if gone(t):
+                    continue
+                out.append(x)
+                continue
+            new = _strip_items(t, gone)
+            if new is None and gone(t) and k == "scope":
+                new = ""
+            if new == "":
+                continue
+            out.append({**x, "text": new} if new else x)
+        # A heading left with nothing under it goes too ("Racked hardware").
+        if k == "scope":
+            out = [x for j, x in enumerate(out) if not (isinstance(x, dict) and x.get("kind") == "heading" and (
+                j + 1 >= len(out) or (isinstance(out[j + 1], dict) and out[j + 1].get("kind") == "heading")))]
+        c[k] = out
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict):
+            desc = []
+            for t in d.get("description") or []:
+                new = _strip_items(str(t), gone)
+                if new != "":
+                    desc.append(new or t)
+            d["description"] = desc
+    # The Customer's duty and the exclusion, one per role split, each cited.
+    cr, oos = c.setdefault("customer_responsibilities", []), c.setdefault("out_of_scope", [])
+    done: set[str] = set()
+    for s_ in sorted(live, key=lambda s_: -len(s_["keys"])):
+        if s_["keys"] & done:
+            for lst in (cr, oos):
+                hit = next((y for y in lst if isinstance(y, dict) and y.get("_they_handle")), None)
+                if hit is not None and s_["id"] not in hit["cites"]:
+                    hit["cites"].append(s_["id"])
+            continue
+        done |= s_["keys"]
+        what = " and ".join(p_ for p_, _ in s_["items"])
+        what = re.sub(r"(?i)\bthemselves\b", "", what).strip()
+        for lst, text in ((cr, f"Handle {what}."), (oos, f"{what[:1].upper()}{what[1:]}, which the Customer handles.")):
+            same = next((y for y in lst if isinstance(y, dict) and all(_mentions(str(y.get("text")), frozenset({kk})) for kk in s_["keys"])), None)
+            if same is not None:
+                same["cites"] = list(dict.fromkeys(list(same.get("cites") or []) + [s_["id"]]))
+                continue
+            lst.append({"text": re.sub(r"\s+", " ", text), "cites": [s_["id"]], "kind": "fact", "_they_handle": True})
+        c.setdefault("rule_decisions", []).append(
+            {"rule": "they_handle", "head": "sow_party", "atom_ids": [s_["id"]], "value": "customer", "was": "technician",
+             "supplier_head": head_says.get(s_["id"]), "text": str(by[s_["id"]].get("text") or "")[:300],
+             "why": "the writer's \"they\" is the Customer: a customer duty and an exclusion, whatever the supplier head said"})
+    for lst in (cr, oos):
+        for y in lst:
+            if isinstance(y, dict):
+                y.pop("_they_handle", None)
+
+
+def _site_unit_counts(c: dict[str, Any]) -> None:
+    """Install counts are the site table's, not the BOM's: when the per-site
+    count list totals N units, an install line counting a different number
+    of those units with a BOM breakdown reads the table's total (010326 pass
+    Y: "Install three hundred fifty-one (351) Cisco phones: 259 ..., 78 ...",
+    the quote's quantities, beside the 317 phones of the location table)."""
+    ss = c.get("site_summary") or {}
+    unit, total = str(ss.get("unit") or "").lower(), int(ss.get("unit_total") or 0)
+    if not unit or total < 2:
+        return
+    noun = re.escape(unit.rstrip("s"))
+    pat = re.compile(r"(?i)\b(%s(?:[\s-]+%s)*)\s*\((\d+)\)(\s+(?:[A-Z][\w-]*\s+){0,3}%ss?\b)(\s*:\s*(?P<bd>[^.]*?))?(?=\s+(?:at|across|in)\b|[.;]|$)"
+                     % (_NUMW, _NUMW, noun))
+    changed: set[int] = set()
+    def fix(m_: re.Match) -> str:
+        n = int(m_.group(2))
+        bd = m_.group("bd") or ""
+        parts = [int(p1 or p2) for p1, p2 in re.findall(r"\((\d+)\)|\b(\d+)\b(?=\s+[A-Z])", bd)]
+        if n == total or not (bd and sum(parts) == n or n in changed):
+            return m_.group(0)
+        changed.add(n)
+        models = [re.sub(r"(?i)\s+units?$", "", x.strip()) for x in re.findall(r"(?:\(\d+\)|\b\d+\b)\s+([^,]+?)(?=,|\s+and\s+|$)", bd)]
+        models = [re.sub(r"(?i)^and\s+", "", x) for x in models if x]
+        lst = (", ".join(models[:-1]) + " and " + models[-1]) if len(models) > 1 else "".join(models)
+        return f"{_words(total)} ({total}){m_.group(3)}" + (f" ({lst} models)" if lst else "")
+    for k in ("scope", "overview"):
+        for x in c.get(k) or []:
+            if isinstance(x, dict) and not x.get("standard") and isinstance(x.get("text"), str):
+                x["text"] = pat.sub(fix, x["text"])
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict):
+            d["description"] = [pat.sub(fix, str(t)) for t in d.get("description") or []]
+    if changed:
+        # The summary says it once: a summary line now saying what the task
+        # list's line says goes (the 351 sentence was in both).
+        sc = [x for x in c.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"]
+        ov = [x for x in c.get("overview") or [] if isinstance(x, dict)]
+        tot = re.compile(r"\(%d\)" % total)
+        dup = [x for x in ov if tot.search(str(x.get("text"))) and any(_said(str(x.get("text")), [y], 0.8) for y in sc)]
+        if dup and len([x for x in ov if tot.search(str(x.get("text")))]) > len(dup):
+            c["overview"] = [x for x in c.get("overview") or [] if not any(x is y for y in dup)]
+
+
+_COUNT_NOUN_SKIP = frozenset("of the and or to per at in on for each new existing additional more total separate individual other".split())
+_SITE_NOUN = re.compile(r"(?i)^(sites?|locations?|stores?|facilities|facility|branches|buildings?|restaurants?)$")
+
+
+def _overview_numbers(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """The summary never states a count no cited line states. A site count
+    must be stated as a count of sites by a line the SOW cites, or be the
+    site table's; otherwise it reads the table's (010326 pass Y: "across
+    fifty-three (53) Manitowoc, WI sites", 53 being one office's phone
+    count, beside 30 locations). Any other count no cited line or grounded
+    SOW line carries goes with its phrase."""
+    by = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    cited = {cc for k in _LIST_SECTION for x in c.get(k) or [] if isinstance(x, dict) for cc in x.get("cites") or []}
+    src = [_digits(by[i]).lower() for i in cited if i in by]
+    src += [_digits(str(x.get("text"))).lower() for k in _LIST_SECTION if k != "overview" for x in c.get(k) or []
+            if isinstance(x, dict) and (x.get("cites") or x.get("standard"))]
+    src += [_digits(str(x.get("text"))).lower() for x in c.get("overview") or [] if isinstance(x, dict) and x.get("cites")]
+    ss = c.get("site_summary") or {}
+    n_sites = int(ss.get("stated") or 0) or len(c.get("sites") or [])
+    sites_of = lambda n: any(re.search(r"(?<![\d.,])%d\s*(?:\)\s*)?(?:[\w&/,.-]+\s+){0,4}?(?:sites?|locations?|stores?|facilit|branch|buildings?|restaurants?)\b" % n, s_)
+                             or re.search(r"\b(?:sites?|locations?|stores?)\b(?:\s+\w+){0,2}\s*[:=|]\s*%d\b" % n, s_) for s_ in src)
+    any_of = lambda n: any(re.search(r"(?<![\d.,])%d(?![\d,]|\.\d)" % n, s_) for s_ in src)
+    out = []
+    for x in c.get("overview") or []:
+        if not (isinstance(x, dict) and isinstance(x.get("text"), str) and not x.get("standard")):
+            out.append(x)
+            continue
+        t = x["text"]
+        for m_ in list(re.finditer(r"(?i)\b((?:%s)(?:[\s-]+(?:%s))*)\s*\((\d+)\)" % (_NUMW, _NUMW), t))[::-1]:
+            n = int(m_.group(2))
+            rest = re.findall(r"[A-Za-z]+", t[m_.end():m_.end() + 60])[:5]
+            noun = next((w for w in rest if w.islower() and w not in _COUNT_NOUN_SKIP and not re.fullmatch(_NUMW, w, re.I)), "")
+            if _SITE_NOUN.match(noun):
+                if n == n_sites or sites_of(n) or n_sites < 2:
+                    continue
+                t = t[:m_.start()] + f"{_words(n_sites)} ({n_sites})" + t[m_.end():]
+                continue
+            if any_of(n) or n == int(ss.get("unit_total") or -1):
+                continue
+            end = re.search(r"\b%s\b" % re.escape(noun), t[m_.end():]) if noun else None
+            stop = m_.end() + (end.end() if end else 0)
+            pre = re.search(r"(?i)(?:,\s*|\s+)(?:across|at|in|for|over|to|with|throughout|including)\s+(?:about\s+|approximately\s+|up to\s+)?$", t[:m_.start()])
+            if pre:
+                t = t[:pre.start()] + t[stop:]
+            else:
+                t = ""
+                break
+        if t.strip(" ."):
+            out.append({**x, "text": re.sub(r"\s+([.,])", r"\1", t)} if t != x["text"] else x)
+    c["overview"] = out
+
+
 def _dropped_not_rendered(c: dict[str, Any]) -> None:
     """A line the check dropped never renders: a later pass that wrote the
     same line again loses it (000123 pass Y: the 161-locations summary line
@@ -10841,6 +11180,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     atoms_ = envelope.get("atoms") or []
     _traced(c, "same_install_twice", _same_install_twice, c, atoms_)
     _traced(c, "superseded_request", _superseded_request, c)
+    _traced(c, "they_handle", _they_handle, c, envelope, facts(envelope))
+    _traced(c, "site_unit_counts", _site_unit_counts, c)
+    _traced(c, "overview_numbers", _overview_numbers, c, atoms_)
     _traced(c, "task_by_party", _task_by_party, c)
     _counted_and_kind(c)
     _cable_cover(c, atoms_)
