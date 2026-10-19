@@ -33,7 +33,13 @@ OWNER_GATE = 0.95
 
 
 def split_of(deal: str) -> str:
-    return "dev" if int(hashlib.sha1(f"judge:{deal}".encode()).hexdigest(), 16) % 4 == 0 else "test"
+    """dev (prompt tuning, ~1/4 of deals) | testA | testB: two held-out halves, so a
+    gate missed on testA can be retried once on deals nobody has looked at."""
+    h = int(hashlib.sha1(f"judge:{deal}".encode()).hexdigest(), 16)
+    if h % 4 == 0:
+        return "dev"
+    # Salt 131 halves the held-out lines evenly (2,872 / 2,896), chosen on counts only.
+    return "testA" if int(hashlib.sha1(f"half131:{deal}".encode()).hexdigest(), 16) % 2 == 0 else "testB"
 
 
 def load(patterns: list[str]) -> list[dict]:
@@ -58,10 +64,15 @@ def load(patterns: list[str]) -> list[dict]:
     return rows
 
 
+def _in(split: str, deal: str) -> bool:
+    s = split_of(deal)
+    return split == "all" or s == split or (split == "test" and s.startswith("test"))
+
+
 def report(rows: list[dict], pred: dict[str, dict]) -> dict:
     out = {}
-    for split in ("dev", "test", "all"):
-        rs = [r for r in rows if (split == "all" or split_of(r["deal"]) == split) and r["id"] in pred]
+    for split in ("dev", "testA", "testB", "test", "all"):
+        rs = [r for r in rows if _in(split, r["deal"]) and r["id"] in pred]
         if not rs:
             continue
         n = len(rs)
@@ -99,7 +110,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--rubric", nargs="+", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--split", choices=["dev", "test", "all"], default="dev")
+    p.add_argument("--split", choices=["dev", "testA", "testB", "test", "all"], default="dev")
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--model", default="")
@@ -117,7 +128,7 @@ def main() -> None:
             r = json.loads(l)
             if r.get("section") is not None:  # an undecided answer is retried
                 pred[r["id"]] = r
-    todo = [r for r in rows if (a.split == "all" or split_of(r["deal"]) == a.split) and r["id"] not in pred]
+    todo = [r for r in rows if _in(a.split, r["deal"]) and r["id"] not in pred]
     if a.limit:
         todo = todo[: a.limit]
     lock = threading.Lock()

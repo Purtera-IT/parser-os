@@ -72,22 +72,41 @@ owner (who acts or supplies): technician (Provider) | customer (end customer) | 
 Notes: judge the line itself, not the trade or customer. A request for added work is scope_of_work. A count of devices to install is scope_of_work; a count of EXISTING things is assumptions. A customer-written list does not make Provider tasks customer duties.
 """
 
+#: How the labelers read test 1 (tuning split 2026-10-19: 37 of 282 _absent lines were filed
+#: elsewhere, nearly all of these kinds). Clarifies the rubric; does not change it.
+_ABSENT_READING = """
+Reading test 1 (_absent) — these are ALWAYS _absent, whatever words they contain:
+- a heading or title alone ("ASSUMPTIONS", "PROJECT OVERVIEW", "LOCATION AND START TIME", "CUSTOMER RESPONSIBILITIES");
+- rates, surcharges, billing minimums and increments, payment, deposits, cancellation fees, taxes, VAT, POs, change-order paperwork (all commercial talk);
+- a question or an "assume ...?" that asks for information rather than stating a fact;
+- contract or SOW boilerplate that names the parties or says what the document is ("This SOW is made by and between ...");
+- spoken chatter, anecdotes, hopes, status updates and plans to find something out ("we're working with them to get ...", "longer term they want ...");
+- a calendar start time or meeting date with nothing about the work.
+Only a line that states a fact of THIS job's work passes test 1.
+Order matters after test 1 too: a line saying a lift, ladder, tool or material is needed for the work is
+provider_responsibilities (test 6) before it is an assumption (test 8). A task-list line in the imperative
+("Provide ...", "Request ...", "Use ... as directed") is Provider's work (scope_of_work) unless it names the
+customer as the one who does it.
+"""
+
 _SECTION_ASK = (
     "Apply this rubric to TEXT and answer its SECTION only (the first test, in order, that matches wins).\n"
-    + RUBRIC
+    + RUBRIC + _ABSENT_READING
 )
 _OWNER_ASK = (
     "Apply this rubric to TEXT, whose section is {section}, and answer its OWNER only: who acts or supplies.\n"
     + RUBRIC
 )
 
-#: Sections whose owner the rubric labels fix (6,221 lines, 2026-10-19: >=98% one owner).
+#: Sections whose owner the rubric labels fix (6,221 lines, 2026-10-19: >=98% one owner;
+#: provider_responsibilities 44/44 technician).
 OWNER_OF = {
     "_absent": "none",
     "timeline": "none",
     "assumptions": "none",
     "overview": "none",
     "scope_of_work": "technician",
+    "provider_responsibilities": "technician",
 }
 
 _DEFAULT_MODEL = "ollama:qwen3:32b"
