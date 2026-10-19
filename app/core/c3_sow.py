@@ -1108,7 +1108,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # Any line already bounding the runs is the bound (010082: "will be no more
     # than 100 ft" plus a derived "under 150 feet").
     bound = re.compile(r"(?i)(no more than|under|less than|not (to )?exceed|maximum|max\.?|up to)\s*\d{2,4}\s*(ft|feet|')")
-    if len(runs) >= 2 and not any(bound.search(str(x.get("text") if isinstance(x, dict) else x))
+    if family in ("low_voltage_cabling", "cameras_security", "av_conference_room", "network_switch_refresh") and len(runs) >= 2 and not any(bound.search(str(x.get("text") if isinstance(x, dict) else x))
                                   for k in ("assumptions", "scope") for x in content.get(k) or []):
         cap = -(-max(runs) // 50) * 50
         text = f"All cable runs are no more than {cap} feet." if cap == max(runs) else f"All cable runs are under {cap} feet."
@@ -2001,7 +2001,8 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             continue
         if wd >= 5:
             sched += " " + ("saturday" if wd == 5 else "sunday")
-    if re.search(r"(?i)\b(saturday|sunday)\b", sched):
+    if re.search(r"(?i)\b(saturday|sunday)\b", sched) and not re.search(
+            r"(?i)\b(no|not|never|excluding|except|without)\b[^.]{0,40}\b(saturday|sunday|weekend)", sched + " " + " ".join(f["text"] for f in fs)):
         for k in ("schedule", "assumptions"):
             content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)regular business hours|monday.{0,12}friday", str(x.get("text") if isinstance(x, dict) else x))]
         asm = content.setdefault("assumptions", [])
