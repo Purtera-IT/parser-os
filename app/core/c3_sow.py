@@ -2046,6 +2046,19 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             alt = [{"text": "Provider will " + str(x["text"])[0].lower() + str(x["text"])[1:], "cites": x.get("cites") or [], "kind": "fact"} for x in inst]
         if alt:
             content["overview"] = alt
+    # Gear the SOW excludes is not in its equipment lists (010171: the stale
+    # bundle "+ 2 Mic Pod" beside "external microphones are not included").
+    oos_txt = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("out_of_scope") or []).lower()
+    banned = [w for w in ("mic pod", "microphone", "sight", "nuc", "license", "lift") if w in oos_txt]
+    if banned:
+        for k in ("equipment_in_scope", "customer_materials", "provider_materials"):
+            content[k] = [x for x in content.get(k) or [] if not any(b in str(x.get("text") if isinstance(x, dict) else x).lower() for b in banned)]
+    # A relative date copied from an email means nothing in a SOW (010171:
+    # "Have the network drops installed next week").
+    for k in LISTS:
+        for x in content.get(k) or []:
+            if isinstance(x, dict) and isinstance(x.get("text"), str):
+                x["text"] = re.sub(r"(?i)\s+(next week|this week|tomorrow|later this week|early next week|by end of (the )?week)\b", "", x["text"])
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
