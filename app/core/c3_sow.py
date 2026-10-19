@@ -156,10 +156,10 @@ _PARTS = {
         "that bound the price: each one a fact settles (a ladder confirmed -> \"No lift is required.\" and "
         "\"Standard ladders reach every work location.\"; the longest run -> \"All cable runs are under N feet.\" with "
         "N the longest rounded up to 50; a PurTera person's own stated assumption, reworded as a SOW assumption) and "
-        "the standard ones for THIS trade only (cabling or devices: pathways accessible, PoE ports available on the "
+        "the standard ones for THIS trade only, and a lift, ladder or pathway line only on ceiling, height or cabling work, never on desk or countertop work (cabling or devices: pathways accessible, PoE ports available on the "
         "IDF switch, equipment on site before arrival; decommission or packing: equipment powered down and released, "
         "the customer directs what is packed; any job: permits by the customer)], \"out_of_scope\": [5-9 exclusions as "
-        "noun phrases: those a fact states and the standard ones for THIS trade (cabling or devices: lift rental, "
+        "noun phrases: those a fact states and the standard ones for THIS trade (cabling or devices: lift rental only on ceiling or height work, "
         "electrical work, core drilling or structural work, patching or painting, switch or firewall work, licensing "
         "or cloud setup; decommission or packing: transport, shipping, disposal, data destruction or asset "
         "disposition, configuration, and never a cabling or construction exclusion on such a job); never anything the draft's scope includes, any equipment it lists as in scope, or what the customer is said to supply]}\n"
@@ -837,6 +837,13 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
                     and _said(text, [x], 0.6)), None)
         if dup is not None:
             dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + orphan))
+            # The fact's own name survives the merge (010373: "Humanscale"
+            # left the install line when the standard step absorbed it).
+            for mm in re.finditer(r"(?<!^)(?<![.:]\s)\b([A-Z][a-zA-Z0-9-]{2,})\s+((?:[a-z][\w-]*\s+)?[a-z][\w-]*)", text):
+                brand, head = mm.group(1), mm.group(2)
+                dt = str(dup.get("text") or "")
+                if brand.lower() not in dt.lower() and brand.lower() not in _STOCK and head in dt:
+                    dup["text"] = dt.replace(head, f"{brand} {head}", 1)
             how = "merged"
         else:
             orig = next((x for x in lists_before.get(lst) or [] if isinstance(x, dict) and tuple(x.get("cites") or []) == cites), None)
@@ -1221,6 +1228,14 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         for d in content.get("deliverables") or []:
             if isinstance(d, dict) and not doc_promise.search(pool_text):
                 d["description"] = [t for t in d.get("description") or [] if not doc_promise.search(str(t))]
+    # A library step about third-party vendors needs a fact that names one
+    # (000132: "Support remote direction from ... third party vendors").
+    if not re.search(r"(?i)third[- ]party|vendors?\b", pool_text):
+        for x in content.get("scope") or []:
+            if isinstance(x, dict) and not x.get("standard"):
+                x["text"] = re.sub(r"(?i)\s*,?\s*(or|and)\s+(with\s+)?(any\s+)?third[- ]party vendors?", "", str(x.get("text")))
+        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
+                            and re.search(r"(?i)third[- ]party vendors?", str(x.get("text"))))]
     content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                             if not (isinstance(x, dict) and not x.get("standard")
                                                     and re.search(r"(?i)construction drawings|cabling paths and idf", str(x.get("text")))
@@ -1283,6 +1298,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if bg:
             text = bg["text"].split("|")[-1].strip().rstrip(".") + "."
             content["overview"] = [{"text": text[:1].upper() + text[1:], "cites": [bg["id"]], "kind": "fact"}]
+    _traced(content, "polarity", _scope_polarity, content)
+    _overview_covers_scope(content, fs)
     content.update(library_counts)
     content["facts_given"] = len(fs)
     # Everything the rules changed after the writer, rule by rule where traced,
@@ -1955,9 +1972,14 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                  and not any(neg.search(by[c]["text"]) for c in x["cites"])]
     content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if not any(x is y for y in unsourced)]
     # A requested service the writer flipped into an exclusion is scope.
+    # Its wording turns with it: 000132's "End-user support ... is excluded
+    # from the service scope." printed as "Provide end-user support ... is
+    # excluded" in the task list.
     for x in unsourced:
-        t = re.sub(r"(?i)^\s*(no |excludes? |exclusion of )", "", str(x.get("text"))).strip()
-        x["text"] = ("Provide " + t[0].lower() + t[1:]) if not re.match(r"(?i)\s*(provide|support|perform|assist|install)\b", t) else t[0].upper() + t[1:]
+        t = _as_scope(str(x.get("text")))
+        if not t:
+            continue
+        x["text"] = t
         if not _said(x["text"], content.setdefault("scope", []), 0.6):
             content["scope"].append(x)
     # The same for an assumption that hands a requested service to the
@@ -2162,7 +2184,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # desk-height work).
     if not re.search(r"(?i)\b(ladder|lift|ceiling|height|high|ft|feet|foot|elevated|scissor|boom)\b", facts_txt):
         content["assumptions"] = [x for x in content.get("assumptions") or []
-                                  if not re.search(r"(?i)\bladders?\b|\bno lift\b", str(x.get("text") if isinstance(x, dict) else x))]
+                                  if not re.search(r"(?i)\bladders?\b|\bno lift\b|\blifts?\b|\blift (rental|operation)", str(x.get("text") if isinstance(x, dict) else x))]
     # A hedged ask is not a promise (000132: "24/7 on-call can be tough ...
     # depending on volume" became "24/7 on-call availability" in the summary,
     # beside its own no-SLO and business-hours assumptions).
@@ -2720,6 +2742,65 @@ def _hours_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             asm = content.setdefault("assumptions", [])
             if not any(re.search(r"(?i)business hours for this sow", tx(x)) for x in asm):
                 asm.insert(0, {"text": line, "cites": list(win.get("cites") or []) if isinstance(win, dict) else [], "kind": "fact"})
+
+
+_NEGATED = re.compile(r"(?i)\b(is|are|will be|remains?)\s+(excluded|not included|out of scope|outside (of )?(the )?(service |work )?scope|not part of)\b|"
+                      r"\bexcluded from\b|\bnot in scope\b|\bout of scope\b")
+
+
+def _as_scope(text: str) -> str:
+    """An exclusion's wording turned into a task ("End-user support is
+    excluded from the service scope." -> "Provide end-user support."), or ""
+    when it cannot be turned cleanly. A scope bullet never says excluded."""
+    t = re.sub(r"(?i)^\s*(no |excludes? |exclusion of |excluded:\s*)", "", text).strip()
+    t = re.sub(r"(?i),?\s*(?:is|are|will be|remains?)\s+(?:excluded|not included|out of scope|outside (?:of )?(?:the )?(?:service |work )?scope|not part of)\b[^.;]*", "", t)
+    t = t.strip(" ,.;")
+    if not t or _NEGATED.search(t):
+        return ""
+    t = ("Provide " + t[0].lower() + t[1:]) if not re.match(r"(?i)\s*(provide|support|perform|assist|install|mount|run|replace|remove|configure)\b", t) else t[0].upper() + t[1:]
+    return t + "."
+
+
+def _scope_polarity(content: dict[str, Any]) -> None:
+    """A task line never says the work is excluded: whatever rule moved it,
+    the wording turns with the section, or the line goes (000132)."""
+    kept = []
+    for x in content.get("scope") or []:
+        if isinstance(x, dict) and x.get("kind") != "heading" and _NEGATED.search(str(x.get("text"))):
+            t = _as_scope(str(x.get("text")))
+            if not t:
+                continue
+            x["text"] = t
+        kept.append(x)
+    content["scope"] = kept
+
+
+def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
+    """The summary names what the cited task list counts: a cited work line
+    whose numbers the summary lacks, and a cited haul-away, are added as
+    summary sentences (010373: the 48 monitors and the trash haul-away were
+    in the tasks, the summary named only the 16 arms). At most four lines."""
+    ov = content.setdefault("overview", [])
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    room = min(4, len(ov) + 2)
+    for x in content.get("scope") or []:
+        if len(ov) >= room:
+            break
+        hauls = any(re.search(r"(?i)\bhaul|trash|debris removal|dispos", f["text"]) for f in fs or [])
+        if not (isinstance(x, dict) and x.get("kind") != "heading"
+                and (x.get("cites") or (hauls and re.search(r"(?i)\bhaul|trash", tx(x))))):
+            continue
+        t = tx(x).strip()
+        if not re.match(r"(?i)(install|mount|replace|remove|deploy|relocate|haul|dispose)\b", t):
+            continue
+        if re.search(r"°|%|humidity|above (the )?floor|\b(?=[\w-]*\d)(?=[\w-]*[A-Z])[A-Z0-9][A-Z0-9-]{4,}\b|\b\d{6,}\b", t):
+            continue  # specs, heights and part numbers are not summary material
+        ov_txt = " ".join(tx(o) for o in ov).lower()
+        counts = {a or b for a, b in re.findall(r"\b[a-z-]+ \((\d{1,4})\)|\b(\d{1,4}) (?:new )?(?:[A-Z]\w*|[a-z]+s)\b", t)}
+        missing_count = bool(counts) and not counts <= set(re.findall(r"\d+", ov_txt)) and not _said(t, ov, 0.5)
+        haul = bool(re.search(r"(?i)\bhaul|dispos|trash", t)) and not re.search(r"(?i)\bhaul|dispos|trash|debris", ov_txt)
+        if (missing_count or haul) and not _said(t, ov, 0.7):
+            ov.append({"text": "Provider will " + t[0].lower() + t[1:].rstrip(".") + ".", "cites": list(x["cites"]), "kind": "fact"})
 
 
 def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:

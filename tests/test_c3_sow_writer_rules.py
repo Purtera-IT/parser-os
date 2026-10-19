@@ -192,3 +192,30 @@ def test_no_verbless_caption_in_scope():
                                           "cites": ["c"], "kind": "fact"}]}
     m._grounding(content, [_fact("c", "The conference room contains a large table")])
     assert not content["scope"]
+
+
+def test_a_scope_line_never_says_excluded():
+    assert m._as_scope("End-user support, including support for O365/M365 clients, is excluded from the service scope.") \
+        == "Provide end-user support, including support for O365/M365 clients."
+    content = {"scope": [{"text": "Provide end-user support is excluded from the service scope.", "cites": ["a"], "kind": "fact"},
+                         {"text": "Out of scope.", "cites": ["b"], "kind": "fact"}]}
+    m._scope_polarity(content)
+    assert [x["text"] for x in content["scope"]] == ["Provide end-user support."]
+
+
+def test_summary_names_what_the_tasks_count():
+    content = {"overview": [{"text": "Provider will install sixteen (16) Humanscale monitor arms.", "cites": [], "kind": "fact"}],
+               "scope": [{"text": "Mount three (3) new 27-inch monitors on each arm, forty-eight (48) total.", "cites": ["m"], "kind": "fact"},
+                         {"text": "Mount each clock with the top screws 45 3/8 inches above the floor.", "cites": ["h"], "kind": "fact"},
+                         {"text": "Remove and haul away packaging debris.", "cites": [], "kind": "method", "standard": True}]}
+    m._overview_covers_scope(content, [{"text": "We found someone that can haul away the trash."}])
+    got = [x["text"] for x in content["overview"]]
+    assert any("48" in t for t in got) and any("haul" in t for t in got)
+    assert not any("45 3/8" in t for t in got)
+
+
+def test_a_merge_keeps_the_facts_brand():
+    content = {"scope": [{"text": "Install sixteen (16) Humanscale monitor arms on new desks.", "cites": ["a1"], "kind": "fact"},
+                         {"text": "Install each of the sixteen (16) monitor arms on new desks.", "cites": [], "kind": "method", "standard": True}]}
+    m._traced(content, "standards", lambda: content.__setitem__("scope", content["scope"][1:]))
+    assert content["scope"][0]["text"] == "Install each of the sixteen (16) Humanscale monitor arms on new desks."
