@@ -429,3 +429,32 @@ def test_a_cited_step_leaves_the_testing_group_for_its_action_heading():
     t = [x["text"] for x in c["scope"]]
     assert t.index("Remove the circular speakers.") < t.index("Ceiling Devices")
     assert t.index("Mount the center device on the wall between both TVs.") < t.index("Installation and Testing")
+
+
+# --- 010217 C+: rooms, logs that match the output, counted materials ----------
+
+def test_places_tell_rooms_apart():
+    assert m._places("Install one (1) new 98-inch display in room 247.") != m._places("Install two (2) 86-inch displays in training room 250.")
+    assert m._places("Install displays.") == frozenset()
+
+
+def test_decision_logs_match_the_final_sow():
+    c = {k: [] for k in m.LISTS}
+    c["scope"] = [{"text": "Install two (2) 86-inch displays.", "cites": ["b"], "kind": "fact"}]
+    c["rule_decisions"] = [
+        {"rule": "grounding", "head": "sow_keep", "atom_ids": ["a"], "value": "keep", "text": "Install one (1) 98-inch display in room 247."},
+        {"rule": "tidy", "head": "sow_keep", "atom_ids": ["b"], "value": "drop", "text": "Install two (2) 86-inch displays."}]
+    c["dropped_unsupported"] = [{"text": "Install two (2) 86-inch displays.", "list": "scope"}]
+    m._decisions_match_output(c)
+    assert [d["value"] for d in c["rule_decisions"]] == ["drop", "keep"] and all(d.get("superseded") for d in c["rule_decisions"])
+    assert c["dropped_unsupported"] == []
+
+
+def test_materials_are_one_counted_line_per_item():
+    c = {"customer_materials": [{"text": "The 55-100 inch VESA TV mount.", "cites": ["a"], "kind": "fact"},
+                                {"text": "The 32-65 inch articulating TV mount.", "cites": ["b"], "kind": "fact"},
+                                {"text": "Three (3) new 32-65 inch articulating TV mounts.", "cites": ["c"], "kind": "fact"},
+                                {"text": "(1) new 55-100 inch VESA TV mount", "cites": ["d"], "kind": "fact"}]}
+    m._materials_counted(c)
+    assert [x["text"] for x in c["customer_materials"]] == ["Three (3) new 32-65 inch articulating TV mounts.",
+                                                            "One (1) new 55-100 inch VESA TV mount."]

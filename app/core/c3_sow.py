@@ -969,8 +969,11 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
         if (lst == "scope" and re.match(r"(?i)\s*(the )?customer\b", text)) or \
                 (lst == "assumptions" and re.match(r"(?i)\s*(provide|ensure|supply|furnish)\b", text)):
             dest = "customer_responsibilities"
+        # Never across rooms or sites (010217 pass U: the Room 247 98-inch
+        # install "merged" into another room's line and vanished).
         dup = next((x for x in content.get(dest) or [] if isinstance(x, dict) and x.get("kind") != "heading"
-                    and _said(text, [x], 0.6 if dest == "scope" else 0.55)), None)  # the standards' own cover bar
+                    and _said(text, [x], 0.6 if dest == "scope" else 0.55)
+                    and not (_places(text) and _places(str(x.get("text"))) and _places(text) != _places(str(x.get("text"))))), None)
         if dup is not None:
             dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + orphan))
             # The fact's own name survives the merge (010373: "Humanscale"
@@ -1023,6 +1026,12 @@ def _std_gone(content: dict[str, Any], where: str) -> None:
         else:
             content.setdefault("standards_suppressed", []).append({"text": t, "reason": where})
     content["_std_objs"] = keep
+
+
+def _places(t: str) -> frozenset[str]:
+    """The rooms, areas or sites a line names ("room 247", "Training Room 250", "the NOC")."""
+    return frozenset(m.group(0).lower() for m in re.finditer(
+        r"(?i)\b(?:room|office|suite|floor|building|store|site|closet|lobby|idf|mdf)\s+#?[\w-]*\d[\w-]*\b|\b(?:the\s+)?NOC\b|\b[A-Z][a-z]+ (?:Room|Office)\b", t))
 
 
 def _slot_back(content: dict[str, Any], before: list[Any], rule: str) -> None:
@@ -4644,6 +4653,61 @@ def _schedule_voice(c: dict[str, Any], as_of: str, theirs: set[str] | frozenset[
         x["text"] = t[:1].upper() + t[1:]
 
 
+def _decisions_match_output(c: dict[str, Any]) -> None:
+    """The decision logs say what the SOW shows (010217 pass U: a guard
+    "keep" whose line was absent, an 86-inch line logged dropped but present,
+    dropped_unsupported lines that appear). The last sow_keep decision on each
+    fact is checked against the final lists: a keep whose fact no line cites
+    and whose text is nowhere becomes a drop, a drop whose exact text is shown
+    becomes a keep; both say so (superseded). A dropped_unsupported line the
+    SOW shows is not dropped."""
+    lines = [x for k in LISTS for x in c.get(k) or [] if isinstance(x, dict) and x.get("kind") != "heading"]
+    shown = {str(x.get("text")).strip() for x in lines}
+    cited = {a for x in lines for a in x.get("cites") or []}
+    last: dict[tuple, dict[str, Any]] = {}
+    for d in c.get("rule_decisions") or []:
+        if d.get("head") == "sow_keep":
+            last[tuple(d.get("atom_ids") or [])] = d
+    for ids, d in last.items():
+        text = str(d.get("text") or "").strip()
+        if d.get("value") == "keep" and text not in shown and not (set(ids) & cited):
+            d.update(value="drop", superseded="keep: absent from the final SOW")
+        elif d.get("value") == "drop" and text and text in shown:
+            d.update(value="keep", superseded="drop: the same line is in the final SOW")
+    c["dropped_unsupported"] = [x for x in c.get("dropped_unsupported") or []
+                                if not (isinstance(x, dict) and str(x.get("text") or "").strip() in shown)]
+
+
+def _materials_counted(c: dict[str, Any]) -> None:
+    """One line per item, with its count: an uncounted line ("The 32-65 inch
+    articulating TV mount.") goes beside the counted one ("Three (3) new 32-65
+    inch articulating TV mounts."), and a bare "(1) new ..." row reads "One (1)
+    new ..." (010217 pass U: a singular articulating mount and the 55-100 inch
+    mount listed twice)."""
+    count = re.compile(r"(?i)^\s*(?:\(\d+\)|\d+\b|%s(?:[\s-]+%s)*\s*\(\d+\))" % (_NUMW, _NUMW))
+    toks = lambda t: {w.rstrip("s") for w in re.findall(r"[a-z0-9]+", str(t).lower())} - {"the", "new", "a", "an", "provide", "and"} - {
+        w for w in _ONES + _TENS[2:] + ["hundred"]}
+    for k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+        items = [x for x in c.get(k) or [] if isinstance(x, dict)]
+        for x in items:
+            mm = re.match(r"^\s*\((\d+)\)\s+", str(x.get("text")))
+            if mm:
+                n = int(mm.group(1))
+                body = str(x["text"])[mm.end():].strip().rstrip(".")
+                x["text"] = f"{_words(n).capitalize()} ({n}) {body}."
+        counted = [x for x in items if count.match(str(x.get("text")))]
+        keep = []
+        for x in c.get(k) or []:
+            if isinstance(x, dict) and x in items and not count.match(str(x.get("text"))):
+                tx_ = toks(x.get("text")) - {str(d) for d in range(10)}
+                if tx_ and any(tx_ <= toks(y.get("text")) for y in counted):
+                    continue
+            if isinstance(x, dict) and any(y is not x and str(y.get("text")).lower() == str(x.get("text")).lower() for y in keep):
+                continue
+            keep.append(x)
+        c[k] = keep
+
+
 def _locations_cover_sites(c: dict[str, Any]) -> None:
     """The locations list names every site the site table holds when both are
     "City, ST" lists (000132 pass U: the writer listed five cities, the sites
@@ -6477,6 +6541,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         re.search(r"(?i)\b(includes?|is|are|has|have|shows?|contains?|mounted|located)\b", str(t)))
     c["locations"] = [x for x in c.get("locations") or [] if not caption(x.get("text") if isinstance(x, dict) else x)]
     c["sites"] = [x for x in c.get("sites") or [] if not caption(x.get("name") or x.get("address"))] or c.get("sites")
+    _traced(c, "materials_counted", _materials_counted, c)
     _locations_cover_sites(c)
     # Lines an outside sender wrote, or a pasted copy of one (010209: the
     # RFQ pasted into a HubSpot note and also in Ralph Lauren's own email).
@@ -6490,6 +6555,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
+    _decisions_match_output(c)
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
