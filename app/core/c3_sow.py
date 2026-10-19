@@ -826,7 +826,14 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
         if any(_said(text, [str(t)], 0.6) for d in content.get("deliverables") or [] if isinstance(d, dict)
                for t in d.get("description") or []):
             continue  # moved into the Work Completion Report (photos, serials)
-        dup = next((x for x in content.get(lst) or [] if isinstance(x, dict) and x.get("kind") != "heading"
+        # Back where its party puts it: a customer's duty written as a task or
+        # an assumption is a customer responsibility (010300 "Customer will
+        # guide technician ...", 010264 "Provide site access ...").
+        dest = lst
+        if (lst == "scope" and re.match(r"(?i)\s*(the )?customer\b", text)) or \
+                (lst == "assumptions" and re.match(r"(?i)\s*(provide|ensure|supply|furnish)\b", text)):
+            dest = "customer_responsibilities"
+        dup = next((x for x in content.get(dest) or [] if isinstance(x, dict) and x.get("kind") != "heading"
                     and _said(text, [x], 0.6)), None)
         if dup is not None:
             dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + orphan))
@@ -835,11 +842,11 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             orig = next((x for x in lists_before.get(lst) or [] if isinstance(x, dict) and tuple(x.get("cites") or []) == cites), None)
             if orig is None:
                 continue
-            items = content.setdefault(lst, [])
+            items = content.setdefault(dest, [])
             close = next((i for i, y in enumerate(items) if isinstance(y, dict) and y.get("kind") == "heading"
-                          and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(items)) if lst == "scope" else len(items)
+                          and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(items)) if dest == "scope" else len(items)
             items.insert(close, orig)
-            how = "restored"
+            how = "restored" if dest == lst else "restored_to_" + dest
         out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(cites), "value": "keep", "was": _LIST_SECTION[lst],
                     "text": text[:300], "guard": how})
     return out
