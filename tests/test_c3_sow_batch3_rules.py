@@ -186,3 +186,81 @@ def test_ups_replacement_standards_gate_on_a_ups_swap_only():
     ups = [t for t in fixed["method_steps"] if "UPS" in t]
     assert ups and all(m._standard_applies(t, ["Replace a 5K UPS (Power input connector type L6-30P)"])[0] for t in ups)
     assert not any(m._standard_applies(t, ["Action items: follow-ups by end of week"])[0] for t in ups)
+
+
+_SINGLES = "[Betty] Apx 83 sites will be singles.  Memphis Main will be apx. 51 switches on multiple floors.  The remainder will be 2-3 switches each."
+
+
+def test_a_count_matches_its_cited_line():
+    """010083: "About ninety-two (92) sites will be single-switch locations"
+    cited "Apx 83 sites will be singles"; 92 is the site total."""
+    c = {"overview": [{"text": "About ninety-two (92) sites will be single-switch locations.", "cites": ["a"], "kind": "fact"},
+                      {"text": "Install 92 switches at the sites.", "cites": ["a"], "kind": "fact"}]}
+    m._cited_counts(c, {"atoms": [{"id": "a", "text": _SINGLES}]})
+    assert c["overview"][0]["text"] == "About eighty-three (83) sites will be single-switch locations."
+    assert c["overview"][1]["text"] == "Install 92 switches at the sites."  # a total is not a sub-count
+
+
+def test_the_site_count_snap_never_overrides_a_cited_count(monkeypatch):
+    monkeypatch.setattr(m, "_best_of", lambda e, pm: {"project_name": "Switch refresh", "overview": [
+        {"text": "About eighty-three (83) sites will be single-switch locations.", "cites": ["a"], "kind": "fact"},
+        {"text": "Provider will refresh switches at approximately 90 locations.", "cites": ["b"], "kind": "fact"}]})
+    monkeypatch.setattr(m, "requested_by", lambda e: {})
+    env = {"atoms": [{"id": "a", "text": _SINGLES}, {"id": "b", "text": "a switch refresh at about 90 locations"}],
+           "site_readiness": {"sites": []}, "site_count_reconciliation": {"stated": 92}}
+    c = m.for_envelope(env)
+    texts = [x["text"] for x in c["overview"]]
+    assert "About eighty-three (83) sites will be single-switch locations." in texts
+
+
+def test_after_hours_only_replaces_the_business_hours_basis():
+    content = {"schedule": [{"text": "Work Window: after hours, no weekends, no overnights.", "cites": ["w"], "kind": "fact"}],
+               "assumptions": [{"text": "All Services will be performed during normal Business Hours.", "cites": [], "kind": "method"}],
+               "customer_responsibilities": [{"text": "Confirm which areas may be completed during business hours and which require after-hours windows.",
+                                              "cites": [], "kind": "method", "standard": True}]}
+    m._hours_basis(content, [])
+    assert [x["text"] for x in content["assumptions"]] == ["All Services will be performed After Hours during the week."]
+    assert content["customer_responsibilities"] == []
+
+
+def test_switch_standards_follow_the_after_hours_and_serial_facts():
+    fixed = m.purtera_standards("network_switch_refresh")
+    facts = ["Will installs be performed during normal business hours, after hours, overnight, or weekends? [Betty] After hours, no weekends, no overnights.",
+             "What closeout documentation is required per site? - before/after pictures and serial numbers of the new switches."]
+    cr = [t for ok, t in (m._standard_applies(x, facts) for x in fixed["customer_responsibilities"]) if ok]
+    assert not any("during business hours" in t for t in cr)
+    out = [t for ok, t in (m._standard_applies(x, facts) for x in fixed["deliverable_outcomes"]) if ok]
+    assert "Serial numbers of each new switch installed." in out
+    assert not any("if requested" in t for t in out)
+
+
+def test_what_the_technician_does_is_not_a_customer_duty():
+    content = {"customer_responsibilities": [{"text": "Customer remote resource will provide verbal validation at completion, and the "
+                                                      "technician may leave once the posted completion time is reached.", "cites": ["v"], "kind": "fact"}]}
+    m._tidy(content)
+    assert content["customer_responsibilities"][0]["text"] == "Customer remote resource will provide verbal validation at completion."
+
+
+def test_pace_and_arrival_lead_time_reach_the_schedule():
+    content = {"schedule": []}
+    fs = [_fact("s", "Hoping for late Aug or Sept start with 8 scheduled a week not to exceed 5 months.", section="timeline"),
+          _fact("r", "Techs will be requested to arrive no less than 30 minutes before closing time.")]
+    m._schedule_from_facts(content, fs, {"atoms": []})
+    texts = [x["text"] for x in content["schedule"]]
+    assert "Pace: eight (8) sites per week" in texts
+    assert "Arrival Time: no less than 30 minutes before closing time" in texts
+
+
+def test_a_documentation_duty_naming_serials_stays_the_customers():
+    content = {"customer_responsibilities": [{"text": "Provide required documentation for the site, including cable diagrams and serial numbers.",
+                                              "cites": ["d"], "kind": "fact"}]}
+    m._tidy(content)
+    assert content["customer_responsibilities"] and not content.get("deliverables")
+
+
+def test_a_cited_step_is_covered_only_by_a_standard_with_its_verb():
+    content = {"scope": [{"text": "Install", "cites": [], "kind": "heading"},
+                         {"text": "Label all cables before removing the old switches.", "cites": ["l"], "kind": "fact"},
+                         {"text": "Closeout", "cites": [], "kind": "heading"}]}
+    m._apply_standards(content, "network_switch_refresh", ["Replace the old switches."])
+    assert any(x["text"].startswith("Label all cables") for x in content["scope"])

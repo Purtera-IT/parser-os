@@ -98,11 +98,12 @@ _PARTS = {
         "surveys, audits and validation of what exists], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
         "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences in third-person proposal voice (\"Provider will ...\", never an order, never a \"Label: value\" line): what is installed or "
-        "done, how many, where, for whom: every device or system the job installs, including one a later request adds (a router asked for after the register and printer); the per-site facts the work is planned by when a fact states them (devices or register lanes per site, the time a fact estimates per site or per device); on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states; a platform "
+        "done, how many, where, for whom (each count exactly as its fact gives it for that same thing: a site total is not the count of single-switch sites): every device or system the job installs, including one a later request adds (a router asked for after the register and printer); the per-site facts the work is planned by when a fact states them (devices or register lanes per site, the time a fact estimates per site or per device); on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states; a platform "
         "or service migration the job is part of (the customer moving from one system to another), named as the facts name it; what stays in place], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
-        "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
-        "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
+        "\"Arrival Time: ...\" (a lead time counts: \"Arrival Time: no less than 30 minutes before the site closes\"), \"Work Window: ...\" (after-hours, weekend or overnight), "
+        "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known), "
+        "\"Pace: ...\" (sites or devices per day or week a fact gives, e.g. \"Pace: eight (8) sites per week\"); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
         "check-in, badge, parking, escort and notice rules a fact states, saying whose duty each is (the technician's "
         "name is sent ahead by Provider and the site adds it to its security list, so a name-in-advance rule reads "
         "\"Provider submits the technician's name <when> before arrival.\"; the site issues badges and passes; a greeting happens on arrival, credentials come in advance: one rule per line); "
@@ -124,7 +125,10 @@ _PARTS = {
         "staff, the tasks assist as directed. A manufacturer's install or setup guide tells how, not what: write the "
         "SOW-level work it supports (mount, connect, power, enroll or test the device, as the job needs), never its "
         "numbered steps, menus, settings or values. On a replacement job, removing the old unit is a task and where it "
-        "goes (left onsite, boxed, returned) follows the facts. A request the customer made to the reseller or to its own team (receiving, "
+        "goes (left onsite, boxed, returned) follows the facts; a replacement that is not one for one (two or more old units "
+        "replaced by one new one, a consolidation) is its own task with both models, and a sequence a fact sets (check rack "
+        "space before removing the old unit) is kept. A time the technician posts or records, a photo or a serial number the "
+        "customer asks for is a deliverable, never a customer duty. A request the customer made to the reseller or to its own team (receiving, "
         "staging, shipping, procurement, configuration the reseller does) is not Provider work. Every written instruction about "
         "where or how a device is mounted, a cable is routed, hidden or covered is its own task with its location; a removal "
         "task names what its lines keep (\"except the HDMI adapter\"): never cite a line and leave out its exception. Never claim a route or a device-to-location pairing no fact gives], "
@@ -159,7 +163,8 @@ _PARTS = {
         "billing and cancellation terms: never repeat or exclude those. Return {\"assumptions\": [5-10 conditions "
         "that bound the price: each one a fact settles (a ladder confirmed -> \"No lift is required.\" and "
         "\"Standard ladders reach every work location.\"; the longest run -> \"All cable runs are under N feet.\" with "
-        "N the longest rounded up to 50; a PurTera person's own stated assumption, reworded as a SOW assumption) and "
+        "N the longest rounded up to 50; a PurTera person's own stated assumption, reworded as a SOW assumption; a replacement "
+        "the facts say is not one for one at some sites -> \"Some sites may consolidate <old> into <new>.\") and "
         "the standard ones for THIS trade only, and a lift, ladder or pathway line only on ceiling, height or cabling work, never on desk or countertop work (cabling or devices: pathways accessible, PoE ports available on the "
         "IDF switch, equipment on site before arrival; decommission or packing: equipment powered down and released, "
         "the customer directs what is packed; any job: permits by the customer)], \"out_of_scope\": [5-9 exclusions as "
@@ -1421,6 +1426,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             text = bg["text"].split("|")[-1].strip().rstrip(".") + "."
             content["overview"] = [{"text": text[:1].upper() + text[1:], "cites": [bg["id"]], "kind": "fact"}]
     _fix_dates(content, fs, cut)
+    _cited_counts(content, envelope)
     _agreed_arrival(content, envelope)
     _weekend(content, fs)
     _schedule_from_facts(content, fs, envelope)
@@ -1572,6 +1578,49 @@ def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dic
         else "Offsite transport of the removed equipment."
     if not _said(ex, oos, 0.5):
         oos.append({"text": ex, "cites": [], "kind": "method"})
+
+
+_LINE_COUNT = re.compile(r"(?:\b([a-z]+(?:-[a-z]+)?) \((\d{1,4})\)|(?<![\w.$/-])(\d{1,4})(?![\w.%/:-]))\s+(?:approximately\s+)?([a-z][a-z-]+)", re.I)
+_ATOM_COUNT = re.compile(r"(?<![\w.$/-])(\d{1,4})(?![\w.%/:-])\s+([a-z][a-z-]+)", re.I)
+
+
+def _cited_counts(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """A count a line writes for a thing is the count its cited lines give
+    that thing (010083: "About ninety-two (92) sites will be single-switch
+    locations" cited "Apx 83 sites will be singles"; 92 was the site total).
+    Only when the cited lines give that thing exactly one count and never
+    the written number."""
+    text_of = {str(a.get("id")): str(a.get("text") or "") for a in envelope.get("atoms") or []}
+    for k in LISTS:
+        for x in content.get(k) or []:
+            if not (isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading"):
+                continue
+            pool = " ".join(text_of.get(c, "") for c in x["cites"])
+            if not pool:
+                continue
+            nums = {int(n) for n in re.findall(r"(?<![\w.])(\d{1,4})(?![\w.])", pool)}
+            by_noun: dict[str, dict[int, str]] = {}
+            for sent in re.split(r"(?<=[.!?])\s+|\n", pool):
+                for mm in _ATOM_COUNT.finditer(sent):
+                    by_noun.setdefault(_stem(mm.group(2).lower()), {})[int(mm.group(1))] = sent
+            t = str(x.get("text") or "")
+            for mm in reversed(list(_LINE_COUNT.finditer(t))):
+                n = int(mm.group(2) or mm.group(3))
+                said = by_noun.get(_stem(mm.group(4).lower())) or {}
+                if n in nums or len(said) != 1:
+                    continue
+                if mm.group(2) and _words_value(mm.group(1)) not in (None, n):
+                    continue  # the words and the digits already disagree: leave it
+                right, sent = next(iter(said.items()))
+                # The same statement: the cited sentence's words are the line's
+                # (a total is not corrected to a sub-count stated beside it).
+                clause = re.split(r"[,;.]", t[mm.start():])[0]
+                if not _said(sent, [clause], 0.5):
+                    continue
+                new = f"{_words(right)} ({right})" if mm.group(2) else str(right)
+                t = t[:mm.start()] + new + t[(mm.end(2) + 1) if mm.group(2) else mm.end(3):]
+            if t != x.get("text"):
+                x["text"] = t[:1].upper() + t[1:] if t[:1].islower() and str(x.get("text"))[:1].isupper() else t
 
 
 def _rejected_source(content: dict[str, Any], envelope: dict[str, Any]) -> None:
@@ -2232,7 +2281,13 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             std_words = " ".join(str(it["text"]) for it in std).lower()
             if names and any(n not in std_words for n in names):
                 return False
-            return (lst != "scope" or not re.search(r"\d", t)) and _said(t, std, max(share, 0.55))
+            if lst == "scope":
+                # The same step, verb and object: "Label all cables before
+                # removing the old switches" is not the rack-space check that
+                # also mentions cables and removal (010209).
+                verb = lambda u: _stem((re.findall(r"[a-z]+", u.lower()) or [""])[0])
+                return not re.search(r"\d", t) and any(verb(str(it["text"])) == verb(t) and _said(t, [it], max(share, 0.55)) for it in std)
+            return _said(t, std, max(share, 0.55))
         items[:] = [x for x in items if not covered(x) and not (isinstance(x, dict) and x.get("standard"))]
         if lst == "scope":
             # A counted deal step is the standard step with the deal's numbers:
@@ -2280,7 +2335,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         # When the deal has its own work groups, preparation leads and the
         # standard follow-on steps (router configuration, failover) come after
         # the deal's installs (010198: router config ahead of the register).
-        pre = [it for it in lead if re.match(r"(?i)(review|confirm (the |each )?(install|mount|location)|verify|unbox|unpack|inspect|check in|meet)", it["text"])]
+        pre = [it for it in lead if re.match(r"(?i)(arrive|review|confirm (the |each )?(install|mount|location)|verify|unbox|unpack|inspect|check in|meet)", it["text"])]
         post = [it for it in lead if it not in pre]
         deal_work = work and sum(1 for x in items if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
                                     and re.match(r"(?i)\s*(install|mount|replace|connect|set up|deploy|place)\b", str(x.get("text")))) >= 1
@@ -2328,7 +2383,17 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             dl.append({"item": "Work Completion Report", "description": [], "format": "PDF"})
         d0 = dl[0] if isinstance(dl[0], dict) else {"item": "Work Completion Report", "description": [], "format": "PDF"}
         own = [str(t) for t in d0.get("description") or [] if str(t).strip()]
-        d0["description"] = own + [o for o in outcomes if not _said(o, own, 0.5)]
+        # The writer's echo of a standard outcome the facts gate off goes
+        # (010083: "Serial numbers ... if requested" beside a customer who
+        # requires serials).
+        off = [t for o in fixed.get("deliverable_outcomes") or [] if o.startswith("{unless:")
+               for ok, t in [_standard_applies(o, facts_text or [])] if not ok]
+        own = [t for t in own if not any(_said(t, [o], 0.8) and _said(o, [t], 0.8) for o in off)]
+        # Said by a line about the same thing: "Serial numbers of each new
+        # switch" is not "New switches installed and cabled".
+        head = lambda u: _stem((re.findall(r"[a-z]+", str(u).lower()) or [""])[0])
+        d0["description"] = own + [o for o in outcomes if not (_said(o, own, 0.5) and (
+            head(o) in {head(t) for t in own} or not o.lower().startswith(("serial", "posted", "photo"))))]
         # Photographs ship as images beside the report (010116, 010209: "PDF, Jpeg").
         if any(re.search(r"(?i)photo", str(t)) for t in d0["description"]) and "JPEG" not in str(d0.get("format") or "").upper():
             d0["format"] = (str(d0.get("format") or "PDF").strip() or "PDF") + ", JPEG"
@@ -3240,6 +3305,17 @@ def _hours_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         if not _said(line, cr, 0.6):
             cr.append({"text": line, "cites": [mix["id"]], "kind": "fact"})
     win = next((x for x in sched if re.match(r"(?i)\s*work window", tx(x))), None)
+    # An after-hours-only window replaces the business-hours basis (010083:
+    # "After hours, no weekends, no overnights" under the template's "All
+    # Services will be performed during normal Business Hours").
+    if not mix and win and re.search(r"(?i)after[- ]?hours", tx(win)) and not re.search(r"(?i)business hours|mix|or after|daytime|weekday days", tx(win)):
+        content["assumptions"] = [x for x in content.get("assumptions") or []
+                                  if not re.search(r"(?i)(normal|regular|standard) business hours|during business hours", tx(x))]
+        line = "All Services will be performed After Hours" + (" during the week" if re.search(r"(?i)no weekends?", tx(win)) else "") + "."
+        if not any(re.search(r"(?i)performed after hours", tx(x)) for x in content["assumptions"]):
+            content["assumptions"].insert(0, {"text": line, "cites": list(win.get("cites") or []), "kind": "fact"})
+        content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
+                                                if not re.search(r"(?i)during business hours and which require after", tx(x))]
     m = win and re.search(_CLOCK + r"\s*(?:-|–|to|until)\s*" + _CLOCK, tx(win), re.I)
     if m:
         h1 = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0)
@@ -3444,6 +3520,21 @@ def _schedule_from_facts(content: dict[str, Any], fs: list[dict[str, Any]], enve
     the next email); only meeting and call slots stay out."""
     sch = content.setdefault("schedule", [])
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    # A pace and an arrival lead time are schedule terms too (010083: "8
+    # scheduled a week" and "arrive no less than 30 minutes before closing
+    # time" were cited and never written).
+    for f in fs:
+        t = f["text"]
+        pm = re.search(r"(?i)\b(\d{1,3})\s+(?:(sites?|stores?|locations?|branches|installs?)\s+)?(?:scheduled\s+|completed\s+|installed\s+|done\s+)?(?:a|per|each)\s+week\b", t)
+        if pm and not any(tx(x).lower().startswith("pace") for x in sch) and not re.search(r"(?i)\b(hours?|days?|calls?|meetings?)\s+(a|per|each)\s+week", pm.group(0)):
+            n, noun = int(pm.group(1)), (pm.group(2) or "sites").lower()
+            noun = noun if noun.endswith("s") else noun + "s"
+            sch.append({"text": f"Pace: {_words(n)} ({n}) {noun} per week", "cites": [f["id"]], "kind": "fact"})
+        am = re.search(r"(?i)\barriv\w*\s+((?:no less than|at least|about|approximately)\s+)?(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)\s+(before|prior to|ahead of)\s+([a-z ]{3,30}?)(?=[.,;)]|$)", t)
+        if am and not any(tx(x).lower().startswith("arrival time") for x in sch):
+            unit = "minutes" if am.group(3).lower().startswith("m") else ("hour" if am.group(2) == "1" else "hours")
+            sch.append({"text": f"Arrival Time: {(am.group(1) or '').strip() + ' ' if am.group(1) else ''}{am.group(2)} {unit} {am.group(4).lower()} {am.group(5).strip()}".replace("  ", " "),
+                        "cites": [f["id"]], "kind": "fact"})
     own = {}
     for a in envelope.get("atoms") or []:
         if not (a.get("structured") or {}).get("quoted"):
@@ -3526,6 +3617,11 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
     "serial numbers for the benched equipment", both dropped from scope)."""
     gone = [str(d.get("text")) for d in content.get("rule_decisions") or [] if d.get("value") == "drop"] + \
            [str(x.get("text")) for x in content.get("dropped") or [] if isinstance(x, dict)]
+    # A line moved into the report is not gone (010083: tidy moved "Provide
+    # before/after pictures and serial numbers" from the customer duties to
+    # the report, and that "drop" then struck the serial-number outcome).
+    report = [str(t) for d in content.get("deliverables") or [] if isinstance(d, dict) for t in d.get("description") or []]
+    gone = [g for g in gone if not any(_said(g, [t], 0.8) for t in report)]
     terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope")
                      for x in content.get(k) or []).lower()
     excl = [(r"(?i)\bship(ment|ped|ping)?\b|\bfreight\b|\btransport", r"ship|freight|transport|logistic"),
@@ -3714,7 +3810,7 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # Schedule: only its labeled lines once start and end dates are there (the
     # form's raw "Timeline/Schedule: 8/8 and 8/7" contradicted them, 010115).
     labels = ("requested start date", "requested completion date", "arrival time", "work window",
-              "number of resources", "hardware quantity")
+              "number of resources", "hardware quantity", "pace")
     sched = content.get("schedule") or []
     if sum(1 for x in sched if tx(x).lower().startswith(labels[:2])) == 2:
         content["schedule"] = [x for x in sched if tx(x).lower().startswith(labels)]
@@ -3766,7 +3862,11 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # Photos and serial numbers are the technician's deliverables, not a
     # customer duty (010083); and a duty that contradicts a standard
     # stage-onsite assumption goes ("identify a single site for disposal").
-    photo = [c for c in cr if re.search(r"(?i)\b(photo|picture|serial)", tx(c)) and not (isinstance(c, dict) and c.get("standard"))]
+    # Only a line that is about the photos or serials (010319: "Provide required
+    # documentation ... cable diagrams, patch schedules, and serial numbers" is
+    # the customer's documentation, not the technician's report).
+    photo = [c for c in cr if re.match(r"(?i)\s*((provide|capture|take|send|submit|post)\s+)?(the\s+|all\s+)?((before|after|completion)[/ \w-]{0,14}\s+)?(photo|picture|serial)", tx(c))
+             and not (isinstance(c, dict) and c.get("standard"))]
     if photo:
         cr[:] = [c for c in cr if c not in photo]
         dl = content.setdefault("deliverables", [])
@@ -3774,6 +3874,14 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
             dl.append({"item": "Work Completion Report", "description": [], "format": "PDF"})
         if isinstance(dl[0], dict):
             dl[0].setdefault("description", []).extend(re.sub(r"(?i)^provide\s+", "", tx(c)).rstrip(".") + "." for c in photo)
+    # What the technician does is not the customer's duty (010083: "Customer
+    # remote resource will provide verbal validation at completion, and the
+    # technician may leave once the posted completion time is reached").
+    for c in cr:
+        if isinstance(c, dict) and not c.get("standard"):
+            t = re.sub(r"(?i)\s*(,\s*and|;|, then)\s+(the\s+)?(technicians?|techs?|provider)\b\s+(may|will|can|is|are|must|should)\b.*$", "", tx(c))
+            if t != tx(c) and len(t.split()) >= 4:
+                c["text"] = t.rstrip(" ,;.") + "."
     if any(re.search(r"(?i)left onsite|staged? onsite|stage the removed", tx(a)) for a in (content.get("assumptions") or []) + (content.get("scope") or [])):
         cr[:] = [c for c in cr if not re.search(r"(?i)site for disposal|ship (the )?removed|return (the )?removed", tx(c))]
     # Hardware Quantity belongs in the Schedule only where PurTera puts it
@@ -4397,12 +4505,21 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     # holds 161 stores; a note said "about 160" and the scope printed 160).
     n_sites = int(c["site_summary"].get("stated") or 0) or len(sites)
     if n_sites >= 10:
+        # Never a count the line's own cited facts state (010083: "Apx 83
+        # sites will be singles" snapped to the 92-site total).
+        atom_text = {str(a.get("id")): str(a.get("text") or "") for a in envelope.get("atoms") or []}
+        stated_here: set[int] = set()
         def _snap(m: re.Match) -> str:
             n = int(m.group(1))
-            return (str(n_sites) if n != n_sites and abs(n - n_sites) <= max(2, 0.1 * n_sites) else m.group(1)) + m.group(2)
+            return (str(n_sites) if n != n_sites and n not in stated_here and abs(n - n_sites) <= max(2, 0.1 * n_sites) else m.group(1)) + m.group(2)
         for k in ("overview", "scope", "schedule", "assumptions", "customer_responsibilities"):
             for x in c.get(k) or []:
                 if isinstance(x, dict):
+                    stated_here.clear()
+                    stated_here.update(int(n) for cc in x.get("cites") or [] for n in re.findall(r"(?<![\w.])(\d{2,4})(?![\w.])", atom_text.get(str(cc), "")))
+                    if x.get("cites") and re.search(r"\(\d{2,4}\)", str(x.get("text"))) and any(
+                            int(n) in stated_here and int(n) != n_sites for n in re.findall(r"\((\d{2,4})\)", str(x.get("text")))):
+                        continue
                     x["text"] = re.sub(r"\b(\d{2,4})(\)?[\s-]+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
                     # "160 (one hundred sixty) Customer locations" (000123).
                     x["text"] = re.sub(r"(?i)\b(\d{2,4})\s*\((?:[a-z -]+)\)(\s+(?:\w+\s+){0,2}(?:locations?|stores?|sites?|restaurants?|branches))",

@@ -252,16 +252,24 @@
     ]
   },
   "network_switch_refresh": {
-    "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list; 2026-10-19: TEMPLATE items from the 010085 v1 grade (document/port-matrix review, MDF/IDF, remote smart hands, closeout photos/serials, confirmed count, configured-switches wording, delay assumption, lift window)",
+    "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list; 2026-10-19: TEMPLATE items from the 010085 v1 grade (document/port-matrix review, MDF/IDF, remote smart hands, closeout photos/serials, confirmed count, configured-switches wording, delay assumption, lift window); 010083 batch-3 TEMPLATE items (check-in, rack space before removal, removal, accessories, racking screws, serial capture, testing checklist, posted completion time, schedule estimate); serials always when the facts ask for them; no business-hours CR on an after-hours-only job",
     "method_steps": [
+      "Arrive onsite and check in according to the Customer-provided site access process.",
       "Review the Customer-provided switch refresh documentation, port matrix, network closet (MDF/IDF) locations, rack layout, cabling and available rack space before beginning work.",
       "{when:\\b(mdf|idf)s?\\b} Locate and inspect the applicable MDF and IDF areas included in the switch refresh.",
       "Confirm the switches, power cords, rack ears, optics and stacking and patch cables are onsite before starting.",
+      "Verify available rack space for the new switch before removing the existing switch where a one-for-one cable move is planned.",
+      "Remove the existing switches as required.",
       "Install the new switches in the existing rack, cabinet or customer-designated network area.",
+      "{when:rack ears|power supplies|stack cables?} Install the rack ears, power supplies, power cords and stack cables provided with the new switches, where applicable.",
+      "{when:racking screws|rack screws|screws from the removed} Reuse existing racking screws from the removed hardware where available.",
       "Migrate patch cable connections according to the Customer-provided port and cable matrix, or one-for-one where practical when no matrix is provided.",
       "Stage the removed legacy switches onsite in a customer-designated area.",
       "Connect power to each new switch and confirm it powers on.",
       "{when:remote|engineer} Support limited remote smart-hands assistance for the Customer's remote engineering team, including visual checks, link light confirmation, serial number capture, photo sharing and basic physical-layer validation.",
+      "{when:serial} Capture and provide the serial number of each new switch installed.",
+      "{when:testing checklist|post[- ]install (test|check)} Support completion of the Customer-provided post-install testing checklist.",
+      "{when:posted completion time|completion time} Post the completion time once the Customer's remote resource confirms the technician is clear to leave the site.",
       "Confirm completion with the onsite contact or remote engineer before leaving site."
     ],
     "customer_responsibilities": [
@@ -281,7 +289,7 @@
       "{when:\\b(lift|boom|scissor)s?\\b} Confirm each lift type suits the work area, and have lifts delivered, charged or fueled, with clear and safe access paths.",
       "{when:\\b(mdf|idf)s?\\b} Provide the final confirmed switch count by MDF and IDF.",
       "{when:remote|engineer} Provide Customer remote engineering support during each cutover or validation window.",
-      "{when:after[- ]?hours|maintenance windows?|production} Confirm which areas may be completed during business hours and which require after-hours or non-production windows."
+      "{unless:\\?\\s*(\\[[^\\]]*\\]\\s*)?after[- ]?hours\\b|\\b(all|only)\\b.{0,30}after[- ]?hours|after[- ]?hours only} {when:after[- ]?hours|maintenance windows?|production} Confirm which areas may be completed during business hours and which require after-hours or non-production windows."
     ],
     "assumptions": [
       "Provider's role is limited to onsite physical labor and field support.",
@@ -292,7 +300,8 @@
       "Provider's responsibility for decommissioned equipment ends once it is placed in the Customer-designated onsite location.",
       "Access, escorts and maintenance windows are ready as scheduled; Provider is not responsible for delays caused by production restrictions, blocked access, missing documentation, missing materials, unavailable remote support or site readiness issues.",
       "{when:remote|engineer} The Customer remote engineering team will be available during cutover and validation windows.",
-      "{when:\\b(lift|boom|scissor)s?\\b} The lift equipment allowance covers onsite use of the listed lift equipment during the scheduled work window only."
+      "{when:\\b(lift|boom|scissor)s?\\b} The lift equipment allowance covers onsite use of the listed lift equipment during the scheduled work window only.",
+      "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations|branches)\\b|per week|a week\\b} The project schedule is an estimate and may be adjusted for site readiness, hardware availability, Customer scheduling, technician availability, access approval and field conditions."
     ],
     "exclusions": [
       "Switch configuration and programming.",
@@ -306,10 +315,12 @@
       "Removed switches staged onsite in the designated area.",
       "Completion confirmed with the onsite contact or remote engineer, with a signed completion document or site signoff where available.",
       "Photos of completed switch installations and of rack conditions after completion.",
-      "Serial numbers or asset information if requested by the Customer.",
+      "{unless:serial} Serial numbers or asset information if requested by the Customer.",
+      "{when:serial} Serial numbers of each new switch installed.",
       "{when:\\b(mdf|idf)s?\\b} Notes identifying the completed MDF and IDF locations.",
       "Notes identifying exceptions, blocked work, missing materials or incomplete items.",
-      "{when:remote|engineer} Confirmation of remote validation where provided by the Customer remote engineering team."
+      "{when:remote|engineer} Confirmation of remote validation where provided by the Customer remote engineering team.",
+      "{when:posted completion time|completion time|arrive no less than|arrival time} Posted arrival and completion time."
     ]
   },
   "av_conference_room": {
