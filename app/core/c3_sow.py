@@ -1671,9 +1671,22 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # lanes" as a Closeout task).
     desc += [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
              and x not in desc and re.match(r"(?i)\s*(most|all|each|every|some|the)?\s*(stores?|sites?|locations?|rooms?|offices?|buildings?)\s+(have|has|are|is|use|contain)\b", str(x.get("text")))]
+    desc += [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+             and x not in desc and re.search(r"(?i)\b(will )?(stay|stays|remain|remains)\b.{0,20}\b(in place|mounted|in (their |its )?current|as is|on the)", str(x.get("text")))
+             and not re.match(r"(?i)\s*(install|mount|remove|replace|leave|keep|retain|protect)\b", str(x.get("text")))]
+    # Presales paperwork is not an onsite step (010120 "documentation
+    # requirements needed to complete the SOW").
+    content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and re.search(
+        r"(?i)complete the sow|for the sow|to quote|for (the )?quot(e|ing)|pricing purposes", str(x.get("text"))))]
     for x in desc:
-        content["scope"].remove(x)
+        if x in content["scope"]:
+            content["scope"].remove(x)
         content.setdefault("assumptions", []).append(x)
+    # Provider supplies materials: no blanket procurement exclusion (010120's
+    # floor raceway and cable).
+    if content.get("provider_materials"):
+        content["out_of_scope"] = [x for x in content.get("out_of_scope") or []
+                                   if not re.match(r"(?i)\s*procurement of (hardware|equipment)( not provided by the customer)?\.?$", str(x.get("text") if isinstance(x, dict) else x))]
     # Every line starts with a capital ("wall patching or painting.", 010373).
     for k in LISTS:
         for x in content.get(k) or []:
