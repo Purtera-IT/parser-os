@@ -26,11 +26,24 @@ from .schema import load_schema
 
 
 def _exact(model, key, c, free: bool) -> tuple[float, int]:
+    """Macro recall over the sections present (scope_of_work is ~3/4 of the
+    rows; plain exact rewards answering it everywhere)."""
     if not len(c["y"]):
         return 0.0, 0
     with torch.no_grad():
         lg = _logits(model, key, c) if free else c["base"]
-        return float((lg.argmax(-1) == c["y"]).float().mean()), len(c["y"])
+        pred = lg.argmax(-1)
+    recs = [float((pred[c["y"] == k] == k).float().mean()) for k in c["y"].unique()]
+    return sum(recs) / len(recs), len(c["y"])
+
+
+def _report(model, key, c, free: bool, names) -> str:
+    with torch.no_grad():
+        pred = (_logits(model, key, c) if free else c["base"]).argmax(-1)
+    exact = float((pred == c["y"]).float().mean())
+    maj = float((c["y"] == c["y"].mode().values).float().mean())
+    per = " ".join(f"{names[int(k)]}={int((pred[c['y'] == k] == k).sum())}/{int((c['y'] == k).sum())}" for k in c["y"].unique())
+    return f"exact {exact:.3f} (always-majority {maj:.3f}) {per}"
 
 
 def main() -> None:
@@ -68,13 +81,17 @@ def main() -> None:
     model.to("cpu")
     base_exact, n = _exact(model, key, va, free=False)
     print(f"checkpoint {key} validation exact {base_exact:.3f} (n={n})", flush=True)
+    names = [a.value for a in schema.by_key()[key].answers]
+    print("checkpoint " + _report(model, key, va, False, names), flush=True)
+    counts = torch.bincount(tr["y"], minlength=len(names)).float()
+    cw = torch.where(counts > 0, counts.sum() / (counts.clamp(min=1) * (counts > 0).sum()), torch.zeros_like(counts))
     model.add_free_head(key)
     opt = torch.optim.AdamW(model.free_heads[key].parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best, best_state = base_exact, None
     for epoch in range(1, args.epochs + 1):
         order = torch.randperm(len(tr["y"]))
         lg = _logits(model, key, tr, order)
-        loss = (F.cross_entropy(lg, tr["y"][order], reduction="none") * tr["w"][order]).sum() / tr["w"][order].sum()
+        loss = (F.cross_entropy(lg, tr["y"][order], weight=cw, reduction="none") * tr["w"][order]).sum() / tr["w"][order].sum()
         opt.zero_grad()
         loss.backward()
         opt.step()
@@ -88,6 +105,7 @@ def main() -> None:
         print(f"no epoch beat the checkpoint's {base_exact:.3f}; nothing saved", flush=True)
         return
     model.free_heads[key].load_state_dict(best_state)
+    print("refit " + _report(model, key, va, True, names), flush=True)
     save_checkpoint(args.out, model, step=step, schema_sha256=sha)
     print(f"saved {args.out}: {key} validation exact {base_exact:.3f} -> {best:.3f}", flush=True)
 
