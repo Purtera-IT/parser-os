@@ -1047,6 +1047,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "tidy", _tidy, content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     content["slot_moved"] = _traced(content, "slot_by_head", _slot_by_head, content, envelope)
+    # Lines from a floor plan, leasing sheet or brochure are about the building,
+    # never the job (010012: Stamford floor-plan captions typed as tasks).
+    bro_docs = {str(d.get("artifact_id")) for d in envelope.get("documents") or []
+                if re.search(r"(?i)floor ?plan|concept plan|space plan|test[ -]?fit|leasing|brochure|flyer|availability|marketing", str(d.get("filename") or ""))}
+    content["_brochure_atoms"] = [str(a.get("id")) for a in envelope.get("atoms") or [] if str(a.get("artifact_id")) in bro_docs]
     # A line the type head called small talk is never cited (010082: "This
     # work is for a new unit opening" from a signature's menu entry).
     chatter = {str(a.get("id")) for a in envelope.get("atoms") or []
@@ -2180,6 +2185,14 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     brochure = re.compile(r"(?i)leasing (team|agent|office)|contact our leasing|vr view|virtual tour|for lease|rsf\b|rentable|"
                           r"waiting area|pantry|reception area|available space")
     bro = {f["id"] for f in fs if brochure.search(f["text"])}
+    # Lines from a plan or brochure document: never a duty, assumption, summary
+    # or arrival step (they describe the building), but they may still name
+    # the room a scope task happens in.
+    bro_doc = set(content.pop("_brochure_atoms", []) or [])
+    for k in ("customer_responsibilities", "assumptions", "arrival_protocol", "overview"):
+        kept = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and all(c in bro_doc for c in x["cites"]))]
+        if kept or k != "overview":
+            content[k] = kept
     for k in LISTS:
         kept = [x for x in content.get(k) or [] if not (isinstance(x, dict) and ((x.get("cites") and all(c in bro for c in x["cites"]))
                                                                                  or brochure.search(str(x.get("text")))))]
