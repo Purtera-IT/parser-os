@@ -1051,6 +1051,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # never the job (010012: Stamford floor-plan captions typed as tasks).
     bro_docs = {str(d.get("artifact_id")) for d in envelope.get("documents") or []
                 if re.search(r"(?i)floor ?plan|concept plan|space plan|test[ -]?fit|leasing|brochure|flyer|availability|marketing", str(d.get("filename") or ""))}
+    content["_our_people"] = sorted({str(pp.get("name") or "").split()[0] for pp in (envelope.get("deal_roster") or {}).get("people") or []
+                                     if pp.get("side") == "ours" and str(pp.get("name") or "").strip()})
     content["_brochure_atoms"] = [str(a.get("id")) for a in envelope.get("atoms") or [] if str(a.get("artifact_id")) in bro_docs]
     # A line the type head called small talk is never cited (010082: "This
     # work is for a new unit opening" from a signature's menu entry).
@@ -2248,6 +2250,18 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
                           and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
             sc.insert(close, {k: v for k, v in x.items() if k != "list"})
+    # A line from an "Open Questions" list is a question, never a duty (010082:
+    # the parking/loading-dock question became a customer responsibility).
+    oq = {f["id"] for f in fs if re.search(r"(?i)open questions?|questions? for (the )?customer|to confirm|tbd items", str(f.get("under") or ""))}
+    if oq:
+        for k in ("customer_responsibilities", "assumptions", "scope"):
+            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and all(c in oq for c in x["cites"]))]
+    # PurTera's own people are never named in the customer's summary (010082:
+    # "Chase, Kelly and Octavian" in the overview).
+    ours = [n for n in content.pop("_our_people", []) or [] if len(n) > 2]
+    if ours:
+        pat = re.compile(r"(?i)\b(" + "|".join(re.escape(n) for n in ours) + r")\b")
+        content["overview"] = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and pat.search(str(x.get("text"))))] or content.get("overview")
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
