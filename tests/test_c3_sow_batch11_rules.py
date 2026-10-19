@@ -325,7 +325,8 @@ def test_a_provider_task_whose_atom_an_exclusion_cites_goes():
     c["out_of_scope"] = [_fact("Managed IT services or repair and replacement of defective Customer equipment.", ("f", "s"))]
     c["scope"] = [_fact("Service and resolve any hardware failures.", ("f",)),
                   _fact("Report unresolved issues to the Systems Support Desk.", ("s",)), _fact("Install the terminals.", ("t",))]
-    m._exclusion_owns_atom(c)
+    m._exclusion_owns_atom(c, [{"id": "f", "text": "Service and resolve any hardware failures"},
+                               {"id": "s", "text": "Report any issues to the Systems Support Desk"}])
     assert _texts(c, "scope") == ["Report unresolved issues to the Systems Support Desk.", "Install the terminals."]
 
 
@@ -425,3 +426,52 @@ def test_one_statement_per_topic():
                                         "The replacement TVs are compatible with the existing content source and video wall layout.",
                                         "The existing 2x2 video wall structure and mounting points can safely support the two replacement TVs."]
     assert c["assumptions"][0]["cites"] == ["a", "c"]
+
+
+# --- 010209 pass Y B -------------------------------------------------------------
+
+def test_a_line_restating_its_sources_limit_is_not_broader():
+    c = _content()
+    c["scope"] = [_fact("Install rack mount hardware at sites even when no existing rack is present.", ("r",)),
+                  _fact("All stores have a rack.", ("r",))]
+    m._no_broader_than_source(c, [{"id": "r", "text": "Not all stores have a rack but still need rack mount hardware installed"}])
+    assert _texts(c, "scope") == ["Install rack mount hardware at sites even when no existing rack is present."]
+
+
+def test_a_line_naming_its_cited_models_is_grounded():
+    lines = {"m": "The switches being removed are a combination of MS120-24 and MS120-48."}
+    assert m._models_cited({"text": "Existing switches to be decommissioned include Cisco Meraki MS120-24 and MS120-48 models.", "cites": ["m"]}, lines)
+    assert not m._models_cited({"text": "Install MS390-48 switches.", "cites": ["m"]}, lines)
+
+
+def test_label_and_trace_come_before_removal():
+    c = _content()
+    c["scope"] = [{"text": "Switch replacement", "cites": [], "kind": "heading"},
+                  _fact("Remove existing switches and install the new switches."),
+                  _std("Verify available rack space for the new switch before removing the existing switch."),
+                  {"text": "Cabling", "cites": [], "kind": "heading"},
+                  _fact("Label all cables before removing the old switches."),
+                  _fact("Trace each cable and create the patch panel to switch port mapping onsite."),
+                  _fact("Reconnect patch cables to the new switches.")]
+    m._label_before_removal(c)
+    assert _texts(c, "scope") == ["Switch replacement", "Verify available rack space for the new switch before removing the existing switch.",
+                                  "Label all cables before removing the old switches.",
+                                  "Trace each cable and create the patch panel to switch port mapping onsite.",
+                                  "Remove existing switches and install the new switches.", "Cabling", "Reconnect patch cables to the new switches."]
+
+
+def test_a_no_charge_term_is_the_providers_error_owed_to_the_customer():
+    c = _content()
+    c["assumptions"] = [_fact("Any extra time spent identifying cables because cables were not labeled is at no charge to RL.", ("n",))]
+    m._no_charge_bounds(c, [{"id": "n", "text": "the tech did not label EVERY cable and spent hours trying to identify 1 cable "
+                                               "(this extra time must be spent at no charge to RL)"}])
+    assert _texts(c, "assumptions") == ["Any extra time spent identifying cables because Provider did not label them is at no charge to the Customer."]
+
+
+def test_a_boundary_around_the_devices_work_is_no_contradiction():
+    c = _content()
+    c["scope"] = [_fact("Install the new switches.")]
+    c["out_of_scope"] = [_fact("Cleaning up or remediating other closet connections outside the switch area."),
+                         _fact("Switch installation.", ())]
+    m._tidy(c)
+    assert "Cleaning up or remediating other closet connections outside the switch area." in _texts(c, "out_of_scope")

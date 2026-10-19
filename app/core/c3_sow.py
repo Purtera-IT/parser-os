@@ -3504,7 +3504,18 @@ def _supply_grounded(content: dict[str, Any], lines: dict[str, str]) -> None:
     so nothing leaves silently."""
     for k in ("provider_materials", "customer_materials", "equipment_in_scope"):
         content[k] = [x for x in content.get(k) or []
-                      if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines) or _counted_row(x, lines))]
+                      if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines) or _counted_row(x, lines)
+                                                                 or _models_cited(x, lines))]
+
+
+def _models_cited(x: dict[str, Any], lines: dict[str, str]) -> bool:
+    """A line naming model numbers every one of which its cited lines give
+    is grounded (010209 pass Y: "Existing switches to be decommissioned
+    include Cisco Meraki MS120-24 and MS120-48 models." from "The switches
+    being removed are a combination of MS120-24 and MS120-48.")."""
+    models = set(re.findall(r"\b[A-Z]{1,6}\d{2,5}(?:-[A-Z0-9]{1,6})*\b", str(x.get("text") or "")))
+    cited = " ".join(lines.get(c, "") for c in x.get("cites") or [])
+    return bool(models) and all(re.search(r"(?<![\w-])" + re.escape(mm) + r"(?![\w-])", cited) for mm in models)
 
 
 def _counted_row(x: dict[str, Any], lines: dict[str, str]) -> bool:
@@ -4352,6 +4363,16 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and re.search(r"(?i)\bbenched\b|\bbenching\b", str(x.get("text"))))]
     # Gear the job does not touch is not Equipment in Scope (010171: the main
     # room's existing Rally Plus kit).
+    # Existing gear the job removes is a fact of the job: an assumption
+    # (010209 pass Y: "Existing switches to be decommissioned include Cisco
+    # Meraki MS120-24 and MS120-48 models." went with no home).
+    for x in content.get("equipment_in_scope") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if isinstance(x, dict) and x.get("cites") and re.search(r"(?i)\bexisting\b", t) \
+                and re.search(r"(?i)\b(decommission\w*|remov\w*|replac\w*|swap\w*|retir\w*|uninstall\w*)\b", t):
+            line = re.sub(r"(?i)\binclude\b", "are", t, count=1)
+            if not _said(line, content.get("assumptions") or [], 0.7):
+                content.setdefault("assumptions", []).append({**x, "text": line})
     content["equipment_in_scope"] = [x for x in content.get("equipment_in_scope") or []
                                      if not re.search(r"(?i)\bexisting\b", str(x.get("text") if isinstance(x, dict) else x))]
     # "Provider will supply no external microphones" is an exclusion, not a duty.
@@ -4643,7 +4664,21 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # customer "will supply, configure, label and deliver"; Provider labeled to
     # the naming convention too).
     if re.search(r"(?i)label.{0,30}deliver|label.{0,30}prior to (shipment|deployment)", " ".join(str(y.get("text")) for y in content.get("customer_responsibilities") or [] if isinstance(y, dict))):
-        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and re.search(r"(?i)label (all )?(the )?(new )?equipment with|naming convention", str(x.get("text"))))]
+        # Only that clause goes: a field step it rode along keeps its
+        # grounded half (010209 pass Y lost "Label all cables before removing
+        # the old switches" with "... and label all equipment with the RL
+        # standard naming convention").
+        bench = re.compile(r"(?i)label (all )?(the )?(new )?equipment with|naming convention")
+        out_sc = []
+        for x in content.get("scope") or []:
+            t = str(x.get("text")) if isinstance(x, dict) else ""
+            if not (isinstance(x, dict) and bench.search(t)):
+                out_sc.append(x)
+                continue
+            parts = [p_ for p_ in re.split(r"(?i),?\s+and\s+(?=[a-z]+\s)|;\s*", t.rstrip(". ")) if p_.strip() and not bench.search(p_)]
+            if parts and len(" ".join(parts).split()) >= 3:
+                out_sc.append({**x, "text": " and ".join(parts).strip() + "."})
+        content["scope"] = out_sc
         sc = content.get("scope") or []
     if pre_ph:
         rest = [x for x in sc if not any(x is y for y in pre_ph)]
@@ -6945,8 +6980,9 @@ def _no_broader_than_source(c: dict[str, Any], atoms: list[dict[str, Any]]) -> N
             cts = [text.get(i, "") for i in (x.get("cites") or [])] if isinstance(x, dict) else []
             if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading" and cts \
                     and all(t_ and len(t_) <= 220 and _LIMITING.search(t_) for t_ in cts) and not _LIMITING.search(t) \
-                    and not re.search(r"(?i)\bwhere (required|needed|applicable)\b", t):
-                continue
+                    and not re.search(r"(?i)\bwhere (required|needed|applicable)\b", t) \
+                    and not re.search(r"(?i)\b(even (when|if|where)|no existing|not all|without)\b", t):
+                continue  # a line restating the limit ("even when no existing rack is present") keeps it
             keep.append(x)
         c[k] = keep
 
@@ -9898,6 +9934,9 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
                                if (isinstance(x, dict) and x.get("standard"))
                                or not (re.search(r"(?i)additional devices not listed", tx(x))
                                        or any(re.search(w, tx(x), re.I) and not re.search(r"(?i)\b(existing|other|new)\b.*\b(configur|programm)", tx(x))
+                                              # A boundary around the device's work is no contradiction (010209
+                                              # pass Y: "... other closet connections outside the switch area").
+                                              and not re.search(r"(?i)\b(outside|beyond|other than|apart from|rest of)\b", tx(x))
                                               for w in excludes_scope))]
     std_oos = [x for x in content.get("out_of_scope") or [] if isinstance(x, dict) and x.get("standard")]
     if std_oos:
@@ -10156,6 +10195,7 @@ def _drop_unstated_counts(text: str, cited: str) -> str:
 _STATE_WORDS = frozenset("""before after prior begin begins start starts started starting arrival arrive arrives active ready
 available availabl ensure ensured confirm onsite site work technician technicians provider customer will shall must be
 been being are is was were place placed complete completed time scheduled schedul functional operational working assume
+area areas other rest""".split()) | frozenset("""
 live""".split())
 
 
@@ -10965,13 +11005,18 @@ def _workmanship_not_duty(c: dict[str, Any]) -> None:
         sc[close:close] = moved
 
 
-def _exclusion_owns_atom(c: dict[str, Any]) -> None:
+def _exclusion_owns_atom(c: dict[str, Any], atoms: list[dict[str, Any]] | None = None) -> None:
     """One atom is never both Provider work and an exclusion: a Provider task
     every cite of which an exclusion also cites goes (010279 pass Y:
     "Service and resolve any hardware failures." beside the exclusion
     "... repair and replacement of defective Customer equipment", both on
     atm_ad0ca11d676eae22)."""
-    excl = {cc for o in c.get("out_of_scope") or [] if isinstance(o, dict) and not o.get("standard") for cc in o.get("cites") or []}
+    # One statement only: a Q&A paragraph that gives both a task and a
+    # boundary (010209: "... cut very long cable ... no expectation for them
+    # to clean the rest of the connections") feeds both sides.
+    words = {str(a.get("id")): len(str(a.get("text") or "").split()) for a in atoms or []}
+    excl = {cc for o in c.get("out_of_scope") or [] if isinstance(o, dict) and not o.get("standard") for cc in o.get("cites") or []
+            if words.get(str(cc), 0) <= 30}
     if not excl:
         return
     # Reporting or handing an issue on is never the excluded work itself
@@ -11165,6 +11210,60 @@ def _same_topic_once(c: dict[str, Any]) -> None:
                 continue
             kept.append(x)
         c[k] = kept
+
+
+_PRE_REMOVAL = re.compile(r"(?i)\bbefore (?:removing|disconnecting|removal|unracking|decommissioning|beginning work|starting)\b|"
+                          r"\bprior to (?:removing|disconnecting|removal)\b")
+_REMOVAL_LEAD = re.compile(r"(?i)\s*(remove|disconnect|unrack|uninstall|decommission|de-?install)\b")
+
+
+def _label_before_removal(c: dict[str, Any]) -> None:
+    """Label and trace, then remove, then install: a step that must happen
+    before removal (it says so, or labels, traces or maps the existing
+    cabling) never follows the first removal step (010209 pass Y: "Label all
+    cables before removing the old switches." and "Trace each cable ..."
+    came after "Remove existing switches and install the new switches.",
+    the customer's stated failure mode)."""
+    sc = c.get("scope") or []
+    r = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") != "heading" and _REMOVAL_LEAD.match(_tx(x))), None)
+    if r is None:
+        return
+    pre = lambda t: bool(_PRE_REMOVAL.search(t)) and not _REMOVAL_LEAD.match(t) or bool(
+        re.match(r"(?i)\s*(label|trace|map|tone out|identify)\b", t) and re.search(r"(?i)\b(cables?|ports?|patch|connections?)\b", t)
+        and not re.search(r"(?i)\b(new|installed)\b", t))
+    move = [x for x in sc[r + 1:] if isinstance(x, dict) and x.get("kind") != "heading" and pre(_tx(x))]
+    if not move:
+        return
+    rest = [x for x in sc if not any(x is y for y in move)]
+    at = next(i for i, x in enumerate(rest) if x is sc[r])
+    c["scope"] = rest[:at] + move + rest[at:]
+    # A heading left with nothing under it goes.
+    sc = c["scope"]
+    c["scope"] = [x for i, x in enumerate(sc) if not (isinstance(x, dict) and x.get("kind") == "heading" and (
+        i + 1 >= len(sc) or (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading")))]
+
+
+def _no_charge_bounds(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A no-charge term is the Provider's own error, owed to the Customer:
+    "Any extra time spent identifying cables because cables were not
+    labeled is at no charge to RL." gives away the tracing of the
+    customer's unlabeled cables, while the source says the tech did not
+    label them (010209 pass Y). The term names Provider as the cause when its
+    source does, and "the Customer" as the payee."""
+    by = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    tech = re.compile(r"(?i)\b(?:the\s+)?(?:tech|techs|technicians?|vendor|installer|provider)\s+(?:did not|didn't|does not|failed to|fails to|doesn't)\s+(\w+)")
+    for k in ("assumptions", "out_of_scope", "scope"):
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and not x.get("standard") and re.search(r"(?i)\b(?:at\s+)?no (?:charge|cost)\b", _tx(x))):
+                continue
+            t = _tx(x)
+            t = re.sub(r"(?i)\b(no (?:charge|cost))\s+to\s+(?!the Customer\b)(?:the\s+)?[A-Z][\w&-]*(?:\s+[A-Z][\w&-]*){0,2}", r"\1 to the Customer", t)
+            src = " ".join(by.get(str(cc), "") for cc in x.get("cites") or [])
+            m_ = tech.search(src)
+            mm = re.search(r"(?i)\bbecause\s+(?:the\s+)?(\w+)\s+(?:were|was)\s+not\s+(\w+ed)\b", t)
+            if m_ and mm and mm.group(2).lower().startswith(m_.group(1).lower()[:4]):
+                t = t[:mm.start()] + f"because Provider did not {m_.group(1).lower()} {('them' if mm.group(1).lower().endswith('s') else 'it')}" + t[mm.end():]
+            x["text"] = t
 
 
 def _dropped_not_rendered(c: dict[str, Any]) -> None:
@@ -11719,11 +11818,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "parts_and_sum", _parts_and_sum, c)
     _traced(c, "reseller_includes", _reseller_includes, c, atoms_)
     _traced(c, "workmanship_not_duty", _workmanship_not_duty, c)
-    _traced(c, "exclusion_owns_atom", _exclusion_owns_atom, c)
+    _traced(c, "exclusion_owns_atom", _exclusion_owns_atom, c, atoms_)
     _traced(c, "install_list_only", _install_list_only, c, atoms_)
     _traced(c, "sales_notes_out", _sales_notes_out, c, atoms_)
     _traced(c, "duty_admission", _duty_admission, c, atoms_)
     _traced(c, "same_topic_once", _same_topic_once, c)
+    _traced(c, "label_before_removal", _label_before_removal, c)
+    _traced(c, "no_charge_bounds", _no_charge_bounds, c, atoms_)
     _traced(c, "site_unit_counts", _site_unit_counts, c)
     _traced(c, "overview_numbers", _overview_numbers, c, atoms_)
     _traced(c, "task_by_party", _task_by_party, c)
