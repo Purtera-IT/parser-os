@@ -2109,8 +2109,9 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     oos_txt = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("out_of_scope") or []).lower()
     banned = [w for w in ("mic pod", "microphone", "sight", "nuc", "license", "lift") if w in oos_txt]
     if banned:
-        for k in ("equipment_in_scope", "customer_materials", "provider_materials"):
-            content[k] = [x for x in content.get(k) or [] if not any(b in str(x.get("text") if isinstance(x, dict) else x).lower() for b in banned)]
+        for k in ("equipment_in_scope", "customer_materials", "provider_materials", "scope", "deliverables_text"):
+            content[k] = [x for x in content.get(k) or [] if not (any(b in str(x.get("text") if isinstance(x, dict) else x).lower() for b in banned)
+                                                                  and not (isinstance(x, dict) and x.get("standard")))]
     # A relative date copied from an email means nothing in a SOW (010171:
     # "Have the network drops installed next week").
     for k in LISTS:
