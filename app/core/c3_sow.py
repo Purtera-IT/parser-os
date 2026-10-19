@@ -1553,6 +1553,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _overview_covers_scope(content, fs)
     _boundary_verbs(content)
     _traced(content, "partner_phase", _partner_phase, content, fs)
+    _contact_roles(content, fs)
     _planning_basis(content, fs)
     _room_counts(content)
     # "the above" points into the source note's list, not the SOW (000123
@@ -2039,9 +2040,14 @@ def _question_not_commitment(content: dict[str, Any], fs: list[dict[str, Any]]) 
     answered, so the general open-question filter lets it through; the answer
     is the fact, and the question that asks for work stays (010198's router)."""
     by = {f["id"]: f for f in fs}
+    # An open checklist item ("Any testing, labeling, certification, or
+    # as-built documentation requirements", 010082) asks too.
+    checklist = re.compile(r"(?i)^\s*(any|is there|are there|what|which|does|do|will)\b[^.?!]*\b(requirements?|needs?|constraints?|"
+                           r"restrictions?|preferences?|expectations?)\s*\??\s*$")
     def asks(c: str) -> bool:
         f = by.get(c)
-        return bool(f) and bool(f.get("asked")) and _only_asks(f["text"]) and not _REQUESTS_WORK.search(f["text"])
+        return bool(f) and ((bool(f.get("asked")) and _only_asks(f["text"]) and not _REQUESTS_WORK.search(f["text"]))
+                            or bool(checklist.match(f["text"])))
     for k in ("scope", "schedule", "provider_materials"):
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
                       and not x.get("standard") and x.get("cites") and all(asks(c) for c in x["cites"]))]
@@ -3016,15 +3022,17 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # 010284's lift, core-drilling and disposal exclusions cited call chatter
     # about poles and penetrations, and became "Provide lift rental" tasks.
     # Otherwise the exclusion stays, as the writer's own uncited line.
+    # Grounding never turns an exclusion into a commitment (010082 pass U:
+    # "Testing, certification, labeling, or as-built documentation", from an
+    # open-question checklist line, became a Provider task). A requested
+    # service the writer flipped into an exclusion is turned back by
+    # _source_polarity, which reads the source's polarity; here the line
+    # only loses the cite that does not exclude it.
     for x in unsourced:
-        t = _as_scope(str(x.get("text")))
-        named = any(_said(re.sub(r"(?i)^provide\s+", "", t), [by[c]["text"]], 0.6) for c in x["cites"]) if t else False
-        if not named:
+        if _LINE_NEG.search(str(x.get("text"))):
+            content["out_of_scope"].append(x)  # _source_polarity reads its source
+        else:
             content["out_of_scope"].append({**x, "cites": [], "kind": "method"})
-            continue
-        x["text"] = t
-        if not _said(x["text"], content.setdefault("scope", []), 0.6):
-            content["scope"].append(x)
     # An assumption that hands a requested service to the customer (000132
     # pass O: "Customer will provide end-user support ... outside of
     # Provider's onsite support scope" from a bare service bullet) or excludes
@@ -3758,6 +3766,28 @@ def _partner_phase(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             isinstance(x, dict) and x.get("standard") and re.match(r"(?i)\s*(capture|record|provide)\b[^.]{0,30}\bserial", str(x.get("text"))))]
 
 
+def _contact_roles(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A person is the onsite contact only when a fact names them so: with
+    another person named as the on-site contact, a line calling someone else
+    the "onsite" contact loses the word (010082 pass U: "Provide AJ Deuel as
+    the main onsite technical contact", AJ being the form's remote TECH
+    contact and Henry Hankins its On Site Contact Name)."""
+    onsite = set()
+    for f in fs:
+        for mm in re.finditer(r"(?i)on[- ]?site contact(?: name)?\s*[:|]\s*([A-Z][a-z]+(?: [A-Z][a-z'-]+)+)", f["text"]):
+            onsite.add(mm.group(1).split()[0].lower())
+    if not onsite:
+        return
+    for k in ("customer_responsibilities", "arrival_protocol", "assumptions", "scope"):
+        for x in content.get(k) or []:
+            if not isinstance(x, dict) or x.get("standard"):
+                continue
+            t = str(x.get("text"))
+            names = {w.lower() for w in re.findall(r"\b([A-Z][a-z]+|[A-Z]{2})\b(?= [A-Z][a-z]+)", t)}
+            if names and not names & onsite and re.search(r"(?i)\bon[- ]?site\s+(\w+\s+)?contact", t):
+                x["text"] = re.sub(r"(?i)\bon[- ]?site\s+(?=(\w+\s+)?contact)", "", t)
+
+
 def _boundary_verbs(content: dict[str, Any]) -> None:
     """The summary and the task list never claim work the SOW's own limits
     rule out: the verbs of an assumption or exclusion that says Provider
@@ -4171,9 +4201,6 @@ def _service_groups(content: dict[str, Any]) -> None:
     content["scope"] = out
 
 
-_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
-
-
 def _schedule_voice(c: dict[str, Any], as_of: str, theirs: set[str] | frozenset[str] = frozenset()) -> None:
     """Schedule lines in SOW voice, not the customer's: "we"/"our" is the
     Customer, a date carries its month name and year (the next one after the
@@ -4219,11 +4246,13 @@ def _schedule_voice(c: dict[str, Any], as_of: str, theirs: set[str] | frozenset[
             t = re.sub(r"^([\w /-]{2,30}:\s+)the Customer", r"\1The Customer", t)
         t = re.sub(r"(?i)^(work (hours|window)\s*:\s*)all work\s+", r"\1", t)
         t = re.sub(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?![\d/])", md, t)
-        months = "|".join(mo.capitalize() for mo in _MONTHS)  # "may" is a verb
+        months = "|".join(mo.capitalize() for mo in _MONTHS if mo != "may")  # "May" also opens a sentence
         t = re.sub(r"\b((?:[Mm]id-|[Ee]arly |[Ll]ate )?)(%s)\b(?!\s+\d)(?!,?\s+(19|20)\d\d)" % months,
                    lambda m: f"{m.group(1)}{m.group(2)} {year(_MONTHS.index(m.group(2).lower()) + 1)}", t)
-        t = re.sub(r"\b(%s)\s+(\d{1,2})(?:st|nd|rd|th)?\b(?!,?\s*(19|20)\d\d)(?!:)" % months,
-                   lambda m: f"{m.group(1)} {m.group(2)}, {year(_MONTHS.index(m.group(1).lower()) + 1)}", t)
+        mon = r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?"
+        full = lambda a: next(mo.capitalize() for mo in _MONTHS if mo.startswith(a.lower()[:3]))
+        t = re.sub(r"\b%s\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s*((?:19|20)\d\d)\b)?(?!:)" % mon,
+                   lambda m: f"{full(m.group(1))} {m.group(2)}, {m.group(3) or year(_MONTHS.index(full(m.group(1)).lower()) + 1)}", t)
         t2 = re.sub(r"(?i)\b(\d{1,2})(?::(\d\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d\d))?\s*(am|pm|a\.m\.|p\.m\.)", clock, t)
         if t2 != t and not re.search(r"(?i)\blocal\b|\b(e|c|m|p)[sd]?t\b|eastern|central|mountain|pacific", t2):
             t2 = re.sub(r"(\d{1,2}:\d\d [AP]M to \d{1,2}:\d\d [AP]M)(\s+(?=[A-Za-z]))?",
@@ -4967,8 +4996,18 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # Schedule: only its labeled lines once start and end dates are there (the
     # form's raw "Timeline/Schedule: 8/8 and 8/7" contradicted them, 010115).
     labels = ("requested start date", "requested completion date", "arrival time", "work window",
-              "number of resources", "hardware quantity", "pace")
+              "number of resources", "hardware quantity", "pace", "work hours", "scheduling constraint")
     sched = content.get("schedule") or []
+    # The site's hours are a labeled line, never dropped as prose (010082 pass
+    # U: "Site hours were stated as Monday through Friday, 8:00am to 3:00pm"
+    # went, and a call slot filled Work Hours).
+    hours = re.compile(r"(?i)\b(mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?|sun(day)?)\b.{0,40}?"
+                       r"\d{1,2}(:\d\d)?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to)\s*\d{1,2}(:\d\d)?\s*(am|pm|a\.m\.|p\.m\.)")
+    for x in sched:
+        if isinstance(x, dict) and not tx(x).lower().startswith(labels) and not re.match(r"^[\w /-]{2,30}:", tx(x)):
+            hm = hours.search(tx(x))
+            if hm:
+                x["text"] = "Work Hours: " + hm.group(0)
     if sum(1 for x in sched if tx(x).lower().startswith(labels[:2])) == 2:
         content["schedule"] = [x for x in sched if tx(x).lower().startswith(labels)]
     sched_dates = set(re.findall(r"\d{1,2}/\d{1,2}", " ".join(tx(x) for x in content.get("schedule") or [])))
@@ -5203,6 +5242,20 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
         if k == "scope" and bare != str(x["text"]).strip() and len(bare.split()) >= 3 and _stated_by(bare, cited):
             x["text"] = bare[:1].upper() + bare[1:]
             bad.discard(id(x))
+            continue
+        # Cited to the wrong copy: another given line states it (010082 pass U:
+        # the metal-studs assumption cited the call's small talk "It may have
+        # metal studs." while the packet says "Walls may have metal studs").
+        for cand in (str(x["text"]), head):
+            if len(cand.split()) < 4:
+                continue
+            other = next((i for i, ln in lines.items() if i not in x["cites"] and _stated_by(cand, ln)), None)
+            if other:
+                x["cites"] = [other]
+                if cand is head and head != str(x["text"]).strip():
+                    x["text"] = head.rstrip(".,;") + "."
+                bad.discard(id(x))
+                break
     gone = content.setdefault("dropped", [])
     for k in LISTS:
         before = len(content[k])

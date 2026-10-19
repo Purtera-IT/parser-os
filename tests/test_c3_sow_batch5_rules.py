@@ -196,3 +196,45 @@ def test_a_cited_fact_whose_term_no_line_carries_goes_to_the_must_place_pass(mon
     m._must_include(c, fs, None)
     assert not seen
 
+
+
+# --- 010082 B-: exclusions stay exclusions; hours; re-cite; onsite contact -----
+
+def test_grounding_never_moves_an_exclusion_into_scope():
+    c = {"overview": [], "scope": [],
+         "out_of_scope": [{"text": "Testing, certification, labeling, or as-built documentation.", "cites": ["q"], "kind": "fact"}]}
+    m._grounding(c, [_fact("q", "Any testing, labeling, certification, or as-built documentation requirements")])
+    assert c["scope"] == [] and c["out_of_scope"][0]["text"].startswith("Testing, certification")
+
+
+def test_an_open_checklist_item_is_never_a_provider_task():
+    c = {"scope": [{"text": "Provide testing, certification, labeling, or as-built documentation.", "cites": ["q"], "kind": "fact"}]}
+    m._question_not_commitment(c, [_fact("q", "Any testing, labeling, certification, or as-built documentation requirements")])
+    assert c["scope"] == []
+
+
+def test_the_site_hours_line_is_kept_as_work_hours():
+    c = {"scope": [], "schedule": [
+        {"text": "Requested Start Date: July 13th 2026", "cites": ["s"], "kind": "fact"},
+        {"text": "Requested Completion Date: Aug 28th 2026", "cites": ["s"], "kind": "fact"},
+        {"text": "Site hours were stated as Monday through Friday, 8:00am to 3:00pm, for planning on-site work.", "cites": ["h"], "kind": "fact"}]}
+    m._tidy(c)
+    assert "Work Hours: Monday through Friday, 8:00am to 3:00pm" in [x["text"] for x in c["schedule"]]
+
+
+def test_a_check_drop_is_re_cited_to_the_line_that_states_it(monkeypatch):
+    lines = {"t": "It may have metal studs.", "p": "Walls may have metal studs", "x": "Black Cat6 preferred"}
+    c = {k: [] for k in m.LISTS}
+    c["assumptions"] = [{"text": "Assume the wall may have metal studs; use appropriate anchoring if wood studs are not available.",
+                         "cites": ["t"], "kind": "fact"}]
+    monkeypatch.setattr(m, "_complete", lambda *a, **k: '{"supported": []}')
+    m.check(c, lines)
+    assert c["assumptions"] and c["assumptions"][0]["cites"] == ["p"]
+
+
+def test_only_the_named_onsite_contact_is_called_onsite():
+    c = {"customer_responsibilities": [{"text": "Provide AJ Deuel as the main onsite technical contact.", "cites": ["a"], "kind": "fact"},
+                                       {"text": "Provide Henry Hankins as the onsite contact.", "cites": ["h"], "kind": "fact"}]}
+    m._contact_roles(c, [_fact("h", "On Site Contact Name | Henry Hankins (SDX GM)")])
+    assert [x["text"] for x in c["customer_responsibilities"]] == ["Provide AJ Deuel as the main technical contact.",
+                                                                  "Provide Henry Hankins as the onsite contact."]

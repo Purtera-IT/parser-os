@@ -59,7 +59,10 @@ def test_a_requested_service_flipped_into_an_exclusion_is_still_scope():
     content = {"overview": [], "scope": [],
                "out_of_scope": [{"text": "End-user support for O365 clients is excluded from the service scope.",
                                  "cites": ["s"], "kind": "fact"}]}
-    m._grounding(content, [_fact("s", "End-user support for O365 clients")])
+    fs = [_fact("s", "End-user support for O365 clients")]
+    m._grounding(content, fs)
+    assert not content["scope"]  # grounding never moves an exclusion into scope (010082 pass U)
+    m._source_polarity(content, fs, {"atoms": []})  # the source's polarity does
     assert content["scope"] and content["scope"][0]["text"].startswith("Provide end-user support")
 
 
