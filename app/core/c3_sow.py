@@ -985,6 +985,10 @@ def _decisions(rule: str, before: dict, after: dict) -> list[dict[str, Any]]:
 #: "standards" and its passthrough routing to "tidy"; 010198 its register
 #: install and 010279 its RFP task line to "grounding").
 GUARDED_RULES = frozenset({"standards", "tidy", "grounding"})
+#: A form's field label written as a sentence: "Hardware to be Installed (By
+#: Category) is N/A; ..." (010115 pass X).
+_FORM_LABEL_LINE = re.compile(r"^\s*[A-Z][\w/&-]*(?:\s+[\w/&-]+){0,6}\s*\([A-Z][^)]{1,30}\)\s*(?:(?:is|are)\s+N/?A\b|[:|])|"
+                              r"^\s*[A-Z][\w/&-]*(?:\s+[\w/&-]+){0,6}\s+(?:is|are)\s+N/?A\b")
 #: A possible follow-up visit (010419: "some follow-up needed the next day"
 #: on a one-day price; "A second day may be needed").
 _FOLLOW_UP = re.compile(r"(?i)follow-?up (visit|day)|follow[- ]?up\b.{0,30}\bnext day|next[- ]day (visit|follow)|return (visit|trip)|"
@@ -1035,6 +1039,8 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             continue
         if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
             continue  # gear the job does not touch
+        if _FORM_LABEL_LINE.search(text):
+            continue  # a form's field label is never a term (010115 pass X)
         # Never a line source_polarity rejected: a negation its cited source
         # lacks (000132 pass W).
         if text in (content.get("_polarity_rejected") or []):
@@ -1098,6 +1104,20 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             lost_n = set(re.findall(r"\b\d+\b", _digits(text))) - set(re.findall(r"\b\d+\b", _digits(dt_)))
             if (len(lost) >= 2 or lost_n) and any(isinstance(x, dict) and tuple(x.get("cites") or []) == cites for x in lists_before.get(lst) or []):
                 dup = None
+        # Already written in another block, with all its own nouns and
+        # numbers: the fact's home is that line (010115 pass X: "Use common
+        # hand tools as needed to dismantle the hardware." restored to the
+        # tools beside the standard tool and the hand-tools assumption).
+        if dup is None and lst != "overview":
+            other = next((x for k_ in _LIST_SECTION if k_ not in (dest, "overview") for x in content.get(k_) or []
+                          if isinstance(x, dict) and x.get("kind") != "heading" and _said(text, [x], 0.6)
+                          and len(_object_toks(text) - _object_toks(str(x.get("text"))) - {"customer", "provid", "provider", "need", "use"}) <= 1
+                          and not set(re.findall(r"\d+", _digits(text))) - set(re.findall(r"\d+", _digits(str(x.get("text")))))), None)
+            if other is not None:
+                other["cites"] = list(dict.fromkeys(list(other.get("cites") or []) + orphan))
+                out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(cites), "value": "keep", "was": _LIST_SECTION[lst],
+                            "text": text[:300], "guard": "said_elsewhere", "where": str(other.get("text"))[:200]})
+                continue
         if dup is not None:
             dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + orphan))
             # The fact's own name survives the merge (010373: "Humanscale"
@@ -1236,6 +1256,8 @@ def _merged_back(content: dict[str, Any], lists_before: dict[str, list], rule: s
             continue
         content["_merged"].remove(m_)
         lt = str(line.get("text"))
+        if _FORM_LABEL_LINE.search(lt):
+            continue  # a form's field label never comes back (010115 pass X)
         if any(_said(lt, [x], 0.6) and len(_object_toks(lt) - _object_toks(str(x.get("text"))) - {"customer", "provid", "provider"}) < 2
                for x in live):
             continue  # still said, its own nouns too
@@ -1529,7 +1551,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # is Provider work (010279: proof of delivery, inventory recap); and one
     # atom is never both Provider scope and a customer duty.
     _traced(content, "duty_party", _duty_party, content, fs, envelope)
-    content["unassigned"] = _party_check(content, lines)
+    _traced(content, "supply_grounded", _supply_grounded, content, lines)
+    art_of = {str(a.get("id")): str(a.get("artifact_id") or "") for a in envelope.get("atoms") or []}
+    content["unassigned"] = _traced(content, "party_check", _party_check, content, lines, art_of)
     _provider_half(content, fs)
     _dedupe_items(content)
     content["withheld"] = _scrub(content)
@@ -1778,7 +1802,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                   and re.search(r"(?i)cable runs? (are|is|will be) (under|less than|not exceed)", str(x.get("text"))))]
     # Any line already bounding the runs is the bound (010082: "will be no more
     # than 100 ft" plus a derived "under 150 feet").
-    bound = re.compile(r"(?i)(no more than|under|less than|not (to )?exceed|maximum|max\.?|up to)\s*\d{2,4}\s*(ft|feet|')")
+    bound = re.compile(r"(?i)(no more than|under|less than|not (to )?exceed|maximum|max\.?|up to|or below|at most)\s*(?:\w+(?:\s+\w+)?\s*\()?\d{2,4}\)?\s*(ft|feet|')")
     if family in ("low_voltage_cabling", "cameras_security", "av_conference_room", "network_switch_refresh") and len(runs) >= 2 and not any(bound.search(str(x.get("text") if isinstance(x, dict) else x))
                                   for k in ("assumptions", "scope") for x in content.get(k) or []):
         cap = -(-max(runs) // 50) * 50
@@ -1819,7 +1843,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     for k in LISTS:
         for x in content.get(k) or []:
             if isinstance(x, dict) and isinstance(x.get("text"), str):
-                x["text"] = re.sub(r"(?i)\b(for|with|to|of|on) the above(?:[- ](?:gear|items?|equipment|devices?|list|hardware))?\b",
+                x["text"] = re.sub(r"(?i)\b(for|with|to|of|on) the above(?:[- ](?:gear|items?|equipment|devices?|list|hardware))?\b(?!-)",
                                    r"\1 the installed equipment", x["text"])
     _traced(content, "exclusion_not_task", _no_exclusion_negates_task, content)
     _traced(content, "own_documents", _own_documents, content)
@@ -2520,6 +2544,24 @@ def _third_parties(envelope: dict[str, Any], content: dict[str, Any]) -> tuple[d
     return names, ids
 
 
+def _account_supplies(item: str, cited: list[str], account: str) -> bool:
+    """A cited line says the papering reseller is to provide the item ("CDW to
+    provide 3/4' backer board, Cat6 network cable and RJ45 ends"). On a
+    reseller-papered job that is the Provider's supply."""
+    acc = re.sub(r"[^a-z0-9 ]", "", account.lower()).split()
+    if not acc or not _RESELLER_NAME.search(account):
+        return False
+    ot = _object_toks(re.sub(r"(?i)^\s*(provide|supply|furnish)\s+", "", item)) - {"provid", "provider", "customer", "suppli", "suppl"}
+    for t in cited:
+        for m_ in re.finditer(r"(?i)\b%s\b\s+(?:is\s+)?(?:to|will|shall)\s+(?:provide|supply|furnish)\b([^.\n]*)" % re.escape(acc[0]), t):
+            if ot and len(ot & _object_toks(m_.group(1))) >= max(1, 0.6 * len(ot)):
+                return True
+    return False
+
+
+_RESELLER_NAME = re.compile(r"(?i)\b(cdw|shi|insight|presidio|connection|zones|softchoice|carahsoft|wwt|world wide technology|ingram|synnex|td synnex)\b")
+
+
 def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     """Another party's supply, terms and work are never Provider's (010376:
     the recycler's box truck, vehicles and packing supplies in Technician
@@ -2532,6 +2574,9 @@ def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dic
     names, tp = _third_parties(envelope, content)
     name = next(iter(names.values()), "")
     asm = content.setdefault("assumptions", [])
+    said_of = {str(a.get("id")): str(a.get("text") or "") for a in envelope.get("atoms") or []}
+    said_of.update({f["id"]: f["text"] for f in fs})
+    account = str((envelope.get("crm") or {}).get("account_name") or "")
     for k in ("provider_materials", "provider_tools"):
         kept = []
         for x in content.get(k) or []:
@@ -2540,8 +2585,26 @@ def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dic
                 kept.append(x)
                 continue
             if tp and all(c in tp for c in cites):
+                # On a reseller-papered job, what the reseller "is to provide"
+                # is what it buys from us: Provider-supplied (010082 pass X:
+                # "CDW to provide ... RJ45 ends" became "Sodexo provides the
+                # RJ45 ends.").
+                if _account_supplies(tx(x), [said_of.get(c, "") for c in cites], account):
+                    kept.append(x)
+                    continue
+                said = " ".join(said_of.get(c, "") for c in cites)
+                # A remark about the other party's options is not its supply
+                # (010376 pass X: "it seems that your client cannot accept a
+                # 53-foot trailer ... it will be expensive to transport just
+                # these two units on a dedicated truck" became "ThinkTLS
+                # provides a dedicated truck ...; do not use a 53-foot trailer").
+                if not (_TP_SAYS.search(said) or re.search(r"(?i)\b(we|i)\s+(will|can|'ll|would)\s+(provide|supply|bring|send|use)\b", said)
+                        or any(len(said_of.get(c, "").split()) <= 8 or _PRICE_TERM.search(said_of.get(c, "")) for c in cites)):
+                    continue
                 t = tx(x).strip().rstrip(".")
                 t = re.sub(r"(?i)^\s*(provide|supply|furnish)\s+", "", t)
+                # An order tacked on is not the vendor's supply ("; do not use ...").
+                t = re.split(r"(?i)\s*[;,]\s*(?:and\s+)?(?:do not|don't|never|avoid)\b", t)[0].rstrip(" ,;")
                 line = {**x, "text": f"{name} provides {t[:1].lower() + t[1:]}."}
                 if not _said(line["text"], asm, 0.6):
                     asm.append(line)
@@ -2577,7 +2640,17 @@ def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dic
         if isinstance(x, dict) and name and tx(x).startswith(f"{name} will"):
             continue
         if isinstance(x, dict):
-            t = re.sub(r"(?i)\s*(,\s*|\band\s+)+(?:then\s+)?(?:" + work + r")\b[^,.;]*", "", tx(x))
+            # "remove and eWaste the old UPS" keeps its object: the verb left
+            # behind takes it ("Provider will remove the old UPS ..."), never
+            # a bare "Provider will remove." (010376 pass X).
+            def cut(m_: re.Match) -> str:
+                obj = re.sub(r"(?i)^\s*(?:" + work + r")\s*", "", m_.group(0).split(m_.group(2), 1)[-1] if m_.group(2) else "")
+                rest = m_.string[m_.end():]
+                before = m_.string[:m_.start()]
+                if re.search(r"(?i)\b(will|to|and)\s+\w+\s*$", before) and not re.match(r"\s*\w", rest) and obj.strip():
+                    return " " + obj.strip()
+                return ""
+            t = re.sub(r"(?i)\s*(,\s*|\band\s+)+(?:then\s+)?((?:" + work + r"))\b[^,.;]*", cut, tx(x))
             x["text"] = t if t.endswith(".") else t.rstrip(" ,;") + "."
     for x in content.get("scope") or []:
         if isinstance(x, dict) and x.get("kind") != "heading":
@@ -2691,6 +2764,34 @@ def _first_person_duties(content: dict[str, Any], envelope: dict[str, Any]) -> N
 
 
 _ORDER_ASM = re.compile(r"(?i)^\s*(direct|maintain|provide|ensure|confirm|keep|coordinate|designate|identify|supply|grant|give|arrange|notify|schedule)\b")
+#: An order that limits the Provider's own work ("Keep all Cat6 cable runs at
+#: or below 100 feet", "Maintain the cable runs within ..."): its object is
+#: the work, which the customer does not control.
+_PROVIDER_LIMIT = re.compile(r"(?i)^\s*(keep|maintain)\s+(?:all\s+|the\s+|each\s+|every\s+)?(?:[\w-]+\s+){0,3}?"
+                             r"(runs?|cables?|cabling|drops?|work|installation|install|pathways?|lengths?|technicians?|crew)\b"
+                             r"(?=.*\b(at|under|below|within|to|no more than|less than|under|above|inside)\b.*\d)")
+
+
+def _limit_as_condition(t: str) -> str:
+    """"Keep all Cat6 cable runs at or below 100 feet." -> "All Cat6 cable runs
+    are at or below 100 feet." """
+    m_ = re.match(r"(?i)^\s*(?:keep|maintain|limit)\s+(?:(all|the|each|every)\s+)?(.+?)\s+((?:at|under|below|within|to|no more than|less than|above|inside)\b.*?)\.?\s*$", t)
+    if not m_:
+        return t
+    det, obj, rest = (m_.group(1) or "").lower(), m_.group(2), m_.group(3)
+    plural = obj.lower().endswith("s") and det not in ("each", "every")
+    lead = {"each": "Each", "every": "Every", "the": "The"}.get(det, "All" if plural else "The")
+    return f"{lead} {obj} {'are' if plural else 'is'} {rest}."
+
+
+def _same_limit(a: str, b: str) -> bool:
+    """Two lines setting the same limit: the same number on the same kind of
+    thing ("All Cat6 cable runs are at or below 100 feet", "All cable runs are
+    no more than 100 feet")."""
+    na, nb = set(re.findall(r"\b\d+\b", _digits(a))), set(re.findall(r"\b\d+\b", _digits(b)))
+    return bool(na) and na == nb and len(_object_toks(a) & _object_toks(b)) >= 2
+
+
 _NO_NEED_ASM = re.compile(r"(?i)^\s*(?:avoid|require no|need no|use no)\s+(?:any\s+)?(.+?)(?:\s+for (?:this|the) (?:job|work|project))?\.?$")
 
 
@@ -2714,6 +2815,15 @@ def _assumption_voice(content: dict[str, Any]) -> None:
             if _said(t2, oos, 0.6) or _said(t2, keep, 0.6):
                 continue
             keep.append({**x, "text": t2})
+        elif _PROVIDER_LIMIT.match(t):
+            # A limit on the Provider's own work is a condition the Provider
+            # keeps, not a customer duty (010082 pass X: "Keep all Cat6 cable
+            # runs at or below one hundred (100) feet" under Customer
+            # Responsibilities).
+            t2 = _limit_as_condition(t)
+            if not (_said(t2, keep, 0.6) or _said(t2, [y for y in content.get("assumptions") or [] if y is not x], 0.7)
+                    or any(_same_limit(t2, str(y.get("text") if isinstance(y, dict) else y)) for y in content.get("assumptions") or [] if y is not x)):
+                keep.append({**x, "text": t2})
         elif _ORDER_ASM.match(t):
             if not _said(t, cr, 0.6):
                 cr.append(x)
@@ -2912,7 +3022,11 @@ def _aside_not_block(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     removal" became the Technician Arrival Protocol, and its trailer-seal
     tags the only Equipment in Scope). A line every cite of which is an
     also-mentioned fact goes from those two blocks."""
-    aside = {f["id"] for f in fs if f["section"] == "also_kept"}
+    # A line in which our technician acts is the job's step, however the
+    # brief filed it (010083 pass X: "Tech will call in to a bridge ..." left
+    # the arrival protocol and no drop was recorded).
+    tech = re.compile(r"(?i)\b(tech(nician)?s?|provider|purtera|installers?|we)\s+(will|shall|must|to|can|should)\b")
+    aside = {f["id"] for f in fs if f["section"] == "also_kept" and not tech.search(f["text"])}
     for k in ("arrival_protocol", "equipment_in_scope"):
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
                       and all(c_ in aside for c_ in x["cites"]))]
@@ -3002,6 +3116,13 @@ def _scope_contradictions(content: dict[str, Any], fs: list[dict[str, Any]]) -> 
             # proceed with the optional site survey").
             optional = re.search(r"(?i)\b(optional|decide whether|whether to (proceed|add|do))\b", dt) \
                 and len(_object_toks(t) & _object_toks(dt)) >= max(1, 0.5 * len(_object_toks(t)))
+            # A duty giving the means the task uses is not the task (010376
+            # pass X: "Provide cart access and the elevator path ..." beside
+            # "Move the removed equipment by cart and elevator ...").
+            means = re.split(r"(?i)\b(?:by|using|via|through)\b", t, maxsplit=1)
+            if len(means) == 2 and re.match(r"(?i)\s*(provide|grant|allow|arrange)\b", dt) \
+                    and (_object_toks(t) & _object_toks(dt)) - {"provid"} <= _object_toks(means[1]):
+                continue
             if _collides(t, dt) or optional:
                 hit = list(d.get("cites") or [])
                 break
@@ -3252,12 +3373,15 @@ def _supply_grounded(content: dict[str, Any], lines: dict[str, str]) -> None:
                       if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines))]
 
 
-def _party_check(content: dict[str, Any], lines: dict[str, str]) -> int:
+def _party_check(content: dict[str, Any], lines: dict[str, str], art: dict[str, str] | None = None) -> int:
     """A supply item stays with a party only when a cited line says that party
     supplies it; the rest go to the neutral Equipment in Scope list, as
     000123's SOW lists hardware "provided by SHI, the customer, or another
-    party" (the writer gave Provider its printers on a bare "Printer")."""
-    _traced(content, "supply_grounded", _supply_grounded, content, lines)
+    party" (the writer gave Provider its printers on a bare "Printer").
+    One order is one supplier: an item cited to the same document as an
+    item the judge kept with that party stays with it (010043 pass X: the
+    junction box on the customer's own CDW order moved to Equipment in Scope
+    beside the order's cameras, kept as the customer's)."""
     items = [(k, x) for k in ("provider_materials", "customer_materials") for x in content.get(k) or []
              if x.get("by") != "col:supplier"]
     if not items:
@@ -3267,9 +3391,13 @@ def _party_check(content: dict[str, Any], lines: dict[str, str]) -> int:
                      for i, (k, x) in enumerate(items))
     got = _json_of(_complete(_PARTY_PROMPT % body, sow_model(), 800)) or {}
     ok = {int(i) for i in got.get("stated") or [] if str(i).isdigit()}
+    art = art or {}
+    docs_ok = {(k, art.get(c)) for i, (k, x) in enumerate(items) if i in ok for c in x.get("cites") or [] if art.get(c)}
     moved = 0
     for i, (k, x) in enumerate(items):
         if i in ok:
+            continue
+        if x.get("cites") and all((k, art.get(c)) in docs_ok for c in x["cites"]):
             continue
         content[k] = [y for y in content[k] if y is not x]
         content.setdefault("equipment_in_scope", []).append(x)
@@ -3646,6 +3774,10 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
                     if verbs and not any(re.search(r"(?i)\b%s" % re.escape(_stem(v)), tt) for v in verbs[:1]):
                         tt = tt.rstrip().rstrip(".") + ", then " + then.group(1).strip() + "."
                         twin["text"] = tt
+                # And the step's place stays: "Install 194 Cisco C9350 ...
+                # switches" takes "in the existing rack, cabinet or
+                # customer-designated network area" (010083 pass X).
+                twin["text"] = _keep_std_place(it["text"], str(twin.get("text")))
                 suppressed(sec, it["text"], "a cited deal step with its own count does the same work and takes its place")
                 items[:] = [x for x in items if x is not twin]
                 std[j] = twin
@@ -3740,10 +3872,14 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         if close is None:
             items.append({"text": "Closeout", "cites": [], "kind": "heading"})
             close = len(items) - 1
+        # A stricter standard check is not said by a weaker deal line: "Test
+        # each cable run for 4-pair continuity." beside "... and test each run
+        # for continuity." stays (010082 pass X).
+        said_check = lambda it: _said(it["text"], items, 0.6) and not _stricter_than(it["text"], items)
         for it in checks:
-            if _said(it["text"], items, 0.6):
+            if said_check(it):
                 suppressed(sec, it["text"], "a scope line already says it")
-        items[close:close] = [it for it in checks if not _said(it["text"], items, 0.6)]
+        items[close:close] = [it for it in checks if not said_check(it)]
         close += len([it for it in checks if any(y is it for y in items)])
         for it in tail:
             if _said(it["text"], items[close + 1:], 0.5):
@@ -5979,13 +6115,27 @@ def _library_other_family(c: dict[str, Any], atoms: list[dict[str, Any]]) -> Non
     texts = lambda f: {str(it.get("text") or "") for sec in (lib.get(f) or {}).values() if isinstance(sec, list) for it in sec if isinstance(it, dict)}
     own = texts(fam)
     other = set().union(*[texts(f) for f in lib if f != fam]) - own
+    # A reworded copy of another family's step is that step (010085 pass X:
+    # "Pull, remove, organize, or route cables where safely accessible.");
+    # uncited method lines come only from the family's own library and
+    # standards.
+    std_own = [re.sub(r"^(\{(?:when|unless):.*?\}\s+)+", "", t) for v in purtera_standards(fam).values() for t in v]
     facts = [str(a.get("text") or "") for a in atoms]
+    # A reworded step whose work a cited deal step does is the deal's (010043:
+    # cable support hardware beside "Run 146 ft of cabling ..."; 000123:
+    # arrival coordination beside "Notify Customer of arrival on site").
+    generic = {"provid", "provider", "customer", "site", "requir", "need", "safely", "accessibl", "where", "as"}
+    cited_toks = [_object_toks(str(y.get("text"))) - generic for y in c.get("scope") or []
+                  if isinstance(y, dict) and y.get("cites") and not y.get("standard") and y.get("kind") != "heading"]
+    deal_does = lambda t: any((_object_toks(t) - generic) & ct for ct in cited_toks)
     def named(t: str) -> bool:
         ot = _object_toks(t)
         return bool(ot) and any(len(ot & _object_toks(f)) >= max(2, 0.5 * len(ot)) for f in facts)
     c["scope"] = [x for x in c.get("scope") or [] if not (
         isinstance(x, dict) and not x.get("standard") and not x.get("cites") and x.get("kind") != "heading"
-        and str(x.get("text")) in other and not named(str(x.get("text"))))]
+        and (str(x.get("text")) in other or (_said(str(x.get("text")), list(other), 0.6) and not _said(str(x.get("text")), list(own) + std_own, 0.6)
+                                             and not deal_does(str(x.get("text")))))
+        and not named(str(x.get("text"))))]
 
 
 def _intro_not_duty(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
@@ -6014,7 +6164,14 @@ def _rules_bind_provider(c: dict[str, Any]) -> None:
     keep = []
     for x in c.get("customer_responsibilities") or []:
         t = str(x.get("text") if isinstance(x, dict) else x)
-        m_ = re.match(r"(?i)\s*(follow|comply with|adhere to|observe|obey)\s+(?:the\s+)?(?:client|customer|site|building)(?:'s)?\s+(.+?)\.?$", t)
+        m_ = re.match(r"(?i)\s*(follow|comply with|adhere to|observe|obey)\s+(?:the\s+)?(?:client|customer|site|building)(?:['’]s)?\s+(.+?)\.?$", t)
+        # Said of the work or the technicians, not the customer: "Work in the
+        # client's building must follow the client's safety rules." (010082
+        # pass X).
+        m_ = m_ or (re.match(r"(?i)\s*(?:all\s+)?(?:work|technicians?|techs?|the delivery team|the team|provider|installers?|crews?)\b[^.]{0,60}?"
+                             r"\b(?:must|shall|will|should)\s+(?:be\s+)?(follow|comply with|adhere to|observe|obey|governed by)\s+"
+                             r"(?:the\s+)?(?:client|customer|site|building)(?:['’]s)?\s+(.+?)\.?$", t)
+                    if not re.match(r"(?i)\s*(the\s+)?(customer|client)\b", t) else None)
         if isinstance(x, dict) and not x.get("standard") and m_ and re.search(r"(?i)\b(rules?|protocols?|polic(y|ies)|procedures?|requirements?|standards?)\b", t):
             line = f"Provider technicians follow the Customer's {m_.group(2)}."
             if not _said(line, c.get("assumptions") or [], 0.7):
@@ -6767,7 +6924,9 @@ def _one_statement(c: dict[str, Any]) -> None:
         if not (isinstance(x, dict) and x.get("standard") and x.get("kind") != "heading"):
             continue
         cls = _clauses(str(x.get("text")))
-        if cls and all(said(cl) for cl in cls):
+        # A stricter standard ("4-pair continuity") is not said by a weaker
+        # deal step ("test each run for continuity"; 010082 pass X).
+        if cls and all(said(cl) for cl in cls) and not _stricter_than(str(x.get("text")), sc):
             gone.append(x)
     if gone:
         c["scope"] = [x for x in sc if not any(x is g for g in gone)]
@@ -7739,6 +7898,324 @@ def _field_sequence(c: dict[str, Any]) -> None:
     c["scope"] = out
 
 
+# --- batch 10 (pass X) -------------------------------------------------------
+
+def _tx(x: Any) -> str:
+    return str(x.get("text") if isinstance(x, dict) else x)
+
+
+def _labor_basis(c: dict[str, Any]) -> None:
+    """A per-site hours estimate the customer gave becomes the quoting basis
+    over the counted sites (000123 pass X: "each store would take 2 hours"
+    on 161 sites is "2 hours per site x 161 sites = 322 hours")."""
+    n = int((c.get("site_summary") or {}).get("stated") or 0) or len(c.get("sites") or [])
+    asm = c.setdefault("assumptions", [])
+    if n < 2 or any(re.search(r"(?i)labor basis", _tx(x)) for x in asm):
+        return
+    for x in list(asm):
+        m_ = re.search(r"(?i)\b(?:each|every|per|a|the average)\s+(?:store|site|location|restaurant|branch)\b[^.;]{0,30}?"
+                       r"\b(?:take|takes|would take|will take|need|needs|requires?)\s+(?:about\s+|approximately\s+|around\s+)?"
+                       r"(\d+(?:\.\d+)?|%s)\s*(?:\(\d+\)\s*)?(?:hours?|hrs?|h)\b" % _NUMW, _tx(x))
+        if not (isinstance(x, dict) and m_):
+            continue
+        h = m_.group(1)
+        hv = float(h) if re.fullmatch(r"\d+(?:\.\d+)?", h) else float(_words_value(h) or 0)
+        if not hv:
+            continue
+        tot = hv * n
+        fmt = lambda v: str(int(v)) if float(v).is_integer() else f"{v:g}"
+        line = f"Customer-indicated labor basis: {fmt(hv)} hours per site x {n} sites = {fmt(tot)} hours."
+        asm.insert(asm.index(x) + 1, {"text": line, "cites": list(x.get("cites") or []), "kind": "fact"})
+        return
+
+
+def _overtime_in_schedule(c: dict[str, Any]) -> None:
+    """"No overtime on nights or weekends" is when the work runs, not an
+    exclusion (000123 pass X: "Overtime work on nights or weekends is not
+    requested." under Out of Scope). It becomes a Schedule line."""
+    sched = c.setdefault("schedule", [])
+    for k in ("out_of_scope", "assumptions"):
+        keep = []
+        for x in c.get(k) or []:
+            t = _tx(x)
+            if isinstance(x, dict) and not x.get("standard") and re.search(r"(?i)\bovertime\b", t) \
+                    and re.search(r"(?i)\b(nights?|weekends?|after[- ]hours|evenings?)\b", t) \
+                    and re.search(r"(?i)\b(not|no|never)\b.{0,30}\b(requested|required|planned|wanted|needed|expected|authorized)\b|^\s*no\b", t):
+                if not any(re.search(r"(?i)overtime|night|weekend", _tx(y)) for y in sched):
+                    sched.append({**x, "text": "Work Window: normal business hours; no night or weekend overtime is planned."})
+                continue
+            keep.append(x)
+        c[k] = keep
+
+
+#: A sentence describing a picture or a drawing, not a deal statement.
+_CAPTION = re.compile(r"(?i)\b(is shown|are shown|the image shows|image of|pictured|the photo shows|the drawing shows|floor plan of|labeled with)\b")
+
+
+def _same_install_twice(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """One install line per install: two cited install lines with the same
+    count and equipment are one, and the copy resting only on picture
+    captions goes (010012 pass X: "Install two (2) Poly X72 bars ... in
+    Conference Room 2102 and Shared Office 2105", from another building's
+    floor-plan captions, beside "... in the Conference Room and Shared Office")."""
+    text = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    caption = lambda x: bool(x.get("cites")) and all(_CAPTION.search(text.get(cc, "")) for cc in x["cites"])
+    key = lambda t: (frozenset(re.findall(r"\d+", _digits(re.sub(r"\b(?:room|office|suite|floor)\s+\d+|\b\d{3,}\b", "", t, flags=re.I)))),
+                     frozenset(w for w in _object_toks(re.split(r"(?i)\s+(?:in|at|on)\s+(?:the\s+)?[A-Z]", t)[0]) if not w.isdigit()))
+    sc = c.get("scope") or []
+    inst = [x for x in sc if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard") and x.get("cites")
+            and re.match(r"(?i)\s*(install|mount)\b", _tx(x)) and re.search(r"\d", _digits(_tx(x)))]
+    gone = []
+    for i, a in enumerate(inst):
+        for b in inst[i + 1:]:
+            if any(a is g or b is g for g in gone) or key(_tx(a)) != key(_tx(b)) or not key(_tx(a))[1]:
+                continue
+            gone.append(b if caption(b) or not caption(a) else a)
+    if gone:
+        c["scope"] = [x for x in sc if not any(x is g for g in gone)]
+
+
+def _report_counts(c: dict[str, Any]) -> None:
+    """A report line counting an install says the count and rooms of the
+    cited install step (010012 pass X: "One (1) Poly X72 bar with TC10
+    controller installed in the Conference Room." on a two-room job whose
+    step installs two (2) in the Conference Room and Shared Office)."""
+    steps = [_tx(x) for x in c.get("scope") or [] if isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading"
+             and re.match(r"(?i)\s*install\s+\w+\s*\(\d+\)", _tx(x))]
+    for d in c.get("deliverables") or []:
+        if not isinstance(d, dict):
+            continue
+        out = []
+        for e in d.get("description") or []:
+            e = str(e)
+            m_ = re.match(r"(?i)\s*(\w+)\s*\((\d+)\)\s+(.+?)\s+installed\b(.*)$", e)
+            if m_:
+                ot = _object_toks(m_.group(3))
+                for st in steps:
+                    sm = re.match(r"(?i)\s*install\s+(\w+\s*\((\d+)\))\s+(.+?)(\s+(?:in|at)\s+.+?)?\.?\s*$", st)
+                    if sm and sm.group(2) != m_.group(2) and ot and len(ot & _object_toks(sm.group(3))) >= 0.6 * len(ot):
+                        e = f"{sm.group(1)[:1].upper() + sm.group(1)[1:]} {sm.group(3)} installed{sm.group(4) or ''}."
+                        break
+            out.append(e)
+        d["description"] = out
+
+
+def _standard_step_repeat(c: dict[str, Any]) -> None:
+    """An uncited writer step that a standard step already does with the
+    same opening words, on a generic object, goes (010012 pass X: "Power on
+    each installed system and confirm basic operation." beside the standard
+    "Power on each video bar and confirm it powers up and connects.")."""
+    sc = c.get("scope") or []
+    std = [_tx(x) for x in sc if isinstance(x, dict) and x.get("standard")]
+    lead = lambda t: " ".join(re.findall(r"[a-z]+", t.lower())[:2])
+    generic = re.compile(r"(?i)^\s*\w+(?:\s+on)?\s+(?:each|every|all|the)\s+(?:installed\s+|new(?:ly installed)?\s+)?(system|device|equipment|unit|item)s?\b")
+    c["scope"] = [x for x in sc if not (isinstance(x, dict) and not x.get("standard") and not x.get("cites") and x.get("kind") != "heading"
+                                         and generic.match(_tx(x)) and any(lead(s_) == lead(_tx(x)) for s_ in std))]
+
+
+def _materials_by_model(c: dict[str, Any]) -> None:
+    """One material per model: a part-number row naming a model another
+    line lists with the same count goes (010043 pass X: "Two (2) Verkada
+    cameras, Mfg. Part#: CD53-512E-HW." beside "Two (2) Verkada Dome Series
+    CD53-E cameras.")."""
+    model = lambda t: {m_.group(1).upper() for m_ in re.finditer(r"\b([A-Z]{1,5}\d{2,5})(?=[A-Z0-9-]*\b)", t)}
+    count = lambda t: set(re.findall(r"\((\d+)\)", t)) or set(re.findall(r"^\s*(\d+)\b", _digits(t)))
+    for k in ("customer_materials", "provider_materials", "equipment_in_scope"):
+        items = c.get(k) or []
+        gone = []
+        for x in items:
+            t = _tx(x)
+            if not isinstance(x, dict) or x.get("standard") or not re.search(r"(?i)part\s*#|mfg\.?|\bp/?n\b|part number", t):
+                continue
+            mx = model(t)
+            if mx and any(y is not x and not any(y is g for g in gone) and mx & model(_tx(y)) and count(_tx(y)) == count(t)
+                          and not re.search(r"(?i)part\s*#|mfg\.?", _tx(y)) for y in items):
+                gone.append(x)
+        if gone:
+            c[k] = [x for x in items if not any(x is g for g in gone)]
+
+
+def _removed_gear_onsite(c: dict[str, Any]) -> None:
+    """One position on removed equipment: when the SOW stages it onsite, a
+    summary or task shipping it elsewhere loses the shipping clause and the
+    request becomes a change-order item (010083 pass X: "remove legacy
+    hardware for shipment to a single First Horizon site" beside "Removed
+    legacy switches will be left onsite in a customer-designated area")."""
+    allt = " ".join(_tx(x) for k in ("assumptions", "scope") for x in c.get(k) or [])
+    if not re.search(r"(?i)\b(left|stag\w+|placed?|remain\w*)\b[^.]{0,40}\bonsite\b|\bonsite\b[^.]{0,30}\bcustomer[- ]designated", allt) \
+            or not re.search(r"(?i)\bremoved\b|\blegacy\b|decommission", allt):
+        return
+    ship = re.compile(r"(?i)\s+(?:for\s+(?:shipment|shipping|transport|delivery)|and\s+ship(?:s|ped)?(?:\s+it|\s+them)?)\s+to\s+([^,.;]+?)(?:\s+for\s+(?:disposal|recycling|storage))?(?=[,.;]|$)")
+    oos = c.setdefault("out_of_scope", [])
+    for k in ("overview", "scope"):
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and not x.get("standard") and re.search(r"(?i)\b(remov\w*|legacy|old|existing)\b", _tx(x))):
+                continue
+            m_ = ship.search(_tx(x))
+            if not m_:
+                continue
+            dest = m_.group(1).strip()
+            x["text"] = (_tx(x)[:m_.start()] + " and stage it onsite in the Customer-designated area" + _tx(x)[m_.end():]).replace("  ", " ")
+            line = f"Shipment of removed equipment to {dest} (available by change order)."
+            if not _said(line, oos, 0.6):
+                oos.append({"text": line, "cites": list(x.get("cites") or []), "kind": "fact"})
+
+
+def _one_item_count(c: dict[str, Any]) -> None:
+    """One count per item: when the summary and the task list count the same
+    model differently, the SOW says one. The count the customer's own
+    breakdown rows add up to wins, else the summary's (010083 pass X: 184
+    in the summary, "Install 194 ..." in the scope; 33 + 69 + 82 = 184)."""
+    rows = [_tx(x) for x in c.get("customer_materials") or []]
+    def counts(t: str) -> list[tuple[str, str]]:
+        return [(m_.group(1), m_.group(2).upper()) for m_ in re.finditer(r"(?i)\b(\d{2,4})\s+(?:\w+\s+){0,2}?([A-Z]{1,5}\d{3,5})\b", _digits(t))]
+    seen: dict[str, set[str]] = {}
+    for k in ("overview", "scope"):
+        for x in c.get(k) or []:
+            for n, mdl in counts(_tx(x)):
+                seen.setdefault(mdl, set()).add(n)
+    for mdl, ns in seen.items():
+        if len(ns) < 2:
+            continue
+        tot = sum(int(m_.group(1)) for r in rows for m_ in [re.match(r"\s*(\d+)\s*x\s+\S*" + mdl, r, re.I)] if m_)
+        ov = [n for x in c.get("overview") or [] for n, m2 in counts(_tx(x)) if m2 == mdl]
+        pick = str(tot) if str(tot) in ns else (ov[0] if ov else max(ns, key=int))
+        for k in ("overview", "scope", "deliverables_text"):
+            for x in c.get(k) or []:
+                if isinstance(x, dict):
+                    for n in ns - {pick}:
+                        x["text"] = re.sub(r"\b%s\b(?=\s+(?:\w+\s+){0,2}?%s)" % (n, mdl), pick, _tx(x))
+        other = sorted(ns - {pick})
+        asm = c.setdefault("assumptions", [])
+        line = f"The quantity is {pick} {mdl} switches; the Customer's request also states {', '.join(other)}, to be confirmed before scheduling." \
+            if re.search(r"(?i)switch", " ".join(_tx(x) for x in c.get("overview") or [])) else \
+            f"The quantity is {pick} {mdl} units; the Customer's request also states {', '.join(other)}, to be confirmed before scheduling."
+        if not _said(line, asm, 0.6):
+            asm.append({"text": line, "cites": [], "kind": "method"})
+
+
+def _single_visit_unsupported(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """An uncited claim that each site takes one visit goes unless a deal
+    line says so (010083 pass X: "Each site can be completed in a single
+    onsite visit." with Memphis Main at ~51 switches)."""
+    said = any(re.search(r"(?i)\b(single|one)\s+(onsite\s+)?(visit|trip|day)\b|\bone[- ]day\b", str(a.get("text") or "")) for a in atoms)
+    if said:
+        return
+    c["assumptions"] = [x for x in c.get("assumptions") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and not x.get("cites")
+        and re.search(r"(?i)\b(completed|done|finished)\s+in\s+(a\s+)?(single|one)\s+(onsite\s+)?(visit|trip|day)\b", _tx(x)))]
+
+
+def _exhibit_not_equipment(c: dict[str, Any]) -> None:
+    """With a site exhibit, per-site counts are the exhibit's: no Equipment in
+    Scope row lists one site's units (010326 pass X: 18 of 30 sites, 213 of
+    317 phones, as "Fire Station 1 at 911 Franklin Street ... includes 8
+    physical phones")."""
+    ss = c.get("site_summary") or {}
+    sites = c.get("sites") or []
+    if len(sites) < 2 or not ss.get("from_table"):
+        return
+    streets = {re.sub(r"\W+", " ", str(s_.get("address") or s_.get("street") or "").split(",")[0].lower()).strip() for s_ in sites} - {""}
+    names = {str(s_.get("name") or "").lower().strip() for s_ in sites} - {""}
+    def per_site(t: str) -> bool:
+        low = re.sub(r"\W+", " ", t.lower())
+        return re.search(r"\d", t) is not None and (any(st and st in low for st in streets) or any(n and low.startswith(re.sub(r"\W+", " ", n)) for n in names))
+    c["equipment_in_scope"] = [x for x in c.get("equipment_in_scope") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and per_site(_tx(x)))]
+
+
+def _internal_team(c: dict[str, Any]) -> None:
+    """The customer's "internal team" is the Customer in a PurTera SOW
+    (010326 pass X: "... while the internal team handles rack hardware")."""
+    for k in LISTS:
+        for x in c.get(k) or []:
+            if isinstance(x, dict) and isinstance(x.get("text"), str):
+                t = re.sub(r"(?i)\b(?:the\s+)?(?:customer'?s\s+|their\s+|its\s+)?internal (?:it\s+)?team\b",
+                           lambda m_: "Customer" if m_.start() == 0 or m_.group(0)[:1].isupper() else "the Customer", x["text"])
+                x["text"] = re.sub(r"(?i)\bthe the Customer\b", "the Customer", t)
+
+
+def _one_visit_wording(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A one-visit job never says "each visit" (010419 pass X: one onsite
+    day, "before or during each visit", "after each visit")."""
+    pool = " ".join(str(a.get("text") or "") for a in atoms)
+    if re.search(r"(?i)\b(weekly|monthly|recurring|ongoing|each visit|every visit|per visit|visits|once a (week|month)|per (week|month)|bi-?weekly)\b", pool):
+        return
+    sched = " ".join(_tx(x) for x in c.get("schedule") or [])
+    if not re.search(r"(?i)\b(one|1|single)\s*(\(1\)\s*)?(onsite\s+)?(work)?day\b|\bone \(1\) onsite\b", sched):
+        return
+    for k in LISTS:
+        for x in c.get(k) or []:
+            if isinstance(x, dict) and isinstance(x.get("text"), str):
+                x["text"] = re.sub(r"(?i)\b(each|every)\s+visit\b", "the visit", x["text"])
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict):
+            d["description"] = [re.sub(r"(?i)\b(each|every)\s+visit\b", "the visit", str(t)) for t in d.get("description") or []]
+
+
+def _arrival_time_to_schedule(c: dict[str, Any]) -> None:
+    """An arrival time is a Schedule value, not a task (010115 pass X: "Arrive
+    onsite at 8:00 am and meet Rachel Bennett." in the task list beside the
+    standard "Meet the onsite contact on arrival ..."). The time goes to the
+    schedule; the contact's name joins the standard meeting step."""
+    sched = c.setdefault("schedule", [])
+    sc = c.get("scope") or []
+    keep = []
+    for x in sc:
+        t = _tx(x)
+        m_ = re.match(r"(?i)\s*arrive(?:\s+onsite|\s+on site)?\s+(?:at|by|no later than)\s+(\d{1,2}(?::\d\d)?\s*(?:a\.?m\.?|p\.?m\.?))\s*(?:,?\s*and\s+(.+?))?\.?\s*$", t)
+        if not (isinstance(x, dict) and not x.get("standard") and m_):
+            keep.append(x)
+            continue
+        tm = re.sub(r"(?i)\s*([ap])\.?m\.?", lambda mm: " " + mm.group(1).upper() + "M", m_.group(1)).strip()
+        if not any(re.search(r"(?i)arrival time", _tx(y)) for y in sched):
+            sched.append({**x, "text": f"Arrival Time: {tm} local site time"})
+        rest = (m_.group(2) or "").strip()
+        if rest:
+            who = re.match(r"(?i)meet(?:\s+with)?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z'-]+){0,2})\s*$", rest)
+            meet = next((y for y in keep + sc if isinstance(y, dict) and re.match(r"(?i)\s*meet the onsite contact\b", _tx(y))), None)
+            if who and meet is not None:
+                meet["text"] = re.sub(r"(?i)^(\s*meet the onsite contact)\b", r"\1, " + who.group(1) + ",", _tx(meet), count=1)
+                continue
+            keep.append({**x, "text": rest[:1].upper() + rest[1:].rstrip(".") + " on arrival."})
+    c["scope"] = keep
+
+
+def _title_spelling(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """The title spells a place as the sources do: a CRM typo one letter off
+    a word the documents write again and again is that word (010376 pass X:
+    "Extton, PA" for Exton)."""
+    import difflib
+    name = str(c.get("project_name") or "")
+    if not name:
+        return
+    pool = " ".join(str(a.get("text") or "") for a in atoms)
+    words = {}
+    for w in re.findall(r"\b[A-Z][a-z]{3,}\b", pool):
+        words[w] = words.get(w, 0) + 1
+    def fix(m_: re.Match) -> str:
+        w = m_.group(0)
+        if words.get(w):
+            return w
+        best = [v for v in difflib.get_close_matches(w, list(words), n=3, cutoff=0.85) if words[v] >= 2 and abs(len(v) - len(w)) <= 1]
+        return best[0] if best else w
+    c["project_name"] = re.sub(r"\b[A-Z][a-z]{3,}\b", fix, name)
+
+
+#: A specification a check names: "4-pair", "Cat6A", "1 Gbps", "TIA-568".
+_SPEC_WORD = re.compile(r"(?i)\b(\d+[- ]?(?:pair|wire|port|strand|gbps|mbps|db|ohm)s?|cat ?\d[a-z]?|tia[- ]?\d+\w*|fluke|certif\w*|end[- ]to[- ]end|wiremap|wire map)\b")
+
+
+def _stricter_than(std: str, items: list[Any]) -> bool:
+    """The standard names a specification no deal line that says it names."""
+    spec = {re.sub(r"[\s-]", "", m_.group(0).lower()) for m_ in _SPEC_WORD.finditer(std)}
+    if not spec:
+        return False
+    sayers = [str(x.get("text")) for x in items if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+              and str(x.get("text")) != std and _said(std, [x], 0.6)]
+    return bool(sayers) and all(not spec <= {re.sub(r"[\s-]", "", m_.group(0).lower()) for m_ in _SPEC_WORD.finditer(t)} for t in sayers)
+
+
 def _sentence_integrity(c: dict[str, Any]) -> None:
     """No line ends on a preposition or a conjunction: a clause that lost its
     object is clipped, a line with nothing left goes."""
@@ -7748,6 +8225,10 @@ def _sentence_integrity(c: dict[str, Any]) -> None:
             if isinstance(x, dict) and x.get("kind") != "heading" and isinstance(x.get("text"), str):
                 t = _clip_dangling(x["text"])
                 if t is None:
+                    continue
+                # A sentence that lost its object ("Provider will remove.",
+                # 010376 pass X) says nothing.
+                if re.fullmatch(r"(?i)\s*(?:the\s+)?(?:provider|customer|[A-Z][\w&.-]+)\s+(?:will|shall|must|to)\s+(?:also\s+)?[a-z]+\.?\s*", t):
                     continue
                 x["text"] = t
             keep.append(x)
@@ -8016,7 +8497,12 @@ def _planning_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         mm = _PLAN_BASIS.search(f["text"])
         if not mm or not re.search(r"\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|dozen)\b", mm.group(0), re.I):
             continue
-        clause = re.split(r"(?i)\s+and\s+there\b|,\s+(?:and|but|so)\b|\s+but\b", mm.group(0))[0].strip(" ,")
+        # Never cut mid-word ("... once we figur."), and the speaker's own
+        # aside ("once we figure out the procedure") is not the basis (000123
+        # pass X).
+        whole = mm.group(0) + re.match(r"\w*", f["text"][mm.end():]).group(0)
+        whole = re.split(r"(?i)\s+(?:once|until|after|if|when|as soon as)\s+(?:we|i|you|they)\b", whole)[0]
+        clause = re.split(r"(?i)\s+and\s+there\b|,\s+(?:and|but|so)\b|\s+but\b", whole)[0].strip(" ,")
         num = re.search(r"\d+|\b(one|two|three|four|five|six|seven|eight|nine|ten|dozen)\b", clause, re.I)
         if not num or num.group(0).lower() in said_by.get(f["id"], ""):
             continue  # a line citing it already states the number
@@ -8128,7 +8614,14 @@ def _duty_party(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dic
         if not isinstance(x, dict) or x.get("standard") or not x.get("cites"):
             continue
         if set(x["cites"]) <= scope_cites:
-            content["customer_responsibilities"].remove(x)
+            # One sentence can give both sides: "We can use the cart ... and use
+            # the Elevator" is the Provider's move and the customer's cart and
+            # elevator path (010376 pass X). A duty to provide or allow access
+            # stays unless a scope line on the same cites provides it too.
+            verb = (re.match(r"(?i)\s*(provide|grant|allow|arrange|give)\b", str(x.get("text"))) or [None, ""])[1].lower()
+            same = [y for y in content.get("scope") or [] if isinstance(y, dict) and set(y.get("cites") or []) & set(x["cites"])]
+            if not verb or any(re.match(r"(?i)\s*" + verb + r"\b", str(y.get("text"))) for y in same):
+                content["customer_responsibilities"].remove(x)
             continue
         if re.match(r"(?i)\s*(customer|client)\b", str(x.get("text"))):
             continue
@@ -8148,6 +8641,11 @@ def _duty_party(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dic
         else:
             nxt = next((i for i, y in enumerate(sc) if i > close and isinstance(y, dict) and y.get("kind") == "heading"), len(sc))
             sc[nxt:nxt] = moved
+
+
+_SUPPLY_DUTY = re.compile(r"(?i)^\s*(provide|supply|furnish|order|purchase|procure|ship|deliver|bring|make available)\b|"
+                          r"\b(provides?|supplies|furnish(es)?|orders?|purchases?|ships?|delivers?)\b|"
+                          r"\bensure\b.{0,60}\b(on ?site|delivered|available|ordered)\b")
 
 
 def _one_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
@@ -8176,7 +8674,12 @@ def _one_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                                     and key <= _toks(tx(y)) and (not need_say or cust_say.search(tx(y)))]
         # A procurement exclusion gives the item to the customer too
         # ("Procurement of monitors, arms or accessories").
-        theirs = hits("customer_materials", False) + hits("customer_responsibilities", False) + hits("assumptions", True) \
+        # A duty gives the item to the customer only when it supplies, orders
+        # or has it onsite: "Keep all Cat6 cable runs at or below 100 feet" is
+        # no supply of Cat6 cable (010082 pass X: the cable the Provider
+        # brings went to Customer Provided Materials).
+        theirs = hits("customer_materials", False) + [y for y in hits("customer_responsibilities", False) if _SUPPLY_DUTY.search(tx(y))] \
+            + hits("assumptions", True) \
             + [y for y in hits("out_of_scope", False) if re.search(r"(?i)\b(procure|purchas)", tx(y))]
         if not theirs:
             continue
@@ -9087,9 +9590,9 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
             continue
         # Rejected only for a count its lines do not state: keep the step, drop the
         # count (010120: "Install two (2) suspended Neat camera devices" went whole).
-        bare = re.sub(r"(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*(\(\d+\)\s*)?(?=[a-z])", "", str(x["text"])).strip()
-        bare = re.sub(r"\s{2,}", " ", bare)
-        if k == "scope" and bare != str(x["text"]).strip() and len(bare.split()) >= 3 and _stated_by(bare, cited):
+        bare = _drop_unstated_counts(str(x["text"]), cited)
+        if k == "scope" and len(bare.split()) >= 3 and _stated_by(re.sub(r"(?i)\bone\s*\(1\)\s*", "", bare), cited) \
+                and (bare != str(x["text"]).strip() or re.search(r"(?i)\bone\s*\(1\)", bare)):
             x["text"] = bare[:1].upper() + bare[1:]
             bad.discard(id(x))
             continue
@@ -9190,6 +9693,34 @@ def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[s
                     x["cites"] = [other]
                     out.append(x)
     return out
+
+
+def _keep_std_place(std: str, twin: str) -> str:
+    """A counted deal step taking a standard step's slot keeps the standard's
+    place phrase when it names none of its own."""
+    pl = re.search(r"(?i)\s+((?:in|into|on|at|within)\s+(?:the|each|a|an)\s+(?:existing|customer[- ]designated|designated|approved|assigned)\b[^.;]*?)\s*(?:[.;]|$)", std)
+    if not pl or re.search(r"(?i)\b(in|into|on|at|within)\s+(the|each|a|an|its|their|room|suite|floor|\d)", twin):
+        return twin
+    return twin.rstrip().rstrip(".") + " " + pl.group(1).strip() + "."
+
+
+def _drop_unstated_counts(text: str, cited: str) -> str:
+    """A step rejected for a count keeps the step without that count, but a
+    number its cited lines state survives (a street number, "6125 Tyvola
+    Centre Drive"), and so does a singular "one (1)" (010043 pass X: the
+    per-door mount lines lost "6125" and "one (1)")."""
+    have = set(re.findall(r"\d+", _digits(cited)))
+    def cut(m_: re.Match) -> str:
+        n = _digits(m_.group(1))
+        if n in have or re.search(r"\(1\)", m_.group(0)) and m_.group(1).lower() in ("one", "1"):
+            return m_.group(0)
+        if re.fullmatch(r"\d+", m_.group(1)) and re.match(
+                r"\s+(?:[A-Z][\w.]*\s+){1,3}(?:Drive|Dr|Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Way|Lane|Ln|Parkway|Pkwy|Court|Ct|Place|Pl|Highway|Hwy)\b",
+                m_.string[m_.end(1):]):
+            return m_.group(0)  # a street number
+        return ""
+    bare = re.sub(r"(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*(\(\d+\)\s*)?(?=[a-z])", cut, text).strip()
+    return re.sub(r"\s{2,}", " ", bare)
 
 
 def _stated_by(text: str, cited: str) -> bool:
@@ -10033,6 +10564,21 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "same_line_twice", _same_line_twice, c)
     _traced(c, "clipped_lines", _clipped_lines, c, envelope.get("atoms") or [])
     _traced(c, "one_sentence_one_party", _one_sentence_one_party, c, envelope.get("atoms") or [])
+    atoms_ = envelope.get("atoms") or []
+    _traced(c, "same_install_twice", _same_install_twice, c, atoms_)
+    _traced(c, "standard_step_repeat", _standard_step_repeat, c)
+    _traced(c, "materials_by_model", _materials_by_model, c)
+    _traced(c, "removed_gear_onsite", _removed_gear_onsite, c)
+    _one_item_count(c)
+    _traced(c, "single_visit_unsupported", _single_visit_unsupported, c, atoms_)
+    _traced(c, "exhibit_not_equipment", _exhibit_not_equipment, c)
+    _internal_team(c)
+    _one_visit_wording(c, atoms_)
+    _traced(c, "arrival_time_to_schedule", _arrival_time_to_schedule, c)
+    _traced(c, "overtime_in_schedule", _overtime_in_schedule, c)
+    _labor_basis(c)
+    _report_counts(c)
+    _title_spelling(c, atoms_)
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)

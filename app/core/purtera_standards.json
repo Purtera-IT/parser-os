@@ -67,7 +67,7 @@
       "Clean the immediate work area of installation packaging and loose cabling created by Provider.",
       "Notify the onsite contact of any material, access or site readiness issues and any incomplete work items.",
       "{when:kitchen printer|receipt printer|printer} Connect each printer to power and the applicable network connection and perform a test print.",
-      "{when:kitchen printer|receipt printer|printer} Assist with pairing the printer with the POS environment where the available Customer credentials and configuration support it.",
+      "{unless:preconfigur|pre-configur|configure all items before ship} {when:kitchen printer|receipt printer|printer} Assist with pairing the printer with the POS environment where the available Customer credentials and configuration support it.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Connect the existing internet service to the router's WAN connection and the POS network to its LAN.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Perform the basic router configuration required to support the POS installation.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Configure the cellular backup connection using the Customer-provided cellular service, modem or SIM, and basic failover from the primary internet connection to it.",
@@ -139,7 +139,7 @@
       "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Preconfiguration, imaging, staging, programming or enrollment of hardware.",
       "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Network design, remediation, firewall, wireless or switch configuration.",
       "Application, payment processor or software configuration and troubleshooting not caused by Provider installation activity.",
-      "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Store scheduling or logistics coordination."
+      "{unless:\\b(stores?|sites?|locations?) (a|per|each) (week|day)\\b|\\bper week\\b|\\ba (week|day)\\b.{0,20}\\b(stores?|sites?)|roll-?out|we.{0,10}dispatch|deploy resources} {when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Store scheduling or logistics coordination."
     ],
     "deliverable_outcomes": [
       "Installed devices connected, powered and functionally tested.",
