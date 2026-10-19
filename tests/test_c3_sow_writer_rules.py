@@ -134,3 +134,22 @@ def test_location_table_rows_are_not_cut_to_a_stated_count(monkeypatch):
     assert len(c["sites"]) == 111
     assert any("113" in x["text"] for x in c["overview"])
     assert c["deliverables"][0]["description"][0] == "PDF for the 113-location rollout."
+
+
+def test_standards_conditions_compile_and_gate():
+    import json
+    import re
+    from pathlib import Path
+    data = json.loads((Path(m.__file__).parent / "purtera_standards.json").read_text())
+    for fam, secs in data.items():
+        if fam.startswith("_"):
+            continue
+        for items in secs.values():
+            for t in items if isinstance(items, list) else []:
+                for c in re.findall(r"^\{(?:when|unless):(.*?)\}\s+(?=[A-Z{])", t):
+                    re.compile(c)
+    park = next(t for t in data["pos_install_refresh"]["assumptions"] if "parking" in t)
+    assert not m._standard_applies(park, ["Pricing by store to include all travel and expenses."])[0]
+    assert m._standard_applies(park, ["Install two registers."])[0]
+    cfg = next(t for t in data["network_switch_refresh"]["customer_responsibilities"] if "fully configured" in t)
+    assert m._standard_applies(cfg, [])[0]

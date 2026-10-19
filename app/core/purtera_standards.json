@@ -51,32 +51,49 @@
     ]
   },
   "pos_install_refresh": {
-    "_source": "owner standards loop 2026-10-18: generic POS handling common to the 000123 and 010198 v1 TEMPLATE lists (device-specific steps left to the deal)",
+    "_source": "owner standards loop 2026-10-18: generic POS handling common to the 000123 and 010198 v1 TEMPLATE lists (device-specific steps left to the deal); 2026-10-19: TEMPLATE items from the 000123, 010198 and 010279 v1 grades (runbook, de-install, peripherals, checklists, remote support, palletize/back room, delay assumption, countertop exclusion; parking gated on billable expenses)",
     "method_steps": [
       "Locate the Customer-provided equipment and installation materials.",
       "Confirm the installation locations and identify the register lanes in scope with the onsite contact.",
       "Verify that the required equipment, power and network connectivity are available before beginning installation.",
+      "{when:\\bSOP\\b|runbook|run book|checklist|install(ation)? guide|procedures?\\b} Follow the Customer-provided installation runbook and checklist.",
+      "{when:replac|refresh|legacy|old (registers?|pos|terminals?|hardware|equipment)|(remov\\w*|de-?install\\w*) (the |all )?(existing|old|legacy)} Disconnect and remove the existing POS equipment being replaced.",
+      "{when:\\bregisters?\\b|\\bterminals?\\b|pos stations?} Connect each register or terminal to power, the applicable network connection and its Customer-provided peripherals.",
       "Perform cable management and organize unused cabling as reasonable within the allotted onsite time.",
       "Power on the installed devices.",
       "Perform functional testing of each installed device before leaving the site.",
+      "{when:pallet} Palletize removed equipment using Customer-supplied pallets and packing materials.",
+      "{when:back ?room|pallet|dispos(al|ed|e) by others|future disposal} Place removed equipment in the onsite back room or other Customer-designated onsite storage area for later disposal by others.",
       "Clean the immediate work area of installation packaging and loose cabling created by Provider.",
       "Notify the onsite contact of any material, access or site readiness issues and any incomplete work items.",
       "{when:kitchen printer|receipt printer|printer} Connect each printer to power and the applicable network connection and perform a test print.",
+      "{when:kitchen printer|receipt printer|printer} Assist with pairing the printer with the POS environment where the available Customer credentials and configuration support it.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Connect the existing internet service to the router's WAN connection and the POS network to its LAN.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Perform the basic router configuration required to support the POS installation.",
-      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Configure basic failover from the primary internet connection to the cellular backup connection.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Configure the cellular backup connection using the Customer-provided cellular service, modem or SIM, and basic failover from the primary internet connection to it.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Validate primary internet connectivity and test cellular failover where the active cellular service allows.",
+      "{when:\\bMAC address|terminal identification|\\bID(ing)? terminals} Perform terminal identification, MAC address validation and the installation-related configuration steps defined in the Customer-provided runbook.",
+      "{when:troubleshoot|hardware failures?|post[- ]installation support|runs? smoothly|connectivity issues} Perform basic installation-related troubleshooting, including reasonable connectivity issues found during the scheduled service window.",
+      "{when:corporate office|support desk|help ?desk|\\bSSD\\b|remote (support|resource|engineer)} Coordinate with the Customer's designated remote support resource for configuration assistance, escalation or additional troubleshooting.",
+      "{when:checklist} Complete the Customer-provided installation and testing checklists.",
       "Confirm the installed POS components communicate across the network before leaving site.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
       "{when:preconfigur|pre-configur|(customer|they|their|end user).{0,40}configur|configur.{0,40}(by|from) (the )?(customer|them)} Perform all device configurations and troubleshooting, if required.",
+      "{when:\\bSOP\\b|runbook|run book|checklist|install(ation)? guide|procedures?\\b} Provide the final approved installation documentation, procedures, checklists, labeling standards and testing procedures before deployment.",
+      "{when:preconfigur|pre-configur} Ensure all required equipment is preconfigured before shipment to the site.",
       "Ensure onsite personnel are available to assist with functional validation where required.",
       "Provide escalation contacts for technical, access, hardware and schedule related issues.",
       "Provide approval criteria for completed installation and functional testing.",
       "{when:square} Provide the required Square account credentials and administrative access.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Provide router administrative credentials or authorization to create the required local configuration.",
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Provide an active cellular service, SIM and data plan for the backup internet connection.",
+      "{unless:square} Provide the credentials or access required for installation-related POS activities.",
+      "{when:corporate office|support desk|help ?desk|\\bSSD\\b|remote (support|resource|engineer)} Provide an available remote technical support and escalation resource during scheduled installations.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover|internet|\\bwan\\b} Provide an active primary internet connection.",
+      "Provide adequate electrical power at each installation location.",
+      "Provide any required software licenses, subscriptions, POS services and third-party accounts.",
       "Authorize test transactions or test prints where required for final validation.",
       "Provide all hardware, cables, adapters, accessories, labels and asset tags required for installation.",
       "{when:retire|retired|remov(e|ed|al) (and|for) (ship|dispos|recycl)|ship (back|out) (the )?old|pallet} Provide pallets, boxes, shrink wrap and straps for retired equipment.",
@@ -84,26 +101,32 @@
       "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Provide the full location list with addresses, site contacts, store hours, access and parking instructions.",
       "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Provide the final deployment schedule and location assignments.",
       "{when:lanes?|registers} Confirm the number of register lanes and POS setups at each location.",
-      "{when:old (registers?|pos|terminals?|hardware)|legacy|back ?room|disposal|dispose|retir} Confirm the disposition of existing registers and legacy hardware."
+      "{when:old (registers?|pos|terminals?|hardware)|legacy|back ?room|disposal|dispose|retir} Confirm the disposition of existing registers and legacy hardware.",
+      "{when:pallet} Coordinate transportation, return, storage, disposal or recycling of retired equipment after Provider completes onsite palletization."
     ],
     "assumptions": [
       "Cable management is required.",
       "Functional testing will be performed before the technician leaves the site.",
-      "Onsite parking is available; any parking fee is reimbursable.",
+      "{unless:include all travel|travel and expenses (are |will be )?included|all travel and expenses} Onsite parking is available; any parking fee is reimbursable.",
       "No construction, wall modification or electrical work is required at any site.",
       "Customer-provided equipment is complete, functional and suitable for installation.",
       "Existing cabling, electrical and peripherals are functional; no new structured cabling is required.",
       "{when:runbook|run book|install guide|playbook|procedure} Technicians follow the Customer's runbook; engineering of procedures is not included.",
-      "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Final schedule, location assignments, site access and dispatch details depend on Customer-provided information."
+      "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Final schedule, location assignments, site access and dispatch details depend on Customer-provided information.",
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover|internet|\\bwan\\b} Existing internet service and cabling are operational upon technician arrival.",
+      "Required account credentials and administrative access will be available during the scheduled installation.",
+      "Installation can be completed using standard field service tools and normal installation methods.",
+      "{when:labor only|we'?d ship|ship(ped)? (out|directly)|customer[- ](provided|supplied|furnished) (hardware|equipment)} No materials are required to be provided by Provider.",
+      "Provider is not responsible for delays caused by unavailable equipment, missing materials, store access restrictions, network outages, electrical issues, unavailable remote support or other conditions outside Provider's control."
     ],
     "exclusions": [
       "Disposal, recycling, shipping or offsite removal of legacy equipment.",
       "Inventory reconciliation beyond basic identification of the equipment for the installation.",
       "POS application programming (menus, product database, pricing or tax configuration).",
       "Troubleshooting or repair of the customer's internet service provider infrastructure.",
-      "Return visits caused by missing equipment, unavailable site access or contacts, or customer-directed schedule changes.",
+      "Return visits caused by missing equipment, unavailable site access or contacts, an incomplete SOP or runbook, site readiness issues, or customer-directed schedule changes.",
       "Hardware, software or accessory procurement.",
-      "Electrical or low-voltage cabling work.",
+      "Countertop modification, construction, carpentry, electrical work, conduit work, or low-voltage cabling installation beyond connecting Customer-provided cables at the register lane.",
       "Core drilling, wall construction or structural modification.",
       "Repair or replacement of defective customer equipment.",
       "Major structured cabling installation.",
@@ -115,7 +138,8 @@
       "Repair of defective existing cabling.",
       "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Preconfiguration, imaging, staging, programming or enrollment of hardware.",
       "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Network design, remediation, firewall, wireless or switch configuration.",
-      "Application, payment processor or software configuration and troubleshooting not caused by Provider installation activity."
+      "Application, payment processor or software configuration and troubleshooting not caused by Provider installation activity.",
+      "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Store scheduling or logistics coordination."
     ],
     "deliverable_outcomes": [
       "Installed devices connected, powered and functionally tested.",
@@ -123,7 +147,9 @@
       "Notes on material, access or site readiness issues and incomplete work items encountered onsite.",
       "Completion confirmed with the onsite contact.",
       "{when:kitchen printer|receipt printer|printer} Printer test print validated.",
-      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Primary internet connectivity and cellular failover validated where supported."
+      "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Primary internet connectivity and cellular failover validated where supported.",
+      "{when:checklist} Completed Customer installation and testing checklists.",
+      "{when:\\bMAC address} Installed terminal MAC address information captured onsite."
     ],
     "tools": [
       "Phillips, flathead and precision screwdriver set.",
@@ -133,7 +159,8 @@
       "Adjustable wrench or small socket set.",
       "Flashlight or headlamp.",
       "Mobile phone with camera for completion photos.",
-      "Laptop, tablet or mobile device for ticket updates and closeout documentation."
+      "Laptop, tablet or mobile device for ticket updates and closeout documentation.",
+      "Basic cable management supplies, only where Provider is expected to supply consumables."
     ]
   },
   "low_voltage_cabling": {
@@ -217,18 +244,20 @@
     ]
   },
   "network_switch_refresh": {
-    "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list",
+    "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list; 2026-10-19: TEMPLATE items from the 010085 v1 grade (document/port-matrix review, MDF/IDF, remote smart hands, closeout photos/serials, confirmed count, configured-switches wording, delay assumption, lift window)",
     "method_steps": [
-      "Review the existing switch location, rack layout, cabling and available rack space.",
+      "Review the Customer-provided switch refresh documentation, port matrix, network closet (MDF/IDF) locations, rack layout, cabling and available rack space before beginning work.",
+      "{when:\\b(mdf|idf)s?\\b} Locate and inspect the applicable MDF and IDF areas included in the switch refresh.",
       "Confirm the switches, power cords, rack ears, optics and stacking and patch cables are onsite before starting.",
       "Install the new switches in the existing rack, cabinet or customer-designated network area.",
-      "Move cables to the new switches one-for-one where practical.",
+      "Migrate patch cable connections according to the Customer-provided port and cable matrix, or one-for-one where practical when no matrix is provided.",
       "Stage the removed legacy switches onsite in a customer-designated area.",
       "Connect power to each new switch and confirm it powers on.",
+      "{when:remote|engineer} Support limited remote smart-hands assistance for the Customer's remote engineering team, including visual checks, link light confirmation, serial number capture, photo sharing and basic physical-layer validation.",
       "Confirm completion with the onsite contact or remote engineer before leaving site."
     ],
     "customer_responsibilities": [
-      "Provide the switch configuration before onsite installation.",
+      "Provide replacement switches fully configured and ready for installation before the onsite visit.",
       "Provide rack ears, power supplies, power cords, stack cables, optics, patch cables, rack hardware and any other materials required for installation, where applicable.",
       "Perform final network validation, connectivity testing and acceptance testing.",
       "Identify the customer-designated area where removed legacy switches should be staged.",
@@ -241,7 +270,10 @@
       "Provide available power and approved maintenance windows.",
       "Provide clear access to the MDF, IDF and rack areas.",
       "Provide a site contact authorized to approve and sign off the work.",
-      "{when:\\b(lift|boom|scissor)s?\\b} Confirm each lift type suits the work area, and have lifts delivered, charged or fueled, with clear and safe access paths."
+      "{when:\\b(lift|boom|scissor)s?\\b} Confirm each lift type suits the work area, and have lifts delivered, charged or fueled, with clear and safe access paths.",
+      "{when:\\b(mdf|idf)s?\\b} Provide the final confirmed switch count by MDF and IDF.",
+      "{when:remote|engineer} Provide Customer remote engineering support during each cutover or validation window.",
+      "{when:after[- ]?hours|maintenance windows?|production} Confirm which areas may be completed during business hours and which require after-hours or non-production windows."
     ],
     "assumptions": [
       "Provider's role is limited to onsite physical labor and field support.",
@@ -250,7 +282,9 @@
       "Existing power, racks, shelves, patch panels and supporting infrastructure are functional and suitable for the replacement equipment.",
       "Provider's scope is limited to physical onsite services at each location; Provider does not procure, receive, stage, configure, package or ship equipment.",
       "Provider's responsibility for decommissioned equipment ends once it is placed in the Customer-designated onsite location.",
-      "Access, escorts and maintenance windows are ready as scheduled; Provider is not responsible for delays caused by them."
+      "Access, escorts and maintenance windows are ready as scheduled; Provider is not responsible for delays caused by production restrictions, blocked access, missing documentation, missing materials, unavailable remote support or site readiness issues.",
+      "{when:remote|engineer} The Customer remote engineering team will be available during cutover and validation windows.",
+      "{when:\\b(lift|boom|scissor)s?\\b} The lift equipment allowance covers onsite use of the listed lift equipment during the scheduled work window only."
     ],
     "exclusions": [
       "Switch configuration and programming.",
@@ -262,7 +296,12 @@
     "deliverable_outcomes": [
       "New switches installed and cabled one-for-one where practical.",
       "Removed switches staged onsite in the designated area.",
-      "Completion confirmed with the onsite contact or remote engineer."
+      "Completion confirmed with the onsite contact or remote engineer, with a signed completion document or site signoff where available.",
+      "Photos of completed switch installations and of rack conditions after completion.",
+      "Serial numbers or asset information if requested by the Customer.",
+      "{when:\\b(mdf|idf)s?\\b} Notes identifying the completed MDF and IDF locations.",
+      "Notes identifying exceptions, blocked work, missing materials or incomplete items.",
+      "{when:remote|engineer} Confirmation of remote validation where provided by the Customer remote engineering team."
     ]
   },
   "av_conference_room": {
