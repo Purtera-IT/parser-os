@@ -357,3 +357,21 @@ def test_a_standard_a_rule_removes_says_which_rule():
     content["_std_objs"] = [[id(content["assumptions"][0]), "No materials are required."]]
     m._traced(content, "tidy", lambda: content.__setitem__("assumptions", []))
     assert content["standards_suppressed"] == [{"text": "No materials are required.", "reason": "rule tidy"}]
+
+
+def test_the_summary_obeys_the_sows_own_limits():
+    """010209 pass T: "Provider will receive, bench, configure, ship, install,
+    and remove ..." beside "Provider does not procure, receive, stage,
+    configure, package or ship equipment"."""
+    c = {"overview": [{"text": "Provider will receive, bench, configure, ship, install, and remove the old hardware.", "cites": []}],
+         "scope": [],
+         "assumptions": [{"text": "Provider does not procure, receive, stage, configure, package or ship equipment.", "standard": True}]}
+    m._boundary_verbs(c)
+    assert c["overview"][0]["text"] == "Provider will install and remove the old hardware."
+
+
+def test_a_hardware_receipt_deadline_is_not_the_completion_date():
+    fs = [_fact("h", "All hardware must be received into COI no later than 9/25 and invoiced no later than 9/29.")]
+    content = {"overview": [{"text": "Provider will install the switches.", "cites": []}], "scope": [], "schedule": []}
+    m._grounding(content, fs)
+    assert not any("9/25" in x["text"] or "9/29" in x["text"] for x in content.get("schedule") or [])

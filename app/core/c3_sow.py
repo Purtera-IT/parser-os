@@ -1473,6 +1473,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "exclusions_never_tasks", _exclusions_never_tasks, content, fs)
     _traced(content, "service_groups", _service_groups, content)
     _overview_covers_scope(content, fs)
+    _boundary_verbs(content)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
     # A one-room job says "the room" (010120: "Verify the equipment for each
@@ -3401,6 +3402,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if not re.search(r"(?i)complet|deadline|by end of|no later than", sched_txt):
         for f in fs:
             m = re.search(r"(?i)\b(by (the )?end of (business|day)|completed? by|no later than)\b[^.]{0,30}?(\d{1,2}/\d{1,2}(/\d{2,4})?|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2})", f["text"])
+            # A deadline for receiving, invoicing or shipping hardware is the
+            # supply chain's, not the job's completion (010209 pass T: "All
+            # hardware must be received into COI no later than 9/25").
+            if m and re.search(r"(?i)\b(receiv\w*|invoic\w*|ship\w*|deliver\w*|order\w*|procur\w*|arriv\w*)\b", f["text"][max(0, m.start() - 60):m.end()]):
+                continue
             if m and f.get("type") in ("deadline", "milestone_phase", "scope_item", "constraint", "", None):
                 content.setdefault("schedule", []).append({"text": f"Requested Completion: {m.group(0).strip()}", "cites": [f["id"]], "kind": "fact"})
                 break
@@ -3458,6 +3464,32 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     content["scope"] = [x for i, x in enumerate(sc)
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
+
+
+def _boundary_verbs(content: dict[str, Any]) -> None:
+    """The summary and the task list never claim work the SOW's own limits
+    rule out: the verbs of an assumption or exclusion that says Provider
+    "does not procure, receive, stage, configure, package or ship" leave a
+    "Provider will receive, bench, configure, ship, install ..." line (010209
+    pass T: the overview contradicted the physical-only boundary)."""
+    verbs: set[str] = set()
+    for k in ("assumptions", "out_of_scope"):
+        for x in content.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            for mm in re.finditer(r"(?i)\b(?:does not|do not|will not|won'?t|is not responsible for|not)\s+((?:[a-z]+(?:,\s*|\s+or\s+|\s+and\s+|,\s*or\s+|,\s*and\s+)){1,8}[a-z]+)", t):
+                for v in re.split(r",\s*(?:or\s+|and\s+)?|\s+or\s+|\s+and\s+", mm.group(1)):
+                    v = v.strip().lower()
+                    if len(v) >= 4 and v not in ("include", "included", "perform", "provide", "responsible", "the", "any", "work"):
+                        verbs.add(re.sub(r"(ing|es|e|s)$", "", v)[:6])
+    if not verbs:
+        return
+    if verbs & {"receiv", "stag", "procur"}:
+        verbs |= {"bench", "kit"}  # warehouse work goes with receiving and staging
+    bad = re.compile(r"(?i)^(%s)" % "|".join(sorted(re.escape(v) for v in verbs)))
+    for k in ("overview", "scope"):
+        for x in content.get(k) or []:
+            if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading":
+                x["text"] = _strip_verbs(str(x.get("text")), bad)
 
 
 def _strip_verbs(text: str, bad: re.Pattern) -> str:
