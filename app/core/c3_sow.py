@@ -3851,7 +3851,12 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                 skip = bool(re.search(r"(?i)destination|unpack|setup at|reinstall", str(x.get("text"))))
                 if skip:
                     continue
-            if skip or (isinstance(x, dict) and re.match(r"(?i)\s*(unpack|reconnect|re-?install|place (the )?equipment at|set up)\b", str(x.get("text")))):
+            # A standard step stays: the job's own standards already say what
+            # the move does at the dock (010147 pass U: the tag-verification
+            # step went with a writer "Destination" heading).
+            if (skip and not (isinstance(x, dict) and x.get("standard"))) or (
+                    isinstance(x, dict) and not x.get("standard")
+                    and re.match(r"(?i)\s*(unpack|reconnect|re-?install|place (the )?equipment at|set up)\b", str(x.get("text")))):
                 continue
             out.append(x)
         content["scope"] = out
@@ -4188,7 +4193,7 @@ def _partner_phase(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
 
 
 #: A form row: "Label | value" (the value may be empty).
-_FORM_ROW = re.compile(r"^\s*([^|\n]{2,60}?)\s*\|\s*(.*)$", re.S)
+_FORM_ROW = re.compile(r"^\s*([^|\n]{2,140}?)\s*\|\s*(.*)$", re.S)
 
 
 def _form_chrome(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
@@ -4207,8 +4212,8 @@ def _form_chrome(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         if not mm:
             return False
         label, value = mm.group(1).strip(), mm.group(2).strip()
-        if re.fullmatch(r"(?i)(n/?a|none|tbd|-+|—)?\.?", value):
-            return True
+        if re.fullmatch(r"(?i)(n/?a|none|tbd|-+|—)?\.?", value) or re.search(r"(?i)[:|]\s*(n/?a|tbd)\s*\.?$", value):
+            return True  # "1875 Lawrence Street, Suite 750: N/A" (010147: N/A read as "No")
         # The field is blank and the cell holds only its own footnote.
         return label.endswith("*") and value.startswith("*")
     for k in ("assumptions", "customer_responsibilities", "out_of_scope"):
@@ -4661,7 +4666,8 @@ def _schedule_voice(c: dict[str, Any], as_of: str, theirs: set[str] | frozenset[
     # Work hours are the site's hours, never a call or meeting slot (010082
     # pass U: "Work Hours: tomorrow (Wednesday 7/8) 2-3pm EST"; 010264: a
     # meeting invite's "When:" line).
-    slot = re.compile(r"(?i)\b(tomorrow|today|tonight|yesterday|subject:|when:|meeting|call|intro|session|webinar|demo)\b")
+    slot = re.compile(r"(?i)\b(tomorrow|today|tonight|yesterday|subject:|when:|meeting|call|intro|session|webinar|demo)\b|"
+                      r"\?|#\s*of\b|\b(will|is|are|does|do|can)\s+(work|it|the work)\s+be\b")  # a questionnaire's question (010147)
     c["schedule"] = [x for x in c.get("schedule") or [] if not (isinstance(x, dict)
                      and re.match(r"(?i)\s*work (hours|window)\s*:", str(x.get("text"))) and slot.search(str(x.get("text"))))]
     try:
@@ -5350,8 +5356,12 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
     line a rule or check dropped, and none the SOW's own terms exclude
     (010209: "removed legacy switch shipment for wipe and disposal" and
     "serial numbers for the benched equipment", both dropped from scope)."""
+    # dropped_unsupported too: a sentence the check dropped from the scope is
+    # not promised in the report (010147 pass U: "five network switches, two
+    # Cisco 1U switches" counted the same switches twice).
     gone = [str(d.get("text")) for d in content.get("rule_decisions") or [] if d.get("value") == "drop"] + \
            [str(x.get("text")) for x in content.get("dropped") or [] if isinstance(x, dict)]
+    unsupported = [str(x.get("text")) for x in content.get("dropped_unsupported") or [] if isinstance(x, dict)]
     # A line moved into the report is not gone (010083: tidy moved "Provide
     # before/after pictures and serial numbers" from the customer duties to
     # the report, and that "drop" then struck the serial-number outcome).
@@ -5377,7 +5387,7 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
         keep = []
         for t in d.get("description") or []:
             t = str(t)
-            if any(_said(t, [g], 0.6) for g in gone):
+            if any(_said(t, [g], 0.6) for g in gone) or any(_said(t, [g], 0.8) and _said(g, [t], 0.8) for g in unsupported):
                 if t in std_out:
                     why.append({"section": "deliverable_outcomes", "text": t, "reason": "deliverables: restates a dropped line"})
                 continue
@@ -6440,7 +6450,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                              "postal_code": r0.get("postal_code") or "", "_named": True})
                 continue
             zipped = [r for r in roster if re.search(r"\b\d{5}\b", f"{r.get('address')} {r.get('postal_code')}")]
-            if len(roster) == 1 and zipped and not re.search(r"\b\d{5}\b", t) and \
+            # Not a "City, ST" line: that is a real place (010147 pass U: the
+            # Denver origin "Denver, CO | 1875 Lawrence Street, Suite 750" became
+            # a second copy of the Lafayette destination).
+            if len(roster) == 1 and zipped and not re.search(r"\b\d{5}\b", t) and not re.search(r"\b[A-Za-z .]+,\s*[A-Z]{2}\b", t) and \
                     not any(w in str(zipped[0].get("address") or "").lower() for w in re.findall(r"[a-z]{4,}", (street or place).lower())):
                 # A cited place with no ZIP that the one fully addressed roster site does
                 # not name is a caption, not the site (010012: "1 Landmark Square, office
@@ -6475,6 +6488,16 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
             else:
                 by_addr[k] = r
         rows = [{kk: vv for kk, vv in r.items() if kk != "_named"} for r in by_addr.values()]
+        # A move's two sites say which is which ("from Denver to Lafayette").
+        ov = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in c.get("overview") or [])
+        mv = re.search(r"\bfrom\s+([A-Z][A-Za-z .]+?)\s+to\s+([A-Z][A-Za-z .]+?)\b(?:[.,;]|$|\s)", ov)
+        if mv and len(rows) == 2:
+            for r in rows:
+                city = str(r.get("city") or "").strip().lower()
+                if city and city == mv.group(1).strip().lower():
+                    r["name"] = "Origin"
+                elif city and city == mv.group(2).strip().lower():
+                    r["name"] = "Destination"
         c["sites"] = rows
     # The project is named as the deal is: PurTera's v1 titles are the CRM deal
     # name without its number and the reseller ("010115 - CDW Sodexo Decomm

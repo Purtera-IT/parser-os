@@ -514,3 +514,28 @@ def test_a_customer_hours_sentence_becomes_the_slot_value():
                        "cites": [], "kind": "fact"}]}
     m._schedule_voice(c, "2026-08-11")
     assert c["schedule"][0]["text"] == "Work Hours: Monday through Friday, 8:00 AM to 5:00 PM local site time"
+
+
+# --- 010147 B-: origin and destination, questionnaire rows, N/A, standards ------
+
+def test_a_questionnaire_question_is_never_work_hours():
+    c = {"schedule": [{"text": "Work Hours: Proposed # of Waves and Dates: Will Work be preformed during or after office hours (8am to 5pm Mon-Fri)",
+                       "cites": [], "kind": "fact"},
+                      {"text": "Work Window: During office hours M-F", "cites": [], "kind": "fact"}]}
+    m._schedule_voice(c, "2026-08-10")
+    assert [x["text"] for x in c["schedule"]] == ["Work Window: During office hours M-F"]
+
+
+def test_an_n_a_answer_is_not_a_no():
+    fs = [_fact("t", "Origin Address: Is loading dock tractor trailer (70' long) accessible? | 1875 Lawrence Street, Suite 750: N/A")]
+    c = {"assumptions": [{"text": "The origin loading dock is not accessible to a 70' tractor-trailer (N/A).", "cites": ["t"], "kind": "fact"}]}
+    m._form_chrome(c, fs)
+    assert c["assumptions"] == []
+
+
+def test_a_dropped_sentence_is_not_promised_in_the_report():
+    c = {"job_family": "relocation_move", "rule_decisions": [], "dropped": [], "out_of_scope": [],
+         "dropped_unsupported": [{"text": "Pack five network switches, two Cisco 1U switches and one printer.", "list": "scope"}],
+         "deliverables": [{"item": "Work Completion Report", "description": ["Pack five network switches, two Cisco 1U switches and one printer."]}]}
+    m._deliverables_hygiene(c)
+    assert c["deliverables"][0]["description"] == []
