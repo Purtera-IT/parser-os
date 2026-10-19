@@ -1224,6 +1224,9 @@ def _merged_back(content: dict[str, Any], lists_before: dict[str, list], rule: s
         was = lists_before.get(lst) or []
         at = next((i for i, y in enumerate(was) if isinstance(y, dict) and str(y.get("text")) == tgt), None)
         pos = len(items)
+        if at is None and m_.get("after") == "first_group":
+            heads = [i for i, y in enumerate(items) if isinstance(y, dict) and y.get("kind") == "heading"]
+            pos = heads[1] if len(heads) > 1 else (len(items) if heads else 0)
         if at is not None:
             for prev in reversed(was[:at]):
                 j = next((i for i, y in enumerate(items) if y is prev), None)
@@ -1363,6 +1366,19 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # keep 0.21, became "Work Window: 24/7 on-call availability").
     weak = {f["id"] for f in fs if f["section"] in ("also_kept", "unsure", "typed_only", "answered_question")}
     _traced(content, "weak_commitments", _weak_commitments, content, weak, envelope.get("atoms") or [])
+    # A brief line merely mentioned, left for labelling or asked is never a
+    # Provider task on its own (010376 pass W: ThinkTLS's "Once verified, the
+    # seal will be cut, and all assets will be audited ..." and its tag check
+    # as Provider Closeout steps).
+    # Only another party's process in the passive ("the seal will be cut",
+    # "will be verified"), with no actor of this job.
+    passive = re.compile(r"(?i)\bwill be (\w+ed|cut|done|taken|sent|kept)\b")
+    actor = re.compile(r"(?i)\b(we|you|our tech|tech(nician)?s?|provider|purtera|install\w*|mount\w*|replace\w*)\b")
+    aside = {f["id"] for f in fs if (f["section"] in ("also_kept", "unsure", "figure") and passive.search(f["text"]) and not actor.search(f["text"]))
+             or f["text"].rstrip().endswith("?")}
+    _traced(content, "aside_not_task", lambda c: c.__setitem__("scope", [x for x in c.get("scope") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading" and x.get("cites")
+        and all(cc in aside for cc in x["cites"]))]), content)
     # A start date before the cutoff is a document's date, not the job's
     # (010120 printed the survey deck's 7/9 as the requested start).
     cut = str((envelope.get("run_scope") or {}).get("as_of") or "")[:10]
@@ -5999,6 +6015,89 @@ def _untraced_ledger(c: dict[str, Any]) -> None:
             decided_ids |= ids
 
 
+def _speakers_facility(c: dict[str, Any]) -> None:
+    """A third party's "our facility" is its own, never Provider's (010376 pass
+    W: "ThinkTLS provides a dedicated truck ... to transport the two removed
+    units back to Provider's facility."). A line whose subject is a named
+    other party says that party's facility; a bare dangling "to install."
+    service line goes ("Provide smart Hand Support to install.")."""
+    for k in LISTS:
+        keep = []
+        for x in c.get(k) or []:
+            if not isinstance(x, dict):
+                keep.append(x)
+                continue
+            t = str(x.get("text"))
+            m_ = re.match(r"^([A-Z][\w&.-]+(?: [A-Z][\w&.-]+){0,2}) (?:provides|will|handles|performs|transports|uses)\b", t)
+            if m_ and m_.group(1) not in ("Provider", "Customer", "The", "All", "Each", "Provide") \
+                    and re.search(r"Provider[\u2019']s (facility|warehouse|depot|site|location)", t):
+                x["text"] = re.sub(r"Provider[\u2019']s (facility|warehouse|depot|site|location)", m_.group(1) + r"'s \1", t)
+            if k == "scope" and not x.get("standard") and re.match(r"(?i)\s*provide\s+[\w ]{0,30}\bsupport\s+to\s+(install|perform|help|assist)\s*\.?\s*$", t):
+                continue
+            keep.append(x)
+        c[k] = keep
+
+
+def _no_universal_against_fact(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """An uncited assumption never says of every site what a deal line says
+    some sites lack (010083 pass W: "Each site will provide adequate rack or
+    mounting space ..." beside "Not all stores have a rack" / "some sites may
+    not have a dedicated rack")."""
+    some = [str(a.get("text") or "") for a in atoms if re.search(
+        r"(?i)\b(some|not all|a few|certain)\b[^.?]{0,40}\b(may not|might not|do not|don'?t|doesn'?t|won'?t|will not|not)\b[^.?]{0,10}\b(have|has|include)\b|\bnot all\b[^.?]{0,30}\b(have|has)\b", str(a.get("text") or ""))]
+    if not some:
+        return
+    keep = []
+    for x in c.get("assumptions") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if isinstance(x, dict) and not x.get("standard") and not x.get("cites") \
+                and re.match(r"(?i)\s*(each|every|all)\s+(sites?|stores?|locations?|rooms?|facilit\w+)\b", t) \
+                and any(len((_object_toks(t) - {"site", "store", "locat", "provid", "adequat", "each", "all"}) & _object_toks(s_)) >= 1
+                        and re.search(r"(?i)\b(rack|space|power|outlet|cabl|port|mount)", s_) for s_ in some):
+            continue
+        keep.append(x)
+    c["assumptions"] = keep
+
+
+def _unanswered_cites(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A line resting only on questions nobody answered in them is not a
+    deal fact (010083 pass W: "Customer remote resource verbal validation is
+    required ..." from PurTera's "Verbal validation from customer remote
+    resource?")."""
+    # An ask is a request, not a question about the job: "Can you provide the
+    # street addresses?", "I would like to add a router - is that something
+    # you can help with?" stay; an assumption may rest on an open point.
+    ask = re.compile(r"(?i)\b(can|could|would|will) you\b|\bplease\b|\b(i|we)('d| would) like\b|\bsomething you can\b|\bable to\b")
+    q = {str(a.get("id")) for a in atoms if str(a.get("text") or "").rstrip().endswith("?") and not ask.search(str(a.get("text") or ""))}
+    for k in ("customer_responsibilities", "scope", "out_of_scope"):
+        c[k] = [x for x in c.get(k) or [] if not (isinstance(x, dict) and not x.get("standard") and x.get("cites")
+                                                  and x.get("kind") != "heading" and all(str(cc) in q for cc in x["cites"]))]
+
+
+def _source_shorthand(c: dict[str, Any]) -> None:
+    """The summary reads in full words, not the source's shorthand (010083
+    pass W: "Apx 83 sites will be singles", "refresh Customer from C3650s to
+    C9350s"); and no assumption repeats the template's after-hours or weekend
+    slot, which reads the Work Window ("All Services will be performed After
+    Hours during the week.")."""
+    fam = str(c.get("job_family") or "")
+    dev = "switch" if fam == "network_switch_refresh" else "device"
+    for k in ("overview", "scope", "assumptions"):
+        for x in c.get(k) or []:
+            if not isinstance(x, dict):
+                continue
+            t = str(x.get("text"))
+            t = re.sub(r"(?<![\w-])[Aa]px\.?(?=\s)", lambda m_: "Approximately" if m_.start() == 0 else "approximately", t)
+            t = re.sub(r"(?i)\bwill be singles\b", f"will each have a single {dev}", t)
+            t = re.sub(r"(?i)\b(refresh|upgrade|replace|migrate)\s+(the\s+)?customer\s+from\b", lambda m_: f"{m_.group(1)} the Customer's {dev}es from" if dev == "switch" else f"{m_.group(1)} the Customer's {dev}s from", t)
+            x["text"] = t
+    window = " ".join(str(x.get("text")) for x in c.get("schedule") or [] if isinstance(x, dict) and re.match(r"(?i)\s*work window", str(x.get("text"))))
+    if re.search(r"(?i)after[- ]hours|weekend|saturday|sunday", window):
+        c["assumptions"] = [x for x in c.get("assumptions") or [] if not (
+            isinstance(x, dict) and not x.get("standard")
+            and re.match(r"(?i)\s*all services will be performed (during )?(the )?(after[- ]hours|weekend)", str(x.get("text"))))]
+
+
 def _materials_counted(c: dict[str, Any]) -> None:
     """One line per item, with its count: an uncounted line ("The 32-65 inch
     articulating TV mount.") goes beside the counted one ("Three (3) new 32-65
@@ -8289,9 +8388,9 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         names = " and ".join(str(x.get("text") if isinstance(x, dict) else x).strip(" .").lower() for x in access)
         cr = content.setdefault("customer_responsibilities", [])
         line = f"Provide the {names} at check-in."
-        if not _said(line, cr):
-            cr.append({"text": line, "cites": sum((x.get("cites") or [] for x in access if isinstance(x, dict)), []),
-                       "kind": "fact"})
+        cites_ = sum((x.get("cites") or [] for x in access if isinstance(x, dict)), [])
+        if cites_ and not _said(line, cr):  # no source, no badge duty (010376 pass W)
+            cr.append({"text": line, "cites": cites_, "kind": "fact"})
     # Internal accounting fields (cost center, segment, tax status) are not a
     # description of the work.
     content["overview"] = [x for x in content.get("overview") or []
@@ -8317,9 +8416,18 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # Said once: a scope step the arrival protocol states, an assumption a
     # customer responsibility states (010115 said "packing materials" four times).
     arr = [re.sub(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", "", tx(a), flags=re.I) for a in content.get("arrival_protocol") or []]
-    content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
-                        and not x.get("standard")
-                        and _said(re.sub(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", "", tx(x), flags=re.I), arr, 0.5))]
+    said_arr = lambda x: isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard") \
+        and _said(re.sub(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", "", tx(x), flags=re.I), arr, 0.5)
+    # Remembered as merged into the arrival line: if that line later goes (an
+    # aside's arrival protocol), the step comes back (010376 pass W: the
+    # writer's check-in step was lost).
+    for x in content.get("scope") or []:
+        if said_arr(x):
+            tgt = next((tx(a) for a in content.get("arrival_protocol") or []
+                        if _said(re.sub(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", "", tx(x), flags=re.I), [re.sub(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b", "", tx(a), flags=re.I)], 0.5)), None)
+            if tgt:
+                content.setdefault("_merged", []).append({"target": tgt, "list": "scope", "line": dict(x), "after": "first_group"})
+    content["scope"] = [x for x in content.get("scope") or [] if not said_arr(x)]
     cr = content.setdefault("customer_responsibilities", [])
     asm = []
     for x in content.get("assumptions") or []:
@@ -8328,7 +8436,9 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
                 and re.search(r"(?i)\b(provid|issue|furnish|receive)", t):
             # The site handing over a badge or pass is the customer's duty.
             line = "Provide the visitor badge and parking pass at check-in."
-            if not _said(line, cr, 0.5):
+            # Only from a cited line: an uncited writer guess is no duty
+            # (010376 pass W: an uncited "fact" duty the check never saw).
+            if isinstance(x, dict) and x.get("cites") and not _said(line, cr, 0.5):
                 cr.append({"text": line, "cites": x.get("cites") or [] if isinstance(x, dict) else [], "kind": "fact"})
             continue
         std = isinstance(x, dict) and x.get("standard")
@@ -8444,6 +8554,12 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
             return bool(first) and any(re.findall(r"[a-z]+", tx(s).lower())[:1] == [first]
                                        and len(_toks(t) & _toks(tx(s))) >= 0.75 * max(1, len(_toks(t))) for s in std_scope) \
                 or bool(content.get("provider_tools") and re.search(r"(?i)\btools?\b|screwdriver|wrench", t))
+        # An arrival step is said only by a standard arrival step, never by
+        # words pooled from closing steps (010376 pass W: "Check in with the
+        # onsite contact before beginning work." went beside "Confirm
+        # completion with the onsite contact before leaving site.").
+        if first in ("check", "sign", "arrive", "report", "meet") and _stem(first) not in std_verbs:
+            return False
         if first and _stem(first) in std_verbs and len(_toks(t) & std_words) >= 0.6 * max(1, len(_toks(t))):
             return True  # the standard step with that verb says it
         if content.get("provider_tools") and re.search(r"(?i)\btools?\b|screwdriver|wrench", t):
@@ -8629,7 +8745,9 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
             if x["kind"] == "fact" and not x["cites"]:
                 # A deal claim with nothing behind it reads as method only if
                 # it carries nothing deal-specific.
-                if _unsupported_specifics(x["text"], pool):
+                ot = _object_toks(str(x["text"])) - {"provid", "provider", "customer", "site", "work"}
+                absent = [w for w in ot if w not in pool]
+                if _unsupported_specifics(x["text"], pool) or (len(ot) >= 2 and len(absent) >= 0.5 * len(ot)):
                     dropped["uncited_fact"] += 1
                     unsupported.append({"list": k, **x, "reason": "uncited fact with a number or name no fact gives"})
                     continue
@@ -9557,6 +9675,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "intro_not_duty", _intro_not_duty, c, envelope.get("atoms") or [])
     _traced(c, "customer_says_it_will", _customer_says_it_will, c, envelope.get("atoms") or [])
     _traced(c, "one_customer_name", _one_customer_name, c, envelope.get("atoms") or [])
+    _traced(c, "speakers_facility", _speakers_facility, c)
+    _traced(c, "no_universal_against_fact", _no_universal_against_fact, c, envelope.get("atoms") or [])
+    _traced(c, "unanswered_cites", _unanswered_cites, c, envelope.get("atoms") or [])
+    _traced(c, "source_shorthand", _source_shorthand, c)
     _traced(c, "rules_bind_provider", _rules_bind_provider, c)
     _traced(c, "condition_not_task", _condition_not_task, c)
     _traced(c, "onsite_assumption_suppliers", _onsite_assumption_suppliers, c)

@@ -511,3 +511,58 @@ def test_the_untraced_ledger_records_a_silent_drop():
     c["scope"] = [{"text": "Mount the TV.", "cites": ["t"], "kind": "fact"}]
     m._untraced_ledger(c)
     assert [d["text"] for d in c["rule_decisions"] if d["rule"] == "untraced"] == ["Install the router."]
+
+
+# --- 010376 B- / 010083 B ----------------------------------------------------------
+
+def test_a_third_partys_facility_is_its_own_and_a_bare_service_phrase_goes():
+    c = _content()
+    c["assumptions"] = [{"text": "ThinkTLS provides a dedicated truck to transport the two removed units back to Provider’s facility.", "cites": ["a"], "kind": "fact"}]
+    c["scope"] = [{"text": "Provide smart Hand Support to install.", "cites": ["b"], "kind": "fact"}]
+    m._speakers_facility(c)
+    assert _texts(c, "assumptions") == ["ThinkTLS provides a dedicated truck to transport the two removed units back to ThinkTLS's facility."]
+    assert c["scope"] == []
+
+
+def test_an_uncited_fact_no_source_names_is_rejected_and_counted():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Provide the visitor badge and parking pass at check-in.", "cites": [], "kind": "fact"}]
+    got = m.check(c, {"a": "Replace a 5K UPS (Power input connector type L6-30P)"})
+    assert got["uncited_fact"] == 1 and c["customer_responsibilities"] == []
+
+
+def test_an_arrival_step_is_not_a_repeat_of_pooled_closing_words():
+    c = _content()
+    c["scope"] = [{"text": "Arrival", "kind": "heading", "cites": []},
+                  {"text": "Check in with the onsite contact before beginning work.", "cites": [], "kind": "method"},
+                  {"text": "Closeout", "kind": "heading", "cites": []},
+                  {"text": "Confirm completion with the onsite contact before leaving site.", "cites": [], "standard": True}]
+    m._tidy(c)
+    assert "Check in with the onsite contact before beginning work." in _texts(c, "scope")
+
+
+def test_an_uncited_universal_never_contradicts_a_deal_line():
+    c = _content()
+    c["assumptions"] = [{"text": "Each site will provide adequate rack or mounting space for the replacement switches.", "cites": [], "kind": "method"}]
+    m._no_universal_against_fact(c, [{"id": "a", "text": "Not all stores have a rack but still need rack mount hardware installed."}])
+    assert c["assumptions"] == []
+
+
+def test_a_line_resting_on_an_unanswered_question_goes():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Customer remote resource verbal validation is required.", "cites": ["q"], "kind": "fact"}]
+    m._unanswered_cites(c, [{"id": "q", "text": "What closeout documentation is required? Verbal validation from customer remote resource?"}])
+    assert c["customer_responsibilities"] == []
+
+
+def test_source_shorthand_and_the_after_hours_slot():
+    c = _content()
+    c["job_family"] = "network_switch_refresh"
+    c["overview"] = [{"text": "Provider will refresh Customer from C3650s to C9350s at approximately 92 sites.", "cites": ["a"], "kind": "fact"},
+                     {"text": "Apx 83 sites will be singles, Memphis Main will have apx. 51 switches.", "cites": ["b"], "kind": "fact"}]
+    c["schedule"] = [{"text": "Work Window: after hours, no weekends, no overnights.", "cites": ["c"], "kind": "fact"}]
+    c["assumptions"] = [{"text": "All Services will be performed After Hours during the week.", "cites": ["c"], "kind": "fact"}]
+    m._source_shorthand(c)
+    assert _texts(c, "overview") == ["Provider will refresh the Customer's switches from C3650s to C9350s at approximately 92 sites.",
+                                     "Approximately 83 sites will each have a single switch, Memphis Main will have approximately 51 switches."]
+    assert c["assumptions"] == []
