@@ -1035,6 +1035,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     if family in ("smart_hands_general", "other") and re.search(r"(?i)once (a|per) week|weekly (on-?site|visit)|recurring|"
                                                                 r"staff aug|dedicated (tech|resource)|on-?site support", pool_text):
         content["services"] = svc = ["staff_augmentation", "support"]
+    # A transition or onboarding check is an assessment and implementation
+    # visit, not staff augmentation (010419: "IT Transition & Onboarding").
+    crm_name = str((envelope.get("crm") or {}).get("deal_name") or "")
+    if re.search(r"(?i)\btransition|onboarding|cut-?over\b", pool_text + " " + crm_name.lower()) and not re.search(
+            r"(?i)once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|ongoing", pool_text):
+        content["services"] = svc = ["assessment", "implementation"]
     text_by = {f["id"]: f["text"] for f in fs}
     neg = re.compile(r"(?i)\b(not|no|exclud|outside|except|without)\b")
     for x in list(content.get("assumptions") or []):
@@ -2832,6 +2838,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     # Delta Atlanta" -> "Sodexo Decomm Delta Atlanta"); the writer coined its own.
     dn = str((envelope.get("crm") or {}).get("deal_name") or "").strip()
     dn = re.sub(r"^\s*\d{5,6}\s*[-–:]?\s*", "", dn)
+    dn = dn.split("|")[0].strip()  # 010419: "... | IT Transition & Onboarding Support | Wilmington, NC"
     dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s+", "", dn).strip(" -–")
     dn = re.sub(r"(?i)\s+w/\s*\w+.*$|\s+with\s+[A-Z][a-z]+$", "", dn).strip()  # "161 Site POS install w/ Ahmed"
     dn = re.sub(r"\s+-(\d+)\b", r" \1", dn)  # "NYC -48 monitor mounting"
