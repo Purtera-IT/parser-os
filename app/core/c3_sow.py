@@ -2221,7 +2221,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     arr_keep = []
     for x in content.get("arrival_protocol") or []:
         t = str(x.get("text") if isinstance(x, dict) else x)
-        if isinstance(x, dict) and re.match(r"(?i)\s*(customer|the customer|site staff|onsite staff)\b", t):
+        if isinstance(x, dict) and re.match(r"(?i)\s*(customer|the customer|site staff|onsite staff|have the onsite|provide (any |the )?(security|credentials|access|badges?|escorts?))\b", t):
             if not _said(t, content.setdefault("customer_responsibilities", []), 0.5):
                 content["customer_responsibilities"].append(x)
             continue
@@ -2253,6 +2253,15 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                 if isinstance(x, dict) and x.get("list") == "overview" and not re.match(r"(?i)\s*(provider will )?also\b", str(x.get("text")))][:1]
         if lead:
             content["overview"] = lead + ov
+    # A stated deadline the schedule lacks goes in (010115: "dismantled and
+    # boxed up by end of Business 8/7/26" never reached the schedule).
+    sched_txt = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or [])
+    if not re.search(r"(?i)complet|deadline|by end of|no later than", sched_txt):
+        for f in fs:
+            m = re.search(r"(?i)\b(by (the )?end of (business|day)|completed? by|no later than)\b[^.]{0,30}?(\d{1,2}/\d{1,2}(/\d{2,4})?|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2})", f["text"])
+            if m and f.get("type") in ("deadline", "milestone_phase", "scope_item", "constraint", "", None):
+                content.setdefault("schedule", []).append({"text": f"Requested Completion: {m.group(0).strip()}", "cites": [f["id"]], "kind": "fact"})
+                break
     # An empty schedule takes back the cited schedule line the check set aside
     # (010043: "Week of July 6, 2026" dropped with no reason).
     if not content.get("schedule"):
