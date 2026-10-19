@@ -564,3 +564,42 @@ def test_a_merged_sheet_row_is_its_rows_and_a_sku_term_goes():
     assert [x["text"] for x in c["customer_materials"]] == ["2 x QM65C Samsung 65IN 4K UHD LED Display",
                                                             "2 x TS525TU Chief Thinkstall Large Wall Mount",
                                                             "1 x CS-BAR-T-C-K9 Cisco Room Bar w/Navigator"]
+
+
+# --- 010264 D: our word on disposal, metadata dates, preconfigured devices ------
+
+def test_purteras_itad_answer_outranks_the_agenda_bullet():
+    env = {"atoms": [{"id": "p", "text": "We are not currently approved to perform ITAD services on behalf of CDW.",
+                      "locator": {"sender": "patrick@purtera-it.com"}}]}
+    c = {"overview": [{"text": "Provider will validate time capture after installation, and retire and appropriately dispose of replaced clocks.",
+                       "cites": ["a"], "kind": "fact"}],
+         "scope": [{"text": "Retire and appropriately dispose of replaced clocks per site requirements.", "cites": ["a"], "kind": "fact"}],
+         "out_of_scope": []}
+    m._our_word_on_disposal(c, env)
+    assert c["overview"][0]["text"] == "Provider will validate time capture after installation."
+    assert c["scope"][0]["text"] == "Leave the removed equipment onsite at the Customer-designated location."
+    assert any("ITAD" in x["text"] for x in c["out_of_scope"])
+
+
+def test_preconfigured_devices_leave_configuration_with_the_customer():
+    c = {"assumptions": [{"text": "Replacement clocks requiring preconfiguration are configured and provisioned before shipment.", "cites": [], "kind": "fact"}],
+         "overview": [{"text": "Provider will standardize configuration and provisioning, and coordinate clock provisioning, shipment and installation.",
+                       "cites": [], "kind": "fact"},
+                      {"text": "Provider will replace the clocks.", "cites": [], "kind": "fact"}],
+         "scope": [{"text": "Configure Wi-Fi or network settings after installation.", "cites": ["w"], "kind": "fact"},
+                   {"text": "Mount each clock.", "cites": [], "kind": "fact"}]}
+    m._preconfigured(c)
+    assert [x["text"] for x in c["overview"]] == ["Provider will replace the clocks."]
+    assert [x["text"] for x in c["scope"]] == ["Mount each clock."]
+
+
+def test_an_exclusion_item_about_work_outside_the_install_stays():
+    c = {"scope": [{"text": "Install each clock.", "cites": ["a"], "kind": "fact"}],
+         "out_of_scope": [{"text": "Troubleshooting of UKG software, or other systems outside the physical clock installation.", "cites": [], "kind": "method"}]}
+    m._no_exclusion_negates_task(c)
+    assert c["out_of_scope"][0]["text"].endswith("outside the physical clock installation.")
+
+
+def test_the_time_clock_family_has_standards():
+    std = m.purtera_standards("time_clock_kiosk")
+    assert any("legacy clock onsite" in t for t in std["method_steps"]) and std["deliverable_outcomes"]

@@ -1231,12 +1231,21 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["schedule"] = [x for x in content.get("schedule") or []
                            if not (x.get("cites") and all(c in quoted for c in x["cites"]) and dated.search(str(x.get("text")))
                                    and not re.match(r"(?i)\s*(number of resources|hardware quantity)", str(x.get("text"))))]
+    # A timestamp is a record's metadata (a meeting's end, an email's send
+    # time), never a schedule value (010264 pass U: "Requested Completion
+    # Date: 2026-09-09T15:00:00.001Z", a meeting recap's end).
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not re.search(r"\b\d{4}-\d\d-\d\dT\d\d:\d\d", str(x.get("text") if isinstance(x, dict) else x))]
     sched = content.setdefault("schedule", [])
     if not any("completion date" in str(x.get("text", "")).lower() for x in sched if isinstance(x, dict)):
         for f in fs:
             m = re.search(r"(?i)\b(end|completion|finish)\s*date\s*[:|]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})", f["text"])
+            # The work's own deadline: "... across 1,400 U.S. locations by 1/31/27".
+            m = m or (re.search(r"(?i)\b(replace|install|complete|finish|deploy|roll ?out|migrate)\w*\b(?:(?!\.\s)[^?]){0,200}?\b(by)\s+([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\b",
+                                re.sub(r"\b([A-Z])\.(?=[A-Z]?\.?\s)", r"\1", f["text"]))
+                      if f["section"] in ("scope_of_work", "timeline", "overview") and not f.get("quoted") else None)
             if m:
-                sched.append({"text": f"Requested Completion Date: {m.group(2)}", "cites": [f["id"]], "kind": "fact"})
+                sched.append({"text": f"Requested Completion Date: {m.group(m.lastindex)}", "cites": [f["id"]], "kind": "fact"})
                 break
     _reseller_supplies(content, fs)
     # A customer duty cannot rest only on what PurTera itself wrote (010217:
@@ -1471,6 +1480,10 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         content.setdefault("scope", []).extend(prov)
     if "implementation" in svc and "custom_work" in svc and family not in ("decommission_packing", "relocation_move"):
         content["services"] = svc = [v for v in svc if v != "custom_work"]  # 010373: haul-away read as packing
+    # A replacement job ticks its family's box (010264 pass U: Implementation
+    # on a time-clock swap whose family default is Reinstallation).
+    if svc == ["implementation"] and _FAMILY_SERVICE.get(family) == "reinstallation" and re.search(r"(?i)\breplac", pool_text):
+        content["services"] = svc = ["reinstallation"]
     if "implementation" in svc and "reinstallation" in svc:
         content["services"] = [v for v in svc if v != "implementation"]
     # A library method item that promises a document nobody asked for (as-built
@@ -1590,6 +1603,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                    r"\1 the installed equipment", x["text"])
     _traced(content, "exclusion_not_task", _no_exclusion_negates_task, content)
     _traced(content, "own_documents", _own_documents, content)
+    _traced(content, "our_word_on_disposal", _our_word_on_disposal, content, envelope)
+    _traced(content, "preconfigured", _preconfigured, content)
     _traced(content, "not_job_terms", _not_job_terms, content)
     _traced(content, "summary_consistent", _summary_consistent, content)
     _traced(content, "facts_to_action_heading", _facts_to_action_heading, content)
@@ -1666,6 +1681,9 @@ def _no_exclusion_negates_task(content: dict[str, Any]) -> None:
         shared = {w for w in re.findall(r"[a-z]+", tail.group(1).lower())} - _GENERIC_OBJ - set(_NOMINAL_VERB) if tail else set()
         keep = []
         for it in items:
+            if re.search(r"(?i)\b(outside|beyond|other than|unless|except)\b", it):
+                keep.append(it.strip())
+                continue
             words = re.findall(r"[a-z]+", it.lower())
             # "packing materials" is a supply, not packing work.
             verbs = [_NOMINAL_VERB[w] for i, w in enumerate(words) if w in _NOMINAL_VERB
@@ -2002,6 +2020,74 @@ def _room_from_section(content: dict[str, Any], envelope: dict[str, Any]) -> Non
     content["scope"] = [y for i, y in enumerate(sc) if not (isinstance(y, dict) and y.get("kind") == "heading"
                         and (i + 1 >= len(sc) or (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))
                         and not re.search(r"(?i)clos", str(y.get("text"))))]
+
+
+def _our_word_on_disposal(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """PurTera's own word on disposal outranks a customer's agenda bullet: when
+    PurTera wrote that it is not approved for ITAD or asked to leave removed
+    devices onsite, the SOW never promises disposal; removed gear stays onsite
+    (010264 pass U: "Retire and appropriately dispose of replaced InTouch 9000
+    clocks" against "we are not currently approved to perform ITAD services")."""
+    ours = " ".join(str(a.get("text") or "") for a in envelope.get("atoms") or []
+                    if "purtera" in str((a.get("locator") or {}).get("sender") or "").lower())
+    if not re.search(r"(?i)\bnot\b[^.]{0,30}\b(approved|certified|licensed)\b[^.]{0,40}\b(itad|dispos\w*|recycl\w*)|"
+                     r"\b(left|leave)\s+(the\s+)?(removed\s+)?(devices|equipment|clocks|units|hardware)?\s*onsite\b|"
+                     r"removed devices left onsite", ours):
+        return
+    disp = re.compile(r"(?i)\b(retire\w* and (appropriately )?dispos\w*|dispos\w*|itad|recycl\w*|e-?waste|data destruction)\b")
+    keep_line = "Leave the removed equipment onsite at the Customer-designated location."
+    for k in ("overview", "scope", "deliverables_text"):
+        out = []
+        for x in content.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if not (isinstance(x, dict) and disp.search(t)) or re.search(r"(?i)\b(not|no|excluded|outside)\b", t):
+                out.append(x)
+                continue
+            t2 = _drop_clause(t, disp)
+            if t2 and len(t2.split()) >= 5 and not disp.search(t2):
+                out.append({**x, "text": t2})
+            elif k == "scope" and not _said(keep_line, out, 0.8):
+                out.append({**x, "text": keep_line})
+        content[k] = out
+    for d in content.get("deliverables") or []:
+        if isinstance(d, dict):
+            d["description"] = [t for t in d.get("description") or [] if not disp.search(str(t))]
+    oos = content.setdefault("out_of_scope", [])
+    ex = "Disposal, recycling or ITAD of removed equipment."
+    if not any(disp.search(str(x.get("text") if isinstance(x, dict) else x)) for x in oos):
+        oos.append({"text": ex, "cites": [], "kind": "method"})
+
+
+def _preconfigured(content: dict[str, Any]) -> None:
+    """Devices configured and provisioned before they ship leave configuration,
+    provisioning and Wi-Fi setup with the customer: no Provider task or
+    summary clause claims them (010264 pass U: "Provider will standardize
+    configuration and provisioning ..." and "Configure Wi-Fi or network
+    settings after installation" beside "Replacement clocks ... are
+    configured and provisioned before shipment")."""
+    terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "customer_responsibilities")
+                     for x in content.get(k) or [])
+    if not re.search(r"(?i)(pre-?configur\w*|configured|provisioned)[^.]{0,40}\bbefore (shipment|shipping|ship|arrival|delivery|deployment)|"
+                     r"arrive[^.]{0,30}pre-?configured", terms):
+        return
+    pat = re.compile(r"(?i)\b(configur\w*|provision\w*|wi-?fi|network settings|clock setup|device setup)\b")
+    content["scope"] = [x for x in content.get("scope") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"
+        and re.match(r"(?i)\s*(configure|provision|set up wi-?fi|program)\b", str(x.get("text"))))]
+    for x in content.get("overview") or []:
+        if not isinstance(x, dict):
+            continue
+        t = str(x.get("text"))
+        mm = re.match(r"(?i)^(\s*provider will\s+)(.+?)\.?$", t)
+        if not (mm and pat.search(t)):
+            continue
+        parts = [p_ for p_ in re.split(r",\s*(?:and\s+)?|\s+and\s+", mm.group(2)) if p_.strip()]
+        left = [p_ for p_ in parts if not pat.search(p_)]
+        # The part that carried the verb went: the rest is no sentence.
+        verb_ok = bool(left) and (left[0] is parts[0] or re.match(
+            r"(?i)(install|replace|remove|validate|verify|mount|connect|coordinate|perform|provide|support|test|deploy)\b", left[0].strip()))
+        x["text"] = (mm.group(1) + _join(left) + ".") if verb_ok and len(" ".join(left).split()) >= 3 else ""
+    content["overview"] = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and not str(x.get("text")).strip())]
 
 
 def _own_documents(content: dict[str, Any]) -> None:
@@ -6456,7 +6542,16 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         # A many-site job states its site count in the summary (010279: no
         # "113" anywhere in the SOW, which read as a six-store job).
         ov = c.setdefault("overview", [])
-        if not any(re.search(r"\b%d\b" % n_sites, str(x.get("text") if isinstance(x, dict) else x)) for x in ov):
+        # Not beside a summary that already counts the locations otherwise,
+        # nor pointing at a table the SOW does not have (010264 pass U: "1,400
+        # U.S. locations" and "797 Customer locations, listed in the location
+        # table").
+        counted_elsewhere = any(re.search(r"(?i)\b\d[\d,]*\)?\s+(?:[\w.]+\s+){0,2}(locations|sites|stores)\b",
+                                          _digits(str(x.get("text") if isinstance(x, dict) else x))) for x in ov)
+        has_table = bool(table) or len(c.get("sites") or []) >= n_sites * 0.5 or bool(
+            count_table(envelope, " ".join(str(x.get("text")) for x in c.get("scope") or [] if isinstance(x, dict))))
+        if not counted_elsewhere and has_table and \
+                not any(re.search(r"\b%d\b" % n_sites, str(x.get("text") if isinstance(x, dict) else x)) for x in ov):
             ov.insert(min(1, len(ov)), {"text": f"The work covers {_words(n_sites)} ({n_sites}) Customer locations, listed in the "
                                                 f"location table.", "cites": [], "kind": "fact"})
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
