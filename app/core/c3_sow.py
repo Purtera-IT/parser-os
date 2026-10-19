@@ -503,6 +503,48 @@ _DIRECTIVE = re.compile(r"(?i)\b(should|will need to|needs? to|must|has to|have 
                         r"\b(stay|stays|remain|remains) (in place|as is|mounted)\b|\bto (stay|remain) in place\b")
 
 
+#: A program-model statement: who opts in, who self-installs, quantities to
+#: be determined, billing on actuals, site outreach, several devices a site.
+_PROGRAM = {
+    "opt_in": re.compile(r"(?i)\bopt[- ]?in\b|\bopt[- ]?out\b"),
+    "self_install": re.compile(r"(?i)\bself[- ]?install"),
+    "tbd": re.compile(r"(?i)\bquantit(?:y|ies)\b[^.]{0,25}\bTBD\b|\bTBD\b[^.]{0,15}\bquantit|\bunits? as tbd\b|\bquantity tbd\b"),
+    "actuals": re.compile(r"(?i)\b(billing|billed|invoic\w*)\b[^.]{0,50}\b(actual|installed|deployed)\b"),
+    "outreach": re.compile(r"(?i)\boutreach\b"),
+    "multi": re.compile(r"(?i)\bduplicate addresses\b|\bmultiple (?:devices|clocks|units|printers|terminals) at\b|\bmore than one (?:device|clock|unit)\b"),
+}
+
+
+def _program_atoms(envelope: dict[str, Any], per_kind: int = 3) -> list[dict[str, str]]:
+    """The program-model lines of PurTera's own notes, meeting recaps and
+    calls, at most sixteen, whatever the keep head's confidence."""
+    docs = {str(d.get("artifact_id") or d.get("id") or ""): str(d.get("filename") or "") for d in envelope.get("documents") or []}
+    out, seen = [], set()
+    for a in envelope.get("atoms") or []:
+        if not isinstance(a, dict):
+            continue
+        st = a.get("structured") or {}
+        name = docs.get(str(a.get("artifact_id") or ""), "")
+        own = st.get("source") == "hubspot_note" or bool(re.search(r"-hs-note-|-hs-meeting-|fireflies", name))
+        t = re.sub(r"\s+", " ", str(a.get("text") or "")).strip()
+        lab = str((st.get("c3_label") or {}).get("type") or a.get("atom_type") or "")
+        # A quoted copy counts (the forwarded agenda's "Leverage
+        # self-installation where feasible ..."); the text is read once.
+        if not own or lab in _CHATTER_TYPES or not 25 <= len(t) <= 400 or t.endswith("?") \
+                or not any(rx.search(t) for rx in _PROGRAM.values()):
+            continue
+        key = re.sub(r"\W+", " ", t.lower())[:80]
+        if key in seen:
+            continue
+        seen.add(key)
+        kind = next(k for k, rx in _PROGRAM.items() if rx.search(t))
+        out.append({"id": str(a.get("id")), "text": t, "kind": kind})
+    # Up to three of each kind, so one much-discussed topic (outreach) does
+    # not crowd out the rest.
+    picked = [x for k in _PROGRAM for x in [y for y in out if y["kind"] == k][:per_kind]]
+    return picked
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -582,6 +624,18 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         typed.append({"id": a["id"], "text": txt})
         got.add(a["id"])
+    # The program model PurTera's own notes and calls record (opt-in,
+    # self-install, quantities TBD, billing on actuals, outreach, several
+    # devices per site) is a fact for the program assumptions however low the
+    # keep head's confidence (010264 pass V: all of it _keep 0.2-0.5 in notes
+    # 116624101737 / 116628536395 and transcript 01M1KXT9, cut by the caps).
+    prog = _program_atoms(envelope)
+    kinds = {k for a in prog for k, rx in _PROGRAM.items() if rx.search(a["text"])}
+    for a in (prog if len(kinds) >= 2 and len(prog) >= 2 else []):  # as _program_model: a model, not a passing mention
+        if a["id"] not in seen:
+            seen.add(a["id"])
+            out.append({"id": a["id"], "section": "assumptions", "when": "", "under": "", "text": a["text"],
+                        "supplier": None, "type": "program_model"})
     for sec, items in (("also_kept", brief.get("also_mentioned") or []), ("figure", brief.get("figures") or []),
                        ("unsure", unsure), ("answered_question", answered[:40]), ("typed_only", typed)):
         for x in items:
@@ -595,7 +649,10 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # "New Unit Opening" (small_talk, confidence 0) reached the summary, and
     # "Photo requirements mentioned: None mentioned" became an assumption).
     rejected = _rejected_atoms(envelope)
-    out = [f for f in out if f["id"] not in rejected and not _ABSENCE.search(f["text"])]
+    # Nor a pivot's tally row ("Detail: Test Clock | Count: 1", 010264 pass V
+    # wrote "Install 1 test clock").
+    out = [f for f in out if f["id"] not in rejected and not _ABSENCE.search(f["text"])
+           and not re.match(r"(?i)^\s*detail\s*:\s*[^|]{1,60}\|\s*count\s*:\s*\d+\s*$", f["text"])]
     # The brief keeps a short copy of each line; the writer reads the whole one.
     full = {a.get("id"): str(a.get("text") or "") for a in envelope.get("atoms") or []}
     # A line a vision pass read off a photo or plan describes a picture; it is
@@ -5596,6 +5653,160 @@ _VERB_RUN = re.compile(r"(?i)^\s*([a-z]+(?:(?:,\s*|\s+and\s+|\s+or\s+)[a-z]+){0,
                        r"(?:[a-z]+\s+)?\(?\d|(?:the|all|each|any)\b)")
 
 
+def _program_model(c: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """A rollout whose locations opt in writes its program model from the
+    facts that record it (010264 pass V: opt-in, self-install, quantities
+    TBD, billing on actuals, the optional site outreach and several clocks at
+    one address were kept facts and none reached the SOW, which instead said
+    "Install one clock at each address/location"). Each line cites the
+    facts that state it; a kind no fact states is not written."""
+    found = _program_atoms(envelope, 99)
+    if not found:
+        return
+    by: dict[str, list[dict[str, str]]] = {}
+    for a in found:
+        for k, rx in _PROGRAM.items():  # one fact can state several kinds
+            if rx.search(a["text"]):
+                by.setdefault(k, []).append(a)
+    if len(by) < 2 or len(found) < 2:
+        return  # one passing mention is not a program model
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    cite = lambda k, rx=None: [a["id"] for a in by.get(k, []) if rx is None or re.search(rx, a["text"], re.I)][:2]
+    noun_m = None
+    for a in by.get("multi", []) + by.get("actuals", []) + by.get("tbd", []):
+        noun_m = re.search(r"(?i)\b\d[\d,]*\s+(?!(?:duplicate|addresses|sites|locations|stores|calls|units)\b)([a-z]+?s)\b", a["text"]) or \
+            re.search(r"(?i)\b(?:deployed|installed)\s+([a-z]+?s)\b", a["text"])
+        if noun_m:
+            break
+    dev = noun_m.group(1).lower() if noun_m else "devices"
+    one = dev[:-1]
+    asm = c.setdefault("assumptions", [])
+    cr = c.setdefault("customer_responsibilities", [])
+    def add(lst: list[Any], text: str, cites: list[str]) -> None:
+        if cites and not _said(text, lst, 0.7):
+            lst.append({"text": text, "cites": cites, "kind": "fact"})
+    if "opt_in" in by:
+        add(asm, f"Customer is not committing to every location; each location opts in to Provider installation, and the final number of "
+                 f"participating locations is to be determined.", cite("opt_in"))
+    if "self_install" in by:
+        add(asm, "Some locations may self-install.", cite("self_install"))
+        add(cr, f"Notify Provider of locations that opt out, self-install or change their {one} quantity.", cite("self_install") + cite("opt_in")[:1])
+    if "tbd" in by:
+        add(asm, f"The final quantities of locations and {dev} are to be determined.", cite("tbd"))
+    if "actuals" in by:
+        add(asm, f"Provider will invoice for the actual locations and {dev} completed.", cite("actuals"))
+    sc = c.setdefault("scope", [])
+    if "multi" in by:
+        add(asm, f"Some locations have more than one {one}.", cite("multi"))
+        # "One clock at each address" is what the facts rule out.
+        c["scope"] = sc = [x for x in sc if not (isinstance(x, dict) and not x.get("standard")
+                                                 and re.search(r"(?i)\bone (?:\w+ )?%s\b[^.]{0,20}\b(?:at|per) (?:each |every )?(?:address|location|site)" % re.escape(one[:5]), tx(x)))]
+        if not any(re.search(r"(?i)same (visit|mobili[sz]ation)", tx(x)) for x in sc):
+            close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading" and re.search(r"(?i)clos", tx(y))), len(sc))
+            sc[close:close] = [{"text": f"Multi {one.title()} Locations", "cites": [], "kind": "heading"},
+                               {"text": f"At a location with more than one {one}, install every {one} at the location during the same visit.",
+                                "cites": cite("multi"), "kind": "fact"}]
+    if len(by.get("outreach", [])) >= 2 and not any(re.search(r"(?i)outreach", tx(x)) for x in sc if isinstance(x, dict)):
+        limit = next((m2 for a in by["outreach"] for m2 in [re.search(r"(?i)\b(\d+\s*-\s*\d+|\d+)\s+calls? per (site|location|store)", a["text"])] if m2), None)
+        lines = [{"text": "Optional Site Outreach", "cites": [], "kind": "heading"},
+                 {"text": "When purchased, perform best-effort outreach to each location by email and limited calls to determine whether it opts in, "
+                          "opts out or self-installs, or does not respond.", "cites": cite("outreach", r"best-effort|email|calls") or cite("outreach"), "kind": "fact"}]
+        if limit:
+            lines.append({"text": f"Limit outreach to {limit.group(1).replace(' ', '')} calls per {limit.group(2).lower()} plus email.",
+                          "cites": [a["id"] for a in by["outreach"] if limit.group(0) in a["text"]][:1], "kind": "fact"})
+        if "opt_in" in by:
+            lines.append({"text": "Record each location as opted in, opted out (self-install) or no response on the central location list.",
+                          "cites": cite("opt_in", r"opt[- ]?out|answer") or cite("opt_in"), "kind": "fact"})
+        first = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                      and re.search(r"(?i)install|mount|replace|site readiness|onsite", tx(y))), None)
+        at = first if first is not None else len(sc)
+        sc[at:at] = lines
+
+
+_PRICING_TALK = re.compile(r"(?i)\$\s?\d|\bpric(?:e|ing) (?:model|discussed|was discussed|would be|options?)\b|\b(?:base|unit) price\b|"
+                           r"\btiered discounts?\b|\bper[- ](?:unit|clock|site|device) (?:price|pricing|rate)\b")
+
+
+_SHIPS_WITH = re.compile(r"(?i)\b(?:an?\s+|the\s+)?([a-z][a-z -]{2,40}?)\s+(?:will be|is|are|comes?|ships?)\s+(?:provided\s+|included\s+|shipped\s+|supplied\s+|packaged\s+)?"
+                         r"(?:with|in the box with|inside)\s+(?:your|the|each)\s+([a-z][a-z -]{1,30})")
+
+
+def _ships_with_gear(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A part that ships with the customer's equipment is the customer's,
+    never a Provider material (010264 pass V: "A power supply unit for each
+    clock ..." under Technician Provided Materials, where the vendor guide
+    says "a power supply will be provided with your time clock")."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    said = []
+    for a in atoms:
+        for m_ in _SHIPS_WITH.finditer(str(a.get("text") or "") if isinstance(a, dict) else ""):
+            # The thing is the noun phrase right before the verb: "... is to be
+            # used a power supply will be provided" -> "power supply".
+            np_ = re.split(r"(?i)\b(?:an?|the|is|are|be|to|used|if|when)\b", m_.group(1))[-1]
+            thing = _object_toks(" ".join(np_.split()[-3:]))
+            if thing:
+                said.append((thing, str(a.get("id"))))
+    if not said:
+        return
+    for x in list(c.get("provider_materials") or []):
+        if not isinstance(x, dict) or x.get("standard"):
+            continue
+        ot = _object_toks(tx(x))
+        hit = [aid for thing, aid in said if thing <= ot]
+        if hit:
+            c["provider_materials"].remove(x)
+            x["cites"] = list(dict.fromkeys(list(x.get("cites") or []) + hit[:1]))
+            if not _said(tx(x), c.get("customer_materials") or [], 0.7):
+                c.setdefault("customer_materials", []).append(x)
+
+
+_BOUNDS = re.compile(r"(?i)\b(before shipment|pre-?ship\w*|prior to (?:shipment|installation|arrival)|pre-?configured|configured and initialized|"
+                     r"not included|excluded|only|limited to)\b")
+
+
+def _recite_exclusions(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """An exclusion the check dropped for its cites comes back citing the
+    lines that set the boundary it states (010264 pass V: "Onsite device
+    configuration or provisioning beyond pre-shipment setup ..." cited a
+    transcript line, while the program's own "Standardize configuration and
+    provisioning to ensure each clock is ... ready for production use before
+    shipment" states it; "Extensive raceway installation, long cable routing
+    ..." beside "Work wire mold / basic cable cleanup into the install
+    pricing"). A boundary line shares two of its words with the exclusion
+    and limits them (before shipment, only, not included), or calls the
+    shared thing basic or cosmetic."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    oos = c.setdefault("out_of_scope", [])
+    keep_dropped = []
+    for d in c.get("dropped") or []:
+        if not (isinstance(d, dict) and d.get("list") == "out_of_scope" and str(d.get("reason") or "").startswith("check")):
+            keep_dropped.append(d)
+            continue
+        k = _object_toks(tx(d))
+        hits = []
+        for a in atoms:
+            t = str(a.get("text") or "") if isinstance(a, dict) else ""
+            lab = str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "")
+            if not t or len(t) > 400 or t.rstrip().endswith("?") or lab in _CHATTER_TYPES or lab in ("open_question", "answered_question"):
+                continue
+            sh = k & _object_toks(t)
+            if (len(sh) >= 2 and _BOUNDS.search(t)) or any(re.search(r"(?i)\b(basic|cosmetic)\s+%s" % re.escape(w), t) for w in sh):
+                hits.append(str(a.get("id")))
+        if hits and not _said(tx(d), oos, 0.7):
+            oos.append({"text": tx(d), "cites": hits[:2], "kind": "fact"})
+        else:
+            keep_dropped.append(d)
+    c["dropped"] = keep_dropped
+
+
+def _pricing_not_assumption(c: dict[str, Any]) -> None:
+    """Pricing talk is never an assumption: the fee table carries price
+    (010264 pass V: "Pricing model discussed: about $350 for the first
+    clock ... $200 to $300 variations")."""
+    c["assumptions"] = [x for x in c.get("assumptions") or [] if not (isinstance(x, dict) and not x.get("standard")
+                        and _PRICING_TALK.search(str(x.get("text"))))]
+
+
 def _claimed_verbs(c: dict[str, Any]) -> None:
     """A Provider task never does what the customer says it does: a cited
     step whose lead verb a customer duty starts with ("Unrack all applicable
@@ -7933,6 +8144,17 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                                                       else m.group(0)[:m.start(2) - m.start(0)]) + m.group(2),
                                            re.sub(r"\b(\d{2,4})([\s-]+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t))) for t in d.get("description") or []]
         _no_site_multiples(c, n_sites, atom_text)
+        # The site count is the inventory sheet's when a sheet gives it,
+        # never an agenda's round figure (010264 pass V: "across approximately
+        # 1,400 U.S. locations" beside the sheet's 797 addresses).
+        if from_sheet and from_sheet == n_sites:
+            span = re.compile(r"(?i)\b(across|at|throughout|in|for|to|over)\s+(?:approximately\s+|about\s+|up to\s+|~\s*)?"
+                              r"(\d{1,3}(?:,\d{3})+|\d{2,5})(\s+(?:U\.S\.\s+|US\s+|Customer\s+|customer\s+)?(?:locations|sites|stores))\b")
+            for k in ("overview", "assumptions"):
+                for x in c.get(k) or []:
+                    if isinstance(x, dict):
+                        x["text"] = span.sub(lambda m3: m3.group(0) if int(m3.group(2).replace(",", "")) == n_sites else
+                                             f"{m3.group(1)} up to {_words(n_sites)} ({n_sites}){m3.group(3)}", str(x.get("text")))
         # A many-site job states its site count in the summary (010279: no
         # "113" anywhere in the SOW, which read as a six-store job).
         ov = c.setdefault("overview", [])
@@ -8198,6 +8420,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     str(s_.get("street") or s_.get("address") or "").split(",")[0].lower() in str(x.get("text")).lower()
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
+    _traced(c, "program_model", _program_model, c, envelope)
+    _traced(c, "pricing_not_assumption", _pricing_not_assumption, c)
+    _traced(c, "recite_exclusions", _recite_exclusions, c, envelope.get("atoms") or [])
+    _traced(c, "ships_with_gear", _ships_with_gear, c, envelope.get("atoms") or [])
     _traced(c, "items_not_tasks", _items_not_tasks, c)
     _traced(c, "claimed_verbs", _claimed_verbs, c)
     _traced(c, "moved_equipment", _moved_equipment, c)

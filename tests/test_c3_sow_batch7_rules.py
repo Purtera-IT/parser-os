@@ -315,3 +315,86 @@ def test_the_transport_step_names_the_requested_mode():
     assert step["text"] == ("Coordinate transportation of the packed equipment by Shared Truck/LTL Shipment (5-7 days), "
                             "including pickup at the origin location.")
     assert step["cites"] == ["t1"]
+
+
+# --- 010264 C-: the program model, the sheet's count, prices, kit parts -------
+
+def _program_env():
+    docs = [{"artifact_id": "n1", "filename": "010264-hs-note-116624101737-pricing.txt"},
+            {"artifact_id": "e1", "filename": "010264-hs-email-1.eml"}]
+    texts = ["Pricing would be displayed as unit rates with total quantities TBD, reflecting client opt-in decisions",
+             "Chase analyzed the location list and identified about 600 duplicate addresses out of 1500 clocks , indicating multiple devices at some sites",
+             "Billing to be done monthly in arrears based on actual deployed clocks per location ( 09:24 )",
+             "The team planned to define reasonable outreach limits, such as 2-3 calls per site, to control scope and avoid endless follow-ups",
+             "Quinton preferred an email campaign combined with limited calls to reduce effort and cost, proposing a best-effort outreach model"]
+    atoms = [{"id": f"p{i}", "artifact_id": "n1", "text": t, "structured": {"source": "hubspot_note", "c3_label": {"type": "_keep", "p": 0.3}}}
+             for i, t in enumerate(texts)]
+    atoms.append({"id": "e9", "artifact_id": "e1", "text": "We can opt in to anything you like, opt-in is easy.", "structured": {}})
+    return {"documents": docs, "atoms": atoms}
+
+
+def test_program_model_lines_come_only_from_our_own_notes():
+    got = m._program_atoms(_program_env())
+    assert [a["id"] for a in got] == ["p0", "p2", "p3", "p4", "p1"] or {a["id"] for a in got} == {"p0", "p1", "p2", "p3", "p4"}
+    assert "e9" not in {a["id"] for a in got}
+
+
+def test_the_program_model_is_written_from_its_facts():
+    c = _content()
+    c["scope"] = [{"text": "Installation", "kind": "heading", "cites": []},
+                  {"text": "Install one clock at each address/location.", "cites": ["x"]},
+                  {"text": "Closeout", "kind": "heading", "cites": []}]
+    m._program_model(c, _program_env())
+    sc, asm = _texts(c, "scope"), _texts(c, "assumptions")
+    assert "Install one clock at each address/location." not in sc
+    assert sc[:4] == ["Optional Site Outreach",
+                      "When purchased, perform best-effort outreach to each location by email and limited calls to determine whether it opts in, "
+                      "opts out or self-installs, or does not respond.",
+                      "Limit outreach to 2-3 calls per site plus email.",
+                      "Record each location as opted in, opted out (self-install) or no response on the central location list."]
+    assert "Multi Clock Locations" in sc and sc.index("Multi Clock Locations") < sc.index("Closeout")
+    assert "Some locations have more than one clock." in asm
+    assert "Provider will invoice for the actual locations and clocks completed." in asm
+    assert "The final quantities of locations and clocks are to be determined." in asm
+    assert all(x["cites"] for x in c["assumptions"] + [y for y in c["scope"] if y.get("kind") != "heading"])
+
+
+def test_one_passing_mention_is_no_program_model():
+    env = _program_env()
+    env["atoms"] = env["atoms"][:1]
+    c = _content()
+    m._program_model(c, env)
+    assert c["assumptions"] == [] and c["scope"] == []
+
+
+def test_pricing_talk_is_never_an_assumption():
+    c = _content()
+    c["assumptions"] = [{"text": "Pricing model discussed: about $350 for the first clock at a site.", "cites": ["f1"]},
+                        {"text": "The additional clock rate applies only when installed in the same visit.", "cites": [], "standard": True},
+                        {"text": "AC power is available at each site.", "cites": ["f2"]}]
+    m._pricing_not_assumption(c)
+    assert _texts(c, "assumptions") == ["The additional clock rate applies only when installed in the same visit.", "AC power is available at each site."]
+
+
+def test_a_part_that_ships_with_the_customers_gear_is_theirs():
+    c = _content()
+    c["provider_materials"] = [{"text": "A power supply unit for each clock installed on standard AC power.", "cites": []}]
+    m._ships_with_gear(c, [{"id": "a1", "text": "If Standard ac power is to be used a power supply will be provided with your time clock."}])
+    assert c["provider_materials"] == [] and c["customer_materials"][0]["cites"] == ["a1"]
+
+
+def test_a_dropped_exclusion_comes_back_citing_the_boundary_it_states():
+    c = _content()
+    c["dropped"] = [{"list": "out_of_scope", "text": "Onsite device configuration or provisioning beyond pre-shipment setup.", "cites": ["t1"],
+                     "reason": "check: the cited lines do not state it"},
+                    {"list": "out_of_scope", "text": "Painting of walls.", "cites": ["t2"], "reason": "check: the cited lines do not state it"}]
+    atoms = [{"id": "a1", "text": "Standardize configuration and provisioning to ensure each clock is configured and ready before shipment."}]
+    m._recite_exclusions(c, atoms)
+    assert c["out_of_scope"] == [{"text": "Onsite device configuration or provisioning beyond pre-shipment setup.", "cites": ["a1"], "kind": "fact"}]
+    assert [d["text"] for d in c["dropped"]] == ["Painting of walls."]
+
+
+def test_a_pivot_tally_row_is_never_a_fact():
+    env = {"c3_brief": {"sections": {"scope_of_work": [{"id": "a", "text": "Detail: Test Clock | Count: 1"},
+                                                       {"id": "b", "text": "Install the replacement clocks at each site."}]}}, "atoms": []}
+    assert [f["id"] for f in m.facts(env)] == ["b"]
