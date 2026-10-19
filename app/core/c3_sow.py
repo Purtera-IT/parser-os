@@ -3173,7 +3173,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         # Two standard duties are two duties ("an active primary internet
         # connection" beside "an active cellular service ... for the backup
         # internet connection", 010198): only a writer line repeats one.
-        if _said(t, [y for y in keep_cr if not (std_x and isinstance(y, dict) and y.get("standard"))], 0.7):
+        # A standard duty goes only for a writer line that says it back
+        # (010279 pass U: "Provide all hardware, cables, adapters, accessories,
+        # labels and asset tags" went for a hardware line without the labels).
+        if any(_said(t, [y], 0.7) and (not std_x or _said(str(y.get("text") if isinstance(y, dict) else y), [t], 0.7))
+               for y in keep_cr if not (std_x and isinstance(y, dict) and y.get("standard"))):
             continue
         keep_cr.append(x)
     content["customer_responsibilities"] = keep_cr
@@ -3372,8 +3376,27 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if any(re.search(r"(?i)\blabor[- ]only\b|\blabor only\b|installation labor only|onsite labor only|field labor only", f["text"]) for f in fs):
         logi = re.compile(r"(?i)accept (the )?deliver|receiv(e|ing) (the )?(equipment|hardware|shipments?)|\bwarehous|\bstor(e|ing|age)\b[^.]{0,25}\b(equipment|hardware)|accept,? (and )?verify deliver|"
                           r"asset[- ]tag|transport|\bkitting\b|\bstaging (area|facility|center|warehouse)|proof of delivery|inventory recap")
+        # A step the source files under its storage or staging section is that
+        # logistics too (010279 pass U: "Record all MAC addresses for terminals
+        # by store" and "Provide all terminal MAC addresses ... the prior week",
+        # RFP 2.1 "Storage / Staging of Equipment"). The customer's own
+        # standard duties (labels and asset tags, retired-gear logistics) are
+        # the customer's and stay.
+        staged = {f["id"] for f in fs if re.search(r"(?i)\b(storage|staging|warehous\w*|receiving|kitting)\b", str(f.get("under") or ""))}
+        content["_noise_atoms"] = list(set(content.get("_noise_atoms") or []) | staged)  # the guard leaves them out
         for k in ("scope", "customer_responsibilities", "deliverables_text"):
-            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and logi.search(str(x.get("text"))))]
+            content[k] = [x for x in content.get(k) or [] if not (
+                isinstance(x, dict) and x.get("kind") != "heading" and not (k == "customer_responsibilities" and x.get("standard"))
+                and (logi.search(str(x.get("text"))) or (k == "scope" and not x.get("standard") and x.get("cites")
+                                                        and all(c in staged for c in x["cites"]))))]
+        # A logistics task filed as a customer material is the material it
+        # handles ("Apply Asset tag for each POS terminal" -> "Asset tags for
+        # each POS terminal.").
+        for x in content.get("customer_materials") or []:
+            if isinstance(x, dict) and re.match(r"(?i)\s*(apply|affix|attach|place|put)\s+", str(x.get("text"))):
+                t = re.sub(r"(?i)^\s*(apply|affix|attach|place|put)\s+(an?\s+|the\s+)?", "", str(x["text"])).strip().rstrip(".")
+                t = re.sub(r"(?i)^(\w+ \w*?)(tag|label|sticker)\b(?!s)", r"\1\2s", t)
+                x["text"] = t[:1].upper() + t[1:] + "."
         # A summary listing the RFP's verbs keeps the labor ones (010279:
         # "stage, tag, transport, de-install, install, label, and test the
         # equipment using the required checklists" went whole, and with it the

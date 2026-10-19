@@ -283,3 +283,21 @@ def test_empty_form_fields_and_blank_field_footnotes_are_not_terms():
                          {"text": "Work is performed Monday through Friday.", "cites": ["d"], "kind": "fact"}]}
     m._form_chrome(c, fs)
     assert [x["cites"] for x in c["assumptions"]] == [["d"]]
+
+
+# --- 010279 B: labor only gates the RFP's staging section ----------------------
+
+def test_labor_only_gates_the_staging_section_and_keeps_the_customers_standard_duties():
+    fs = [_fact("l", "We are pricing physical installation labor only"),
+          _fact("m", "Supply all terminal MAC addresses to Harris Teeter the prior week", under="2.1\tStorage / Staging of Equipment"),
+          _fact("t", "Apply Asset tag for each POS terminal", under="2.1\tStorage / Staging of Equipment")]
+    c = {"overview": [], "scope": [{"text": "Staging", "cites": [], "kind": "heading"},
+                                   {"text": "Provide all terminal MAC addresses to Harris Teeter the prior week.", "cites": ["m"], "kind": "fact"},
+                                   {"text": "Install", "cites": [], "kind": "heading"},
+                                   {"text": "Install the terminals.", "cites": ["l"], "kind": "fact"}],
+         "customer_responsibilities": [{"text": "Provide all hardware, cables, adapters, accessories, labels and asset tags required for installation.",
+                                        "cites": [], "kind": "method", "standard": True}],
+         "customer_materials": [{"text": "Apply Asset tag for each POS terminal", "cites": ["t"], "kind": "fact"}]}
+    m._grounding(c, fs)
+    assert not any("MAC" in x["text"] for x in c["scope"])
+    assert c["customer_responsibilities"] and c["customer_materials"][0]["text"] == "Asset tags for each POS terminal."
