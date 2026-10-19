@@ -783,6 +783,10 @@ def _decisions(rule: str, before: dict, after: dict) -> list[dict[str, Any]]:
 #: "standards" and its passthrough routing to "tidy"; 010198 its register
 #: install and 010279 its RFP task line to "grounding").
 GUARDED_RULES = frozenset({"standards", "tidy", "grounding"})
+#: A possible follow-up visit (010419: "some follow-up needed the next day"
+#: on a one-day price; "A second day may be needed").
+_FOLLOW_UP = re.compile(r"(?i)follow-?up (visit|day)|follow[- ]?up\b.{0,30}\bnext day|next[- ]day (visit|follow)|return (visit|trip)|"
+                        r"second (visit|day)\b|come back|additional (visit|day) (may|might|could) be")
 #: Lines that are noise whatever they cite: a greeting, PurTera's pitch, a
 #: leasing brochure, a picture, presales paperwork, lease terms, a hedged
 #: follow-up or a priced maybe. A rule's drop of such a line stands.
@@ -796,7 +800,7 @@ _NOISE_TEXT = re.compile(
     r"^\s*(the )?[\w ()#-]{0,40}\b(contains|features|is equipped with|is furnished with|is shown with)\b")
 
 
-def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before: dict[str, list]) -> list[dict[str, Any]]:
+def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before: dict[str, list]) -> list[dict[str, Any]]:  # noqa: C901
     """Put back a cited line a rule removed when one of its facts is cited by
     no surviving line, unless the line is noise (see _NOISE_TEXT, and the
     atoms in content["_noise_atoms"]: captions, small talk, brochures, open
@@ -813,7 +817,8 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
         alive = {c for x in live() for c in x.get("cites") or []}
         orphan = [c for c in cites if c not in alive]
         extra = str(content.get("_noise_re") or "")
-        if not orphan or any(c in noise for c in cites) or _NOISE_TEXT.search(text) or (extra and re.search(extra, text, re.I)):
+        if not orphan or any(c in noise for c in cites) or _NOISE_TEXT.search(text) or _FOLLOW_UP.search(text) \
+                or (extra and re.search(extra, text, re.I)):
             continue
         if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
             continue  # gear the job does not touch
@@ -1298,8 +1303,15 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if bg:
             text = bg["text"].split("|")[-1].strip().rstrip(".") + "."
             content["overview"] = [{"text": text[:1].upper() + text[1:], "cites": [bg["id"]], "kind": "fact"}]
+    _fix_dates(content, fs, cut)
+    _agreed_arrival(content, envelope)
+    _weekend(content, fs)
+    _schedule_from_facts(content, fs, envelope)
+    _roles_and_hours(content, fs)
     _traced(content, "polarity", _scope_polarity, content)
     _overview_covers_scope(content, fs)
+    _deliverables_hygiene(content)
+    _reconcile_dropped(content)
     content.update(library_counts)
     content["facts_given"] = len(fs)
     # Everything the rules changed after the writer, rule by rule where traced,
@@ -2111,7 +2123,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             if not _said(x["text"], sc, 0.6):
                 sc.insert(close, x)
             continue
-        if _said(t, keep_cr, 0.7):
+        std_x = isinstance(x, dict) and x.get("standard")
+        # Two standard duties are two duties ("an active primary internet
+        # connection" beside "an active cellular service ... for the backup
+        # internet connection", 010198): only a writer line repeats one.
+        if _said(t, [y for y in keep_cr if not (std_x and isinstance(y, dict) and y.get("standard"))], 0.7):
             continue
         keep_cr.append(x)
     content["customer_responsibilities"] = keep_cr
@@ -2479,34 +2495,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if not content.get("provider_materials"):
         content["assumptions"] = [x for x in content.get("assumptions") or []
                                   if not re.search(r"(?i)provider[- ]supplied", str(x.get("text") if isinstance(x, dict) else x))]
-    # A weekend date is weekend work, not "regular business hours" (010198 Sunday).
-    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or [])
-    # The calendar date says the weekday when the line does not (010198:
-    # "August 16, 2026" is a Sunday).
-    from datetime import date as _date
-    for mo, dy, yr_ in re.findall(r"(?i)\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(20\d\d)", sched):
-        try:
-            wd = _date(int(yr_), ["january", "february", "march", "april", "may", "june", "july", "august", "september",
-                                  "october", "november", "december"].index(mo.lower()) + 1, int(dy)).weekday()
-        except ValueError:
-            continue
-        if wd >= 5:
-            sched += " " + ("saturday" if wd == 5 else "sunday")
-    if re.search(r"(?i)\b(saturday|sunday)\b", sched) and not re.search(
-            r"(?i)\b(no|not|never|excluding|except|without)\b[^.]{0,40}\b(saturday|sunday|weekend)", sched + " " + " ".join(f["text"] for f in fs)):
-        for k in ("schedule", "assumptions"):
-            content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)regular business hours|monday.{0,12}friday", str(x.get("text") if isinstance(x, dict) else x))]
-        asm = content.setdefault("assumptions", [])
-        if not any(re.search(r"(?i)weekend", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
-            day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
-            asm.append({"text": f"All Services will be performed during the weekend ({day}, as scheduled); site access is available that day.", "cites": [], "kind": "method"})
-        # The window says it too, so no template "regular business hours"
-        # line stands unanswered beside a Sunday date (010198 W1).
-        day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
-        sch = content.setdefault("schedule", [])
-        if not any(re.match(r"(?i)\s*work window", str(x.get("text") if isinstance(x, dict) else x)) for x in sch):
-            sch.append({"text": f"Work Window: Weekend ({day})", "cites": [c for x in sch if isinstance(x, dict) for c in x.get("cites") or []][:2],
-                        "kind": "fact"})
+    _weekend(content, fs)
     # Work steps written after the closing heading go before it (010198: the
     # router install after "Confirm completion before leaving site").
     sc = content.get("scope") or []
@@ -2562,7 +2551,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         content["services"] = [v for v in content["services"] if v != "assessment"] or ["implementation"]
     # A possible follow-up visit is never a planned one (010419: "some
     # follow-up needed the next day" became a scheduled return on a one-day fee).
-    fu = re.compile(r"(?i)follow-?up (visit|day)|follow[- ]?up (on )?(the )?next day|next[- ]day (visit|follow)|return (visit|trip)|second (visit|day of)|come back")
+    fu = _FOLLOW_UP
     had = False
     for k in ("overview", "schedule", "scope", "assumptions"):
         kept = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("standard") and fu.search(str(x.get("text"))))]
@@ -2594,8 +2583,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # An empty schedule takes back the cited schedule line the check set aside
     # (010043: "Week of July 6, 2026" dropped with no reason).
     if not content.get("schedule"):
+        # Never a line the check dropped for a date its cites do not state
+        # (010198: the writer's "2026-08-09" for "next Sunday, August 16th").
         back = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
-                if isinstance(x, dict) and x.get("list") == "schedule" and x.get("cites")][:2]
+                if isinstance(x, dict) and x.get("list") == "schedule" and x.get("cites")
+                and _dates_ok(str(x.get("text")), " ".join(by.get(c, {}).get("text", "") for c in x["cites"]))][:2]
         if back:
             content["schedule"] = back
     # Form labels are not prose (010115: "... Specific Location(s): Sodexo
@@ -2803,6 +2795,264 @@ def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | N
             ov.append({"text": "Provider will " + t[0].lower() + t[1:].rstrip(".") + ".", "cites": list(x["cites"]), "kind": "fact"})
 
 
+def _weekend(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A weekend date is weekend work, not "regular business hours"."""
+    # A weekend date is weekend work, not "regular business hours" (010198 Sunday).
+    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or [])
+    # The calendar date says the weekday when the line does not (010198:
+    # "August 16, 2026" is a Sunday).
+    from datetime import date as _date
+    for mo, dy, yr_ in re.findall(r"(?i)\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(20\d\d)", sched):
+        try:
+            wd = _date(int(yr_), ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+                                  "october", "november", "december"].index(mo.lower()) + 1, int(dy)).weekday()
+        except ValueError:
+            continue
+        if wd >= 5:
+            sched += " " + ("saturday" if wd == 5 else "sunday")
+    if re.search(r"(?i)\b(saturday|sunday)\b", sched) and not re.search(
+            r"(?i)\b(no|not|never|excluding|except|without)\b[^.]{0,40}\b(saturday|sunday|weekend)", sched + " " + " ".join(f["text"] for f in fs)):
+        for k in ("schedule", "assumptions"):
+            content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)regular business hours|monday.{0,12}friday", str(x.get("text") if isinstance(x, dict) else x))]
+        asm = content.setdefault("assumptions", [])
+        if not any(re.search(r"(?i)weekend", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
+            day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
+            asm.append({"text": f"All Services will be performed during the weekend ({day}, as scheduled); site access is available that day.", "cites": [], "kind": "method"})
+        # The window says it too, so no template "regular business hours"
+        # line stands unanswered beside a Sunday date (010198 W1).
+        day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
+        sch = content.setdefault("schedule", [])
+        if not any(re.match(r"(?i)\s*work window", str(x.get("text") if isinstance(x, dict) else x)) for x in sch):
+            sch.append({"text": f"Work Window: Weekend ({day})", "cites": [c for x in sch if isinstance(x, dict) for c in x.get("cites") or []][:2],
+                        "kind": "fact"})
+
+
+_MONTH_RE = r"(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?"
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _dates_in(text: str) -> list[tuple[re.Match, int, int, int | None]]:
+    """(match, month, day, year or None) for each written date."""
+    out = []
+    for m in re.finditer(r"\b(20\d\d)-(\d{2})-(\d{2})\b", text):
+        out.append((m, int(m.group(2)), int(m.group(3)), int(m.group(1))))
+    for m in re.finditer(r"(?i)\b(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+)?" + _MONTH_RE + r"\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(20\d\d))?\b", text):
+        mo = next(i for i, n in enumerate(_MONTHS) if n.startswith(m.group(1).lower()[:3])) + 1
+        out.append((m, mo, int(m.group(2)), int(m.group(3)) if m.group(3) else None))
+    for m in re.finditer(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?![\d/])", text):
+        y = m.group(3)
+        out.append((m, int(m.group(1)), int(m.group(2)), (int(y) + (2000 if len(y) == 2 else 0)) if y else None))
+    return [d for d in out if 1 <= d[1] <= 12 and 1 <= d[2] <= 31]
+
+
+def _dates_ok(text: str, cited: str) -> bool:
+    """Every date the line writes is a date its cited lines state."""
+    have = {(mo, d) for _m, mo, d, _y in _dates_in(cited)}
+    return all((mo, d) in have for _m, mo, d, _y in _dates_in(text)) if have or _dates_in(text) else True
+
+
+def _fix_dates(content: dict[str, Any], fs: list[dict[str, Any]], as_of: str) -> None:
+    """The writer never re-dates a dated fact: a schedule or summary date its
+    cited lines do not state takes the month and day they do state (010198:
+    "next Sunday, August 16th" printed as 2026-08-09, the as-of Sunday), with
+    the weekday the calendar gives."""
+    from datetime import date as _date
+    text_of = {f["id"]: f["text"] for f in fs}
+    yr0 = int(as_of[:4]) if as_of[:4].isdigit() else None
+    for k in ("schedule", "overview"):
+        for x in content.get(k) or []:
+            if not (isinstance(x, dict) and x.get("cites")):
+                continue
+            cited = " ".join(text_of.get(c, "") for c in x["cites"])
+            stated = _dates_in(cited)
+            if not stated:
+                continue
+            have = {(mo, d) for _m, mo, d, _y in stated}
+            t = str(x.get("text"))
+            for m, mo, d, y in sorted(_dates_in(t), key=lambda z: -z[0].start()):
+                if (mo, d) in have:
+                    continue
+                _m2, mo2, d2, y2 = stated[-1]
+                y2 = y2 or y or yr0
+                if not y2:
+                    continue
+                try:
+                    dd = _date(y2, mo2, d2)
+                except ValueError:
+                    continue
+                t = t[:m.start()] + f"{_WEEKDAYS[dd.weekday()]}, {_MONTHS[mo2 - 1].capitalize()} {d2}, {y2}" + t[m.end():]
+            x["text"] = re.sub(r"\b(Sunday|Saturday|Monday|Tuesday|Wednesday|Thursday|Friday),\s+(?=(Sunday|Saturday|Monday|Tuesday|Wednesday|Thursday|Friday),)", "", t)
+
+
+def _agreed_arrival(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """A start time one side proposes as a question ("How would 8am Sunday
+    work for you?") and the other side accepts in a later message ("Yes, we
+    can hit that date!") is the arrival time (010198)."""
+    sch = content.setdefault("schedule", [])
+    if any(re.match(r"(?i)\s*arrival time", str(x.get("text") if isinstance(x, dict) else x)) for x in sch):
+        return
+    atoms = envelope.get("atoms") or []
+    sent = lambda a: _when_sent(str((a.get("locator") or {}).get("sent_at") or ""))
+    who = lambda a: str((a.get("locator") or {}).get("sender") or "").lower()
+    for a in atoms:
+        t = str(a.get("text") or "")
+        m = re.search(r"(?i)\b(how (would|does|about)|would|does|can we do|is)\b[^?]{0,20}?\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b[^?]{0,40}\?", t)
+        if not m or (a.get("structured") or {}).get("quoted") or sent(a) is None:
+            continue
+        ok = next((b for b in atoms if b is not a and sent(b) and 0 < sent(b) - sent(a) < 4 * 86400 and who(b) and who(b) != who(a)
+                   and re.match(r"(?i)\s*(yes|yep|yeah|sounds good|that works|works (great|for)|we can (hit|do|make)|confirmed|perfect)\b", str(b.get("text") or ""))), None)
+        if ok:
+            h = int(m.group(3))
+            sch.append({"text": f"Arrival Time: {h}:{m.group(4) or '00'} {m.group(5).upper()}M", "cites": [str(a.get("id")), str(ok.get("id"))], "kind": "fact"})
+            return
+
+
+#: Schedule terms PurTera writes from the facts: a dated window, a blackout,
+#: allowed days and hours, a pace limit (010209: "installs will start 10/13
+#: and continue through 11/19", "holiday blackout", "All work 7-10am Monday,
+#: Tuesday, Thursday", "Only 1 store per time zone").
+_SCHED_TERM = re.compile(r"(?i)\bblackout\b|\bper time zone\b|\b(start|begin)\w*\b.{0,40}\b(through|until|thru|continue)\b|"
+                         r"\b\d{1,2}\s*(:\d{2})?\s*(am|pm)?\s*(-|–|to)\s*\d{1,2}\s*(:\d{2})?\s*(am|pm)\b.{0,40}\b(mon|tue|wed|thu|fri|sat|sun)|"
+                         r"\b(mon|tue|wed|thu|fri|sat|sun)\w*\b.{0,40}\b\d{1,2}\s*(:\d{2})?\s*(am|pm)?\s*(-|–|to)\s*\d{1,2}\s*(:\d{2})?\s*(am|pm)\b|"
+                         r"\b(one|1) (store|site|location) (per|a|each) (day|time zone)\b|\b(stores?|sites?) per (day|week)\b")
+
+
+def _schedule_from_facts(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dict[str, Any]) -> None:
+    """Schedule terms a fact states reach the schedule even when the writer
+    left them out, from the facts and from atoms the type head dated
+    (milestone_phase, deadline) that no section kept. A term in a quoted
+    reply is still the customer's term (010209's answers were all quoted in
+    the next email); only meeting and call slots stay out."""
+    sch = content.setdefault("schedule", [])
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    own = {}
+    for a in envelope.get("atoms") or []:
+        if not (a.get("structured") or {}).get("quoted"):
+            own.setdefault(re.sub(r"\W+", " ", str(a.get("text") or "").lower()).strip(), str(a.get("id")))
+    cands = [(f["id"], f["text"]) for f in fs if not str(f["text"]).rstrip().endswith("?")]
+    seen = {i for i, _ in cands}
+    for a in envelope.get("atoms") or []:
+        lab = (a.get("structured") or {}).get("c3_label") or {}
+        if a.get("id") not in seen and lab.get("type") in ("milestone_phase", "deadline") and float(lab.get("p") or 0) >= 0.5 \
+                and 10 < len(str(a.get("text") or "")) < 300:
+            cands.append((str(a["id"]), str(a["text"])))
+    added = 0
+    for i, t0 in cands:
+        if added >= 4 or re.search(r"(?i)\b(call|meeting|meet|webex|zoom|teams|demo)\b|hours of operation|days of operation|store hours|\boperates\b", t0) \
+                or "|" in t0:
+            continue  # meeting slots, the site's own opening hours, form rows
+        sent = next((x for x in re.split(r"(?<=[.!?])\s+", t0) if _SCHED_TERM.search(x)), None)
+        if not sent or len(sent) > 220:
+            continue
+        t = sent.strip().rstrip(".")
+        have = " ".join(tx(x) for x in sch)
+        if _said(t, sch, 0.6):
+            continue
+        cite = own.get(re.sub(r"\W+", " ", t0.lower()).strip(), i)
+        win = re.search(r"\b(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s*(?:-|–|to|through|thru)\s*(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b", t) \
+            or re.search(r"(?i)\bstart\w*\s+(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b.{0,30}\b(?:through|until|thru)\s+(\d{1,2}/\d{1,2}(?:/\d{2,4})?)", t)
+        times = re.search(r"(?i)\d\s*(:\d{2})?\s*(am|pm)\b", t)
+        if win:
+            if re.search(r"(?i)work window: (\d|from|beginning|week)", have):
+                continue
+            line = f"Work Window: {win.group(1)} through {win.group(2)}"
+        elif times and re.search(r"(?i)\b(mon|tue|wed|thu|fri|sat|sun)", t):
+            if re.search(r"(?i)work window:.*\d\s*(:\d{2})?\s*(am|pm)", have):
+                continue
+            line = "Work Hours: " + t
+        elif re.search(r"(?i)\b(start|begin)\w*\b.{0,40}\b(through|until|thru|continue)\b", t) and re.search(r"(?i)work window", have):
+            continue
+        else:
+            line = "Scheduling Constraint: " + t
+        sch.append({"text": line, "cites": [cite], "kind": "fact"})
+        added += 1
+
+
+def _roles_and_hours(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """Staffing by role and the visit length the facts give (010419: "one
+    network technician and one help desk technician", "usually a full day of
+    work"): the task-list lead names the roles; a full day is one 8-hour
+    workday per technician."""
+    roles = None
+    for f in fs:
+        m = re.search(r"(?i)\b(one|two|three|\d)\s+((?:[\w-]+\s+){0,2}?)(technician|tech|engineer)s?\s+and\s+(one|two|three|\d)\s+((?:[\w-]+\s+){0,2}?)(technician|tech|engineer)s?\b", f["text"])
+        if m:
+            roles = (m, f["id"])
+            break
+    num = lambda w: int(w) if w.isdigit() else ("one two three".split().index(w.lower()) + 1)
+    if roles:
+        m = roles[0]
+        n1, n2 = num(m.group(1)), num(m.group(4))
+        r1 = (m.group(2).strip() + " technician").strip() + ("s" if n1 > 1 else "")
+        r2 = (m.group(5).strip() + " technician").strip() + ("s" if n2 > 1 else "")
+        content["scope_lead"] = f"Provider will dispatch {_words(n1)} ({n1}) {r1} and {_words(n2)} ({n2}) {r2} to perform the following:"
+        techs = n1 + n2
+    else:
+        nr = next((re.search(r"\((\d+)\)|\b(\d+)\b", str(x.get("text"))) for x in content.get("schedule") or []
+                   if isinstance(x, dict) and re.match(r"(?i)\s*number of resources", str(x.get("text")))), None)
+        techs = int(nr.group(1) or nr.group(2)) if nr else 0
+    day = next((f for f in fs if re.search(r"(?i)\b(a |one )?full (work ?)?day\b|\bone[- ]day (visit|job|engagement)\b", f["text"])
+                and not f["text"].rstrip().endswith("?")), None)
+    sch = content.setdefault("schedule", [])
+    if day and techs and not any(re.match(r"(?i)\s*(estimated duration|duration)", str(x.get("text"))) for x in sch if isinstance(x, dict)):
+        sch.append({"text": f"Estimated Duration: one (1) onsite workday of eight (8) hours per technician; {_words(techs)} ({techs}) "
+                            f"technicians, {_words(8 * techs)} ({8 * techs}) combined hours",
+                    "cites": [day["id"]] + ([roles[1]] if roles else []), "kind": "fact"})
+
+
+def _deliverables_hygiene(content: dict[str, Any]) -> None:
+    """The report promises only work the SOW keeps: no outcome restating a
+    line a rule or check dropped, and none the SOW's own terms exclude
+    (010209: "removed legacy switch shipment for wipe and disposal" and
+    "serial numbers for the benched equipment", both dropped from scope)."""
+    gone = [str(d.get("text")) for d in content.get("rule_decisions") or [] if d.get("value") == "drop"] + \
+           [str(x.get("text")) for x in content.get("dropped") or [] if isinstance(x, dict)]
+    terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope")
+                     for x in content.get(k) or []).lower()
+    excl = [(r"(?i)\bship(ment|ped|ping)?\b|\bfreight\b|\btransport", r"ship|freight|transport|logistic"),
+            (r"(?i)\bdispos|\bwipe\b|data destruction|recycl", r"dispos|recycl|wipe|destruction"),
+            (r"(?i)\bbench(ed|ing)?\b", r"bench|stag")]
+    for d in content.get("deliverables") or []:
+        if not isinstance(d, dict):
+            continue
+        keep = []
+        for t in d.get("description") or []:
+            t = str(t)
+            if any(_said(t, [g], 0.6) for g in gone):
+                continue
+            hit = [pat for pat, ex in excl if re.search(pat, t) and re.search(ex, terms)]
+            if hit:
+                # Strip the excluded clause from a list sentence, or drop it.
+                parts = [p_ for p_ in re.split(r",\s*(?:and\s+)?", t) if not any(re.search(h, p_) for h in hit)]
+                t2 = ", ".join(p_.strip() for p_ in parts).strip(" ,.")
+                if len(parts) >= 2:
+                    t2 = ", ".join(p_.strip() for p_ in parts[:-1]) + ", and " + parts[-1].strip().rstrip(".")
+                if len(t2.split()) < 3:
+                    continue
+                t = t2 + "."
+            keep.append(t[:1].upper() + t[1:])
+        d["description"] = keep
+
+
+def _reconcile_dropped(content: dict[str, Any]) -> None:
+    """content["dropped"] lists only what the SOW leaves out: a line a rule
+    took back (a schedule line the check set aside) is no longer dropped."""
+    shown = {(k, str(x.get("text"))) for k in LISTS for x in content.get(k) or [] if isinstance(x, dict)}
+    content["dropped"] = [x for x in content.get("dropped") or [] if not (isinstance(x, dict) and (x.get("list"), str(x.get("text"))) in shown)]
+
+
+def _strip_people(name: str, people: list[str]) -> str:
+    """The project name without a person's name: the full name, or any first
+    name before the person's surname, and a trailing "w/ <Name>"."""
+    pn = re.sub(r"(?i)\s+(w/|with)\s+[A-Z][a-z]+\b.*$", "", name)
+    for nm in people:
+        parts = [w for w in re.findall(r"[A-Za-z][A-Za-z'-]+", nm) if len(w) >= 3]
+        if len(parts) >= 2:
+            pn = re.sub(r"\s*[-–]?\s*\b(?:[A-Z][a-z]+\s+)?" + re.escape(parts[-1]) + r"\b", "", pn)
+    pn = re.sub(r"\s{2,}", " ", pn).strip(" -–,")
+    return pn if len(pn.split()) >= 2 else name
+
+
 def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     """A facility rule that the technician's name be sent ahead is written once,
     as Provider's duty, with its notice period (010115: 'Need Name provided 48
@@ -2889,6 +3139,16 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     if any(re.search(r"(?i)powered down", tx(a)) for a in content.get("assumptions") or []):
         content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and not x.get("standard")
                             and re.search(r"(?i)\bpower(s|ing)? down\b", tx(x)))]
+    # A standard, convention, matrix or document is information the customer
+    # provides, not equipment (010209: "The RL standard naming convention for
+    # equipment labels" under Equipment in Scope).
+    info = [x for x in content.get("equipment_in_scope") or [] if isinstance(x, dict) and re.search(
+        r"(?i)naming convention|\bstandards?\b(?! (power|cords?|cables?|mounts?))|\bmatrix\b|documentation|diagram|\binstructions\b|\bschedule\b|\bconvention\b", tx(x))]
+    for x in info:
+        content["equipment_in_scope"].remove(x)
+        line = {**x, "text": "Provide " + re.sub(r"(?i)^\s*the\s+", "the ", tx(x)).rstrip(".") + "."}
+        if not _said(tx(line), cr, 0.6):
+            cr.append(line)
     form_label = re.compile(r"(?i)\bN/A\b|to be installed,? by category|no hardware is to be installed")
     # A described picture is not material (010012: "Abstract metal sculpture with
     # spiral and spherical elements", a leasing brochure photo, as customer material).
@@ -3669,6 +3929,11 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         dn = re.sub(r"\s*[-–]?\s*" + re.escape(rq) + r"\s*", " ", dn, flags=re.I).strip(" -–")  # "... Dan Tighe"
     if len(dn.split()) >= 2:
         c["project_name"] = dn
+    # A person's name is never part of the project name, in any form
+    # (010209: requester "Daniel Tighe" written "Dan Tighe"; 000123 "w/ Ahmed").
+    c["project_name"] = _strip_people(str(c.get("project_name") or ""),
+                                      [str((c.get("requested_by") or {}).get("name") or "")]
+                                      + [str(pp.get("name") or "") for pp in (envelope.get("deal_roster") or {}).get("people") or []])
     # On a one-address job, a place the request names inside it ("Specific
     # Location(s) | Sodexo Dining CAFE") is where the work is: it names the site.
     if len(c["sites"]) == 1:

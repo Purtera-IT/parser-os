@@ -219,3 +219,77 @@ def test_a_merge_keeps_the_facts_brand():
                          {"text": "Install each of the sixteen (16) monitor arms on new desks.", "cites": [], "kind": "method", "standard": True}]}
     m._traced(content, "standards", lambda: content.__setitem__("scope", content["scope"][1:]))
     assert content["scope"][0]["text"] == "Install each of the sixteen (16) Humanscale monitor arms on new desks."
+
+
+def test_an_explicit_date_beats_the_writers_normalised_one():
+    content = {"schedule": [{"text": "Requested Start Date: 2026-08-09", "cites": ["d"], "kind": "fact"}],
+               "overview": [{"text": "Provider will perform the work on Sunday, 2026-08-09.", "cites": ["d"], "kind": "fact"}]}
+    fs = [_fact("d", "We actually rescheduled this installation for next Sunday, August 16th.")]
+    m._fix_dates(content, fs, "2026-08-09")
+    assert content["schedule"][0]["text"] == "Requested Start Date: Sunday, August 16, 2026"
+    assert content["overview"][0]["text"] == "Provider will perform the work on Sunday, August 16, 2026."
+    m._weekend(content, fs)
+    assert any(x["text"].startswith("Work Window: Weekend") for x in content["schedule"])
+    assert not m._dates_ok("Requested Start Date: 2026-08-09", fs[0]["text"])
+
+
+def test_an_accepted_proposed_time_is_the_arrival():
+    atoms = [{"id": "q", "text": "How would 8am Sunday work for you?", "locator": {"sender": "sam@cust.io", "sent_at": "Fri, 07 Aug 2026 14:31:19 +0000"}},
+             {"id": "y", "text": "Yes, we can hit that date!", "locator": {"sender": "aj@purtera-it.com", "sent_at": "Fri, 07 Aug 2026 16:33:23 +0000"}}]
+    content = {"schedule": []}
+    m._agreed_arrival(content, {"atoms": atoms})
+    assert content["schedule"][0]["text"] == "Arrival Time: 8:00 AM"
+
+
+def test_schedule_terms_reach_the_schedule():
+    fs = [_fact("a", "All work 7-10am Monday, Tuesday, Thursday"), _fact("b", "Only 1 store per time zone"),
+          _fact("c", "Project installs will start 10/13 and continue through 11/19"),
+          _fact("d", "Days of Operation | Monday - Friday | Hours of Operation | 8:00am - 5:00pm")]
+    content = {"schedule": []}
+    m._schedule_from_facts(content, fs, {"atoms": []})
+    got = [x["text"] for x in content["schedule"]]
+    assert "Work Hours: All work 7-10am Monday, Tuesday, Thursday" in got
+    assert "Scheduling Constraint: Only 1 store per time zone" in got
+    assert "Work Window: 10/13 through 11/19" in got
+    assert not any("Hours of Operation" in t for t in got)
+
+
+def test_roles_and_a_full_day_become_lead_and_duration():
+    fs = [_fact("r", "Typically, we need one network technician and one help desk technician per community."),
+          _fact("d", "This is usually a full day of work.")]
+    content = {"schedule": []}
+    m._roles_and_hours(content, fs)
+    assert content["scope_lead"].startswith("Provider will dispatch one (1) network technician and one (1) help desk technician")
+    assert "sixteen (16) combined hours" in content["schedule"][0]["text"]
+
+
+def test_deliverables_drop_what_the_sow_excludes_or_dropped():
+    content = {"assumptions": [{"text": "Provider does not ship or dispose of removed equipment; removed switches are staged onsite."}],
+               "out_of_scope": [], "rule_decisions": [{"value": "drop", "text": "Provide serial numbers for the benched equipment."}],
+               "deliverables": [{"description": ["Included cabling transfer, labeling, before and after photographs, switch validation, "
+                                                 "and removed legacy switch shipment for wipe and disposal.",
+                                                 "serial numbers for the benched equipment."]}]}
+    m._deliverables_hygiene(content)
+    assert content["deliverables"][0]["description"] == ["Included cabling transfer, labeling, before and after photographs, and switch validation."]
+
+
+def test_a_hedged_follow_up_is_never_guarded_back():
+    content = {"overview": [{"text": "Plan for a full day of work, with follow-up the next day.", "cites": ["f"], "kind": "fact"}]}
+    m._traced(content, "grounding", lambda: content.__setitem__("overview", []))
+    assert content["overview"] == []
+
+
+def test_info_is_not_equipment():
+    content = {"equipment_in_scope": [{"text": "The RL standard naming convention for equipment labels.", "cites": ["n"], "kind": "fact"},
+                                      {"text": "New Cisco power cords.", "cites": ["p"], "kind": "fact"}],
+               "customer_responsibilities": []}
+    m._tidy(content)
+    assert [x["text"] for x in content["equipment_in_scope"]] == ["New Cisco power cords."]
+    assert content["customer_responsibilities"][0]["text"].startswith("Provide the RL standard naming convention")
+
+
+def test_project_name_drops_a_persons_name(monkeypatch):
+    monkeypatch.setattr(m, "_best_of", lambda e, pm: {"project_name": "Ralph Lauren Switch Replacement Dan Tighe", "overview": []})
+    monkeypatch.setattr(m, "requested_by", lambda e: {"name": "Daniel Tighe"})
+    c = m.for_envelope({"atoms": [], "site_readiness": {"sites": []}})
+    assert c["project_name"] == "Ralph Lauren Switch Replacement"
