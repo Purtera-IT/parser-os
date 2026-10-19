@@ -371,11 +371,11 @@ def test_a_title_naming_excluded_work_is_contradicted():
 
 def test_work_no_fact_names_goes_even_when_cited():
     c = {"scope": [{"text": "Assist with workstation cabling and cable organization.", "cites": ["s"], "kind": "method"},
-                   {"text": "Validate reported issues.", "cites": [], "kind": "method"}],
+                   {"text": "Validate that systems function as before.", "cites": [], "kind": "method"}],
          "assumptions": [{"text": "Cable pathways are accessible for low-voltage review.", "cites": [], "kind": "method"}],
          "provider_tools": [{"text": "Standard IT tools to perform workstation migrations.", "cites": [], "kind": "method"}]}
     m._work_no_fact_names(c, "one network technician and one help desk technician per community. onboarding.")
-    assert [x["text"] for x in c["scope"]] == ["Validate reported issues."] and not c["assumptions"] and not c["provider_tools"]
+    assert [x["text"] for x in c["scope"]] == ["Validate that systems function as before."] and not c["assumptions"] and not c["provider_tools"]
 
 
 def test_a_task_never_claims_the_work_a_customer_duty_holds():

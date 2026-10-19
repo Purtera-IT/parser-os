@@ -204,3 +204,152 @@ def test_requested_by_reads_the_requesters_signature_card():
          "structured": {"email_thread": {"to": ["ralpsmi@cdw.com"]}}}]}
     rb = m.requested_by(env)
     assert rb["name"] == "Ralph Smith III" and rb["phone"] == "813.373.1644"
+
+
+# --- 010209 B-: the summary never claims work the SOW's limits deny -----------
+
+def test_the_summary_drops_ruled_out_clauses():
+    c = _content()
+    c["assumptions"] = [{"text": "Provider does not procure, receive, stage, configure, package or ship equipment.", "cites": [], "standard": True},
+                        {"text": "Removed legacy switches will be left onsite in a customer-designated area.", "cites": [], "standard": True}]
+    c["overview"] = [
+        {"text": "Provider will receive the hardware, bench it for twenty-four (24) to thirty-six (36) hours, install required rack mount hardware "
+                 "and new Cisco power cords, and coordinate with RL remote support during each installation window.", "cites": ["a"], "kind": "fact"},
+        {"text": "Provider will take before-and-after pictures, and remove the old switches for packing, shipping, data wipe, and disposal.",
+         "cites": ["b"], "kind": "fact"}]
+    m._summary_denied_work(c)
+    assert _texts(c, "overview") == [
+        "Provider will install required rack mount hardware and new Cisco power cords and coordinate with RL remote support during each installation window.",
+        "Provider will take before-and-after pictures and remove the old switches."]
+
+
+def test_a_partner_phase_assumption_goes_but_the_start_line_stays():
+    c = _content()
+    c["assumptions"] = [{"text": "Provider's scope is limited to physical onsite services; Provider does not procure, receive, stage, configure, package or ship equipment.", "cites": [], "standard": True},
+                        {"text": "Allow hardware receipt and a twenty-four (24) to thirty-six (36) hour bench period before deployment.", "cites": ["f1"], "kind": "fact"},
+                        {"text": "If equipment is received earlier than planned, the project may start earlier.", "cites": ["f2"], "kind": "fact"}]
+    m._partner_phase(c, [_fact("f1", "Equipment will be on bench for 24-36 hours"), _fact("f2", "If equipment is received earlier, we can start the project earlier")])
+    assert _texts(c, "assumptions")[1:] == ["If equipment is received earlier than planned, the project may start earlier."]
+
+
+def test_an_answered_na_question_rules_its_work_out():
+    c = _content()
+    atoms = [{"id": "q", "atom_type": "answered_question", "text": "Testing requirements: What must the technician complete? Will any console work need to be completed? N/a"}]
+    m._answered_none(c, atoms)
+    assert _texts(c, "assumptions") == ["No console work is anticipated."]
+
+
+def test_a_dropped_exclusion_holding_a_standard_exclusion_survives(monkeypatch):
+    c = _content()
+    c["dropped"] = [{"list": "out_of_scope", "text": "Logical switch configuration, programming, firmware changes, licensing, network engineering, routing, firewall, wireless, cloud configuration, and network design.",
+                     "cites": ["a"], "kind": "fact", "reason": "check: the cited lines do not state it"}]
+    m._standard_exclusion_survives(c)
+    assert len(_texts(c, "out_of_scope")) == 1 and c["dropped"] == []
+
+
+# --- 010419 B-: transition visit -------------------------------------------------
+
+def test_break_fix_filler_goes_on_a_transition_with_no_issue_named():
+    c = _content()
+    c["scope"] = [{"text": "Validate reported issues, equipment checks, and site readiness tasks.", "cites": [], "kind": "method"},
+                  {"text": "Perform basic issue triage.", "cites": [], "kind": "method"},
+                  {"text": "Provide local on site technician support at the designated Customer location.", "cites": [], "kind": "method"},
+                  {"text": "Provide basic onsite assistance for end user devices.", "cites": [], "kind": "method"}]
+    m._work_no_fact_names(c, "one network technician and one help desk technician per community. usually a full day of work.")
+    assert _texts(c, "scope") == ["Provide basic onsite assistance for end user devices."]
+
+
+def test_a_full_day_is_eight_hours_per_technician():
+    c = _content()
+    fs = [_fact("f1", "We need one network technician and one help desk technician per community."),
+          _fact("f2", "This is usually a full day of work, with some follow-up needed the next day.")]
+    m._roles_and_hours(c, fs)
+    assert any("eight (8) hours per technician; two (2) technicians, sixteen (16) combined hours" in t for t in _texts(c, "schedule"))
+
+
+def test_a_business_day_still_gives_no_hours():
+    c = _content()
+    m._roles_and_hours(c, [_fact("f1", "Two technicians for one business day.")])
+    assert not any("hours" in t for t in _texts(c, "schedule"))
+
+
+def test_template_and_standard_duties_are_not_repeated():
+    c = _content()
+    c["customer_responsibilities"] = [
+        {"text": "Provide a remote engineer responsible for network device configuration and technical direction during the onsite visit.", "cites": [], "kind": "method"},
+        {"text": "Provide all device configurations and troubleshooting support as required.", "cites": [], "kind": "method"},
+        {"text": "Ensure employees are prepared for technician visits on scheduled dates.", "cites": [], "kind": "method"},
+        {"text": "Provide approval before any work continues beyond authorized scope.", "cites": [], "kind": "method"},
+        {"text": "Provide a remote engineer who owns configuration and cutover during the visit.", "cites": [], "standard": True}]
+    m._standard_says_it(c)
+    assert _texts(c, "customer_responsibilities") == ["Provide approval before any work continues beyond authorized scope.",
+                                                      "Provide a remote engineer who owns configuration and cutover during the visit."]
+
+
+def test_a_single_site_sow_says_nothing_per_community():
+    c = _content()
+    c["sites"] = [{"name": "Bradley Creek", "city": "Wilmington", "state": "NC"}]
+    c["schedule"] = [{"text": "Number of Resources: one (1) network technician and one (1) help desk technician per community", "cites": ["f"], "kind": "fact"}]
+    c["assumptions"] = [{"text": "Staff one (1) network technician and one (1) help desk technician per community.", "cites": ["f"], "kind": "fact"}]
+    m._single_site_wording(c)
+    assert _texts(c, "schedule") == ["Number of Resources: one (1) network technician and one (1) help desk technician"]
+    assert _texts(c, "assumptions") == []
+
+
+# --- 010326 B- / 010198 B -----------------------------------------------------------
+
+def test_a_derived_atom_alone_supports_no_task():
+    c = _content()
+    c["scope"] = [{"text": "Perform a site survey to finalize the scope.", "cites": ["d"], "kind": "fact"},
+                  {"text": "Replace the phones.", "cites": ["d", "s"], "kind": "fact"}]
+    m._derived_not_task(c, [{"id": "d", "text": "survey outstanding", "locator": {"derived": True}}, {"id": "s", "text": "Replace the phones"}])
+    assert _texts(c, "scope") == ["Replace the phones."]
+
+
+def test_a_clipped_line_is_completed_from_its_source():
+    c = _content()
+    c["assumptions"] = [{"text": "The Customer has indicated that each location has at least 350 watt PoE switches capable of powering the new.", "cites": ["s"], "kind": "fact"},
+                        {"text": "No need for new structured cabling or electrical work is required.", "cites": [], "kind": "method"}]
+    m._clipped_lines(c, [{"id": "s", "text": "Each location has at least 350 watt PoE switches capable of powering the new phones."}])
+    assert _texts(c, "assumptions") == ["The Customer has indicated that each location has at least 350 watt PoE switches capable of powering the new phones.",
+                                        "No new structured cabling or electrical work is required."]
+
+
+def test_a_part_family_task_takes_the_orders_count():
+    c = _content()
+    c["scope"] = [{"text": "Install and handle ATAs as part of the phone swap effort.", "cites": ["x"], "kind": "fact"}]
+    m._bom_count_on_task(c, [{"id": "r", "atom_type": "rate_card", "text": "Cisco - VoIP phone adapter 18 6044227 Mfg. Part#: ATA191-3PW-K9 TAX: WI"}])
+    assert _texts(c, "scope") == ["Install and handle eighteen (18) ATAs as part of the phone swap effort."]
+
+
+def test_no_after_hours_work_is_an_exclusion():
+    c = _content()
+    m._no_after_hours(c, [{"id": "a", "text": "No after-hours work is required, easing workforce planning."}])
+    assert _texts(c, "out_of_scope") == ["After-hours, weekend, or holiday services unless separately authorized in writing."]
+
+
+def test_counted_sites_answer_the_count_duty_and_widen_the_report():
+    c = _content()
+    c["sites"] = [{"name": "A", "count": 300, "unit": "phones"}, {"name": "B", "count": 17, "unit": "phones"}]
+    c["customer_responsibilities"] = [{"text": "Provide the final phone count by site spreadsheet.", "cites": ["q"], "kind": "fact"}]
+    c["deliverables"] = [{"item": "Work Completion Report", "description": ["Document the fewer than ten (10) wall mounted phone installations."]}]
+    m._counts_given(c)
+    assert c["customer_responsibilities"] == []
+    assert c["deliverables"][0]["description"] == ["Document all three hundred seventeen (317) phone installations, including the fewer than ten (10) wall mounted phones."]
+
+
+def test_a_condition_is_never_cut_by_the_duty_owner_rule():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Provide all device configurations and troubleshooting support.", "cites": [], "kind": "method"}]
+    t = "Perform a test print and pair the kitchen printer with the POS environment where the available Customer credentials and configuration support it."
+    c["scope"] = [{"text": t, "cites": [], "kind": "method"}]
+    m._duty_owner(c, [])
+    assert _texts(c, "scope") == [t]
+
+
+def test_a_title_naming_work_the_summary_gives_the_customer_is_contradicted():
+    c = _content()
+    c["overview"] = [{"text": "Provider will install desk phones, while rack-mounted gateways and rack hardware stay with Customer's internal team.", "cites": [], "kind": "fact"}]
+    c["out_of_scope"] = [{"text": "Rack-mounted gateway and rack hardware installation.", "cites": [], "kind": "method"}]
+    assert m._name_contradicted("Manitowoc - Racking/Wall mount", c)
+    assert not m._name_contradicted("Manitowoc Phone Deployment", c)

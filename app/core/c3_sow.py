@@ -1947,7 +1947,13 @@ def _not_job_terms(content: dict[str, Any]) -> None:
 
 #: Kinds of work a library or writer line can carry onto a job that has none.
 _WORK_KINDS = ((r"\bcabling\b|\blow[- ]voltage\b|\bcable (pathways?|organization|management|testers?)\b", r"\bcabl|\bwir(e|ing)\b|\bpatch|\bdrops?\b|low[- ]voltage|\bcat ?[56]"),
-               (r"\bmigrat\w*\b|\bequipment moves?\b|\bmoves?\b", r"\bmigrat|\bmov(e|es|ing)\b|\brelocat"))
+               (r"\bmigrat\w*\b|\bequipment moves?\b|\bmoves?\b", r"\bmigrat|\bmov(e|es|ing)\b|\brelocat"),
+               # Break-fix framing (010419 pass W: "Validate reported issues ...",
+               # "Perform basic issue triage.", "Provide local on site technician
+               # support at the designated Customer location." on a transition
+               # visit whose facts name no issue).
+               (r"\breported issues?\b|\bissue triage\b|\btriage\b|\bbreak[- ]?fix\b|^\s*provide (local )?on ?-?site technician support\b",
+                r"\bissues?\b|\btriage\b|\bbreak[- ]?fix\b|\btickets?\b|\bproblems?\b|\bincidents?\b"))
 
 
 def _work_no_fact_names(content: dict[str, Any], pool: str) -> None:
@@ -1993,11 +1999,21 @@ def _duty_owner(content: dict[str, Any], fs: list[dict[str, Any]] | None = None)
                 or re.search(r"(?i)\b(escalat|coordinat|under (the )?direction|as directed|support (the )?customer)", t):
             keep.append(x)
             continue
-        m = re.match(r"(?i)^(\s*\w+\s+)(.+?)\.?$", t)
+        # A subordinate clause ("where the available Customer credentials and
+        # configuration support it") is a condition, not a listed task: it is
+        # never split or cut (010198 pass W: "... where the available Customer
+        # credentials.").
+        sub = re.search(r"(?i)\s+\b(where|when|if|unless|as long as|once)\b\s", t)
+        tail = t[sub.start():].rstrip(".") if sub else ""
+        head_t = t[:sub.start()] if sub else t
+        if sub and not pat.search(head_t):
+            keep.append(x)
+            continue
+        m = re.match(r"(?i)^(\s*\w+\s+)(.+?)\.?$", head_t)
         items = [i for i in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(2)) if i.strip()] if m else []
         left = [i for i in items if not pat.search(i)]
         if left and len(left) < len(items):
-            keep.append({**x, "text": m.group(1) + _join(left) + "."})
+            keep.append({**x, "text": m.group(1) + _join(left) + tail + "."})
     content["scope"] = keep
 
 
@@ -4627,6 +4643,15 @@ def _partner_phase(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             # When this job starts is this job's (the RFQ's "If equipment is
             # received earlier, we can start the project earlier").
             and not (k == "schedule" and re.search(r"(?i)\b(start|begin|commence)\w*\b", str(x.get("text")))))]
+    # An assumption that has Provider do that phase's work (010209 pass W:
+    # "Allow hardware receipt and a twenty-four (24) to thirty-six (36) hour
+    # bench period before deployment."), unless it is a limit, another
+    # party's work, or says when this job starts.
+    content["assumptions"] = [x for x in content.get("assumptions") or [] if not (
+        isinstance(x, dict) and not x.get("standard")
+        and phase.search(str(x.get("text")))
+        and not re.search(r"(?i)\b(not|no|never|without|customer|partner|vendor|reseller|others?|third[- ]party)\b", str(x.get("text")))
+        and not re.search(r"(?i)\b(start|begin|commence)\w*\b", str(x.get("text"))))]
     # A task doing the ruled-out work itself.
     lead = lambda t: re.sub(r"(ing|es|e|s)$", "", (re.findall(r"[a-z]+", t.lower()) or [""])[0])[:6]
     alias = {"pack": "packag"}
@@ -5470,6 +5495,213 @@ def _onsite_assumption_suppliers(c: dict[str, Any]) -> None:
     c["assumptions"] = out
 
 
+def _summary_denied_work(c: dict[str, Any]) -> None:
+    """The summary never claims work the SOW's own limits deny (010209 pass W:
+    "Provider will receive the hardware, bench it for twenty-four (24) to
+    thirty-six (36) hours, ..." and "... remove the old switches for packing,
+    shipping, data wipe, and disposal" beside "Provider does not procure,
+    receive, stage, configure, package or ship equipment" and removed
+    switches left onsite). A clause led by a ruled-out verb goes, and so
+    does a "for <ruled-out work>" purpose; a sentence left with no clause
+    goes."""
+    verbs = _ruled_out_verbs(c)
+    lim = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope") for x in c.get(k) or [])
+    if re.search(r"(?i)\bleft onsite|left on site|customer-designated (onsite )?(area|location)|\bdispos\w*", lim):
+        verbs |= {"dispos", "wipe", "recycl"}
+    if not verbs:
+        return
+    stem = lambda w: {"pack": "packag", "packing": "packag", "receipt": "receiv"}.get(w.lower(), re.sub(r"(ing|es|e|s)$", "", w.lower())[:6])
+    ruled = lambda w: stem(w) in verbs or (w.lower() == "data" and "wipe" in verbs)
+    out = []
+    for x in c.get("overview") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        m_ = re.match(r"^(Provider will (?:also )?)(.+?)\.?$", t)
+        if not (isinstance(x, dict) and m_):
+            out.append(x)
+            continue
+        body = m_.group(2)
+        def purpose(mm: re.Match) -> str:
+            words = re.findall(r"[A-Za-z]+", mm.group(1))
+            return "" if any(ruled(w) for w in words) else mm.group(0)
+        body = re.sub(r"\s+for\s+((?:[a-z]+(?:\s+[a-z]+)?)(?:(?:,\s*(?:and\s+)?|\s+and\s+)[a-z]+(?:\s+[a-z]+)?)*)(?=[,.;]|$)", purpose, body)
+        parts = [p_.strip() for p_ in re.split(r",\s*(?:and\s+)?(?=[a-z]+\b)", body) if p_.strip()]
+        keep = [p_ for p_ in parts if not ruled((re.findall(r"[A-Za-z]+", p_) or [""])[0])]
+        if keep == parts and body == m_.group(2):
+            out.append(x)
+            continue
+        if not keep:
+            continue
+        keep = [re.sub(r"^and\s+", "", p_) for p_ in keep]
+        joined = keep[0] if len(keep) == 1 else (" and ".join(keep) if len(keep) == 2 else ", ".join(keep[:-1]) + ", and " + keep[-1])
+        out.append({**x, "text": m_.group(1) + joined + "."})
+    c["overview"] = out
+
+
+def _answered_none(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A questionnaire question answered "N/a" or "No" rules its work out
+    (010209 pass W: "Will any console work need to be completed? N/a" ->
+    "No console work is anticipated."), unless a line already says it."""
+    have = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in LISTS for x in c.get(k) or []).lower()
+    asm = c.setdefault("assumptions", [])
+    for a in atoms:
+        if str(a.get("atom_type") or "") != "answered_question":
+            continue
+        t = str(a.get("text") or "")
+        m_ = re.search(r"(?i)\b(?:will|is|are|does|do)\s+(?:there\s+be\s+)?any\s+([a-z][a-z /-]{2,40}?)\s+(?:need(?:s)? to be|be|required|be required|needed)\b[^?]*\?\s*(?:answer:?\s*)?(n/?a|no|none)\.?\s*$", t)
+        if not m_:
+            continue
+        what = m_.group(1).strip()
+        if what.lower() in have:
+            continue
+        asm.append({"text": f"No {what} is anticipated.", "cites": [str(a.get("id"))], "kind": "fact"})
+        have += " " + what.lower()
+
+
+def _single_site_wording(c: dict[str, Any]) -> None:
+    """A one-site SOW says nothing "per community" (010419 pass W: "one (1)
+    network technician and one (1) help desk technician per community",
+    copied from the customer's generic statement, in the Schedule and the
+    Assumptions), and an assumption repeating a schedule line goes (the
+    staffing line)."""
+    sites = [x for x in c.get("sites") or [] if isinstance(x, dict)]
+    alltxt = " ".join(str(x.get("text")) for k in LISTS for x in c.get(k) or [] if isinstance(x, dict))
+    many = re.search(r"(?i)\b(\d{2,}|two|three|four|five|six|seven|eight|nine|ten|hundred)\b[^;]{0,30}\b(locations|sites|stores|communities|properties|facilities|branches)\b", alltxt)
+    if len(sites) == 1 and len([x for x in c.get("locations") or [] if isinstance(x, dict)]) <= 1 and not many:
+        per = re.compile(r"(?i)\s+per\s+(community|site|location|store|property|facility|branch|campus)\b")
+        for k in ("schedule", "assumptions", "scope", "overview"):
+            for x in c.get(k) or []:
+                if isinstance(x, dict) and per.search(str(x.get("text"))):
+                    x["text"] = per.sub("", str(x["text"]))
+    sch = [str(x.get("text")).split(":", 1)[-1] for x in c.get("schedule") or [] if isinstance(x, dict)]
+    c["assumptions"] = [x for x in c.get("assumptions") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and sch
+        and any(_said(re.sub(r"(?i)^\s*(staff|plan for|assume)\s+", "", str(x.get("text"))), [t], 0.9) for t in sch))]
+
+
+def _derived_not_task(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A derived atom (the deal-state deriver's inference, no source sentence)
+    alone never supports a Provider task (010326 pass W: "Perform a site
+    survey / onsite walkthrough to finalize the scope and firm up the final
+    number" cited only a derived next-step atom)."""
+    derived = {str(a.get("id")) for a in atoms if (a.get("locator") or {}).get("derived")}
+    if not derived:
+        return
+    for k in ("scope", "overview"):
+        c[k] = [x for x in c.get(k) or [] if not (isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"
+                                                  and x.get("cites") and all(str(cc) in derived for cc in x["cites"]))]
+
+
+def _clipped_lines(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A line cut short ("... capable of powering the new.") is completed from
+    its cited source, which carries the words that follow ("the new phones");
+    a cut-off line no source completes loses its broken clause (010326 pass
+    W)."""
+    text = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    # "No need for X is required." reads "No X is required." (010198 pass W).
+    for k in ("assumptions", "out_of_scope", "customer_responsibilities"):
+        for x in c.get(k) or []:
+            if isinstance(x, dict):
+                x["text"] = re.sub(r"(?i)^\s*no need for (.+?) (is|are) (required|needed)\.?$", lambda m_: f"No {m_.group(1)} {m_.group(2)} {m_.group(3)}.", str(x.get("text")))
+    dangling = re.compile(r"(?i)\b(the|a|an|new|of|for|to|with|by|at|on|in|from|and|or|available|existing|each|all|its|their)\s*\.\s*$")
+    norm = lambda t: re.sub(r"\s+", " ", t.lower())
+    for k in LISTS:
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"):
+                continue
+            t = str(x.get("text"))
+            if not dangling.search(t):
+                continue
+            words = t.rstrip(" .").split()
+            fixed = None
+            for n in (5, 4, 3):
+                if len(words) < n:
+                    continue
+                tail = norm(" ".join(words[-n:]))
+                for cc in x.get("cites") or []:
+                    src = norm(text.get(str(cc), ""))
+                    i = src.find(tail)
+                    if i >= 0:
+                        rest = re.match(r"\s*([^.;:,()]{1,60})", src[i + len(tail):])
+                        more = rest.group(1).strip() if rest else ""
+                        if more and len(more.split()) <= 6:
+                            orig = text.get(str(cc), "")[i + len(tail):].strip()[:len(more)]
+                            fixed = t.rstrip(" .") + " " + orig + "."
+                            break
+                if fixed:
+                    break
+            if fixed:
+                x["text"] = fixed
+
+
+_BOM_QTY = re.compile(r"\s(\d{1,4})\s+\d{6,8}\s+(?:\(TPM\)\s*2\.0\s+)?Mfg\.\s*Part#:\s*([A-Z0-9][\w=+-]*)")
+
+
+def _bom_count_on_task(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A task naming an item by its part family with no count takes the one
+    quantity the order gives that part (010326 pass W: "Install and handle
+    ATAs as part of the phone swap effort." beside the order's "Cisco - VoIP
+    phone adapter 18 ... Mfg. Part#: ATA191-3PW-K9" -> "eighteen (18) ATAs")."""
+    rows = [(int(m_.group(1)), m_.group(2).upper()) for a in atoms
+            if str(a.get("atom_type") or "") in ("vendor_line_item", "rate_card", "bom_line", "quantity")
+            for m_ in [_BOM_QTY.search(str(a.get("text") or ""))] if m_]
+    if not rows:
+        return
+    for x in c.get("scope") or []:
+        if not (isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"):
+            continue
+        t = str(x.get("text"))
+        for m_ in re.finditer(r"\b([A-Z]{2,5})s\b", t):
+            fam = m_.group(1)
+            hits = {n for n, part in rows if part.startswith(fam) and re.match(r"[A-Z]{2,5}\d", part)}
+            before = t[max(0, m_.start() - 25):m_.start()]
+            if len(hits) == 1 and not re.search(r"\d|\b(%s)\b" % _NUMW, before):
+                n = hits.pop()
+                x["text"] = t[:m_.start()] + f"{_words(n)} ({n}) " + t[m_.start():]
+                break
+
+
+def _no_after_hours(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A deal line saying no after-hours work is needed excludes it (010326
+    pass W: "No after-hours work is required" and only a "regular hours"
+    window rendered)."""
+    oos = c.setdefault("out_of_scope", [])
+    if any(re.search(r"(?i)after[- ]hours", str(x.get("text") if isinstance(x, dict) else x)) for x in oos):
+        return
+    for a in atoms:
+        t = str(a.get("text") or "")
+        if re.search(r"(?i)\bno after[- ]hours (work|services?)\b(?! (is|are) (allowed|permitted) unless)", t) and not t.rstrip().endswith("?"):
+            oos.append({"text": "After-hours, weekend, or holiday services unless separately authorized in writing.", "cites": [str(a.get("id"))], "kind": "fact"})
+            return
+
+
+def _counts_given(c: dict[str, Any]) -> None:
+    """What the site table already counts is not asked of the customer, and
+    the report covers every counted unit (010326 pass W: "Provide the final
+    phone count by site spreadsheet." beside thirty sites with phone counts,
+    317 in all; "Document the fewer than ten (10) wall mounted phone
+    installations." as the whole report)."""
+    sites = [s_ for s_ in c.get("sites") or [] if isinstance(s_, dict)]
+    units = {str(s_.get("unit") or "").lower().rstrip("s") for s_ in sites if s_.get("count")} - {""}
+    if len(units) != 1 or len(sites) < 2:
+        return
+    unit = units.pop()
+    total = sum(int(s_.get("count") or 0) for s_ in sites)
+    c["customer_responsibilities"] = [x for x in c.get("customer_responsibilities") or [] if not (
+        isinstance(x, dict) and not x.get("standard")
+        and re.search(r"(?i)\bprovide\b.{0,30}\b%ss?\s+(count|counts|quantit\w*|numbers?)\b" % re.escape(unit), str(x.get("text"))))]
+    for d in c.get("deliverables") or []:
+        if not isinstance(d, dict):
+            continue
+        out = []
+        for t in d.get("description") or []:
+            m_ = re.match(r"(?i)^\s*document (?:the )?((?:fewer than|less than|about|approximately|up to)?\s*[\w-]+ \((\d+)\) ([\w -]*?%ss?)) installations?\.?$" % re.escape(unit), str(t))
+            if m_ and int(m_.group(2)) < total:
+                sub = m_.group(1) if m_.group(1).endswith("s") else m_.group(1) + "s"
+                t = f"Document all {_words(total)} ({total}) {unit} installations, including the {sub}."
+            out.append(t)
+        d["description"] = out
+
+
 def _materials_counted(c: dict[str, Any]) -> None:
     """One line per item, with its count: an uncounted line ("The 32-65 inch
     articulating TV mount.") goes beside the counted one ("Three (3) new 32-65
@@ -5872,8 +6104,12 @@ def _one_statement(c: dict[str, Any]) -> None:
     a standard step with any clause of its own stays. Deal steps are never
     removed here."""
     sc = c.get("scope") or []
+    # A condition ("where the available Customer credentials and configuration
+    # support it") says no work (010198 pass W: it said the router
+    # configuration standard step).
+    cond = lambda t: re.split(r"(?i)\s+\b(?:where|when|if|unless|as long as|once)\b\s", t, maxsplit=1)[0]
     deal = [cl for x in sc if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
-            for cl in _clauses(str(x.get("text")))]
+            for cl in _clauses(cond(str(x.get("text"))))]
     def said(cl: tuple[str, set[str], bool]) -> bool:
         # A standard said of each or all is broader than a deal step about
         # one item (010198: "functional testing of each installed device"
@@ -6042,6 +6278,14 @@ def _observation_not_line(c: dict[str, Any]) -> None:
                 and _OBSERVED.search(tx(x)) and not _INTENT.search(tx(x)))]
 
 
+#: The CDW template's own Customer Responsibilities, printed on every SOW.
+_TEMPLATE_DUTIES = ("Ensure Customer employees will be prepared for Provider engineer(s) visit on the specified date(s).",
+                    "All device configurations and troubleshooting, if required.",
+                    "Provide any specific installation requirements as needed.",
+                    "Customer to provide a point of contact for the project and onsite visit.",
+                    "Ensure that all Customer provided equipment is on site and available prior to our arrival.")
+
+
 def _standard_says_it(c: dict[str, Any]) -> None:
     """A writer assumption or customer duty a standard line already says,
     with no count or date of its own, goes (010115 pass V: "All everyday POS
@@ -6051,13 +6295,32 @@ def _standard_says_it(c: dict[str, Any]) -> None:
     surfaces and fastening methods are suitable" beside "Standard commercial
     wall construction and fastening methods can be used")."""
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    # The role a duty provides ("a remote engineer", "a primary contact").
+    role = lambda t: (lambda m_: m_.group(1).lower() if m_ else "")(re.match(
+        r"(?i)\s*provide\s+(?:a|an|the|one)?\s*(?:[\w-]+\s+){0,2}?((?:remote |onsite |on-site |primary |single |designated )?"
+        r"(?:engineer|contact|technician|representative|manager|point of contact))\b", t))
     for k in ("assumptions", "customer_responsibilities"):
-        std = [_object_toks(tx(y)) for y in c.get(k) or [] if isinstance(y, dict) and y.get("standard")]
+        stds = [y for y in c.get(k) or [] if isinstance(y, dict) and y.get("standard")]
+        std = [_object_toks(tx(y)) for y in stds]
+        # The template's own fixed lines say theirs too (010419 pass W: "Ensure
+        # employees are prepared for technician visits on scheduled dates."
+        # beside the template's "Ensure Customer employees will be prepared
+        # ...", "Provide all device configurations and troubleshooting support
+        # as required." beside "All device configurations and troubleshooting,
+        # if required.").
+        if k == "customer_responsibilities":
+            std += [_object_toks(t) for t in _TEMPLATE_DUTIES]
+        roles = {role(tx(y)) for y in stds} - {""}
         keep = []
         for x in c.get(k) or []:
             if isinstance(x, dict) and not x.get("standard") and not x.get("cites") and not re.search(r"\d", _digits(tx(x))):
                 ot = _object_toks(tx(x))
                 if len(ot) >= 3 and any(len(ot & so) >= 0.6 * len(ot) for so in std):
+                    continue
+                # A standard duty providing the same role says it ("Provide a
+                # remote engineer responsible for ..." beside "Provide a remote
+                # engineer who owns configuration and cutover ...").
+                if k == "customer_responsibilities" and role(tx(x)) and role(tx(x)) in roles:
                     continue
             keep.append(x)
         c[k] = keep
@@ -6635,7 +6898,13 @@ def _standard_exclusion_survives(c: dict[str, Any]) -> None:
         if not (isinstance(d, dict) and d.get("list") == "out_of_scope" and d.get("text")):
             continue
         t = str(d["text"])
-        if _said(t, std, 0.6) and not _said(t, oos, 0.6) and not any(_collides(t, k) for k in tasks):
+        # Backed by the standards when one says most of it, or it carries a
+        # standard exclusion whole (010209 pass W: the full logical-config
+        # exclusion holds "Switch configuration and programming."; "Repair,
+        # replacement, troubleshooting, or certification of existing cabling"
+        # holds "Repair of defective existing cabling.").
+        backed = _said(t, std, 0.6) or any(_said(s_, [t], 0.6) for s_ in std)
+        if backed and not _said(t, oos, 0.6) and not any(_collides(t, k) for k in tasks):
             oos.append({k: v for k, v in d.items() if k not in ("list", "reason")})
             back.append(d)
     if back:
@@ -7323,10 +7592,10 @@ def _weekend(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             r"(?i)\b(no|not|never|excluding|except|without)\b[^.]{0,40}\b(saturday|sunday|weekend)", sched + " " + " ".join(f["text"] for f in fs)):
         for k in ("schedule", "assumptions"):
             content[k] = [x for x in content.get(k) or [] if not re.search(r"(?i)regular business hours|monday.{0,12}friday", str(x.get("text") if isinstance(x, dict) else x))]
-        asm = content.setdefault("assumptions", [])
-        if not any(re.search(r"(?i)weekend", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
-            day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
-            asm.append({"text": f"All Services will be performed during the weekend ({day}, as scheduled); site access is available that day.", "cites": [], "kind": "method"})
+        # No weekend assumption of our own: the template's business-hours
+        # line already reads the Work Window's weekend ("All Services will be
+        # performed during the scheduled Sunday (weekend work)"; 010198 pass
+        # W printed both).
         # The window says it too, so no template "regular business hours"
         # line stands unanswered beside a Sunday date (010198 W1).
         day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
@@ -7578,8 +7847,13 @@ def _roles_and_hours(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         # hours" on a fixed fee whose target caps each technician at four).
         hrs = next((m3 for f in fs for m3 in [re.search(r"(?i)\b(\d{1,2}|eight|ten|twelve)[- ]?(?:hours?|hrs?)\b(?:\s*(?:per|a|each)\s*(?:day|tech\w*))?", f["text"])]
                     if m3 and re.search(r"(?i)\bday\b", f["text"]) and not f["text"].rstrip().endswith("?")), None)
-        if hrs:
-            h = int(hrs.group(1)) if hrs.group(1).isdigit() else {"eight": 8, "ten": 10, "twelve": 12}[hrs.group(1).lower()]
+        # A "full day" is the template's standard eight-hour working day
+        # (010419 pass W: "usually a full day of work" for two technicians;
+        # the PM wrote eight hours each, sixteen combined). A bare "business
+        # day" gives no hours (010376).
+        full = bool(re.search(r"(?i)\bfull (work ?)?day\b", day["text"]))
+        if hrs or full:
+            h = 8 if not hrs else int(hrs.group(1)) if hrs.group(1).isdigit() else {"eight": 8, "ten": 10, "twelve": 12}[hrs.group(1).lower()]
             text = (f"Estimated Duration: one (1) onsite workday of {_words(h)} ({h}) hours per technician; {_words(techs)} ({techs}) "
                     f"technicians, {_words(h * techs)} ({h * techs}) combined hours")
         else:
@@ -7947,7 +8221,7 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # is not that line (000132: "Provide a Customer point of contact
     # available by phone during scheduled visits" never rendered).
     poc = "Customer to provide a point of contact for the project and onsite visit."
-    content["customer_responsibilities"] = [c for c in cr if not (re.search(r"(?i)point of contact|onsite contact for", tx(c))
+    content["customer_responsibilities"] = [c for c in cr if not (re.search(r"(?i)point of contact|onsite contact for|^\s*provide (a|an|one) (primary|main|single|designated) contact\b", tx(c))
                                                                   and not (isinstance(c, dict) and c.get("standard") and not _said(tx(c), [poc], 0.75)))
                                             and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
     # The standards win a conflict: removed gear left onsite and return
@@ -7965,6 +8239,11 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     if any(isinstance(a, dict) and a.get("standard") and "limited to" in tx(a).lower() for a in asm):
         content["assumptions"] = [a for a in asm if (isinstance(a, dict) and a.get("standard")) or "limited to" not in tx(a).lower()]
     scope_text = " ".join(tx(x) for k in ("scope", "equipment_in_scope") for x in content.get(k) or []).lower()
+    # An inventory or observation step works on no device (010419 pass W:
+    # the transition's network inventory names switches, firewalls and
+    # routers, which took "Advanced network, firewall, ... engineering" out).
+    scope_text = " ".join(tx(x) for k in ("scope", "equipment_in_scope") for x in content.get(k) or []
+                          if not re.match(r"(?i)\s*(identify|inventory|document|photograph|observe|record|perform directed|following)\b", tx(x))).lower()
     excludes_scope = []
     for dev, words in (("router", r"switch|firewall|network device|router"), ("firewall", r"firewall"),
                        ("switch", r"\bswitch"), ("access point", r"access point|wireless"), ("camera", r"camera"),
@@ -8906,6 +9185,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     day = re.search(r"(?i)\b(saturday|sunday)\b", sched)
     all_txt = " ".join(str(a.get("text") or "") for a in envelope.get("atoms") or [])
     asm = c.setdefault("assumptions", [])
+    # The template's business-hours line reads a weekend Work Window itself
+    # (010198 pass W: the weekend said twice).
+    if day and re.search(r"(?i)work window:[^|]*\b(weekend|%s)\b" % day.group(1), sched):
+        day = None
     if day and not re.search(r"(?i)\b(no|not|never|excluding|except|without)\b[^.]{0,40}\b(saturday|sunday|weekend)", all_txt) \
             and not any(re.search(r"(?i)weekend|performed on (saturday|sunday)", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
         asm.append({"text": f"Work is performed on {day.group(1).capitalize()} as scheduled; site access is available that day.",
@@ -8950,6 +9233,12 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "backing_counts", _backing_counts, c)
     _traced(c, "it_handles_duty", _it_handles_duty, c, envelope.get("atoms") or [])
     _traced(c, "before_start_not_closeout", _before_start_not_closeout, c)
+    _traced(c, "answered_none", _answered_none, c, envelope.get("atoms") or [])
+    _traced(c, "single_site_wording", _single_site_wording, c)
+    _traced(c, "derived_not_task", _derived_not_task, c, envelope.get("atoms") or [])
+    _traced(c, "bom_count_on_task", _bom_count_on_task, c, envelope.get("atoms") or [])
+    _traced(c, "no_after_hours", _no_after_hours, c, envelope.get("atoms") or [])
+    _traced(c, "counts_given", _counts_given, c)
     _traced(c, "onsite_assumption_suppliers", _onsite_assumption_suppliers, c)
     _traced(c, "materials_counted", _materials_counted, c)
     _locations_cover_sites(c)
@@ -8975,6 +9264,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "followup_not_promised", _followup_not_promised, c, envelope.get("atoms") or [])
     _traced(c, "standards_coverage", _standards_coverage, c)
     _traced(c, "no_repeat_lines", _no_repeat_lines, c)
+    _traced(c, "summary_denied_work", _summary_denied_work, c)
+    _traced(c, "clipped_lines", _clipped_lines, c, envelope.get("atoms") or [])
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
@@ -8988,15 +9279,22 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
 def _name_contradicted(name: str, c: dict[str, Any]) -> bool:
     """A project title naming work that a cited customer duty holds and no
     Provider task or summary line does."""
-    tasks = set().union(*[_object_toks(str(x.get("text"))) for k in ("scope", "overview") for x in c.get(k) or []
-                          if isinstance(x, dict)] or [set()])
+    # A summary clause handing work to another party is not ours (010326 pass
+    # W: "... while rack-mounted gateways and rack hardware stay with
+    # Customer's internal team").
+    theirs = lambda t: re.sub(r"(?i)\b(while|whereas)\b[^.]*|[^,.;]*\b(stays?|remains?) with\b[^,.;]*", "", t)
+    tasks = set().union(*[_object_toks(theirs(str(x.get("text"))) if k == "overview" else str(x.get("text")))
+                          for k in ("scope", "overview") for x in c.get(k) or [] if isinstance(x, dict)] or [set()])
     # The SOW's exclusions hold work too (010326 pass U: "Racking/Wall mount"
     # beside "Rack hardware, gateways, or rack-and-stack work" out of scope).
     other = set().union(*[_object_toks(str(x.get("text"))) for x in c.get("customer_responsibilities") or []
                           if isinstance(x, dict) and x.get("cites")] or [set()])
     other |= set().union(*[_object_toks(str(x.get("text"))) for x in c.get("out_of_scope") or []
                            if isinstance(x, dict) and not x.get("standard")] or [set()])
-    return any(w in other and w not in tasks for w in _object_toks(name))
+    # By stem: "Racking" is the "rack" work an exclusion holds (010326 pass W).
+    st = lambda ws: {re.sub(r"(ing|ed|es|s)$", "", w) for w in ws}
+    other, tasks = st(other), st(tasks)
+    return any(w in other and w not in tasks for w in st(_object_toks(name)))
 
 
 def _when_sent(raw: str) -> float | None:
