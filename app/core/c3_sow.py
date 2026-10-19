@@ -132,7 +132,8 @@ _PARTS = {
         "type: write every one of its items, reworded to this job, unless a fact contradicts it; the other lists: tools Provider brings; customer duties PurTera writes on such "
         "jobs; use those that fit THIS job's facts, never one the facts contradict): %s\n"
         "TASK: who supplies what. Tools must agree with the job's facts: no lift or scissor lift in the tools when a "
-        "ladder is confirmed. Return {\"provider_materials\": [materials Provider supplies, one item each, each "
+        "ladder is confirmed. A line that splits who supplies what (\"Provider will supply the backing board; the customer "
+        "orders the rack\") gives each party its own item: write both halves. Return {\"provider_materials\": [materials Provider supplies, one item each, each "
         "citing the fact that assigns it], \"provider_tools\": [tools Provider brings; standard hand tools may be "
         "uncited], \"customer_materials\": [equipment and materials the customer or end customer supplies, each "
         "citing the fact that assigns it; an item on the customer's purchase order is customer-supplied], "
@@ -393,6 +394,52 @@ TYPED_BAR = float(os.environ.get("SOWSMITH_C3_SOW_TYPED_BAR", "0.5"))
 TYPED_MAX = int(os.environ.get("SOWSMITH_C3_SOW_TYPED_MAX", "40"))
 
 
+#: A form field or note that records that something was not said: "Photo
+#: requirements mentioned: None mentioned", "Paying contact: Unknown". A count
+#: the request says is not known stays ("Hardware Quantity: Not provided").
+_ABSENCE = re.compile(r"(?i)^(?!.*\b(quantity|count|qty)\b)[^|:]{2,60}:\s*(none( mentioned| specified| provided| stated| given)?|unknown|n/?a|"
+                      r"not (mentioned|specified|provided|stated|given|known))\s*\.?\s*$")
+#: The same said as a SOW line: "No photo documentation requirements were
+#: specified." contradicted the photo deliverable beside it (010082).
+_ABSENCE_LINE = re.compile(r"(?i)^\s*(no\b.{3,80}\b(were|was|are|is|have been|has been)\s+(specified|mentioned|provided|stated|given|identified)|"
+                           r".{3,60}\b(is|are) (unknown|not known|not specified))(\s+(for|in|on|at|from) [^.]{0,40})?\s*\.?\s*$")
+_CHATTER_TYPES = ("small_talk", "signature")
+
+
+def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
+    """Atoms that are not facts of the job whatever section the brief put them
+    in: typed small talk or signature (the type head's label, else the
+    parser's type), a parser admission reject, and the items of a list whose
+    other items are mostly chatter (010082's signature menu "Need help with:
+    Firewall Request / ISP Upgrade / Network Consultation/New Installation /
+    New Unit Opening": the one item typed scope_item became a Provider task)."""
+    out: set[str] = set()
+    lines: dict[tuple, dict[int, list[bool]]] = {}
+    items: list[tuple[str, tuple, int]] = []
+    for a in envelope.get("atoms") or []:
+        st = a.get("structured") or {}
+        lab = str((st.get("c3_label") or {}).get("type") or "")
+        chat = lab in _CHATTER_TYPES or (not lab and str(a.get("atom_type") or "") in _CHATTER_TYPES) \
+            or bool(st.get("admission_reject"))
+        if chat:
+            out.add(str(a.get("id")))
+        loc = a.get("locator") or {}
+        ln = loc.get("line_start")
+        if not isinstance(ln, int):
+            continue
+        key = (a.get("artifact_id"), loc.get("message_index"))
+        lines.setdefault(key, {}).setdefault(ln, []).append(chat)
+        if not chat and (loc.get("lead_in") or st.get("lead_in") or st.get("list_item")):
+            items.append((str(a.get("id")), key, ln))
+    # A list item among chatter is chatter: its neighbours within three lines
+    # are mostly small talk or signature.
+    for i, key, ln in items:
+        near = [c for l2, cs in lines[key].items() if l2 != ln and abs(l2 - ln) <= 3 for c in cs]
+        if len(near) >= 2 and sum(near) >= 0.6 * len(near):
+            out.add(i)
+    return out
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -482,6 +529,12 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": "",
                         "text": str(x["text"]), "supplier": x.get("supplier")})
+    # A line the type head or the parser rejected is never a fact, wherever
+    # the brief filed it; nor is a form's absence note (010082: a signature's
+    # "New Unit Opening" (small_talk, confidence 0) reached the summary, and
+    # "Photo requirements mentioned: None mentioned" became an assumption).
+    rejected = _rejected_atoms(envelope)
+    out = [f for f in out if f["id"] not in rejected and not _ABSENCE.search(f["text"])]
     # The brief keeps a short copy of each line; the writer reads the whole one.
     full = {a.get("id"): str(a.get("text") or "") for a in envelope.get("atoms") or []}
     # A line a vision pass read off a photo or plan describes a picture; it is
@@ -960,6 +1013,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
              + (f" [supplier head: {_SUPPLIER.get(f['supplier'][0], f['supplier'][0])}]"
                 if f.get("supplier") and float(f["supplier"][1] or 0) >= SUPPLIER_BAR
                 and f.get("type") in _ITEM_TYPES else "") for f in fs}
+    _traced(content, "rejected_source", _rejected_source, content, envelope)
     content["added"] = _cover(content, fs, model)
     content["added"] += _must_include(content, fs, model)
     content["checks"] = check(content, lines)
@@ -1101,6 +1155,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             moved.append(x)
     content.setdefault("scope", []).extend(moved)
     content["unassigned"] = _party_check(content, lines)
+    _provider_half(content, fs)
     _dedupe_items(content)
     content["withheld"] = _scrub(content)
     # A number that names a document ("785 POS Termainal Refresh RFP.doc") is a
@@ -1346,6 +1401,71 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     return content
 
 
+def _rejected_source(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """Lines the writer built on what is not a fact of the job. A line citing
+    a rejected atom (see _rejected_atoms) whose words come from that atom
+    goes (010082: "This work is for a new unit opening" cited the signature's
+    "New Unit Opening" beside a real site line; "Include network consultation
+    ... ISP upgrade support" cited the menu). An absence note goes ("No
+    testing or certification tools were specified" beside the testing tools;
+    "The paying contact is unknown"). A summary or assumption naming two or
+    more of the deal's people is staffing colour, not the job (010082: "led by
+    AJ Deuel, with Chase, Kelly, and Octavian"). A verb glued to a negation
+    ("Provide do not install a patch cable") keeps the negation."""
+    rejected = _rejected_atoms(envelope)
+    text_of = {str(a.get("id")): str(a.get("text") or "") for a in envelope.get("atoms") or []}
+    people = [{w for w in str(pp.get("name") or "").split() if len(w) >= 3 and w[0].isupper()}
+              for pp in (envelope.get("deal_roster") or {}).get("people") or []]
+    def built_on_rejected(x: dict[str, Any]) -> bool:
+        bad = [c for c in x.get("cites") or [] if c in rejected]
+        if not bad:
+            return False
+        good = " ".join(text_of.get(c, "") for c in x.get("cites") or [] if c not in rejected).lower()
+        words = {w for c in bad for w in re.findall(r"[a-z]{4,}", text_of.get(c, "").lower())}
+        return len(bad) == len(x.get("cites") or []) or any(w in str(x.get("text")).lower() and w not in good for w in words)
+    for k in LISTS:
+        keep = []
+        for x in content.get(k) or []:
+            if not isinstance(x, dict) or x.get("kind") == "heading":
+                keep.append(x)
+                continue
+            t = str(x.get("text") or "")
+            if built_on_rejected(x) or (k != "schedule" and _ABSENCE_LINE.match(t)):
+                continue
+            if k in ("overview", "assumptions") and sum(1 for ws in people if ws and any(re.search(r"\b" + re.escape(w) + r"\b", t) for w in ws)) >= 2:
+                continue
+            x["text"] = re.sub(r"^(?:Provide|Perform|Ensure|Complete|Handle)\s+(do not|don't|not)\s+(\w)",
+                               lambda m_: "Do not " + m_.group(2), t)
+            keep.append(x)
+        content[k] = keep
+
+
+_PROVIDER_SUPPLIES = re.compile(r"(?i)\b(?:provider|technicians?|techs?|technican|purtera)\s+will\s+(?:supply|provide|provdie|bring|furnish)\s+([^;.]+)")
+_TOOL_WORDS = re.compile(r"(?i)\b(finder|drill|driver|ladder|tester|toner|tool|tools|level|crimper|punch)\b")
+
+
+def _provider_half(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """The Provider half of a line that splits who supplies what. 010082's
+    "Provider will supply backing board; AJ/CDW will provide/order the 9U
+    rack" gave the customer its rack and the backing board went nowhere;
+    "Provider will bring toggle bolts and stud finder" left only "anchors"."""
+    have = list(content.get("provider_materials") or []) + list(content.get("provider_tools") or [])
+    for f in fs:
+        if f.get("pictured") or f["section"] in ("figure", "unsure"):
+            continue
+        for m_ in _PROVIDER_SUPPLIES.finditer(f["text"]):
+            for part in re.split(r"\s*(?:,|\band\b)\s*", m_.group(1)):
+                part = re.sub(r"(?i)^(the|a|an|all|any)\s+", "", part.strip()).strip()
+                if not part or "/" in part or not 1 <= len(part.split()) <= 5 or not re.search(r"[a-z]{3}", part) \
+                        or re.search(r"(?i)\b(provider|customer|vendor|contractor|team|support|services?|labor|access|help|"
+                                     r"assistance|update|information|details|quote|pricing)\b", part) \
+                        or _said(part, have, 0.6):
+                    continue
+                item = {"text": part[:1].upper() + part[1:] + ".", "cites": [f["id"]], "kind": "fact"}
+                content.setdefault("provider_tools" if _TOOL_WORDS.search(part) else "provider_materials", []).append(item)
+                have.append(item)
+
+
 _REQUESTS_WORK = re.compile(r"(?i)\b(would (also )?like|i'?d like|we need|need (you|us|to)|want to add|add (a|an|the)|can you help|"
                             r"could you|please (install|add|quote))\b")
 
@@ -1411,7 +1531,10 @@ def _scope_contradictions(content: dict[str, Any], fs: list[dict[str, Any]]) -> 
     draft never excludes what it includes. Standard steps are the template's
     and are not judged here."""
     by = {f["id"]: f for f in fs}
-    duties = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict) and x.get("cites")]
+    # A hedged offer ("on-site staff may help mount the back of the clock if
+    # needed", 010264) is not a role split.
+    duties = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict) and x.get("cites")
+              and not re.search(r"(?i)\b(may|might|could|can)\b|\bif needed\b|\bassist|\bhelp\b", str(x.get("text")))]
     def latest(cites: list[str]) -> str:
         return max((by[c]["when"] for c in cites if c in by and by[c].get("when") and not by[c].get("quoted")), default="")
     def later(x: dict[str, Any], other: list[str]) -> bool:
@@ -1428,7 +1551,13 @@ def _scope_contradictions(content: dict[str, Any], fs: list[dict[str, Any]]) -> 
         t = str(x.get("text") or "")
         hit = None
         for d in duties:
-            if _collides(t, str(d.get("text"))):
+            dt = str(d.get("text"))
+            # A task the customer is to decide on is not yet Provider work
+            # (010082: "Perform a project survey" beside "Decide whether to
+            # proceed with the optional site survey").
+            optional = re.search(r"(?i)\b(optional|decide whether|whether to (proceed|add|do))\b", dt) \
+                and len(_object_toks(t) & _object_toks(dt)) >= max(1, 0.5 * len(_object_toks(t)))
+            if _collides(t, dt) or optional:
                 hit = list(d.get("cites") or [])
                 break
         if hit is None:

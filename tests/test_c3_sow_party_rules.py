@@ -154,3 +154,62 @@ def test_a_crm_title_naming_the_customers_work_yields_to_the_writers_name():
     assert m._name_contradicted("Manitowoc - Racking/Wall mount", c)
     assert not m._name_contradicted("Manitowoc Phone Deployment", c)
     assert not m._name_contradicted("Manitowoc Wall Mount Install", c)
+
+
+def _atom(i, text, ln, typ="scope_item", label=None, lead=None, **st):
+    s = {"c3_label": {"type": label}} if label else {}
+    s.update(st)
+    return {"id": i, "artifact_id": "mail", "text": text, "atom_type": typ, "structured": s,
+            "locator": {"line_start": ln, "message_index": 4, **({"lead_in": lead} if lead else {})}}
+
+
+SIG = [_atom("s1", "Firewall Request", 115, "small_talk"), _atom("s2", "ISP Upgrade", 116, "small_talk"),
+       _atom("s3", "Network Consultation/New Installation/Upgrade/Questions", 117, label="_keep", lead=["Need help with:"]),
+       _atom("s4", "New Unit Opening", 118, "small_talk"), _atom("s5", "Wastewatch Connectivity", 119, "small_talk"),
+       _atom("ok", "Commercial site with kitchen and office areas (Sodexo location)", 40, label="scope_item"),
+       _atom("ab", "Photo requirements mentioned: None mentioned", 41, "deal_metadata"),
+       _atom("hq", "Hardware Quantity: Not provided", 42, "deal_metadata")]
+
+
+def test_a_signature_menu_and_small_talk_are_never_facts():
+    rej = m._rejected_atoms({"atoms": SIG})
+    assert {"s1", "s2", "s3", "s4", "s5"} <= rej and "ok" not in rej
+    env = {"atoms": SIG, "c3_brief": {"sections": {"scope_of_work": [{"id": a["id"], "text": a["text"]} for a in SIG]}}}
+    got = {f["id"] for f in m.facts(env)}
+    assert got == {"ok", "hq"}  # an absence note goes; a count the request says is unknown stays
+
+
+def test_lines_built_on_rejected_atoms_or_absence_notes_go():
+    env = {"atoms": SIG, "deal_roster": {"people": [{"name": "AJ Deuel"}, {"name": "Chase Smith"}, {"name": "Patrick Kelly"}]}}
+    c = {"overview": [{"text": "This work is for a new unit opening at a commercial Sodexo site with kitchen and office areas.",
+                       "cites": ["s4", "ok"], "kind": "fact"},
+                      {"text": "Provider will work at a commercial Sodexo site with kitchen and office areas.", "cites": ["s4", "ok"], "kind": "fact"},
+                      {"text": "The one-day install is led by AJ Deuel, with Chase and Kelly in delivery.", "cites": ["ok"], "kind": "fact"}],
+         "scope": [{"text": "Include network consultation and ISP upgrade support.", "cites": ["s3", "s2"], "kind": "fact"},
+                   {"text": "Provide do not install a patch cable at the far-end biscuit box.", "cites": ["ok"], "kind": "fact"}],
+         "provider_tools": [{"text": "No testing or certification tools were specified for this job.", "cites": ["ab"], "kind": "fact"}],
+         "assumptions": [{"text": "The paying contact is unknown.", "cites": ["ab"], "kind": "fact"}]}
+    m._traced(c, "rejected_source", m._rejected_source, c, env)
+    assert [x["text"] for x in c["overview"]] == ["Provider will work at a commercial Sodexo site with kitchen and office areas."]
+    assert [x["text"] for x in c["scope"]] == ["Do not install a patch cable at the far-end biscuit box."]
+    assert not c["provider_tools"] and not c["assumptions"]
+
+
+def test_a_task_the_customer_is_to_decide_on_is_not_provider_work():
+    c = {"scope": [{"text": "Perform a project survey.", "cites": ["s"], "kind": "fact"},
+                   {"text": "Mount each clock at the approved height.", "cites": ["c"], "kind": "fact"}],
+         "customer_responsibilities": [{"text": "Decide whether to proceed with the optional site survey.", "cites": ["d"], "kind": "fact"},
+                                       {"text": "On-site staff may help mount the back of the clock if needed.", "cites": ["h"], "kind": "fact"}],
+         "out_of_scope": []}
+    m._scope_contradictions(c, [_fact(i, "x") for i in "scdh"])
+    assert [x["text"] for x in c["scope"]] == ["Mount each clock at the approved height."]
+
+
+def test_the_provider_half_of_a_split_supply_line_is_written():
+    c = {"provider_materials": [{"text": "Screws, anchors, washers and standard mounting hardware.", "cites": [], "kind": "method"}],
+         "provider_tools": [], "customer_materials": [{"text": "One (1) 9U rack.", "cites": ["r"], "kind": "fact"}]}
+    m._provider_half(c, [_fact("r", "Provider will supply backing board; AJ/CDW will provide/order the 9U rack"),
+                         _fact("t", "Toggle bolts / heavy-duty drywall anchors: Provider will bring toggle bolts and stud finder"),
+                         _fact("x", "The service provider will provide support as needed")])
+    assert [x["text"] for x in c["provider_materials"]][1:] == ["Backing board.", "Toggle bolts."]
+    assert [x["text"] for x in c["provider_tools"]] == ["Stud finder."]

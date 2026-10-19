@@ -164,13 +164,16 @@
     ]
   },
   "low_voltage_cabling": {
-    "_source": "owner standards loop 2026-10-18: generic cabling handling from the 010082 v1 TEMPLATE list (job-specific hardware left to the deal)",
+    "_source": "owner standards loop 2026-10-18: generic cabling handling from the 010082 v1 TEMPLATE list (job-specific hardware left to the deal); 010082 v2 grade TEMPLATE items (business-hours arrival, J-hook/Velcro support, metal-stud screws, drilling-prohibited areas, trenching/demolition/hazmat)",
     "method_steps": [
+      "{unless:after[- ]hours|overnight|weekends?\\b|night shift} Arrive onsite during the Customer-approved regular business hours.",
       "Review the work areas and the cable pathway with the onsite point of contact.",
       "Confirm each mounting and termination location with the onsite point of contact before drilling or mounting equipment.",
       "Use fastening methods suited to the existing wall and stud conditions, with anchors or toggle bolts where approved and no stud is available.",
+      "{when:metal studs?} Use self-tapping metal screws suited to the metal studs.",
       "Verify each backboard, cabinet and mounted device is level and securely fastened.",
       "Maintain proper cable support and never rest cable directly on ceiling tiles, electrical fixtures, plumbing or ductwork.",
+      "Support the cable using J-hooks, Velcro and other appropriate low-voltage cable supports.",
       "Terminate and label each cable run at both ends.",
       "Test each cable run for 4-pair continuity.",
       "Inform the onsite point of contact of each cable's location.",
@@ -178,7 +181,8 @@
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
-      "Provide device and termination locations before the technician arrives."
+      "Provide device and termination locations before the technician arrives.",
+      "{when:drill|mount|backboard|backing board} Identify any areas where drilling or mounting is prohibited."
     ],
     "assumptions": [
       "The work can be completed from an appropriate A-frame ladder; powered lifts, scaffolding or specialty access equipment are not included and may require a change order.",
@@ -188,7 +192,8 @@
     "exclusions": [
       "Electrical work, new power circuits or modification of existing power infrastructure.",
       "Fire-stopping, core drilling, conduit installation or structural modification.",
-      "Network configuration, programming or active equipment setup."
+      "Network configuration, programming or active equipment setup.",
+      "Trenching, demolition or hazardous material remediation."
     ],
     "deliverable_outcomes": [
       "Cable runs installed, terminated and labeled at both ends.",
@@ -207,7 +212,10 @@
     ],
     "materials": [
       "Screws, anchors, washers and standard mounting hardware.",
-      "Standard low-voltage consumables, labels, tape and installation hardware."
+      "Standard low-voltage consumables, labels, tape and installation hardware.",
+      "J-hooks and standard low-voltage cable supports.",
+      "Velcro cable management material.",
+      "{when:metal studs?} Self-tapping metal screws suitable for metal studs."
     ]
   },
   "cameras_security": {
