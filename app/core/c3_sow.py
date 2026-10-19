@@ -1336,6 +1336,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["overview"] = content["overview"][:4]
     pool_text = " ".join(f["text"] for f in fs).lower()
     content["scope_lead"] = _lead(str(content.get("scope_lead") or ""), pool_text)
+    # The template's own lead-in says it (010043 pass W: "Subject to the other
+    # provisions of this SOW, Provider will perform the following services:"
+    # then "Provider will perform the following:").
+    if re.fullmatch(r"(?i)\s*(the )?provider will perform the following( services| tasks| work)?\s*:?\s*", content["scope_lead"]):
+        content["scope_lead"] = ""
     lines = {f["id"]: (f"[under: {f['under']}] " if f["under"] else "") + f["text"]
              + (f" [supplier head: {_SUPPLIER.get(f['supplier'][0], f['supplier'][0])}]"
                 if f.get("supplier") and float(f["supplier"][1] or 0) >= SUPPLIER_BAR
@@ -1351,22 +1356,13 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                    for x in content.get(k) or [] if isinstance(x, dict)]
                                for k in LISTS if content.get(k)}
     _model_numbers(content, envelope)  # before the check reads "785 existing" as a count
+    _traced(content, "recite_places", _recite_places, content, fs, envelope.get("atoms") or [])
     content["checks"] = check(content, lines)
     # A schedule or work-window line is a commitment: it needs a line the brief
     # kept, not only one it mentioned in passing (000132's "24/7 on-call",
     # keep 0.21, became "Work Window: 24/7 on-call availability").
     weak = {f["id"] for f in fs if f["section"] in ("also_kept", "unsure", "typed_only", "answered_question")}
-    content["schedule"] = [x for x in content.get("schedule") or []
-                           if not x.get("cites") or not all(c in weak for c in x["cites"])]
-    # The summary commits only what the brief commits: a line the brief merely
-    # mentioned (000132's "24/7 on-call", whose caveat sat beside it) is not a
-    # promise in the overview.
-    promise = re.compile(r"(?i)24\s*/\s*7|on-?call|\bsla\b|guarantee|response time|within \d+ (hours?|minutes?)")
-    for k in ("scope", "schedule", "assumptions"):
-        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
-                      and all(c in weak for c in x["cites"]) and promise.search(str(x.get("text"))))]
-    ov_kept = [x for x in content.get("overview") or [] if not x.get("cites") or not all(c in weak for c in x["cites"])]
-    content["overview"] = ov_kept or content.get("overview") or []
+    _traced(content, "weak_commitments", _weak_commitments, content, weak, envelope.get("atoms") or [])
     # A start date before the cutoff is a document's date, not the job's
     # (010120 printed the survey deck's 7/9 as the requested start).
     cut = str((envelope.get("run_scope") or {}).get("as_of") or "")[:10]
@@ -1719,8 +1715,17 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             str(x.get("text")) for k in ("scope", "provider_tools", "provider_materials") for x in content.get(k) or [] if isinstance(x, dict))):
         asm = content.setdefault("assumptions", [])
         for t in ("No lift is required.", "Standard ladders reach every work location."):
-            if not _said(t, asm, 0.6):
+            # A deal line already saying ladders suffice says it (010043 pass W:
+            # "Standard ladder access is sufficient for the three door camera
+            # locations." beside it).
+            if not _said(t, asm, 0.6) and not (t.startswith("Standard ladders") and any(
+                    re.search(r"(?i)\bladders?\b.{0,40}\b(sufficient|enough|reach|adequate)|\b(accessible|reachable)\b.{0,40}\bladders?\b", str(x.get("text")))
+                    for x in asm if isinstance(x, dict))):
                 asm.append({"text": t, "cites": [], "kind": "method"})
+        # The tools say ladders, not "access equipment", when no lift is needed.
+        for x in content.get("provider_tools") or []:
+            if isinstance(x, dict) and re.match(r"(?i)\s*ladders? or (specialty )?access equipment\b", str(x.get("text"))):
+                x["text"] = "Standard ladders."
     # A run-length cap no fact gives is a priced promise nobody made (010120:
     # "All cable runs are under 50 feet" on a job whose runs home-run to the
     # IDF). The cap derived from the stated runs below is the only one.
@@ -3126,12 +3131,25 @@ def _grounded(x: dict[str, Any], lines: dict[str, str]) -> bool:
     # A count is its value however it is spelled (010373 pass U: "Supply
     # sixteen (16) monitor arms and forty-eight (48) monitors" failed on
     # "sixteen", "forty" and "eight" against "16 ... arms", "48 monitors").
+    # A unit names nothing, and a display is the TV or monitor its line names
+    # (010171 pass W: "Two (2) 85-inch TV displays and one (1) 75-inch TV
+    # display" against "mount three TV's (2 x 85" and 1 x 75")" failed on
+    # "inch" and "display", and the line left with no record).
     words = [w for w in re.findall(r"[a-z0-9]{2,}", _digits(x["text"]).lower())
-             if w not in _STOPWORDS and (len(w) >= 3 or w.isdigit())]
+             if w not in _STOPWORDS and (len(w) >= 3 or w.isdigit()) and w not in ("inch", "inches", "feet", "foot")]
     if not words:
         return True
     cited = _digits(" ".join(lines.get(c, "") for c in x["cites"])).lower()
-    return sum(1 for w in words if w in cited or w.rstrip("s") in cited) >= max(1, (len(words) + 1) // 2)
+    alias = lambda w: bool(re.fullmatch(r"displays?|screens?|monitors?|televisions?", w)) and bool(re.search(r"\b(tvs?|tv's|televisions?|displays?|monitors?|screens?)\b", cited))
+    return sum(1 for w in words if w in cited or w.rstrip("s") in cited or alias(w)) >= max(1, (len(words) + 1) // 2)
+
+
+def _supply_grounded(content: dict[str, Any], lines: dict[str, str]) -> None:
+    """A supply item names things its cited lines name (see _grounded); traced
+    so nothing leaves silently."""
+    for k in ("provider_materials", "customer_materials", "equipment_in_scope"):
+        content[k] = [x for x in content.get(k) or []
+                      if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines))]
 
 
 def _party_check(content: dict[str, Any], lines: dict[str, str]) -> int:
@@ -3139,9 +3157,7 @@ def _party_check(content: dict[str, Any], lines: dict[str, str]) -> int:
     supplies it; the rest go to the neutral Equipment in Scope list, as
     000123's SOW lists hardware "provided by SHI, the customer, or another
     party" (the writer gave Provider its printers on a bare "Printer")."""
-    for k in ("provider_materials", "customer_materials", "equipment_in_scope"):
-        content[k] = [x for x in content.get(k) or []
-                      if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines))]
+    _traced(content, "supply_grounded", _supply_grounded, content, lines)
     items = [(k, x) for k in ("provider_materials", "customer_materials") for x in content.get(k) or []
              if x.get("by") != "col:supplier"]
     if not items:
@@ -5573,9 +5589,14 @@ def _single_site_wording(c: dict[str, Any]) -> None:
                 if isinstance(x, dict) and per.search(str(x.get("text"))):
                     x["text"] = per.sub("", str(x["text"]))
     sch = [str(x.get("text")).split(":", 1)[-1] for x in c.get("schedule") or [] if isinstance(x, dict)]
+    # Or one citing what a schedule line cites and saying its value (010085
+    # pass W: "Work is performed during a mix of Business Hours and
+    # Customer-approved after-hours windows ..." beside that Work Window).
+    sch_c = [(str(x.get("text")).split(":", 1)[-1], set(x.get("cites") or [])) for x in c.get("schedule") or [] if isinstance(x, dict)]
     c["assumptions"] = [x for x in c.get("assumptions") or [] if not (
         isinstance(x, dict) and not x.get("standard") and sch
-        and any(_said(re.sub(r"(?i)^\s*(staff|plan for|assume)\s+", "", str(x.get("text"))), [t], 0.9) for t in sch))]
+        and (any(_said(re.sub(r"(?i)^\s*(staff|plan for|assume)\s+", "", str(x.get("text"))), [t], 0.9) and _said(t, [x], 0.8) for t in sch)
+             or any(cs and set(x.get("cites") or []) == cs and _said(t, [x], 0.8) and _said(str(x.get("text")), [t], 0.6) for t, cs in sch_c)))]
 
 
 def _derived_not_task(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
@@ -5700,6 +5721,282 @@ def _counts_given(c: dict[str, Any]) -> None:
                 t = f"Document all {_words(total)} ({total}) {unit} installations, including the {sub}."
             out.append(t)
         d["description"] = out
+
+
+def _question_not_exclusion(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """An unanswered question never becomes an exclusion (010085 pass W:
+    PurTera's own "No remote access/console work?" printed as "Remote access
+    or console work." out of scope). An uncited exclusion whose words come
+    from an open question, and from no statement, goes."""
+    ask = [str(a.get("text") or "") for a in atoms if str(a.get("atom_type") or "") == "open_question" or str(a.get("text") or "").rstrip().endswith("?")]
+    said = [str(a.get("text") or "") for a in atoms if not (str(a.get("atom_type") or "") in ("open_question", "answered_question")
+                                                          or str(a.get("text") or "").rstrip().endswith("?"))]
+    if not ask:
+        return
+    def from_q(t: str) -> bool:
+        ot = _object_toks(t) - {"work", "service"}
+        if len(ot) < 2:
+            return False
+        inq = any(len(ot & _object_toks(q)) >= 0.75 * len(ot) for q in ask)
+        ins = any(len(ot & _object_toks(x)) >= 0.75 * len(ot) for x in said)
+        return inq and not ins
+    c["out_of_scope"] = [x for x in c.get("out_of_scope") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and not x.get("cites") and from_q(str(x.get("text"))))]
+
+
+def _library_other_family(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A library step from a neighbouring job type, written by no deal line,
+    stays out unless a deal line names its work (010085 pass W: the smart-hands
+    "Pull, remove, organize, or route cables as requested ..." on a switch
+    job)."""
+    fam = str(c.get("job_family") or "")
+    lib = _library()
+    if fam not in lib:
+        return
+    texts = lambda f: {str(it.get("text") or "") for sec in (lib.get(f) or {}).values() if isinstance(sec, list) for it in sec if isinstance(it, dict)}
+    own = texts(fam)
+    other = set().union(*[texts(f) for f in lib if f != fam]) - own
+    facts = [str(a.get("text") or "") for a in atoms]
+    def named(t: str) -> bool:
+        ot = _object_toks(t)
+        return bool(ot) and any(len(ot & _object_toks(f)) >= max(2, 0.5 * len(ot)) for f in facts)
+    c["scope"] = [x for x in c.get("scope") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and not x.get("cites") and x.get("kind") != "heading"
+        and str(x.get("text")) in other and not named(str(x.get("text"))))]
+
+
+def _intro_not_duty(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """An introduction is not a duty (010082 pass W: "Mike leads that team."
+    became "Coordinate timing with Mike, who leads that team."). A line whose
+    statement cites are introductions of a person ("X leads/runs/manages
+    that team") or questions, and nothing else, goes."""
+    text = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    intro = re.compile(r"(?i)\b[A-Z][a-z]+(?: [A-Z][a-z]+)?\.?\s+(leads|runs|manages|heads|owns|is in charge of)\s+(that|the|our|their|this)\s+(team|group|department)\b")
+    for k in ("customer_responsibilities", "scope", "assumptions"):
+        keep = []
+        for x in c.get(k) or []:
+            cites = [text.get(str(cc), "") for cc in (x.get("cites") or [])] if isinstance(x, dict) else []
+            if isinstance(x, dict) and not x.get("standard") and cites and any(intro.search(t) for t in cites) \
+                    and all(intro.search(t) or t.rstrip().endswith("?") for t in cites):
+                continue
+            keep.append(x)
+        c[k] = keep
+
+
+def _rules_bind_provider(c: dict[str, Any]) -> None:
+    """A site rule the technicians follow binds the Provider, not the customer
+    (010082 pass W: "Follow client drilling rules and ladder use protocols."
+    under Customer Responsibilities). It becomes an assumption the Provider
+    keeps."""
+    keep = []
+    for x in c.get("customer_responsibilities") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        m_ = re.match(r"(?i)\s*(follow|comply with|adhere to|observe|obey)\s+(?:the\s+)?(?:client|customer|site|building)(?:'s)?\s+(.+?)\.?$", t)
+        if isinstance(x, dict) and not x.get("standard") and m_ and re.search(r"(?i)\b(rules?|protocols?|polic(y|ies)|procedures?|requirements?|standards?)\b", t):
+            line = f"Provider technicians follow the Customer's {m_.group(2)}."
+            if not _said(line, c.get("assumptions") or [], 0.7):
+                c.setdefault("assumptions", []).append({**x, "text": line})
+            continue
+        keep.append(x)
+    c["customer_responsibilities"] = keep
+
+
+def _condition_not_task(c: dict[str, Any]) -> None:
+    """A site condition is not a task (010082 pass W: "The existing large safe
+    in the space is not to be moved." under Closeout). A scope line that
+    states a condition rather than an action becomes an assumption."""
+    keep = []
+    for x in c.get("scope") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading" \
+                and re.match(r"(?i)\s*(the|there|an?|existing|all|no)\b", t) \
+                and re.search(r"(?i)\b(is|are) not to be\b|\b(must|should|cannot|can ?not|may) not be\b|\b(is|are) (immovable|fixed in place)\b", t):
+            if not _said(t, c.get("assumptions") or [], 0.7):
+                c.setdefault("assumptions", []).append(x)
+            continue
+        keep.append(x)
+    c["scope"] = keep
+
+
+def _same_line_twice(c: dict[str, Any]) -> None:
+    """One duty per person and one material per item (010082 pass W: Henry
+    Hankins as escort in two customer duties; "Toggle bolts." beside "Toggle
+    bolts / heavy-duty drywall anchors ..."; a backing-board line with a
+    sourcing clause beside the counted backing board). A later duty naming
+    the same person for most of the same work goes; a material whose words
+    another line carries goes, and so does a material line with a sourcing
+    clause when another line names the item."""
+    names = lambda t: set(re.findall(r"(?=\b([A-Z][a-z]+ [A-Z][a-z]+)\b)", t[1:])) - {"Provider Will", "Customer Will"}
+    out = []
+    for x in c.get("customer_responsibilities") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if isinstance(x, dict) and not x.get("standard") and any(
+                isinstance(y, dict) and names(t) & names(str(y.get("text")))
+                and len(_object_toks(t) & _object_toks(str(y.get("text")))) >= 0.5 * max(1, len(_object_toks(t)))
+                and len(_object_toks(t) & _object_toks(str(y.get("text")))) >= 4 for y in out):
+            continue
+        out.append(x)
+    c["customer_responsibilities"] = out
+    for k in ("provider_materials", "customer_materials"):
+        items = [x for x in c.get(k) or [] if isinstance(x, dict)]
+        keep = []
+        for x in c.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if isinstance(x, dict) and not x.get("standard"):
+                ot = _object_toks(t)
+                if re.search(r"(?i)\band (source|order|buy|purchase|pick up)\b|\bincluding a [\w ]+ run\b", t) and any(
+                        y is not x and len(ot & _object_toks(str(y.get("text")))) >= 2 for y in items):
+                    continue
+                bare = re.sub(r"(?i)^\s*(the|a|an)\s+|[.\s]+$", "", t).lower()
+                if ot and len(ot) <= 3 and any(y is not x and not y.get("standard") and ot < _object_toks(str(y.get("text")))
+                                               and bare in str(y.get("text")).lower() for y in items):
+                    continue
+            keep.append(x)
+        c[k] = keep
+
+
+_PLACE = re.compile(r"(?i)\b(side|back|rear|front|main|north|south|east|west|loading|service|exterior|interior|lobby|kitchen|break|conference|training)\s+"
+                    r"(doors?|entrances?|gates?|docks?|walls?|rooms?|offices?|closets?|hallways?|corridors?|areas?)\b")
+
+
+def _recite_places(c: dict[str, Any], fs: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> None:
+    """A step naming a place its cited line only counts ("Mount one Verkada
+    camera above the side door." citing "installed above 3 different doors")
+    also cites the line of the same sender or document that names the place
+    ("IDF to side door 154ft"), so the check reads the name (010043 pass W:
+    the three per-door mount steps were dropped as unsupported)."""
+    loc = {str(a.get("id")): a.get("locator") or {} for a in atoms}
+    src = lambda i: (str(loc.get(i, {}).get("sender") or ""), str(loc.get(i, {}).get("doc_id") or loc.get(i, {}).get("source") or ""))
+    text = {f["id"]: f["text"] for f in fs}
+    for k in ("scope", "equipment_in_scope", "overview"):
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")):
+                continue
+            cited = " ".join(text.get(cc, "") for cc in x["cites"]).lower()
+            whos = {src(str(cc)) for cc in x["cites"]}
+            for m_ in _PLACE.finditer(str(x.get("text"))):
+                ph = m_.group(0).lower()
+                if ph in cited:
+                    continue
+                hit = next((f["id"] for f in fs if ph in f["text"].lower() and f["id"] not in x["cites"]
+                            and any(w[0] and w[0] == src(f["id"])[0] or w[1] and w[1] == src(f["id"])[1] for w in whos)), None)
+                if hit:
+                    x["cites"] = list(x["cites"]) + [hit]
+                    cited += " " + text[hit].lower()
+
+
+def _weak_commitments(content: dict[str, Any], weak: set[str], atoms: list[dict[str, Any]]) -> None:
+    """A schedule line, a promise or a summary sentence resting only on lines
+    the brief merely mentioned is not a commitment (000132's "24/7 on-call",
+    keep 0.21, became "Work Window: 24/7 on-call availability"). Traced, so
+    nothing leaves silently; a summary install request the type head read as
+    scope ("We would like to have the Logitech Sight installed in this
+    specific room.") is a task, not lost (010171 pass W: the Sight's only line
+    was a summary sentence, removed with no record)."""
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not x.get("cites") or not all(c in weak for c in x["cites"])]
+    # The summary commits only what the brief commits: a line the brief merely
+    # mentioned (000132's "24/7 on-call", whose caveat sat beside it) is not a
+    # promise in the overview.
+    promise = re.compile(r"(?i)24\s*/\s*7|on-?call|\bsla\b|guarantee|response time|within \d+ (hours?|minutes?)")
+    for k in ("scope", "schedule", "assumptions"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
+                      and all(c in weak for c in x["cites"]) and promise.search(str(x.get("text"))))]
+    ov = content.get("overview") or []
+    ov_kept = [x for x in ov if not x.get("cites") or not all(c in weak for c in x["cites"])]
+    if not ov_kept:
+        return
+    typ = {str(a.get("id")): str(a.get("atom_type") or "") for a in atoms}
+    sc = content.setdefault("scope", [])
+    for x in ov:
+        if any(x is y for y in ov_kept) or not isinstance(x, dict):
+            continue
+        t = re.sub(r"(?i)^\s*provider will (also )?", "", str(x.get("text"))).strip()
+        if re.match(r"(?i)(install|mount|hang|replace)\b", t) and not promise.search(t) \
+                and any(typ.get(c) in ("scope_item", "task") for c in x.get("cites") or []) and not _said(t, sc, 0.6):
+            close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                          and _CLOSING_HEAD.search(str(y.get("text")))), len(sc))
+            sc.insert(close, {**x, "text": t[:1].upper() + t[1:]})
+    content["overview"] = ov_kept
+
+
+def _customer_says_it_will(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """What the customer says it will do itself ("No, I will do the device
+    configuration and testing.") is never a Provider clause citing that line
+    (010171 pass W: the summary had Provider "complete device configuration
+    and testing for the new rooms")."""
+    by = {str(a.get("id")): a for a in atoms}
+    for k in ("overview", "scope"):
+        keep = []
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and not x.get("standard") and x.get("cites")):
+                keep.append(x)
+                continue
+            t = str(x.get("text"))
+            for cc in x["cites"]:
+                a = by.get(str(cc)) or {}
+                if "purtera" in str((a.get("locator") or {}).get("sender") or "").lower():
+                    continue
+                m_ = re.search(r"(?i)\b(?:I|we)(?:'ll| will| am going to| are going to)\s+(?:do|handle|take care of|perform|complete|own)\s+(?:the\s+|all\s+)?(.{4,60}?)(?:\s+(?:myself|ourselves|ourself|in-?house))?\s*[.!;]", str(a.get("text") or ""))
+                if not m_:
+                    continue
+                phrase = m_.group(1).strip()
+                rx = re.compile(r"(?i)(?:,\s*(?:and\s+)?|\s+and\s+)(?:[a-z]+\s+){0,2}" + re.escape(phrase) + r"[^,.;]*")
+                if rx.search(t):
+                    t = rx.sub("", t, count=1).rstrip(" ,") 
+                    t = t if t.endswith(".") else t + "."
+                elif re.match(r"(?i)\s*(provider will\s+)?(?:[a-z]+\s+){0,2}" + re.escape(phrase), t):
+                    t = ""
+                    break
+            if t:
+                keep.append({**x, "text": t} if t != str(x.get("text")) else x)
+        c[k] = keep
+
+
+def _one_customer_name(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """One customer name: a "for <Name>" no source line writes (only an email
+    domain spells it) reads the SOW's end customer (010171 pass W: "for Radius
+    Global" beside APWireless)."""
+    cust = str(c.get("end_customer") or "").strip()
+    if not cust:
+        return
+    blob = " ".join(str(a.get("text") or "") for a in atoms).lower()
+    def fix(m_: re.Match) -> str:
+        name = m_.group(1)
+        if name.lower() == cust.lower() or name.lower() in blob or len(name.split()) < 2:
+            return m_.group(0)
+        return "for " + cust
+    for k in ("overview", "scope"):
+        for x in c.get(k) or []:
+            if isinstance(x, dict):
+                x["text"] = re.sub(r"\bfor ((?:[A-Z][\w&.-]*)(?: [A-Z][\w&.-]*){1,3})\b", fix, str(x.get("text")))
+
+
+def _untraced_ledger(c: dict[str, Any]) -> None:
+    """No cited writer line leaves silently (010171 pass W: the Sight install
+    and the TV material vanished with nothing in dropped or rule_decisions). A
+    cited writer_draft line the SOW does not show, that no check dropped and
+    no rule decided, is recorded as a drop by an untraced rule, so SowSmith's
+    queue shows it and a replay test can name it."""
+    lines = [x for k in LISTS for x in c.get(k) or [] if isinstance(x, dict)]
+    shown = {str(x.get("text")).strip() for x in lines}
+    cited = {a for x in lines for a in x.get("cites") or []}
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict):
+            shown |= {str(t).strip() for t in d.get("description") or []}
+    gone = {str(x.get("text")).strip() for k in ("dropped", "dropped_unsupported") for x in c.get(k) or [] if isinstance(x, dict)}
+    decided = {str(d.get("text")).strip() for d in c.get("rule_decisions") or []}
+    decided_ids = {a for d in c.get("rule_decisions") or [] for a in d.get("atom_ids") or []}
+    for k, xs in (c.get("writer_draft") or {}).items():
+        for x in xs if isinstance(xs, list) else []:
+            t = str(x.get("text")).strip()
+            ids = set(x.get("cites") or [])
+            if not ids or t in shown or t in gone or t in decided or ids & cited or ids & decided_ids:
+                continue
+            c.setdefault("rule_decisions", []).append({"rule": "untraced", "head": "sow_keep", "atom_ids": list(x.get("cites") or []),
+                                                       "value": "drop", "was": _LIST_SECTION.get(k, k), "text": t[:300],
+                                                       "why": "removed by a rule that records nothing"})
+            decided_ids |= ids
 
 
 def _materials_counted(c: dict[str, Any]) -> None:
@@ -6005,13 +6302,24 @@ def _standards_coverage(c: dict[str, Any]) -> None:
             continue
         obj = _object_toks(t)
         best, at, cur, score = None, None, None, 0
+        per_group: dict[Any, int] = {}
         for i, x in enumerate(sc):
             if isinstance(x, dict) and x.get("kind") == "heading":
                 cur = i
                 continue
             n = len(obj & _object_toks(str(x.get("text"))))
+            if not (cur is not None and _CLOSING_HEAD.search(str(sc[cur].get("text")))):
+                per_group[cur] = max(per_group.get(cur, 0), n)
             if n > score and not (cur is not None and _CLOSING_HEAD.search(str(sc[cur].get("text")))):
                 best, score = cur, n
+        # A step several per-item groups share goes to the general group,
+        # never into the first item's block (010043 pass W: "Terminate and
+        # label each cable run ..." under Side door only).
+        if score and sum(1 for v in per_group.values() if v == score) >= 2:
+            gen = next((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"
+                        and re.search(r"(?i)general|all (work )?areas|installation and testing|testing|common", str(x.get("text")))
+                        and per_group.get(i, 0) < score), None)
+            best = gen if gen is not None else best
         if best is not None or score:
             end = next((j for j in range((best or 0) + 1, len(sc)) if isinstance(sc[j], dict) and sc[j].get("kind") == "heading"), len(sc))
             # Ahead of the group's testing, unless it is a test itself.
@@ -8221,6 +8529,11 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # is not that line (000132: "Provide a Customer point of contact
     # available by phone during scheduled visits" never rendered).
     poc = "Customer to provide a point of contact for the project and onsite visit."
+    # The template asks that all customer equipment be on site and available
+    # before arrival (010085 pass W: "Ensure the network switches are onsite
+    # and available before Provider arrives." beside it and a standard).
+    cr = [c for c in cr if not (isinstance(c, dict) and not c.get("standard") and re.match(
+        r"(?i)\s*ensure (that )?(all )?(the )?[\w -]{2,40}? (is|are) (on ?-?site|delivered) and available (before|prior to)\b[^.]{0,30}\.?$", tx(c)))]
     content["customer_responsibilities"] = [c for c in cr if not (re.search(r"(?i)point of contact|onsite contact for|^\s*provide (a|an|one) (primary|main|single|designated) contact\b", tx(c))
                                                                   and not (isinstance(c, dict) and c.get("standard") and not _said(tx(c), [poc], 0.75)))
                                             and not re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}", tx(c))]
@@ -9239,6 +9552,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "bom_count_on_task", _bom_count_on_task, c, envelope.get("atoms") or [])
     _traced(c, "no_after_hours", _no_after_hours, c, envelope.get("atoms") or [])
     _traced(c, "counts_given", _counts_given, c)
+    _traced(c, "question_not_exclusion", _question_not_exclusion, c, envelope.get("atoms") or [])
+    _traced(c, "library_other_family", _library_other_family, c, envelope.get("atoms") or [])
+    _traced(c, "intro_not_duty", _intro_not_duty, c, envelope.get("atoms") or [])
+    _traced(c, "customer_says_it_will", _customer_says_it_will, c, envelope.get("atoms") or [])
+    _traced(c, "one_customer_name", _one_customer_name, c, envelope.get("atoms") or [])
+    _traced(c, "rules_bind_provider", _rules_bind_provider, c)
+    _traced(c, "condition_not_task", _condition_not_task, c)
     _traced(c, "onsite_assumption_suppliers", _onsite_assumption_suppliers, c)
     _traced(c, "materials_counted", _materials_counted, c)
     _locations_cover_sites(c)
@@ -9265,11 +9585,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "standards_coverage", _standards_coverage, c)
     _traced(c, "no_repeat_lines", _no_repeat_lines, c)
     _traced(c, "summary_denied_work", _summary_denied_work, c)
+    _traced(c, "same_line_twice", _same_line_twice, c)
     _traced(c, "clipped_lines", _clipped_lines, c, envelope.get("atoms") or [])
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
     c.pop("_merged", None)
+    _untraced_ledger(c)
     _decisions_match_output(c)
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"

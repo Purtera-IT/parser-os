@@ -353,3 +353,161 @@ def test_a_title_naming_work_the_summary_gives_the_customer_is_contradicted():
     c["out_of_scope"] = [{"text": "Rack-mounted gateway and rack hardware installation.", "cites": [], "kind": "method"}]
     assert m._name_contradicted("Manitowoc - Racking/Wall mount", c)
     assert not m._name_contradicted("Manitowoc Phone Deployment", c)
+
+
+# --- 010171 C: no silent deletion ------------------------------------------------
+
+import glob as _glob
+import json as _json
+import os as _os
+
+import pytest as _pytest
+
+from tests.test_c3_sow_batch4_rules import _SAVED, _replay
+
+
+def _unaccounted(c):
+    lines = [x for k in m.LISTS for x in c.get(k) or [] if isinstance(x, dict)]
+    shown = {str(x.get("text")).strip() for x in lines}
+    cited = {a for x in lines for a in x.get("cites") or []}
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict):
+            shown |= {str(t).strip() for t in d.get("description") or []}
+    gone = {str(x.get("text")).strip() for k in ("dropped", "dropped_unsupported") for x in c.get(k) or [] if isinstance(x, dict)}
+    decided = {str(d.get("text")).strip() for d in c.get("rule_decisions") or []}
+    decided_ids = {a for d in c.get("rule_decisions") or [] for a in d.get("atom_ids") or []}
+    out = []
+    for k, xs in (c.get("writer_draft") or {}).items():
+        for x in xs:
+            t = str(x.get("text")).strip()
+            ids = set(x.get("cites") or [])
+            if t in shown or t in gone or t in decided or (ids and (ids & cited or ids & decided_ids)):
+                continue
+            if not ids:
+                continue  # an uncited writer line is the template's to keep or lose
+            out.append((k, t))
+    return out
+
+
+@_pytest.mark.parametrize("deal", sorted(re.search(r"final_(\d+)_env", p_).group(1) for p_ in _glob.glob(f"{_SAVED}/final_*_env.json"))
+                         or ["none"])
+def test_every_cited_writer_line_is_shown_dropped_or_decided(deal, monkeypatch):
+    """010171 pass W: "Install one (1) Logitech Sight in the requested room."
+    left the SOW with nothing in dropped or rule_decisions."""
+    path = f"{_SAVED}/final_{deal}_env.json"
+    if not _os.path.exists(path) or "c3_sow" not in _json.load(open(path)):
+        _pytest.skip("saved envelope not on this machine")
+    c = _replay(deal, monkeypatch)
+    assert _unaccounted(c) == [], deal
+
+
+# --- 010085 A- / 010082 B- / 010043 A- / 010171 C -----------------------------------
+
+def test_an_unanswered_question_is_never_an_exclusion():
+    c = _content()
+    c["out_of_scope"] = [{"text": "Remote access or console work.", "cites": [], "kind": "method"},
+                         {"text": "Electrical work.", "cites": [], "kind": "method"}]
+    m._question_not_exclusion(c, [{"id": "q", "atom_type": "open_question", "text": "Once installed, move to next? No remote access/console work?"}])
+    assert _texts(c, "out_of_scope") == ["Electrical work."]
+
+
+def test_a_neighbour_familys_library_step_needs_a_deal_line(monkeypatch):
+    monkeypatch.setattr(m, "_library", lambda: {"network_switch_refresh": {"method_steps": [{"text": "Install the new switches."}]},
+                                                "smart_hands_general": {"method_steps": [{"text": "Pull, remove, organize, or route cables as requested and where safely accessible."}]}})
+    c = _content()
+    c["job_family"] = "network_switch_refresh"
+    c["scope"] = [{"text": "Install the new switches.", "cites": [], "kind": "method"},
+                  {"text": "Pull, remove, organize, or route cables as requested and where safely accessible.", "cites": [], "kind": "method"}]
+    m._library_other_family(c, [{"id": "a", "text": "Install about 20 switches."}])
+    assert _texts(c, "scope") == ["Install the new switches."]
+
+
+def test_an_introduction_is_not_a_duty():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Coordinate timing with Mike, who leads that team.", "cites": ["a", "b"], "kind": "fact"}]
+    m._intro_not_duty(c, [{"id": "a", "text": "And if you can't tell already, Mike. Mike leads that team."}, {"id": "b", "text": "Do we want to wait for Mike, you said?"}])
+    assert c["customer_responsibilities"] == []
+
+
+def test_site_rules_bind_the_provider_and_conditions_are_assumptions():
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Follow client drilling rules and ladder use protocols.", "cites": ["a"], "kind": "fact"}]
+    c["scope"] = [{"text": "Closeout", "kind": "heading", "cites": []},
+                  {"text": "The existing large safe in the space is not to be moved.", "cites": ["b"], "kind": "fact"}]
+    m._rules_bind_provider(c)
+    m._condition_not_task(c)
+    assert _texts(c, "assumptions") == ["Provider technicians follow the Customer's drilling rules and ladder use protocols.",
+                                        "The existing large safe in the space is not to be moved."]
+    assert c["customer_responsibilities"] == [] and _texts(c, "scope") == ["Closeout"]
+
+
+def test_one_duty_per_person_and_one_material_per_item():
+    c = _content()
+    c["customer_responsibilities"] = [
+        {"text": "Provide Henry Hankins as the onsite escort for technician access.", "cites": ["a"], "kind": "fact"},
+        {"text": "Customer's Henry Hankins greets the technician on arrival and escorts the technician throughout the job.", "cites": ["b"], "kind": "fact"}]
+    c["provider_materials"] = [{"text": "Toggle bolts.", "cites": ["c"], "kind": "fact"},
+                               {"text": "Toggle bolts / heavy-duty drywall anchors for mounting as needed.", "cites": ["d"], "kind": "fact"}]
+    c["customer_materials"] = [{"text": "The TV mounts.", "cites": ["e"], "kind": "fact"},
+                               {"text": "The rolling mount for the FiveStar TV at the NEW site.", "cites": ["f"], "kind": "fact"}]
+    m._same_line_twice(c)
+    assert _texts(c, "customer_responsibilities") == ["Provide Henry Hankins as the onsite escort for technician access."]
+    assert _texts(c, "provider_materials") == ["Toggle bolts / heavy-duty drywall anchors for mounting as needed."]
+    assert len(c["customer_materials"]) == 2
+
+
+def test_a_step_several_item_groups_share_goes_to_the_general_group():
+    c = _content()
+    t = "Terminate and label each cable run at the camera location and the IDF."
+    c["scope"] = [{"text": "General", "kind": "heading", "cites": []}, {"text": "Install three cameras.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Side door", "kind": "heading", "cites": []}, {"text": "Run 154 ft of cable run from the IDF to the side door.", "cites": ["b"], "kind": "fact"},
+                  {"text": "Back door", "kind": "heading", "cites": []}, {"text": "Run 88 ft of cable run from the IDF to the back door.", "cites": ["c"], "kind": "fact"},
+                  {"text": "Closeout", "kind": "heading", "cites": []}]
+    c["standards_suppressed"] = [{"section": "method_steps", "text": t, "reason": "a deal step already says it (one_statement)"}]
+    m._standards_coverage(c)
+    tx = _texts(c, "scope")
+    assert tx.index(t) < tx.index("Side door")
+
+
+def test_a_named_place_is_recited_from_the_same_sender():
+    c = _content()
+    c["scope"] = [{"text": "Mount one Verkada camera above the side door.", "cites": ["a"], "kind": "fact"}]
+    fs = [_fact("a", "the cameras are going to be installed above 3 different doors"), _fact("b", "IDF to side door 154ft"), _fact("z", "side door at the other site")]
+    atoms = [{"id": "a", "locator": {"sender": "x@cdw.com"}}, {"id": "b", "locator": {"sender": "x@cdw.com"}}, {"id": "z", "locator": {"sender": "y@other.com"}}]
+    m._recite_places(c, fs, atoms)
+    assert c["scope"][0]["cites"] == ["a", "b"]
+
+
+def test_what_the_customer_will_do_itself_is_not_a_provider_clause():
+    c = _content()
+    c["overview"] = [{"text": "Provider will mount three (3) TVs using provided mounts and complete device configuration and testing for the new rooms.",
+                      "cites": ["a", "b"], "kind": "fact"}]
+    m._customer_says_it_will(c, [{"id": "a", "text": "We do need to mount three TVs."},
+                                 {"id": "b", "text": "No, I will do the device configuration and testing.", "locator": {"sender": "karl@shi.com"}}])
+    assert _texts(c, "overview") == ["Provider will mount three (3) TVs using provided mounts."]
+
+
+def test_one_customer_name():
+    c = _content()
+    c["end_customer"] = "APWireless"
+    c["overview"] = [{"text": "Provider will install three setups at the La Jolla site for Radius Global, with two in offices.", "cites": [], "kind": "fact"}]
+    m._one_customer_name(c, [{"id": "a", "text": "Below are the answers from the APWireless Team."}])
+    assert _texts(c, "overview") == ["Provider will install three setups at the La Jolla site for APWireless, with two in offices."]
+
+
+def test_an_overview_install_on_weak_cites_becomes_a_task():
+    c = _content()
+    c["overview"] = [{"text": "Provider will install three setups.", "cites": ["s"], "kind": "fact"},
+                     {"text": "Install one (1) Logitech Sight in the requested room.", "cites": ["w"], "kind": "fact"}]
+    c["scope"] = [{"text": "Closeout", "kind": "heading", "cites": []}]
+    m._weak_commitments(c, {"w"}, [{"id": "w", "atom_type": "scope_item", "text": "We would like to have the Logitech Sight installed."}])
+    assert _texts(c, "overview") == ["Provider will install three setups."]
+    assert _texts(c, "scope") == ["Install one (1) Logitech Sight in the requested room.", "Closeout"]
+
+
+def test_the_untraced_ledger_records_a_silent_drop():
+    c = _content()
+    c["writer_draft"] = {"scope": [{"text": "Install the router.", "cites": ["r"]}, {"text": "Mount the TV.", "cites": ["t"]}]}
+    c["scope"] = [{"text": "Mount the TV.", "cites": ["t"], "kind": "fact"}]
+    m._untraced_ledger(c)
+    assert [d["text"] for d in c["rule_decisions"] if d["rule"] == "untraced"] == ["Install the router."]
