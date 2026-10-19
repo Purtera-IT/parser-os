@@ -2545,8 +2545,13 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         t = tx(x)
         if set(re.findall(r"\d{1,2}/\d{1,2}", t)) & sched_dates and not re.search(r"(?i)\b\d+\s*(ft|feet|x|units?|pcs)\b", t):
             return True  # restates the schedule
+        # A deal line with a count, size or model is the deal's own fact, never a
+        # repeat (010217: "Install two (2) new 86 inch Philips displays in
+        # training room 250 ..." dropped as the standard install step).
+        if re.search(r"\d|\b(one|two|three|four|five|six|seven|eight|nine|ten)\b|\b[A-Z][A-Za-z]+\b(?<!^)", t[1:]):
+            return False
         first = next(iter(re.findall(r"[a-z]+", t.lower())), "")
-        if first and _stem(first) in std_verbs and len(_toks(t) & std_words) >= 0.35 * max(1, len(_toks(t))):
+        if first and _stem(first) in std_verbs and len(_toks(t) & std_words) >= 0.6 * max(1, len(_toks(t))):
             return True  # the standard step with that verb says it
         if content.get("provider_tools") and re.search(r"(?i)\btools?\b|screwdriver|wrench", t):
             return True  # the tools list says it
