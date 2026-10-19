@@ -1618,6 +1618,24 @@ def _materials_hygiene(content: dict[str, Any], family: str, fs: list[dict[str, 
         else:
             keep_cm.append(x)
     content["customer_materials"] = [x for x in keep_cm if not _said(str(x.get("text") if isinstance(x, dict) else x), pm, 0.7)]
+    # And back: a Provider material whose cited line has the customer or the
+    # reseller providing or ordering it (010082: "AJ/CDW will provide/order the
+    # 9U rack"), or that a customer duty says to have onsite.
+    cust_side = re.compile(r"(?i)\b(cdw|shi|customer|client|they|aj)\b[^.]{0,25}\b(will |to )?(provide|order|supply|furnish)|customer[- ]provided|provided by (the )?(customer|cdw)")
+    duties = " ".join(str(y.get("text") if isinstance(y, dict) else y) for y in content.get("customer_responsibilities") or []).lower()
+    back = []
+    for x in content.get("provider_materials") or []:
+        if not isinstance(x, dict) or x.get("standard"):
+            continue
+        cited = [by.get(c, "") for c in x.get("cites") or []]
+        key = [w for w in re.findall(r"[a-z0-9]{3,}", str(x.get("text")).lower()) if w not in ("the", "and", "for", "with")][:3]
+        strict = family == "low_voltage_cabling" and _CONSUMABLE.search(str(x.get("text")))
+        if (not strict and (any(cust_side.search(c) and not ours.search(c) for c in cited) or (key and all(w in duties for w in key)))) \
+                or (strict and any(theirs.search(c) for c in cited)):
+            back.append(x)
+    if back:
+        content["provider_materials"] = [x for x in content["provider_materials"] if not any(x is y for y in back)]
+        content.setdefault("customer_materials", []).extend(back)
     if family == "low_voltage_cabling":
         pm = content.setdefault("provider_materials", [])
         keep = []
@@ -2657,6 +2675,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
               "name": s.get("display_name") or ""}
              for s in (envelope.get("site_readiness") or {}).get("sites") or []]
     offices = _reseller_streets(envelope)
+    sites = [x for x in sites if str(x.get("address") or "").strip() or str(x.get("name") or "").strip()]  # 010116: one blank roster row
     sites = [x for x in sites if not any(o in re.sub(r"\W+", " ", x["address"].lower()) for o in offices)]
     if not sites:
         # Every resolved site was an office: the address a message names as the
