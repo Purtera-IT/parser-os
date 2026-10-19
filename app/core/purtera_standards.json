@@ -125,7 +125,6 @@
       "{when:labor only|we'?d ship|ship(ped)? (out|directly)|customer[- ](provided|supplied|furnished) (hardware|equipment)} No materials are required to be provided by Provider.",
       "Provider is not responsible for delays caused by unavailable equipment, missing materials, store access restrictions, network outages, electrical issues, unavailable remote support or other conditions outside Provider's control.",
       "{when:cellular backup|failover|cellular} The cellular service will be activated prior to installation if cellular failover testing is required.",
-      "{when:\\b(saturday|sunday|weekends?)\\b} All Services will be performed during the weekend.",
       "Additional labor resulting from conditions outside the documented scope may require Customer authorization through the Change Control process."
     ],
     "exclusions": [
@@ -187,8 +186,7 @@
       "Test each cable run for 4-pair continuity.",
       "Inform the onsite point of contact of each cable's location.",
       "Clean the immediate work area and remove Provider-generated installation debris.",
-      "Confirm completion with the onsite contact before leaving site.",
-      "{when:rough[- ]?in|tape .*ceiling|coil|unterminated|service loop} Coil the unterminated cable and service loop neatly above the accessible ceiling and mark its location with tape for the onsite point of contact."
+      "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
       "Provide device and termination locations before the technician arrives.",
@@ -425,7 +423,6 @@
       "Permission to mount equipment to approved existing surfaces.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Confirm wall structure suitability for mounting, if applicable.",
       "Provide timely testing, direction, and completion approval.",
-      "{unless:new (network |data )?drops?|cat ?6 (run|cable|plenum)} Prior to technician mobilization, the Customer is responsible for confirming that all required network drops are physically installed, terminated, labeled, accessible, and ready for use.",
       "Providing timely approval of any field discovered changes that could affect scope, schedule, or cost."
     ],
     "assumptions": [
@@ -447,7 +444,6 @@
       "There is a trash area onsite able to hold all debris.",
       "{when:backing board|plywood} Installation of the backing boards can be completed without major demolition, reconstruction, wall opening or structural reinforcement.",
       "{when:larger (displays?|tvs?|screens?)|\\b(7\\d|8\\d|9\\d|1\\d\\d) ?(inch|in\\b|\"|”)} The installation areas can safely accommodate the personnel required to handle the larger displays.",
-      "{when:wi-?fi|wireless} Provider's configuration responsibility is limited to connecting the installed equipment to the room display and confirming WiFi connectivity, assuming Customer provides valid wireless credentials.",
       "{unless:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down|relocat} No devices are required to be removed; this is a net-new installation.",
       "{unless:backing board|plywood|blocking} Any required wall blocking, backing, or structural support will already be in place.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} The PoE switch provides sufficient ports and PoE capacity for the final design.",
@@ -460,8 +456,7 @@
       "Work areas will be free from active construction activities that prevent installation.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)|room system} If the final equipment inventory requires installation of an additional room system beyond the rooms in this SOW, the additional installation will be considered outside the base scope and may require additional labor authorization.",
       "{when:mic pods?|later (elect|add|install)|deferred|phase (2|two)|not (being )?installed (now|at this time)} If the Customer later elects to install deferred devices (for example microphone pods), associated installation and cable routing may require a scope adjustment or change order.",
-      "The scope is based on information provided.",
-      "{when:articulating} The mounting surfaces can support the articulating wall mounted displays without structural modification beyond normal mounting practices."
+      "The scope is based on information provided."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
@@ -509,7 +504,6 @@
       "Torx and security bit set.",
       "Pliers, diagonal cutters, and needle nose pliers.",
       "Flashlight or headlamp.",
-      "Fish tape or fiberglass fish rods.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Hardware assortment for securing accessories behind the displays."
     ]
   },
@@ -667,7 +661,6 @@
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Removed equipment is moved as separate units using the Customer-provided cart or other approved onsite handling equipment; extended manual carrying of heavy equipment is not included.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} No specialty rigging, crane, forklift, rack modification or electrical infrastructure work is included; work may pause if the equipment cannot be handled safely with the planned team and available cart.",
       "{when:recycl\\w* (provider|vendor|company|partner)|recycler|\\bewaste\\b|e-waste} If the recycling provider is not onsite during the service window, Provider stages the removed equipment at a Customer-designated onsite location; a return visit for a later pickup is not included.",
-      "{unless:include all travel|travel and expenses (are |will be )?included|all travel and expenses} Parking available onsite, reimbursed if there is a fee.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Replacement devices will be preconfigured and provisioned, or a Customer designated remote engineer will be available during the installation window to perform configuration, provisioning, registration, and troubleshooting.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Customer will provide compatible wall mounting hardware and accessories where required.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Existing phone locations will have operational network connectivity available at the time of installation.",
@@ -743,8 +736,7 @@
       "Providing the replacement UKG time clocks and all applicable manufacturer supplied components.",
       "Coordinating procurement and shipment of replacement time clocks to the applicable locations.",
       "Providing final identification and approval of the mounting location for each replacement clock.",
-      "Providing existing functional AC power within five (5) feet of each approved installation location.",
-      "Providing existing functional network connectivity at each approved installation location, including sufficient WiFi connectivity when wireless connectivity is required."
+      "Providing existing functional AC power within five (5) feet of each approved installation location."
     ],
     "assumptions": [
       "{when:additional clock|multi[- ]?clock|per additional|second clock|each additional} The additional clock rate applies only when the additional clocks are installed during the same mobilization and service window as the first clock.",
