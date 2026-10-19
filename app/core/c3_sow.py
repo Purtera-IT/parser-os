@@ -2146,6 +2146,20 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                      r"\b(optional|contingent)\b.{0,40}survey", f["text"]) for f in fs):
         content["scope"] = [x for x in content.get("scope") or []
                             if not (isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"(?i)\bsurvey\b", str(x.get("text"))))]
+    # One line per exclusion, and arrival lines that repeat a customer duty go
+    # (010115: transport/packing/disposal two or three times each).
+    oos, kept_o = content.get("out_of_scope") or [], []
+    for x in oos:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if not _said(t, kept_o, 0.6):
+            kept_o.append(x)
+    content["out_of_scope"] = kept_o
+    cr_items = content.get("customer_responsibilities") or []
+    content["arrival_protocol"] = [x for x in content.get("arrival_protocol") or []
+                                   if not (isinstance(x, dict) and re.match(r"(?i)\s*customer\b", str(x.get("text"))) and _said(str(x.get("text")), cr_items, 0.5))]
+    for x in content.get("arrival_protocol") or []:
+        if isinstance(x, dict) and re.match(r"(?i)\s*require an onsite manager", str(x.get("text"))):
+            x["text"] = re.sub(r"(?i)^\s*require an onsite manager", "Customer provides an onsite manager", str(x["text"]))
     # Last: a heading left with nothing under it goes (010209 "Switch replacement").
     sc = content.get("scope") or []
     content["scope"] = [x for i, x in enumerate(sc)
