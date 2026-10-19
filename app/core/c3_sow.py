@@ -1104,6 +1104,15 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             lost_n = set(re.findall(r"\b\d+\b", _digits(text))) - set(re.findall(r"\b\d+\b", _digits(dt_)))
             if (len(lost) >= 2 or lost_n) and any(isinstance(x, dict) and tuple(x.get("cites") or []) == cites for x in lists_before.get(lst) or []):
                 dup = None
+        # A duty or assumption never merges into a line that lacks the thing
+        # its own fact names (010171 pass Y: "Ensure network drops are
+        # installed before technician arrival" merged into "Provide network or
+        # Wi-Fi access and credentials", and the drops were gone).
+        if dup is not None and dest in ("customer_responsibilities", "assumptions"):
+            fact_toks = _object_toks(" ".join(str(content.get("_fact_text", {}).get(c_, "")) for c_ in cites))
+            if (_object_toks(text) & fact_toks) - _object_toks(str(dup.get("text"))) - {"customer", "provid", "provider", "ensur", "befor"} \
+                    and not (_object_toks(text) & fact_toks) & _object_toks(str(dup.get("text"))) - {"network", "site", "access", "work", "area"}:
+                dup = None
         # Already written in another block, with all its own nouns and
         # numbers: the fact's home is that line (010115 pass X: "Use common
         # hand tools as needed to dismantle the hardware." restored to the
@@ -1230,9 +1239,37 @@ def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     _std_gone(content, f"rule {rule}")
     guarded = _guard_drops(content, rule, before, lists_before) if rule in GUARDED_RULES else []
     kept = {tuple(g["atom_ids"]) for g in guarded}
-    content.setdefault("rule_decisions", []).extend(
-        [d for d in _decisions(rule, before, _snap(content)) if tuple(d["atom_ids"]) not in kept] + guarded + merged_back)
+    new = [d for d in _decisions(rule, before, _snap(content)) if tuple(d["atom_ids"]) not in kept] + guarded + merged_back
+    new += _lost_lines(content, rule, lists_before, new)
+    content.setdefault("rule_decisions", []).extend(new)
     return result
+
+
+def _lost_lines(content: dict[str, Any], rule: str, lists_before: dict[str, list], recorded: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every drop is recorded: a cited line a rule removed is a sow_keep drop
+    even when another line shares its cites (the snapshot keys lines by
+    their cites, so 010012 pass Y lost "Mount each Poly X72 bar ..." beside
+    four more lines citing the same order line, with no record anywhere). A
+    line rewritten or moved (a new line with its cites appeared) is not one."""
+    after_ids = {id(x) for k in _LIST_SECTION for x in content.get(k) or []}
+    after_txt = {str(x.get("text")) for k in _LIST_SECTION for x in content.get(k) or [] if isinstance(x, dict)}
+    before_ids = {id(x) for v in lists_before.values() for x in v}
+    fresh = {tuple(x.get("cites") or []) for k in _LIST_SECTION for x in content.get(k) or []
+             if isinstance(x, dict) and id(x) not in before_ids and x.get("cites")}
+    said = {d.get("text") for d in recorded}
+    live = [x for k in _LIST_SECTION for x in content.get(k) or [] if isinstance(x, dict) and x.get("kind") != "heading"]
+    out = []
+    for k, items in lists_before.items():
+        for x in items:
+            if not (isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading" and not x.get("standard")):
+                continue
+            t = str(x.get("text") or "")
+            if id(x) in after_ids or t in after_txt or tuple(x["cites"]) in fresh or t[:300] in said or _said(t, live, 0.8):
+                continue  # still there, rewritten, moved or merged into a line that says it
+            said.add(t[:300])
+            out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(x["cites"]), "value": "drop",
+                        "was": _LIST_SECTION[k], "text": t[:300], "why": "removed beside a line that shares its cites", "ledger": "lost_line"})
+    return out
 
 
 def _merged_back(content: dict[str, Any], lists_before: dict[str, list], rule: str) -> list[dict[str, Any]]:
@@ -1585,6 +1622,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     writer_snap = _snap(content)
     content["_noise_atoms"], content["_noise_re"] = _noise(envelope, fs)
     content["_inventory"] = _inventory_rows(envelope)
+    content["_fact_text"] = {f["id"]: f["text"] for f in fs}
     # The standards' gates also read the deal lines the brief left out, from
     # the documents the facts come from: not addresses, contacts, chatter or
     # rejected lines (000123: "Gateway Road" is not a gateway).
@@ -1900,6 +1938,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _std_gone(content, "writer rules (untraced)")
     content.pop("_noise_atoms", None)
     content.pop("_inventory", None)
+    content.pop("_fact_text", None)
     content.pop("_slots", None)
     content.pop("_polarity_rejected", None)
     content.pop("_noise_re", None)
@@ -2612,7 +2651,12 @@ def _third_party(content: dict[str, Any], envelope: dict[str, Any], fs: list[dic
                 # 53-foot trailer ... it will be expensive to transport just
                 # these two units on a dedicated truck" became "ThinkTLS
                 # provides a dedicated truck ...; do not use a 53-foot trailer").
+                # A supply the other party's own text says it provides ("All
+                # required packing materials ... are provided", ThinkTLS) is its
+                # supply, an assumption; only a step inside its own process
+                # (trailer seals) goes (010376 pass Y lost the packing line).
                 if not (_TP_SAYS.search(said) or re.search(r"(?i)\b(we|i)\s+(will|can|'ll|would)\s+(provide|supply|bring|send|use)\b", said)
+                        or re.search(r"(?i)\b(?:are|is|will be|to be)\s+(?:provided|supplied|furnished|included)\b|\bship(?:ping)? in\b", said)
                         or any(len(said_of.get(c, "").split()) <= 8 or _PRICE_TERM.search(said_of.get(c, "")) for c in cites)):
                     continue
                 t = tx(x).strip().rstrip(".")
@@ -3281,7 +3325,7 @@ _SALIENT = re.compile(r"\b(\d+(?:\.\d+)?\s*(?:ft|feet|foot|in|inch|\"|u|mm|lbs?)
                       r"\d+[A-Za-z]+[A-Za-z0-9-]*)\b")
 _PRODUCT = re.compile(r"\b([A-Z][a-z]{2,}(?: [A-Z][a-z]{2,})?)\b")
 MUST_SECTIONS = ("scope_of_work", "customer_furnished", "answered_question", "customer_responsibilities",
-                 "assumptions", "out_of_scope")
+                 "assumptions", "out_of_scope", "job_details")
 
 
 def _must_include(content: dict[str, Any], fs: list[dict[str, Any]], model: str | None) -> int:
@@ -5298,6 +5342,12 @@ def _exclusions_never_tasks(content: dict[str, Any], fs: list[dict[str, Any]]) -
         rest = (mm.group(2) if mm else t).strip().rstrip(".")
         cited = [text_of[c] for c in x.get("cites") or [] if c in text_of]
         orig = was_excl.get(tuple(x.get("cites") or []))
+        # Only a task that rewords that exclusion: a task merely sharing its
+        # cite is not it (010012 pass Y: five install steps citing the order
+        # line "2x Poly X72 bars with TC10's" left for Out of Scope, mount step
+        # and all, because a negated assumption cited the same line).
+        if orig is not None and not (_said(rest, [orig], 0.5) or _said(orig, [rest], 0.6)):
+            orig = None
         library = bool(mm) and any(_said(rest, [e], 0.8) and _said(e, [rest], 0.8) for e in known)
         if (library or orig is not None) and not _said(rest, cited, 0.6):
             line = orig if orig is not None and not library else rest[:1].upper() + rest[1:] + "."
@@ -8610,6 +8660,8 @@ def _summary_names_installs(c: dict[str, Any]) -> None:
     if not inst or len(inst) > 6 or not ov:
         return
     missing, cites = [], []
+    alltext = " ".join(_digits(_tx(x)) for k in ("overview", "scope") for x in c.get(k) or [])
+    multi = any(int(n) > 1 for n in re.findall(r"(?i)\b(\d+)\)?\s+(?:[\w-]+\s+){0,3}?(?:setups?|systems?|rooms?|room systems?|offices?)\b", alltext))
     for x in inst:
         m_ = re.match(r"(?i)\s*(?:provider will )?(?:install|mount|deploy)\s+(.+?)(?:\s+(?:at|in|on|onto|to|for|from)\s+.*)?\.?$", str(x["text"]))
         obj = m_.group(1).strip() if m_ else ""
@@ -8617,6 +8669,12 @@ def _summary_names_installs(c: dict[str, Any]) -> None:
         # that connects ..." never reads "using a bracket that connects"
         # (010171 pass X).
         obj = re.split(r"(?i)\s+(?:using|via|by|underneath|under|behind|above|below|beneath|that|which|so that)\b", obj)[0].strip(" ,")
+        # One device of a several-room job is each room's, never "the X"
+        # (010171 pass Y: "install the Rally Bar" on three conference setups).
+        head = (re.findall(r"[A-Za-z]+", obj) or [""])[-1].lower()
+        if multi and re.match(r"(?i)the\s+(?!\w+\s+(?:room|office|site)\b)", obj) and not re.search(r"\d|\b(?:one|single)\b", obj) \
+                and len(head) > 2 and re.search(r"(?i)\beach\s+(?:[\w-]+\s+){0,2}%ss?\b" % re.escape(head), alltext):
+            obj = "each " + obj[4:]
         nouns = _object_toks(obj)
         if obj and nouns and not (nouns & ov_toks) and not any(_said(obj, [mm], 0.8) for mm in missing):
             missing.append(obj)
@@ -9330,7 +9388,9 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
     # dropped_unsupported too: a sentence the check dropped from the scope is
     # not promised in the report (010147 pass U: "five network switches, two
     # Cisco 1U switches" counted the same switches twice).
-    gone = [str(d.get("text")) for d in content.get("rule_decisions") or [] if d.get("value") == "drop"] + \
+    # A lost-line record is bookkeeping, not a verdict on the work (it never
+    # strikes an outcome the SOW otherwise keeps).
+    gone = [str(d.get("text")) for d in content.get("rule_decisions") or [] if d.get("value") == "drop" and d.get("ledger") != "lost_line"] + \
            [str(x.get("text")) for x in content.get("dropped") or [] if isinstance(x, dict)]
     unsupported = [str(x.get("text")) for x in content.get("dropped_unsupported") or [] if isinstance(x, dict)]
     # A line moved into the report is not gone (010083: tidy moved "Provide
@@ -9980,7 +10040,7 @@ def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[s
             # "about 160" stated, 161 resolved from the roster (000123's count).
             approx = re.search(r"(?i)\b(about|approximately|approx\.?|around|roughly|~)\s*\d", cited) and _stated_by(
                 re.sub(r"\d+", lambda m: next((n for n in re.findall(r"\d+", cited) if abs(int(n) - int(m.group(0))) <= 2), m.group(0)), x["text"]), cited)
-            if i in okn or explicit_absence or install_row or approx or _stated_by(x["text"], cited):
+            if i in okn or explicit_absence or install_row or approx or _stated_by(x["text"], cited) or _content_covered(x["text"], cited):
                 out.append(x)
             else:
                 # Cited to the wrong line but stated by another: re-cite, do not
@@ -10018,6 +10078,34 @@ def _drop_unstated_counts(text: str, cited: str) -> str:
         return ""
     bare = re.sub(r"(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*(\(\d+\)\s*)?(?=[a-z])", cut, text).strip()
     return re.sub(r"\s{2,}", " ", bare)
+
+
+#: Words saying when or in what state, not what: a paraphrase may add them
+#: ("installed and active before installation begins" for "waiting for our
+#: network drops to be installed next week").
+_STATE_WORDS = frozenset("""before after prior begin begins start starts started starting arrival arrive arrives active ready
+available availabl ensure ensured confirm onsite site work technician technicians provider customer will shall must be
+been being are is was were place placed complete completed time scheduled schedul functional operational working assume
+live""".split())
+
+
+def _content_covered(text: str, cited: str) -> bool:
+    """Every content word of a bullet (two or more of them) is in its cited
+    lines, in some form, with every number, and no negation the lines lack:
+    a paraphrase of them (010171 pass Y: "Network drops are installed and
+    active before installation begins", cited to "waiting for our network
+    drops to be installed next week", was dropped as not stated)."""
+    neg = r"(?i)\b(not|no|never|without|n't)\b"
+    if re.search(neg, text) and not re.search(neg, cited):
+        return False
+    have = {_stem(w) for w in re.findall(r"[a-z0-9]+", cited.lower())}
+    state = {_stem(w) for w in _STATE_WORDS} | _STATE_WORDS
+    want = {_stem(w) for w in re.findall(r"[a-z]+", text.lower()) if len(w) > 2 and w not in _FILLER and w not in _STATE_WORDS} - state
+    want = {w for w in want if not w.startswith(("install", "instal"))} | (
+        {"instal"} if re.search(r"(?i)\binstall", text) else set())
+    hit = lambda w: w in have or any(len(w) >= 5 and (h.startswith(w[:5]) or w.startswith(h[:5])) for h in have if len(h) >= 5) or \
+        (w == "instal" and any(h.startswith("instal") for h in have))
+    return len(want) >= 2 and all(hit(w) for w in want) and set(re.findall(r"\d+", text)) <= set(re.findall(r"\d+", cited))
 
 
 def _stated_by(text: str, cited: str) -> bool:
@@ -10634,6 +10722,94 @@ def _overview_numbers(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
     c["overview"] = out
 
 
+def _one_place_count(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """One counted thing is in one place: "one (1) floor data port at the
+    installation locations" spreads a single room's port over every room
+    (010171 pass Y). The line takes the room its cited line's context names
+    (the sentences before it in the same message), else one location."""
+    by = {str(a.get("id")): a for a in atoms}
+    key = lambda a: ((a.get("locator") or {}).get("message_index") or 0, (a.get("locator") or {}).get("line_start") or 0,
+                     (a.get("locator") or {}).get("sentence_index") or 0)
+    span = re.compile(r"(?i)\b(?:at|in|for|across)\s+(?:the|each|all|every)\s+(?:of the\s+)?(?:installation\s+|install\s+|work\s+)?"
+                      r"(?:locations|rooms|sites|areas|offices|spaces)\b")
+    def room_of(cites: list[str]) -> str | None:
+        for cc in cites:
+            a = by.get(str(cc))
+            if not a:
+                continue
+            mm = _ROOM.search(str(a.get("text") or ""))
+            if mm:
+                return mm.group(0).lower()
+            same = sorted((b for b in atoms if b.get("artifact_id") == a.get("artifact_id")), key=key)
+            i = next((j for j, b in enumerate(same) if b is a), 0)
+            for b in reversed(same[max(0, i - 4):i]):
+                mm = _ROOM.search(str(b.get("text") or ""))
+                if mm:
+                    return mm.group(0).lower()
+        return None
+    for k in ("customer_responsibilities", "assumptions", "scope"):
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and not x.get("standard") and x.get("cites")):
+                continue
+            t = str(x.get("text") or "")
+            if not re.search(r"(?i)\bone\s*\(1\)|\ba single\b", t) or re.search(r"(?i)\b(each|per|every)\s+(room|location|site|office)\b.*\bone\s*\(1\)|\bone\s*\(1\)[^.]*\b(each|per)\b", t):
+                continue
+            m_ = span.search(t)
+            if not m_:
+                continue
+            room = room_of(list(x["cites"]))
+            x["text"] = t[:m_.start()] + (f"in the {re.sub(r'(?i)s$', '', room)}" if room else "at one installation location") + t[m_.end():]
+
+
+def _equipment_from_installs(c: dict[str, Any]) -> None:
+    """Equipment in Scope is never empty beside a counted install of a named
+    model: the install line's count and devices are the rows (010012 pass Y:
+    "Install two (2) Poly X72 bars with TC10 controllers in ..." and no
+    Equipment block, which the earlier build had)."""
+    if any(isinstance(x, dict) and x.get("kind") != "heading" for x in c.get("equipment_in_scope") or []):
+        return
+    rows = []
+    for x in c.get("scope") or []:
+        if not (isinstance(x, dict) and x.get("cites") and not x.get("standard") and x.get("kind") != "heading"):
+            continue
+        m_ = re.match(r"(?i)\s*(?:provider will\s+)?install\s+(?:up to\s+)?((?:%s)(?:[\s-]+(?:%s))*\s*\(\d+\)\s+.+?)"
+                      r"(?:\s+(?:in|at|on|onto|across|throughout|for)\s+(?:the\s+)?[A-Z\w].*)?\.?$" % (_NUMW, _NUMW), str(x.get("text")))
+        if not m_ or not re.search(r"\b[A-Z][A-Za-z]*-?\d+[A-Za-z0-9-]*\b", m_.group(1)):
+            continue
+        what = m_.group(1).strip(" .")
+        if not any(_said(what, [r], 0.9) for r in rows):
+            rows.append({"text": what[:1].upper() + what[1:] + ".", "cites": list(x["cites"]), "kind": "fact"})
+    if rows:
+        c["equipment_in_scope"] = rows[:6]
+
+
+def _parts_and_sum(c: dict[str, Any]) -> None:
+    """One atom never yields both a part and the sum that holds it: two rows
+    of one list for the same part number, where the larger count cites every
+    atom the smaller does, are the sum and one of its parts; the part goes
+    (010116 pass Y: "2 x TS525TU ..." from the fused sheet row beside "3 x
+    TS525TU ..." citing that row and the 75-inch row, 5 mounts against 3)."""
+    part = re.compile(r"\b(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9][A-Z0-9-]{3,}\b")
+    count = lambda t: (lambda m_: int(m_.group(1) or m_.group(2)) if m_ else None)(
+        re.match(r"\s*(?:(\d+)\s*x\b|[a-z -]*\((\d+)\))", _digits(t), re.I))
+    for k in ("equipment_in_scope", "provider_materials", "customer_materials"):
+        rows = [x for x in c.get(k) or [] if isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading"]
+        gone = []
+        for x in rows:
+            px, nx = set(part.findall(str(x.get("text")))), count(str(x.get("text")))
+            if not px or nx is None:
+                continue
+            for y in rows:
+                if y is x or any(y is g for g in gone):
+                    continue
+                ny = count(str(y.get("text")))
+                if ny is not None and ny > nx and px & set(part.findall(str(y.get("text")))) and set(x["cites"]) <= set(y.get("cites") or []):
+                    gone.append(x)
+                    break
+        if gone:
+            c[k] = [x for x in c.get(k) or [] if not any(x is g for g in gone)]
+
+
 def _dropped_not_rendered(c: dict[str, Any]) -> None:
     """A line the check dropped never renders: a later pass that wrote the
     same line again loses it (000123 pass Y: the 161-locations summary line
@@ -11181,6 +11357,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "same_install_twice", _same_install_twice, c, atoms_)
     _traced(c, "superseded_request", _superseded_request, c)
     _traced(c, "they_handle", _they_handle, c, envelope, facts(envelope))
+    _traced(c, "one_place_count", _one_place_count, c, atoms_)
+    _traced(c, "equipment_from_installs", _equipment_from_installs, c)
+    _traced(c, "parts_and_sum", _parts_and_sum, c)
     _traced(c, "site_unit_counts", _site_unit_counts, c)
     _traced(c, "overview_numbers", _overview_numbers, c, atoms_)
     _traced(c, "task_by_party", _task_by_party, c)

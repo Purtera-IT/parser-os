@@ -181,3 +181,66 @@ def test_every_row_of_a_port_inventory_sheet_is_a_record_not_a_task():
     fs = [{"id": a["id"], "text": a["text"]} for a in rows]
     m._cell_not_task(c, fs)
     assert _texts(c, "scope") == ["Install the phones at MPU Main Office."]
+
+
+# --- 010171 / 010012 / 010116 / 010376 pass Y ------------------------------------
+
+def test_a_paraphrase_its_cite_covers_is_stated():
+    cite = "We are currently waiting for our network drops to be installed next week."
+    assert m._content_covered("Ensure network drops are installed before technician arrival.", cite)
+    assert m._content_covered("Assume network drops are installed and functional before technician arrival.", cite)
+    assert not m._content_covered("Network drops are not installed.", cite)
+    assert not m._content_covered("Install the Rally Bar.", "We need a Logitech Rally Bar")
+
+
+def test_a_device_of_a_several_room_job_is_each_rooms_in_the_summary():
+    c = _content()
+    c["overview"] = [_fact("Provider will install three (3) completely new conference setups.", ())]
+    c["scope"] = [_fact("Mount the Rally Bar using a bracket that connects to the VESA mount behind the TV."),
+                  _fact("Mount the NUC underneath the table."), _std("Mount each video bar at its designated location.")]
+    m._summary_names_installs(c)
+    assert _texts(c, "overview")[-1] == "Provider will also install each Rally Bar and the NUC."
+
+
+def test_one_counted_thing_is_in_the_one_room_its_source_names():
+    atoms = [{"id": "r", "artifact_id": "e", "text": "And one small conference room with a table with openings at the top.",
+              "locator": {"line_start": 1}},
+             {"id": "p", "artifact_id": "e", "text": "We will have available power (2x outlets) 1 and data port in the floor.",
+              "locator": {"line_start": 2}}]
+    c = _content()
+    c["customer_responsibilities"] = [_fact("Ensure one (1) floor data port is available at the installation locations.", ("p",))]
+    m._one_place_count(c, atoms)
+    assert _texts(c, "customer_responsibilities") == ["Ensure one (1) floor data port is available in the small conference room."]
+
+
+def test_a_task_sharing_a_cite_with_an_exclusion_is_not_that_exclusion():
+    c = _content()
+    c["writer_draft"] = {"assumptions": [_fact("Existing displays are not replaced or removed.", ("o",))]}
+    c["scope"] = [_fact("Mount each Poly X72 bar at its designated location and connect it to its display.", ("o",))]
+    m._exclusions_never_tasks(c, [{"id": "o", "text": "2x Poly X72 bars with TC10's"}])
+    assert _texts(c, "scope") == ["Mount each Poly X72 bar at its designated location and connect it to its display."]
+
+
+def test_every_drop_is_recorded_even_beside_a_line_sharing_its_cites():
+    c = _content()
+    c["scope"] = [_fact("Install two (2) Poly X72 bars.", ("o",)), _fact("Mount each Poly X72 bar on its wall mount kit.", ("o",))]
+    m._traced(c, "demo", lambda c: c.__setitem__("scope", c["scope"][:1]), c)
+    rd = [r for r in c["rule_decisions"] if r["rule"] == "demo"]
+    assert [r["text"] for r in rd] == ["Mount each Poly X72 bar on its wall mount kit."] and rd[0]["value"] == "drop"
+
+
+def test_equipment_in_scope_is_never_empty_beside_a_counted_model_install():
+    c = _content()
+    c["scope"] = [_fact("Install two (2) Poly X72 bars with TC10 controllers in the Conference Room 2102 and Shared Office 2105."),
+                  _fact("Install the cabling neatly.")]
+    m._equipment_from_installs(c)
+    assert _texts(c, "equipment_in_scope") == ["Two (2) Poly X72 bars with TC10 controllers."]
+
+
+def test_one_atom_never_yields_a_part_and_its_sum():
+    c = _content()
+    c["equipment_in_scope"] = [_fact("2 x QM65C Samsung 65IN Display", ("f",)), _fact("2 x TS525TU Chief Thinstall Wall Mount", ("f",)),
+                               _fact("1 x QM75C Samsung 75IN Display", ("g",)), _fact("3 x TS525TU Chief Thinstall Wall Mount", ("g", "f"))]
+    m._parts_and_sum(c)
+    assert _texts(c, "equipment_in_scope") == ["2 x QM65C Samsung 65IN Display", "1 x QM75C Samsung 75IN Display",
+                                               "3 x TS525TU Chief Thinstall Wall Mount"]
