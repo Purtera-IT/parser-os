@@ -70,3 +70,69 @@ def test_standards_and_uncited_lines_are_the_templates():
         {"text": "All work is performed on site; remote IT support is not included.", "cites": [], "kind": "method", "standard": True}]}
     m._source_polarity(content, [], {"atoms": []})
     assert len(content["assumptions"]) == 1
+
+
+def _std(t):
+    return {"text": t, "cites": [], "kind": "method", "standard": True}
+
+
+def _support_scope():
+    h = lambda t: {"text": t, "cites": [], "kind": "heading"}
+    f = lambda t, c: {"text": t, "cites": [c], "kind": "fact"}
+    return [h("Onsite Support"),
+            _std("Coordinate visit priorities with the customer's designated IT contact before or during each visit."),
+            _std("Assist with workstation, peripheral, printer, phone and connectivity issues and desk-side support."),
+            _std("Perform hands-on support for network equipment, servers, power connections, rack placement and cabling as directed."),
+            _std("Support server and endpoint validation after approved patching or upgrade work."),
+            _std("Assist with basic troubleshooting of switches, wireless access points, patching, cabling and network connectivity."),
+            _std("Assist with server or NAS troubleshooting while onsite and under Customer direction."),
+            _std("Support troubleshooting related to virtual servers, host visibility, storage connectivity and incident response."),
+            h("Network Support"), f("Support physical network components, including LAN and WLAN.", "n"),
+            h("Server Support"), f("Support physical server and NAS environments.", "s"),
+            {"text": "Support remote direction from Customer's internal IT team.", "cites": [], "kind": "method"},
+            h("Virtualization Support"), f("Support the virtual server environment based on VMware vSphere.", "v"),
+            h("Windows and Linux Patching"), f("Perform operating system patching and upgrades for Windows and Linux.", "p"),
+            {"text": "Support server validation after approved Windows and Linux patching and upgrade work.", "cites": [], "kind": "method"},
+            _std("Validate reported issues and document observed site conditions, findings and recommended next steps."),
+            h("End User Support"), f("Provide end-user support, including O365/M365 clients.", "e"),
+            h("Closeout"), _std("Confirm completion with the onsite contact before leaving site.")]
+
+
+def _groups(scope):
+    out, cur = {}, None
+    for x in scope:
+        if x.get("kind") == "heading":
+            cur = x["text"]
+            out[cur] = []
+        else:
+            out[cur].append(x["text"])
+    return out
+
+
+def test_standard_steps_sit_under_the_service_they_support():
+    """000132: fifteen standard steps under "Onsite Support", the visit
+    validation step under "Windows and Linux Patching"."""
+    content = {"services": ["staff_augmentation", "support"], "scope": _support_scope()}
+    m._service_groups(content)
+    g = _groups(content["scope"])
+    assert any(t.startswith("Assist with workstation") for t in g["End User Support"])
+    assert any(t.startswith("Assist with basic troubleshooting of switches") for t in g["Network Support"])
+    assert any(t.startswith("Assist with server or NAS") for t in g["Server Support"])
+    assert any(t.startswith("Support troubleshooting related to virtual servers") for t in g["Virtualization Support"])
+    assert any(t.startswith("Support server and endpoint validation") for t in g["Windows and Linux Patching"])
+    # a step naming two services, and the visit steps, stay general
+    assert any(t.startswith("Perform hands-on support") for t in g["Onsite Support"])
+    assert any(t.startswith("Validate reported issues") for t in g["Onsite Support"])
+    assert any(t.startswith("Coordinate visit priorities") for t in g["Onsite Support"])
+    # patch validation said once; remote direction is coordination, in the general group
+    assert not any(t.startswith("Support server validation after approved Windows") for t in g["Windows and Linux Patching"])
+    assert "Coordinate with Customer's designated remote IT contact during each visit." in g["Onsite Support"]
+    assert not any("remote direction" in t for ts in g.values() for t in ts)
+    assert list(g)[-1] == "Closeout" and g["Closeout"] == ["Confirm completion with the onsite contact before leaving site."]
+
+
+def test_service_groups_leave_install_jobs_alone():
+    content = {"services": ["implementation"], "scope": _support_scope()}
+    before = [x["text"] for x in content["scope"]]
+    m._service_groups(content)
+    assert [x["text"] for x in content["scope"]] == before

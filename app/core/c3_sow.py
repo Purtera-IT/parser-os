@@ -1438,6 +1438,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _schedule_from_facts(content, fs, envelope)
     _roles_and_hours(content, fs)
     _traced(content, "polarity", _scope_polarity, content)
+    _traced(content, "service_groups", _service_groups, content)
     _overview_covers_scope(content, fs)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
@@ -3596,6 +3597,101 @@ def _source_polarity(content: dict[str, Any], fs: list[dict[str, Any]], envelope
             group = ([{"text": head, "cites": [], "kind": "heading"}] if head and any(
                 isinstance(y, dict) and y.get("kind") == "heading" for y in sc) else []) + [new]
             sc[close:close] = group
+
+
+#: IT support service areas and the words that name each, so a standard
+#: step finds the heading of its service when the two word it differently
+#: ("virtual servers, host visibility" under "Virtualization Support",
+#: "switches, wireless access points" under "Network Support").
+_SERVICE_AREAS = {
+    "network": "network switch wireless lan wlan access uplink port cabling cable wap",
+    "server": "server nas rack",
+    "virtualization": "virtualization virtual vmware vsphere hypervisor host vm",
+    "patching": "patching patch-management upgrade update",
+    "end user": "end-user end user workstation peripheral printer desk-side deskside desktop laptop o365 m365",
+}
+
+
+def _area_hits(text: str, area: str) -> int:
+    low = text.lower()
+    words = _SERVICE_AREAS[area].split()
+    if area == "end user":
+        return sum(1 for w in words if w not in ("end", "user") and re.search(r"\b" + re.escape(w) + r"s?\b", low)) \
+            + (1 if re.search(r"\bend[- ]users?\b", low) else 0)
+    return sum(1 for w in words if re.search(r"\b" + re.escape(w) + r"(s|es|ing)?\b", low))
+
+
+def _heading_area(text: str) -> str | None:
+    hits = {a: _area_hits(text, a) for a in _SERVICE_AREAS}
+    best = max(hits, key=hits.get)
+    return best if hits[best] else None
+
+
+def _service_groups(content: dict[str, Any]) -> None:
+    """Recurring support (staff augmentation): each standard step sits under
+    the service heading it supports, the rest under the general visit
+    heading; a writer line a standard step in its group already says goes;
+    "remote direction" from the customer's IT team is coordination with
+    its designated IT contact (000132: fifteen standard steps under "Onsite
+    Support", one under "Network Support", the visit-validation step under
+    "Windows and Linux Patching", patch validation written twice)."""
+    if not ({"support", "staff_augmentation"} & set(content.get("services") or [])):
+        return
+    sc = content.get("scope") or []
+    heads = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
+    if len(heads) < 3:
+        return
+    closing = re.compile(r"(?i)clos|clean|wrap|complet")
+    groups: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    lead: list[dict[str, Any]] = []
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            groups.append((x, []))
+        elif groups:
+            groups[-1][1].append(x)
+        else:
+            lead.append(x)
+    work = [g for g in groups if not closing.search(str(g[0].get("text")))]
+    if len(work) < 2:
+        return
+    # The general group: the one the standard steps were written into.
+    general = max(work, key=lambda g: sum(1 for y in g[1] if isinstance(y, dict) and y.get("standard")))
+    if not any(isinstance(y, dict) and y.get("standard") for y in general[1]):
+        return
+    remote = re.compile(r"(?i)^\s*(support|take|follow|accept|work under|receive)\s+(remote\s+)?(direction|guidance|instructions?)\s+from\b[^.]*\bremote\b|"
+                        r"^\s*(support|take|follow|accept|work under|receive)\s+remote\s+(direction|guidance|instructions?)\b")
+    reworded: list[dict[str, Any]] = []
+    for g in work:
+        for y in list(g[1]):
+            if isinstance(y, dict) and not y.get("standard") and remote.search(str(y.get("text"))):
+                y["text"] = "Coordinate with Customer's designated remote IT contact during each visit."
+                reworded.append(y)
+                if g is not general:
+                    g[1].remove(y)
+                    general[1].append(y)
+    # Each service heading's area; a standard step goes to the one area its
+    # words name most, else to the general group.
+    services = [(g, _heading_area(str(g[0].get("text")))) for g in work if g is not general]
+    services = [(g, a) for g, a in services if a]
+    for g in work:
+        for y in list(g[1]):
+            if not (isinstance(y, dict) and y.get("standard")):
+                continue
+            score = sorted(((_area_hits(str(y.get("text")), a), n) for n, (_, a) in enumerate(services)), reverse=True)
+            best = services[score[0][1]][0] if score and score[0][0] >= 1 and (len(score) == 1 or score[0][0] > score[1][0]) else general
+            if best is not g:
+                g[1].remove(y)
+                best[1].append(y)
+    # Said once per group: a writer line a standard step in its group says.
+    for g in work:
+        std = [y for y in g[1] if isinstance(y, dict) and y.get("standard")]
+        g[1][:] = [y for y in g[1] if not (isinstance(y, dict) and not y.get("standard") and not y.get("cites")
+                                           and not any(y is r for r in reworded) and any(_said(str(y.get("text")), [s], 0.75) for s in std))]
+    out = list(lead)
+    for h, items in groups:
+        if items or closing.search(str(h.get("text"))):
+            out += [h] + items
+    content["scope"] = out
 
 
 def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
