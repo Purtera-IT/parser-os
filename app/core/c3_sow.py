@@ -98,7 +98,7 @@ _PARTS = {
         "surveys, audits and validation of what exists], \"pricing_model\": \"fixed\"|\"tm\"|\"\", "
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
         "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences in third-person proposal voice (\"Provider will ...\", never an order, never a \"Label: value\" line): what is installed or "
-        "done, how many, where, for whom; on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states], \"schedule\": [labeled "
+        "done, how many, where, for whom: every device or system the job installs, including one a later request adds (a router asked for after the register and printer); the per-site facts the work is planned by when a fact states them (devices or register lanes per site, the time a fact estimates per site or per device); on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\", \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known); a date stated anywhere in the facts for the work itself belongs here], \"arrival_protocol\": [only "
@@ -114,7 +114,7 @@ _PARTS = {
         "TASK: the task list. Return {\"scope_lead\": one line introducing the tasks (\"Provider will dispatch <N> (<n>) <trade> "
         "technicians to perform the following:\"; a count only when a fact states the staffing, never "
         "from meeting attendees), \"scope\": [group the tasks under short headings, one per area, system or room (an item "
-        "{\"text\": \"<Heading>\", \"kind\": \"heading\", \"cites\": []} of at most six words, then that group's tasks); "
+        "{\"text\": \"<Heading>\", \"kind\": \"heading\", \"cites\": []} of at most six words, then that group's tasks; a device heading holds only the tasks that act on that device, its install task first, and steps common to every device go under a general heading); "
         "the tasks in the order the work is done: arrive and check in; each "
         "piece of work with its counts, lengths and locations kept together (\"<location>: approximately <N> ft\"); "
         "every device to be installed gets an install or mount task with its count, model and location; every count, "
@@ -126,7 +126,7 @@ _PARTS = {
         "goes (left onsite, boxed, returned) follows the facts. A request the customer made to the reseller or to its own team (receiving, "
         "staging, shipping, procurement, configuration the reseller does) is not Provider work. Never claim a route or a device-to-location pairing no fact gives], "
         "\"deliverables\": [{\"item\": \"Work Completion Report\", \"description\": [the finished outcomes with their "
-        "counts], \"format\": \"PDF\"}]}"),
+        "counts, one for every device or system installed], \"format\": \"PDF\"}]}"),
     "supply": (
         "STANDARD PURTERA ITEMS FOR THIS KIND OF JOB (a purtera_standard_* list is PurTera's fixed handling of this job "
         "type: write every one of its items, reworded to this job, unless a fact contradicts it; the other lists: tools Provider brings; customer duties PurTera writes on such "
