@@ -401,6 +401,12 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Assist with cable identification, labeling, patch tracing and physical network documentation.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Support server and endpoint validation after approved patching or upgrade work.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Coordinate configuration changes, escalation and advanced troubleshooting with Customer's IT team.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Assist with basic troubleshooting of switches, wireless access points, patching, cabling and network connectivity.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Assist with server or NAS troubleshooting while onsite and under Customer direction.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Support troubleshooting related to virtual servers, host visibility, storage connectivity and incident response.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Respond to reported issues during scheduled onsite visits or approved onsite dispatches.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide visit notes, findings, completed actions, open items and recommended next steps after each visit.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Assist with cable tracing, equipment identification and IT closet review where safely accessible.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Check in with the onsite contact and confirm the work areas and monitor placement before beginning work.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Install each monitor arm on its desk at the location the customer designates.",
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Mount the monitors on each arm, then align and secure them.",
@@ -426,7 +432,9 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide a Customer point of contact available by phone during scheduled visits.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provide the final deployment list identifying the phones and installation locations.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provide a collection or staging area for removed phones at each facility.",
-      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provide remote engineering support for provisioning and registration during the install."
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provide remote engineering support for provisioning and registration during the install.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide a remote IT contact to guide or approve work during visits.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Confirm whether equipment should be moved, stored, reused, disposed of or left in place."
     ],
     "assumptions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Cable work is limited to physical routing of the provided power and video cables.",
@@ -437,7 +445,10 @@
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Trash removal is limited to packaging and installation debris from the equipment installed under this SOW.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Services are performed during standard business hours unless otherwise approved.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provider responsibility is limited to onsite physical installation, basic connectivity validation and installation documentation.",
-      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Delays from unavailable employees, locked rooms, escorts or inaccessible work areas may require a Change Order."
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Delays from unavailable employees, locked rooms, escorts or inaccessible work areas may require a Change Order.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Customer provides timely access to supported locations, IT areas, equipment rooms, systems and contacts.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Customer identifies the IT contacts responsible for technical direction, approvals, escalation and prioritization.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Hardware, software, licensing, replacement parts, shipping and third-party vendor charges are not included."
     ],
     "exclusions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Furniture assembly or desk modification.",
@@ -449,7 +460,9 @@
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Removal or disposal of existing monitors, arms, computers, furniture or unrelated site waste.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Phone provisioning, extension assignment or application-level configuration.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Application-level troubleshooting or voice system engineering.",
-      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} End user training."
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} End user training.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Electrical work, construction, wall repair, painting or structural modification.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Disposal, recycling or shipment of removed equipment unless separately approved."
     ],
     "deliverable_outcomes": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Monitor arms installed and monitors mounted, aligned and secured.",
