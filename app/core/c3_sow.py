@@ -1967,6 +1967,12 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         isinstance(x, dict) and x.get("cites") and re.match(r"(?i)\s*install\b", str(x.get("text")))
         and all(re.search(r"(?i)\b(we|they) (already |currently )?have\b|\balready (have|installed|in place)\b|\bcurrently (have|has|installed)\b", by_t.get(c, ""))
                 for c in x["cites"]))]
+    # An uncited "limited to basic ..." cap is library text that narrows the
+    # contract below the deal's own scope (000132: vSphere, NAS and patching
+    # capped as "basic on-site support, triage, equipment moves").
+    content["assumptions"] = [x for x in content.get("assumptions") or [] if not (
+        isinstance(x, dict) and not x.get("cites") and not x.get("standard")
+        and re.match(r"(?i)\s*(services|work|provider'?s? (work|scope|services)) (are|is) limited to (basic|general|light)\b", str(x.get("text"))))]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
