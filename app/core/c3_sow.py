@@ -2024,6 +2024,23 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if any(re.search(r"(?i)(no|not have a|without a) (dedicated )?rack|may not have (a )?rack|consolidat", f["text"]) for f in fs):
         content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.search(r"(?i)no rack modification|rack (modification|fabrication) is (not )?required",
                                                                                                  str(x.get("text") if isinstance(x, dict) else x))]
+    # A leasing brochure is not the job (010012: the landlord's leasing team
+    # named "the site contacts"; the summary built from its floor-plan text).
+    brochure = re.compile(r"(?i)leasing (team|agent|office)|contact our leasing|vr view|virtual tour|for lease|rsf\b|rentable|"
+                          r"waiting area|pantry|reception area|available space")
+    bro = {f["id"] for f in fs if brochure.search(f["text"])}
+    for k in LISTS:
+        kept = [x for x in content.get(k) or [] if not (isinstance(x, dict) and ((x.get("cites") and all(c in bro for c in x["cites"]))
+                                                                                 or brochure.search(str(x.get("text")))))]
+        if kept or k != "overview":
+            content[k] = kept
+    if not content.get("overview") or all(isinstance(x, dict) and ((x.get("cites") and all(c in bro for c in x["cites"])) or brochure.search(str(x.get("text"))))
+                                          for x in content.get("overview") or []):
+        alt = [{k2: v for k2, v in x.items() if k2 != "list"} for x in content.get("dropped") or []
+               if isinstance(x, dict) and x.get("list") == "overview" and not all(c in bro for c in x.get("cites") or ["-"])
+               and not brochure.search(str(x.get("text")))][:2]
+        if alt:
+            content["overview"] = alt
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
