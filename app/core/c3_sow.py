@@ -1314,6 +1314,8 @@ def _merged_back(content: dict[str, Any], lists_before: dict[str, list], rule: s
         lt = str(line.get("text"))
         if _FORM_LABEL_LINE.search(lt):
             continue  # a form's field label never comes back (010115 pass X)
+        if lt in (content.get("_polarity_rejected") or []):
+            continue  # source_polarity reversed it (000132 pass Z: the O365 request came back as an exclusion)
         if any(_said(lt, [x], 0.6) and len(_object_toks(lt) - _object_toks(str(x.get("text"))) - {"customer", "provid", "provider"}) < 2
                for x in live):
             continue  # still said, its own nouns too
@@ -5501,12 +5503,31 @@ def _source_polarity(content: dict[str, Any], fs: list[dict[str, Any]], envelope
                 continue
             t = str(x.get("text") or "")
             cites = [str(c) for c in x["cites"]]
-            if not _LINE_NEG.search(t) or not all(src(c) for c in cites) or any(_SOURCE_NEG.search(src(c)) for c in cites):
+            # An out-of-scope line is a negation by where it sits, worded or not
+            # (000132 pass Z: "End-user support, including O365/M365 client
+            # support." under Out of Scope, citing the requested "End-user support
+            # including O365/M365 clients"). Unworded, it is acted on only when
+            # its source names work, so a bare exclusion is never dropped here.
+            listed_only = k == "out_of_scope" and not _LINE_NEG.search(t)
+            if (not listed_only and not _LINE_NEG.search(t)) or not all(src(c) for c in cites) \
+                    or any(_SOURCE_NEG.search(src(c)) for c in cites):
+                continue
+            # Its source naming a service in plain words is enough: the request
+            # bullet above was typed deal_metadata and placed under assumptions.
+            # Unworded, it must also restate the source (010264: "Drywall repair,
+            # patching, painting ..." cites a remark that the customer may need
+            # to repaint; that is no request for Provider work).
+            def names_work(c: str) -> bool:
+                if not listed_only:
+                    return reads_as_work(c)
+                return (reads_as_work(c) or bool(_SERVICE_WORDS.search(src(c)))) \
+                    and _said(src(c), [t], 0.6) and _said(t, [src(c)], 0.6)
+            if listed_only and not any(names_work(c) for c in cites):
                 continue
             content[k].remove(x)
             # The drop guard never puts back a line this rule rejected.
             content.setdefault("_polarity_rejected", []).append(t)
-            work = [c for c in cites if reads_as_work(c)]
+            work = [c for c in cites if names_work(c)]
             if not work or k == "overview":
                 continue  # a summary sentence goes; the task list says the work
             # Never moved still negated: the line is rewritten in the cited
