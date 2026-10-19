@@ -5814,6 +5814,13 @@ def _cited_connector(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
             continue
         for cc in x["cites"]:
             src = text.get(str(cc), "")
+            # A table's cell names one row: the type comes from the row the
+            # step names, never a neighbour (010279 pass Y: "Install 242 cash
+            # drawer DisplayPort cables" from the BOM row beside "Triplite 10
+            # Ft DisplayPort Cable").
+            if src.count("|") >= 3:
+                own = _object_toks(t) - {"cabl", "cable", "connect", "connection", "wire", "wir"}
+                src = " | ".join(seg for seg in src.split("|") if own and len(own & _object_toks(seg)) >= max(1, len(own) // 2))
             k = _CONNECTOR.search(src)
             if not k or not re.search(r"(?i)\b(cabl\w*|connect\w*|wir\w*)\b", src):
                 continue
@@ -9492,7 +9499,12 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
             # return/disposal, and complete installation and testing
             # checklists" struck "Completed Customer installation and testing
             # checklists").
-            if any(_said(t, [g], 0.6) and _said(g, [t], 0.35) for g in gone) or any(_said(t, [g], 0.8) and _said(g, [t], 0.8) for g in unsupported):
+            # Only a dropped line naming what the outcome names: "obtain
+            # Customer sign-off that installation and testing are complete"
+            # is not the checklists (010279 pass Y: the standard "Completed
+            # Customer installation and testing checklists" was struck).
+            names_it = lambda g: not (_object_toks(t) - _object_toks(g) - {"complet", "customer", "provid", "provider"})
+            if any(_said(t, [g], 0.6) and _said(g, [t], 0.35) and names_it(g) for g in gone) or any(_said(t, [g], 0.8) and _said(g, [t], 0.8) for g in unsupported):
                 if t in std_out:
                     why.append({"section": "deliverable_outcomes", "text": t, "reason": "deliverables: restates a dropped line"})
                 continue
@@ -10953,6 +10965,105 @@ def _workmanship_not_duty(c: dict[str, Any]) -> None:
         sc[close:close] = moved
 
 
+def _exclusion_owns_atom(c: dict[str, Any]) -> None:
+    """One atom is never both Provider work and an exclusion: a Provider task
+    every cite of which an exclusion also cites goes (010279 pass Y:
+    "Service and resolve any hardware failures." beside the exclusion
+    "... repair and replacement of defective Customer equipment", both on
+    atm_ad0ca11d676eae22)."""
+    excl = {cc for o in c.get("out_of_scope") or [] if isinstance(o, dict) and not o.get("standard") for cc in o.get("cites") or []}
+    if not excl:
+        return
+    # Reporting or handing an issue on is never the excluded work itself
+    # ("Report unresolved issues to the Systems Support Desk ..." stays
+    # beside the help-desk exclusion that also cited its line).
+    hand_on = re.compile(r"(?i)\s*(report|communicate|notify|escalate|document|record|inform|alert)\b")
+    c["scope"] = [x for x in c.get("scope") or [] if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")
+                  and x.get("kind") != "heading" and set(x["cites"]) <= excl and not hand_on.match(str(x.get("text"))))]
+
+
+_ITEM_SKIP = frozenset("description part quantity needed supplied by qty".split())
+
+
+def _list_after(atoms: list[dict[str, Any]], lead: re.Pattern) -> tuple[str, str] | None:
+    """The lead-in line matching ``lead`` and the table line that follows it
+    in the same document (within three lines)."""
+    key = lambda a: ((a.get("locator") or {}).get("page") or 0, (a.get("locator") or {}).get("line_start") or 0)
+    for a in atoms:
+        if lead.search(str(a.get("text") or "")):
+            ln = key(a)
+            nxt = sorted((b for b in atoms if b.get("artifact_id") == a.get("artifact_id") and "|" in str(b.get("text") or "")
+                          and ln < key(b) <= (ln[0], ln[1] + 3)), key=key)
+            if nxt:
+                return str(a.get("id")), str(nxt[0].get("text") or "")
+    return None
+
+
+def _install_list_only(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """When the documents list what to install and, apart, what only to
+    accept delivery of, an item on the delivery list alone is never an
+    install task, report line or heading (010279 pass Y: the fuel-center
+    TCx displays and USB-to-6-pin cables, accept-and-verify rows of the RFP,
+    became a "Fuel centers" scope block; its install list is 777, 913,
+    garage units and five cable rows)."""
+    inst = _list_after(atoms, re.compile(r"(?i)\b(?:transport and )?install the following\b"))
+    acc = _list_after(atoms, re.compile(r"(?i)\baccept\s*(?:&|and)\s*verify delivery\b|\baccept delivery of the following\b"))
+    if not inst or not acc:
+        return
+    cells = lambda t: [x.strip() for x in t.split("|") if x.strip() and not set(re.findall(r"[a-z]+", x.lower())) <= _ITEM_SKIP]
+    inst_items = [_object_toks(x) for x in cells(inst[1]) if not re.fullmatch(r"[\d,]+|[A-Z]{1,3}", x)]
+    acc_rows = cells(acc[1])
+    # Rows of name | part | qty | supplier: the names are the cells with words.
+    acc_items = [_object_toks(x) for x in acc_rows if re.search(r"[a-z]{3}", x) and not re.fullmatch(r"[\d,]+|[A-Z]{1,3}", x)]
+    only = [it for it in acc_items if it and not any(len(it & ii) >= max(2, 0.6 * len(it)) for ii in inst_items if ii)]
+    if not only:
+        return
+    def accept_only(t: str) -> bool:
+        ot = _object_toks(t)
+        best_acc = max((len(ot & it) for it in only), default=0)
+        best_inst = max((len(ot & ii) for ii in inst_items if ii), default=0)
+        return best_acc >= 2 and best_acc > best_inst
+    words_only = set().union(*only) - set().union(*[ii for ii in inst_items if ii])
+    for k in ("scope", "overview", "equipment_in_scope"):
+        out = []
+        for x in c.get(k) or []:
+            if not isinstance(x, dict) or x.get("standard"):
+                out.append(x)
+                continue
+            t = str(x.get("text") or "")
+            if x.get("kind") == "heading":
+                hw = _object_toks(t)
+                if hw and hw <= words_only:
+                    continue
+                out.append(x)
+                continue
+            if re.match(r"(?i)\s*(?:provider will\s+)?(?:also\s+)?(?:install|mount|deploy|connect)\b", t) and accept_only(t):
+                continue
+            out.append(x)
+        c[k] = out
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict):
+            d["description"] = [t for t in d.get("description") or [] if not (re.search(r"(?i)\binstall", str(t)) and accept_only(str(t)))]
+
+
+#: A sales or pricing note between the reseller and PurTera: never
+#: customer text (010279 pass Y: "Travel included in the store rate, or
+#: clearly separated if CDW prefers"; "This appears to be basic installs
+#: from Nov – Feb.").
+_SALES_NOTE = re.compile(r"(?i)\bstore rate\b|\bif (?:cdw|shi|insight|presidio|the reseller) prefers\b|\bclearly separated\b|"
+                         r"\b(?:appears|seems|looks) (?:to be|like)\s+(?:a |an )?(?:basic|simple|straightforward|easy|standard)\b")
+
+
+def _sales_notes_out(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A customer-text line every cite of which is a sales or pricing note
+    goes (the travel assumption, the "basic installs" summary sentence)."""
+    by = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    note = lambda cc: bool(_SALES_NOTE.search(by.get(str(cc), "")))
+    for k in ("overview", "assumptions", "scope", "customer_responsibilities", "out_of_scope"):
+        c[k] = [x for x in c.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")
+                and all(note(cc) for cc in x["cites"]))]
+
+
 def _dropped_not_rendered(c: dict[str, Any]) -> None:
     """A line the check dropped never renders: a later pass that wrote the
     same line again loses it (000123 pass Y: the 161-locations summary line
@@ -11505,6 +11616,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "parts_and_sum", _parts_and_sum, c)
     _traced(c, "reseller_includes", _reseller_includes, c, atoms_)
     _traced(c, "workmanship_not_duty", _workmanship_not_duty, c)
+    _traced(c, "exclusion_owns_atom", _exclusion_owns_atom, c)
+    _traced(c, "install_list_only", _install_list_only, c, atoms_)
+    _traced(c, "sales_notes_out", _sales_notes_out, c, atoms_)
     _traced(c, "site_unit_counts", _site_unit_counts, c)
     _traced(c, "overview_numbers", _overview_numbers, c, atoms_)
     _traced(c, "task_by_party", _task_by_party, c)

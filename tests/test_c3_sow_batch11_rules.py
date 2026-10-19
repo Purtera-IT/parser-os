@@ -316,3 +316,66 @@ def test_a_workmanship_requirement_is_the_providers():
     m._workmanship_not_duty(c)
     assert not c["customer_responsibilities"]
     assert _texts(c, "scope") == ["Mount the device.", "Conceal the cables so none are visible after the mount is complete.", "Closeout"]
+
+
+# --- 010279 pass Y B -------------------------------------------------------------
+
+def test_a_provider_task_whose_atom_an_exclusion_cites_goes():
+    c = _content()
+    c["out_of_scope"] = [_fact("Managed IT services or repair and replacement of defective Customer equipment.", ("f", "s"))]
+    c["scope"] = [_fact("Service and resolve any hardware failures.", ("f",)),
+                  _fact("Report unresolved issues to the Systems Support Desk.", ("s",)), _fact("Install the terminals.", ("t",))]
+    m._exclusion_owns_atom(c)
+    assert _texts(c, "scope") == ["Report unresolved issues to the Systems Support Desk.", "Install the terminals."]
+
+
+def _rfp_atoms():
+    loc = lambda n: {"page": 0, "line_start": n}
+    return [{"id": "acc", "artifact_id": "rfp", "text": "The vendor will be required to accept & verify delivery of the following:", "locator": loc(71)},
+            {"id": "bom", "artifact_id": "rfp", "locator": loc(72), "text":
+             "Description | Part # | Quantity Needed | Supplied By | Toshiba 777 Terminals | TGCS 777 | 71 | HT | Cash Drawer Cables | "
+             "TGCS Cash Drawer Cable | 242 | HT | Triplite 10 Ft DisplayPort Cable | P580-010 | 242 | HT | Toshiba 2X20 TCx Displays "
+             "(Fuel Centers) | 3AA0079730 | 8 | HT"},
+            {"id": "ins", "artifact_id": "rfp", "text": "The vendor will be required to transport and install the following equipment to each", "locator": loc(74)},
+            {"id": "lst", "artifact_id": "rfp", "locator": loc(76),
+             "text": "Description | Toshiba 777 Terminals | Cash Drawer Cables | Triplite 10 Ft DisplayPort Cable"}]
+
+
+def test_an_accept_delivery_only_row_is_never_an_install_task():
+    c = _content()
+    c["scope"] = [_fact("Install 71 Toshiba 777 terminals at the self-checkout robots.", ("bom",)),
+                  {"text": "Fuel centers", "cites": [], "kind": "heading"},
+                  _fact("Install eight (8) Toshiba 2X20 TCx displays at the fuel centers.", ("bom",))]
+    c["deliverables"] = [{"item": "Work Completion Report", "description": [
+        "Document completed installation work for eight (8) Toshiba 2X20 TCx displays.", "Completion confirmed."]}]
+    m._install_list_only(c, _rfp_atoms())
+    assert _texts(c, "scope") == ["Install 71 Toshiba 777 terminals at the self-checkout robots."]
+    assert c["deliverables"][0]["description"] == ["Completion confirmed."]
+
+
+def test_a_table_rows_cable_type_is_never_its_neighbours():
+    c = _content()
+    c["scope"] = [_fact("Install 242 cash drawer cables.", ("bom",)), _fact("Run the HDMI-less display cables.", ("h",))]
+    atoms = _rfp_atoms() + [{"id": "h", "text": "The existing connections will need to be reconnected (most likely HDMI cables)."}]
+    m._cited_connector(c, atoms)
+    assert _texts(c, "scope")[0] == "Install 242 cash drawer cables."
+
+
+def test_a_sales_note_is_never_customer_text():
+    c = _content()
+    c["assumptions"] = [_fact("Travel is included in the store rate, or provide it as a separate line item if CDW prefers.", ("t",))]
+    c["overview"] = [_fact("This is basic install work running from November through February.", ("b",))]
+    c["schedule"] = [_fact("Work Window: a mix of business hours and after hours.", ("w",))]
+    m._sales_notes_out(c, [{"id": "t", "text": "Travel included in the store rate, or clearly separated if CDW prefers"},
+                           {"id": "b", "text": "This appears to be basic installs from Nov – Feb."},
+                           {"id": "w", "text": "I think it looks like a mix of business hours and after hours."}])
+    assert not c["assumptions"] and not c["overview"] and c["schedule"]
+
+
+def test_a_dropped_line_strikes_only_the_outcome_it_names():
+    c = _content()
+    c["job_family"] = "pos_install_refresh"
+    c["rule_decisions"] = [{"value": "drop", "text": "Review completed work and obtain Customer sign-off that installation and testing are complete."}]
+    c["deliverables"] = [{"item": "Work Completion Report", "description": ["Completed Customer installation and testing checklists."]}]
+    m._deliverables_hygiene(c)
+    assert c["deliverables"][0]["description"] == ["Completed Customer installation and testing checklists."]
