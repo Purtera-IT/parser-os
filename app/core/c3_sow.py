@@ -1211,8 +1211,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # A transition or onboarding check is an assessment and implementation
     # visit, not staff augmentation (010419: "IT Transition & Onboarding").
     crm_name = str((envelope.get("crm") or {}).get("deal_name") or "")
-    if re.search(r"(?i)\btransition|onboarding|cut-?over\b", pool_text + " " + crm_name.lower()) and not re.search(
-            r"(?i)once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|ongoing", pool_text):
+    # An IT transition, not a device cutover: 010326's phone "cutover" and
+    # 010082's ISP "transition" ticked Assessment on install jobs.
+    transition = bool(re.search(r"(?i)\b(it|msp|support|service|services|provider)\s+transition\b|\btransition\s+(and|&)\s+onboarding|\bonboarding\b",
+                                pool_text + " " + crm_name.lower())) and not re.search(
+            r"(?i)once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|ongoing", pool_text)
+    if transition:
         content["services"] = svc = ["assessment", "implementation"]
     text_by = {f["id"]: f["text"] for f in fs}
     neg = re.compile(r"(?i)\b(not|no|exclud|outside|except|without)\b")
@@ -1321,6 +1325,14 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _overview_covers_scope(content, fs)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
+    # Assessment is ticked for assessment work the task list does: a survey
+    # the summary mentions, or one offered as optional, is not it (010326's
+    # "Twilio survey integration" under a separate SOW, 010082's optional survey).
+    if not transition and "assessment" in (content.get("services") or []) and len(content["services"]) > 1 and not any(
+            isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"(?i)\b(survey|assess|audit|walk-?through|inventory)", str(x.get("text")))
+            and not re.search(r"(?i)\boptional|if (requested|needed|required)|may be|separate", str(x.get("text")))
+            for x in content.get("scope") or []):
+        content["services"] = [v for v in content["services"] if v != "assessment"]
     content.update(library_counts)
     content["facts_given"] = len(fs)
     # Everything the rules changed after the writer, rule by rule where traced,
@@ -3680,6 +3692,97 @@ def location_table(envelope: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
+_KEYCELL = re.compile(r"^\s*[A-Za-z][\w /#&-]{0,40}:\s*(.+)$")
+_ADDR_TAIL = re.compile(r"^(?P<pre>.+?),?\s+(?P<st>[A-Z]{2})\s*(?P<zip>\d{5}(?:-\d{4})?)?\s*$")
+
+
+def count_table(envelope: dict[str, Any], scope_text: str = "") -> list[dict[str, Any]]:
+    """The deal's per-site device count list, read as a table: rows of "<site>
+    [(address)] | <count>" or "<site> | <address> | <count>" in one document,
+    with a TOTAL row the counts add up to (or a total the task list states).
+    010326's "Physical Site / location | Phone Count" list is 30 rows totalling
+    317; the location table and its exhibit came from a lossy site resolve
+    (33 rows, duplicate spellings, two sites outside the list, no counts)."""
+    by_doc: dict[str, dict[str, Any]] = {}
+    for a in envelope.get("atoms") or []:
+        t = str(a.get("text") or "")
+        if "|" not in t or len(t) > 300:
+            continue
+        cells = [c.strip() for c in t.split("|")]
+        cells = [(_KEYCELL.match(c).group(1).strip() if _KEYCELL.match(c) and not re.match(r"^\d", c) else c) for c in cells]
+        cells = [c for c in cells if c]
+        if len(cells) < 2:
+            continue
+        doc = by_doc.setdefault(str(a.get("artifact_id") or ""), {"rows": {}, "total": None, "unit": ""})
+        last, first = cells[-1], cells[0]
+        if not re.fullmatch(r"\d{1,5}", last):
+            head = re.search(r"(?i)\b([a-z]+)\s*(?:count|qty|quantity|#)\s*$", last)
+            if head and len(cells) >= 2:
+                doc["unit"] = head.group(1).lower()
+                doc["site_header"] = doc.get("site_header") or bool(re.search(r"(?i)site|location|store|branch|facility|address", first))
+            continue
+        if re.match(r"(?i)\s*(grand )?total\b", first):
+            doc["total"] = int(last)
+            continue
+        if not re.search(r"[A-Za-z]{3}", first) or re.fullmatch(r"\d+", first):
+            continue
+        key = re.sub(r"\W+", " ", re.sub(r"\(.*", "", first).lower()).strip()
+        if m0 := re.match(r"(?i)\s*(?:physical site|site|location)\s*/?\s*(?:location)?\s*:\s*(.+)", t.split("|")[0]):
+            unit_cell = t.split("|")[-1]
+            hk = re.match(r"\s*([A-Za-z]+)\s*(?:count|qty|quantity)\s*:", unit_cell, re.I)
+            if hk:
+                doc["unit"] = hk.group(1).lower()
+                doc["site_header"] = True
+        doc["rows"].setdefault(key, (first, cells[1:-1], int(last)))
+    best: list[tuple[str, list[str], int]] = []
+    unit = ""
+    for doc in by_doc.values():
+        rows = list(doc["rows"].values())
+        total = sum(r[2] for r in rows)
+        # Rows of places: a site/location header, or addresses on most rows
+        # (010264's clock status summary also adds up to its total).
+        addressed = sum(1 for r in rows if re.search(r"\d{2,6}\s+[A-Za-z]", " ".join([r[0]] + list(r[1]))))
+        if len(rows) < 6 or not (doc.get("site_header") or addressed >= 0.6 * len(rows)):
+            continue
+        ok = (doc["total"] is not None and doc["total"] == total) or (
+            doc["total"] is None and re.search(r"\b%d\b" % total, scope_text))
+        if ok and len(rows) > len(best):
+            best, unit = rows, doc["unit"]
+    if not best:
+        return []
+    def parse(addr: str) -> dict[str, str]:
+        m1 = _ADDR_TAIL.match(addr.strip())
+        if not m1:
+            return {"street": addr.strip(), "city": "", "state": "", "postal_code": ""}
+        pre = m1.group("pre")
+        street, _, city = pre.rpartition(",")
+        return {"street": street.strip() or pre.strip(), "city": city.strip() if street else "", "state": m1.group("st"),
+                "postal_code": m1.group("zip") or ""}
+    out = []
+    for first, mid, n in best:
+        mm = re.match(r"^(.*?)\s*\((.+)\)\s*$", first)
+        name, addr = (mm.group(1).strip(), mm.group(2)) if mm else (first.strip(), "")
+        if not addr and mid and re.search(r"\d", mid[0]) and not re.search(r"(?i)not provided|unknown|tbd", mid[0]):
+            addr = mid[0]
+        out.append({"name": name, **(parse(addr) if addr else {"street": "", "city": "", "state": "", "postal_code": ""}), "count": n})
+    # A street written without the comma before its city ("911 Franklin Street
+    # Manitowoc, WI") takes the city the other rows name.
+    cities = {r["city"] for r in out if r["city"]}
+    for r in out:
+        if not r["city"] and r["street"]:
+            for ci in sorted(cities, key=len, reverse=True):
+                if r["street"].lower().endswith(" " + ci.lower()):
+                    r["street"], r["city"] = r["street"][:-len(ci)].strip(" ,"), ci
+                    break
+    label = (unit.rstrip("s") + "s") if unit else "devices"
+    for r in out:
+        tail = ", ".join(x for x in (r["city"], " ".join(x for x in (r["state"], r["postal_code"]) if x)) if x)
+        r["address"] = ", ".join(x for x in (r["street"], tail) if x)
+        r["unit"] = label
+        r["extra"] = {label: str(r["count"])}
+    return out
+
+
 def _reseller_streets(envelope: dict[str, Any]) -> set[str]:
     """Street addresses the account's own people sign with: a contact line or
     signature from the reseller's domain. 010083's only "site" was CDW's sales
@@ -3941,6 +4044,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                                                 f"location table.", "cites": [], "kind": "fact"})
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
     c["sites"] = [x for x in _sites(envelope, {"sites": sites}) if (x.get("address") or x.get("name"))]
+    # The deal's own per-site count list, when one adds up, is the site table
+    # and the site count, with each site's device count (010326: 30 rows, 317).
+    counted = count_table(envelope, " ".join(str(x.get("text")) for x in c.get("scope") or [] if isinstance(x, dict)))
+    if counted:
+        c["sites"] = counted
+        c["site_summary"] = {**c.get("site_summary", {}), "stated": len(counted), "resolved": len(counted), "from_table": True,
+                             "unit": counted[0]["unit"], "unit_total": sum(r["count"] for r in counted)}
     # On a job of a few sites the writer's own cited locations are the table:
     # the roster kept SHI's Austin office (a signature) on 010376 and lost
     # 010147's Denver origin, while the writer's locations had both right.
@@ -3956,7 +4066,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         if m:
             name, street, city, st, z = (g.strip() for g in m.groups())
             parsed.append({"name": name, "address": f"{street}, {city}, {st} {z}", "street": street, "city": city, "state": st, "postal_code": z})
-    if len(parsed) >= 6 and len(parsed) > len(c["sites"]) and len(parsed) >= 0.4 * len(c.get("locations") or []):
+    if not counted and len(parsed) >= 6 and len(parsed) > len(c["sites"]) and len(parsed) >= 0.4 * len(c.get("locations") or []):
         # Name-only rows ("Lakefront Substation.") are sites too (010326).
         named = [{"name": str(x.get("text") if isinstance(x, dict) else x).strip().rstrip(".").split(" — ")[0], "address": "",
                   "street": "", "city": "", "state": "", "postal_code": ""}
@@ -4051,7 +4161,11 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     dn = re.sub(r"\s*[-–]?\s*" + re.escape(cand) + r"\s*$", "", dn, flags=re.I).strip(" -–")
     if rq and rq.lower() in dn.lower():
         dn = re.sub(r"\s*[-–]?\s*" + re.escape(rq) + r"\s*", " ", dn, flags=re.I).strip(" -–")  # "... Dan Tighe"
-    if len(dn.split()) >= 2:
+    # Unless the CRM title names work this SOW gives the customer or excludes:
+    # 010326's deal was titled "Racking/Wall mount" after the call that gave
+    # racking to the customer; the job is a phone deployment, as the writer said.
+    writer_name = str(c.get("project_name") or "").strip()
+    if len(dn.split()) >= 2 and not (_name_contradicted(dn, c) and writer_name and not _name_contradicted(writer_name, c)):
         c["project_name"] = dn
     # A person's name is never part of the project name, in any form
     # (010209: requester "Daniel Tighe" written "Dan Tighe"; 000123 "w/ Ahmed").
@@ -4140,6 +4254,16 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
+
+
+def _name_contradicted(name: str, c: dict[str, Any]) -> bool:
+    """A project title naming work that a cited customer duty holds and no
+    Provider task or summary line does."""
+    tasks = set().union(*[_object_toks(str(x.get("text"))) for k in ("scope", "overview") for x in c.get(k) or []
+                          if isinstance(x, dict)] or [set()])
+    other = set().union(*[_object_toks(str(x.get("text"))) for x in c.get("customer_responsibilities") or []
+                          if isinstance(x, dict) and x.get("cites")] or [set()])
+    return any(w in other and w not in tasks for w in _object_toks(name))
 
 
 def _when_sent(raw: str) -> float | None:

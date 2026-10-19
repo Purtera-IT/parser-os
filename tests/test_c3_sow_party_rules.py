@@ -113,3 +113,44 @@ def test_a_cited_reuse_step_is_not_written_twice_by_its_standard():
     m._apply_standards(c, "smart_hands_general", PHONE)
     removes = [x["text"] for x in c["scope"] if x["text"].lower().startswith(("remove each existing phone", "disconnect and remove"))]
     assert len(removes) == 1 and "using the existing cabling" in removes[0]
+
+
+def _row(i, text, art="mail"):
+    return {"id": i, "artifact_id": art, "text": text}
+
+
+def test_the_per_site_count_list_is_the_site_table():
+    rows = [_row("h", "Physical Site / location | Phone Count")]
+    names = [("City Hall (900 Quay St, Manitowoc, WI 54220)", 60), ("Fire Station 1 (911 Franklin Street Manitowoc, WI 54220)", 8),
+             ("10th St Bridge", 1), ("Police Department (910 Jay St, Manitowoc, WI 54220)", 40),
+             ("Zoo (1215 N 8th St, Manitowoc, WI 54220)", 1), ("Senior Center (3330 Custer St, Manitowoc, WI 54220)", 6)]
+    rows += [_row(f"r{i}", f"{n} | {k}") for i, (n, k) in enumerate(names)]
+    rows += [_row("t", "TOTAL | 116"), _row("x", "Primary Switch | 96", "sheet"),  # another document's cells
+             _row("s1", "OK Status | 50", "status"), _row("s2", "Failed | 5", "status")]
+    got = m.count_table({"atoms": rows})
+    assert [r["name"] for r in got][:2] == ["City Hall", "Fire Station 1"] and len(got) == 6
+    fs1 = got[1]
+    assert (fs1["street"], fs1["city"], fs1["state"], fs1["postal_code"], fs1["count"]) == ("911 Franklin Street", "Manitowoc", "WI", "54220", 8)
+    assert fs1["extra"] == {"phones": "8"} and got[2]["address"] == ""
+
+
+def test_a_count_list_that_does_not_add_up_is_not_the_site_table():
+    rows = [_row("h", "Site | Phone Count")] + [_row(f"r{i}", f"Site {c} (1{i}0 Main St, Town, WI 54220) | {i + 1}") for i, c in enumerate("ABCDEF")]
+    rows.append(_row("t", "TOTAL | 99"))
+    assert m.count_table({"atoms": rows}) == []
+
+
+def test_a_status_summary_with_a_total_is_not_a_site_list():
+    rows = [_row(f"r{i}", f"{t} | {n}", "s") for i, (t, n) in enumerate([("OK Status in Open CC", 10), ("Failed Status", 2), ("Test Clock", 1),
+                                                                          ("OK Closed", 3), ("Failed Closed", 4), ("Missing", 5)])]
+    rows.append(_row("t", "Total | 25", "s"))
+    assert m.count_table({"atoms": rows}) == []
+
+
+def test_a_crm_title_naming_the_customers_work_yields_to_the_writers_name():
+    c = {"scope": [{"text": "Install three hundred seventeen (317) phones.", "cites": ["p"], "kind": "fact"},
+                   {"text": "Remove each existing wall mount and install the replacement mount.", "cites": ["w"], "kind": "fact"}],
+         "overview": [], "customer_responsibilities": [{"text": "Handle rack hardware and rack & stack gear.", "cites": ["s"], "kind": "fact"}]}
+    assert m._name_contradicted("Manitowoc - Racking/Wall mount", c)
+    assert not m._name_contradicted("Manitowoc Phone Deployment", c)
+    assert not m._name_contradicted("Manitowoc Wall Mount Install", c)
