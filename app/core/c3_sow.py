@@ -1613,7 +1613,8 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         post = [it for it in lead if it not in pre]
         deal_work = work and sum(1 for x in items if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
                                     and re.match(r"(?i)\s*(install|mount|replace|connect|set up|deploy|place)\b", str(x.get("text")))) >= 1
-        if deal_work and post and family in ("pos_install_refresh", "av_conference_room", "network_switch_refresh"):
+        if deal_work and post and family in ("pos_install_refresh", "av_conference_room", "network_switch_refresh",
+                                             "cameras_security", "low_voltage_cabling"):
             items[work[0] + 1:work[0] + 1] = pre
             close0 = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
                            and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), len(items))
@@ -2359,6 +2360,13 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     ov_items = [x for x in content.get("overview") or [] if isinstance(x, dict)]
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
                         and ov_items and _said(str(x.get("text")), ov_items, 0.75))]
+    # A generic "install cable runs" line beside the measured runs repeats them
+    # (010043: "Install CAT6 cable runs to the camera locations").
+    sc_all = content.get("scope") or []
+    if any(isinstance(x, dict) and re.search(r"(?i)\b\d{2,4}\s*(ft|feet)\b", str(x.get("text"))) and re.search(r"(?i)\b(run|cable)", str(x.get("text"))) for x in sc_all):
+        content["scope"] = [x for x in sc_all if not (isinstance(x, dict) and not x.get("standard")
+                            and re.match(r"(?i)\s*(install|run|pull)\s+(the\s+)?(cat ?6a?|cat ?5e?|low[- ]voltage)?\s*cable runs?\b", str(x.get("text")))
+                            and not re.search(r"\d", str(x.get("text"))))]
     # Uncited padding about hidden repairs (010115).
     for k in ("assumptions", "out_of_scope"):
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("cites") and not x.get("standard")
