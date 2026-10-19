@@ -1011,6 +1011,18 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
         dup = next((x for x in content.get(dest) or [] if isinstance(x, dict) and x.get("kind") != "heading"
                     and _said(text, [x], 0.6 if dest == "scope" else 0.55)
                     and not (_places(text) and _places(str(x.get("text"))) and _places(text) != _places(str(x.get("text"))))), None)
+        # A fact whose own nouns or counts the surviving line lacks is not
+        # said by it: the deal line comes back instead of merging (010083 pass
+        # V: "Migrate trunks and AP ports according to the Customer-provided
+        # minimal matrix" merged into the generic port-matrix step and lost
+        # trunks, AP ports and the minimal matrix; "Capture before-and-after
+        # pictures and serial numbers" lost the pictures).
+        if dup is not None and dest == "scope":
+            dt_ = str(dup.get("text"))
+            lost = _object_toks(text) - _object_toks(dt_) - {"customer", "provid", "provider"}
+            lost_n = set(re.findall(r"\b\d+\b", _digits(text))) - set(re.findall(r"\b\d+\b", _digits(dt_)))
+            if (len(lost) >= 2 or lost_n) and any(isinstance(x, dict) and tuple(x.get("cites") or []) == cites for x in lists_before.get(lst) or []):
+                dup = None
         if dup is not None:
             dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + orphan))
             # The fact's own name survives the merge (010373: "Humanscale"
@@ -5545,6 +5557,53 @@ _DISPOSAL = re.compile(r"(?i)\be-?waste\b|\bdispos(e|al|ing)\b|\brecycl\w*|\bscr
 _BOM_ONE = re.compile(r"^\s*(\d{1,5})\s*(?:x\s+|:\s*|\s+)(?=[A-Za-z0-9./_-]*\d)(?=[A-Za-z0-9./_-]*[A-Z0-9]{2})([A-Z0-9][A-Z0-9./_-]{2,30})\s+(\S.{2,160}?)\s*$")
 
 
+_TASK_LEAD = re.compile(r"(?i)^\s*(support|perform|complete|coordinate|verify|confirm|test|install|mount|replace|configure|connect|deploy|"
+                        r"set up|remove|disconnect|label|document|capture|assist|ensure|schedule|attend|review)\b")
+_DOC_ITEM = re.compile(r"(?i)^\s*(?:the |a |an )?(?:final |full |complete |updated )?(site|location|store|address|contact)s?\s+list\b|"
+                       r"^\s*(?:the |a |an )?(?:customer[- ]provided )?(port matrix|minimal matrix|checklists?|runbook|credentials)\b")
+
+
+def _items_not_tasks(c: dict[str, Any]) -> None:
+    """Materials and Equipment in Scope hold things. A line there that is a
+    task goes to the task list (or goes, when the task list says it), and a
+    document the customer hands over is a customer duty (010083 pass V:
+    "Support the Customer-provided post-install testing checklist" under
+    Equipment in Scope; 010264 pass V: "The site list with the site address
+    and the quantity of time clocks" as equipment)."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    for k in ("customer_materials", "equipment_in_scope", "provider_materials"):
+        keep = []
+        for x in c.get(k) or []:
+            if not isinstance(x, dict) or x.get("standard"):
+                keep.append(x)
+                continue
+            t = tx(x)
+            if _TASK_LEAD.match(t):
+                if not _said(t, c.get("scope") or [], 0.6):
+                    c.setdefault("scope", []).append(x)
+                continue
+            if k != "provider_materials" and _DOC_ITEM.match(t):
+                body = re.sub(r"^\s*(the|a|an)\s+", "", t.rstrip(". "), flags=re.I)
+                line = {**x, "text": "Provide the " + body[:1].lower() + body[1:] + "."}
+                if not _said(line["text"], c.get("customer_responsibilities") or [], 0.6):
+                    c.setdefault("customer_responsibilities", []).append(line)
+                continue
+            keep.append(x)
+        c[k] = keep
+
+
+def _duration_not_date(c: dict[str, Any]) -> None:
+    """A date slot holds a date: "Requested Completion Date: not to exceed
+    five (5) months" is the job's duration (010083 pass V)."""
+    date = re.compile(r"(?i)\b\d{1,2}/\d{1,2}|\b\d{4}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b")
+    for x in c.get("schedule") or []:
+        if not isinstance(x, dict):
+            continue
+        m_ = re.match(r"(?i)\s*requested (?:completion|end) date:\s*(.+)$", str(x.get("text")))
+        if m_ and not date.search(m_.group(1)) and re.search(r"(?i)\b(days?|weeks?|months?|years?)\b", m_.group(1)):
+            x["text"] = "Project Duration: " + m_.group(1)
+
+
 def _bom_rows(text: str) -> list[tuple[int, str, str]]:
     """The BOM rows a line holds, as (quantity, part, description): "1:
     QM75C Samsung 75IN 4K UHD LED Display", "33 C9350-48U with Stack module
@@ -6145,6 +6204,25 @@ def _planning_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     for f in fs:
         if added >= 2 or f["section"] in ("also_kept", "unsure", "typed_only", "answered_question") or f.get("quoted"):
             continue
+        # A per-site quantity mix ("Apx 83 sites will be singles. Memphis Main
+        # will be apx. 51 switches on multiple floors. The remainder will be
+        # 2-3 switches each.") is written whole when no citing line states
+        # its counts (010083 pass V: the writer's "Treat per-site switch
+        # quantities as variable" cited it and lost 83, 51 and 2-3).
+        ans = re.split(r"\?\s*(?:-\s*)?(?:\[[^\]]{1,40}\]\s*)?", f["text"])[-1]
+        if re.search(r"(?i)\b\d+\s+(?:sites?|stores?|locations?|branches)\s+(?:will|would|are|have|need)\b", ans):
+            ans = re.sub(r"(?i)\b(?:apx|approx)\.?(?=\s)", "approximately", ans)
+            sents = [x_.strip(" .") for x_ in re.split(r"(?<=[.;])\s+", ans)
+                     if re.search(r"\d", x_) and re.search(r"(?i)\b(sites?|stores?|locations?|remainder|rest|each|main)\b", x_)]
+            nums = {n for x_ in sents for n in re.findall(r"\d+", x_)}
+            have = set(re.findall(r"\d+", _digits(said_by.get(f["id"], ""))))
+            if len(sents) >= 2 and not nums & have:
+                body = "; ".join(x_[:1].lower() + x_[1:] if re.match(r"(The|A|An|Each|All)\b", x_) else x_ for x_ in sents)
+                line = "The Customer has indicated that " + body[:1].lower() + body[1:] + "."
+                if not _said(line, asm, 0.6):
+                    asm.append({"text": line, "cites": [f["id"]], "kind": "fact"})
+                    added += 1
+                continue
         mm = _PLAN_BASIS.search(f["text"])
         if not mm or not re.search(r"\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|dozen)\b", mm.group(0), re.I):
             continue
@@ -8016,6 +8094,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     str(s_.get("street") or s_.get("address") or "").split(",")[0].lower() in str(x.get("text")).lower()
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
+    _traced(c, "items_not_tasks", _items_not_tasks, c)
     _traced(c, "bom_lists", _bom_lists, c, envelope.get("atoms") or [])
     _traced(c, "disposal_not_ours", _disposal_not_ours, c)
     _traced(c, "reused_not_removed", _reused_not_removed, c, envelope.get("atoms") or [])
@@ -8033,6 +8112,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     theirs = {str(a.get("id")) for a in outside} | {str(a.get("id")) for a in envelope.get("atoms") or []
                                                    if not sender(a) and norm(a.get("text")) in outside_text}
     _traced(c, "schedule_voice", _schedule_voice, c, str((envelope.get("run_scope") or {}).get("as_of") or ""), theirs)
+    _duration_not_date(c)
     _traced(c, "materials_onsite_only", _materials_onsite_only, c)
     _traced(c, "schedule_not_estimates", _schedule_not_estimates, c)
     _traced(c, "window_rollover", _window_rollover, c)

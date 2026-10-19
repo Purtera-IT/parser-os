@@ -210,3 +210,48 @@ def test_the_report_lists_every_installed_row_in_the_same_form():
     m._bom_lists(c, atoms)
     assert c["deliverables"][0]["description"] == ["1 x QM75C Samsung 75IN Display installed.", "1 x SW4-TPS-TX240 Lightware TPS transmitter installed.",
                                                    "2 x QM65C Samsung 65IN Display installed.", "Completion confirmed with the onsite contact."]
+
+
+# --- 010083 B: a merge keeps the deal's nouns; site mix; items not tasks -----
+
+def test_a_guarded_step_whose_nouns_the_standard_lacks_comes_back_instead_of_merging():
+    c = _content()
+    deal = {"text": "Migrate trunks and AP ports according to the Customer-provided minimal matrix.", "cites": ["f1"], "kind": "fact"}
+    std = {"text": "Migrate patch cable connections according to the Customer-provided port and cable matrix.", "cites": [], "standard": True}
+    before = m._snap({**c, "scope": [deal, std]})
+    lists_before = {k: [] for k in m._LIST_SECTION}
+    lists_before["scope"] = [deal, std]
+    c["scope"] = [std]
+    out = m._guard_drops(c, "standards", before, lists_before)
+    assert [o["guard"] for o in out] == ["restored"]
+    assert deal["text"] in _texts(c, "scope")
+
+
+def test_a_per_site_quantity_mix_is_written_whole():
+    c = _content()
+    c["assumptions"] = [{"text": "Treat per-site switch quantities as variable across the approximately ninety-two (92) locations.", "cites": ["f1"]}]
+    f = _fact("f1", "Are the switches generally two (2) per site, or will quantities vary by location? [Betty] Apx 83 sites will be singles.  "
+                    "Memphis Main will be apx. 51 switches on multiple floors.  The remainder will be 2-3 switches each.", section="assumptions")
+    m._planning_basis(c, [f])
+    assert _texts(c, "assumptions")[-1] == ("The Customer has indicated that approximately 83 sites will be singles; Memphis Main will be "
+                                            "approximately 51 switches on multiple floors; the remainder will be 2-3 switches each.")
+
+
+def test_a_task_or_a_document_is_never_equipment():
+    c = _content()
+    c["scope"] = [{"text": "Support completion of the Customer-provided post-install testing checklist.", "cites": [], "standard": True}]
+    c["customer_materials"] = [{"text": "Support the Customer-provided post-install testing checklist.", "cites": ["f1"]},
+                               {"text": "The site list with the site address and the quantity of time clocks at the site.", "cites": ["f2"]},
+                               {"text": "Forty-eight (48) monitors.", "cites": ["f3"]}]
+    m._items_not_tasks(c)
+    assert _texts(c, "customer_materials") == ["Forty-eight (48) monitors."]
+    assert _texts(c, "customer_responsibilities") == ["Provide the site list with the site address and the quantity of time clocks at the site."]
+    assert len(c["scope"]) == 1
+
+
+def test_a_duration_is_not_a_completion_date():
+    c = _content()
+    c["schedule"] = [{"text": "Requested Completion Date: not to exceed five (5) months.", "cites": ["f1"]},
+                     {"text": "Requested Completion Date: January 31, 2027", "cites": ["f2"]}]
+    m._duration_not_date(c)
+    assert _texts(c, "schedule") == ["Project Duration: not to exceed five (5) months.", "Requested Completion Date: January 31, 2027"]
