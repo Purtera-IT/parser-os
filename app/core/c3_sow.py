@@ -2019,6 +2019,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                      r"\b(optional|contingent)\b.{0,40}survey", f["text"]) for f in fs):
         content["scope"] = [x for x in content.get("scope") or []
                             if not (isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"(?i)\bsurvey\b", str(x.get("text"))))]
+    # Last: a heading left with nothing under it goes (010209 "Switch replacement").
+    sc = content.get("scope") or []
+    content["scope"] = [x for i, x in enumerate(sc)
+                        if not (isinstance(x, dict) and x.get("kind") == "heading")
+                        or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
 
 
 def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
