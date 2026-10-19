@@ -458,3 +458,35 @@ def test_materials_are_one_counted_line_per_item():
     m._materials_counted(c)
     assert [x["text"] for x in c["customer_materials"]] == ["Three (3) new 32-65 inch articulating TV mounts.",
                                                             "One (1) new 55-100 inch VESA TV mount."]
+
+
+import glob as _glob
+import os as _os
+import re as _re
+
+import pytest as _pytest
+
+from tests.test_c3_sow_batch4_rules import _SAVED, _replay
+
+
+@_pytest.mark.parametrize("deal", sorted(_re.search(r"final_(\d+)_env", p_).group(1) for p_ in _glob.glob(f"{_SAVED}/final_*_env.json"))
+                         or ["none"])
+def test_every_keep_decision_is_in_the_output(deal, monkeypatch):
+    """010217 pass U: a guard "keep" whose line the SOW never showed."""
+    import json as _json
+    path = f"{_SAVED}/final_{deal}_env.json"
+    if not _os.path.exists(path) or "c3_sow" not in _json.load(open(path)):
+        _pytest.skip("saved envelope not on this machine")
+    c = _replay(deal, monkeypatch)
+    lines = [x for k in m.LISTS for x in c.get(k) or [] if isinstance(x, dict)]
+    shown = {str(x.get("text")).strip() for x in lines}
+    cited = {a for x in lines for a in x.get("cites") or []}
+    last = {}
+    for d in c.get("rule_decisions") or []:
+        if d.get("head") == "sow_keep":
+            last[tuple(d.get("atom_ids") or [])] = d
+    for ids, d in last.items():
+        if d["value"] == "keep":
+            assert set(ids) & cited or str(d.get("text")).strip() in shown, (deal, d)
+        else:
+            assert str(d.get("text")).strip() not in shown, (deal, d)
