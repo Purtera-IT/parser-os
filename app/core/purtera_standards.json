@@ -373,8 +373,8 @@
       "Ensure furniture required for installation is assembled and in its final position.",
       "{unless:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} {when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Confirm the equipment approved for removal and provide an onsite location for removed equipment.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Provide the network port, VLAN, DHCP, firewall and internet access the installed devices require.",
-      "{when:video bar|rally|neat|poly (x|studio)|teams room|zoom room|network switch|poe switch|\\bms\\d{3}\\b} Complete device enrollment, management dashboard, tenant and licensing setup.",
-      "{when:video bar|rally|neat|poly (x|studio)|teams room|zoom room|network switch|poe switch|\\bms\\d{3}\\b} Provide remote AV or network engineering support during testing without delay.",
+      "{when:video bar|room bar|rally|neat|poly (x|studio)|teams room|zoom room|network switch|poe switch|\\bms\\d{3}\\b} Complete device enrollment, management dashboard, tenant and licensing setup.",
+      "{when:video bar|room bar|rally|neat|poly (x|studio)|teams room|zoom room|network switch|poe switch|\\bms\\d{3}\\b} Provide remote AV or network engineering support during testing without delay.",
       "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Provide replacement ceiling tiles or blanking plates where needed.",
       "Provide technician access to the rooms, common areas, telecom spaces, elevators and corridors the work requires.",
       "Have onsite personnel available for access and approvals during the work.",
@@ -432,6 +432,7 @@
     "tools": [
       "Cordless drill or driver and bits for approved mounting surfaces.",
       "Screwdriver set.",
+      "{when:mount|bracket} Allen key set for mounts and brackets.",
       "Level.",
       "Tape measure.",
       "Stud finder.",
@@ -451,7 +452,7 @@
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
-      "{when:\\bdesks?\\b|desktop|office (it )?equipment} Remove desktop and office equipment from desks.",
+      "{when:\\bdesks?\\b|desktop|office (it |technology |tech )?equipment|office (move|relocation)} Remove desktop and office equipment from desks.",
       "Power down all equipment before the technicians arrive.",
       "Unrack all applicable devices before packing begins.",
       "Centralize all equipment in an accessible staging area.",

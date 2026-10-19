@@ -259,6 +259,10 @@ _STOCK = frozenset("""provider customer the a an all any each this these those c
 poe ups av it pos sow pm pmo onsite on-site usb hdmi vesa wi-fi wifi tv tvs ap aps lan wan ip coi""".split())
 
 
+#: Hand-tool words that are capitalised eponyms, not deal names.
+_TOOL_EPONYMS = re.compile(r"\b(Allen|Velcro|Phillips|Torx|Robertson)\b")
+
+
 _NEIGHBOURS = {
     "cameras_security": ("low_voltage_cabling", "wireless_ap"),
     "pos_install_refresh": ("smart_hands_general", "imac_deskside"),
@@ -1156,6 +1160,20 @@ def _std_gone(content: dict[str, Any], where: str) -> None:
     content["_std_objs"] = keep
 
 
+_STREET = re.compile(r"(?i)\b\d{1,6}\s+(?:[NSEW]\.?\s+)?[A-Za-z0-9][\w.'-]*(?:\s+[\w.'-]+){0,4}?\s+(?:street|st|avenue|ave|road|rd|"
+                     r"drive|dr|lane|ln|blvd|boulevard|way|court|ct|place|pl|parkway|pkwy|highway|hwy|circle|cir|trail|"
+                     r"terrace|square|sq|plaza|pike|turnpike|row|center|centre)\b\.?")
+
+
+def _site_line(t: str, roster_n: int = 0) -> bool:
+    """A writer location line that names a place: a street, a ZIP or a "City,
+    ST", or (beside one roster site) a short place name with no digits."""
+    if re.search(r"\b\d{5}(?:-\d{4})?\b", t) or _STREET.search(t) or re.search(r"\b[A-Z][A-Za-z .]+,\s*[A-Z]{2}\b", t):
+        return True
+    place = re.sub(r"(?i)^\s*specific location\(?s?\)?\s*[:|]\s*", "", t.split("|")[0]).strip(" .")
+    return roster_n == 1 and not re.search(r"\d", t) and 1 <= len(place.split()) <= 6
+
+
 def _places(t: str) -> frozenset[str]:
     """The rooms, areas or sites a line names ("room 247", "Training Room 250", "the NOC")."""
     return frozenset(m.group(0).lower() for m in re.finditer(
@@ -1443,7 +1461,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             if m:
                 sched.append({"text": f"Requested Completion Date: {m.group(m.lastindex)}", "cites": [f["id"]], "kind": "fact"})
                 break
-    _reseller_supplies(content, fs)
+    _traced(content, "reseller_supplies", _reseller_supplies, content, fs)
     # A customer duty cannot rest only on what PurTera itself wrote (010217:
     # Trent's sales intro "deep familiarity with Certinia, Agiloft" became a
     # CDW responsibility).
@@ -1814,6 +1832,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "room_from_section", _room_from_section, content, envelope)
     _traced(content, "explanation_not_exclusion", _explanation_not_exclusion, content, fs)
     _traced(content, "summary_order", _summary_order, content)
+    _traced(content, "summary_rooms", _summary_rooms, content, envelope)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
     # A one-room job says "the room" (010120: "Verify the equipment for each
@@ -2271,6 +2290,71 @@ def _room_from_section(content: dict[str, Any], envelope: dict[str, Any]) -> Non
     content["scope"] = [y for i, y in enumerate(sc) if not (isinstance(y, dict) and y.get("kind") == "heading"
                         and (i + 1 >= len(sc) or (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))
                         and not re.search(r"(?i)clos", str(y.get("text"))))]
+
+
+_PART = re.compile(r"\b(?:(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9][A-Z0-9-]{3,}|\d{6,})\b")
+
+
+def _summary_rooms(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """The summary puts each item in its own sheet section's room, as the
+    task list does (010116 pass W: "... two (2) QM65C Samsung 65IN ...
+    units on Chief Thinkstall ... Wall Mounts, ... in the Boardroom", rows
+    under "Common Area Displays"). A summary sentence listing counted items
+    "in the <Room>" keeps that room for the items whose rows sit there and
+    names the other items' own areas; a list naming no room whose rows all
+    sit in one of two or more areas says that area."""
+    by_id = {str(a.get("id")): a for a in envelope.get("atoms") or [] if isinstance(a, dict)}
+    def area(ci: str) -> str:
+        sp = (by_id.get(ci, {}).get("locator") or {}).get("section_path") or []
+        last = str(sp[-1]).strip() if sp else ""
+        # A place, not a column header ("EXT. PRICE", 010043).
+        bad = r"(?i)sheet\s*\d*|table\s*\d*|summary|totals?|bom|quote|.*\b(price|qty|quantity|cost|amount|description|part|sku|model|unit|ext)\b.*|.*\$.*"
+        return "" if not last or re.fullmatch(bad, last) else last
+    place = lambda a: re.sub(r"(?i)\s+(displays?|devices|equipment|items)$", "", a)
+    said_rooms = " ".join(str(x.get("text")) for x in content.get("overview") or [] if isinstance(x, dict)) + " " + \
+        " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") == "heading")
+    all_areas = {area(ci) for k in ("overview", "scope") for x in content.get(k) or [] if isinstance(x, dict)
+                 for ci in x.get("cites") or []} - {""}
+    if len(all_areas) < 2:
+        return
+    cnt = r"(?:%s|\d+)\s*(?:\(\d+\)\s*)?" % _NUMW
+    for x in content.get("overview") or []:
+        if not (isinstance(x, dict) and x.get("cites")):
+            continue
+        t = str(x.get("text"))
+        parts_of = {ci: _PART.findall(str(by_id.get(ci, {}).get("text") or "")) for ci in x["cites"] if area(ci)}
+        if not parts_of:
+            continue
+        m_ = re.match(r"(?i)^(.*?\b(?:install|mount|deploy|relocate|move|replace)\s+)(.+?)(?:\s+in the ([A-Z][\w-]*(?: [A-Z][\w-]*){0,3}))?(\.?)$", t)
+        if not m_:
+            continue
+        lead, body, room, end = m_.group(1), m_.group(2), m_.group(3), m_.group(4)
+        items = [i for i in re.split(r"(?i),\s*(?:and\s+)?(?=%s)|\s+and\s+(?=%s)" % (cnt, cnt), body) if i.strip()]
+        if len(items) < 1:
+            continue
+        def item_area(it: str) -> str:
+            for p_ in _PART.findall(it):
+                hits = {area(ci) for ci, ps in parts_of.items() if p_ in ps}
+                if len(hits) == 1:
+                    return hits.pop()
+            return ""
+        got = [(it, item_area(it)) for it in items]
+        if any(not a for _, a in got):
+            continue
+        areas = list(dict.fromkeys(a for _, a in got))
+        join = lambda xs: xs[0] if len(xs) == 1 else (" and ".join(xs) if len(xs) == 2 else ", ".join(xs[:-1]) + ", and " + xs[-1])
+        if room:
+            home = next((a for a in areas if place(a).lower() == room.lower() or room.lower() in a.lower()), None)
+            if home is None or len(areas) == 1:
+                continue
+            order = [home] + [a for a in areas if a != home]
+        else:
+            if len(areas) != 1 or place(areas[0]).lower() not in said_rooms.lower():
+                continue
+            order = areas
+        groups = [f"{join([it.strip() for it, a in got if a == ar])} in the {place(ar)}" for ar in order]
+        both = groups[0] if len(groups) == 1 else (", ".join(groups[:-1]) + (", and " if "," in groups[0] else " and ") + groups[-1])
+        x["text"] = lead + both + (end or ".")
 
 
 def _our_word_on_disposal(content: dict[str, Any], envelope: dict[str, Any]) -> None:
@@ -5589,6 +5673,129 @@ def _answered_none(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
         have += " " + what.lower()
 
 
+_NEG_CLAIM = re.compile(r"(?i)\b(does not|do not|doesn't|don't|is not|are not|isn't|aren't|cannot|can't|not (?:be )?"
+                        r"(?:accessible|available|provided|present)|unavailable|inaccessible|lacks?|without)\b|^\s*no\s+\w+")
+
+
+def _na_not_negative(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """An "N/A" answer never becomes a negative claim: it says the question
+    does not apply or is not known, not "No" (010147 pass W: "Is loading dock
+    tractor trailer (70' long) accessible? | ...: N/A" became "Origin site
+    does not have an accessible 70' tractor-trailer loading dock."). A line
+    stating a lack, every one of whose cited facts is a question answered only
+    N/A, goes. "Will any X be needed? N/a" stays the no-X assumption
+    (answered_none)."""
+    text = {str(a.get("id")): str(a.get("raw_text") or a.get("text") or "") for a in atoms}
+    na = re.compile(r"(?i)\?[^?]*?(?:[|:]\s*)(?:[^|:]*[|:]\s*)?n/?a\.?\s*$")
+    def only_na(x: dict[str, Any]) -> bool:
+        ts = [text.get(str(i), "") for i in x.get("cites") or []]
+        return bool(ts) and all(na.search(t) and not re.search(r"(?i)\bwill\s+(?:there\s+be\s+)?any\b", t) for t in ts)
+    for k in _LIST_SECTION:
+        c[k] = [x for x in c.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")
+                                                  and _NEG_CLAIM.search(str(x.get("text"))) and only_na(x))]
+
+
+def _inventory_counts(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """The deal's inventory is the source of truth for counts: an item a
+    prose line counts otherwise, citing no inventory row, is that inventory's
+    gear said again and goes from the line (010147 pass W: the email's "a
+    couple of Cisco 1U switches" became "two (2) Cisco 1U switches" beside the
+    inventory's "Network Switch | 5", seven switches in all)."""
+    inv: dict[str, str] = {}
+    inv_ids: dict[str, set[str]] = {}
+    for a in atoms:
+        if str(a.get("atom_type") or "") not in ("quantity", "vendor_line_item", "bom_line"):
+            continue
+        t = str(a.get("text") or "")
+        m_ = re.match(r"(?i)\s*quantity\s+([\d-]+)\s+(.+?)\s*$", t) or None
+        q, item = (m_.group(1), m_.group(2)) if m_ else (None, None)
+        if not m_:
+            m2 = re.match(r"(?i)\s*line item\s+(.+?)\s+[—-]+\s+qty\s+([\d-]+)\s*$", t)
+            if m2:
+                item, q = m2.group(1), m2.group(2)
+        if not item:
+            continue
+        noun = re.sub(r"(es|s)$", "", item.lower().split()[-1])
+        if len(noun) >= 4:
+            inv.setdefault(noun, q)
+            inv_ids.setdefault(noun, set()).add(str(a.get("id")))
+    if not inv:
+        return
+    cnt = r"(?:a couple of|a few|several|(?:%s)(?:[\s-]+%s)?\s*\(\d+\)|\d+)" % (_NUMW, _NUMW)
+    for k in ("scope", "equipment_in_scope"):
+        out = []
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and x.get("cites") and not x.get("standard") and x.get("kind") != "heading"):
+                out.append(x)
+                continue
+            t = str(x.get("text"))
+            for noun, q in inv.items():
+                if set(x.get("cites") or []) & inv_ids[noun]:
+                    continue
+                m_ = re.search(r"(?i)(?:,\s*(?:and\s+)?|\s+and\s+|^|\b(?:move|pack|relocate|ship|transport)\s+(?:the\s+)?)(%s)((?:\s+[\w-]+){0,3}?\s+%s(?:es|s)?)\b" % (cnt, re.escape(noun)), t)
+                if not m_:
+                    continue
+                n = re.search(r"\((\d+)\)|^(\d+)$", m_.group(1))
+                said = (n.group(1) or n.group(2)) if n else None
+                if said == q or (said and "-" in q and said in q.split("-")):
+                    continue
+                head = t[:m_.start()].strip()
+                if not re.search(r"\w", re.sub(r"(?i)^\s*(pack|move|and|the|\s|,)+", "", head)):
+                    t = ""
+                    break
+                rest = t[m_.end():]
+                lead = re.match(r"(?i)^\s*(?:(?:pack|move|relocate|transport|ship|and)\b,?\s*)*", head).end()
+                if head.count(",") == 1 and " and " not in head[lead:]:
+                    head = re.sub(r",\s*([^,]+)$", r" and \1", head)
+                t = head + rest
+            if not t.strip():
+                continue
+            if t != str(x.get("text")):
+                x = {**x, "text": t}
+            out.append(x)
+        c[k] = out
+
+
+def _one_sentence_one_party(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """Every clause of a split sentence stays with one party: the one the
+    sentence makes its subject (010147 pass W: "A member of our Lafayette
+    team will be available to meet the carrier, assist with packing, and
+    address anything that may have been missed during the pre-audit." gave
+    the Customer "Provide a member of the Lafayette team to meet the carrier
+    and assist with packing" and the Provider a closeout task "Address
+    anything missed during the pre-audit"). When lines citing that one
+    sentence sit on both sides and only one side's lines name its subject,
+    the other side's lines join them."""
+    text = {str(a.get("id")): str(a.get("raw_text") or a.get("text") or "") for a in atoms}
+    side = {"scope": "scope", "customer_responsibilities": "customer_responsibilities"}
+    def lines(k: str, cite: str) -> list[dict[str, Any]]:
+        return [x for x in c.get(k) or [] if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"
+                and list(x.get("cites") or []) == [cite]]
+    cites = {str(x["cites"][0]) for k in side for x in c.get(k) or []
+             if isinstance(x, dict) and len(x.get("cites") or []) == 1 and not x.get("standard")}
+    for ci in sorted(cites):
+        sc, cr = lines("scope", ci), lines("customer_responsibilities", ci)
+        if not sc or not cr:
+            continue
+        sents = [s_ for s_ in re.split(r"(?<=[.;!?])\s+", text.get(ci, "")) if s_.strip()]
+        if len(sents) != 1:
+            continue
+        m_ = re.match(r"\s*((?:[\w&.'-]+\s+){0,7}?[\w&.'-]+)\s+(?:will|shall|must|can|is going to|are going to)\s+", sents[0])
+        if not m_:
+            continue
+        subj = _object_toks(m_.group(1)) - {"member", "members", "someone", "person", "one"}
+        if not subj or re.search(r"(?i)\b(we|us|purtera|provider|technicians?|techs?|vendors?|installers?)\b", m_.group(1)) and \
+                not re.search(r"(?i)\bour\s+\w+\s+(team|office|staff|site)\b", m_.group(1)):
+            continue
+        names = lambda xs: any(subj & _object_toks(str(x.get("text"))) for x in xs)
+        if names(cr) and not names(sc):
+            c["scope"] = [x for x in c.get("scope") or [] if not any(x is y for y in sc)]
+            c.setdefault("customer_responsibilities", []).extend(sc)
+        elif names(sc) and not names(cr):
+            c["customer_responsibilities"] = [x for x in c.get("customer_responsibilities") or [] if not any(x is y for y in cr)]
+            c.setdefault("scope", []).extend(cr)
+
+
 def _single_site_wording(c: dict[str, Any]) -> None:
     """A one-site SOW says nothing "per community" (010419 pass W: "one (1)
     network technician and one (1) help desk technician per community",
@@ -5988,6 +6195,16 @@ def _one_customer_name(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
                 x["text"] = re.sub(r"\bfor ((?:[A-Z][\w&.-]*)(?: [A-Z][\w&.-]*){1,3})\b", fix, str(x.get("text")))
 
 
+def _shown_reworded(t: str, shown: set[str]) -> bool:
+    """A writer line the SOW shows in other words: "Supply one APC Smart-UPS
+    SRT 5000VA UPS." is the material "One APC Smart-UPS SRT 5000VA UPS."
+    (010376 pass W), the same nouns and numbers with its lead verb gone."""
+    core = lambda u: _object_toks(re.sub(r"(?i)^\s*(supply|provide|bring|furnish|install|ensure)\s+", "", u)) | \
+        set(re.findall(r"\d+", _digits(u)))
+    k = core(t)
+    return bool(k) and any(k == core(u) for u in shown)
+
+
 def _untraced_ledger(c: dict[str, Any]) -> None:
     """No cited writer line leaves silently (010171 pass W: the Sight install
     and the TV material vanished with nothing in dropped or rule_decisions). A
@@ -6009,9 +6226,14 @@ def _untraced_ledger(c: dict[str, Any]) -> None:
             ids = set(x.get("cites") or [])
             if not ids or t in shown or t in gone or t in decided or ids & cited or ids & decided_ids:
                 continue
-            c.setdefault("rule_decisions", []).append({"rule": "untraced", "head": "sow_keep", "atom_ids": list(x.get("cites") or []),
+            if _shown_reworded(t, shown):
+                continue
+            unknown = t in (c.get("_unknown_cites") or [])
+            c.setdefault("rule_decisions", []).append({"rule": "uncited" if unknown else "untraced", "head": "sow_keep",
+                                                       "atom_ids": list(x.get("cites") or []),
                                                        "value": "drop", "was": _LIST_SECTION.get(k, k), "text": t[:300],
-                                                       "why": "removed by a rule that records nothing"})
+                                                       "why": "its cites name no known fact, so it was checked and removed as an uncited line"
+                                                       if unknown else "removed by a rule that records nothing"})
             decided_ids |= ids
 
 
@@ -6981,6 +7203,43 @@ def _pricing_not_assumption(c: dict[str, Any]) -> None:
                         and _PRICING_TALK.search(str(x.get("text"))))]
 
 
+def _label_verbs(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A verb a task takes from a form's category label is not work the
+    source asks for (010147 pass W: "Pack, deinstall, and move three (3)
+    individual 1U-4U servers/devices for deinstall/reinstall (not remaining in
+    racks)" from the questionnaire header "Individual Servers/Devices for
+    Deinstall/Reinstall", beside the customer's own unracking and the
+    excluded install at the destination). A verb its cited facts give only in
+    a slash pair ("Deinstall/Reinstall") leaves the verb run, and the copied
+    "for X/Y (...)" label goes."""
+    text = {str(a.get("id")): str(a.get("raw_text") or a.get("text") or "") for a in atoms}
+    def label_only(v: str, src: str) -> bool:
+        occ = list(re.finditer(r"(?i)\b%s\w*" % re.escape(v), src))
+        return bool(occ) and all(re.search(r"/\s*$", src[max(0, o.start() - 2):o.start()]) or
+                                 re.match(r"\s*/", src[o.end():o.end() + 2]) for o in occ)
+    for x in c.get("scope") or []:
+        if not (isinstance(x, dict) and x.get("cites") and not x.get("standard") and x.get("kind") != "heading"):
+            continue
+        src = " ".join(text.get(str(i), "") for i in x.get("cites") or [])
+        t = str(x.get("text"))
+        run = re.match(r"(?i)^\s*((?:[a-z]+(?:,\s*(?:and\s+)?|\s+and\s+|\s+or\s+))*[a-z]+)\s+", t)
+        if not run:
+            continue
+        verbs = [v for v in re.findall(r"[A-Za-z]+", run.group(1)) if v.lower() not in ("and", "or")]
+        if len(verbs) < 2:
+            continue
+        keep = [v for v in verbs if not label_only(v, src)]
+        if len(keep) == len(verbs) or not keep:
+            continue
+        lead = keep[0][:1].upper() + keep[0][1:].lower()
+        vs = [lead] + [v.lower() for v in keep[1:]]
+        new_run = vs[0] if len(vs) == 1 else (" and ".join(vs) if len(vs) == 2 else ", ".join(vs[:-1]) + ", and " + vs[-1])
+        rest = t[run.end():]
+        rest = re.sub(r"(?i)\s+for\s+([a-z-]+)\s*/\s*([a-z-]+)(\s*\([^)]*\))?",
+                      lambda m2: "" if label_only(m2.group(1), src) and label_only(m2.group(2), src) else m2.group(0), rest)
+        x["text"] = new_run + " " + rest
+
+
 def _claimed_verbs(c: dict[str, Any]) -> None:
     """A Provider task never does what the customer says it does: a cited
     step whose lead verb a customer duty starts with ("Unrack all applicable
@@ -7028,7 +7287,7 @@ def _claimed_verbs(c: dict[str, Any]) -> None:
         c.setdefault("customer_responsibilities", []).extend(moved)
 
 
-def _moved_equipment(c: dict[str, Any]) -> None:
+def _moved_equipment(c: dict[str, Any], atoms: list[dict[str, Any]] | tuple = ()) -> None:
     """On a pack or move job, Equipment in Scope names everything the job
     packs or the customer readies for it (010147 pass V: three of seven
     inventory lines; the phones, servers, printer and cables were tasks
@@ -7044,7 +7303,9 @@ def _moved_equipment(c: dict[str, Any]) -> None:
     for x, verbs in src:
         if not (isinstance(x, dict) and x.get("cites") and not x.get("standard") and x.get("kind") != "heading"):
             continue
-        m_ = re.match(r"(?i)^\s*(?:%s)\s+(?:up\s+)?(?:the\s+)?(.+?)\.?$" % verbs, tx(x))
+        # "Pack and move ..." / "Pack, deinstall, and move ...": the whole
+        # verb run, not "and move ..." as an item (010147 pass W).
+        m_ = re.match(r"(?i)^\s*(?:(?:%s|deinstall|unrack|label|wrap|remove)\b,?\s+(?:and\s+)?)+(?:up\s+)?(?:the\s+)?(.+?)\.?$" % verbs, tx(x))
         if not m_ or re.search(r"(?i)\b(debris|materials?|area|equipment for|it|them)\b", m_.group(1)) and not re.search(r"\d", m_.group(1)):
             continue
         # "twenty-five (25) to thirty (30) ..." is a range, not a destination.
@@ -7055,6 +7316,20 @@ def _moved_equipment(c: dict[str, Any]) -> None:
         if not ot or any(len(ot & _object_toks(tx(e))) >= 0.6 * len(ot) for e in eq):
             continue
         eq.append({"text": obj[:1].upper() + obj[1:] + ".", "cites": list(x["cites"]), "kind": "fact"})
+    # A count the move's own questionnaire gives ("Estimated # of Cables: 20")
+    # is moved gear too, cited or not (010147 pass W: the cables were in no line).
+    for a in atoms:
+        lab = (a.get("structured") or {}).get("c3_label") or {}
+        if not isinstance(a, dict) or str(lab.get("act") or "") in ("drop", "reject"):
+            continue
+        m_ = re.match(r"(?i)\s*(?:estimated\s+)?(?:#|number)\s*of\s+([a-z][a-z ]{2,30}?)\s*[:|]\s*(\d{1,4})\s*$", str(a.get("text") or ""))
+        if not m_ or int(m_.group(2)) == 0:
+            continue
+        item, n = m_.group(1).strip().lower(), int(m_.group(2))
+        ot = _object_toks(item)
+        if not ot or any(ot <= _object_toks(tx(e)) for e in eq):
+            continue
+        eq.append({"text": f"{_words(n)[:1].upper()}{_words(n)[1:]} ({n}) {item}.", "cites": [str(a.get("id"))], "kind": "fact"})
 
 
 def _transport_mode(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
@@ -7164,6 +7439,24 @@ def _bom_lists(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
         c[k] = out
     if not any(n_lines.values()):
         return
+    # One BOM is one supply list: rows of a table some of whose rows the
+    # Customer furnishes are all the Customer's, never split between Customer
+    # Provided Materials and the neutral Equipment in Scope by which lines a
+    # check could tie to a supplier sentence (010116 pass W: the QM75C, Room
+    # Bar and SW4 in one list, the MMX4X2, CAB-SERIAL and QM65C rows of the
+    # same sheet in the other).
+    art = {str(a.get("id")): str(a.get("artifact_id") or "") for a in atoms if isinstance(a, dict)}
+    bom_line = lambda x: isinstance(x, dict) and bool(x.get("cites")) and all(ci in rows_of for ci in x["cites"])
+    cust_arts = {art.get(ci) for x in c.get("customer_materials") or [] if bom_line(x) for ci in x["cites"]} - {"", None}
+    if cust_arts:
+        join = [x for x in c.get("equipment_in_scope") or [] if bom_line(x) and all(art.get(ci) in cust_arts for ci in x["cites"])]
+        if join:
+            c["equipment_in_scope"] = [x for x in c["equipment_in_scope"] if not any(x is y for y in join)]
+            c["customer_materials"].extend(join)
+            n_lines["customer_materials"] += len(join)
+            n_lines["equipment_in_scope"] -= len(join)
+            have["customer_materials"] |= {key(r) for x in join for ci in x["cites"] for r in rows_of[ci] if fmt(r) == tx(x)}
+            have["equipment_in_scope"] -= have["customer_materials"]
     primary = max(mats, key=lambda k: n_lines[k])
     listed = set().union(*have.values())
     for ci in order:
@@ -8731,6 +9024,11 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                 if k == "scope" and len(x["text"].split()) <= 7:
                     keep.append(x)
                 continue
+            # A line whose cites name no fact at all (010279 pass W: the
+            # writer's garbled "atm_b395ab78b2e1db30f") is an uncited line; the
+            # ledger says so rather than blaming a silent rule.
+            if x["cites"] and not any(c in lines for c in x["cites"]):
+                content.setdefault("_unknown_cites", []).append(str(x["text"]).strip())
             x["cites"] = [c for c in x["cites"] if c in lines]
             if not x["cites"] and k not in ("overview",):
                 # An uncited line a given fact states is that fact's line:
@@ -8752,13 +9050,17 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                     unsupported.append({"list": k, **x, "reason": "uncited fact with a number or name no fact gives"})
                     continue
                 x["kind"] = "method"
+            # A hand tool named for its maker's type is a tool, not a deal
+            # name ("Allen key set", "Velcro cable ties", "Phillips"): 010116
+            # pass W lost the PM's standard Allen key set as "uncited supply".
+            tool_txt = _TOOL_EPONYMS.sub("", str(x["text"])) if k == "provider_tools" else str(x["text"])
             if x["kind"] == "method" and (k in ("customer_materials", "provider_materials", "locations")
-                                          or (k == "provider_tools" and _unsupported_specifics(x["text"], pool))):
+                                          or (k == "provider_tools" and _unsupported_specifics(tool_txt, pool))):
                 # Who supplies what is a deal fact, never a default.
                 dropped["method"] += 1
                 unsupported.append({"list": k, **x, "reason": "uncited supply, location or tool line"})
                 continue
-            if x["kind"] == "method" and _unsupported_specifics(x["text"], pool):
+            if x["kind"] == "method" and _unsupported_specifics(tool_txt, pool):
                 dropped["method"] += 1
                 unsupported.append({"list": k, **x, "reason": "method line with a number or name no fact gives"})
                 continue
@@ -9423,6 +9725,17 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         rows = []
         roster = list(c["sites"])
         for t in locs:
+            if not _site_line(t, len(roster)):
+                # A site has a street, a ZIP or a "City, ST": a sentence the
+                # writer filed as a location is not one (010147 pass W:
+                # "Origin site does not have an accessible 70' tractor-trailer
+                # loading dock." became a third location row, then the summary).
+                x0 = next(x for x in c.get("locations") or [] if isinstance(x, dict) and str(x.get("text") or "") == t)
+                c.setdefault("rule_decisions", []).append(
+                    {"rule": "site_needs_address", "head": "sow_keep", "atom_ids": list(x0.get("cites") or []), "value": "drop",
+                     "was": "locations", "text": t[:300], "why": "a location row names no street, ZIP or city and state"})
+                c["locations"].remove(x0)
+                continue
             place, _, street = t.partition("|")
             city, _, st = place.strip().partition(",")
             full = street.strip() if place.strip().lower() in street.lower() else ", ".join(
@@ -9562,6 +9875,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 named = {m.group(0).split(",")[0] for m in hits}
                 if 2 <= len(named) < len(cities):
                     a, b = min(m.start() for m in hits), max(m.end() for m in hits)
+                    # A route names its two ends, not a list of sites ("from
+                    # Denver, CO to Lafayette, IN"): never widened.
+                    if re.search(r"(?i)\bfrom\s*$", t[max(0, a - 8):a]) and re.search(r"(?i)\bto\b", t[a:b]):
+                        continue
                     full = ", ".join(f"{ci}, {st}" if st else ci for ci, st in cities[:-1]) + ", and " + \
                         (f"{cities[-1][0]}, {cities[-1][1]}" if cities[-1][1] else cities[-1][0])
                     x["text"] = t[:a] + full + t[b:]
@@ -9579,7 +9896,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                 and re.search(r"\b%d\b" % n_sites, str(x.get("text")))]
         if back:
             c.setdefault("overview", []).insert(0, {k: v for k, v in back[0].items() if k not in ("list", "reason")})
-    if len(c["sites"]) == 1:  # 010085: multi-site standards wording in a one-site SOW
+    # Not on a job the documents state is many sites (010209: 30 locations,
+    # one signature address left as the only row).
+    one_site = len(c["sites"]) == 1 and int((c.get("site_summary") or {}).get("stated") or 1) <= 1
+    if one_site:  # 010085: multi-site standards wording in a one-site SOW
         for k in LISTS:
             for x in c.get(k) or []:
                 if isinstance(x, dict) and isinstance(x.get("text"), str):
@@ -9650,8 +9970,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "recite_exclusions", _recite_exclusions, c, envelope.get("atoms") or [])
     _traced(c, "ships_with_gear", _ships_with_gear, c, envelope.get("atoms") or [])
     _traced(c, "items_not_tasks", _items_not_tasks, c)
+    _traced(c, "label_verbs", _label_verbs, c, envelope.get("atoms") or [])
     _traced(c, "claimed_verbs", _claimed_verbs, c)
-    _traced(c, "moved_equipment", _moved_equipment, c)
+    _traced(c, "inventory_counts", _inventory_counts, c, envelope.get("atoms") or [])
+    _traced(c, "moved_equipment", _moved_equipment, c, envelope.get("atoms") or [])
     _traced(c, "transport_mode", _transport_mode, c, envelope.get("atoms") or [])
     _traced(c, "bom_lists", _bom_lists, c, envelope.get("atoms") or [])
     _traced(c, "disposal_not_ours", _disposal_not_ours, c)
@@ -9665,6 +9987,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "it_handles_duty", _it_handles_duty, c, envelope.get("atoms") or [])
     _traced(c, "before_start_not_closeout", _before_start_not_closeout, c)
     _traced(c, "answered_none", _answered_none, c, envelope.get("atoms") or [])
+    _traced(c, "na_not_negative", _na_not_negative, c, envelope.get("atoms") or [])
     _traced(c, "single_site_wording", _single_site_wording, c)
     _traced(c, "derived_not_task", _derived_not_task, c, envelope.get("atoms") or [])
     _traced(c, "bom_count_on_task", _bom_count_on_task, c, envelope.get("atoms") or [])
@@ -9709,11 +10032,13 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "summary_denied_work", _summary_denied_work, c)
     _traced(c, "same_line_twice", _same_line_twice, c)
     _traced(c, "clipped_lines", _clipped_lines, c, envelope.get("atoms") or [])
+    _traced(c, "one_sentence_one_party", _one_sentence_one_party, c, envelope.get("atoms") or [])
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
     c.pop("_merged", None)
     _untraced_ledger(c)
+    c.pop("_unknown_cites", None)
     _decisions_match_output(c)
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"

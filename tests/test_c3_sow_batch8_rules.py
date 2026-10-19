@@ -385,6 +385,8 @@ def _unaccounted(c):
                 continue
             if not ids:
                 continue  # an uncited writer line is the template's to keep or lose
+            if m._shown_reworded(t, shown):
+                continue  # shown in other words (batch 9: the ledger's own test)
             out.append((k, t))
     return out
 
