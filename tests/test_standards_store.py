@@ -73,11 +73,16 @@ def test_api_round_trip(overlay):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.routes_standards import router
+    from app.api.routes_feedback import router
 
     app = FastAPI()
-    app.include_router(router)
-    c = TestClient(app)
+    app.include_router(router)  # as parser-os-service mounts it
+    raw = TestClient(app)
+
+    class C:
+        def get(self, p, **k): return raw.get("/projects" + p, **k)
+        def post(self, p, **k): return raw.post("/projects" + p, **k)
+    c = C()
     r = c.post("/standards/items", json={"family": "relocation_move", "list": "assumptions",
                                          "text": "Elevators are available for the move.", "by": "pm@x",
                                          "deal_id": "010147", "source_line": "atm_1"})

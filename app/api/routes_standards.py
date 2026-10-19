@@ -1,5 +1,7 @@
 """PurTera SOW standards, editable without a deploy (app/core/standards_store.py).
 
+Served at /projects/standards (it rides on the feedback router, the one parser-os-service mounts).
+
     GET  /standards                      merged standards (packaged + approved items), same shape as
                                          purtera_standards.json; "items" = every overlay item with its status
     POST /standards/items                {family, list, text, by, deal_id?, source_line?, when?, unless?, note?}

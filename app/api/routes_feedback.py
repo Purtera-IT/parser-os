@@ -799,3 +799,10 @@ def feedback_correction(project_id: str, req: PMCorrectionRequest) -> dict:
         except Exception:
             fired = False
     return {"correction_id": cid, "relation": spec.relation, "fired_instantly": fired}
+
+
+# PurTera SOW standards (app/api/routes_standards.py) ride on this router: it is the one
+# parser-os router parser-os-service mounts, so they serve at /projects/standards there.
+from app.api.routes_standards import router as _standards_router  # noqa: E402
+
+router.include_router(_standards_router)

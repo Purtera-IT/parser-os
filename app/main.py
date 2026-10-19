@@ -10,7 +10,6 @@ from app.api.routes_feedback import router as feedback_router
 from app.api.routes_health import router as health_router
 from app.api.routes_packets import router as packets_router
 from app.api.routes_projects import router as projects_router
-from app.api.routes_standards import router as standards_router
 from app.storage.db import init_db
 
 
@@ -36,4 +35,3 @@ app.include_router(artifacts_router)
 app.include_router(compile_router)
 app.include_router(packets_router)
 app.include_router(feedback_router)
-app.include_router(standards_router)
