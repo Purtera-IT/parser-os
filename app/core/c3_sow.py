@@ -1573,7 +1573,13 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             t = str(x.get("text"))
             if x.get("cites") and re.search(r"(?i)\b(stay|remain|retain|except|unless|existing|reuse|no|not)\b", t):
                 return False  # a deal line carrying an exception is never a duplicate of a standard
-            return (lst != "scope" or not re.search(r"\d", t)) and _said(t, std, share)
+            # A deal line naming something no standard line names (Windows,
+            # Linux, O365) is its own fact (000132's OS patching line).
+            names = {w.lower() for w in re.findall(r"\b[A-Z][A-Za-z0-9/+-]{1,}\b", t)[1:]}
+            std_words = " ".join(str(it["text"]) for it in std).lower()
+            if names and any(n not in std_words for n in names):
+                return False
+            return (lst != "scope" or not re.search(r"\d", t)) and _said(t, std, max(share, 0.55))
         items[:] = [x for x in items if not covered(x) and not (isinstance(x, dict) and x.get("standard"))]
         if lst == "scope":
             # A counted deal step is the standard step with the deal's numbers:
@@ -1811,9 +1817,16 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # An exclusion needs a source that excludes: 000132's requested end-user
     # O365 support (a service in both notes) came out as Out of Scope.
     neg = re.compile(r"(?i)\b(not|no|exclud\w*|except|outside|without|won'?t|n't|never|customer'?s? (team|staff|it)|by (the )?customer|handled by|responsib)")
-    content["out_of_scope"] = [x for x in content.get("out_of_scope") or []
-                               if not (isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
-                                       and not any(neg.search(by[c]["text"]) for c in x["cites"]))]
+    unsourced = [x for x in content.get("out_of_scope") or []
+                 if isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
+                 and not any(neg.search(by[c]["text"]) for c in x["cites"])]
+    content["out_of_scope"] = [x for x in content.get("out_of_scope") or [] if not any(x is y for y in unsourced)]
+    # A requested service the writer flipped into an exclusion is scope.
+    for x in unsourced:
+        t = re.sub(r"(?i)^\s*(no |excludes? |exclusion of )", "", str(x.get("text"))).strip()
+        x["text"] = ("Provide " + t[0].lower() + t[1:]) if not re.match(r"(?i)\s*(provide|support|perform|assist|install)\b", t) else t[0].upper() + t[1:]
+        if not _said(x["text"], content.setdefault("scope", []), 0.6):
+            content["scope"].append(x)
     # The same for an assumption that hands a requested service to the
     # customer (000132 pass O: "Customer will provide end-user support ...
     # outside of Provider's onsite support scope" from a bare service bullet).
