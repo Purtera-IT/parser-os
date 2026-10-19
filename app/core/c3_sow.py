@@ -756,6 +756,15 @@ def _reseller_supplies(content: dict[str, Any], fs: list[dict[str, Any]]) -> Non
 _ONES = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
 _TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
 _NUMW = "(?:" + "|".join(sorted(set(_ONES + _TENS[2:] + ["hundred"]), key=len, reverse=True)) + ")"
+#: A spelled count, compound or not ("forty-eight", "one hundred sixty").
+_NUM_RUN = re.compile(r"\b%s(?:[\s-]+%s)*\b" % (_NUMW, _NUMW), re.I)
+
+
+def _digits(t: str) -> str:
+    """Every spelled count as its digits, once: "forty-eight (48)" -> "48"."""
+    t = re.sub(r"(?i)(%s)\s*\((\d+)\)" % _NUM_RUN.pattern,
+               lambda m: m.group(2) if str(_words_value(m.group(1))) == m.group(2) else m.group(0), t)
+    return _NUM_RUN.sub(lambda m: str(_words_value(m.group(0))), t)
 
 
 def _words(n: int) -> str:
@@ -995,10 +1004,32 @@ def _std_gone(content: dict[str, Any], where: str) -> None:
     content["_std_objs"] = keep
 
 
+def _slot_back(content: dict[str, Any], before: list[Any], rule: str) -> None:
+    """A cited step that took a standard step's slot and is then removed or
+    moved out of the task list gives the slot back: the standard step returns
+    where the step stood (010085: the counted "Install approximately twenty
+    (20) network switches" took "Install the new switches" and grounding then
+    dropped it, leaving no install step)."""
+    slots = content.get("_slots") or {}
+    if not slots:
+        return
+    sc = content.setdefault("scope", [])
+    for i, x in enumerate(before):
+        std = slots.get(id(x))
+        if std is None or any(x is y for y in sc):
+            continue
+        slots.pop(id(x))
+        if not _said(std["text"], sc, 0.8):
+            sc.insert(min(i, len(sc)), std)
+            content.setdefault("standards_suppressed", []).append(
+                {"section": "method_steps", "text": std["text"], "reason": f"restored: rule {rule} removed the deal step in its slot"})
+
+
 def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     before = _snap(content)
     lists_before = {k: list(content.get(k) or []) for k in _LIST_SECTION}
     result = fn(*args, **kwargs)
+    _slot_back(content, lists_before.get("scope") or [], rule)
     _std_gone(content, f"rule {rule}")
     guarded = _guard_drops(content, rule, before, lists_before) if rule in GUARDED_RULES else []
     kept = {tuple(g["atom_ids"]) for g in guarded}
@@ -1496,6 +1527,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             if isinstance(x, dict) and isinstance(x.get("text"), str):
                 x["text"] = re.sub(r"(?i)\b(for|with|to|of|on) the above(?:[- ](?:gear|items?|equipment|devices?|list|hardware))?\b",
                                    r"\1 the installed equipment", x["text"])
+    _traced(content, "summary_order", _summary_order, content)
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
     # A one-room job says "the room" (010120: "Verify the equipment for each
@@ -1525,12 +1557,28 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # the rest as "writer_rules": the queue SowSmith shows as "Teach the heads".
     _std_gone(content, "writer rules (untraced)")
     content.pop("_noise_atoms", None)
+    content.pop("_slots", None)
     content.pop("_noise_re", None)
     content["teachable"] = {k: v[0] for k, v in TEACHABLE.items()}
     traced = {(tuple(d["atom_ids"]), d["head"]) for d in content.get("rule_decisions") or []}
     content["rule_decisions"] = (content.get("rule_decisions") or []) + [
         d for d in _decisions("writer_rules", writer_snap, _snap(content)) if (tuple(d["atom_ids"]), d["head"]) not in traced]
     return content
+
+
+#: A cleanup sentence: it hauls or clears trash, debris or packaging (not
+#: "clean up the existing cabling", not disposing of replaced gear).
+_CLEANUP = re.compile(r"(?i)^(?!.*\b(install|mount|replace|configure|connect)(s|ed|ing)?\b).*\b(trash|debris|packing materials?|packaging)\b")
+
+
+def _summary_order(content: dict[str, Any]) -> None:
+    """The summary leads with the work: a cleanup or haul-away sentence comes
+    after the install sentences, as its step closes the task list (010373
+    pass U: "Provider will haul away installation trash" opened the summary)."""
+    ov = [x for x in content.get("overview") or [] if isinstance(x, dict)]
+    work = [x for x in ov if not _CLEANUP.search(str(x.get("text")))]
+    if work and len(work) < len(ov):
+        content["overview"] = work + [x for x in ov if all(x is not w for w in work)]
 
 
 _ROLE_WORDS = re.compile(r"(?i)^(customer|client|provider|we|they|it|seller|vendor|subcontractor|contractors?|service provider|"
@@ -2223,10 +2271,14 @@ def _grounded(x: dict[str, Any], lines: dict[str, str]) -> bool:
     """A supply item names things its cited lines name: at least half its
     words are in them (010043's writer listed a "backer board" off a line about
     running the cabling)."""
-    words = [w for w in re.findall(r"[a-z0-9]{3,}", x["text"].lower()) if w not in _STOPWORDS]
+    # A count is its value however it is spelled (010373 pass U: "Supply
+    # sixteen (16) monitor arms and forty-eight (48) monitors" failed on
+    # "sixteen", "forty" and "eight" against "16 ... arms", "48 monitors").
+    words = [w for w in re.findall(r"[a-z0-9]{2,}", _digits(x["text"]).lower())
+             if w not in _STOPWORDS and (len(w) >= 3 or w.isdigit())]
     if not words:
         return True
-    cited = " ".join(lines.get(c, "") for c in x["cites"]).lower()
+    cited = _digits(" ".join(lines.get(c, "") for c in x["cites"])).lower()
     return sum(1 for w in words if w in cited or w.rstrip("s") in cited) >= max(1, (len(words) + 1) // 2)
 
 
@@ -2423,6 +2475,37 @@ def _toks(t: str) -> set[str]:
     return {_stem(w) for w in _TOK.findall(str(t).lower()) if w not in _FILLER}
 
 
+_OBJ_SKIP = frozenset("each every all the a an of new both its their".split())
+_OBJ_STOP = frozenset("on onto in into at to for from with along per under above behind across then and using "
+                      "before after once so that as".split())
+
+
+def _action(t: str) -> tuple[str, list[str]]:
+    """A step's verb and the object it acts on: "Install each of the sixteen
+    (16) monitor arms on its desk" -> ("instal", ["monitor", "arm"])."""
+    words = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*|[,.;:()]", _digits(str(t)).lower())
+    if not words or not re.match(r"[a-z]", words[0]):
+        return "", []
+    obj: list[str] = []
+    for w in words[1:]:
+        if w in "()":
+            continue
+        if not obj and (w in _OBJ_SKIP or w.isdigit()):
+            continue
+        if w in _OBJ_STOP or w in ",.;:":
+            break
+        obj.append(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w)
+    return _stem(words[0]), obj
+
+
+def _same_action(std: str, deal: str) -> bool:
+    """The deal step does the standard step's work on the same thing: same
+    verb, same object (its head noun and every word the standard names)."""
+    v1, o1 = _action(std)
+    v2, o2 = _action(deal)
+    return bool(v1 and o1 and o2) and v1 == v2 and o1[-1] == o2[-1] and set(o1) <= set(o2)
+
+
 def _said(text: str, items: list[Any], share: float = 0.5) -> bool:
     """Does some item already say ``text`` (most of its words)?"""
     want = _toks(text)
@@ -2544,10 +2627,51 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             # "Disconnect and remove each existing phone ... reusing existing cabling".
             counted += [x for x in items if isinstance(x, dict) and x.get("kind") != "heading" and x.get("cites")
                         and re.search(r"(?i)\b(existing|reuse|reusing|reused)\b", str(x.get("text")))]
+            # A cited counted step doing the standard step's work on the same
+            # thing takes the step's slot, so the list keeps the standard order
+            # (010373 pass U: "Install sixteen (16) Humanscale monitor arms"
+            # sat after cable management while "Install each monitor arm"
+            # stayed in its slot).
+            slotted = []
+            for j, it in enumerate(std):
+                twin = next((x for x in counted if x.get("cites") and re.search(r"\d", _digits(str(x.get("text"))))
+                             and all(x is not y for y in slotted) and _same_action(it["text"], str(x.get("text")))), None)
+                if twin is None:
+                    continue
+                # The standard's own method word stays: "align and secure them"
+                # replaced by "... and secure them" keeps "align".
+                co = re.search(r"(?i)\b(\w+) and (\w+) (them|it)\b", it["text"])
+                tt = str(twin.get("text"))
+                if co and re.search(r"(?i)\b%s %s\b" % (co.group(2), co.group(3)), tt) and not re.search(r"(?i)\b%s\b" % co.group(1), tt):
+                    tt = re.sub(r"(?i)(,?\s*and\s+)?\b%s %s\b" % (co.group(2), co.group(3)),
+                                lambda m: (", then " if m.group(1) else "") + f"{co.group(1).lower()} and {co.group(2)} {co.group(3)}", tt, count=1)
+                    twin["text"] = tt
+                suppressed(sec, it["text"], "a cited deal step with its own count does the same work and takes its place")
+                items[:] = [x for x in items if x is not twin]
+                std[j] = twin
+                slotted.append(twin)
+                content.setdefault("_slots", {})[id(twin)] = it
             for it in std:
+                if any(it is y for y in slotted):
+                    continue
                 if _said(it["text"], counted, 0.6):
                     suppressed(sec, it["text"], "a cited deal step with its own count or exception says it")
-            std = [it for it in std if not _said(it["text"], counted, 0.6)]
+            std = [it for it in std if any(it is y for y in slotted) or not _said(it["text"], counted, 0.6)]
+        if lst == "customer_responsibilities":
+            # A counted, cited customer-supply line is the standard supply duty
+            # with the deal's numbers: keep it, not the uncounted standard
+            # (010373 pass U: "Provide all monitor arms, monitors, mounting
+            # hardware and cables" beside "Sixteen (16) monitor arms and
+            # forty-eight (48) monitors ...").
+            cm = [x for x in content.get("customer_materials") or [] if isinstance(x, dict) and x.get("cites")
+                  and re.search(r"\d", _digits(str(x.get("text"))))]
+            supply = lambda t: re.sub(r"(?i)^\s*(provide|supply|furnish)\s+(all\s+)?(the\s+)?", "", t)
+            gone = [it for it in std if re.match(r"(?i)\s*(provide|supply|furnish)\b", it["text"]) and _said(supply(it["text"]), cm, 0.7)]
+            for it in gone:
+                suppressed(sec, it["text"], "a cited customer-supply line with the deal's counts says it")
+            std = [it for it in std if it not in gone]
+            if not std:
+                continue
         n += len(std)
         if lst == "provider_tools":
             # The family's tool list is the list: the writer's own tool lines were
@@ -4837,12 +4961,18 @@ def _unsupported_specifics(text: str, pool: str) -> bool:
     # "Requested Start Date: 2026-08-16") is the fact's own date.
     text = re.sub(r"\b(\d{4})-(\d{2})-(\d{2})\b",
                   lambda m: "" if _date_stated(m.group(1), m.group(2), m.group(3), pool) else m.group(0), text)
+    # A count is its value, however it is written: "forty-eight (48)" is the
+    # 48 a fact gives (010373 pass U: the summary's lead install sentence and
+    # the counted equipment assumption went over "forty" and "eight").
+    text = _digits(re.sub(r"\bone\s+(?=(of|or|end|side|another)\b)", "", text, flags=re.I))
+    pool_nums = set(re.findall(r"\d+", _NUM_RUN.sub(lambda m: f" {_words_value(m.group(0))} ", pool)))
     for m in _NUM.finditer(text):
         tok = m.group(1).lower().rstrip(".,")
-        if tok in ("one",) and re.search(r"\bone\s+(of|or|end|side|another)\b", text, re.I):
+        if not tok or tok in pool:
             continue
-        if tok and tok not in pool:
-            return True
+        if tok.isdigit() and tok.lstrip("0") in pool_nums | {n.lstrip("0") for n in pool_nums}:
+            continue
+        return True
     words = re.findall(r"(?<![.!?]\s)(?<!^)\b([A-Z][A-Za-z0-9&\-]{2,})\b", text.strip())
     for w in words:
         if w.lower() in _STOCK:
