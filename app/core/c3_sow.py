@@ -9186,7 +9186,10 @@ def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | N
         if re.search(r"°|%|humidity|above (the )?floor|\b(?=[\w-]*\d)(?=[\w-]*[A-Z])[A-Z0-9][A-Z0-9-]{4,}\b|\b\d{6,}\b", t):
             continue  # specs, heights and part numbers are not summary material
         ov_txt = " ".join(tx(o) for o in ov).lower()
-        counts = {a or b for a, b in re.findall(r"\b[a-z-]+ \((\d{1,4})\)|\b(\d{1,4}) (?:new )?(?:[A-Z]\w*|[a-z]+s)\b", t)}
+        # A per-unit count ("three (3) monitors per arm") is the task's detail,
+        # not a job count the summary lacks (010373 pass Y).
+        t_job = re.sub(r"(?i)\b(?:[a-z-]+ \(\d{1,4}\)|\d{1,4})\s+(?:[\w-]+\s+){0,2}?(?:per|each|for each|on each)\s+\w+", "", t)
+        counts = {a or b for a, b in re.findall(r"\b[a-z-]+ \((\d{1,4})\)|\b(\d{1,4}) (?:new )?(?:[A-Z]\w*|[a-z]+s)\b", t_job)}
         missing_count = bool(counts) and not counts <= set(re.findall(r"\d+", ov_txt)) and not _said(t, ov, 0.5)
         haul = bool(re.search(r"(?i)\bhaul|dispos|trash", t)) and not re.search(r"(?i)\bhaul|dispos|trash|debris", ov_txt)
         if (missing_count or haul) and not _said(t, ov, 0.7):
@@ -10038,8 +10041,11 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
         # Supply items are checked by _party_check (who) and _grounded (what):
         # judged here too, a bare order line "does not say" the customer
         # supplies it and 010043's cameras were dropped outright.
+        # A method line that cites atoms is checked against them too (010373
+        # pass Y: "Approve any packing-material removal or disposal before
+        # Provider leaves the site." cited PurTera's own haul-away notes).
         if k not in ("provider_materials", "customer_materials", "equipment_in_scope"):
-            to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact"]
+            to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact" or (x["kind"] == "method" and x["cites"])]
     ok = _verified([x for _, _, x in to_verify], lines)
     bad = {id(x) for _, _, x in to_verify} - {id(x) for x in ok}
     # A scope line rejected for one trailing clause keeps its main claim
@@ -11266,6 +11272,20 @@ def _no_charge_bounds(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
             x["text"] = t
 
 
+def _approval_needs_source(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """An approval duty needs a source that asks for one: a customer line
+    led by approve / authorize / sign off whose cited lines say no such
+    thing is invented (010373 pass Y: "Approve any packing-material removal
+    or disposal before Provider leaves the site." from PurTera's own
+    "confirm the engineer's ability to haul away the packaging")."""
+    by = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    lead = re.compile(r"(?i)\s*(?:the\s+customer\s+(?:will|to|must)\s+)?(approve|authori[sz]e|sign off|sign-off|accept)\b")
+    asks = re.compile(r"(?i)approv|authori[sz]|sign[- ]?off|signoff|accept|consent|permission|sign\b")
+    c["customer_responsibilities"] = [x for x in c.get("customer_responsibilities") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and x.get("cites") and lead.match(_tx(x))
+        and not any(asks.search(by.get(str(cc), "")) for cc in x["cites"]))]
+
+
 def _dropped_not_rendered(c: dict[str, Any]) -> None:
     """A line the check dropped never renders: a later pass that wrote the
     same line again loses it (000123 pass Y: the 161-locations summary line
@@ -11825,6 +11845,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "same_topic_once", _same_topic_once, c)
     _traced(c, "label_before_removal", _label_before_removal, c)
     _traced(c, "no_charge_bounds", _no_charge_bounds, c, atoms_)
+    _traced(c, "approval_needs_source", _approval_needs_source, c, atoms_)
     _traced(c, "site_unit_counts", _site_unit_counts, c)
     _traced(c, "overview_numbers", _overview_numbers, c, atoms_)
     _traced(c, "task_by_party", _task_by_party, c)

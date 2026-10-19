@@ -475,3 +475,35 @@ def test_a_boundary_around_the_devices_work_is_no_contradiction():
                          _fact("Switch installation.", ())]
     m._tidy(c)
     assert "Cleaning up or remediating other closet connections outside the switch area." in _texts(c, "out_of_scope")
+
+
+# --- 010373 pass Y A- ------------------------------------------------------------
+
+def test_an_approval_duty_needs_a_source_that_asks_for_one():
+    c = _content()
+    c["customer_responsibilities"] = [
+        {"text": "Approve any packing-material removal or disposal before Provider leaves the site.", "cites": ["h"], "kind": "method"},
+        _fact("Approve the final mounting heights.", ("a",))]
+    m._approval_needs_source(c, [{"id": "h", "text": "I just want to confirm the engineer's ability to haul away the packaging."},
+                                 {"id": "a", "text": "The customer must approve the mounting heights before drilling."}])
+    assert _texts(c, "customer_responsibilities") == ["Approve the final mounting heights."]
+
+
+def test_the_check_reads_a_method_line_that_cites_atoms(monkeypatch):
+    seen = []
+    def fake(prompt, *a, **k):
+        seen.append(prompt)
+        return json.dumps({"supported": []})
+    monkeypatch.setattr(m, "_complete", fake)
+    c = _content()
+    c["customer_responsibilities"] = [{"text": "Approve any packing-material removal or disposal.", "cites": ["h"], "kind": "method"}]
+    m.check(c, {"h": "I just want to confirm the engineer's ability to haul away the packaging."})
+    assert not c["customer_responsibilities"] and "Approve any packing-material removal" in seen[0]
+
+
+def test_a_per_unit_count_is_not_a_summary_count():
+    c = _content()
+    c["overview"] = [_fact("Provider will install 16 Humanscale monitor arms and mount 48 new 27-inch monitors.", ())]
+    c["scope"] = [_fact("Mount forty-eight (48) new 27-inch monitors on the installed arms, three (3) monitors per arm.")]
+    m._overview_covers_scope(c, [])
+    assert len(c["overview"]) == 1
