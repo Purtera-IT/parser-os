@@ -211,6 +211,8 @@ def main() -> None:
     p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     p.add_argument("--device", default="auto")
+    p.add_argument("--only-keys", nargs="*", default=[],
+                   help="refit only these heads (e.g. read:sow_section); every other head keeps the checkpoint's")
     p.add_argument("--extra-keys", nargs="*", default=[],
                    help="company-layer heads to refit beside the universal ones (e.g. read:co_action)")
     args = p.parse_args()
@@ -230,6 +232,8 @@ def main() -> None:
     keys = [o.key for o in schema.select(layer="universal")
             if o.kind not in (RELATION, NUMBER) and len(o.answers) > 1]
     keys += [k for k in args.extra_keys if k in schema.by_key() and k not in keys]
+    if args.only_keys:
+        keys = [k for k in args.only_keys if k in schema.by_key()]
     train, _ = load_split(args.train, schema, args.max_atoms)
     val, _ = load_split(args.validation, schema, args.max_atoms)
     print(f"parts train={len(train)} validation={len(val)}", flush=True)

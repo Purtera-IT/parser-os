@@ -1687,6 +1687,13 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     content["out_of_scope"] = [x for x in content.get("out_of_scope") or []
                                if not (isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
                                        and not any(neg.search(by[c]["text"]) for c in x["cites"]))]
+    # The same for an assumption that hands a requested service to the
+    # customer (000132 pass O: "Customer will provide end-user support ...
+    # outside of Provider's onsite support scope" from a bare service bullet).
+    content["assumptions"] = [x for x in content.get("assumptions") or []
+                              if not (isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
+                                      and re.search(r"(?i)outside (of )?(the )?provider'?s?|not (part of|included in) provider|customer will (provide|handle) .{0,40}support", str(x.get("text")))
+                                      and not any(neg.search(by[c]["text"]) for c in x["cites"]))]
     # Recurring onsite support has no install site conditions to price.
     facts_all = " ".join(f["text"] for f in fs)
     if re.search(r"(?i)\b(weekly|monthly|recurring|break[/ -]?fix|staff aug|ongoing (it )?support|onsite (it )?support)\b", facts_all) \
