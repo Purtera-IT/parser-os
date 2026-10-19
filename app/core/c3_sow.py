@@ -11235,7 +11235,7 @@ def _label_before_removal(c: dict[str, Any]) -> None:
     if r is None:
         return
     pre = lambda t: bool(_PRE_REMOVAL.search(t)) and not _REMOVAL_LEAD.match(t) or bool(
-        re.match(r"(?i)\s*(label|trace|map|tone out|identify)\b", t) and re.search(r"(?i)\b(cables?|ports?|patch|connections?)\b", t)
+        re.match(r"(?i)\s*(label|trace|map|tone out|identify)\b", t) and re.search(r"(?i)\b(cables?|connections?)\b", t)
         and not re.search(r"(?i)\b(new|installed)\b", t))
     move = [x for x in sc[r + 1:] if isinstance(x, dict) and x.get("kind") != "heading" and pre(_tx(x))]
     if not move:
