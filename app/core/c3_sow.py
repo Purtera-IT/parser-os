@@ -968,7 +968,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     _grounding(content, fs)
-    _materials_hygiene(content, family)
+    _materials_hygiene(content, family, fs)
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
     # became scope), unless it asks the customer to confirm.
@@ -1562,7 +1562,7 @@ _CONSUMABLE = re.compile(r"(?i)\b(cat ?5e?|cat ?6a?|cable|wire|anchors?|screws?|
                          r"rj-?45|connectors?|keystones?|jacks?|faceplates?|biscuit|backing board|plywood|supports?|labels?)\b")
 
 
-def _materials_hygiene(content: dict[str, Any], family: str) -> None:
+def _materials_hygiene(content: dict[str, Any], family: str, fs: list[dict[str, Any]] | None = None) -> None:
     """Equipment in Scope is the gear worked on; on a cabling job the cable and
     fasteners are Provider's materials, and one line per thing (010082: Cat6
     listed twice, anchors as equipment). Who carries the materials to site is
@@ -1585,6 +1585,24 @@ def _materials_hygiene(content: dict[str, Any], family: str) -> None:
         for x in content.get(k) or []:
             if isinstance(x, dict):
                 x["text"] = re.sub(r"(?i)\bthe above( gear| equipment| items)?\b", "the listed equipment", str(x.get("text")))
+    # A material the cited line says the tech provides is Provider's (010082:
+    # "Tech to provdie estiamted 100ft ... CAT6" under Customer Provided).
+    by = {f["id"]: f["text"] for f in fs or []}
+    ours = re.compile(r"(?i)^\s*(tech|technician|provider|purtera|we|our tech)\w*\s+(to|will|shall|would)?\s*(provi|provdi|supply|bring|furnish)")
+    theirs = re.compile(r"(?i)customer (will )?(provide|supply|furnish)|supplied by (the )?customer|client (will )?provide")
+    pm = content.setdefault("provider_materials", [])
+    keep_cm = []
+    for x in content.get("customer_materials") or []:
+        cited = [by.get(c, "") for c in (x.get("cites") or [])] if isinstance(x, dict) else []
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        to_ours = any(ours.search(c) for c in cited) or (family == "low_voltage_cabling" and _CONSUMABLE.search(t)
+                                                         and not any(theirs.search(c) for c in cited))
+        if to_ours:
+            if not _said(t, pm, 0.6):
+                pm.append(x)
+        else:
+            keep_cm.append(x)
+    content["customer_materials"] = [x for x in keep_cm if not _said(str(x.get("text") if isinstance(x, dict) else x), pm, 0.7)]
     if family == "low_voltage_cabling":
         pm = content.setdefault("provider_materials", [])
         keep = []
