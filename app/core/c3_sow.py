@@ -74,7 +74,7 @@ _BASE = (
     "a method item is standard practice for this kind of work and carries no number, brand, model, name, place or "
     "date the facts do not give. A later fact replaces an earlier one. [under: ...] is the heading or lead-in above "
     "a line. WHO: in a line written by the reseller or PurTera, \"we/us\" is the side doing the work (\"he will need us to <do the work>\" = Provider does it); in a line written by the customer or under a customer heading "
-    "(\"Customer notes:\"), \"we\" is the customer (\"We will <do X>\" = the customer does X). A request "
+    "(\"Customer notes:\"), \"we\" is the customer (\"We will <do X>\" = the customer does X), in the overview too: never write \"Provider will <X>\" for what the customer says it will do (\"We will preconfigure all items before shipping\" = Customer preconfigures). In an RFP or requirements document the customer issues, a duty written for the vendor or installer, or with no subject under a vendor heading (\"Post-Installation: Verifies all tasks complete\"), is Provider work when the job includes it; a duty that hands something to the customer (\"supply all MAC addresses to <customer>\") is never the customer's. A request "
     "form asking the reseller to provide materials (\"<reseller> to provide <items>\") means Provider "
     "supplies them. A fact marked (from a photo) only tells a mounting surface, height or device count; never "
     "describe a picture or turn what it shows into a task. In a question-and-answer email the ANSWER is the fact (\"... ? [Betty] After hours, no weekends\"); "
@@ -1048,6 +1048,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         for k in LISTS:
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and all(c in chatter for c in x["cites"]))]
     _traced(content, "grounding", _grounding, content, fs)
+    _traced(content, "hours", _hours_basis, content, fs)
     _traced(content, "materials", _materials_hygiene, content, family, fs)
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
@@ -1875,6 +1876,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                 if isinstance(x, dict) and x.get("list") == "overview" and x.get("text") and not greet.search(str(x["text"]))][:2]
     if keep:
         content["overview"] = keep
+    _speaker_in_overview(content, by)
     # The reseller's warehouse work in the summary (010209: "Provider will
     # manage hardware receipt, benching, configuration, shipping ...") against
     # the SOW's own onsite-only lines.
@@ -1971,6 +1973,22 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             continue
         keep_cr.append(x)
     content["customer_responsibilities"] = keep_cr
+    # A duty that hands something TO the customer is not the customer's own
+    # (010279: the RFP's "Supply all terminal MAC addresses to Harris Teeter"
+    # and "report any issues ... to Harris Teeter Systems Support Desk" became
+    # customer responsibilities). It is the installer's task.
+    names = [n for n in {str(content.get("end_customer") or "").strip(), "the customer", "customer"} if len(n) > 2]
+    to_cust = re.compile(r"(?i)\b(provide|supply|submit|send|report|deliver|communicate|return|hand over)\w*\b[^.]{0,120}?\bto (" +
+                         "|".join(re.escape(n) for n in names) + r")\b(?!'s|’s)")
+    handed = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict) and not x.get("standard")
+              and x.get("cites") and to_cust.search(str(x.get("text")))]
+    for x in handed:
+        content["customer_responsibilities"].remove(x)
+        sc = content.setdefault("scope", [])
+        close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                      and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
+        if not _said(str(x["text"]), sc, 0.6):
+            sc.insert(close + 1 if close < len(sc) else close, x)
     # A statement of fact filed as a duty is an assumption (010171: "Customer
     # states there is no existing equipment in place").
     facts_as_duty = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict)
@@ -2139,11 +2157,29 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # physical installation labor only"; the SOW still accepted delivery,
     # stored, tagged and transported gear to 113 stores).
     if any(re.search(r"(?i)\blabor[- ]only\b|\blabor only\b|installation labor only|onsite labor only|field labor only", f["text"]) for f in fs):
-        logi = re.compile(r"(?i)accept (the )?deliver|receiv(e|ing) (the )?(equipment|hardware|shipments?)|\bwarehous|\bstor(e|ing|age) (the )?(equipment|hardware)|"
+        logi = re.compile(r"(?i)accept (the )?deliver|receiv(e|ing) (the )?(equipment|hardware|shipments?)|\bwarehous|\bstor(e|ing|age)\b[^.]{0,25}\b(equipment|hardware)|accept,? (and )?verify deliver|"
                           r"asset[- ]tag|transport|\bkitting\b|\bstaging (area|facility|center|warehouse)|proof of delivery|inventory recap")
         for k in ("scope", "customer_responsibilities", "deliverables_text"):
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and logi.search(str(x.get("text"))))]
+        # A summary listing the RFP's verbs keeps the labor ones (010279:
+        # "stage, tag, transport, de-install, install, label, and test the
+        # equipment using the required checklists" went whole, and with it the
+        # only de-install and checklist line in the SOW).
+        lverb = re.compile(r"(?i)^(stage|tag|asset[- ]tag|transport|receive|accept( delivery)?|store|warehouse|kit|ship|deliver|inventory)$")
+        for x in content.get("overview") or []:
+            if isinstance(x, dict) and logi.search(str(x.get("text"))):
+                x["text"] = _strip_verbs(str(x["text"]), lverb)
         ov = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and logi.search(str(x.get("text"))))]
+        # Gear shipped to Provider is warehousing a labor-only bid declines
+        # (010279: "... will directly ship the 71 self-checkout terminals to
+        # Provider"): the clause goes, the rest of the supply line stays.
+        for x in list(content.get("customer_materials") or []):
+            if isinstance(x, dict) and re.search(r"(?i)\bship\w*\b[^.;]{0,80}\bto (the )?(provider|vendor)\b", str(x.get("text"))):
+                parts = [p_ for p_ in re.split(r";\s*", str(x["text"])) if not re.search(r"(?i)\bship\w*\b[^.;]{0,80}\bto (the )?(provider|vendor)\b", p_)]
+                if parts:
+                    x["text"] = "; ".join(parts).rstrip(" .;") + "."
+                else:
+                    content["customer_materials"].remove(x)
         content["overview"] = ov or [{"text": "Provider will provide onsite installation labor at each location.", "cites": [], "kind": "method"}]
         content["overview"] = [x for x in content["overview"] if not re.search(r"(?i)appears to be a basic|this looks like|seems like a", str(x.get("text") if isinstance(x, dict) else x))] or content["overview"]
         asm = content.setdefault("assumptions", [])
@@ -2321,7 +2357,14 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         asm = content.setdefault("assumptions", [])
         if not any(re.search(r"(?i)weekend", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
             day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
-            asm.append({"text": f"Work is performed on {day} as scheduled; site access is available that day.", "cites": [], "kind": "method"})
+            asm.append({"text": f"All Services will be performed during the weekend ({day}, as scheduled); site access is available that day.", "cites": [], "kind": "method"})
+        # The window says it too, so no template "regular business hours"
+        # line stands unanswered beside a Sunday date (010198 W1).
+        day = re.search(r"(?i)\b(saturday|sunday)\b", sched).group(1).capitalize()
+        sch = content.setdefault("schedule", [])
+        if not any(re.match(r"(?i)\s*work window", str(x.get("text") if isinstance(x, dict) else x)) for x in sch):
+            sch.append({"text": f"Work Window: Weekend ({day})", "cites": [c for x in sch if isinstance(x, dict) for c in x.get("cites") or []][:2],
+                        "kind": "fact"})
     # Work steps written after the closing heading go before it (010198: the
     # router install after "Confirm completion before leaving site").
     sc = content.get("scope") or []
@@ -2457,6 +2500,106 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     content["scope"] = [x for i, x in enumerate(sc)
                         if not (isinstance(x, dict) and x.get("kind") == "heading")
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
+
+
+def _strip_verbs(text: str, bad: re.Pattern) -> str:
+    """"Provider will stage, tag, install and test the equipment" without the
+    verbs ``bad`` matches; the text unchanged when it is not such a list."""
+    m = re.match(r"(?i)^(\s*provider will\s+)(.+?)(\s+(?:the|all|each|every|new|existing)\b.*)$", text)
+    if not m:
+        return text
+    verbs = [v.strip() for v in re.split(r",\s*(?:and\s+)?|\s+and\s+", m.group(2)) if v.strip()]
+    if len(verbs) < 2 or any(len(v.split()) > 2 for v in verbs):
+        return text
+    keep = [v for v in verbs if not bad.match(v)]
+    if not keep or len(keep) == len(verbs):
+        return text
+    return m.group(1) + _join(keep) + m.group(3)
+
+
+def _join(items: list[str]) -> str:
+    """"a", "a and b", "a, b, and c"."""
+    return items[0] if len(items) == 1 else (" and ".join(items) if len(items) == 2 else ", ".join(items[:-1]) + ", and " + items[-1])
+
+
+def _speaker_in_overview(content: dict[str, Any], by: dict[str, dict[str, Any]]) -> None:
+    """A summary clause "Provider will <X>" whose cited line is the customer
+    saying "we will <X>" is the customer's, when the line sits under a customer
+    heading or the SOW's own exclusions rule <X> out (000123: "We will
+    preconfigure all items before shipping them", under "Customer notes:",
+    became "Provider will preconfigure the equipment", beside the exclusion
+    "Preconfiguration, imaging, staging ..."). The clause moves to the
+    Customer; the rest stays Provider's."""
+    oos_stems = {w[:8] for x in content.get("out_of_scope") or []
+                 for w in re.findall(r"[a-z]{8,}", str(x.get("text") if isinstance(x, dict) else x).lower())}
+    for x in content.get("overview") or []:
+        if not isinstance(x, dict):
+            continue
+        m = re.match(r"(?i)^(\s*provider will\s+)(.+)$", str(x.get("text")))
+        if not m:
+            continue
+        cited = [by[c] for c in x.get("cites") or [] if c in by]
+        said = []  # stems of what a customer "we will" line commits the customer to
+        for f in cited:
+            for cl in re.findall(r"(?i)\bwe\s*(?:will|'ll|are going to|plan to)\s+([^.;]{3,120})", f["text"]):
+                said += [(w[:8], f) for w in re.findall(r"[a-z]{6,}", cl.lower())]
+        if not said:
+            continue
+        phrases = [p_ for p_ in re.split(r",\s*(?:then\s+|and\s+)*|\s+and then\s+", m.group(2)) if p_.strip()]
+        moved, kept = [], []
+        for p_ in phrases:
+            first = (re.findall(r"[a-z]+", p_.lower()) or [""])[0]
+            hit = len(first) >= 6 and next((f for st, f in said if st == first[:8]), None)
+            if hit and (re.search(r"(?i)customer", str(hit.get("under") or "")) or first[:8] in oos_stems):
+                moved.append(p_.strip().rstrip("."))
+            else:
+                kept.append(p_.strip())
+        if not moved or not kept:
+            continue
+        x["text"] = "Customer will " + _join(moved) + "; Provider will " + _join([k.rstrip(".") for k in kept]) + "."
+
+
+_MIXED_HOURS = re.compile(r"(?i)\b(mix|combination|blend) of (normal |regular )?business hours and after[- ]?hours|"
+                          r"both (during )?business hours and after[- ]?hours|business hours (and|with) some after[- ]?hours")
+_CLOCK = r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?"
+
+
+def _hours_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """The deal's own hours replace the template's business-hours-only basis.
+    "A mix of business hours and after hours" becomes the work window and the
+    assumption (010085 kept "All Services ... during normal Business Hours"),
+    and a stated daytime window other than 8-5 redefines Business Hours
+    (010279: arrival 6 AM, departure 5 PM, so every visit's first two hours
+    would bill as after-hours)."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    sched = content.setdefault("schedule", [])
+    mix = next((f for f in fs if _MIXED_HOURS.search(f["text"]) and not f["text"].rstrip().endswith("?")), None)
+    if mix:
+        if not any(tx(x).lower().startswith("work window") for x in sched):
+            sched.append({"text": "Work Window: A mix of Business Hours and Customer-approved after-hours windows",
+                          "cites": [mix["id"]], "kind": "fact"})
+        content["assumptions"] = [x for x in content.get("assumptions") or []
+                                  if not re.search(r"(?i)(normal|regular|standard) business hours|during business hours", tx(x))]
+        content["assumptions"].append({"text": "Work is performed during a mix of Business Hours and Customer-approved after-hours "
+                                               "windows, not during Business Hours only.", "cites": [mix["id"]], "kind": "fact"})
+        cr = content.setdefault("customer_responsibilities", [])
+        line = "Confirm which areas may be worked during Business Hours and which require after-hours windows."
+        if not _said(line, cr, 0.6):
+            cr.append({"text": line, "cites": [mix["id"]], "kind": "fact"})
+    win = next((x for x in sched if re.match(r"(?i)\s*work window", tx(x))), None)
+    m = win and re.search(_CLOCK + r"\s*(?:-|–|to|until)\s*" + _CLOCK, tx(win), re.I)
+    if m:
+        h1 = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0)
+        h2 = int(m.group(4)) % 12 + (12 if m.group(6).lower() == "p" else 0)
+        if 5 <= h1 <= 10 and 15 <= h2 <= 20 and (h1, h2) != (8, 17):
+            fmt = lambda h, mi: f"{(h - 1) % 12 + 1}:{mi or '00'} {'AM' if h < 12 else 'PM'}"
+            a, b = fmt(h1, m.group(2)), fmt(h2, m.group(5))
+            days = re.search(r"(?i)\b(monday|mon)\s*(?:-|–|through|to)\s*(thursday|thu|friday|fri|saturday|sat)\b", tx(win))
+            dtxt = f", {days.group(0)}" if days else ""
+            line = f"Business Hours for this SOW are {a} to {b} local time{dtxt}; After Hours are {b} to {a}."
+            asm = content.setdefault("assumptions", [])
+            if not any(re.search(r"(?i)business hours for this sow", tx(x)) for x in asm):
+                asm.insert(0, {"text": line, "cites": list(win.get("cites") or []) if isinstance(win, dict) else [], "kind": "fact"})
 
 
 def _arrival_name_rule(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
@@ -2671,6 +2814,19 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
             x["text"] = re.sub(r"(?i)^\s*provider (provides|issues|will provide|supplies)", "Provide", tx(x))
             if not _said(tx(x), cr, 0.5):
                 cr.append(x)
+    # Granting access is the site's; the work the access is for stays
+    # Provider's (010279: "Provide POS access for terminal identification and
+    # configuration tasks" as a Provider task, from the RFP's "This will
+    # include POS access to complete specific tasks to IDing terminals").
+    for x in [y for y in content.get("scope") or [] if isinstance(y, dict) and y.get("kind") != "heading" and not y.get("standard")]:
+        mm = re.match(r"(?i)\s*provide\s+((?:[\w-]+\s+){0,3}(?:access|credentials|logins?))\s+(?:for|to)\s+(?:complete\s+|perform\s+)?(.{8,})$", tx(x))
+        if not mm:
+            continue
+        i = content["scope"].index(x)
+        content["scope"][i] = {**x, "text": "Perform " + mm.group(2).rstrip(".") + "."}
+        line = {**x, "text": "Provide " + mm.group(1) + " for " + mm.group(2).rstrip(".") + "."}
+        if not _said(tx(line), cr, 0.6):
+            cr.append(line)
     # Standard 8-5 site hours repeat the template's Business Hours line.
     content["assumptions"] = [a for a in content.get("assumptions") or [] if (isinstance(a, dict) and a.get("standard"))
                               or not re.search(r"(?i)monday.{0,15}friday.{0,30}8:?0?0?\s*(am|a\.m\.).{0,10}5:?0?0?\s*(pm|p\.m\.)", tx(a))]
