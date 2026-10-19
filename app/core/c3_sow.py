@@ -1594,6 +1594,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "summary_consistent", _summary_consistent, content)
     _traced(content, "facts_to_action_heading", _facts_to_action_heading, content)
     _traced(content, "room_from_source", _room_from_source, content, fs, envelope)
+    _traced(content, "room_from_section", _room_from_section, content, envelope)
     _traced(content, "explanation_not_exclusion", _explanation_not_exclusion, content, fs)
     _traced(content, "summary_order", _summary_order, content)
     _deliverables_hygiene(content)
@@ -1958,6 +1959,49 @@ def _room_from_source(content: dict[str, Any], fs: list[dict[str, Any]], envelop
                 sc.insert(nxt, x)
 
     content["scope"] = sc
+
+
+def _room_from_section(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """A row's room is its sheet section's: a task citing rows whose
+    section_path ends in another area ("Common Area Displays") names that
+    area and sits under its heading, not under a heading the writer coined
+    (010116 pass U: two QM65C displays "in the Boardroom" under "Boardroom
+    Displays")."""
+    by_id = {str(a.get("id")): a for a in envelope.get("atoms") or [] if isinstance(a, dict)}
+    def area(c: str) -> str:
+        sp = (by_id.get(c, {}).get("locator") or {}).get("section_path") or []
+        last = str(sp[-1]).strip() if sp else ""
+        return "" if not last or re.fullmatch(r"(?i)sheet\s*\d*|table\s*\d*|summary|totals?|bom|quote", last) else last
+    sc = content.get("scope") or []
+    heads = {str(x.get("text")).strip().lower(): x for x in sc if isinstance(x, dict) and x.get("kind") == "heading"}
+    for x in list(sc):
+        if not (isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading"):
+            continue
+        areas = {area(c) for c in x["cites"]} - {""}
+        if len(areas) != 1:
+            continue
+        a = areas.pop()
+        t = str(x.get("text"))
+        mm = re.search(r"\s+in the ([A-Z][\w-]*(?: [A-Z][\w-]*){0,3})(?=[.,;]|$)", t)
+        if not mm or mm.group(1).lower() == a.lower() or a.lower() in t.lower():
+            continue
+        place = re.sub(r"(?i)\s+(displays?|devices|equipment|items)$", "", a)
+        x["text"] = t[:mm.start()] + f" in the {place}" + t[mm.end():]
+        sc.remove(x)
+        h = heads.get(a.lower())
+        if h is None:
+            h = {"text": a, "cites": [], "kind": "heading"}
+            at = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                       and re.search(r"(?i)all work areas|test|clos", str(y.get("text")))), len(sc))
+            sc.insert(at, h)
+            heads[a.lower()] = h
+        j = next(i for i, y in enumerate(sc) if y is h)
+        nxt = next((i for i, y in enumerate(sc) if i > j and isinstance(y, dict) and y.get("kind") == "heading"), len(sc))
+        sc.insert(nxt, x)
+    # A heading left empty goes.
+    content["scope"] = [y for i, y in enumerate(sc) if not (isinstance(y, dict) and y.get("kind") == "heading"
+                        and (i + 1 >= len(sc) or (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))
+                        and not re.search(r"(?i)clos", str(y.get("text"))))]
 
 
 def _own_documents(content: dict[str, Any]) -> None:
@@ -4772,6 +4816,24 @@ def _materials_counted(c: dict[str, Any]) -> None:
                 n = int(mm.group(1))
                 body = str(x["text"])[mm.end():].strip().rstrip(".")
                 x["text"] = f"{_words(n).capitalize()} ({n}) {body}."
+        # A merged spreadsheet row is its rows ("2 x 2 | QM65C: TS525TU |
+        # Samsung 65IN ...: Chief Thinkstall ..." is two lines), and a
+        # subscription term on a SKU ("w/Navigator -36mo") is not the item
+        # (010116 pass U).
+        for x in c.get("scope") or []:
+            if isinstance(x, dict) and isinstance(x.get("text"), str):
+                x["text"] = re.sub(r"\s+-\d{1,3}\s*mo\b", "", x["text"])
+        parts: dict[int, list[dict[str, Any]]] = {}
+        for x in items:
+            t = re.sub(r"\s+-\d{1,3}\s*mo\b", "", str(x.get("text")))
+            x["text"] = t
+            mm = re.match(r"^\s*(\d+)\s*x\s*(\d+)\s*\|\s*([^:|]+):\s*([^|]+?)\s*\|\s*([^:|]+):\s*(.+?)\s*$", t)
+            if mm:
+                parts[id(x)] = [{**x, "text": f"{mm.group(1)} x {mm.group(3).strip()} {mm.group(5).strip()}"},
+                                {**x, "text": f"{mm.group(2)} x {mm.group(4).strip()} {mm.group(6).strip()}"}]
+        if parts:
+            c[k] = [y for x in c.get(k) or [] for y in parts.get(id(x), [x])]
+            items = [x for x in c[k] if isinstance(x, dict)]
         counted = [x for x in items if count.match(str(x.get("text")))]
         keep = []
         for x in c.get(k) or []:
@@ -6635,6 +6697,14 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         re.search(r"(?i)\b(includes?|is|are|has|have|shows?|contains?|mounted|located)\b", str(t)))
     c["locations"] = [x for x in c.get("locations") or [] if not caption(x.get("text") if isinstance(x, dict) else x)]
     c["sites"] = [x for x in c.get("sites") or [] if not caption(x.get("name") or x.get("address"))] or c.get("sites")
+    # A location line the check dropped as uncited is the site the roster
+    # holds (010116 pass U: "Miami, FL | 1221 Brickell Ave").
+    if not c.get("locations"):
+        for x in c.get("dropped_unsupported") or []:
+            if isinstance(x, dict) and x.get("list") == "locations" and any(
+                    str(s_.get("street") or s_.get("address") or "").split(",")[0].lower() in str(x.get("text")).lower()
+                    for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
+                c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
     _traced(c, "materials_counted", _materials_counted, c)
     _locations_cover_sites(c)
     # Lines an outside sender wrote, or a pasted copy of one (010209: the

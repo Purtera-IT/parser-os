@@ -539,3 +539,28 @@ def test_a_dropped_sentence_is_not_promised_in_the_report():
          "deliverables": [{"item": "Work Completion Report", "description": ["Pack five network switches, two Cisco 1U switches and one printer."]}]}
     m._deliverables_hygiene(c)
     assert c["deliverables"][0]["description"] == []
+
+
+# --- 010116 B: a row's room is its sheet section; merged rows; SKU terms ---------
+
+def test_a_rows_room_is_its_sheet_section():
+    atoms = [{"id": "d", "text": "2 x 2 | QM65C: TS525TU", "locator": {"section_path": ["Sheet1", "Common Area Displays"]}},
+             {"id": "b", "text": "1 | QM75C", "locator": {"section_path": ["Sheet1", "Boardroom"]}}]
+    c = {"scope": [{"text": "Boardroom Displays", "cites": [], "kind": "heading"},
+                   {"text": "Install one (1) QM75C display in the Boardroom.", "cites": ["b"], "kind": "fact"},
+                   {"text": "Install two (2) QM65C displays in the Boardroom.", "cites": ["d"], "kind": "fact"},
+                   {"text": "All Work Areas", "cites": [], "kind": "heading"},
+                   {"text": "Mount each display.", "cites": [], "kind": "method", "standard": True}]}
+    m._room_from_section(c, {"atoms": atoms})
+    t = [x["text"] for x in c["scope"]]
+    assert "Install two (2) QM65C displays in the Common Area." in t
+    assert t.index("Common Area Displays") < t.index("Install two (2) QM65C displays in the Common Area.") < t.index("All Work Areas")
+
+
+def test_a_merged_sheet_row_is_its_rows_and_a_sku_term_goes():
+    c = {"customer_materials": [{"text": "2 x 2 | QM65C: TS525TU | Samsung 65IN 4K UHD LED Display: Chief Thinkstall Large Wall Mount", "cites": ["d"], "kind": "fact"},
+                                {"text": "1 x CS-BAR-T-C-K9 Cisco Room Bar w/Navigator -36mo", "cites": ["r"], "kind": "fact"}]}
+    m._materials_counted(c)
+    assert [x["text"] for x in c["customer_materials"]] == ["2 x QM65C Samsung 65IN 4K UHD LED Display",
+                                                            "2 x TS525TU Chief Thinkstall Large Wall Mount",
+                                                            "1 x CS-BAR-T-C-K9 Cisco Room Bar w/Navigator"]
