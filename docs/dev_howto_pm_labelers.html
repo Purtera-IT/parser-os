@@ -1,0 +1,81 @@
+<title>Dev Brief How-To</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{--bg:#f6f6f2;--panel:#fff;--fg:#1d2420;--muted:#5c6862;--line:#dde2dc;--accent:#2f6f5e;--warn:#9a5b12;
+--f-body:'IBM Plex Sans',system-ui,sans-serif;--f-mono:'IBM Plex Mono',ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121614;--panel:#1a201d;--fg:#e3eae6;--muted:#98a59e;--line:#2c3530;--accent:#7cc4ad;--warn:#e2a64e;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121614;--panel:#1a201d;--fg:#e3eae6;--muted:#98a59e;--line:#2c3530;--accent:#7cc4ad;--warn:#e2a64e;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15.5px/1.6 var(--f-body);padding:32px 16px 64px}
+.wrap{max-width:720px;margin:0 auto;display:grid;gap:30px}
+h1{font:600 1.75rem/1.2 var(--f-body);margin:0;text-wrap:balance}
+h2{font:600 1.15rem/1.3 var(--f-body);margin:0 0 10px;text-wrap:balance}
+p{margin:0 0 10px}
+ol,ul{margin:0;padding-left:22px} li{margin:5px 0}
+.muted{color:var(--muted)}
+.path{font-family:var(--f-mono);font-size:.86em;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.url{font-family:var(--f-mono);font-size:.85rem;word-break:break-all;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;display:block;user-select:all}
+.note{border-left:3px solid var(--warn);padding:6px 0 6px 14px}
+.note b{color:var(--warn)}
+.tag{display:inline-block;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-weight:600;margin-bottom:4px}
+</style>
+<div class=wrap>
+<header>
+<h1>Using and labeling the new brief on dev</h1>
+<p class=muted>For PMs and labelers. Dev only: the live site (purpulse.app) is unchanged.</p>
+</header>
+
+<section>
+<h2>Where to go</h2>
+<p>Open the dev site and sign in with your Purtera account:</p>
+<span class=url>https://orange-island-06ab5dc0f-dev.eastus2.6.azurestaticapps.net</span>
+<p class=muted style="margin-top:8px">Open a deal from <span class=path>Quoting</span>. Each deal has five tabs: Overview, Sources, Scope, Quote and SOW.</p>
+</section>
+
+<section>
+<span class=tag>For PMs</span>
+<h2>Reading the brief</h2>
+<ol>
+<li>Open the <span class=path>Scope</span> tab. The headline and overview are the new brief: a short summary, then Scope, Customer responsibilities, Out of scope, Schedule, Fees and Terms.</li>
+<li>Every sentence comes from lines in the deal's own files. If something looks wrong, open its source and check the line it came from before you trust or reject it.</li>
+<li>The review queue lists the open questions. Questions the customer or team asked in this deal come first, then the standard checklist questions the deal doesn't answer yet. Questions the deal already answers are left out.</li>
+<li>Answer, edit or dismiss questions as usual. Every action is saved and trains the system.</li>
+<li>After you've taught it something, use the re-run button (its tooltip starts "Apply everything taught since the last run"). A re-parse takes 1–6 minutes depending on deal size. The brief updates a few minutes after that.</li>
+</ol>
+<p class="note"><b>Every question shows as a clarification for now.</b> The system can't yet tell a blocker from a clarification. If a question should block the SOW, say so in your answer or note.</p>
+</section>
+
+<section>
+<span class=tag>For labelers</span>
+<h2>Labeling a deal</h2>
+<ol>
+<li>Open the <span class=path>Sources</span> tab and click <span class=path>Label atoms</span>. The labeling workspace opens with the source document on the left and the items to label on the right.</li>
+<li>Work through the stages along the top, in this order of value:
+<ul>
+<li><b>Questions</b>: mark each question valid or not for this deal.</li>
+<li><b>Sites</b>: say whether an address is a job site or a vendor or billing address (CDW's address is not a job site), and whether two sites are the same place.</li>
+<li><b>Documents</b>: say whether a document or call is about this deal or another job. On single-job deals, a call is almost always "this deal".</li>
+<li><b>Atoms</b>: correct a line's type. If the current type is right, keep it.</li>
+<li><b>BOM</b>: say who supplies each bill-of-materials line: us, the customer, a partner (CDW, SHI) or a third party.</li>
+</ul></li>
+<li>Your work saves as you move between items. Labels count from your next save onward; there's no submit step.</li>
+</ol>
+</section>
+
+<section>
+<h2>Please don't</h2>
+<ul>
+<li>Change or delete anything on the <span class=path>Quote</span> tab's saved Deal Kits. They are training data the owner is using.</li>
+<li>Label a deal whose files say OxBlue. Skip it.</li>
+<li>Send anything to a customer from dev. Use the live site for real customer work.</li>
+</ul>
+</section>
+
+<section>
+<h2>Good to know</h2>
+<ul>
+<li>If the brief looks like the old style, the newer brief may still be building. Wait a few minutes and reload.</li>
+<li>If the dev site looks out of date or a screen is missing, tell the owner. The dev site is refreshed by hand.</li>
+<li>Report anything odd with the deal number and what you expected, in the shared channel or to the owner.</li>
+</ul>
+</section>
+</div>
