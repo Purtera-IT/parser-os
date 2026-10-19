@@ -3322,6 +3322,25 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         site_words = _toks(" ".join(str(c["sites"][0].get(k) or "") for k in ("name", "address")))
         c["scope"] = [x for x in c.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") == "heading"
                       and _toks(x.get("text")) and _toks(x.get("text")) <= site_words)]
+    # Weekend work, checked last: the schedule's date is only final here
+    # (010198: "Sunday, August 16" was filled after the grounding pass ran).
+    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in c.get("schedule") or [])
+    from datetime import date as _d
+    for mo, dy, yr_ in re.findall(r"(?i)\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(20\d\d)", sched):
+        try:
+            wd = _d(int(yr_), ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+                               "october", "november", "december"].index(mo.lower()) + 1, int(dy)).weekday()
+            sched += " saturday" if wd == 5 else (" sunday" if wd == 6 else "")
+        except ValueError:
+            pass
+    day = re.search(r"(?i)\b(saturday|sunday)\b", sched)
+    all_txt = " ".join(str(a.get("text") or "") for a in envelope.get("atoms") or [])
+    asm = c.setdefault("assumptions", [])
+    if day and not re.search(r"(?i)\b(no|not|never|excluding|except|without)\b[^.]{0,40}\b(saturday|sunday|weekend)", all_txt) \
+            and not any(re.search(r"(?i)weekend|performed on (saturday|sunday)", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
+        asm.append({"text": f"Work is performed on {day.group(1).capitalize()} as scheduled; site access is available that day.",
+                    "cites": [], "kind": "method"})
+        c["assumptions"] = [x for x in asm if not re.search(r"(?i)(regular|normal|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
