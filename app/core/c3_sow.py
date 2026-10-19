@@ -2059,6 +2059,30 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         for x in content.get(k) or []:
             if isinstance(x, dict) and isinstance(x.get("text"), str):
                 x["text"] = re.sub(r"(?i)\s+(next week|this week|tomorrow|later this week|early next week|by end of (the )?week)\b", "", x["text"])
+    # PurTera's own "Safe to assume X?" is the assumption PurTera prices on
+    # (010085: "Safe to assume no spotter is required while lifts are in use?").
+    asm = content.setdefault("assumptions", [])
+    for f in fs:
+        m = re.match(r"(?i)\s*(?:is it |it'?s )?safe to assume (?:that )?(.{8,160}?)\s*\?\s*$", f["text"])
+        if m:
+            t = m.group(1).strip().rstrip(".")
+            t = t[0].upper() + t[1:] + "."
+            if not _said(t, asm, 0.6):
+                asm.append({"text": t, "cites": [f["id"]], "kind": "fact"})
+    # A dropped scope line every number and most words of which the sources
+    # state comes back (010085: "Install approximately twenty (20) network
+    # switches across the one (1) MDF and thirteen (13) raised IDFs").
+    all_facts = " ".join(f["text"] for f in fs)
+    have_nums = set(re.findall(r"\d+", all_facts))
+    sc = content.setdefault("scope", [])
+    for x in content.get("dropped") or []:
+        if not (isinstance(x, dict) and x.get("list") == "scope" and re.match(r"(?i)\s*(install|replace|remove|mount|run)\b", str(x.get("text")))):
+            continue
+        nums = set(re.findall(r"\d+", str(x["text"])))
+        if nums and nums <= have_nums and _stated_by(re.sub(r"\d+", "", str(x["text"])), all_facts) and not _said(str(x["text"]), sc, 0.7):
+            close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                          and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
+            sc.insert(close, {k: v for k, v in x.items() if k != "list"})
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
