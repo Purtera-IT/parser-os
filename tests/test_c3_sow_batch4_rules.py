@@ -274,3 +274,86 @@ def test_every_check_drop_says_why(monkeypatch):
     m.check(c, {"a": "a printer"})
     assert c["dropped"][0]["reason"].startswith("check:")
     assert c["dropped_unsupported"][0]["reason"]
+
+
+# The graders' missing standards (pass T): each applicable item is in the SOW
+# after the whole chain, or says why it is not. Runs on the saved pass-T
+# envelopes when they are on this machine (the replay's writer answers are
+# the saved lists).
+import copy as _copy
+import json as _json
+import os as _os
+
+import pytest as _pytest
+
+_SAVED = "/private/tmp/claude-501/-Users-purtera/a02898c4-8e61-4640-a057-e8aa8aa45e75/scratchpad"
+_WANT = {
+    "010082": ["Support the cable using J-hooks, Velcro", "Use self-tapping metal screws suited to the metal studs.",
+               "Identify any areas where drilling or mounting is prohibited.", "Trenching, demolition or hazardous material remediation."],
+    "010085": ["Arrive onsite and check in", "Verify available rack space for the new switch", "Remove the existing switches as required."],
+    "000123": ["Perform all device configurations and troubleshooting", "No materials are required to be provided by Provider."],
+    "010198": ["Provide an active primary internet connection."],
+}
+
+
+def _replay(deal, monkeypatch):
+    env = _json.load(open(f"{_SAVED}/final_{deal}_env.json"))
+    saved = env["c3_sow"]
+    src = saved["writer_draft"] if isinstance(saved.get("writer_draft"), dict) else saved
+    items = lambda k: [x for x in src.get(k) or [] if not (isinstance(x, dict) and x.get("standard"))]
+    gone = {str(x.get("text")) for x in saved.get("dropped") or [] if isinstance(x, dict)}
+
+    def fake(prompt, model=None, max_tokens=0, effort=None):
+        if "TASK: the SOW header" in prompt:
+            return _json.dumps({"job_family": saved.get("job_family"), "project_name": saved.get("project_name"),
+                                "end_customer": saved.get("end_customer"), "services": saved.get("services"),
+                                "pricing_model": saved.get("pricing_model"),
+                                **{k: items(k) for k in ("locations", "overview", "schedule", "arrival_protocol")}})
+        if "TASK: the task list" in prompt:
+            return _json.dumps({"scope_lead": saved.get("scope_lead"), "scope": items("scope"), "deliverables": saved.get("deliverables")})
+        if "TASK: who supplies what" in prompt:
+            return _json.dumps({k: items(k) for k in ("provider_materials", "provider_tools", "customer_materials", "customer_responsibilities")})
+        if "TASK: assumptions and exclusions" in prompt:
+            return _json.dumps({k: items(k) for k in ("assumptions", "out_of_scope")})
+        if "Say which bullets" in prompt:
+            import re as _re
+            return _json.dumps({"supported": [int(n) for n, t in _re.findall(r"(?m)^(\d+)\. (.*)$", prompt) if t not in gone]})
+        if "Say which assignments" in prompt:
+            return _json.dumps({"stated": list(range(200))})
+        return _json.dumps({"add": []})
+
+    from app.core import embedding_retrieval as er
+    monkeypatch.setattr(er, "_embed_azure", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(m, "_complete", fake)
+    monkeypatch.setattr(m, "WRITER_RUNS", 1)
+    return m.for_envelope(_copy.deepcopy(env))
+
+
+@_pytest.mark.parametrize("deal", sorted(_WANT))
+def test_applicable_standards_render_or_say_why(deal, monkeypatch):
+    if not _os.path.exists(f"{_SAVED}/final_{deal}_env.json"):
+        _pytest.skip("saved pass-T envelope not on this machine")
+    c = _replay(deal, monkeypatch)
+    shown = [str(x.get("text")) for k in m.LISTS for x in c.get(k) or [] if isinstance(x, dict)]
+    why = [x for x in c.get("standards_suppressed") or [] if x.get("reason")]
+    assert "_std_objs" not in c
+    for want in _WANT[deal]:
+        assert any(want in t for t in shown) or any(want in x["text"] for x in why), (deal, want)
+
+
+def test_a_standards_gate_reads_deal_lines_the_brief_left_out_but_an_unless_reads_facts_only():
+    content = {"scope": [], "assumptions": [], "customer_responsibilities": [], "out_of_scope": []}
+    m._apply_standards(content, "pos_install_refresh", ["Install one printer per store."], [],
+                       ["We haven't written up the SOP yet, but overall we'd ship out:", "square terminals"])
+    asm = [x["text"] for x in content["assumptions"]]
+    assert "No materials are required to be provided by Provider." in asm
+    # "{unless:square}" still reads the facts only
+    assert any("credentials or access required for installation-related POS" in x["text"]
+               for x in content["customer_responsibilities"])
+
+
+def test_a_standard_a_rule_removes_says_which_rule():
+    content = {"assumptions": [{"text": "No materials are required.", "cites": [], "kind": "method", "standard": True}]}
+    content["_std_objs"] = [[id(content["assumptions"][0]), "No materials are required."]]
+    m._traced(content, "tidy", lambda: content.__setitem__("assumptions", []))
+    assert content["standards_suppressed"] == [{"text": "No materials are required.", "reason": "rule tidy"}]

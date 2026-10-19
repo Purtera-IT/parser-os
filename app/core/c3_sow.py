@@ -277,13 +277,13 @@ def purtera_standards(family: str) -> dict[str, list[str]]:
 _WHEN = re.compile(r"^\{when:(.*?)\}\s+(?=[A-Z])")  # the regex may hold {n,m}: end at "} " before the item
 
 
-def _standard_applies(t: str, facts_text: list[str]) -> tuple[bool, str]:
+def _standard_applies(t: str, facts_text: list[str], unless_text: list[str] | None = None) -> tuple[bool, str]:
     """A standard item may carry "{when:<regex>}": written only when a deal fact matches."""
     # "{unless:<regex>}": skipped when a deal fact matches (010198: config
     # exclusions beside the router setup the job does).
     u = re.match(r"^\{unless:(.*?)\}\s+(?=[A-Z{])", t)
     if u:
-        if any(re.search(u.group(1), f, re.I) for f in facts_text):
+        if any(re.search(u.group(1), f, re.I) for f in (facts_text if unless_text is None else unless_text)):
             return False, t[u.end():]
         t = t[u.end():]
     m = _WHEN.match(t)
@@ -971,10 +971,27 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
     return out
 
 
+def _std_gone(content: dict[str, Any], where: str) -> None:
+    """Record the standard items no longer in the SOW, and what took them."""
+    objs = content.get("_std_objs")
+    if not objs:
+        return
+    live = [x for k in LISTS for x in content.get(k) or [] if isinstance(x, dict) and x.get("standard")]
+    ids, texts = {id(x) for x in live}, {str(x.get("text")) for x in live}
+    keep = []
+    for i, t in objs:
+        if i in ids or t in texts:
+            keep.append([i, t])
+        else:
+            content.setdefault("standards_suppressed", []).append({"text": t, "reason": where})
+    content["_std_objs"] = keep
+
+
 def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     before = _snap(content)
     lists_before = {k: list(content.get(k) or []) for k in _LIST_SECTION}
     result = fn(*args, **kwargs)
+    _std_gone(content, f"rule {rule}")
     guarded = _guard_drops(content, rule, before, lists_before) if rule in GUARDED_RULES else []
     kept = {tuple(g["atom_ids"]) for g in guarded}
     content.setdefault("rule_decisions", []).extend(
@@ -1228,8 +1245,21 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # mounted on the front wall" fired the display-mounting block).
     writer_snap = _snap(content)
     content["_noise_atoms"], content["_noise_re"] = _noise(envelope, fs)
+    # The standards' gates also read the deal lines the brief left out, from
+    # the documents the facts come from: not addresses, contacts, chatter or
+    # rejected lines (000123: "Gateway Road" is not a gateway).
+    rejected = _rejected_atoms(envelope) | set(content.get("_noise_atoms") or [])
+    fact_ids = {f["id"] for f in fs}
+    fact_docs = {str(a.get("artifact_id")) for a in envelope.get("atoms") or [] if str(a.get("id")) in fact_ids}
+    no_gate = ("physical_site", "contact", "person", "signature", "small_talk", "email_header", "deal_metadata",
+               "open_question", "action_item", "answered_question")
+    gate_atoms = [str(a.get("text") or "") for a in envelope.get("atoms") or []
+                  if not (a.get("structured") or {}).get("quoted") and str(a.get("id")) not in rejected
+                  and str(a.get("artifact_id")) in fact_docs and "?" not in str(a.get("text") or "")
+                  and str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") not in no_gate]
     _traced(content, "standards", _apply_standards, content, family, [f["text"] for f in fs if not f.get("pictured")],
-                     [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")])
+            [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")],
+            gate_atoms)
     _traced(content, "zero_rows", _zero_rows, content, envelope)
     _traced(content, "first_person", _first_person_duties, content, envelope)
     _traced(content, "assumption_voice", _assumption_voice, content)
@@ -1470,6 +1500,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["facts_given"] = len(fs)
     # Everything the rules changed after the writer, rule by rule where traced,
     # the rest as "writer_rules": the queue SowSmith shows as "Teach the heads".
+    _std_gone(content, "writer rules (untraced)")
     content.pop("_noise_atoms", None)
     content.pop("_noise_re", None)
     content["teachable"] = {k: v[0] for k, v in TEACHABLE.items()}
@@ -2377,7 +2408,7 @@ def _said(text: str, items: list[Any], share: float = 0.5) -> bool:
 
 
 def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str] | None = None,
-                     context_text: list[str] | None = None) -> int:
+                     context_text: list[str] | None = None, gate_text: list[str] | None = None) -> int:
     """Write PurTera's fixed handling of the job type (purtera_standards.json)
     into the SOW. Offered to the writer as hints they came back missing,
     paraphrased or out of order (010115 rounds 12-14), so the standards are the
@@ -2435,15 +2466,27 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     # steps (010171: "I will do the device configuration and testing").
     self_test = any(re.search(r"(?i)\b(i|we|customer|our (team|it))\b.{0,25}\b(will|'ll|would)\b.{0,15}\b(do|handle|perform|take care of)\b.{0,40}\btest", str(f))
                     for f in (facts_text or []) + (context_text or []))
+    # Every standard item that applies and is not written says why
+    # (graders found applicable items nowhere in the SOW, not even dropped).
+    why = content.setdefault("standards_suppressed", [])
+    def suppressed(sec: str, t: str, reason: str) -> None:
+        why.append({"section": sec, "text": t, "reason": reason})
+    # A gate reads the deal's own lines, not only the brief's facts (000123:
+    # "we'd ship out:" was a deal_state line the brief left out, so "No
+    # materials are required to be provided by Provider" never applied).
+    gate = list(facts_text or []) + list(gate_text or [])
     for sec, lst in _STD_LIST.items():
         std = []
         for t0 in fixed.get(sec) or []:
-            ok, t = _standard_applies(t0, facts_text or [])
+            ok, t = _standard_applies(t0, gate, facts_text or [])
             about_reuse = bool(re.match(r"^\{when:[^}]*(reuse|existing)", t0))
-            if self_test and re.search(r"(?i)\btest|confirm .{0,90}\bfunction|verify (basic )?operation", t):
+            if ok and self_test and re.search(r"(?i)\btest|confirm .{0,90}\bfunction|verify (basic )?operation", t):
+                suppressed(sec, t, "the customer does its own testing")
                 continue
             if ok and (about_reuse or not contradicted(t)):
                 std.append({"text": t, "cites": [], "kind": "method", "standard": True})
+            elif ok:
+                suppressed(sec, t, "a fact says what it acts on stays in place")
         if not std:
             continue
         items = content.setdefault(lst, [])
@@ -2478,6 +2521,9 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             # "Disconnect and remove each existing phone ... reusing existing cabling".
             counted += [x for x in items if isinstance(x, dict) and x.get("kind") != "heading" and x.get("cites")
                         and re.search(r"(?i)\b(existing|reuse|reusing|reused)\b", str(x.get("text")))]
+            for it in std:
+                if _said(it["text"], counted, 0.6):
+                    suppressed(sec, it["text"], "a cited deal step with its own count or exception says it")
             std = [it for it in std if not _said(it["text"], counted, 0.6)]
         n += len(std)
         if lst == "provider_tools":
@@ -2547,15 +2593,27 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         if close is None:
             items.append({"text": "Closeout", "cites": [], "kind": "heading"})
             close = len(items) - 1
+        for it in checks:
+            if _said(it["text"], items, 0.6):
+                suppressed(sec, it["text"], "a scope line already says it")
         items[close:close] = [it for it in checks if not _said(it["text"], items, 0.6)]
         close += len([it for it in checks if any(y is it for y in items)])
+        for it in tail:
+            if _said(it["text"], items[close + 1:], 0.5):
+                suppressed(sec, it["text"], "a closing line already says it")
         items[close + 1:close + 1] = [it for it in tail if not _said(it["text"], items[close + 1:], 0.5)]
         # One closing group: "Cleanup" and "Closeout" both held closing steps.
         items[close]["text"] = "Closeout"
         items[:] = [x for i, x in enumerate(items) if not (i > close and isinstance(x, dict) and x.get("kind") == "heading"
                     and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text"))))]
-    outcomes = [t for ok, t in (_standard_applies(o, facts_text or []) for o in fixed.get("deliverable_outcomes") or [])
-                if ok and not contradicted(t) and not (self_test and re.search(r"(?i)\btest", t))]
+    outcomes = []
+    for ok, t in (_standard_applies(o, gate, facts_text or []) for o in fixed.get("deliverable_outcomes") or []):
+        if not ok:
+            continue
+        if contradicted(t) or (self_test and re.search(r"(?i)\btest", t)):
+            suppressed("deliverable_outcomes", t, "contradicted by a fact or the customer's own testing")
+            continue
+        outcomes.append(t)
     if outcomes:
         dl = content.setdefault("deliverables", [])
         if not dl:
@@ -2566,18 +2624,23 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         # (010083: "Serial numbers ... if requested" beside a customer who
         # requires serials).
         off = [t for o in fixed.get("deliverable_outcomes") or [] if o.startswith("{unless:")
-               for ok, t in [_standard_applies(o, facts_text or [])] if not ok]
+               for ok, t in [_standard_applies(o, gate, facts_text or [])] if not ok]
         own = [t for t in own if not any(_said(t, [o], 0.8) and _said(o, [t], 0.8) for o in off)]
         # Said by a line about the same thing: "Serial numbers of each new
         # switch" is not "New switches installed and cabled".
         head = lambda u: _stem((re.findall(r"[a-z]+", str(u).lower()) or [""])[0])
-        d0["description"] = own + [o for o in outcomes if not (_said(o, own, 0.5) and (
-            head(o) in {head(t) for t in own} or not o.lower().startswith(("serial", "posted", "photo"))))]
+        said_o = lambda o: _said(o, own, 0.5) and (head(o) in {head(t) for t in own} or not o.lower().startswith(("serial", "posted", "photo")))
+        for o in outcomes:
+            if said_o(o):
+                suppressed("deliverable_outcomes", o, "the report already says it")
+        d0["description"] = own + [o for o in outcomes if not said_o(o)]
         # Photographs ship as images beside the report (010116, 010209: "PDF, Jpeg").
         if any(re.search(r"(?i)photo", str(t)) for t in d0["description"]) and "JPEG" not in str(d0.get("format") or "").upper():
             d0["format"] = (str(d0.get("format") or "PDF").strip() or "PDF") + ", JPEG"
         dl[0] = d0
     content["standards_added"] = n
+    content["_std_objs"] = [[id(x), str(x.get("text"))] for k in _STD_LIST.values() for x in content.get(k) or []
+                            if isinstance(x, dict) and x.get("standard")]
     return n
 
 
@@ -5308,6 +5371,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         asm.append({"text": f"Work is performed on {day.group(1).capitalize()} as scheduled; site access is available that day.",
                     "cites": [], "kind": "method"})
         c["assumptions"] = [x for x in asm if not re.search(r"(?i)(regular|normal|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
+    _std_gone(c, "for_envelope")
+    c.pop("_std_objs", None)
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
