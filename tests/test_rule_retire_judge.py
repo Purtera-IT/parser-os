@@ -1,5 +1,12 @@
 """rule_retire_judge: the judge scored against each rule's own decisions."""
-from ml.c3.rule_retire_judge import judged_answer, score
+import importlib.util
+import pathlib
+
+_spec = importlib.util.spec_from_file_location(
+    "rule_retire_judge", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "sow_judge" / "rule_retire_judge.py")
+_m = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_m)
+judged_answer, score = _m.judged_answer, _m.score
 
 
 def test_answers_map_per_head():

@@ -1,6 +1,6 @@
 """Label deal lines with the rubric judge (jdg:sow_section), for the fast heads to learn from.
 
-    python -m ml.c3.judge_label --envelopes '/outside/envs/*.json' --out /outside/judge_labels \
+    python3.11 scripts/sow_judge/judge_label.py --envelopes '/outside/envs/*.json' --out /outside/judge_labels \
         [--per-deal 150] [--skip-deals 010043 ...] [--workers 2] [--max-lines N]
 
 Per deal: the envelope's lines (atoms), deduplicated by text, a seeded sample
@@ -13,6 +13,11 @@ answer on the same line wins. Nothing here writes to the feedback store.
 Resumes: a judged line is never asked again.
 """
 from __future__ import annotations
+
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[2]))  # the repo root: app/ and ml/ beside each other
 
 import argparse
 import glob

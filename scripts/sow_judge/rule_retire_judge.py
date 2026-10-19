@@ -1,6 +1,6 @@
 """Can a SOW writer rule be retired onto the rubric judge? (rule_retire.py, for jdg:sow_section)
 
-    python -m ml.c3.rule_retire_judge --envelopes '/outside/final_*_env.json' \
+    python3.11 scripts/sow_judge/rule_retire_judge.py --envelopes '/outside/final_*_env.json' \
         --cache /outside/judge/rule_cache.jsonl --report /outside/rule_retire_judge.json \
         [--skip-deals 000002 000123 ...] [--workers 2]
 
@@ -16,6 +16,11 @@ left to rule_retire. Counts and rates only, never line text.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[2]))  # the repo root: app/ and ml/ beside each other
+
 import argparse
 import glob
 import json
@@ -25,8 +30,8 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .labels_from_sow import SUPPLIER_OF_OWNER
-from .rule_retire import READY_AGREE, READY_MIN
+from ml.c3.labels_from_sow import SUPPLIER_OF_OWNER
+from ml.c3.rule_retire import READY_AGREE, READY_MIN
 
 HEADS = ("sow_section", "sow_party", "sow_supplier")
 

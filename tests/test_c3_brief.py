@@ -349,3 +349,54 @@ def test_the_coverage_pass_adds_cited_missing_facts(monkeypatch):
                         ' {"text": "Invented.", "cites": ["atm_zz"]}]}')
     assert B._cover_missing_facts(brief) == 1
     assert brief["written"]["sections"]["job_details"] == [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]}]
+
+
+def _judge_says(monkeypatch, answers):
+    from app.core import sow_rubric_judge as J
+
+    def fake_judge(text, **_):
+        sec, own = answers.get(text, (None, None))
+        return J.Verdict(sec, 0.9 if sec else 0.0, own, 0.9 if own else 0.0, "llm" if sec else "fallback")
+
+    monkeypatch.setattr(J, "judge", fake_judge)
+
+
+def test_the_rubric_judge_places_facts_when_on(monkeypatch):
+    _trusted_all(monkeypatch)
+    monkeypatch.setenv("SOWSMITH_SOW_JUDGE", "on")
+    _judge_says(monkeypatch, {"Customer ships the TVs": ("customer_responsibilities", "customer"),
+                              "Thanks all": ("_absent", "none")})
+    atoms = [_atom(1, "scope_item", "Customer ships the TVs"), _atom(2, "scope_item", "Thanks all"),
+             _atom(3, "scope_item", "Mount 3 TVs")]
+    reads = {a.id: {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.6]} for a in atoms}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    cr = b["sections"]["customer_responsibilities"]
+    assert [x["id"] for x in cr] == ["a1"] and cr[0]["section_by"] == "judge:jdg:sow_section"
+    assert cr[0]["judge"] == {"section": "customer_responsibilities", "owner": "customer", "p": 0.9}
+    # _absent is not a drop (keep/drop stays co_action's) and an undecided judge changes nothing
+    sow = {x["id"]: x for x in b["sections"]["scope_of_work"]}
+    assert set(sow) == {"a2", "a3"}
+    assert sow["a2"]["section_by"] == "base:read:sow_section" and sow["a2"]["judge"]["section"] == "_absent"
+    assert "judge" not in sow["a3"]
+
+
+def test_the_rubric_judge_in_shadow_changes_nothing(monkeypatch):
+    _trusted_all(monkeypatch)
+    monkeypatch.setenv("SOWSMITH_SOW_JUDGE", "shadow")
+    _judge_says(monkeypatch, {"Customer ships the TVs": ("customer_responsibilities", "customer")})
+    atoms = [_atom(1, "scope_item", "Customer ships the TVs")]
+    reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.6]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    item = b["sections"]["scope_of_work"][0]
+    assert item["section_by"] == "base:read:sow_section"
+    assert item["judge"]["section"] == "customer_responsibilities"
+
+
+def test_the_rubric_judge_is_off_by_default(monkeypatch):
+    _trusted_all(monkeypatch)
+    monkeypatch.delenv("SOWSMITH_SOW_JUDGE", raising=False)
+    _judge_says(monkeypatch, {"Customer ships the TVs": ("customer_responsibilities", "customer")})
+    atoms = [_atom(1, "scope_item", "Customer ships the TVs")]
+    reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.6]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert "judge" not in b["sections"]["scope_of_work"][0]

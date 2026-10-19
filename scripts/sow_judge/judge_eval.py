@@ -1,6 +1,6 @@
 """Measure jdg:sow_section (app/core/sow_rubric_judge.py) against the rubric labels.
 
-    python -m ml.c3.judge_eval --rubric '/outside/rubric/*.A.jsonl' --out /outside/judge/v1 \
+    python3.11 scripts/sow_judge/judge_eval.py --rubric '/outside/rubric/*.A.jsonl' --out /outside/judge/v1 \
         [--split test] [--workers 2] [--limit N] [--variant v1]
 
 Held out BY DEAL: deals hashing into the ``dev`` split (about a quarter) are the
@@ -11,6 +11,11 @@ always-majority baseline, per-section precision/recall and the confusion
 matrix, and seconds per line. Line text is never printed.
 """
 from __future__ import annotations
+
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[2]))  # the repo root: app/ and ml/ beside each other
 
 import argparse
 import glob

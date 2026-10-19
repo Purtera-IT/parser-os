@@ -102,3 +102,19 @@ def test_model_env_default_keeps_decide_route(monkeypatch):
     assert J.judge_model() is None
     monkeypatch.setenv("SOWSMITH_SOW_JUDGE_MODEL", "ollama:qwen3:14b")
     assert J.judge_model() == "ollama:qwen3:14b"
+
+
+def test_judge_many_keeps_decided_lines_within_budget(calls):
+    seen, answers = calls
+    answers[("section", "a")] = ("timeline", 0.9)
+    out = J.judge_many([{"id": "1", "text": "a"}, {"id": "2", "text": "b"}], budget_s=5, workers=2)
+    assert set(out) == {"1"} and out["1"].owner == "none"
+
+
+def test_mode(monkeypatch):
+    monkeypatch.delenv("SOWSMITH_SOW_JUDGE", raising=False)
+    assert J.mode() == "off"
+    monkeypatch.setenv("SOWSMITH_SOW_JUDGE", "ON")
+    assert J.mode() == "on"
+    monkeypatch.setenv("SOWSMITH_SOW_JUDGE", "bogus")
+    assert J.mode() == "off"

@@ -331,14 +331,34 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             why["rule:drop"] += 1
 
     # ---- sections
+    # jdg:sow_section (app/core/sow_rubric_judge.py): the placement rubric
+    # applied per fact. shadow records its answer; on lets it place the fact.
+    from app.core import sow_rubric_judge as _judge
+
+    judge_mode = _judge.mode()
+    judged: dict[str, Any] = {}
+    if judge_mode != "off" and kept:
+        svc0 = deal.get("deal:primary_service") if deal else None
+        job = str((svc0 or [None])[0] or service_fallback or "")
+        if job in ("_absent", "default_pack"):
+            job = ""
+        t0 = time.monotonic()
+        judged = _judge.judge_many([{"id": str(a.id), "text": a.raw_text[:300], "job": job,
+                                     "under": _heading_of(a)} for a, _, _ in kept])
+        log.info("c3_brief: jdg:sow_section %s judged %d/%d facts in %.1fs", judge_mode, len(judged), len(kept),
+                 time.monotonic() - t0)
     sections: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for a, p, by in kept:
         aid = str(a.id)
-        sec, ps = r(aid, "read:sow_section") if use["read:sow_section"] else ("_absent", 0.0)
-        if sec != "_absent" and ps >= SECTION_BAR:
-            sec_by = _by("read:sow_section")
+        v = judged.get(aid)
+        if judge_mode == "on" and v is not None and v.section not in (None, "_absent"):
+            sec, ps, sec_by = v.section, float(v.section_conf), "judge:jdg:sow_section"
         else:
-            sec, sec_by = SECTION_BY_TYPE.get(_type(a), "other"), "rule:type"
+            sec, ps = r(aid, "read:sow_section") if use["read:sow_section"] else ("_absent", 0.0)
+            if sec != "_absent" and ps >= SECTION_BAR:
+                sec_by = _by("read:sow_section")
+            else:
+                sec, sec_by = SECTION_BY_TYPE.get(_type(a), "other"), "rule:type"
         # Our technician's work is never the customer's responsibility. On
         # 010038 the section head, unsure (0.42-0.56), filed "Remove the TVs
         # and mounts from the OLD site" there while the owner head said
@@ -358,9 +378,12 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             # responsibility 0.65, and the brief gave our work to the customer.
             if own == "technician" and (po >= OWNER_BAR or po > ps):
                 sec, sec_by = "scope_of_work", "base:read:task_owner_role"
-        sections[sec].append({"id": aid, "text": a.raw_text[:400], "type": _type(a), "when": _when_of(a),
-                              "under": _heading_of(a),
-                              "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by})
+        item = {"id": aid, "text": a.raw_text[:400], "type": _type(a), "when": _when_of(a),
+                "under": _heading_of(a),
+                "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by}
+        if v is not None:
+            item["judge"] = {"section": v.section, "owner": v.owner, "p": round(float(v.section_conf), 3)}
+        sections[sec].append(item)
     _customer_furnished(sections, by_id, r if have_reads else None)
     for sec in sections:
         sections[sec].sort(key=lambda x: -(x["keep_p"] or 0.5))

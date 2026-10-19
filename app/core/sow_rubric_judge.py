@@ -161,5 +161,46 @@ def judge(
     return Verdict(d.verdict, d.confidence, owner, o.confidence if owner else 0.0, d.source)
 
 
-__all__ = ["RELATION", "OWNER_RELATION", "SECTIONS", "OWNERS", "RUBRIC", "OWNER_OF", "Verdict", "judge",
+def mode() -> str:
+    """``SOWSMITH_SOW_JUDGE``: off (default) | shadow | on. shadow records the
+    judge's answer beside each brief fact and changes nothing; on lets it place
+    the fact (the brief's section head and type fallback answer only where the
+    judge is undecided or says _absent: keep/drop stays co_action's)."""
+    v = os.environ.get("SOWSMITH_SOW_JUDGE", "off").strip().lower()
+    return v if v in ("shadow", "on") else "off"
+
+
+def judge_many(lines: list[dict], *, budget_s: float | None = None, workers: int | None = None,
+               deal_id: str = "") -> dict[str, Verdict]:
+    """Judge many lines ({"id", "text", "job"?, "under"?}) in parallel within a
+    time budget; a line not answered in time is simply missing (undecided)."""
+    import concurrent.futures as cf
+    import time
+
+    budget = budget_s if budget_s is not None else float(os.environ.get("SOWSMITH_SOW_JUDGE_BUDGET_S", "180"))
+    n = workers or int(os.environ.get("SOWSMITH_SOW_JUDGE_WORKERS", "4"))
+    out: dict[str, Verdict] = {}
+    if not lines:
+        return out
+    t_end = time.monotonic() + budget
+    ex = cf.ThreadPoolExecutor(max(1, n))
+    try:
+        futs = {ex.submit(judge, ln["text"], job=ln.get("job") or "", under=ln.get("under") or "",
+                          deal_id=deal_id): ln["id"] for ln in lines}
+        try:
+            for f in cf.as_completed(futs, timeout=max(0.0, t_end - time.monotonic())):
+                try:
+                    v = f.result()
+                except Exception:
+                    continue
+                if v.section is not None:
+                    out[futs[f]] = v
+        except cf.TimeoutError:
+            pass
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+    return out
+
+
+__all__ = ["mode", "judge_many", "RELATION", "OWNER_RELATION", "SECTIONS", "OWNERS", "RUBRIC", "OWNER_OF", "Verdict", "judge",
            "judge_model", "context_for"]
