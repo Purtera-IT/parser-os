@@ -24,13 +24,16 @@ REAL=${REAL:-}
 extra=()
 [ -n "$REVIEWS" ] && extra+=(--reviews "$REVIEWS")
 [ -n "$REAL" ] && extra+=(--real-sow "$REAL")
+# Rubric labels (docs/C3_RUBRIC_SOW_SECTION.md): the consistent gold for section and owner.
+[ -n "$RUBRIC" ] && extra+=(--rubric "$RUBRIC")
 python3.11 -m ml.c3.labels_from_sow --envelopes "$ENV_DIR"/final_*_env.json "${extra[@]}" --out "$OUT/records"
 deals=($(ls "$OUT/records" | sed 's/.json//' | sort))
 mkdir -p "$OUT/train" "$OUT/val"
 i=0; for d in $deals; do if (( i % 4 == 0 )); then cp "$OUT/records/$d.json" "$OUT/val/"; else cp "$OUT/records/$d.json" "$OUT/train/"; fi; i=$((i+1)); done
 cur=$CKPT
-for key in read:sow_section read:co_action; do
-  tag=${key#read:}
+# One head at a time, each starting from the previous refit; every other head stays frozen.
+for key in ${=HEADS:-read:co_action col:supplier read:task_owner_role read:sow_section}; do
+  tag=${key#*:}
   python3.11 -m ml.c3.slot_fit --checkpoint "$cur" --key "$key" --train "$OUT"/train/*.json \
       --validation "$OUT"/val/*.json --out "$OUT/refit_$tag.pt" --epochs 60 | tee "$OUT/fit_$tag.log"
   [ -f "$OUT/refit_$tag.pt" ] && cur="$OUT/refit_$tag.pt"
