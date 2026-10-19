@@ -39,3 +39,15 @@ def test_judge_labels_are_slight_and_lose_to_rubric(tmp_path):
     assert by["a2"]["labeler"] == "judge:ollama:qwen3:32b"
     assert by["a3"]["reads_set"]["sow_section"] == "_absent"
     assert counts["judge"] >= 2 and counts["gold"] >= 1
+
+
+def test_supplier_from_owner_only_on_work_and_supply_lines():
+    from ml.c3.labels_from_sow import supplier_reviews
+    rv = [{"deal": "d", "atom_id": "a", "head": "sow_section", "value": "customer_responsibilities", "verdict": "accepted", "by": "rubric"},
+          {"deal": "d", "atom_id": "a", "head": "sow_party", "value": "customer", "verdict": "accepted", "by": "rubric"},
+          {"deal": "d", "atom_id": "b", "head": "sow_section", "value": "out_of_scope", "verdict": "accepted", "by": "rubric"},
+          {"deal": "d", "atom_id": "b", "head": "sow_party", "value": "technician", "verdict": "accepted", "by": "rubric"},
+          {"deal": "d", "atom_id": "c", "head": "sow_section", "value": "scope_of_work", "verdict": "judge", "by": "judge:m"},
+          {"deal": "d", "atom_id": "c", "head": "sow_party", "value": "technician", "verdict": "judge", "by": "judge:m"}]
+    out = {(r["atom_id"]): (r["value"], r["verdict"]) for r in supplier_reviews(rv)}
+    assert out == {"a": ("customer", "accepted"), "c": ("us", "judge")}

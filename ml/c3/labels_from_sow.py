@@ -126,6 +126,27 @@ def real_sow_reviews(paths: list[str]) -> list[dict]:
     return out
 
 
+#: A rubric owner as col:supplier, on lines that are work or a supply (who does or supplies it).
+SUPPLIER_OF_OWNER = {"technician": "us", "customer": "customer", "partner": "partner", "other": "third_party"}
+SUPPLY_SECTIONS = ("scope_of_work", "customer_responsibilities", "provider_responsibilities")
+
+
+def supplier_reviews(reviews: list[dict]) -> list[dict]:
+    """col:supplier answers implied by rubric or judge placements: the owner of
+    a work or supply line is who supplies it (010326 "They will handle rack &
+    stack gear": rubric customer_responsibilities / customer, the base said us
+    0.728). Same source and verdict as the placement they come from."""
+    sec = {(r["deal"], r["atom_id"]): r["value"] for r in reviews if r.get("head") == "sow_section"}
+    out = []
+    for r in reviews:
+        if r.get("head") != "sow_party" or sec.get((r["deal"], r["atom_id"])) not in SUPPLY_SECTIONS:
+            continue
+        sup = SUPPLIER_OF_OWNER.get(r.get("value"))
+        if sup:
+            out.append(dict(r, head="sow_supplier", value=sup))
+    return out
+
+
 def rubric_reviews(paths: list[str]) -> list[dict]:
     """Lines labeled by the SOW section rubric (docs/C3_RUBRIC_SOW_SECTION.md):
     one section and one owner per line, judged by what the line does in the
@@ -314,6 +335,8 @@ def main() -> None:
     p.add_argument("--real-sow", nargs="*", default=[], help="sem_g*.jsonl real-SOW alignments (gold)")
     p.add_argument("--rubric", nargs="*", default=[], help="rubric label files (<batch>.A.jsonl)")
     p.add_argument("--judge", nargs="*", default=[], help="rubric-judge label files (<batch>.J.jsonl), model drafts")
+    p.add_argument("--supplier-from-owner", action="store_true",
+                   help="derive col:supplier from rubric/judge owners on work and supply lines")
     p.add_argument("--outcomes", action="store_true", help="add the graded SOW's placements as silver")
     p.add_argument("--out", required=True)
     a = p.parse_args()
@@ -324,6 +347,8 @@ def main() -> None:
     reviews += rubric_reviews([x for pat in a.rubric for x in glob.glob(pat)])
     reviews += real_sow_reviews([x for pat in a.real_sow for x in glob.glob(pat)])
     reviews += judge_reviews([x for pat in a.judge for x in glob.glob(pat)])
+    if a.supplier_from_owner:
+        reviews += supplier_reviews(reviews)
     if a.outcomes:
         reviews += outcome_reviews(paths)
     print(json.dumps(build(paths, reviews, a.out)))
