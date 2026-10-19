@@ -174,3 +174,28 @@ def test_a_few_site_job_names_its_cities_once():
     assert c["overview"][1]["text"] == "Provider will perform the work at two (2) Customer locations: Gallup, NM and Harlan, IA."
     m._summary_names_job(c)
     assert len(c["overview"]) == 2
+
+
+def test_an_uncited_date_the_deal_does_not_state_never_renders():
+    """010198 live (pass T): "Requested Start Date: 2026-08-09" (the as-of
+    Sunday) with no cites, beside "next Sunday, August 16th"."""
+    fs = [_fact("d", "We actually rescheduled this installation for next Sunday, August 16th.", section="timeline",
+                type="milestone_phase")]
+    content = {"schedule": [{"text": "Requested Start Date: 2026-08-09", "cites": [], "kind": "fact"},
+                            {"text": "Arrival Time: 8:00 AM", "cites": [], "kind": "fact"}]}
+    m._fix_dates(content, fs, "2026-08-09")
+    assert [x["text"] for x in content["schedule"]] == ["Requested Start Date: Sunday, August 16, 2026", "Arrival Time: 8:00 AM"]
+    assert content["schedule"][0]["cites"] == ["d"]
+    # an undated cite does not vouch for the date either; with the deal's
+    # start already written, the stray line just goes
+    content = {"schedule": [{"text": "Requested Start Date: Sunday, August 16, 2026", "cites": ["d"], "kind": "fact"},
+                            {"text": "Requested Start Date: 2026-08-09", "cites": ["x"], "kind": "fact"}]}
+    m._fix_dates(content, fs + [_fact("x", "Install the register.")], "2026-08-09")
+    assert [x["text"] for x in content["schedule"]] == ["Requested Start Date: Sunday, August 16, 2026"]
+
+
+def test_a_date_the_deal_states_stays_uncited():
+    fs = [_fact("d", "Install window 10/13 - 11/19", section="timeline")]
+    content = {"schedule": [{"text": "Work Window: 10/13 through 11/19", "cites": [], "kind": "fact"}]}
+    m._fix_dates(content, fs, "2026-09-01")
+    assert content["schedule"][0]["text"] == "Work Window: 10/13 through 11/19"

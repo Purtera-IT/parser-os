@@ -16,3 +16,8 @@ def test_items_still_carrying_one_are_dropped() -> None:
     c = {"scope": [{"text": "Enter password 1234 on the clock"}, {"text": "Mount the clock"},
                    {"text": "Join SSID: [withheld]"}]}
     assert _scrub(c) == 2 and [x["text"] for x in c["scope"]] == ["Mount the clock"]
+
+
+def test_the_recorded_writer_draft_is_scrubbed_too() -> None:
+    c = {"writer_draft": {"scope": [{"text": "Enter password 1234 on the clock"}, {"text": "Mount the clock"}]}, "scope": []}
+    assert _scrub(c) == 0 and [x["text"] for x in c["writer_draft"]["scope"]] == ["Mount the clock"]

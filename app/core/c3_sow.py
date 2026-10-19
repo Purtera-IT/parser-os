@@ -380,6 +380,8 @@ def _withhold(text: str) -> str:
 def _scrub(content: dict[str, Any]) -> int:
     """Drop every item that still carries a credential or an address."""
     n = 0
+    if isinstance(content.get("writer_draft"), dict):  # the writer's raw lists carry what it was given
+        _scrub(content["writer_draft"])  # not counted: the SOW never shows it
     for k, v in list(content.items()):
         if not isinstance(v, list):
             continue
@@ -1061,6 +1063,13 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "rejected_source", _rejected_source, content, envelope)
     content["added"] = _cover(content, fs, model)
     content["added"] += _must_include(content, fs, model)
+    # The writer's own lists, before any check or rule, so a replay feeds
+    # what the live writer said rather than the chain's output (010198 pass T:
+    # the replay re-ran the rules on their own output and could not show the
+    # live date line).
+    content["writer_draft"] = {k: [{kk: x.get(kk) for kk in ("text", "cites", "kind") if kk in x}
+                                   for x in content.get(k) or [] if isinstance(x, dict)]
+                               for k in LISTS if content.get(k)}
     content["checks"] = check(content, lines)
     # A schedule or work-window line is a commitment: it needs a line the brief
     # kept, not only one it mentioned in passing (000132's "24/7 on-call",
@@ -3867,6 +3876,46 @@ def _fix_dates(content: dict[str, Any], fs: list[dict[str, Any]], as_of: str) ->
                     continue
                 t = t[:m.start()] + f"{_WEEKDAYS[dd.weekday()]}, {_MONTHS[mo2 - 1].capitalize()} {d2}, {y2}" + t[m.end():]
             x["text"] = re.sub(r"\b(Sunday|Saturday|Monday|Tuesday|Wednesday|Thursday|Friday),\s+(?=(Sunday|Saturday|Monday|Tuesday|Wednesday|Thursday|Friday),)", "", t)
+    # A schedule date no fact states, on a line whose cites state no date
+    # (uncited, or citing an undated line), never renders when the deal
+    # states its own date: it takes the date of the deal's latest dated
+    # timeline or milestone line, or goes (010198 live, pass T: an uncited
+    # "Requested Start Date: 2026-08-09", the as-of Sunday, beside "next
+    # Sunday, August 16th").
+    pool = {(mo, d) for f in fs for _m, mo, d, _y in _dates_in(f["text"])}
+    if not pool:
+        return
+    dated = [f for f in fs if (f.get("type") in ("milestone_phase", "deadline") or f.get("section") in ("timeline", "schedule"))
+             and _dates_in(f["text"])]
+    kept = []
+    for x in content.get("schedule") or []:
+        if not isinstance(x, dict):
+            kept.append(x)
+            continue
+        t = str(x.get("text"))
+        cited_dates = [z for c in x.get("cites") or [] for z in _dates_in(text_of.get(c, ""))]
+        wrong = [z for z in _dates_in(t) if (z[1], z[2]) not in pool]
+        if cited_dates or not wrong:
+            kept.append(x)
+            continue
+        if any(re.match(r"(?i)\s*requested (start|service)", str(y.get("text"))) for y in kept if isinstance(y, dict)) \
+                and re.match(r"(?i)\s*requested (start|service)", t):
+            continue  # the deal's own start line is already there
+        if dated and re.match(r"(?i)\s*requested (start|service)", t):
+            f = dated[-1]
+            _m2, mo2, d2, y2 = _dates_in(f["text"])[-1]
+            y2 = y2 or wrong[0][3] or yr0
+            try:
+                dd = _date(int(y2), mo2, d2)
+            except (TypeError, ValueError):
+                continue
+            for m, *_rest in sorted(wrong, key=lambda z: -z[0].start()):
+                t = t[:m.start()] + f"{_WEEKDAYS[dd.weekday()]}, {_MONTHS[mo2 - 1].capitalize()} {d2}, {dd.year}" + t[m.end():]
+            if not any(str(y.get("text")) == t for y in kept if isinstance(y, dict)):
+                kept.append({**x, "text": t, "cites": [f["id"]]})
+            continue
+        # no dated line to take it from: the date goes with its line
+    content["schedule"] = kept
 
 
 def _agreed_arrival(content: dict[str, Any], envelope: dict[str, Any]) -> None:
