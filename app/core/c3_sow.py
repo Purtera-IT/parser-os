@@ -1908,7 +1908,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
                             and re.search(r"(?i)for shipment|ship (them |it )?to|shipping to|for disposal", str(x.get("text"))))]
     # After-hours work is not business hours (010083).
-    if any(re.search(r"(?i)after[- ]hours|after (store |branch )?clos|overnight|before (store |branch )?open", f["text"]) for f in fs):
+    if any(re.search(r"(?i)after[- ]hours|after (store |branch )?clos|overnight|before (store |branch )?open|minutes before (store |branch )?clos", f["text"]) for f in fs):
         content["assumptions"] = [x for x in content.get("assumptions") or []
                                   if not re.search(r"(?i)(normal|regular|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
     # Before-work photos and checks lead the work (010083: prework photos last).
@@ -1995,6 +1995,10 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             out.append(x)
         content["scope"] = out
         content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.search(r"(?i)\b(unpack|reconnect)", str(x.get("text") if isinstance(x, dict) else x))]
+    # "No rack modification" against sites without a dedicated rack (010083).
+    if any(re.search(r"(?i)(no|not have a|without a) (dedicated )?rack|may not have (a )?rack|consolidat", f["text"]) for f in fs):
+        content["assumptions"] = [x for x in content.get("assumptions") or [] if not re.search(r"(?i)no rack modification|rack (modification|fabrication) is (not )?required",
+                                                                                                 str(x.get("text") if isinstance(x, dict) else x))]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
@@ -2749,6 +2753,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
             for x in c.get(k) or []:
                 if isinstance(x, dict):
                     x["text"] = re.sub(r"\b(\d{2,4})(\)?\s+(?:\w+\s+)?(?:locations?|stores?|sites?|restaurants?|branches))", _snap, str(x["text"]))
+                    # "160 (one hundred sixty) Customer locations" (000123).
+                    x["text"] = re.sub(r"(?i)\b(\d{2,4})\s*\((?:[a-z -]+)\)(\s+(?:\w+\s+){0,2}(?:locations?|stores?|sites?|restaurants?|branches))",
+                                       lambda m: (f"{n_sites} ({_words(n_sites)})" if int(m.group(1)) != n_sites and abs(int(m.group(1)) - n_sites) <= max(2, 0.1 * n_sites)
+                                                  else m.group(0)[:m.start(2) - m.start(0)]) + m.group(2), x["text"])
                     # The spelled number before "(161)" says the same count.
                     x["text"] = re.sub(r"(?i)\b(" + _NUMW + r"(?:[\s-]+" + _NUMW + r"){0,4})\s*\((\d{2,4})\)",
                                        lambda m: (_words(int(m.group(2))) + f" ({m.group(2)})")
@@ -2756,7 +2764,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                                        x["text"])
         for d in c.get("deliverables") or []:
             if isinstance(d, dict):
-                d["description"] = [re.sub(r"\b(\d{2,4})(\s+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t)) for t in d.get("description") or []]
+                d["description"] = [re.sub(r"(?i)\b(\d{2,4})\s*\((?:[a-z -]+)\)(\s+(?:\w+\s+){0,2}(?:locations?|stores?|sites?))",
+                                           lambda m: (f"{n_sites} ({_words(n_sites)})" if int(m.group(1)) != n_sites and abs(int(m.group(1)) - n_sites) <= max(2, 0.1 * n_sites)
+                                                      else m.group(0)[:m.start(2) - m.start(0)]) + m.group(2),
+                                           re.sub(r"\b(\d{2,4})(\s+(?:\w+\s+)?(?:locations?|stores?|sites?))", _snap, str(t))) for t in d.get("description") or []]
     c["crm"] = {k: (envelope.get("crm") or {}).get(k) for k in ("deal_name", "account_name")}
     c["sites"] = [x for x in _sites(envelope, {"sites": sites}) if (x.get("address") or x.get("name"))]
     # On a job of a few sites the writer's own cited locations are the table:
