@@ -1428,6 +1428,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "grounding", _grounding, content, fs)
     _traced(content, "hours", _hours_basis, content, fs)
     _traced(content, "materials", _materials_hygiene, content, family, fs)
+    _traced(content, "capability_not_supply", _capability_not_supply, content, fs)
     _traced(content, "one_supplier", _one_supplier, content, fs)
     _traced(content, "third_party", _third_party, content, envelope, fs)
     # An unanswered question is not a fact: a bullet cited only to open
@@ -3317,6 +3318,17 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
                     tt = re.sub(r"(?i)(,?\s*and\s+)?\b%s %s\b" % (co.group(2), co.group(3)),
                                 lambda m: (", then " if m.group(1) else "") + f"{co.group(1).lower()} and {co.group(2)} {co.group(3)}", tt, count=1)
                     twin["text"] = tt
+                # And the step's own later work stays: "Mount the monitors on
+                # each arm, then align and secure them" replaced by the counted
+                # "Mount forty-eight (48) new 27-inch monitors on the installed
+                # arms" keeps ", then align and secure them" (010373 pass V).
+                then = re.search(r"(?i),?\s+(?:and\s+)?then\s+([a-z][^.;]*?)\.?\s*$", it["text"])
+                if then:
+                    verbs = [v for v in re.findall(r"[a-z]+", then.group(1).lower())
+                             if v not in ("and", "or", "them", "it", "the", "each", "all", "as", "needed", "required")][:3]
+                    if verbs and not any(re.search(r"(?i)\b%s" % re.escape(_stem(v)), tt) for v in verbs[:1]):
+                        tt = tt.rstrip().rstrip(".") + ", then " + then.group(1).strip() + "."
+                        twin["text"] = tt
                 suppressed(sec, it["text"], "a cited deal step with its own count does the same work and takes its place")
                 items[:] = [x for x in items if x is not twin]
                 std[j] = twin
@@ -5945,6 +5957,45 @@ def _planning_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         added += 1
 
 
+#: A sentence offering to do work ("We can handle the monitor arms and monitor
+#: installation"): a capability, never a promise to supply the thing.
+_CAPABILITY = re.compile(r"(?i)\b(?:we|i|purtera|our (?:team|techs?|technicians?))\s+(?:can|could|are able to|will be able to|would be able to|"
+                         r"can definitely|can certainly)\s+(?:also\s+)?(?:handle|do|take care of|install|perform|support|help|mount|cover)\b")
+#: A line that says the Provider side supplies a thing.
+_WE_SUPPLY = re.compile(r"(?i)\b(?:tech|technician|provider|purtera|we|our tech)\w*\s+(?:to|will|shall|would|can|could)?\s*(?:also\s+)?"
+                        r"(?:provi|provdi|supply|bring|furnish|procure|order|purchase|source)")
+
+
+def _capability_not_supply(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A capability or work-commitment sentence is never a supply line
+    (010373 pass V: "Technician Provided Materials: Sixteen (16) monitor
+    arms" cited "We can handle the monitor arms and monitor installation."
+    beside the customer's "Provide all monitor arms ..." and "Procurement of
+    monitors, arms or accessories" out of scope). A Provider material none
+    of whose cited lines says the Provider side supplies it, and one of
+    which offers to do the work, is gear worked on: customer-provided when
+    a customer duty, customer material or procurement exclusion names it,
+    else Equipment in Scope."""
+    by = {f["id"]: f["text"] for f in fs}
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    pm = content.get("provider_materials") or []
+    for x in list(pm):
+        if not isinstance(x, dict) or x.get("standard") or not x.get("cites"):
+            continue
+        cited = [by.get(c, "") for c in x["cites"]]
+        if any(_WE_SUPPLY.search(t) for t in cited) or not any(_CAPABILITY.search(t) for t in cited):
+            continue
+        key = _object_toks(tx(x)) - {"installation", "install", "instal"}
+        theirs = [y for k in ("customer_responsibilities", "customer_materials", "out_of_scope") for y in content.get(k) or []
+                  if isinstance(y, dict) and key and len(key & _object_toks(tx(y))) >= min(2, len(key))
+                  and (k != "out_of_scope" or re.search(r"(?i)\b(procure|purchas|suppl)", tx(y)))
+                  and (k != "customer_responsibilities" or re.match(r"(?i)\s*(provide|supply|furnish|ensure|have)\b", tx(y)))]
+        pm.remove(x)
+        dest = "customer_materials" if theirs else "equipment_in_scope"
+        if not _said(tx(x), content.get(dest) or [], 0.7):
+            content.setdefault(dest, []).append(x)
+
+
 def _one_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     """One item is never both Provider material and customer-provided. When
     a Provider material line names an item that a customer material, a
@@ -5961,12 +6012,18 @@ def _one_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     for x in list(pm):
         if not isinstance(x, dict) or x.get("standard"):
             continue
-        key = {w for w in _toks(tx(x)) if not re.fullmatch(r"one|two|three|four|five|\d+|provid|suppl|all|required|need", w)}
+        # Counts and the work word are not the item ("Sixteen (16) monitor
+        # arms for the installation" is the monitor arms).
+        key = {w for w in _toks(tx(x)) if not re.fullmatch(r"one|two|three|four|five|\d+|provid|suppl|all|required|need|instal\w*|new", w)
+               and _words_value(w) is None}
         if not key or len(key) > 4:
             continue
         hits = lambda k, need_say: [y for y in content.get(k) or [] if isinstance(y, dict) and y is not x
                                     and key <= _toks(tx(y)) and (not need_say or cust_say.search(tx(y)))]
-        theirs = hits("customer_materials", False) + hits("customer_responsibilities", False) + hits("assumptions", True)
+        # A procurement exclusion gives the item to the customer too
+        # ("Procurement of monitors, arms or accessories").
+        theirs = hits("customer_materials", False) + hits("customer_responsibilities", False) + hits("assumptions", True) \
+            + [y for y in hits("out_of_scope", False) if re.search(r"(?i)\b(procure|purchas)", tx(y))]
         if not theirs:
             continue
         ours = [x] + [y for y in content.get("scope") or [] if isinstance(y, dict) and key <= _toks(tx(y))
