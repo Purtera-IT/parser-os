@@ -2935,6 +2935,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     dn = str((envelope.get("crm") or {}).get("deal_name") or "").strip()
     dn = re.sub(r"^\s*\d{5,6}\s*[-–:]?\s*", "", dn)
     dn = dn.split("|")[0].strip()  # 010419: "... | IT Transition & Onboarding Support | Wilmington, NC"
+    dn = re.sub(r"(?i)\s*[-–]?\s*\b(cdw|shi|insight|presidio|computacenter)\s*$", "", dn).strip()  # 010147 "... Move CDW"
     dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s+", "", dn).strip(" -–")
     dn = re.sub(r"(?i)\s+w/\s*\w+.*$|\s+with\s+[A-Z][a-z]+$", "", dn).strip()  # "161 Site POS install w/ Ahmed"
     dn = re.sub(r"\s+-(\d+)\b", r" \1", dn)  # "NYC -48 monitor mounting"
