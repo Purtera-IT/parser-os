@@ -142,9 +142,17 @@ def test_one_bom_is_one_supply_list():
     c["equipment_in_scope"] = [{"text": "QM75C Samsung 75IN 4K UHD LED Display.", "cites": ["r0"], "kind": "fact"},
                                {"text": "CS-BAR-T-C-K9 Cisco Room Bar in Carbon Black w/Navigator.", "cites": ["r2"], "kind": "fact"}]
     c["customer_materials"] = [{"text": "MMX4X2-HT200 Lightware 4x2 Matrix Switcher.", "cites": ["r1"], "kind": "fact"}]
-    m._bom_lists(c, atoms)
+    # With a line saying the customer supplies the equipment, the BOM is the
+    # customer's; with none, every row is Equipment in Scope (batch 10,
+    # 010116 pass X: no supplier split without a source).
+    said = [{"id": "s", "artifact_id": "mail", "text": "Customer will provide all of the equipment on the BOM."}]
+    c0 = _copy.deepcopy(c)
+    m._bom_lists(c, atoms + said)
     assert _texts(c, "equipment_in_scope") == []
     assert len(_texts(c, "customer_materials")) == 3
+    m._bom_lists(c0, atoms)
+    assert _texts(c0, "customer_materials") == []
+    assert len(_texts(c0, "equipment_in_scope")) == 3
 
 
 def test_the_summary_puts_each_item_in_its_own_room():
