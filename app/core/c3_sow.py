@@ -971,7 +971,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     # Picture captions never trigger standards (010120: "Two large TVs are
     # mounted on the front wall" fired the display-mounting block).
-    _apply_standards(content, family, [f["text"] for f in fs if not f.get("pictured")])
+    _apply_standards(content, family, [f["text"] for f in fs if not f.get("pictured")],
+                     [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")])
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     _grounding(content, fs)
@@ -1423,7 +1424,8 @@ def _said(text: str, items: list[Any], share: float = 0.5) -> bool:
                               for x in items)
 
 
-def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str] | None = None) -> int:
+def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str] | None = None,
+                     context_text: list[str] | None = None) -> int:
     """Write PurTera's fixed handling of the job type (purtera_standards.json)
     into the SOW. Offered to the writer as hints they came back missing,
     paraphrased or out of order (010115 rounds 12-14), so the standards are the
@@ -1453,12 +1455,12 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     # The customer doing its own testing or configuration rules out the test
     # steps (010171: "I will do the device configuration and testing").
     self_test = any(re.search(r"(?i)\b(i|we|customer|our (team|it))\b.{0,25}\b(will|'ll|would)\b.{0,15}\b(do|handle|perform|take care of)\b.{0,40}\btest", str(f))
-                    for f in facts_text or [])
+                    for f in (facts_text or []) + (context_text or []))
     for sec, lst in _STD_LIST.items():
         std = []
         for t0 in fixed.get(sec) or []:
             ok, t = _standard_applies(t0, facts_text or [])
-            if self_test and re.search(r"(?i)\btest|confirm .{0,40}\bfunction|verify (basic )?operation", t):
+            if self_test and re.search(r"(?i)\btest|confirm .{0,90}\bfunction|verify (basic )?operation", t):
                 continue
             if ok and not contradicted(t):
                 std.append({"text": t, "cites": [], "kind": "method", "standard": True})
@@ -1541,7 +1543,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         items[:] = [x for i, x in enumerate(items) if not (i > close and isinstance(x, dict) and x.get("kind") == "heading"
                     and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text"))))]
     outcomes = [t for ok, t in (_standard_applies(o, facts_text or []) for o in fixed.get("deliverable_outcomes") or [])
-                if ok and not contradicted(t)]
+                if ok and not contradicted(t) and not (self_test and re.search(r"(?i)\btest", t))]
     if outcomes:
         dl = content.setdefault("deliverables", [])
         if not dl:
@@ -1951,6 +1953,13 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                               and re.search(r"(?i)" + m.group(2), str(y.get("text")))), close)
             sc.insert(first_std, {"text": f"Install the {m.group(1).strip()}.", "cites": [f["id"]], "kind": "fact"})
             sc_txt += " install " + m.group(2)
+    # "We have X" is the customer's existing gear, never an install (010171:
+    # "in our main conference room we have a Logitech Rally Plus").
+    by_t = {f["id"]: f["text"] for f in fs}
+    content["scope"] = [x for x in content.get("scope") or [] if not (
+        isinstance(x, dict) and x.get("cites") and re.match(r"(?i)\s*install\b", str(x.get("text")))
+        and all(re.search(r"(?i)\b(we|they) (already |currently )?have\b|\balready (have|installed|in place)\b|\bcurrently (have|has|installed)\b", by_t.get(c, ""))
+                for c in x["cites"]))]
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
