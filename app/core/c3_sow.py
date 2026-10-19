@@ -1971,6 +1971,9 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                           r"asset[- ]tag|transport|\bkitting\b|\bstaging (area|facility|center|warehouse)|proof of delivery|inventory recap")
         for k in ("scope", "customer_responsibilities", "deliverables_text"):
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and logi.search(str(x.get("text"))))]
+        ov = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and logi.search(str(x.get("text"))))]
+        content["overview"] = ov or [{"text": "Provider will provide onsite installation labor at each location.", "cites": [], "kind": "method"}]
+        content["overview"] = [x for x in content["overview"] if not re.search(r"(?i)appears to be a basic|this looks like|seems like a", str(x.get("text") if isinstance(x, dict) else x))] or content["overview"]
         asm = content.setdefault("assumptions", [])
         if not any(re.search(r"(?i)labor only|onsite (field )?labor", str(x.get("text") if isinstance(x, dict) else x)) for x in asm):
             asm.insert(0, {"text": "Pricing covers onsite installation labor only; hardware is delivered to each location before technicians arrive.", "cites": [], "kind": "method"})
