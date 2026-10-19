@@ -1226,6 +1226,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["_noise_atoms"], content["_noise_re"] = _noise(envelope, fs)
     _traced(content, "standards", _apply_standards, content, family, [f["text"] for f in fs if not f.get("pictured")],
                      [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")])
+    _traced(content, "zero_rows", _zero_rows, content, envelope)
+    _traced(content, "first_person", _first_person_duties, content, envelope)
+    _traced(content, "assumption_voice", _assumption_voice, content)
+    _traced(content, "moved_gear", _moved_gear, content, family)
+    _traced(content, "destination", _destination_owner, content, fs)
+    _onsite_designate(content, fs)
     _traced(content, "tidy", _tidy, content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     content["slot_moved"] = _traced(content, "slot_by_head", _slot_by_head, content, envelope)
@@ -1623,6 +1629,147 @@ def _cited_counts(content: dict[str, Any], envelope: dict[str, Any]) -> None:
                 x["text"] = t[:1].upper() + t[1:] if t[:1].islower() and str(x.get("text"))[:1].isupper() else t
 
 
+_ZERO_ROW = re.compile(r"[:|]\s*0\s*$")
+
+
+def _zero_rows(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """A form row answered 0 is nothing to do and nothing to exclude (010147:
+    "6U-10U Server Quantity: 0" became "Provide 6U-10U servers are not
+    included" in the task list, and four zero cabinet rows a "Leave ...
+    out of scope" task). A line most of whose cites are such rows goes."""
+    zero = {str(a.get("id")) for a in envelope.get("atoms") or [] if _ZERO_ROW.search(str(a.get("text") or ""))}
+    if not zero:
+        return
+    for k in LISTS:
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")
+                      and sum(c in zero for c in x["cites"]) > 0.5 * len(x["cites"]))]
+
+
+_WE_WILL = re.compile(r"(?i)\b(?:we|i)\s*(?:will|'ll|are going to|am going to)\s+(?:also\s+)?(?:be\s+)?([a-z]+)\b([^.;]*)")
+
+
+def _first_person_duties(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """What the customer says it will do itself is its duty, never a Provider
+    task (010147: "We will also unrack and ready any cables and equipment",
+    the customer's questionnaire answer, became the Provider task "Unrack and
+    ready any cables and equipment"). Only a line no PurTera person wrote."""
+    by = {str(a.get("id")): a for a in envelope.get("atoms") or []}
+    # A reseller's "we" may be the delivery team it sells (010171: SHI's "We
+    # can mount the NUC"): only the end customer's own words count.
+    acct = re.sub(r"[^a-z0-9]", "", str((envelope.get("crm") or {}).get("account_name") or "").lower())
+    cr = content.setdefault("customer_responsibilities", [])
+    keep = []
+    for x in content.get("scope") or []:
+        if not (isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading" and not x.get("standard")):
+            keep.append(x)
+            continue
+        t = str(x.get("text") or "")
+        verb = _stem((re.findall(r"[a-z]+", t.lower()) or [""])[0])
+        theirs = False
+        for c in x["cites"]:
+            a = by.get(c) or {}
+            sender = str((a.get("locator") or {}).get("sender") or "").lower()
+            if "purtera" in sender or (acct and acct in re.sub(r"[^a-z0-9@]", "", sender).split("@")[-1]):
+                continue
+            for mm in _WE_WILL.finditer(str(a.get("text") or "")):
+                if _stem(mm.group(1).lower()) == verb and _said(mm.group(1) + mm.group(2), [t], 0.6):
+                    theirs = True
+        if not theirs:
+            keep.append(x)
+            continue
+        line = {**x, "text": re.sub(r"(?i)\s+as part of [^.]*", "", t).rstrip(" .") + "."}
+        if not _said(line["text"], cr, 0.6):
+            cr.append(line)
+    content["scope"] = keep
+
+
+_ORDER_ASM = re.compile(r"(?i)^\s*(direct|maintain|provide|ensure|confirm|keep|coordinate|designate|identify|supply|grant|give|arrange|notify|schedule)\b")
+_NO_NEED_ASM = re.compile(r"(?i)^\s*(?:avoid|require no|need no|use no)\s+(?:any\s+)?(.+?)(?:\s+for (?:this|the) (?:job|work|project))?\.?$")
+
+
+def _assumption_voice(content: dict[str, Any]) -> None:
+    """An assumption is a condition, never an order with no party (010147:
+    "Direct what is packed ..." and "Maintain clear access ..." are the
+    customer's duties; "Avoid any lift rental or specialty rigging for this
+    job" is "No lift rental or specialty rigging is required", and goes when
+    an exclusion already says it; 010376: "Require no lift rental ...")."""
+    cr = content.setdefault("customer_responsibilities", [])
+    oos = content.get("out_of_scope") or []
+    keep = []
+    for x in content.get("assumptions") or []:
+        if not isinstance(x, dict) or x.get("standard"):
+            keep.append(x)
+            continue
+        t = str(x.get("text") or "").strip()
+        nm = _NO_NEED_ASM.match(t)
+        if nm:
+            t2 = "No " + nm.group(1).rstrip(" .") + " is required."
+            if _said(t2, oos, 0.6) or _said(t2, keep, 0.6):
+                continue
+            keep.append({**x, "text": t2})
+        elif _ORDER_ASM.match(t):
+            if not _said(t, cr, 0.6):
+                cr.append(x)
+        else:
+            keep.append(x)
+    content["assumptions"] = keep
+
+
+_PACKING_SUPPLY = re.compile(r"(?i)packing|\btape\b|bubble|pallets?\b|shrink|gaylord|foam|crates?|empty boxes|moving boxes|cardboard|labels?\b|carts?\b|dolly|dollies")
+
+
+def _moved_gear(content: dict[str, Any], family: str) -> None:
+    """On a move or pack-up the customer's gear is what is moved, not
+    material the customer supplies for the work (010147: the 25-30 curved
+    monitors and three document boxes under Customer Provided Materials)."""
+    if family not in ("relocation_move", "decommission_packing"):
+        return
+    # Counted gear only: "The networking rack" for the new site (010038) is
+    # material the customer supplies; "Twenty-five (25) ... monitors" is moved.
+    gear = [x for x in content.get("customer_materials") or [] if isinstance(x, dict) and x.get("cites")
+            and not _PACKING_SUPPLY.search(str(x.get("text"))) and re.search(r"\d", str(x.get("text")))]
+    if not gear:
+        return
+    content["customer_materials"] = [x for x in content.get("customer_materials") or [] if not any(x is g for g in gear)]
+    eq = content.setdefault("equipment_in_scope", [])
+    for g in gear:
+        if not _said(str(g.get("text")), eq, 0.6):
+            eq.append(g)
+
+
+def _destination_owner(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """When the customer manages the destination, Provider does not unload,
+    stage or set up there (010147: "We will manage things at the
+    destination" beside "Unload and stage the equipment at the destination")."""
+    if not any(re.search(r"(?i)\b(we|customer|they|our team)\b.{0,20}\b(manage|handle|take care of|receive)\b.{0,30}\bdestination", f["text"]) for f in fs):
+        return
+    content["scope"] = [x for x in content.get("scope") or [] if not (
+        isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+        and re.search(r"(?i)\bdestination|delivery (site|location)", str(x.get("text")))
+        and re.match(r"(?i)\s*(unload|stage|unpack|unbox|install|set up|place|position|rack|reinstall|connect)\b", str(x.get("text"))))]
+
+
+def _onsite_designate(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A contact whose onsite designate is still to be named is not the person
+    the technician meets (010147: "Bill Tripp - Onsite designate to be named."
+    printed "Check in with Bill Tripp"; the office has no employees left)."""
+    for f in fs:
+        mm = re.search(r"(?i)\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s*[-–:,]\s*(?:an?\s+)?onsite designate (?:to be named|tbd|to be determined)", f["text"])
+        if not mm:
+            continue
+        who = mm.group(1)
+        for k in ("scope", "arrival_protocol"):
+            for x in content.get(k) or []:
+                if isinstance(x, dict) and re.search(r"(?i)\b(check in|meet)\w*\s+with\s+" + re.escape(who), str(x.get("text"))):
+                    x["text"] = re.sub(r"(?i)\b(check in|meet)(\w*)\s+with\s+" + re.escape(who),
+                                       lambda m_: f"{m_.group(1)}{m_.group(2)} with the onsite designate named by {who}", str(x["text"]))
+        cr = content.setdefault("customer_responsibilities", [])
+        line = "Provide an onsite designate at the origin location and name them before the visit."
+        if not any(re.search(r"(?i)onsite designate", str(c.get("text") if isinstance(c, dict) else c)) for c in cr):
+            cr.append({"text": line, "cites": [f["id"]], "kind": "fact"})
+        break
+
+
 def _rejected_source(content: dict[str, Any], envelope: dict[str, Any]) -> None:
     """Lines the writer built on what is not a fact of the job. A line citing
     a rejected atom (see _rejected_atoms) whose words come from that atom
@@ -1928,7 +2075,9 @@ def _must_include(content: dict[str, Any], fs: list[dict[str, Any]], model: str 
         # insurance)" was kept by the brief and silently left out).
         toks |= {m.group(1).lower() for m in re.finditer(r"\b([A-Z]{3,5})s?\b", f["text"]) if m.group(1) not in ("ASAP", "FYI", "TBD", "PST", "EST", "CST")}
         toks = {t for t in toks if len(t) >= 2 and t not in ("the", "we", "you", "and")}
-        if toks and not any(t in text for t in toks):
+        # A number counts as written only as a number of its own: "20" cables
+        # is not in "2026-08-25" (010147 lost its 20 cables that way).
+        if toks and not any((re.search(r"(?<![\w-])" + re.escape(t) + r"(?![\w-])", text) if re.fullmatch(r"\d+", t) else t in text) for t in toks):
             missing.append(f)
     if not missing:
         return 0

@@ -264,3 +264,87 @@ def test_a_cited_step_is_covered_only_by_a_standard_with_its_verb():
                          {"text": "Closeout", "cites": [], "kind": "heading"}]}
     m._apply_standards(content, "network_switch_refresh", ["Replace the old switches."])
     assert any(x["text"].startswith("Label all cables") for x in content["scope"])
+
+
+def test_zero_quantity_rows_make_no_line():
+    env = {"atoms": [{"id": "z1", "text": "6U-10U Server Quantity: 0"}, {"id": "z2", "text": "# of Complete SAN Frame/Cabinets: 0"},
+                     {"id": "z3", "text": "# of Complete Rack Tape Libraries: 0"}, {"id": "h", "text": "If moving in Complete Cabinets"},
+                     {"id": "s", "text": "1U-4U Server Quantity: 3"}]}
+    content = {"scope": [{"text": "Leave complete cabinets out of scope.", "cites": ["z2", "z3", "h"], "kind": "fact"},
+                         {"text": "Pack the three (3) 1U-4U servers.", "cites": ["s"], "kind": "fact"}],
+               "out_of_scope": [{"text": "6U-10U servers are not included.", "cites": ["z1"], "kind": "fact"}]}
+    m._traced(content, "zero_rows", m._zero_rows, content, env)
+    assert [x["text"] for x in content["scope"]] == ["Pack the three (3) 1U-4U servers."]
+    assert content["out_of_scope"] == []
+
+
+def test_what_the_customer_says_it_will_do_is_its_duty():
+    """010147: the questionnaire's "We will also unrack and ready any cables
+    and equipment" became a Provider task."""
+    env = {"crm": {"account_name": "CDW"},
+           "atoms": [{"id": "q", "text": "No: There will not be a need for a cable map. We will manage things at the destination. "
+                                         "We will also unrack and ready any cables and equipment.", "locator": {}},
+                     {"id": "r", "text": "We will mount the NUC under the table.", "locator": {"sender": "rep@cdw.com"}}]}
+    content = {"scope": [{"text": "Unrack and ready any cables and equipment as part of the pack-and-deliver work.", "cites": ["q"], "kind": "fact"},
+                         {"text": "Mount the NUC under the table.", "cites": ["r"], "kind": "fact"}],
+               "customer_responsibilities": []}
+    m._traced(content, "first_person", m._first_person_duties, content, env)
+    assert [x["text"] for x in content["scope"]] == ["Mount the NUC under the table."]  # the reseller's "we" is the delivery team
+    assert content["customer_responsibilities"][0]["text"] == "Unrack and ready any cables and equipment."
+
+
+def test_assumptions_are_conditions_not_orders():
+    content = {"assumptions": [{"text": "Direct what is packed, staged, and delivered during the move.", "cites": [], "kind": "method"},
+                               {"text": "Avoid any lift rental or specialty rigging for this job.", "cites": [], "kind": "method"},
+                               {"text": "Require no lift rental, hoisting, or other specialized moving equipment for this job.", "cites": [], "kind": "method"},
+                               {"text": "Existing walls are suitable.", "cites": [], "kind": "method"}],
+               "out_of_scope": [{"text": "Lift rental or specialty rigging.", "cites": [], "kind": "method"}],
+               "customer_responsibilities": []}
+    m._assumption_voice(content)
+    assert [x["text"] for x in content["assumptions"]] == [
+        "No lift rental, hoisting, or other specialized moving equipment is required.", "Existing walls are suitable."]
+    assert content["customer_responsibilities"][0]["text"].startswith("Direct what is packed")
+
+
+def test_moved_gear_is_not_customer_material_and_the_destination_stays_the_customers():
+    content = {"customer_materials": [{"text": "Twenty-five (25) to thirty (30) curved monitors.", "cites": ["m"], "kind": "fact"},
+                                      {"text": "Packing tape and pallets.", "cites": ["p"], "kind": "fact"},
+                                      {"text": "The networking rack.", "cites": ["r"], "kind": "fact"}],
+               "scope": [{"text": "Unload and stage the equipment at the destination.", "cites": [], "kind": "method"},
+                         {"text": "Deliver the packed equipment to the destination dock.", "cites": ["d"], "kind": "fact"}]}
+    m._moved_gear(content, "relocation_move")
+    assert [x["text"] for x in content["equipment_in_scope"]] == ["Twenty-five (25) to thirty (30) curved monitors."]
+    assert len(content["customer_materials"]) == 2
+    m._destination_owner(content, [_fact("q", "We will manage things at the destination.")])
+    assert [x["text"] for x in content["scope"]] == ["Deliver the packed equipment to the destination dock."]
+
+
+def test_a_contact_whose_designate_is_unnamed_is_not_the_check_in():
+    content = {"scope": [{"text": "Check in with Bill Tripp at 1875 Lawrence Street.", "cites": ["o"], "kind": "fact"}],
+               "customer_responsibilities": []}
+    m._onsite_designate(content, [_fact("o", "Origin Address: Point of Contact | 1875 Lawrence Street, Suite 750: Bill Tripp - Onsite designate to be named.")])
+    assert content["scope"][0]["text"] == "Check in with the onsite designate named by Bill Tripp at 1875 Lawrence Street."
+    assert "onsite designate" in content["customer_responsibilities"][0]["text"]
+
+
+def test_a_number_inside_a_date_is_not_the_count_written():
+    seen = {}
+    import json as _j
+    def fake(prompt, *a, **k):
+        seen["p"] = prompt
+        return _j.dumps({"add": []})
+    m._complete, old = fake, m._complete
+    try:
+        content = {k: [] for k in m.LISTS}
+        content["schedule"] = [{"text": "Requested Start Date: 2026-08-25", "cites": ["d"], "kind": "fact"}]
+        m._must_include(content, [_fact("c", "Estimated # of Cables: 20", section="scope_of_work")], None)
+    finally:
+        m._complete = old
+    assert "Estimated # of Cables: 20" in seen.get("p", "")
+
+
+def test_relocation_tools_are_move_tools_unless_the_move_installs():
+    fixed = m.purtera_standards("relocation_move")
+    t = fixed["tools"][0]
+    assert m._standard_applies(t, ["We will also unrack and ready any cables and equipment."])[0]
+    assert not m._standard_applies(t, ["Mount the networking hardware from the OLD site to the rack in the NEW site"])[0]

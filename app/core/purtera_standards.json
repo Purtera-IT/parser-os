@@ -441,14 +441,17 @@
     ]
   },
   "relocation_move": {
-    "_source": "owner standards loop 2026-10-18: generic relocation handling from the 010147 v1 TEMPLATE list (transport mode and audit/ITAD items are deal facts, left out)",
+    "_source": "owner standards loop 2026-10-18: generic relocation handling from the 010147 v1 TEMPLATE list (transport mode and audit/ITAD items are deal facts, left out); 010147 batch-3 TEMPLATE items (dedicated PM, Provider packing materials, pickup/transit/dock delivery, tag verified before seal removal, desk clear-off duty, one move tools line)",
     "method_steps": [
+      "Assign a dedicated Provider Project Manager to oversee the engagement from kickoff through completion, including scheduling, logistics coordination, Customer communication, documentation and quality assurance.",
       "Safely pack all equipment designated for relocation, labeling each package.",
-      "Coordinate transportation of the packed equipment from the origin location to the designated destination.",
+      "Coordinate transportation of the packed equipment, including pickup at the origin location, secure transit and dock delivery at the destination location.",
       "Document proof of delivery by photographing the sealed container and its security tag.",
+      "Verify the security tag number against the applicable shipping records before the seal is removed.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
+      "{when:\\bdesks?\\b|desktop|office (it )?equipment} Remove desktop and office equipment from desks.",
       "Power down all equipment before the technicians arrive.",
       "Unrack all applicable devices before packing begins.",
       "Centralize all equipment in an accessible staging area.",
@@ -458,7 +461,7 @@
       "No equipment requires a ladder or lift to remove."
     ],
     "exclusions": [
-      "Furniture, shelving or white boards.",
+      "Furniture, shelving or whiteboards.",
       "Powering down, disconnecting or unracking equipment at the origin location.",
       "Installation, configuration, cabling or activation of equipment at the destination unless added by written change order.",
       "{when:\\bltl\\b|shared truck|less than truckload} Dedicated truck."
@@ -467,6 +470,12 @@
       "Equipment packed and labeled for transport.",
       "Proof-of-delivery photographs of the sealed container and security tag.",
       "Completion confirmed with the onsite contact."
+    ],
+    "materials": [
+      "{unless:(customer|we|client)\\b.{0,25}\\b(will )?(provide|supply|furnish)\\b.{0,25}\\bpacking|packing (materials|supplies).{0,30}\\b(provided|supplied) by (the )?(customer|client)} Packing materials required to safely prepare the equipment for transportation, which may include Gaylord boxes, pallets, bubble wrap, foam and protective packaging."
+    ],
+    "tools": [
+      "{unless:^\\W*(install|mount|hang|rack)\\b|\\b(at|in|to) the new (site|location|office|building)} Basic hand tools for disconnecting, packing and moving equipment."
     ]
   },
   "smart_hands_general": {
