@@ -2404,14 +2404,19 @@ def _model_numbers(content: dict[str, Any], envelope: dict[str, Any]) -> None:
 def _dedupe_items(content: dict[str, Any]) -> None:
     """One line per thing in each list: the writer and the coverage pass both
     wrote 010082's drop-off arrangement."""
+    # Lines that name different rooms or sites are two lines, however alike
+    # their first words (010012 pass U: "Install one (1) Poly X72 bar ... in
+    # Conference Room 2102" and "... in Shared Office 2105" became one).
+    names = lambda t: frozenset(re.findall(r"\b(?:[A-Z][A-Za-z]+|\d+)\b", t)[1:])
     for k in LISTS:
-        seen, keep = set(), []
+        seen, shorts, keep = set(), {}, []
         for x in content.get(k) or []:
             key = re.sub(r"\W+", " ", x["text"].lower()).strip()
             short = " ".join(key.split()[:8])
-            if key in seen or short in seen:
+            if key in seen or names(x["text"]) in shorts.get(short, ()):
                 continue
-            seen.update({key, short})
+            seen.add(key)
+            shorts.setdefault(short, set()).add(names(x["text"]))
             keep.append(x)
         content[k] = keep
 
@@ -4516,7 +4521,18 @@ def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | N
     ov = content.setdefault("overview", [])
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
     room = min(4, len(ov) + 2)
+    # One of several per-room or per-site lines is not the job's count: the
+    # summary would name one room's share (010012 pass U: "Provider will
+    # install one (1) Poly X72 bar ... in Conference Room 2102" beside the
+    # Shared Office's own line).
+    first8 = lambda y: " ".join(re.sub(r"\W+", " ", tx(y).lower()).split()[:8])
+    tally: dict[str, int] = {}
+    for y in content.get("scope") or []:
+        if isinstance(y, dict) and y.get("kind") != "heading":
+            tally[first8(y)] = tally.get(first8(y), 0) + 1
     for x in content.get("scope") or []:
+        if isinstance(x, dict) and tally.get(first8(x), 0) > 1:
+            continue
         if len(ov) >= room:
             break
         hauls = any(re.search(r"(?i)\bhaul|trash|debris removal|dispos", f["text"]) for f in fs or [])

@@ -238,3 +238,18 @@ def test_only_the_named_onsite_contact_is_called_onsite():
     m._contact_roles(c, [_fact("h", "On Site Contact Name | Henry Hankins (SDX GM)")])
     assert [x["text"] for x in c["customer_responsibilities"]] == ["Provide AJ Deuel as the main technical contact.",
                                                                   "Provide Henry Hankins as the onsite contact."]
+
+
+# --- 010012 B: lines naming different rooms are never merged ------------------
+
+def test_lines_naming_different_rooms_are_two_lines():
+    a = "Install one (1) Poly X72 bar with one (1) TC10 controller in Conference Room 2102."
+    b = "Install one (1) Poly X72 bar with one (1) TC10 controller in Shared Office 2105."
+    c = {k: [] for k in m.LISTS}
+    c["scope"] = [{"text": a, "cites": ["x"], "kind": "fact"}, {"text": b, "cites": ["x"], "kind": "fact"},
+                  {"text": a, "cites": ["x"], "kind": "fact"}]
+    m._dedupe_items(c)
+    assert [x["text"] for x in c["scope"]] == [a, b]
+    c["overview"] = [{"text": "Provider will install two (2) Poly X72 bars with TC10s.", "cites": ["x"], "kind": "fact"}]
+    m._overview_covers_scope(c, [])
+    assert len(c["overview"]) == 1  # one room's share is not the job's count
