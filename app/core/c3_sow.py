@@ -6535,6 +6535,9 @@ def _recite_places(c: dict[str, Any], fs: list[dict[str, Any]], atoms: list[dict
                     cited += " " + text[hit].lower()
 
 
+_PROMISE = re.compile(r"(?i)24\s*/\s*7|on-?call|\bsla\b|guarantee|response time|within \d+ (hours?|minutes?)")
+
+
 def _weak_commitments(content: dict[str, Any], weak: set[str], atoms: list[dict[str, Any]]) -> None:
     """A schedule line, a promise or a summary sentence resting only on lines
     the brief merely mentioned is not a commitment (000132's "24/7 on-call",
@@ -6543,12 +6546,20 @@ def _weak_commitments(content: dict[str, Any], weak: set[str], atoms: list[dict[
     scope ("We would like to have the Logitech Sight installed in this
     specific room.") is a task, not lost (010171 pass W: the Sight's only line
     was a summary sentence, removed with no record)."""
+    promise_re = _PROMISE
+    # A calendar window a milestone or deadline line states is the deal's schedule,
+    # mentioned or not (010209 pass Z: "Project installs will start on 10/13 and
+    # continue through 11/19.", a milestone_phase line, was dropped). The 24/7
+    # on-call line has no date and still goes.
+    typ0 = {str(a.get("id")): str(a.get("atom_type") or "") for a in atoms}
     content["schedule"] = [x for x in content.get("schedule") or []
-                           if not x.get("cites") or not all(c in weak for c in x["cites"])]
+                           if not x.get("cites") or not all(c in weak for c in x["cites"])
+                           or (_dates_in(str(x.get("text"))) and not promise_re.search(str(x.get("text")))
+                               and any(typ0.get(c) in ("milestone_phase", "deadline") for c in x["cites"]))]
     # The summary commits only what the brief commits: a line the brief merely
     # mentioned (000132's "24/7 on-call", whose caveat sat beside it) is not a
     # promise in the overview.
-    promise = re.compile(r"(?i)24\s*/\s*7|on-?call|\bsla\b|guarantee|response time|within \d+ (hours?|minutes?)")
+    promise = promise_re
     for k in ("scope", "schedule", "assumptions"):
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
                       and all(c in weak for c in x["cites"]) and promise.search(str(x.get("text"))))]
@@ -9285,8 +9296,8 @@ def _fix_dates(content: dict[str, Any], fs: list[dict[str, Any]], as_of: str) ->
     yr0 = int(as_of[:4]) if as_of[:4].isdigit() else None
     for k in ("schedule", "overview"):
         for x in content.get(k) or []:
-            if not (isinstance(x, dict) and x.get("cites")):
-                continue
+            if not (isinstance(x, dict) and x.get("cites")) or x.get("recited"):
+                continue  # a cite check() attached by number never re-dates the line
             cited = " ".join(text_of.get(c, "") for c in x["cites"])
             stated = _dates_in(cited)
             if not stated:
@@ -10031,10 +10042,13 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                 # fifty-nine (259) Cisco Desk Phone 9851 units." beside the
                 # quote line "Cisco Desk Phone 9851 ... | QTY: 259").
                 dt = _digits(str(x["text"]))
-                if re.search(r"(?<![\w-])\d+(?![\w-])", dt):  # a count, not a model number
+                # Never a dated or schedule line (010209 pass Z: "Requested Completion
+                # Date: 11/19/2026" took an email header holding 11, 19 and 2026 as its
+                # cite and was re-dated to that header's quote due date).
+                if re.search(r"(?<![\w-])\d+(?![\w-])", dt) and k != "schedule" and not _dates_in(str(x["text"])):
                     src = next((i for i, ln in lines.items() if _stated_by(dt, _digits(ln))), None)
                     if src:
-                        x["cites"], x["kind"] = [src], "fact"
+                        x["cites"], x["kind"], x["recited"] = [src], "fact", True
             if x["kind"] == "fact" and not x["cites"]:
                 # A deal claim with nothing behind it reads as method only if
                 # it carries nothing deal-specific.

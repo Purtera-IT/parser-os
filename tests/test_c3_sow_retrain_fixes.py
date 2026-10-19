@@ -33,3 +33,20 @@ def test_merged_back_never_restores_a_polarity_rejection():
                "_merged": [{"list": "out_of_scope", "target": "Gone target line.", "line": line}]}
     m._merged_back(content, {"out_of_scope": []}, "tidy")
     assert content["out_of_scope"] == []
+
+
+def test_a_dated_milestone_window_survives_weak_commitments():
+    # 010209 pass Z: the install window was dropped as merely mentioned.
+    keep = {"text": "Project installs will start on 10/13 and continue through 11/19.", "cites": ["m1"]}
+    oncall = {"text": "Work Window: 24/7 on-call availability.", "cites": ["w1"]}
+    c = {"schedule": [keep, oncall], "overview": []}
+    m._weak_commitments(c, {"m1", "w1"}, [{"id": "m1", "atom_type": "milestone_phase"},
+                                         {"id": "w1", "atom_type": "milestone_phase"}])
+    assert c["schedule"] == [keep]
+
+
+def test_a_dated_line_is_never_recited_by_number():
+    # 010209 pass Z: "Requested Completion Date: 11/19/2026" took an email header as its cite.
+    c = {"schedule": [{"text": "Requested Completion Date: 11/19/2026", "cites": [], "kind": "fact"}]}
+    m.check(c, {"hdr": "Sent: 11 Aug 2026 19:40 | Due 8/17/2026"})
+    assert all(not x.get("cites") for x in c.get("schedule") or [])
