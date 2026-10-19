@@ -3913,12 +3913,19 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and re.search(r"(?i)label (all )?(the )?(new )?equipment with|naming convention", str(x.get("text"))))]
         sc = content.get("scope") or []
     if pre_ph:
-        heads_i = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
         rest = [x for x in sc if not any(x is y for y in pre_ph)]
         at = 1 if rest and isinstance(rest[0], dict) and rest[0].get("kind") == "heading" else 0
-        if len(heads_i) > 1:
-            first_work = next((i for i, x in enumerate(rest) if isinstance(x, dict) and x.get("kind") == "heading" and i > 0), at)
-            at = first_work + 1
+        # Under the first work heading: past a leading prep group, never into
+        # a closing one (010209 pass V: with "Switch replacement" then
+        # "Closeout", the prework photos went under Closeout).
+        if at and re.search(r"(?i)arriv|prep|getting started|common|general|site access|before", str(rest[0].get("text"))):
+            nxt = next((i for i, x in enumerate(rest) if i > 0 and isinstance(x, dict) and x.get("kind") == "heading"), None)
+            if nxt is not None and not _CLOSING_HEAD.search(str(rest[nxt].get("text"))):
+                at = nxt + 1
+        # After the arrival and review steps that open the group.
+        while at < len(rest) and isinstance(rest[at], dict) and rest[at].get("kind") != "heading" \
+                and re.match(r"(?i)\s*(arrive|check in|review|verify available|validate receipt|meet)\b", str(rest[at].get("text"))):
+            at += 1
         content["scope"] = rest[:at] + pre_ph + rest[at:]
     # A task the SOW also excludes goes (010326: "Provide help with racking/
     # stacking/wall mounting" beside rack-and-stack in Out of Scope).
@@ -5132,6 +5139,142 @@ def _followup_not_promised(c: dict[str, Any], atoms: list[dict[str, Any]]) -> No
     if withheld and not any(_FOLLOWUP.search(str(x.get("text") if isinstance(x, dict) else x)) for x in oos):
         oos.append({"text": "Follow-up visits unless authorized in writing or by Change Order.",
                     "cites": [str(hedges[0].get("id"))], "kind": "fact"})
+
+
+#: A closing group's heading.
+_CLOSING_HEAD = re.compile(r"(?i)clos|clean|wrap|complet")
+
+
+def _replacement_order(body: list[Any]) -> list[Any]:
+    """Nothing new is installed, dressed or validated before the old gear
+    comes out (010209 pass V: rack hardware, power cords, Velcro and remote
+    validation were listed before "Remove the existing switches"). In a
+    group with a step that removes gear, an install step listed before it
+    moves to just after it, and a dressing or validation step to after the
+    group's last install step; every other line keeps its place. A line
+    that leads with removal and also installs ("Remove ... and install
+    ...") is the removal. Only the existing gear's removal counts (not a
+    cable access plug), and never one the deal puts "after installation"
+    (010319's old infrastructure comes out last)."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    lines = [isinstance(x, dict) and x.get("kind") != "heading" for x in body]
+    removal = re.compile(r"(?i)^\s*(also\s+)?(remove|disconnect|unrack|uninstall|decommission|dismantle)\b.{0,30}\b(existing|old|legacy|current)\b"
+                         r"(?!.*\bafter (the )?(install|installation|cutover|migration)\b)")
+    install = re.compile(r"(?i)^\s*(also\s+)?(install|mount|rack|migrate|connect|power|reinstall|seat)\b")
+    finish = re.compile(r"(?i)^\s*(also\s+)?(manage|dress|bundle|tidy|support (the )?(available )?[\w ]{0,20}remote|validate|test)\b")
+    loose = re.compile(r"(?i)^\s*(also\s+)?(disconnect and remove|remove|disconnect|unrack|uninstall|decommission|dismantle)\b"
+                       r"(?!.{0,40}\b(debris|packaging|trash|waste|cardboard|boxes|plug|cover|cap|film|tabs?)\b)")
+    # The group's first removal must be the existing gear's (010387: "remove
+    # the two bad TVs" already leads; a later standard removal is no anchor).
+    r = next((i for i, x in enumerate(body) if lines[i] and loose.search(tx(x))), None)
+    if r is None or not removal.search(tx(body[r])):
+        return body
+    early_i = [x for i, x in enumerate(body[:r]) if lines[i] and install.search(tx(x))]
+    early_f = [x for i, x in enumerate(body[:r]) if lines[i] and finish.search(tx(x))]
+    if not early_i and not early_f:
+        return body
+    rest = [x for x in body if not any(x is y for y in early_i + early_f)]
+    r = next(i for i, x in enumerate(rest) if x is body[r])
+    rest[r + 1:r + 1] = early_i
+    last = max((i for i, x in enumerate(rest) if i > r and isinstance(x, dict) and x.get("kind") != "heading" and install.search(tx(x))), default=r)
+    rest[last + 1:last + 1] = early_f
+    return rest
+
+
+def _schedule_not_estimates(c: dict[str, Any]) -> None:
+    """A customer's per-unit hour estimate is a pricing input, never a
+    schedule term (010209 pass V: "2 switches are estimated at 2.0 hours
+    per store" and three more, from the RFQ's "My estimated time", read as
+    duration commitments). An unlabeled schedule line giving estimated hours
+    per store, site or unit goes; a labeled line PurTera writes
+    ("Estimated Duration: ...") stays."""
+    est = re.compile(r"(?i)\bestimat\w*\b.{0,40}\bhours?\b.{0,20}\bper\b|\bhours?\b.{0,10}\bper (store|site|location|unit|device|switch|room)\b.{0,40}\bestimat")
+    c["schedule"] = [x for x in c.get("schedule") or []
+                     if not (isinstance(x, dict) and est.search(str(x.get("text")))
+                             and not re.match(r"^\s*[A-Z][\w /-]{2,30}:", str(x.get("text"))))]
+
+
+def _window_rollover(c: dict[str, Any]) -> None:
+    """A work window the deal itself extends says so (010209 pass V: "Work
+    Window: October 13, 2026 through November 19, 2026" beside "Any site not
+    complete by November 19, 2026 will be scheduled ... starting mid-January
+    2027"; the template's "All Services will be performed during the
+    Customer's work window" then ruled the rollover out)."""
+    sch = [x for x in c.get("schedule") or [] if isinstance(x, dict)]
+    win = next((x for x in sch if re.match(r"(?i)\s*work window:.*\bthrough\b", str(x.get("text")))), None)
+    if win is None:
+        return
+    end = re.search(r"(?i)\bthrough\s+(.+?)\s*$", str(win["text"])).group(1).rstrip(". ")
+    for x in sch:
+        t = str(x.get("text"))
+        m = re.search(r"(?i)not (be )?complete[d]? by\s+" + re.escape(end) + r".*?\b(?:starting|from|beginning|resuming|after)\s+"
+                      r"((?:early|mid|late)-?\s*[A-Z][a-z]+(?:\s+\d{4})?|[A-Z][a-z]+ \d{1,2},? \d{4}|[A-Z][a-z]+ \d{4})", t)
+        if x is not win and m and "not complete by then" not in str(win["text"]):
+            win["text"] = f"{str(win['text']).rstrip('. ')}; any site not complete by then is scheduled from {m.group(2)}"
+            win["cites"] = list(dict.fromkeys(list(win.get("cites") or []) + list(x.get("cites") or [])))
+            return
+
+
+def _qualified_over_universal(c: dict[str, Any]) -> None:
+    """One step said twice, once "where required" and once "at every store",
+    is the qualified step (010209 pass V: "Install rack mount hardware at
+    every store" beside "... where required", from the RFQ's "Depending on
+    switch, rack mount hardware must be installed"). The universal copy
+    goes."""
+    qual = re.compile(r"(?i)\b(where|as|if|when) (required|needed|applicable|necessary)\b")
+    univ = re.compile(r"(?i)\b(at|in|for|to) (every|each|all) (stores?|sites?|locations?|rooms?)\b")
+    for k in ("scope",):
+        lst = c.get(k) or []
+        qs = [x for x in lst if isinstance(x, dict) and x.get("kind") != "heading" and qual.search(str(x.get("text")))]
+        strip = lambda t: _toks(univ.sub(" ", qual.sub(" ", t)))
+        gone = []
+        for x in lst:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if not isinstance(x, dict) or x.get("kind") == "heading" or not univ.search(t) or qual.search(t):
+                continue
+            a = strip(t)
+            if any(a and len(a & strip(str(q.get("text")))) >= 0.8 * max(len(a), len(strip(str(q.get("text"))))) for q in qs):
+                gone.append(x)
+        c[k] = [x for x in lst if not any(x is g for g in gone)]
+
+
+def _field_sequence(c: dict[str, Any]) -> None:
+    """Steps in the order a technician does them, within each work group
+    (010209 pass V: "Take after photos of the completed switch replacement"
+    before the switches were removed, and "Confirm the switches ... are
+    onsite before starting" after the labeling and tracing it gates). A
+    photo of finished work goes to the end of its group; a check made
+    "before starting" goes ahead of the group's first hands-on step."""
+    sc = c.get("scope") or []
+    groups: list[list[Any]] = [[]]
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            groups.append([x])
+        else:
+            groups[-1].append(x)
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    after_ph = re.compile(r"(?i)^\s*(take|capture|provide)\b.{0,20}\b(after|completion|completed|post-?work|final)\b.{0,20}photo"
+                          r"|^\s*(take|capture)\b.{0,10}photos? of the (completed|finished|installed)")
+    gate = re.compile(r"(?i)^\s*(confirm|verify|check)\b.{0,120}\b(onsite|on site|available|delivered)\b.{0,30}\bbefore (starting|beginning|work)")
+    hands = re.compile(r"(?i)^\s*(label|trace|remove|disconnect|install|mount|use the|capture|migrate|unrack|dismantle|replace|take (pre-?work|before))\b")
+    out: list[Any] = []
+    for g in groups:
+        head = g[:1] if g and isinstance(g[0], dict) and g[0].get("kind") == "heading" else []
+        body = g[len(head):]
+        if head and _CLOSING_HEAD.search(tx(head[0])):
+            out += g
+            continue
+        late = [x for x in body if isinstance(x, dict) and after_ph.search(tx(x))]
+        body = [x for x in body if not any(x is y for y in late)]
+        body = _replacement_order(body)
+        first = next((i for i, x in enumerate(body) if hands.search(tx(x))), None)
+        if first is not None:
+            moved = [x for i, x in enumerate(body) if i > first and isinstance(x, dict) and gate.search(tx(x))]
+            if moved:
+                body = [x for x in body if not any(x is y for y in moved)]
+                body[first:first] = moved
+        out += head + body + late
+    c["scope"] = out
 
 
 def _sentence_integrity(c: dict[str, Any]) -> None:
@@ -7060,6 +7203,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     theirs = {str(a.get("id")) for a in outside} | {str(a.get("id")) for a in envelope.get("atoms") or []
                                                    if not sender(a) and norm(a.get("text")) in outside_text}
     _traced(c, "schedule_voice", _schedule_voice, c, str((envelope.get("run_scope") or {}).get("as_of") or ""), theirs)
+    _traced(c, "schedule_not_estimates", _schedule_not_estimates, c)
+    _traced(c, "window_rollover", _window_rollover, c)
+    _traced(c, "qualified_over_universal", _qualified_over_universal, c)
+    _traced(c, "field_sequence", _field_sequence, c)
     _traced(c, "no_install_wording", _no_install_wording, c, envelope.get("atoms") or [])
     _traced(c, "followup_not_promised", _followup_not_promised, c, envelope.get("atoms") or [])
     _traced(c, "sentence_integrity", _sentence_integrity, c)

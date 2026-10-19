@@ -228,3 +228,80 @@ def test_install_wording_stays_on_an_install_job():
     c["customer_responsibilities"] = [{"text": "Ensure access to the installation location.", "cites": [], "kind": "method"}]
     m._no_install_wording(c, [{"id": "a", "atom_type": "scope_item", "text": "Need help with 2 displays in room 4"}])
     assert c["customer_responsibilities"][0]["text"] == "Ensure access to the installation location."
+
+
+# --- 010209 pass V: schedule and step hygiene --------------------------------
+
+def test_customer_hour_estimates_are_not_schedule_lines():
+    c = _content()
+    c["schedule"] = [{"text": "2 switches are estimated at 2.0 hours per store.", "cites": ["a"], "kind": "fact"},
+                     {"text": "Estimated Duration: one (1) onsite workday of eight (8) hours per technician", "cites": [], "kind": "method"},
+                     {"text": "Work Hours: 7:00 AM to 10:00 AM local site time", "cites": ["b"], "kind": "fact"}]
+    m._schedule_not_estimates(c)
+    assert [x["text"][:14] for x in c["schedule"]] == ["Estimated Dura", "Work Hours: 7:"]
+
+
+def test_a_work_window_the_deal_extends_says_so():
+    c = _content()
+    c["schedule"] = [{"text": "Work Window: October 13, 2026 through November 19, 2026", "cites": ["w"], "kind": "fact"},
+                     {"text": "Scheduling Constraint: Any site not complete by November 19, 2026 will be scheduled once the Customer is "
+                              "out of holiday blackout starting mid-January 2027", "cites": ["r"], "kind": "fact"}]
+    m._window_rollover(c)
+    assert c["schedule"][0]["text"] == ("Work Window: October 13, 2026 through November 19, 2026; any site not complete by then "
+                                        "is scheduled from mid-January 2027")
+    assert c["schedule"][0]["cites"] == ["w", "r"]
+
+
+def test_the_universal_copy_of_a_qualified_step_goes():
+    c = _content()
+    c["scope"] = [{"text": "Install rack mount hardware where required, including stores without an existing rack.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Install rack mount hardware at every store, including stores without an existing rack.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Label every cable at every store.", "cites": ["b"], "kind": "fact"}]
+    m._qualified_over_universal(c)
+    assert [x["text"][:20] for x in c["scope"]] == ["Install rack mount h", "Label every cable at"]
+    assert "where required" in c["scope"][0]["text"]
+
+
+def test_nothing_new_goes_in_before_the_old_gear_comes_out():
+    c = _content()
+    t = lambda s_, std=False: {"text": s_, "cites": [] if std else ["x"], "kind": "fact", **({"standard": True} if std else {})}
+    c["scope"] = [{"text": "Switch replacement", "cites": [], "kind": "heading"},
+                  t("Arrive onsite and check in.", True),
+                  t("Label every cable before removing the existing switches."),
+                  t("Install the new power cords with the replacement switches."),
+                  t("Manage all cables with Velcro and no zip ties."),
+                  t("Take after photos of the completed switch replacement and cabling."),
+                  t("Confirm the switches and patch cables are onsite before starting.", True),
+                  t("Remove the existing switches and install the replacement switches."),
+                  t("Install the new switches in the existing rack.", True),
+                  t("Connect power to each new switch.", True),
+                  {"text": "Closeout", "cites": [], "kind": "heading"},
+                  t("Take prework photographs of the existing switch locations.")]
+    sc = c["scope"]
+    # The before photos leave Closeout for the first work group, after arrival.
+    pre = sc.pop()
+    m._field_sequence(c)
+    got = [x["text"][:22] for x in c["scope"]]
+    assert got == ["Switch replacement", "Arrive onsite and chec", "Confirm the switches a", "Label every cable befo",
+                   "Remove the existing sw", "Install the new power ", "Install the new switch", "Connect power to each ",
+                   "Manage all cables with", "Take after photos of t", "Closeout"]
+    assert pre["text"].startswith("Take prework")
+
+
+def test_a_removal_the_deal_puts_after_installation_is_no_anchor():
+    body = [{"text": "Install the new rack.", "cites": ["a"], "kind": "fact"},
+            {"text": "Remove existing infrastructure, including APs, after installation.", "cites": ["b"], "kind": "fact"}]
+    assert m._replacement_order(list(body)) == body
+
+
+def test_prework_photos_never_go_under_closeout():
+    c = _content()
+    c["scope"] = [{"text": "Switch replacement", "cites": [], "kind": "heading"},
+                  {"text": "Arrive onsite and check in.", "cites": [], "kind": "method", "standard": True},
+                  {"text": "Label every cable before removing the existing switches.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Take prework photographs of the existing switch locations and connected cabling.", "cites": ["p"], "kind": "fact"},
+                  {"text": "Closeout", "cites": [], "kind": "heading"},
+                  {"text": "Confirm completion with the onsite contact.", "cites": [], "kind": "method"}]
+    m._grounding(c, [_fact("a", "Label every cable"), _fact("p", "Take before pictures")])
+    got = [x["text"][:20] for x in c["scope"]]
+    assert got.index("Take prework photogr") == 2 and got.index("Closeout") == 4, got
