@@ -106,3 +106,125 @@ def test_a_project_job_gets_no_summary_service_task():
     c["overview"] = [{"text": "Provider will provide end-user support including O365/M365 clients.", "cites": [], "kind": "method"}]
     m._summary_services_tasked(c, [{"id": "e1", "atom_type": "scope_item", "text": "End-user support including O365/M365 clients"}])
     assert not c["scope"]
+
+
+# --- 010419 pass V: the job family is pinned per deal ------------------------
+
+import json as _json
+import os as _os
+
+import pytest as _pytest
+
+from tests.test_c3_sow_batch4_rules import _SAVED
+
+#: Each deal's job family from pass U (wave_U logs), except 010376, which
+#: 0cfb740 deliberately moved from decommission_packing to smart_hands_general
+#: (a replacement job is not dismantle-and-pack; pass S also had it there).
+PINNED_FAMILY = {
+    "000123": "pos_install_refresh", "000132": "smart_hands_general", "010012": "av_conference_room",
+    "010043": "cameras_security", "010082": "low_voltage_cabling", "010083": "network_switch_refresh",
+    "010085": "network_switch_refresh", "010115": "decommission_packing", "010116": "av_conference_room",
+    "010120": "av_conference_room", "010147": "relocation_move", "010171": "av_conference_room",
+    "010198": "pos_install_refresh", "010209": "network_switch_refresh", "010217": "av_conference_room",
+    "010264": "time_clock_kiosk", "010279": "pos_install_refresh", "010326": "smart_hands_general",
+    "010373": "smart_hands_general", "010376": "smart_hands_general", "010419": "smart_hands_general",
+}
+
+
+def _saved_env(deal):
+    path = f"{_SAVED}/final_{deal}_env.json"
+    if not _os.path.exists(path):
+        _pytest.skip("saved envelope not on this machine")
+    env = _json.load(open(path))
+    if not env.get("c3_sow"):
+        _pytest.skip("saved envelope has no c3_sow")
+    return env
+
+
+@_pytest.mark.parametrize("deal", sorted(PINNED_FAMILY))
+def test_the_routed_family_is_the_pinned_one(deal):
+    """The writer's own call (as the envelope recorded it) routes to the
+    deal's family; a smart-hands deal also gets there from a generic "other"
+    call, the run-to-run wobble that cost 010419 its 97 standards."""
+    env = _saved_env(deal)
+    fs = m.facts(env)
+    want = PINNED_FAMILY[deal]
+    assert m._route_family(str(env["c3_sow"].get("job_family") or "other"), fs) == want
+    assert m._route_family(want, fs) == want
+    # 010376 is smart hands by its own call (a replacement); "other" there
+    # is not a wobble the facts can settle, so only the recurring, staffing
+    # and phone-swap deals are held to it.
+    if want == "smart_hands_general" and deal != "010376":
+        assert m._route_family("other", fs) == want
+
+
+def test_technician_staffing_for_a_transition_is_smart_hands():
+    fs = [_fact("a", "Typically, we need one network technician and one help desk technician per community."),
+          _fact("b", "They will ensure that all systems are functioning as they were before the transition.")]
+    assert m._route_family("other", fs) == "smart_hands_general"
+    # A question about what the onsite technician does is not staffing.
+    assert m._route_family("other", [_fact("a", "Will the onsite technician need to handle device configuration?")]) == "other"
+
+
+def test_a_cutover_or_takeover_call_of_other_is_smart_hands():
+    assert m._route_family("other", [_fact("a", "We are handling the IT cutover from the outgoing MSP at the clinic.")]) == "smart_hands_general"
+    assert m._route_family("other", [_fact("a", "PurTera is taking over the IT support for the site next month.")]) == "smart_hands_general"
+
+
+def test_a_family_without_standards_takes_the_smart_hands_block_only():
+    shg = m.purtera_standards("smart_hands_general")
+    assert shg and m.purtera_standards("other") == shg
+    # A specific trade's block is never borrowed (wireless_ap -> cabling).
+    assert m.purtera_standards("wireless_ap") == {}
+    assert m.purtera_standards("av_conference_room") != shg
+
+
+# --- 010419 pass V: a hedged follow-up is never a commitment -----------------
+
+def test_a_hedged_follow_up_leaves_the_assumption_and_becomes_the_exclusion():
+    c = _content()
+    c["assumptions"] = [{"text": "The visit can be completed in one full day, with any remaining items handled the next day if needed.",
+                         "cites": [], "kind": "method"}]
+    c["scope"] = [{"text": "Return the next day to complete any remaining items.", "cites": ["f"], "kind": "fact"},
+                  {"text": "Validate that systems function as before.", "cites": ["g"], "kind": "fact"}]
+    atoms = [{"id": "h", "atom_type": "scope_item",
+              "text": "This is usually a full day of work, with some follow-up needed the next day to complete any remaining items."}]
+    m._followup_not_promised(c, atoms)
+    assert [x["text"] for x in c["assumptions"]] == ["The visit can be completed in one full day."]
+    assert [x["text"] for x in c["scope"]] == ["Validate that systems function as before."]
+    assert c["out_of_scope"] == [{"text": "Follow-up visits unless authorized in writing or by Change Order.", "cites": ["h"], "kind": "fact"}]
+
+
+def test_a_firm_follow_up_stays():
+    c = _content()
+    c["schedule"] = [{"text": "Day 2: follow-up visit to finish testing.", "cites": ["f"], "kind": "fact"}]
+    m._followup_not_promised(c, [{"id": "f", "atom_type": "scope_item", "text": "Day 2 is a follow-up visit to finish testing."}])
+    assert len(c["schedule"]) == 1 and not c["out_of_scope"]
+
+
+# --- 010419 pass V: a job that installs nothing reads in its own words -------
+
+def test_install_wording_on_a_non_install_job_is_reworded():
+    c = _content()
+    c["scope"] = [{"text": "Provide local onsite technician support.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Document any installation exceptions, access issues, damaged fittings, missing equipment, or blockers.", "cites": ["a"], "kind": "method"}]
+    c["provider_tools"] = [{"text": "Standard hand tools suitable for device installation activities.", "cites": [], "kind": "method"}]
+    c["customer_responsibilities"] = [
+        {"text": "Ensure technicians have safe and authorized access to the installation location.", "cites": [], "kind": "method"},
+        {"text": "Provide any required equipment, cables, labels, mounting materials, or tools not normally carried by the technician.", "cites": [], "kind": "method"},
+        {"text": "Confirm the mounting height of each display.", "cites": [], "kind": "method"}]
+    atoms = [{"id": "a", "atom_type": "scope_item", "text": "Typically, we need one network technician and one help desk technician per community."}]
+    m._no_install_wording(c, atoms)
+    assert c["scope"][1]["text"] == "Document any exceptions, access issues, missing equipment, or blockers."
+    assert c["provider_tools"][0]["text"] == "Standard hand tools suitable for onsite support activities."
+    assert [x["text"] for x in c["customer_responsibilities"]] == [
+        "Ensure technicians have safe and authorized access to the work location.",
+        "Provide any required equipment, cables, labels, or tools not normally carried by the technician."]
+
+
+def test_install_wording_stays_on_an_install_job():
+    c = _content()
+    c["scope"] = [{"text": "Install two (2) displays in Room 4.", "cites": ["a"], "kind": "fact"}]
+    c["customer_responsibilities"] = [{"text": "Ensure access to the installation location.", "cites": [], "kind": "method"}]
+    m._no_install_wording(c, [{"id": "a", "atom_type": "scope_item", "text": "Need help with 2 displays in room 4"}])
+    assert c["customer_responsibilities"][0]["text"] == "Ensure access to the installation location."

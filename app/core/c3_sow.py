@@ -291,7 +291,13 @@ def purtera_standards(family: str) -> dict[str, list[str]]:
         data = json.loads((Path(__file__).parent / "purtera_standards.json").read_text())
     except Exception:
         return {}
-    fam = data.get(family) or {}
+    # A family with no block of its own takes the generic smart-hands block
+    # when that is its neighbour, as the method library does (010419 pass V:
+    # a generic "other" call wrote an IT transition with no standards at
+    # all). Never a specific trade's block: wireless_ap's neighbour is
+    # cabling, whose standards wrote cable runs into 010344, an AP job that
+    # excludes new structured cabling.
+    fam = data.get(family) or (data.get("smart_hands_general") or {} if "smart_hands_general" in _NEIGHBOURS.get(family, ()) else {})
     return {k: [str(t) for t in v] for k, v in fam.items() if not k.startswith("_") and isinstance(v, list)}
 
 
@@ -1068,34 +1074,9 @@ def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     return result
 
 
-def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
-          model: str | None = None) -> dict[str, Any]:
-    """The SOW content for one deal: four focused calls (header, tasks, who
-    supplies what, then the assumptions and exclusions against that draft),
-    a pass over the facts still unused, and every item checked. One call
-    asked for all of it dropped a different rule each run."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    model = model or sow_model()
-    fs = facts(envelope)
-    brief = envelope.get("c3_brief") or {}
-    crm = envelope.get("crm") or {}
-    crm_rec = {"deal_name": crm.get("deal_name") or (brief.get("deal") or {}).get("deal_name"),
-               "account_name": crm.get("account_name") or (brief.get("deal") or {}).get("account_name"),
-               # A file's own name can be the only place the end customer is
-               # written (000123: "Bevmo locations 1.txt").
-               "document_titles": sorted({re.sub(r"^\d{6}-(hs|fireflies)-[\w-]*?-", "", str(d.get("filename") or ""))[:80]
-                                          for d in envelope.get("documents") or [] if d.get("filename")})[:25]}
-    contacts = [c.get("line") for c in brief.get("contacts") or [] if c.get("line")][:12]
-    sites = _sites(envelope, pm_handoff)
-    rows = len([x for x in (brief.get("sections") or {}).get("contacts") or [] if x.get("type") == "physical_site"])
-    site_info = {"count_in_site_lists": max(rows, len(sites), int((pm_handoff or {}).get("site_count") or 0)),
-                 "sites": sites[:15]}
-    base = _BASE % (json.dumps(crm_rec), json.dumps(site_info), json.dumps(contacts),
-                    "\n".join(_fact_line(f) for f in fs))
-    effort = os.environ.get("SOWSMITH_C3_SOW_EFFORT", "medium")
-    got: dict[str, Any] = dict(_json_of(_complete(base + _PARTS["header"], model, 3500, effort)) or {})
-    family = str(got.get("job_family") or "other")
+def _route_family(family: str, fs: list[dict[str, Any]]) -> str:
+    """The job family: the writer's call, unless it is generic or wrong for
+    what the facts plainly are."""
     family = family if family in FAMILIES else "other"
     # The writer's family call wobbles run to run (010082: low_voltage_cabling,
     # then smart_hands_general, losing the cabling standards). A generic call
@@ -1123,9 +1104,46 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         # A phone swap or recurring support call that came back "other" is smart
         # hands, whose standards carry those blocks (010326 pass P: "other", no
         # standards at all).
-        if family == "other" and re.search(r"\b(phones?|handsets?|ata'?s?)\b.{0,60}\b(swap|replace|install|deploy)|weekly (on-?site|visit)|staff aug|monitor arms?", blob):
+        # So is technician staffing for an IT transition or onboarding (010419
+        # pass V: "one network technician and one help desk technician per
+        # community ... before the transition" came back "other", no standards).
+        if family == "other" and re.search(r"\b(phones?|handsets?|ata'?s?)\b.{0,60}\b(swap|replace|install|deploy)|weekly (on-?site|visit)|staff aug|monitor arms?"
+                                           r"|\b(network|help ?desk|desk-?side|it) (support )?(technicians?|techs?)\b"
+                                           r"|\b(it|provider|msp|managed services?|system) transition\b|\bonboarding\b|\bthe transition\b"
+                                           r"|\b(it|provider|msp|network|site) (cutover|takeover|take-over)\b|\btak(e|ing) over (the )?(it|support|site|network)\b", blob):
             family = "smart_hands_general"
-        got["job_family"] = family
+    return family
+
+
+def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
+          model: str | None = None) -> dict[str, Any]:
+    """The SOW content for one deal: four focused calls (header, tasks, who
+    supplies what, then the assumptions and exclusions against that draft),
+    a pass over the facts still unused, and every item checked. One call
+    asked for all of it dropped a different rule each run."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    model = model or sow_model()
+    fs = facts(envelope)
+    brief = envelope.get("c3_brief") or {}
+    crm = envelope.get("crm") or {}
+    crm_rec = {"deal_name": crm.get("deal_name") or (brief.get("deal") or {}).get("deal_name"),
+               "account_name": crm.get("account_name") or (brief.get("deal") or {}).get("account_name"),
+               # A file's own name can be the only place the end customer is
+               # written (000123: "Bevmo locations 1.txt").
+               "document_titles": sorted({re.sub(r"^\d{6}-(hs|fireflies)-[\w-]*?-", "", str(d.get("filename") or ""))[:80]
+                                          for d in envelope.get("documents") or [] if d.get("filename")})[:25]}
+    contacts = [c.get("line") for c in brief.get("contacts") or [] if c.get("line")][:12]
+    sites = _sites(envelope, pm_handoff)
+    rows = len([x for x in (brief.get("sections") or {}).get("contacts") or [] if x.get("type") == "physical_site"])
+    site_info = {"count_in_site_lists": max(rows, len(sites), int((pm_handoff or {}).get("site_count") or 0)),
+                 "sites": sites[:15]}
+    base = _BASE % (json.dumps(crm_rec), json.dumps(site_info), json.dumps(contacts),
+                    "\n".join(_fact_line(f) for f in fs))
+    effort = os.environ.get("SOWSMITH_C3_SOW_EFFORT", "medium")
+    got: dict[str, Any] = dict(_json_of(_complete(base + _PARTS["header"], model, 3500, effort)) or {})
+    family = _route_family(str(got.get("job_family") or "other"), fs)
+    got["job_family"] = family
     deal_no = (re.match(r"\s*(\d{6})", str(crm_rec.get("deal_name") or "")) or [None, ""])[1]
     std = standard_items(family, deal_no, [f["text"][:300] for f in fs
                                             if f["section"] in ("scope_of_work", "customer_responsibilities",
@@ -5029,6 +5047,93 @@ def _drop_clause(t: str, rx: re.Pattern[str]) -> str:
     return out if out.endswith((".", "?", "!", ":")) else out.rstrip(" ,;") + "."
 
 
+#: Work that puts gear in place.
+_INSTALL_WORK = re.compile(r"(?i)\b(install\w*|mount\w*|hang\w*|rack\w*|cabl\w*|replac\w*|swap\w*|deploy\w*|relocat\w*|moves?|moving|"
+                           r"setup|set up|refresh\w*|wir(e|es|ing)|drill\w*)\b")
+#: Install-job wording a non-install SOW reads in its own words.
+_INSTALL_REWORD = ((r"(?i)\b(device )?installation activities\b", "onsite support activities"),
+                   (r"(?i)\binstallation (location|area|site)s?\b", r"work \1"),
+                   (r"(?i)\binstallation exceptions\b", "exceptions"),
+                   (r"(?i),?\s*\b(mounting (materials|components|hardware)|damaged fittings)\b(?=,|\s+(and|or)\b)", ""),
+                   (r"(?i)\bdevice type, quantity, and device-specific information\b", "site, system and access information"))
+
+
+def _no_install_wording(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A job that installs nothing reads in its own words (010419 pass V: an
+    IT transition's SOW asked for "mounting materials", "the installation
+    location" and "device installation activities"). Only when no deal line
+    and no deal task names install work; a writer line is reworded where its
+    install word has a plain equivalent, and an uncited one still built on
+    install work goes."""
+    if any(_INSTALL_WORK.search(str(a.get("text") or "")) for a in atoms
+           if str(a.get("atom_type") or "") not in ("small_talk", "signature", "deal_metadata", "stakeholder")):
+        return
+    # A task that does install work leads with it ("Install ...", "Provider
+    # will replace ..."); a report line naming "installation exceptions" is
+    # the wording this rule fixes, not install work.
+    lead = re.compile(r"(?i)^\s*(provider will (also )?)?(install|mount|hang|rack|cable|replace|swap|deploy|relocate|move|set up|"
+                      r"refresh|wire|drill|remove and replace)\b")
+    if any(lead.search(str(x.get("text"))) for k in ("overview", "scope") for x in c.get(k) or []
+           if isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"):
+        return
+    still = re.compile(r"(?i)\b(install\w*|mount\w*|fittings?)\b")
+    for k in LISTS:
+        keep = []
+        for x in c.get(k) or []:
+            if not isinstance(x, dict) or x.get("standard") or not still.search(str(x.get("text"))):
+                keep.append(x)
+                continue
+            t = str(x["text"])
+            for pat, rep in _INSTALL_REWORD:
+                t = re.sub(pat, rep, t)
+            t = re.sub(r"\s+,", ",", re.sub(r",\s*,", ",", t))
+            if still.search(t) and not x.get("cites"):
+                continue
+            x["text"] = t
+            keep.append(x)
+        c[k] = keep
+
+
+#: A follow-up, return or next-day visit.
+_FOLLOWUP = re.compile(r"(?i)\b(next|following|second|additional) (business )?day\b|\bfollow-?ups?\b|\breturn (visit|trip)s?\b|"
+                       r"\bremaining items\b|\bcome back\b|\brevisits?\b")
+#: Words that make a follow-up a habit or a maybe, not a term.
+_HABIT = re.compile(r"(?i)\b(usually|typically|normally|often|sometimes|some|may|might|if needed|as needed|possibly|depend\w*|can be)\b")
+
+
+def _followup_not_promised(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A follow-up the deal hedges is never a commitment of any kind, not a
+    task, a schedule term or an assumption (010419 pass V: "usually a full
+    day of work, with some follow-up needed the next day" became the
+    assumption "... with any remaining items handled the next day if
+    needed"). The follow-up clause goes whole; a line that is nothing but
+    the follow-up goes; and the SOW says follow-up visits need a change
+    order, cited to the deal's hedged line."""
+    hedges = [a for a in atoms if _FOLLOWUP.search(str(a.get("text") or "")) and _HABIT.search(str(a.get("text") or ""))
+              and str(a.get("atom_type") or "") not in ("small_talk", "signature")]
+    if not hedges:
+        return
+    firm = re.compile(r"(?i)\b(unless|change order|not included|excluded|authori[sz]ed in writing)\b")
+    withheld = False
+    for k in ("overview", "scope", "schedule", "assumptions", "customer_responsibilities", "arrival_protocol"):
+        keep = []
+        for x in c.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if not isinstance(x, dict) or x.get("kind") == "heading" or x.get("standard") or not _FOLLOWUP.search(t) or firm.search(t):
+                keep.append(x)
+                continue
+            withheld = True
+            t1 = _drop_clause(t, _FOLLOWUP)
+            if t1 and len(t1.split()) >= 4 and not _FOLLOWUP.search(t1):
+                x["text"] = t1
+                keep.append(x)
+        c[k] = keep
+    oos = c.setdefault("out_of_scope", [])
+    if withheld and not any(_FOLLOWUP.search(str(x.get("text") if isinstance(x, dict) else x)) for x in oos):
+        oos.append({"text": "Follow-up visits unless authorized in writing or by Change Order.",
+                    "cites": [str(hedges[0].get("id"))], "kind": "fact"})
+
+
 def _sentence_integrity(c: dict[str, Any]) -> None:
     """No line ends on a preposition or a conjunction: a clause that lost its
     object is clipped, a line with nothing left goes."""
@@ -6955,6 +7060,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     theirs = {str(a.get("id")) for a in outside} | {str(a.get("id")) for a in envelope.get("atoms") or []
                                                    if not sender(a) and norm(a.get("text")) in outside_text}
     _traced(c, "schedule_voice", _schedule_voice, c, str((envelope.get("run_scope") or {}).get("as_of") or ""), theirs)
+    _traced(c, "no_install_wording", _no_install_wording, c, envelope.get("atoms") or [])
+    _traced(c, "followup_not_promised", _followup_not_promised, c, envelope.get("atoms") or [])
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
