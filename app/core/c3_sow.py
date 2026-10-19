@@ -156,7 +156,9 @@ _PARTS = {
         "a fact): %s\n"
         "TASK: assumptions and exclusions, written against the DRAFT below so they never contradict it. An assumption is "
         "a plain statement of a condition (\"All cable runs are under 200 feet.\"), never an order to anyone; a duty "
-        "of the customer belongs in customer responsibilities, not here. A fact from a "
+        "of the customer belongs in customer responsibilities, not here. Every line keeps its cited fact's meaning: a fact that "
+        "names a service or task (\"End-user support including O365 clients\") is requested work, never an exclusion or a "
+        "\"not included\" assumption; exclude only what a fact itself excludes or limits. A fact from a "
         "figure or photo is a site condition only when it bears on the work (a mounting surface, a height); never "
         "describe what a photo shows. The template "
         "already prices after-hours, weekend and holiday work and travel, and already states business hours, "
@@ -1324,14 +1326,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             r"(?i)once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|ongoing", pool_text)
     if transition:
         content["services"] = svc = ["assessment", "implementation"]
-    text_by = {f["id"]: f["text"] for f in fs}
-    neg = re.compile(r"(?i)\b(not|no|exclud|outside|except|without)\b")
-    for x in list(content.get("assumptions") or []):
-        t = str(x.get("text")) if isinstance(x, dict) else str(x)
-        if isinstance(x, dict) and x.get("cites") and re.search(r"(?i)excluded from|outside (of )?the (work )?scope|not (included|in scope)", t) \
-                and not any(neg.search(text_by.get(c, "")) for c in x["cites"]):
-            content["assumptions"].remove(x)  # a negation the source lacks (000132 excluded end-user support)
-            content.setdefault("scope", []).append({"text": text_by.get(x["cites"][0], t).strip().rstrip(".") + ".", "cites": x["cites"], "kind": "fact"})
+    # A negation its cited source lacks reverses the source (000132: the
+    # requested end-user O365 support written as "is excluded").
+    n_dec = len(content.get("rule_decisions") or [])
+    _traced(content, "source_polarity", _source_polarity, content, fs, envelope)
+    for d in (content.get("rule_decisions") or [])[n_dec:]:
+        d["why"] = "states a negation its cited source lacks"
     prov = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict) and not x.get("standard")
             and re.match(r"(?i)\s*(provide\s+)?(troubleshoot|incident response|end-user support|support for|patch|monitor(ing)? and)", str(x.get("text")))]
     if prov and family in ("smart_hands_general", "other"):
@@ -2725,13 +2725,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         x["text"] = t
         if not _said(x["text"], content.setdefault("scope", []), 0.6):
             content["scope"].append(x)
-    # The same for an assumption that hands a requested service to the
-    # customer (000132 pass O: "Customer will provide end-user support ...
-    # outside of Provider's onsite support scope" from a bare service bullet).
-    content["assumptions"] = [x for x in content.get("assumptions") or []
-                              if not (isinstance(x, dict) and x.get("cites") and all(c in by for c in x["cites"])
-                                      and re.search(r"(?i)outside (of )?(the )?provider'?s?|not (part of|included in) provider|customer will (provide|handle) .{0,40}support|\b(is|are) (excluded|not included|out of scope)\b", str(x.get("text")))
-                                      and not any(neg.search(by[c]["text"]) for c in x["cites"]))]
+    # An assumption that hands a requested service to the customer (000132
+    # pass O: "Customer will provide end-user support ... outside of
+    # Provider's onsite support scope" from a bare service bullet) or excludes
+    # it is reversed by _source_polarity, after the drop guard: dropped here,
+    # the guard put it back as the only line citing the service.
     # Recurring onsite support has no install site conditions to price.
     facts_all = " ".join(f["text"] for f in fs)
     if re.search(r"(?i)\b(weekly|monthly|recurring|break[/ -]?fix|staff aug|ongoing (it )?support|onsite (it )?support)\b", facts_all) \
@@ -3509,6 +3507,95 @@ def _scope_polarity(content: dict[str, Any]) -> None:
             x["text"] = t
         kept.append(x)
     content["scope"] = kept
+
+
+#: A line that excludes work: "excluded", "not included", "will not
+#: perform", "no <service>". A bound or a site condition ("does not exceed
+#: 200 feet", "No concealed utilities are present") is not one.
+_LINE_NEG = re.compile(r"(?i)\b(excluded|exclusion|not (be )?(included|provided|performed|supported|covered|part of|in scope)|"
+                       r"out of scope|outside (of )?(the |provider'?s? )?(\w+ ){0,2}scope|"
+                       r"(will not|won'?t|does not|do not|is not to)( be)? (provide|perform|support|include|cover|install|handle|do)\w*)\b|"
+                       r"^\s*no\b[^.;]{0,40}\b(support|services?|maintenance|troubleshoot\w*|patch\w*|install\w*|administration|work)\b"
+                       r"(?![^.;]{0,30}\b(is|are)\s+(present|expected|anticipated|required|needed)\b)")
+#: A source line that carries a negation, a limit, or hands the work to
+#: another party: an exclusion or a "Customer will" line may lean on it.
+_SOURCE_NEG = re.compile(r"(?i)\b(not|no|none|never|neither|nor|without|exclud\w*|except\w*|outside|only|limited|solely|"
+                         r"won'?t|dont|wont|cant|cannot|doesnt|isnt|arent|n/a|optional|separate(ly)?|instead)\b|n't\b|"
+                         r"\b(customer|client|they|their|we|i|in-?house|internal(ly)?|reseller|vendor|others?)\b.{0,40}\b(will|to|handles?|provides?|does|owns?|manages?)\b|"
+                         r"\b(by|from) (the )?(customer|client|others|their|reseller|vendor)|handled by|responsib")
+#: A source that names work: a service, a task.
+_SERVICE_WORDS = re.compile(r"(?i)\b(support|maintenance|maintain|troubleshoot\w*|install\w*|patch\w*|upgrades?|repair\w*|"
+                            r"configur\w*|monitor\w*|management|coordinat\w*|response|services?|deploy\w*|replace\w*|"
+                            r"migrat\w*|administration|assistance|help ?desk|desk-?side)\b")
+_SERVICE_TYPES = frozenset({"scope_item", "task", "deliverable"})
+
+
+def _service_heading(text: str) -> str:
+    """A heading for a service line: its object up to the first comma,
+    "including" or "for" ("Provide end-user support, including O365" ->
+    "End User Support")."""
+    t = re.sub(r"(?i)^\s*(provide|perform|support for|support)\s+", "", text).strip()
+    t = re.split(r"(?i),|\bincluding\b|\bfor\b|\bat\b|\bduring\b|\(", t)[0].strip(" .;")
+    words = [w for w in re.split(r"[\s-]+", t) if w][:4]
+    return " ".join(w[:1].upper() + w[1:] for w in words) if words else ""
+
+
+def _source_polarity(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dict[str, Any]) -> None:
+    """A line that states an exclusion or a negation ("excluded", "not
+    included", "no X", "will not") when none of its cited lines carries a
+    negation, a limit or another party's duty says the opposite of its
+    source (000132: the requested "End-user support including O365/M365
+    clients" written as "End-user support ... is excluded." under
+    assumptions). A source that names work (the parser or a head read it as
+    a scope item, or the heads put it in the scope) turns into a task in the
+    source's polarity, under its own service heading; any other source makes
+    the line go. Standard and uncited lines are the template's."""
+    by = {f["id"]: f for f in fs}
+    atoms = {str(a.get("id")): a for a in envelope.get("atoms") or []}
+    def src(c: str) -> str:
+        return str((by.get(c) or {}).get("text") or (atoms.get(c) or {}).get("text") or "")
+    def reads_as_work(c: str) -> bool:
+        a = atoms.get(c) or {}
+        st = a.get("structured") or {}
+        types = {str(a.get("atom_type") or ""), str((by.get(c) or {}).get("type") or ""),
+                 str((st.get("c3_label") or {}).get("was") or "")} | {str(t) for t in st.get("alt_atom_types") or []}
+        return bool(types & _SERVICE_TYPES or (by.get(c) or {}).get("section") == "scope_of_work") and bool(_SERVICE_WORDS.search(src(c)))
+    sc = content.setdefault("scope", [])
+    for k in ("assumptions", "customer_responsibilities", "out_of_scope", "overview"):
+        for x in list(content.get(k) or []):
+            if not isinstance(x, dict) or x.get("standard") or not x.get("cites") or x.get("kind") == "heading":
+                continue
+            t = str(x.get("text") or "")
+            cites = [str(c) for c in x["cites"]]
+            if not _LINE_NEG.search(t) or not all(src(c) for c in cites) or any(_SOURCE_NEG.search(src(c)) for c in cites):
+                continue
+            content[k].remove(x)
+            work = [c for c in cites if reads_as_work(c)]
+            if not work or k == "overview":
+                continue  # a summary sentence goes; the task list says the work
+            line = _as_scope(t)
+            if not line or not _said(re.sub(r"(?i)^provide\s+", "", line), [src(c) for c in work], 0.6):
+                body = src(work[0]).strip().rstrip(".")
+                line = body[:1].upper() + body[1:] + "." if re.match(r"(?i)(provide|perform|support|assist|install|coordinate)\b", body) \
+                    else "Provide " + body[:1].lower() + body[1:] + "."
+            if _said(line, [y for y in sc if isinstance(y, dict) and y.get("kind") != "heading"], 0.8):
+                continue
+            new = {"text": line, "cites": cites, "kind": "fact"}
+            # Under the heading that names its service, else its own heading
+            # ahead of the closing group.
+            mine = _toks(_service_heading(line)) - {"support", "provid"}
+            at = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                       and mine and mine <= _toks(y.get("text"))), None)
+            if at is not None:
+                end = next((j for j in range(at + 1, len(sc)) if isinstance(sc[j], dict) and sc[j].get("kind") == "heading"), len(sc))
+                sc.insert(end, new)
+                continue
+            close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                          and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
+            head = _service_heading(line)
+            group = ([{"text": head, "cites": [], "kind": "heading"}] if head and any(
+                isinstance(y, dict) and y.get("kind") == "heading" for y in sc) else []) + [new]
+            sc[close:close] = group
 
 
 def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
