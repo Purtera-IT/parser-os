@@ -1030,6 +1030,11 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             continue
         if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
             continue  # gear the job does not touch
+        # Never a line source_polarity rejected: a negation its cited source
+        # lacks (000132 pass W).
+        if text in (content.get("_polarity_rejected") or []):
+            content.setdefault("guard_declined", []).append({"rule": rule, "list": lst, "text": text, "reason": "source_polarity rejected it"})
+            continue
         # Never a line the deal's own exclusions or customer duties rule out
         # (010171 pass V: the stale "3 Rally Bar ... + 2 Mic Pods" ask restored
         # beside "exclude external mics and mic pods"); the drop stands.
@@ -1098,6 +1103,14 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
                 if brand.lower() not in dt.lower() and brand.lower() not in _STOCK and head in dt:
                     dup["text"] = dt.replace(head, f"{brand} {head}", 1)
             how = "merged"
+            # The merge is remembered: a target later removed gives the line
+            # back (000132 pass W: "Coordinate with local stakeholders during
+            # each visit" merged into a standard one_statement then removed).
+            orig = next((x for x in lists_before.get(lst) or [] if isinstance(x, dict) and x is not dup
+                         and str(x.get("text") or "") == text), None)
+            if orig is not None:
+                content.setdefault("_merged", []).append({"target": str(dup.get("text")), "list": dest,
+                                                         "line": {**orig, "cites": list(cites)}})
         else:
             orig = next((x for x in lists_before.get(lst) or [] if isinstance(x, dict) and tuple(x.get("cites") or []) == cites), None)
             if orig is None:
@@ -1174,12 +1187,56 @@ def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     lists_before = {k: list(content.get(k) or []) for k in _LIST_SECTION}
     result = fn(*args, **kwargs)
     _slot_back(content, lists_before.get("scope") or [], rule)
+    merged_back = _merged_back(content, lists_before, rule)
     _std_gone(content, f"rule {rule}")
     guarded = _guard_drops(content, rule, before, lists_before) if rule in GUARDED_RULES else []
     kept = {tuple(g["atom_ids"]) for g in guarded}
     content.setdefault("rule_decisions", []).extend(
-        [d for d in _decisions(rule, before, _snap(content)) if tuple(d["atom_ids"]) not in kept] + guarded)
+        [d for d in _decisions(rule, before, _snap(content)) if tuple(d["atom_ids"]) not in kept] + guarded + merged_back)
     return result
+
+
+def _merged_back(content: dict[str, Any], lists_before: dict[str, list], rule: str) -> list[dict[str, Any]]:
+    """A line the drop guard merged into another line comes back when that
+    line is removed and nothing left says it (000132 pass W: the deal step
+    "Coordinate with local stakeholders during each visit" merged into the
+    standard "Coordinate visit priorities ...", which one_statement then
+    suppressed as a deal step saying it, so both vanished). It returns where
+    its target stood."""
+    out = []
+    for m_ in list(content.get("_merged") or []):
+        lst, tgt, line = m_["list"], m_["target"], m_["line"]
+        items = content.setdefault(lst, [])
+        live = [x for x in items if isinstance(x, dict) and x.get("kind") != "heading"]
+        if any(str(x.get("text")) == tgt for x in live) or any(str(x.get("text")) == tgt for k in _LIST_SECTION
+                                                              for x in content.get(k) or [] if isinstance(x, dict)):
+            continue
+        same = next((x for x in live if _said(tgt, [x], 0.8) and _said(str(x.get("text")), [tgt], 0.8)), None)
+        if same is not None:
+            m_["target"] = str(same.get("text"))  # reworded, still there
+            continue
+        content["_merged"].remove(m_)
+        lt = str(line.get("text"))
+        if any(_said(lt, [x], 0.6) and len(_object_toks(lt) - _object_toks(str(x.get("text"))) - {"customer", "provid", "provider"}) < 2
+               for x in live):
+            continue  # still said, its own nouns too
+        was = lists_before.get(lst) or []
+        at = next((i for i, y in enumerate(was) if isinstance(y, dict) and str(y.get("text")) == tgt), None)
+        pos = len(items)
+        if at is not None:
+            for prev in reversed(was[:at]):
+                j = next((i for i, y in enumerate(items) if y is prev), None)
+                if j is not None:
+                    pos = j + 1
+                    break
+            else:
+                pos = 0
+        new = {k: v for k, v in line.items()}
+        items.insert(pos, new)
+        out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(new.get("cites") or []), "value": "keep",
+                    "was": _LIST_SECTION[lst], "text": str(new.get("text"))[:300], "guard": "merged_back",
+                    "why": f"its merge target was removed: {tgt[:120]}"})
+    return out
 
 
 def _route_family(family: str, fs: list[dict[str, Any]]) -> str:
@@ -1765,6 +1822,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _std_gone(content, "writer rules (untraced)")
     content.pop("_noise_atoms", None)
     content.pop("_slots", None)
+    content.pop("_polarity_rejected", None)
     content.pop("_noise_re", None)
     content["teachable"] = {k: v[0] for k, v in TEACHABLE.items()}
     traced = {(tuple(d["atom_ids"]), d["head"]) for d in content.get("rule_decisions") or []}
@@ -4881,6 +4939,9 @@ _SERVICE_WORDS = re.compile(r"(?i)\b(support|maintenance|maintain|troubleshoot\w
                             r"configur\w*|monitor\w*|management|coordinat\w*|response|services?|deploy\w*|replace\w*|"
                             r"migrat\w*|administration|assistance|help ?desk|desk-?side)\b")
 _SERVICE_TYPES = frozenset({"scope_item", "task", "deliverable"})
+#: Any negation in a line source_polarity would move: such a line is never
+#: moved, it is rewritten positively or dropped.
+_POLARITY_NEG = re.compile(r"(?i)\b(not|no|never|none|without|exclud\w*|except\w*)\b|n't\b|\bout of scope\b")
 
 
 def _service_heading(text: str) -> str:
@@ -4923,14 +4984,24 @@ def _source_polarity(content: dict[str, Any], fs: list[dict[str, Any]], envelope
             if not _LINE_NEG.search(t) or not all(src(c) for c in cites) or any(_SOURCE_NEG.search(src(c)) for c in cites):
                 continue
             content[k].remove(x)
+            # The drop guard never puts back a line this rule rejected.
+            content.setdefault("_polarity_rejected", []).append(t)
             work = [c for c in cites if reads_as_work(c)]
             if not work or k == "overview":
                 continue  # a summary sentence goes; the task list says the work
-            line = _as_scope(t)
-            if not line or not _said(re.sub(r"(?i)^provide\s+", "", line), [src(c) for c in work], 0.6):
+            # Never moved still negated: the line is rewritten in the cited
+            # source's own positive words, or it goes (000132 pass W: "Assume
+            # support does not include end-user support ..." moved to the task
+            # list as "Support does not include ..." under a "Does Not Include
+            # End" heading).
+            line = _as_scope(re.sub(r"(?i)^\s*assume\s+(that\s+)?", "", t))
+            if not line or _POLARITY_NEG.search(line) or not _said(re.sub(r"(?i)^provide\s+", "", line), [src(c) for c in work], 0.6):
                 body = src(work[0]).strip().rstrip(".")
+                body = re.sub(r"(?i)^\s*(?:[-*\u2022]\s*|\d+[.)]\s*)", "", body)
                 line = body[:1].upper() + body[1:] + "." if re.match(r"(?i)(provide|perform|support|assist|install|coordinate)\b", body) \
                     else "Provide " + body[:1].lower() + body[1:] + "."
+            if _POLARITY_NEG.search(line) or len(line.split()) > 30:
+                continue  # no clean positive wording: the line goes
             if _said(line, [y for y in sc if isinstance(y, dict) and y.get("kind") != "heading"], 0.8):
                 continue
             new = {"text": line, "cites": cites, "kind": "fact"}
@@ -6663,6 +6734,8 @@ def _summary_names_job(c: dict[str, Any]) -> None:
                 continue  # the site line
             if _said(t, said_by, 0.5) or len(t.split()) > 10 or not _SERVICE_WORDS.search(t) or _LOGISTICS.search(t):
                 continue  # a service is named in a few words; a long line is a task, not a service
+            if _POLARITY_NEG.search(t):
+                continue  # a negated line names no service (000132 pass W: "provide support for does not include ...")
             for pat, rep in _NOMINAL:
                 mm = re.match(r"(?i)\s*" + pat, t)
                 if mm:
@@ -8645,6 +8718,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
+    c.pop("_merged", None)
     _decisions_match_output(c)
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
