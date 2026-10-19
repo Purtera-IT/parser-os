@@ -379,3 +379,49 @@ def test_a_dropped_line_strikes_only_the_outcome_it_names():
     c["deliverables"] = [{"item": "Work Completion Report", "description": ["Completed Customer installation and testing checklists."]}]
     m._deliverables_hygiene(c)
     assert c["deliverables"][0]["description"] == ["Completed Customer installation and testing checklists."]
+
+
+# --- 010082 pass Y B -------------------------------------------------------------
+
+def test_a_customer_duty_is_admitted_only_when_its_source_puts_it_on_the_customer():
+    atoms = [{"id": "v", "text": "Mike Stephens reminded that the vendor team must respect client drilling policies and site-specific safety requirements."},
+             {"id": "o", "text": "Technician Arrival Protocol | Contact OSC prior to arrival"},
+             {"id": "g", "text": "Technician Arrival Protocol | Customer greets the technician with an onsite manager on arrival."},
+             {"id": "q", "text": "Aj, you'll get it over to the district manager, whoever needs to sign off on that."},
+             {"id": "k", "text": "Mike Stephens agreed that if onsite contact cannot clarify installation conditions, a quick visit would be justified."},
+             {"id": "p", "text": "Formal parking/loading dock process and permissions for drop-off", "structured": {"c3_label": {"type": "_keep", "p": 0.26}}},
+             {"id": "l", "text": "Lift needed", "structured": {"c3_label": {"type": "requirement", "p": 0.9}}},
+             {"id": "w", "text": "Provider (Chase/Delivery team): Reach out to Henry Hankins this week to gather details and schedule site visit if needed."}]
+    c = _content()
+    c["scope"] = [_fact("Follow client drilling rules and ladder-use protocols.", ("x",)),
+                  _fact("Contact Henry Hankins to gather details and schedule a site visit if needed.", ("w",))]
+    c["customer_responsibilities"] = [
+        _fact("Customer will respect client drilling policies and site-specific safety requirements during installation.", ("v",)),
+        _fact("Customer will coordinate any required contact with OSC prior to the technician's arrival.", ("o",)),
+        _fact("Customer greets the technician with an onsite manager on arrival.", ("g",)),
+        _fact("Customer will obtain any required signoff from the district manager.", ("q",)),
+        _fact("If the onsite contact cannot clarify installation conditions, a quick site visit may be performed.", ("k",)),
+        _fact("Customer will handle the formal parking/loading dock process and secure any permissions needed for drop-off.", ("p",)),
+        _fact("Provide a lift for mounting as required.", ("l",))]
+    m._duty_admission(c, atoms)
+    assert _texts(c, "customer_responsibilities") == ["Customer greets the technician with an onsite manager on arrival.",
+                                                      "Provide a lift for mounting as required."]
+    assert _texts(c, "scope") == ["Follow client drilling rules and ladder-use protocols.",
+                                  "Coordinate any required contact with OSC prior to the technician's arrival."]
+    assert _texts(c, "assumptions") == ["If the onsite contact cannot clarify installation conditions, a quick site visit may be performed."]
+
+
+def test_one_statement_per_topic():
+    c = _content()
+    c["assumptions"] = [_fact("A-frame ladder access is sufficient for the drop-tile ceiling work.", ("a",)),
+                        _fact("The cable run remains within approximately 100 feet.", ("b",)),
+                        _fact("The ceiling work can be performed using an A-frame ladder.", ("c",)),
+                        _fact("All cable runs are no more than 100 feet.", ("d",)),
+                        _fact("The replacement TVs are compatible with the existing content source and video wall layout.", ("e",)),
+                        _fact("The existing 2x2 video wall structure and mounting points can safely support the two replacement TVs.", ("f",))]
+    m._same_topic_once(c)
+    assert _texts(c, "assumptions") == ["A-frame ladder access is sufficient for the drop-tile ceiling work.",
+                                        "The cable run remains within approximately 100 feet.",
+                                        "The replacement TVs are compatible with the existing content source and video wall layout.",
+                                        "The existing 2x2 video wall structure and mounting points can safely support the two replacement TVs."]
+    assert c["assumptions"][0]["cites"] == ["a", "c"]

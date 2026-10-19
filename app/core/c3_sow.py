@@ -11064,6 +11064,109 @@ def _sales_notes_out(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
                 and all(note(cc) for cc in x["cites"]))]
 
 
+_VENDOR_SUBJECT = re.compile(r"(?i)\b(?:the\s+)?(?:vendor|technicians?|techs?|installers?|provider|contractors?|delivery)(?:\s+team)?\s+"
+                             r"(?:must|will|shall|should|needs? to|is to|are to|to)\b(?!\s+be\s+\w+ed\b)|^\s*(?:technician|tech|vendor|installer)\b[^|]{0,40}\|")
+_PRESALE = re.compile(r"(?i)\bthis week\b|\bdue date\b|\bby (?:eod|end of (?:the )?(?:day|week))\b|"
+                      r"\b(?:get|send|route|forward)\s+(?:it|this|that|the quote|the proposal|the sow)\s+(?:over\s+)?to\b")
+_HAS_VERB = re.compile(r"(?i)\b(will|must|shall|should|need|needs|to|is|are|was|were|provide|provides|ensure|has|have|can|may)\b")
+
+
+def _duty_admission(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A customer responsibility is admitted only when its source puts the
+    duty on the customer (010082 pass Y): a line whose cited source makes
+    the vendor or technician its subject ("the vendor team must respect
+    client drilling policies", "Technician Arrival Protocol | Contact OSC")
+    is the Provider's (dropped when a task already says it); a pre-sale
+    action item ("this week", "get it over to the district manager") is no
+    duty and no task; a contingency ("If the onsite contact cannot clarify
+    ..., a quick site visit may be performed") is an assumption; and a bare
+    label from a packet's list ("Formal parking/loading dock process and
+    permissions for drop-off") is no duty at all."""
+    by = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    lab = {str(a.get("id")): ((a.get("structured") or {}).get("c3_label") or {}) for a in atoms}
+    abstained = lambda cc: lab.get(str(cc), {}).get("type") == "_keep" and float(lab.get(str(cc), {}).get("p") or 0) < 0.35
+    sc = c.setdefault("scope", [])
+    tasks = [y for k in ("scope", "arrival_protocol") for y in c.get(k) or [] if isinstance(y, dict) and y.get("kind") != "heading"]
+    keep, to_scope, to_asm = [], [], []
+    for x in c.get("customer_responsibilities") or []:
+        if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")):
+            keep.append(x)
+            continue
+        t = str(x.get("text") or "")
+        # The cited sentence that says the line, not the whole message.
+        def best(s_: str) -> str:
+            sents = [z for z in re.split(r"(?<=[.;!?])\s+|\n+", s_) if z.strip()] or [s_]
+            return max(sents, key=lambda z: len(_object_toks(z) & _object_toks(t)))
+        src = [best(by.get(str(cc), "")) for cc in x["cites"]]
+        if src and all(_PRESALE.search(s_) for s_ in src if s_):
+            continue
+        # A form row is judged by its value, not its label ("Technician
+        # Arrival Protocol | Customer greets the technician ..." is the customer's).
+        val = lambda s_: s_.split("|", 1)[1] if "|" in s_ else s_
+        theirs = re.compile(r"(?i)^\s*(?:the\s+)?(customer|client|site|store|owner)\b|\b(customer|client|site|store)\s+(must|will|shall|to)\b")
+        if src and all(s_ and _VENDOR_SUBJECT.search(s_) and not theirs.search(val(s_)) for s_ in src):
+            if re.match(r"(?i)\s*(provider|technicians?)\s+will\b|.*\b(may|might)\b", t):
+                to_asm.append(x)
+            elif not any(_said(t, [y], 0.5) or len(_object_toks(t) & _object_toks(_tx(y))) >= 2 for y in tasks):
+                body = re.sub(r"(?i)^\s*(?:the\s+)?customer\s+(?:will|shall|must|to)\s+", "", t)
+                to_scope.append({**x, "text": body[:1].upper() + body[1:]})
+            continue
+        if re.match(r"(?i)\s*if\b", t) and re.search(r"(?i)\b(may|might|would|could)\b", t):
+            to_asm.append(x)
+            continue
+        if src and all(s_ and not _HAS_VERB.search(s_) and len(s_.split()) <= 14 and abstained(cc) for s_, cc in zip(src, x["cites"])):
+            continue
+        keep.append(x)
+    c["customer_responsibilities"] = keep
+    # A pre-sale action item is no field task either ("Contact Henry Hankins
+    # to gather details and schedule a site visit if needed", due this week).
+    c["scope"] = [y for y in sc if not (isinstance(y, dict) and y.get("cites") and not y.get("standard") and y.get("kind") != "heading"
+                  and all(_PRESALE.search(by.get(str(cc), "")) for cc in y["cites"]))]
+    if to_scope:
+        sc = c["scope"]
+        close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                      and re.search(r"(?i)clos|wrap|complet", str(y.get("text")))), len(sc))
+        sc[close:close] = to_scope
+    if to_asm:
+        c.setdefault("assumptions", []).extend(to_asm)
+
+
+def _bigrams(t: str) -> set[tuple[str, str]]:
+    ws = [_stem(w) for w in re.findall(r"[a-z0-9]+", _digits(str(t)).lower()) if w not in _FILLER and w not in _STOPWORDS]
+    ws = [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in ws]
+    ws = [w for w in ws if w not in _WORK_STEMS and not re.fullmatch(r"(?:%s)" % _NUM_WORDS, w)]
+    return {(a, b) for a, b in zip(ws, ws[1:]) if not (a.isdigit() and b.isdigit())}
+
+
+def _same_topic_once(c: dict[str, Any]) -> None:
+    """One statement per topic: two deal lines in one list sharing a
+    distinctive pair of words ("A-frame ladder", "metal studs", "100 feet",
+    "Henry Hankins") and most of their nouns say one thing; the first stays
+    (010082 pass Y: the ladder five times, the studs three, the escort four)."""
+    for k in ("assumptions", "customer_responsibilities"):
+        kept: list[dict[str, Any]] = []
+        for x in c.get(k) or []:
+            if not (isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"):
+                kept.append(x)
+                continue
+            aux = {"can", "using", "use", "may", "could", "might", "would", "should", "must", "that", "within", "approximately",
+                   "about", "more", "than", "remain", "sufficient", "will", "been", "being"}
+            obj = lambda t: {w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in _object_toks(t)} - aux
+            bx, ox = _bigrams(_tx(x)), obj(_tx(x))
+            generic = {"site", "onsit", "contact", "access", "work", "area", "provid", "provider", "customer", "requir", "locat", "detail"}
+            key = lambda b: {(a_, b_) for a_, b_ in b if len(a_) >= 3 and len(b_) >= 3 and a_ not in generic and b_ not in generic}
+            def same(y: dict[str, Any]) -> bool:
+                shared = key(bx) & key(_bigrams(_tx(y)))
+                share = len(ox & obj(_tx(y))) / max(1, min(len(ox), len(obj(_tx(y)))))
+                return bool(shared) and (share >= 0.7 or (len(shared) >= 2 and share >= 0.6))
+            dup = next((y for y in kept if isinstance(y, dict) and not y.get("standard") and same(y)), None)
+            if dup is not None:
+                dup["cites"] = list(dict.fromkeys(list(dup.get("cites") or []) + list(x.get("cites") or [])))
+                continue
+            kept.append(x)
+        c[k] = kept
+
+
 def _dropped_not_rendered(c: dict[str, Any]) -> None:
     """A line the check dropped never renders: a later pass that wrote the
     same line again loses it (000123 pass Y: the 161-locations summary line
@@ -11619,6 +11722,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "exclusion_owns_atom", _exclusion_owns_atom, c)
     _traced(c, "install_list_only", _install_list_only, c, atoms_)
     _traced(c, "sales_notes_out", _sales_notes_out, c, atoms_)
+    _traced(c, "duty_admission", _duty_admission, c, atoms_)
+    _traced(c, "same_topic_once", _same_topic_once, c)
     _traced(c, "site_unit_counts", _site_unit_counts, c)
     _traced(c, "overview_numbers", _overview_numbers, c, atoms_)
     _traced(c, "task_by_party", _task_by_party, c)
