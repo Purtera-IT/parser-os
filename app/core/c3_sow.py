@@ -1907,7 +1907,14 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                                   if not re.search(r"(?i)(normal|regular|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
     # Before-work photos and checks lead the work (010083: prework photos last).
     sc = content.get("scope") or []
-    pre_ph = [x for x in sc if isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"(?i)\b(pre-?work|before (starting|work|removal)|existing condition)\b.{0,40}photo|photo.{0,40}\b(before (starting|work|removal)|pre-?work|existing condition)", str(x.get("text")))]
+    pre_ph = [x for x in sc if isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"(?i)\b(pre-?work|before (starting|work|removal)|existing condition|before)\b.{0,40}photo|photo.{0,40}\b(before (starting|work|removal|any)|pre-?work|existing condition)", str(x.get("text")))
+              and not re.search(r"(?i)after|completed|completion", str(x.get("text")))]
+    # Labeling the gear before it ships is the customer's staging (010209: the
+    # customer "will supply, configure, label and deliver"; Provider labeled to
+    # the naming convention too).
+    if re.search(r"(?i)label.{0,30}deliver|label.{0,30}prior to (shipment|deployment)", " ".join(str(y.get("text")) for y in content.get("customer_responsibilities") or [] if isinstance(y, dict))):
+        content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and re.search(r"(?i)label (all )?(the )?(new )?equipment with|naming convention", str(x.get("text"))))]
+        sc = content.get("scope") or []
     if pre_ph:
         heads_i = [i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") == "heading"]
         rest = [x for x in sc if not any(x is y for y in pre_ph)]
@@ -2808,6 +2815,16 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         if not rq:
             c["requested_by"] = {**(c.get("requested_by") or {}), "name": m_rep.group(1)}
         dn = dn[:m_rep.start()].strip(" -–")
+    # Any deal person's name trailing the deal name (010209: "Ralph Lauren
+    # Switch Replacement Dan Tighe").
+    for pp in (envelope.get("deal_roster") or {}).get("people") or []:
+        nm = str(pp.get("name") or "").strip()
+        parts = nm.split()
+        if len(parts) >= 2:
+            short = f"{parts[0]} {parts[-1]}"
+            for cand in {nm, short}:
+                if re.search(r"\s+" + re.escape(cand) + r"\s*$", dn, re.I):
+                    dn = re.sub(r"\s*[-–]?\s*" + re.escape(cand) + r"\s*$", "", dn, flags=re.I).strip(" -–")
     if rq and rq.lower() in dn.lower():
         dn = re.sub(r"\s*[-–]?\s*" + re.escape(rq) + r"\s*", " ", dn, flags=re.I).strip(" -–")  # "... Dan Tighe"
     if len(dn.split()) >= 2:
