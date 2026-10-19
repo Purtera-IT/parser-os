@@ -1690,6 +1690,9 @@ def build_orbitbrief_envelope(
 
         if c3_sow.enabled() and envelope.get("c3_brief"):
             envelope["c3_sow"] = c3_sow.for_envelope(envelope)
+            from app.core import c3_sow_trace
+
+            c3_sow_trace.attach(envelope)
     except Exception as exc:  # pragma: no cover - a failed SOW draft never costs the envelope
         envelope["c3_sow"] = {"error": type(exc).__name__}
     return envelope
