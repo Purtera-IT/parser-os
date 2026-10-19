@@ -255,3 +255,63 @@ def test_a_duration_is_not_a_completion_date():
                      {"text": "Requested Completion Date: January 31, 2027", "cites": ["f2"]}]
     m._duration_not_date(c)
     assert _texts(c, "schedule") == ["Project Duration: not to exceed five (5) months.", "Requested Completion Date: January 31, 2027"]
+
+
+# --- 010147 B: the customer's verbs, the packed inventory, the transport mode -
+
+def _move_job():
+    c = _content()
+    c["job_family"] = "relocation_move"
+    c["scope"] = [{"text": "Network and servers", "kind": "heading", "cites": []},
+                  {"text": "Pack five (5) network switches.", "cites": ["f1"]},
+                  {"text": "Unrack and ready three (3) individual 1U-4U servers/devices.", "cites": ["f2"]},
+                  {"text": "Pack twenty-five (25) to thirty (30) Yealink phones.", "cites": ["f3"]},
+                  {"text": "Coordinate transportation of the packed equipment, including pickup at the origin location.", "cites": [], "standard": True}]
+    c["customer_responsibilities"] = [{"text": "Unrack all applicable devices before packing begins.", "cites": [], "standard": True},
+                                      {"text": "Unrack and ready approximately twenty (20) cables and related equipment.", "cites": ["f4"]}]
+    c["out_of_scope"] = [{"text": "Powering down, disconnecting or unracking equipment at the origin location.", "cites": [], "standard": True}]
+    c["equipment_in_scope"] = [{"text": "Five (5) network switches.", "cites": ["f1"]}]
+    return c
+
+
+def test_a_provider_step_takes_its_siblings_verb_when_the_customer_claims_its_own():
+    c = _move_job()
+    m._claimed_verbs(c)
+    assert "Pack three (3) individual 1U-4U servers/devices." in _texts(c, "scope")
+
+
+def test_a_claimed_step_with_no_sibling_verb_is_the_customers():
+    c = _content()
+    c["scope"] = [{"text": "Disconnect all workstations at the origin.", "cites": ["f1"]}]
+    c["customer_responsibilities"] = [{"text": "Disconnect all equipment before the technicians arrive.", "cites": [], "standard": True}]
+    m._claimed_verbs(c)
+    assert c["scope"] == [] and "Disconnect all workstations at the origin." in _texts(c, "customer_responsibilities")
+
+
+def test_a_generic_customer_verb_claims_nothing():
+    c = _content()
+    c["scope"] = [{"text": "Mount one (1) 9U network cabinet onto the backer board.", "cites": ["f1"]},
+                  {"text": "Install the switch.", "cites": ["f2"]}]
+    c["customer_responsibilities"] = [{"text": "Mount nothing until the walls are ready.", "cites": []}]
+    m._claimed_verbs(c)
+    assert _texts(c, "scope")[0] == "Mount one (1) 9U network cabinet onto the backer board."
+
+
+def test_equipment_in_scope_names_everything_the_move_packs():
+    c = _move_job()
+    m._claimed_verbs(c)
+    m._moved_equipment(c)
+    assert _texts(c, "equipment_in_scope") == ["Five (5) network switches.", "Three (3) individual 1U-4U servers/devices.",
+                                               "Twenty-five (25) to thirty (30) Yealink phones.",
+                                               "Approximately twenty (20) cables and related equipment."]
+
+
+def test_the_transport_step_names_the_requested_mode():
+    c = _move_job()
+    atoms = [{"id": "t1", "text": "Primary Wave Transportation Method: Secondary Wave Transportation Method | Shared Truck/LTL Shipment (5-7 days): Select transportation method"},
+             {"id": "t2", "text": "States: Alabama | Select One Method: Dedicated Direct Truck/Climate Controlled"}]
+    m._transport_mode(c, atoms)
+    step = c["scope"][-1]
+    assert step["text"] == ("Coordinate transportation of the packed equipment by Shared Truck/LTL Shipment (5-7 days), "
+                            "including pickup at the origin location.")
+    assert step["cites"] == ["t1"]

@@ -5592,6 +5592,110 @@ def _items_not_tasks(c: dict[str, Any]) -> None:
         c[k] = keep
 
 
+_VERB_RUN = re.compile(r"(?i)^\s*([a-z]+(?:(?:,\s*|\s+and\s+|\s+or\s+)[a-z]+){0,2})\s+(?=(?:the\s+|all\s+|each\s+|approximately\s+|about\s+)?"
+                       r"(?:[a-z]+\s+)?\(?\d|(?:the|all|each|any)\b)")
+
+
+def _claimed_verbs(c: dict[str, Any]) -> None:
+    """A Provider task never does what the customer says it does: a cited
+    step whose lead verb a customer duty starts with ("Unrack all applicable
+    devices before packing begins") or an exclusion names ("Powering down,
+    disconnecting or unracking equipment at the origin") takes the verb its
+    sibling steps use, else it is the customer's (010147 pass V: "Unrack and
+    ready three (3) individual 1U-4U servers/devices", from a quantity row,
+    beside "Pack five (5) network switches")."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    duty_verbs = {_stem((re.findall(r"[a-z]+", tx(y).lower()) or [""])[0]) for y in c.get("customer_responsibilities") or []}
+    oos = " ".join(tx(y).lower() for y in c.get("out_of_scope") or [])
+    # Only the customer's preparation verbs: "Provide", "Confirm" or "Mount"
+    # lead customer duties about other things.
+    prep = re.compile(r"(?i)^(unrack|de-?rack|disconnect|power|decommission|de-?install|uninstall|centrali[sz]|wipe|back)")
+    claimed = lambda v: bool(prep.match(v)) and (_stem(v) in duty_verbs or bool(re.search(r"\b%s\w*ing\b" % re.escape(_stem(v)[:5]), oos)))
+    sc = c.get("scope") or []
+    groups: list[list[Any]] = [[]]
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            groups.append([x])
+        else:
+            groups[-1].append(x)
+    moved = []
+    for g in groups:
+        for x in g:
+            if not (isinstance(x, dict) and x.get("cites") and not x.get("standard") and x.get("kind") != "heading"):
+                continue
+            m_ = _VERB_RUN.match(tx(x))
+            if not m_:
+                continue
+            verbs = re.findall(r"[a-z]+", m_.group(1).lower())
+            verbs = [v for v in verbs if v not in ("and", "or")]
+            if not verbs or not claimed(verbs[0]):
+                continue
+            sib = [(re.findall(r"[A-Za-z]+", tx(y)) or [""])[0] for y in g if y is not x and isinstance(y, dict)
+                   and y.get("cites") and not y.get("standard") and y.get("kind") != "heading"]
+            sib = [v for v in sib if v and not claimed(v.lower())]
+            if sib:
+                v = max(set(sib), key=sib.count)
+                x["text"] = v[:1].upper() + v[1:].lower() + tx(x)[m_.end(1):]
+            else:
+                moved.append(x)
+    if moved:
+        c["scope"] = [x for x in sc if not any(x is y for y in moved)]
+        c.setdefault("customer_responsibilities", []).extend(moved)
+
+
+def _moved_equipment(c: dict[str, Any]) -> None:
+    """On a pack or move job, Equipment in Scope names everything the job
+    packs or the customer readies for it (010147 pass V: three of seven
+    inventory lines; the phones, servers, printer and cables were tasks
+    only)."""
+    if str(c.get("job_family") or "") not in ("relocation_move", "decommission_packing"):
+        return
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    eq = c.setdefault("equipment_in_scope", [])
+    if not eq:
+        return
+    src = [(x, r"pack|move|relocate|transport|crate|palleti[sz]e") for x in c.get("scope") or []] + \
+          [(x, r"unrack(?: and ready)?|ready|disconnect|power down") for x in c.get("customer_responsibilities") or []]
+    for x, verbs in src:
+        if not (isinstance(x, dict) and x.get("cites") and not x.get("standard") and x.get("kind") != "heading"):
+            continue
+        m_ = re.match(r"(?i)^\s*(?:%s)\s+(?:up\s+)?(?:the\s+)?(.+?)\.?$" % verbs, tx(x))
+        if not m_ or re.search(r"(?i)\b(debris|materials?|area|equipment for|it|them)\b", m_.group(1)) and not re.search(r"\d", m_.group(1)):
+            continue
+        # "twenty-five (25) to thirty (30) ..." is a range, not a destination.
+        obj = re.split(r"(?i)\s+(?:at|from|to(?!\s+(?:\d|[a-z-]+\s*\(\d))|for|into|onto|and stage|before|during)\s+", m_.group(1))[0].strip()
+        if x in (c.get("customer_responsibilities") or []) and not re.search(r"\d|\(\d", obj):
+            continue
+        ot = _object_toks(obj)
+        if not ot or any(len(ot & _object_toks(tx(e))) >= 0.6 * len(ot) for e in eq):
+            continue
+        eq.append({"text": obj[:1].upper() + obj[1:] + ".", "cites": list(x["cites"]), "kind": "fact"})
+
+
+def _transport_mode(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """The transport step names the mode the request picked (010147 pass V:
+    "Shared Truck/LTL Shipment (5-7 days)" was a kept scope fact, and the
+    step said only "Coordinate transportation of the packed equipment")."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    sc = c.get("scope") or []
+    step = next((x for x in sc if isinstance(x, dict) and re.match(r"(?i)\s*(coordinate|arrange|provide|manage)\s+(the\s+)?transport", tx(x))), None)
+    if step is None or re.search(r"(?i)\bltl\b|shared truck|dedicated (direct )?truck|white glove|freight", tx(step)):
+        return
+    cited = {ci for k in LISTS for y in c.get(k) or [] if isinstance(y, dict) for ci in y.get("cites") or []}
+    for a in atoms:
+        t = str(a.get("text") or "")
+        if not isinstance(a, dict) or re.search(r"(?i)\bstates?\s*:|select one method", t):
+            continue
+        mm = re.search(r"(?i)\b(shared truck\s*/\s*ltl(?: shipment)?|ltl shipment|less[- ]than[- ]truckload)(\s*\(\d+\s*-\s*\d+\s*(?:business )?days\))?", t)
+        if not mm or (a.get("id") not in cited and not re.search(r"(?i)transportation method", t)):
+            continue
+        new = re.sub(r"(?i)(transport\w*(?: of [^,;.]+?)?)(?=,|\.|;|\s+including|$)", lambda m2: m2.group(1) + " by " + mm.group(0).strip(), tx(step), count=1)
+        if new != tx(step):
+            step["text"] = new
+            step["cites"] = list(dict.fromkeys(list(step.get("cites") or []) + [str(a.get("id"))]))
+        return
+
+
 def _duration_not_date(c: dict[str, Any]) -> None:
     """A date slot holds a date: "Requested Completion Date: not to exceed
     five (5) months" is the job's duration (010083 pass V)."""
@@ -8095,6 +8199,9 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
     _traced(c, "items_not_tasks", _items_not_tasks, c)
+    _traced(c, "claimed_verbs", _claimed_verbs, c)
+    _traced(c, "moved_equipment", _moved_equipment, c)
+    _traced(c, "transport_mode", _transport_mode, c, envelope.get("atoms") or [])
     _traced(c, "bom_lists", _bom_lists, c, envelope.get("atoms") or [])
     _traced(c, "disposal_not_ours", _disposal_not_ours, c)
     _traced(c, "reused_not_removed", _reused_not_removed, c, envelope.get("atoms") or [])
