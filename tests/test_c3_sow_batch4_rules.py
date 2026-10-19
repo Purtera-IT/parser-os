@@ -148,3 +148,29 @@ def test_a_standard_contact_duty_that_says_more_than_the_template_stays():
     m._tidy(content)
     assert [x["text"] for x in content["customer_responsibilities"]] == [
         "Provide a Customer point of contact available by phone during scheduled visits."]
+
+
+def test_the_support_summary_names_the_sites_and_every_service():
+    """000132 pass T: the summary shrank to one line of four technical areas."""
+    sites = [{"city": c, "state": s} for c, s in (("Delphos", "OH"), ("Hudson", "WI"), ("Troy", "MI"))]
+    c = {"services": ["staff_augmentation", "support"], "sites": sites,
+         "overview": [{"text": "Provider will support physical network components and physical server environments.", "cites": [], "kind": "method"}],
+         "scope": [{"text": "Recurring Support Visits", "cites": [], "kind": "heading"},
+                   {"text": "Perform weekly on-site visits as needed at Delphos, OH, Hudson, WI, and Troy, MI.", "cites": ["w"], "kind": "fact"},
+                   {"text": "Coordinate with local stakeholders at each visit.", "cites": ["k"], "kind": "fact"},
+                   {"text": "Support physical network components.", "cites": ["n"], "kind": "fact"},
+                   {"text": "Provide end-user support, including O365/M365 clients.", "cites": ["e"], "kind": "fact"}]}
+    m._summary_names_job(c)
+    ov = " ".join(x["text"] for x in c["overview"])
+    assert "Delphos" in ov and "Troy" in ov and "weekly on-site visits" in ov
+    assert "coordination with local stakeholders" in ov and "end-user support, including O365/M365 clients" in ov
+    assert ov.count("physical network components") == 1
+
+
+def test_a_few_site_job_names_its_cities_once():
+    c = {"services": ["implementation"], "sites": [{"city": "Gallup", "state": "NM"}, {"city": "Harlan", "state": "IA"}],
+         "overview": [{"text": "Provider will install the antennas.", "cites": [], "kind": "fact"}], "scope": []}
+    m._summary_names_job(c)
+    assert c["overview"][1]["text"] == "Provider will perform the work at two (2) Customer locations: Gallup, NM and Harlan, IA."
+    m._summary_names_job(c)
+    assert len(c["overview"]) == 2

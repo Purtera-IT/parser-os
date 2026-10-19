@@ -99,7 +99,7 @@ _PARTS = {
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
         "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences in third-person proposal voice (\"Provider will ...\", never an order, never a \"Label: value\" line): what is installed or "
         "done, how many, where, for whom (each count exactly as its fact gives it for that same thing: a site total is not the count of single-switch sites): every device or system the job installs, including one a later request adds (a router asked for after the register and printer); the per-site facts the work is planned by when a fact states them (devices or register lanes per site, the time a fact estimates per site or per device); on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states; a platform "
-        "or service migration the job is part of (the customer moving from one system to another), named as the facts name it; what stays in place], \"schedule\": [labeled "
+        "or service migration the job is part of (the customer moving from one system to another), named as the facts name it; what stays in place; on recurring or on-call support, every service the facts request (end-user support, troubleshooting, coordination with local stakeholders) and the sites by city when there are a few], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\" (a lead time counts: \"Arrival Time: no less than 30 minutes before the site closes\"), \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known), "
@@ -3694,6 +3694,64 @@ def _service_groups(content: dict[str, Any]) -> None:
     content["scope"] = out
 
 
+_NOMINAL = ((r"provide\s+", ""), (r"perform\s+", ""), (r"support\s+", "support for "), (r"coordinate\s+", "coordination "),
+            (r"document\s+", "documentation of "), (r"troubleshoot\s+", "troubleshooting of "), (r"respond to\s+", "response to "),
+            (r"maintain\s+", "maintenance of "), (r"monitor\s+", "monitoring of "))
+
+
+def _summary_names_job(c: dict[str, Any]) -> None:
+    """A few-site job's summary names its sites, and a recurring support
+    job's summary names every service its cited task lines carry (000132
+    pass T: the summary shrank to four technical areas, without the six
+    cities, the end-user support or the stakeholder coordination). The
+    task line that already names every site is the site sentence; else
+    the cities are listed. At most two sentences are added."""
+    ov = c.setdefault("overview", [])
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    cities = [(str(x.get("city") or "").strip(), str(x.get("state") or "").strip()) for x in c.get("sites") or []]
+    cities = [(ci, st) for ci, st in cities if ci]
+    support = bool({"support", "staff_augmentation"} & set(c.get("services") or []))
+    tasks = [x for x in c.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"
+             and not x.get("standard") and x.get("cites")]
+    added = 0
+    ov_txt = " ".join(tx(o) for o in ov)
+    if 2 <= len(cities) <= 8 and len({ci for ci, _ in cities}) == len(cities) \
+            and not any(re.search(r"\b" + re.escape(ci) + r"\b", ov_txt) for ci, _ in cities):
+        named = next((x for x in tasks if all(re.search(r"\b" + re.escape(ci) + r"\b", tx(x)) for ci, _ in cities)), None)
+        if named is not None and re.match(r"(?i)(perform|provide|support|install|deploy|replace|visit)\b", tx(named)):
+            t = tx(named).strip().rstrip(".")
+            line = {"text": "Provider will " + t[:1].lower() + t[1:] + ".", "cites": list(named["cites"]), "kind": "fact"}
+        else:
+            places = [f"{ci}, {st}" if st else ci for ci, st in cities]
+            what = "provide recurring on-site IT support" if support else "perform the work"
+            line = {"text": f"Provider will {what} at {_words(len(places))} ({len(places)}) Customer locations: "
+                            + ("; ".join(places[:-1]) + "; and " if len(places) > 2 else places[0] + " and ") + places[-1] + ".", "cites": [], "kind": "method"}
+        ov.insert(min(1, len(ov)), line)
+        added += 1
+    if support:
+        said_by = [o for o in ov]
+        names = []
+        for x in tasks:
+            t = tx(x).strip().rstrip(".")
+            if cities and sum(1 for ci, _ in cities if re.search(r"\b" + re.escape(ci) + r"\b", t)) >= 2:
+                continue  # the site line
+            if _said(t, said_by, 0.5) or len(t.split()) > 10 or not _SERVICE_WORDS.search(t):
+                continue  # a service is named in a few words; a long line is a task, not a service
+            for pat, rep in _NOMINAL:
+                mm = re.match(r"(?i)\s*" + pat, t)
+                if mm:
+                    names.append(rep + t[mm.end():])
+                    break
+        if names:
+            body = names[0] if len(names) == 1 else "; ".join(names[:-1]) + ("; and " if len(names) > 2 else " and ") + names[-1]
+            if len(names) == 2:
+                body = body.replace("; and ", " and ")
+            ov.append({"text": "Provider will also provide " + body + ".",
+                       "cites": [cc for x in tasks if any(_said(n, [x], 0.6) for n in names) for cc in x.get("cites") or []],
+                       "kind": "fact"})
+            added += 1
+
+
 def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
     """The summary names what the cited task list counts: a cited work line
     whose numbers the summary lacks, and a cited haul-away, are added as
@@ -5045,6 +5103,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     full = ", ".join(f"{ci}, {st}" if st else ci for ci, st in cities[:-1]) + ", and " + \
                         (f"{cities[-1][0]}, {cities[-1][1]}" if cities[-1][1] else cities[-1][0])
                     x["text"] = t[:a] + full + t[b:]
+    _summary_names_job(c)
     # The site-count summary line the fact check set aside comes back when its
     # count is the resolved roster (000123: "161 customer locations" dropped
     # against a note's "about 160").
