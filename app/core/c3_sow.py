@@ -2245,6 +2245,14 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         t = "Follow-up or return visits, unless authorized in writing or by Change Order."
         if not _said(t, oos, 0.5):
             oos.append({"text": t, "cites": [], "kind": "method"})
+    # An overview left opening on "also" lost its lead line: put it back
+    # (010116: "Provider will also install ..." alone).
+    ov = content.get("overview") or []
+    if ov and isinstance(ov[0], dict) and re.match(r"(?i)\s*(provider will )?also\b", str(ov[0].get("text"))):
+        lead = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+                if isinstance(x, dict) and x.get("list") == "overview" and not re.match(r"(?i)\s*(provider will )?also\b", str(x.get("text")))][:1]
+        if lead:
+            content["overview"] = lead + ov
     # An empty schedule takes back the cited schedule line the check set aside
     # (010043: "Week of July 6, 2026" dropped with no reason).
     if not content.get("schedule"):
