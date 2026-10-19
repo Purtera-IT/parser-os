@@ -75,8 +75,11 @@ def main() -> None:
     key = args.key
     train, _ = load_split(args.train, schema, args.max_atoms)
     val, _ = load_split(args.validation, schema, args.max_atoms)
-    tr = _cache(model, train, [key], dev)[key]
-    va = _cache(model, val, [key], dev)[key]
+    tr = _cache(model, train, [key], dev).get(key)
+    va = _cache(model, val, [key], dev).get(key)
+    if tr is None or va is None or not len(tr["y"]) or not len(va["y"]):
+        print(f"no {key} labels in train or validation; nothing to fit", flush=True)
+        return
     print(f"rows train={len(tr['y'])} validation={len(va['y'])}", flush=True)
     model.to("cpu")
     base_exact, n = _exact(model, key, va, free=False)

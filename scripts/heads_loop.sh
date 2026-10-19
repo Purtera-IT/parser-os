@@ -21,7 +21,10 @@ CKPT=${CKPT:-$HOME/c3-serve/c3_base/checkpoint.pt}
 cd "$(dirname "$0")/.."
 mkdir -p "$OUT"
 REAL=${REAL:-}
-python3.11 -m ml.c3.labels_from_sow --envelopes "$ENV_DIR"/final_*_env.json ${REVIEWS:+--reviews "$REVIEWS"} ${REAL:+--real-sow $REAL} --out "$OUT/records"
+extra=()
+[ -n "$REVIEWS" ] && extra+=(--reviews "$REVIEWS")
+[ -n "$REAL" ] && extra+=(--real-sow "$REAL")
+python3.11 -m ml.c3.labels_from_sow --envelopes "$ENV_DIR"/final_*_env.json "${extra[@]}" --out "$OUT/records"
 deals=($(ls "$OUT/records" | sed 's/.json//' | sort))
 mkdir -p "$OUT/train" "$OUT/val"
 i=0; for d in $deals; do if (( i % 4 == 0 )); then cp "$OUT/records/$d.json" "$OUT/val/"; else cp "$OUT/records/$d.json" "$OUT/train/"; fi; i=$((i+1)); done
