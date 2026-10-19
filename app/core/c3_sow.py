@@ -976,6 +976,13 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
     content["slot_moved"] = _slot_by_head(content, envelope)
+    # A line the type head called small talk is never cited (010082: "This
+    # work is for a new unit opening" from a signature's menu entry).
+    chatter = {str(a.get("id")) for a in envelope.get("atoms") or []
+               if str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") in ("small_talk", "signature")}
+    if chatter:
+        for k in LISTS:
+            content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and all(c in chatter for c in x["cites"]))]
     _grounding(content, fs)
     _materials_hygiene(content, family, fs)
     # An unanswered question is not a fact: a bullet cited only to open
@@ -2201,6 +2208,21 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     for x in content.get("arrival_protocol") or []:
         if isinstance(x, dict) and re.match(r"(?i)\s*require an onsite manager", str(x.get("text"))):
             x["text"] = re.sub(r"(?i)^\s*require an onsite manager", "Customer provides an onsite manager", str(x["text"]))
+    # Customer duties written into the technician's arrival protocol are the
+    # customer's (010082: inform Henry of the schedule, provide credentials).
+    arr_keep = []
+    for x in content.get("arrival_protocol") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        if isinstance(x, dict) and re.match(r"(?i)\s*(customer|the customer|site staff|onsite staff)\b", t):
+            if not _said(t, content.setdefault("customer_responsibilities", []), 0.5):
+                content["customer_responsibilities"].append(x)
+            continue
+        arr_keep.append(x)
+    content["arrival_protocol"] = arr_keep
+    # Assessment is ticked only when an assessment or survey survives in scope.
+    if "assessment" in (content.get("services") or []) and not re.search(
+            r"(?i)\bsurvey|assess|walk-?through|evaluat", " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict))):
+        content["services"] = [v for v in content["services"] if v != "assessment"] or ["implementation"]
     # Last: a heading left with nothing under it goes (010209 "Switch replacement").
     sc = content.get("scope") or []
     content["scope"] = [x for i, x in enumerate(sc)
