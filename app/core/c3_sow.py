@@ -2039,6 +2039,11 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         alt = [{k2: v for k2, v in x.items() if k2 != "list"} for x in content.get("dropped") or []
                if isinstance(x, dict) and x.get("list") == "overview" and not all(c in bro for c in x.get("cites") or ["-"])
                and not brochure.search(str(x.get("text")))][:2]
+        if not alt:
+            # No clean draft: the summary is the job's own install lines.
+            inst = [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("cites")
+                    and re.match(r"(?i)\s*(install|mount|replace|remove|run|deploy|pack|swap)\b", str(x.get("text")))][:2]
+            alt = [{"text": "Provider will " + str(x["text"])[0].lower() + str(x["text"])[1:], "cites": x.get("cites") or [], "kind": "fact"} for x in inst]
         if alt:
             content["overview"] = alt
     # A site condition is an assumption, not a closing step (010082: the 12 ft
