@@ -5297,6 +5297,72 @@ def _standards_coverage(c: dict[str, Any]) -> None:
     c["scope"] = sc
 
 
+_DEVICE = re.compile(r"(?i)\b(registers?|printers?|routers?|gateways?|switch(es)?|displays?|tvs?|monitors?|cameras?|access points?|"
+                     r"phones?|clocks?|kiosks?|scanners?|terminals?|video bars?|speakers?|ups|firewalls?|servers?|tablets?)\b")
+
+
+def _device_headings(c: dict[str, Any]) -> None:
+    """Steps sit under the heading of the device they act on (010198 pass V:
+    "Connect each printer to power ... and perform a test print" and the
+    printer pairing step in a generic "All Work Areas" block beside a
+    "Kitchen printer" heading, and five router steps with no heading at
+    all). A step in a generic group naming exactly one device that one
+    device heading names moves to that heading's group; a device a cited
+    install step in a generic group installs, with at least two more steps
+    naming it, gets its own heading after the last device group."""
+    sc = c.get("scope") or []
+    groups: list[list[Any]] = [[]]
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            groups.append([x])
+        else:
+            groups[-1].append(x)
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    dev = lambda t: {re.sub(r"(es|s)$", "", m_.group(0).lower()) for m_ in _DEVICE.finditer(t)}
+    heads = [g for g in groups if g and isinstance(g[0], dict) and g[0].get("kind") == "heading" and dev(tx(g[0]))]
+    generic = [g for g in groups if g and isinstance(g[0], dict) and g[0].get("kind") == "heading"
+               and re.search(r"(?i)\b(all work areas?|general|common|all areas|installation and testing|work steps)\b", tx(g[0]))]
+    if not generic:
+        return
+    moved = False
+    for g in generic:
+        for x in list(g[1:]):
+            if not isinstance(x, dict):
+                continue
+            d = dev(tx(x))
+            if len(d) != 1:
+                continue
+            home = [h for h in heads if d <= dev(tx(h[0]))]
+            if len(home) == 1:
+                g.remove(x)
+                home[0].append(x)
+                moved = True
+        # A device with its own install step and steps but no heading, in a
+        # task list already organised by device (not by room: 010217).
+        for x in (list(g[1:]) if heads else []):
+            m_ = re.match(r"(?i)\s*(?:provider will )?install\s+(?:one \(1\)\s+|the\s+|a\s+|an\s+)?(.+?)\.?$", tx(x)) \
+                if isinstance(x, dict) and x.get("cites") and not x.get("standard") else None
+            d = dev(tx(x)) if m_ else set()
+            if len(d) != 1 or any(d <= dev(tx(h[0])) for h in heads):
+                continue
+            mates = [y for y in g[1:] if y is not x and isinstance(y, dict) and dev(tx(y)) == d]
+            if len(mates) < 2:
+                continue
+            name = re.split(r"(?i)\s+(?:at|in|on|for|to)\s+", m_.group(1))[0].strip()
+            if dev(name) != d:
+                continue  # the install's own object is the device ("a backing board for the displays" is not)
+            new = [{"text": name[:1].upper() + name[1:], "cites": [], "kind": "heading"}, x] + mates
+            for y in [x] + mates:
+                g.remove(y)
+            at = max(i for i, gg in enumerate(groups) if any(gg is h for h in heads)) + 1
+            groups.insert(at, new)
+            heads.append(new)
+            moved = True
+            break
+    if moved:
+        c["scope"] = [x for g in groups for x in g if not (isinstance(x, dict) and x.get("kind") == "heading" and len(g) == 1 and g[0] is x)]
+
+
 def _one_statement(c: dict[str, Any]) -> None:
     """Each step is said once (pass V: standards appended beside the deal
     lines that already say them; 010082 "Arrive onsite during the
@@ -5654,6 +5720,52 @@ def _summary_services_tasked(c: dict[str, Any], atoms: list[dict[str, Any]]) -> 
     at = max((i for i, x in enumerate(sc) if isinstance(x, dict) and x.get("kind") != "heading" and x.get("cites")
               and not x.get("standard") and re.match(r"(?i)\s*(support|perform|provide|troubleshoot|maintain)\b", tx(x))), default=len(sc) - 1)
     sc[at + 1:at + 1] = adds[:3]
+
+
+def _summary_names_installs(c: dict[str, Any]) -> None:
+    """A few-device job's summary names every device a cited task installs
+    (010198 pass V: "Provider will install one (1) Square register and one
+    (1) kitchen printer" while the task list also installs the Ubiquiti
+    router with cellular backup). Only for a job with at most six cited
+    install steps; one sentence is added naming what is missing."""
+    ov = c.setdefault("overview", [])
+    ov_toks = _toks(" ".join(str(x.get("text") if isinstance(x, dict) else x) for x in ov))
+    inst = [x for x in c.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+            and x.get("cites") and re.match(r"(?i)\s*(provider will )?(install|mount|deploy)\b", str(x.get("text")))]
+    if not inst or len(inst) > 6 or not ov:
+        return
+    missing, cites = [], []
+    for x in inst:
+        m_ = re.match(r"(?i)\s*(?:provider will )?(?:install|mount|deploy)\s+(.+?)(?:\s+(?:at|in|on|onto|to|for|from)\s+.*)?\.?$", str(x["text"]))
+        obj = m_.group(1).strip() if m_ else ""
+        nouns = _object_toks(obj)
+        if obj and nouns and not (nouns & ov_toks) and not any(_said(obj, [mm], 0.8) for mm in missing):
+            missing.append(obj)
+            cites += list(x.get("cites") or [])
+    if missing:
+        body = missing[0] if len(missing) == 1 else ", ".join(missing[:-1]) + " and " + missing[-1]
+        ov.append({"text": f"Provider will also install {body}.", "cites": list(dict.fromkeys(cites)), "kind": "fact"})
+
+
+def _request_wording(c: dict[str, Any]) -> None:
+    """A request is not a task: "Add one (1) Ubiquiti router with cellular
+    backup to the installation scope" (010198 pass V, the email's "I would
+    also like to add a Ubiquiti router") restates the install task beside
+    it and goes; with no such task it reads as the install."""
+    sc = c.get("scope") or []
+    rx = re.compile(r"(?i)^\s*(?:please\s+)?add\s+(.+?)\s+to\s+(?:the\s+)?(?:installation\s+|project\s+|work\s+)?(?:scope|quote|sow|order)\b.*$")
+    keep = []
+    for x in sc:
+        m_ = rx.match(str(x.get("text"))) if isinstance(x, dict) and x.get("kind") != "heading" else None
+        if m_:
+            obj = m_.group(1)
+            if any(y is not x and isinstance(y, dict) and y.get("kind") != "heading"
+                   and re.match(r"(?i)\s*(provider will )?(install|mount|deploy|set up)\b", str(y.get("text")))
+                   and len(_object_toks(obj) & _object_toks(str(y.get("text")))) >= max(1, 0.5 * len(_object_toks(obj))) for y in sc):
+                continue
+            x["text"] = "Install " + obj + "."
+        keep.append(x)
+    c["scope"] = keep
 
 
 def _summary_names_job(c: dict[str, Any]) -> None:
@@ -6153,6 +6265,11 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
     # the report, and that "drop" then struck the serial-number outcome).
     report = [str(t) for d in content.get("deliverables") or [] if isinstance(d, dict) for t in d.get("description") or []]
     gone = [g for g in gone if not any(_said(g, [t], 0.8) for t in report)]
+    # Nor is a line gone that a surviving line still says (010198 pass V:
+    # a dropped copy of "Confirm completion with the onsite contact" struck
+    # the onsite-handoff outcome while the scope kept that step).
+    live = [x for k in LISTS for x in content.get(k) or [] if isinstance(x, dict) and x.get("kind") != "heading"]
+    gone = [g for g in gone if not _said(g, live, 0.8)]
     terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope")
                      for x in content.get(k) or []).lower()
     # A place named for shipping ("the designated shipment area") is where
@@ -7381,6 +7498,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "per_site_lines", _per_site_lines, c, envelope.get("atoms") or [])
     _summary_names_job(c)
     _traced(c, "summary_services_tasked", _summary_services_tasked, c, envelope.get("atoms") or [])
+    _traced(c, "summary_names_installs", _summary_names_installs, c)
+    _traced(c, "request_wording", _request_wording, c)
     # The site-count summary line the fact check set aside comes back when its
     # count is the resolved roster (000123: "161 customer locations" dropped
     # against a note's "about 160").
@@ -7464,6 +7583,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "window_rollover", _window_rollover, c)
     _traced(c, "qualified_over_universal", _qualified_over_universal, c)
     _traced(c, "no_broader_than_source", _no_broader_than_source, c, envelope.get("atoms") or [])
+    _traced(c, "device_headings", _device_headings, c)
     _traced(c, "one_statement", _one_statement, c)
     _traced(c, "field_sequence", _field_sequence, c)
     _traced(c, "no_install_wording", _no_install_wording, c, envelope.get("atoms") or [])

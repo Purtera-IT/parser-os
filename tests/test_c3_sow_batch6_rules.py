@@ -425,3 +425,53 @@ def test_an_uncited_repeat_of_a_cited_line_goes():
                         {"text": "Standard ladders reach every camera location.", "cites": [], "kind": "method"}]
     m._no_repeat_lines(c)
     assert [x["text"][:12] for x in c["assumptions"]] == ["All cable ru", "Standard lad"]
+
+
+# --- 010198 pass V -------------------------------------------------------------
+
+def test_a_request_restating_a_task_goes_and_the_summary_names_the_device():
+    c = _content()
+    c["overview"] = [{"text": "Provider will install one (1) Square register and one (1) kitchen printer.", "cites": ["a"], "kind": "fact"}]
+    c["scope"] = [{"text": "Install one Square register.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Install the Ubiquiti router with cellular backup.", "cites": ["r"], "kind": "fact"},
+                  {"text": "Closeout", "cites": [], "kind": "heading"},
+                  {"text": "Add one (1) Ubiquiti router with cellular backup to the installation scope.", "cites": ["r"], "kind": "fact"}]
+    m._summary_names_installs(c)
+    m._request_wording(c)
+    assert c["overview"][-1]["text"] == "Provider will also install the Ubiquiti router with cellular backup."
+    assert not any(x["text"].startswith("Add one") for x in c["scope"])
+
+
+def test_a_request_with_no_task_reads_as_the_install():
+    c = _content()
+    c["scope"] = [{"text": "Add a second kitchen printer to the quote.", "cites": ["r"], "kind": "fact"}]
+    m._request_wording(c)
+    assert c["scope"][0]["text"] == "Install a second kitchen printer."
+
+
+def test_steps_move_under_the_device_heading_and_a_headless_device_gets_one():
+    c = _content()
+    h = lambda t: {"text": t, "cites": [], "kind": "heading"}
+    st = lambda t: {"text": t, "cites": [], "kind": "method", "standard": True}
+    c["scope"] = [h("Kitchen printer"), {"text": "Install one kitchen printer.", "cites": ["p"], "kind": "fact"},
+                  h("All Work Areas"), st("Connect each printer to power and perform a test print."),
+                  {"text": "Install the Ubiquiti router with cellular backup.", "cites": ["r"], "kind": "fact"},
+                  st("Connect the internet service to the router's WAN connection."), st("Perform the basic router configuration."),
+                  st("Power on the installed devices."), h("Closeout"), st("Confirm completion.")]
+    m._device_headings(c)
+    got = [x["text"][:24] for x in c["scope"]]
+    assert got == ["Kitchen printer", "Install one kitchen prin", "Connect each printer to ",
+                   "Ubiquiti router with cel", "Install the Ubiquiti rou", "Connect the internet ser", "Perform the basic router",
+                   "All Work Areas", "Power on the installed d", "Closeout", "Confirm completion."]
+
+
+def test_a_room_organised_list_gets_no_device_heading():
+    c = _content()
+    h = lambda t: {"text": t, "cites": [], "kind": "heading"}
+    c["scope"] = [h("General"), {"text": "Install the two new 86-inch displays in Room 250.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Reconnect the display connections in Room 250.", "cites": ["b"], "kind": "fact"},
+                  {"text": "Mount each display at the approved height.", "cites": [], "kind": "method", "standard": True},
+                  h("Room 247"), {"text": "Install the 98-inch display in room 247.", "cites": ["c"], "kind": "fact"}]
+    before = [x["text"] for x in c["scope"]]
+    m._device_headings(c)
+    assert [x["text"] for x in c["scope"]] == before
