@@ -1,7 +1,7 @@
 {
   "_about": "PurTera's fixed handling per job type: SOW items a PM writes on every job of that type whether or not the deal states them (template content, not deal facts). Owner-reviewed. The writer writes every item unless a deal fact contradicts it. Sections match sow_method_library.json.",
   "decommission_packing": {
-    "_source": "owner, 2026-10-18 (010115 v1 grade: PM-habit items are PurTera standard handling); items added from the 010115 v1 TEMPLATE list (grade round 12)",
+    "_source": "owner, 2026-10-18 (010115 v1 grade: PM-habit items are PurTera standard handling); items added from the 010115 v1 TEMPLATE list (grade round 12); retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "Meet the onsite contact on arrival and review the hardware to be dismantled and packed.",
       "Assist with the physical disconnection of the equipment as directed by the onsite contact.",
@@ -23,7 +23,9 @@
       "Disconnect or arrange for the safe disconnection of any electrical, building, security, or specialized connections that require a licensed trade or manufacturer-authorized resource.",
       "Accept responsibility for the transportation, shipment, storage, and disposal of all equipment and materials.",
       "Ensure equipment is accessible and free from obstructions.",
-      "Provide any specialized tools, carts, pallets, shipping or lifting equipment the job needs."
+      "Provide any specialized tools, carts, pallets, shipping or lifting equipment the job needs.",
+      "{when:badges?|parking pass|security desk|check[- ]in with security} Coordinate site access with security.",
+      "{when:badges?|parking pass} Provide visitor badges and parking passes upon technician arrival."
     ],
     "assumptions": [
       "Equipment is powered down and released for removal before the technician arrives.",
@@ -51,7 +53,7 @@
     ]
   },
   "pos_install_refresh": {
-    "_source": "owner standards loop 2026-10-18: generic POS handling common to the 000123 and 010198 v1 TEMPLATE lists (device-specific steps left to the deal); 2026-10-19: TEMPLATE items from the 000123, 010198 and 010279 v1 grades (runbook, de-install, peripherals, checklists, remote support, palletize/back room, delay assumption, countertop exclusion; parking gated on billable expenses)",
+    "_source": "owner standards loop 2026-10-18: generic POS handling common to the 000123 and 010198 v1 TEMPLATE lists (device-specific steps left to the deal); 2026-10-19: TEMPLATE items from the 000123, 010198 and 010279 v1 grades (runbook, de-install, peripherals, checklists, remote support, palletize/back room, delay assumption, countertop exclusion; parking gated on billable expenses); retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "Locate the Customer-provided equipment and installation materials.",
       "Confirm the installation locations and identify the register lanes in scope with the onsite contact.",
@@ -77,7 +79,11 @@
       "{when:corporate office|support desk|help ?desk|\\bSSD\\b|remote (support|resource|engineer)} Coordinate with the Customer's designated remote support resource for configuration assistance, escalation or additional troubleshooting.",
       "{when:checklist} Complete the Customer-provided installation and testing checklists.",
       "Confirm the installed POS components communicate across the network before leaving site.",
-      "Confirm completion with the onsite contact before leaving site."
+      "Confirm completion with the onsite contact before leaving site.",
+      "{when:\\bregisters?\\b|\\bterminals?\\b|pos stations?} Unpack and physically install each register or terminal.",
+      "{when:runs? smoothly|remain onsite|\\bmonitor\\b|onsite for \\d|\\d ?(-|to) ?\\d hours? onsite} Following installation, the technician will remain onsite to monitor and validate the operation of the POS and network environment.",
+      "{when:runs? smoothly|remain onsite|\\bmonitor\\b|onsite for \\d} Confirm stable internet connectivity, that each register remains connected to the network, that each printer remains reachable and can receive a test print, and that the router is providing network connectivity.",
+      "Check in with store management upon arrival."
     ],
     "customer_responsibilities": [
       "{when:preconfigur|pre-configur|(customer|they|their|end user).{0,40}configur|configur.{0,40}(by|from) (the )?(customer|them)} Perform all device configurations and troubleshooting, if required.",
@@ -117,7 +123,10 @@
       "Required account credentials and administrative access will be available during the scheduled installation.",
       "Installation can be completed using standard field service tools and normal installation methods.",
       "{when:labor only|we'?d ship|ship(ped)? (out|directly)|customer[- ](provided|supplied|furnished) (hardware|equipment)} No materials are required to be provided by Provider.",
-      "Provider is not responsible for delays caused by unavailable equipment, missing materials, store access restrictions, network outages, electrical issues, unavailable remote support or other conditions outside Provider's control."
+      "Provider is not responsible for delays caused by unavailable equipment, missing materials, store access restrictions, network outages, electrical issues, unavailable remote support or other conditions outside Provider's control.",
+      "{when:cellular backup|failover|cellular} The cellular service will be activated prior to installation if cellular failover testing is required.",
+      "{when:\\b(saturday|sunday|weekends?)\\b} All Services will be performed during the weekend.",
+      "Additional labor resulting from conditions outside the documented scope may require Customer authorization through the Change Control process."
     ],
     "exclusions": [
       "Disposal, recycling, shipping or offsite removal of legacy equipment.",
@@ -164,7 +173,7 @@
     ]
   },
   "low_voltage_cabling": {
-    "_source": "owner standards loop 2026-10-18: generic cabling handling from the 010082 v1 TEMPLATE list (job-specific hardware left to the deal); 010082 v2 grade TEMPLATE items (business-hours arrival, J-hook/Velcro support, metal-stud screws, drilling-prohibited areas, trenching/demolition/hazmat)",
+    "_source": "owner standards loop 2026-10-18: generic cabling handling from the 010082 v1 TEMPLATE list (job-specific hardware left to the deal); 010082 v2 grade TEMPLATE items (business-hours arrival, J-hook/Velcro support, metal-stud screws, drilling-prohibited areas, trenching/demolition/hazmat); retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "{unless:after[- ]hours|overnight|weekends?\\b|night shift} Arrive onsite during the Customer-approved regular business hours.",
       "Review the work areas and the cable pathway with the onsite point of contact.",
@@ -178,7 +187,8 @@
       "Test each cable run for 4-pair continuity.",
       "Inform the onsite point of contact of each cable's location.",
       "Clean the immediate work area and remove Provider-generated installation debris.",
-      "Confirm completion with the onsite contact before leaving site."
+      "Confirm completion with the onsite contact before leaving site.",
+      "{when:rough[- ]?in|tape .*ceiling|coil|unterminated|service loop} Coil the unterminated cable and service loop neatly above the accessible ceiling and mark its location with tape for the onsite point of contact."
     ],
     "customer_responsibilities": [
       "Provide device and termination locations before the technician arrives.",
@@ -193,7 +203,8 @@
       "Electrical work, new power circuits or modification of existing power infrastructure.",
       "Fire-stopping, core drilling, conduit installation or structural modification.",
       "Network configuration, programming or active equipment setup.",
-      "Trenching, demolition or hazardous material remediation."
+      "Trenching, demolition or hazardous material remediation.",
+      "Wall and ceiling repairs."
     ],
     "deliverable_outcomes": [
       "Cable runs installed, terminated and labeled at both ends.",
@@ -219,7 +230,7 @@
     ]
   },
   "cameras_security": {
-    "_source": "owner standards loop 2026-10-18: generic camera handling from the 010043 v1 TEMPLATE list",
+    "_source": "owner standards loop 2026-10-18: generic camera handling from the 010043 v1 TEMPLATE list; retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "Coordinate with the customer or authorized representative to confirm final camera placement before mounting.",
       "Route, dress and secure cabling in a professional manner where accessible.",
@@ -235,7 +246,9 @@
       "The IDF is accessible and has a usable pathway to each camera location.",
       "Lift requirements, if needed, will be handled through a change request.",
       "Any required permits, building or landlord approvals will be handled by the customer unless otherwise stated.",
-      "Available PoE ports on the IDF switch support each camera."
+      "Available PoE ports on the IDF switch support each camera.",
+      "Cameras and required mounting hardware are provided or available before installation.",
+      "{unless:\\b(lift|boom|scissor)s?\\b} Camera locations are accessible using standard ladders or normal installation methods."
     ],
     "exclusions": [
       "Advanced camera analytics configuration.",
@@ -243,7 +256,10 @@
       "Electrical work.",
       "Camera licensing, cloud portal administration or video management configuration.",
       "After-hours work unless previously approved.",
-      "Network switch or firewall configuration."
+      "Network switch or firewall configuration.",
+      "{unless:\\b(lift|boom|scissor)s? (rental|is included|will be provided by provider)} Lift rental or lift operation.",
+      "Core drilling, trenching, or major structural modifications.",
+      "Painting, patching, drywall repair, or ceiling tile replacement beyond normal access requirements."
     ],
     "deliverable_outcomes": [
       "Cameras mounted at the confirmed locations.",
@@ -252,7 +268,7 @@
     ]
   },
   "network_switch_refresh": {
-    "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list; 2026-10-19: TEMPLATE items from the 010085 v1 grade (document/port-matrix review, MDF/IDF, remote smart hands, closeout photos/serials, confirmed count, configured-switches wording, delay assumption, lift window); 010083 batch-3 TEMPLATE items (check-in, rack space before removal, removal, accessories, racking screws, serial capture, testing checklist, posted completion time, schedule estimate); serials always when the facts ask for them; no business-hours CR on an after-hours-only job",
+    "_source": "owner standards loop 2026-10-18: generic switch-refresh handling from the 010083 v1 TEMPLATE list; 2026-10-19: TEMPLATE items from the 010085 v1 grade (document/port-matrix review, MDF/IDF, remote smart hands, closeout photos/serials, confirmed count, configured-switches wording, delay assumption, lift window); 010083 batch-3 TEMPLATE items (check-in, rack space before removal, removal, accessories, racking screws, serial capture, testing checklist, posted completion time, schedule estimate); serials always when the facts ask for them; no business-hours CR on an after-hours-only job; retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "Arrive onsite and check in according to the Customer-provided site access process.",
       "Review the Customer-provided switch refresh documentation, port matrix, network closet (MDF/IDF) locations, rack layout, cabling and available rack space before beginning work.",
@@ -270,7 +286,11 @@
       "{when:serial} Capture and provide the serial number of each new switch installed.",
       "{when:testing checklist|post[- ]install (test|check)} Support completion of the Customer-provided post-install testing checklist.",
       "{when:posted completion time|completion time} Post the completion time once the Customer's remote resource confirms the technician is clear to leave the site.",
-      "Confirm completion with the onsite contact or remote engineer before leaving site."
+      "Confirm completion with the onsite contact or remote engineer before leaving site.",
+      "{when:bridge|webex} Join the customer provided bridge upon arrival.",
+      "{when:bridge|webex} Post pictures of the existing switch or switches to the customer provided bridge before beginning replacement work.",
+      "{when:bridge|webex} Ask any site specific questions through the customer provided bridge before beginning the replacement.",
+      "Provider will perform reasonable physical corrective actions related to Provider installed connections during the scheduled visit."
     ],
     "customer_responsibilities": [
       "Provide replacement switches fully configured and ready for installation before the onsite visit.",
@@ -289,7 +309,12 @@
       "{when:\\b(lift|boom|scissor)s?\\b} Confirm each lift type suits the work area, and have lifts delivered, charged or fueled, with clear and safe access paths.",
       "{when:\\b(mdf|idf)s?\\b} Provide the final confirmed switch count by MDF and IDF.",
       "{when:remote|engineer} Provide Customer remote engineering support during each cutover or validation window.",
-      "{unless:\\?\\s*(\\[[^\\]]*\\]\\s*)?after[- ]?hours\\b|\\b(all|only)\\b.{0,30}after[- ]?hours|after[- ]?hours only} {when:after[- ]?hours|maintenance windows?|production} Confirm which areas may be completed during business hours and which require after-hours or non-production windows."
+      "{unless:\\?\\s*(\\[[^\\]]*\\]\\s*)?after[- ]?hours\\b|\\b(all|only)\\b.{0,30}after[- ]?hours|after[- ]?hours only} {when:after[- ]?hours|maintenance windows?|production} Confirm which areas may be completed during business hours and which require after-hours or non-production windows.",
+      "{when:testing checklist|post[- ]install (test|check)} Provide the post install testing checklist.",
+      "{when:bridge|webex} Provide the customer bridge information for each scheduled installation.",
+      "{when:minimal port matrix|special cables|same port} Provide a minimal port matrix for special cables that must return to the same port number on the new switch, including trunk ports and wireless access point ports.",
+      "{unless:minimal port matrix|special cables|same port} Provide an accurate port and cable matrix for each MDF and IDF included in the refresh.",
+      "Provide available rack space for the replacement switches."
     ],
     "assumptions": [
       "Provider's role is limited to onsite physical labor and field support.",
@@ -301,14 +326,24 @@
       "Access, escorts and maintenance windows are ready as scheduled; Provider is not responsible for delays caused by production restrictions, blocked access, missing documentation, missing materials, unavailable remote support or site readiness issues.",
       "{when:remote|engineer} The Customer remote engineering team will be available during cutover and validation windows.",
       "{when:\\b(lift|boom|scissor)s?\\b} The lift equipment allowance covers onsite use of the listed lift equipment during the scheduled work window only.",
-      "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations|branches)\\b|per week|a week\\b} The project schedule is an estimate and may be adjusted for site readiness, hardware availability, Customer scheduling, technician availability, access approval and field conditions."
+      "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations|branches)\\b|per week|a week\\b} The project schedule is an estimate and may be adjusted for site readiness, hardware availability, Customer scheduling, technician availability, access approval and field conditions.",
+      "{when:minimal port matrix|special cables|same port} Customer will provide a minimal port matrix for special cables that must return to the same port number on the new switch.",
+      "{unless:minimal port matrix|special cables|same port} The customer will provide a complete and accurate port and cable matrix before the onsite visit.",
+      "Existing patch cables will be reused where practical unless replacement patch cables are provided by the customer.",
+      "{when:\\b(lift|boom|scissor)s?\\b} Lift spotters and lift certifications are not required onsite.",
+      "{when:relabel|re-label|no (additional )?charge|labell?ing error|label(ing)? mistake} If Provider fails to properly label or reconnect a cable that was reasonably accessible and within Provider's control during the scheduled installation, reasonable corrective labor directly resulting from that Provider error will be completed at no additional charge to the Customer.",
+      "{when:relabel|re-label|no (additional )?charge|labell?ing error|label(ing)? mistake} Additional time resulting from undocumented existing conditions, inaccessible cabling, hidden cable routes, damaged infrastructure, defective cables, incorrect existing labels, inaccurate Customer documentation, unrelated network issues, or third party changes is not considered a Provider labeling error and may require additional approved services.",
+      "The site will be reasonably accessible and safe for Provider personnel."
     ],
     "exclusions": [
       "Switch configuration and programming.",
       "Network troubleshooting.",
       "Return logistics for removed equipment.",
       "Structured cabling installation, cable certification, electrical work, rack replacement or circuit troubleshooting unless added by written change order.",
-      "Shipping, freight coordination or logistics for replacement equipment."
+      "Shipping, freight coordination or logistics for replacement equipment.",
+      "Core drilling or structural work.",
+      "Wall patching or painting.",
+      "Complete network closet, rack, or cable remediation beyond the switches being replaced."
     ],
     "deliverable_outcomes": [
       "New switches installed and cabled one-for-one where practical.",
@@ -324,7 +359,7 @@
     ]
   },
   "av_conference_room": {
-    "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list; 010120 v1 TEMPLATE items (positioning, secure/PoE/video checks, J-hooks, room availability, final device locations, ceiling tile/structure, suspended-mount and finish exclusions, existing displays untouched); 010217 v1 batch-3 TEMPLATE items (relocation protect/transport, 3/4 in plywood spec, access credentials, parking/trash as assumptions, backing without demolition, large-display handling, rigging and defective-equipment exclusions); decommission lines skip relocated gear",
+    "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list; 010120 v1 TEMPLATE items (positioning, secure/PoE/video checks, J-hooks, room availability, final device locations, ceiling tile/structure, suspended-mount and finish exclusions, existing displays untouched); 010217 v1 batch-3 TEMPLATE items (relocation protect/transport, 3/4 in plywood spec, access credentials, parking/trash as assumptions, backing without demolition, large-display handling, rigging and defective-equipment exclusions); decommission lines skip relocated gear; retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "{unless:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} {when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Disconnect and remove the existing equipment designated for removal, including brackets, power supplies and unused cabling.",
       "{when:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} Protect the removed displays being relocated within the facility.",
@@ -358,7 +393,12 @@
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Verify network connectivity and PoE delivery to the connected devices.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Verify that the displays receive the intended video signal.",
       "Correct any workmanship deficiencies identified during testing before leaving site.",
-      "Confirm completion with the onsite contact before leaving site."
+      "Confirm completion with the onsite contact before leaving site.",
+      "Arrive onsite at the scheduled Customer location.",
+      "Check in with the Customer site contact.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Assemble and secure the wall mounts to the designated mounting surfaces.",
+      "{when:switcher|transmitter|receiver|extender|under[- ]desk|thin[- ]client|lightware|control processor|matrix switch} Mount the AV control and endpoint equipment (switchers, transmitters, under-desk kits, thin-client mounts) in their designated locations using the provided mounting hardware and accessories.",
+      "Protect the room and work surfaces."
     ],
     "customer_responsibilities": [
       "Provide all displays, hardware, cables and mounts.",
@@ -380,7 +420,13 @@
       "Have onsite personnel available for access and approvals during the work.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Confirm the final mounting locations for all video devices before work begins.",
       "Ensure the room is available and not occupied during the scheduled work period.",
-      "Provide any required building access credentials, escorts, parking instructions, security requirements and site-specific safety requirements before deployment."
+      "Provide any required building access credentials, escorts, parking instructions, security requirements and site-specific safety requirements before deployment.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Any required platform credentials, admin access, or end user access if Customer requests validation beyond basic hardware and WiFi connectivity.",
+      "Permission to mount equipment to approved existing surfaces.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Confirm wall structure suitability for mounting, if applicable.",
+      "Provide timely testing, direction, and completion approval.",
+      "{unless:new (network |data )?drops?|cat ?6 (run|cable|plenum)} Prior to technician mobilization, the Customer is responsible for confirming that all required network drops are physically installed, terminated, labeled, accessible, and ready for use.",
+      "Providing timely approval of any field discovered changes that could affect scope, schedule, or cost."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Mounting walls can structurally support the displays, mounts and backing materials.",
@@ -400,7 +446,22 @@
       "Parking is available onsite, reimbursed if there is a fee.",
       "There is a trash area onsite able to hold all debris.",
       "{when:backing board|plywood} Installation of the backing boards can be completed without major demolition, reconstruction, wall opening or structural reinforcement.",
-      "{when:larger (displays?|tvs?|screens?)|\\b(7\\d|8\\d|9\\d|1\\d\\d) ?(inch|in\\b|\"|”)} The installation areas can safely accommodate the personnel required to handle the larger displays."
+      "{when:larger (displays?|tvs?|screens?)|\\b(7\\d|8\\d|9\\d|1\\d\\d) ?(inch|in\\b|\"|”)} The installation areas can safely accommodate the personnel required to handle the larger displays.",
+      "{when:wi-?fi|wireless} Provider's configuration responsibility is limited to connecting the installed equipment to the room display and confirming WiFi connectivity, assuming Customer provides valid wireless credentials.",
+      "{unless:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down|relocat} No devices are required to be removed; this is a net-new installation.",
+      "{unless:backing board|plywood|blocking} Any required wall blocking, backing, or structural support will already be in place.",
+      "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} The PoE switch provides sufficient ports and PoE capacity for the final design.",
+      "{unless:\\b(lift|boom|scissor)s?\\b} Lift requirements, if needed, will be handled through a change request (CR).",
+      "Technician provided incidental hardware is intended only for minor installation needs. Primary television mounts, manufacturer specific brackets, mounting accessories, compute mounting hardware, structural mounting components, and other equipment specific hardware remain Customer provided unless otherwise included in the associated quotation.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Use of any anchor or fastener will be subject to the mounting surface, manufacturer requirements, equipment weight, and applicable site conditions. Technician provided drywall anchors will not be used as a substitute for required structural fastening of large displays where the television mount or manufacturer requires attachment to studs, blocking, masonry, or other structural support.",
+      "{when:\\bnuc\\b|mini ?pc|compute (device|module)|room pc} Any specialized compute (NUC) mounting brackets, shelves, enclosures, adapters, or manufacturer specific mounting hardware must be Customer provided unless separately quoted.",
+      "The Field Services Provider is not responsible for delays caused by incomplete network installation, unavailable network ports, inactive switch ports, network configuration, firewall restrictions, VLAN configuration, or other network related conditions.",
+      "The onsite technicians may verify physical power and physical connectivity where practical but will not be responsible for application level functionality.",
+      "Work areas will be free from active construction activities that prevent installation.",
+      "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)|room system} If the final equipment inventory requires installation of an additional room system beyond the rooms in this SOW, the additional installation will be considered outside the base scope and may require additional labor authorization.",
+      "{when:mic pods?|later (elect|add|install)|deferred|phase (2|two)|not (being )?installed (now|at this time)} If the Customer later elects to install deferred devices (for example microphone pods), associated installation and cable routing may require a scope adjustment or change order.",
+      "The scope is based on information provided.",
+      "{when:articulating} The mounting surfaces can support the articulating wall mounted displays without structural modification beyond normal mounting practices."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
@@ -417,7 +478,8 @@
       "Ceiling grid repair, replacement ceiling tiles, drywall repair, painting, patching or finish work.",
       "{unless:(install|mount|hang|replace|new|remove|removal of)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install|removed|replaced)\\b} Removal, relocation, replacement or adjustment of the existing displays.",
       "Specialty rigging, lifts, scaffolding, furniture relocation, or installation of equipment not specifically identified within this Statement of Work.",
-      "Additional work resulting from defective, damaged, incompatible, incomplete or missing equipment, or from concealed and unforeseen site conditions."
+      "Additional work resulting from defective, damaged, incompatible, incomplete or missing equipment, or from concealed and unforeseen site conditions.",
+      "{unless:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Ceiling work, above ceiling cabling, or ceiling microphone installation."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Displays mounted at the approved locations and heights.",
@@ -438,7 +500,17 @@
       "Stud finder.",
       "Spare wall anchors and fasteners.",
       "Velcro cable ties.",
-      "Step ladder."
+      "Step ladder.",
+      "Pencil or marker for layout.",
+      "Zip ties.",
+      "Socket and ratchet set (or wrench set).",
+      "Adjustable wrench and channel locks.",
+      "Hammer (light use).",
+      "Torx and security bit set.",
+      "Pliers, diagonal cutters, and needle nose pliers.",
+      "Flashlight or headlamp.",
+      "Fish tape or fiberglass fish rods.",
+      "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b(?:(?!\\b(?:are|is|stay|stays|remain|remains|already|currently)\\b).){0,40}(\\b(mount|hang|install)(s|ing)?\\b|\\bbe (mounted|hung|installed)\\b)} Hardware assortment for securing accessories behind the displays."
     ]
   },
   "relocation_move": {
@@ -480,7 +552,7 @@
     ]
   },
   "smart_hands_general": {
-    "_source": "owner standards loop 2026-10-18: conditional handling, monitor-arm/desk mounting from the 010373 v1 TEMPLATE list; 010326 v1 phone-swap TEMPLATE items (scheduling, completion criterion, SmartHands only, quantity change order, electrical); transition lines skip a phone swap; 010376 v1 UPS-replacement TEMPLATE items (sequence, authorized shutdown, like-for-like reconnect, compatibility and shutdown duties, cart handling, recycler-absent staging, sizing/config exclusion)",
+    "_source": "owner standards loop 2026-10-18: conditional handling, monitor-arm/desk mounting from the 010373 v1 TEMPLATE list; 010326 v1 phone-swap TEMPLATE items (scheduling, completion criterion, SmartHands only, quantity change order, electrical); transition lines skip a phone swap; 010376 v1 UPS-replacement TEMPLATE items (sequence, authorized shutdown, like-for-like reconnect, compatibility and shutdown duties, cart handling, recycler-absent staging, sizing/config exclusion); retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Coordinate visit priorities with the customer's designated IT contact before or during each visit.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Validate reported issues and document observed site conditions, findings and recommended next steps.",
@@ -521,7 +593,20 @@
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Position and install the replacement UPS and battery equipment.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Reconnect the existing applicable connections like for like and perform a basic visual installation check.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Support Customer-directed power-up and operational validation.",
-      "Confirm completion with the onsite contact before leaving site."
+      "Confirm completion with the onsite contact before leaving site.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Validate physical network connections, visible cabling, uplinks, port status indicators, and related site conditions.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Support physical checks, reseating, cable validation, power cycling, staging, or replacement activities when approved by Customer.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Coordinate with Customer's internal IT team regarding timing, maintenance windows, rollback expectations, access, and approval requirements.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Assist with on site validation, impact assessment, physical checks, and hands on remediation where feasible.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Perform infrastructure checks, end user support, issue triage, hands on troubleshooting, equipment review, and other approved on site support tasks.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide photos, notes, or live video review as requested by Customer during the on site visit.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Support approved ad hoc tasks that are consistent with the technician's skill set, available tools, site access, and Customer direction.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Perform the physical installation using the Customer furnished equipment and manufacturer supplied mounting hardware.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Provide onsite assistance for Customer directed workstation login and Customer application access checks, and supervised iOS or Android device enrollment, using Customer furnished accounts, instructions, platforms and remote support. Provider is not responsible for independent account or device administration.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Assist with physical access to printers and copiers and Customer directed print or scan to email verification.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Follow site sign in and access procedures, notify designated Customer personnel before approved service interruptions, observe Customer or qualified vendor led critical system checks when requested, and complete applicable transition checklists, photographs, inventory entries, deficiency records and a visit summary.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Perform the Customer approved onsite physical tasks identified in the Project Scope and provide standardized transition documentation and reports upon completion of the visit.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Provide Customer with onsite technician names and contact information prior to dispatch."
     ],
     "customer_responsibilities": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Provide all monitor arms, monitors, mounting hardware and cables.",
@@ -544,7 +629,20 @@
       "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Coordinate access, permissions and actions with the outgoing provider, ISPs, telephone vendors, nurse call support and other third parties as applicable.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Confirm the replacement equipment suits the existing environment, power source, load and connections.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Determine and authorize any shutdown, bypass or load transfer before Provider disconnects the existing equipment.",
-      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Provide a technical point of contact with authority to approve shutdown, bypass, load transfer, power-up and operational validation during the service window."
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Provide a technical point of contact with authority to approve shutdown, bypass, load transfer, power-up and operational validation during the service window.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provide all phones, ATAs, wall mounting hardware, and required accessories.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Ensure existing cabling, network ports, and supporting infrastructure are operational prior to installation.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Provide timely direction if Provider identifies missing, damaged, incompatible, or inaccessible equipment or site conditions that prevent completion of the Services.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Ensure all Customer furnished equipment is onsite, complete, undamaged, and available in or near the designated work area before Provider arrival.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Customer will ensure that the replacement UPS and battery backup equipment, including all required manufacturer supplied accessories and connection hardware, are onsite and available before the scheduled service window.",
+      "{when:recycl\\w* (provider|vendor|company|partner)|recycler|\\bewaste\\b|e-waste} Customer will coordinate the designated recycling provider.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Customer will provide safe and timely access to the building, equipment room, rack or cabinet, UPS equipment, elevator, and designated pickup area required to perform the Services.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Customer will provide any site specific Certificate of Insurance requirements, certificate holder language, or access requirements before scheduling. Provider will provide a current Certificate of Insurance reflecting Provider's existing coverage upon request.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Ensure the site, designated work areas and relevant Customer personnel are ready for the scheduled visit, and arrange timely check in, escorts and authorized physical access.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Supply all Customer furnished hardware, patch cords, materials, licensed software, install media, accounts, configurations and proprietary equipment required for the tasks, and ensure existing power, network infrastructure and data connectivity are operational.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Identify accessible devices and equipment locations before the visit, and provide available rack, cabling, circuit, workstation and equipment records to support the authorized work.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Approve and communicate planned service interruptions to affected staff and occupants. Coordinate nurse call, elevator, fire alarm and other critical system verification with the responsible Customer representative or qualified vendor.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Prioritize the assigned onsite work if equipment volumes exceed the scheduled labor hours, review findings and report deliverables, and authorize additional labor or remediation in writing before it begins."
     ],
     "assumptions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Cable work is limited to physical routing of the provided power and video cables.",
@@ -568,7 +666,19 @@
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Existing branch circuits, receptacles, power feeds and load connections are functional and suitable for the replacement equipment; Provider does not modify electrical circuits.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Removed equipment is moved as separate units using the Customer-provided cart or other approved onsite handling equipment; extended manual carrying of heavy equipment is not included.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} No specialty rigging, crane, forklift, rack modification or electrical infrastructure work is included; work may pause if the equipment cannot be handled safely with the planned team and available cart.",
-      "{when:recycl\\w* (provider|vendor|company|partner)|recycler|\\bewaste\\b|e-waste} If the recycling provider is not onsite during the service window, Provider stages the removed equipment at a Customer-designated onsite location; a return visit for a later pickup is not included."
+      "{when:recycl\\w* (provider|vendor|company|partner)|recycler|\\bewaste\\b|e-waste} If the recycling provider is not onsite during the service window, Provider stages the removed equipment at a Customer-designated onsite location; a return visit for a later pickup is not included.",
+      "{unless:include all travel|travel and expenses (are |will be )?included|all travel and expenses} Parking available onsite, reimbursed if there is a fee.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Replacement devices will be preconfigured and provisioned, or a Customer designated remote engineer will be available during the installation window to perform configuration, provisioning, registration, and troubleshooting.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Customer will provide compatible wall mounting hardware and accessories where required.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Existing phone locations will have operational network connectivity available at the time of installation.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Services are limited to the onsite physical work expressly stated in this SOW.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} The movement path from the equipment location to the elevator, main building exit, and designated parking or pickup area will be clear and accessible. No stair carry, specialty floor protection, construction, or facility modification is assumed.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} The replacement scope is limited to the existing UPS and battery backup units identified in this SOW.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Provider is not responsible for delays caused by site access, missing or incompatible replacement equipment, unavailable Customer resources, delayed shutdown authorization, remote support delays, elevator unavailability, recycler scheduling, or other conditions outside Provider control.",
+      "{when:recycl\\w* (provider|vendor|company|partner)|recycler|\\bewaste\\b|e-waste} The designated recycling provider is responsible for offsite transportation, certified recycling, Certificate of Recycling, settlement reporting, and ESG reporting.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} The remote Lead Network Engineer is Customer furnished and is not included in Provider pricing.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} The Customer will supply an accessible and functioning environment, all required credentials and approved instructions, and available remote engineering or application support throughout the visit. Provider will not independently configure or administer Customer systems.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} The work assumes use of existing accessible cabling, rack space, outlets, internet circuits and onsite infrastructure. Any replacement hardware, patch cords, licenses, media, specialty tools or consumable materials are Customer furnished unless expressly added to this SOW."
     ],
     "exclusions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Furniture assembly or desk modification.",
@@ -586,7 +696,19 @@
       "{when:transition|onboarding|cut-?over|takeover|take over} Follow-up visits unless authorized in writing or by Change Order.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Electrical installation or modification.",
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} UPS sizing, solution design, configuration, programming, firmware updates, monitoring configuration or advanced troubleshooting.",
-      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Additional onsite visits caused by unavailable replacement equipment, unavailable site access, delayed recycler pickup or unavailable Customer technical resources."
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Additional onsite visits caused by unavailable replacement equipment, unavailable site access, delayed recycler pickup or unavailable Customer technical resources.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Dedicated full time on site staffing.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Installation of new in wall cabling requiring permits, ladders beyond standard safe access, lifts, conduit, or licensed trade work.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Work requiring access, credentials, or approvals not provided by Customer.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Ownership of Customer's IT environment, systems, architecture, security program, backups, licensing, warranties, or vendor contracts.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Major infrastructure projects, migrations, redesigns, deployments, or refreshes unless separately scoped.",
+      "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Application development, database administration, ERP support, or business application ownership.",
+      "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Repair of Customer furnished equipment or correction of preexisting site conditions that prevent installation.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Removal, replacement, repair, troubleshooting, or disposal of equipment other than the UPS and battery backup units identified in this SOW.",
+      "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Procurement or specification of the replacement UPS, replacement battery backup equipment, packing materials, pallet materials, or transportation equipment unless separately identified in an associated quote.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Independent network engineering, design, firewall or switch configuration, wireless cloud administration, ISP circuit provisioning, or ownership of network cutover execution, troubleshooting, rollback and final acceptance.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Independent endpoint or account administration, mass device imaging, application installation or remediation, mobile device management platform configuration, data migration, software licensing and bulk workstation rebuilds.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} New copper or fiber cable pulls, termination or certification, electrical work, new pathways or conduit, rack construction, major equipment mounting or relocation, and equipment procurement or disposal."
     ],
     "deliverable_outcomes": [
       "{when:\\b(replace|replacing|install|swap|upgrade|new)\\b.{0,40}(?<![\\w-])(ups|battery backup|battery pack)\\b|(?<![\\w-])(ups|battery backup)\\b.{0,40}\\b(replace|replacement|swap|upgrade|end of life)} Replacement UPS and battery equipment installed with basic physical installation verification completed.",
@@ -598,7 +720,7 @@
     ]
   },
   "time_clock_kiosk": {
-    "_source": "owner standards loop 2026-10-19: 010264 v1 TEMPLATE items (UKG time-clock replacement program)",
+    "_source": "owner standards loop 2026-10-19: 010264 v1 TEMPLATE items (UKG time-clock replacement program); retrain session 2026-10-19: graders' TEMPLATE ITEMS (pass Y/Z grades, 21 deals), harvested to ~/c3-local/retrain/standards/harvest.json; owner approved adding them",
     "method_steps": [
       "Participate in project kickoff and deployment planning activities with CDW and applicable project stakeholders.",
       "Confirm the number of time clocks scheduled for replacement at the location.",
@@ -609,11 +731,20 @@
       "Leave the removed legacy clock onsite in the Customer-designated location.",
       "Document any condition that prevents successful activation or validation.",
       "Track installation exceptions and escalate issues that prevent successful completion.",
-      "Remove installation debris generated by Provider and leave the immediate work area in a clean condition."
+      "Remove installation debris generated by Provider and leave the immediate work area in a clean condition.",
+      "Check in with the designated onsite representative and comply with applicable access and security requirements.",
+      "Confirm the approved mounting location for each replacement clock.",
+      "Disconnect and remove the existing time clock from its installed position.",
+      "Coordinate with the designated remote support resource if activation or remote validation assistance is required."
     ],
     "customer_responsibilities": [
       "Provide any required test credentials, employee test account, or testing process necessary to validate successful time capture and punch processing.",
-      "Confirm and schedule the locations electing Provider installation services before technician dispatch."
+      "Confirm and schedule the locations electing Provider installation services before technician dispatch.",
+      "Providing the replacement UKG time clocks and all applicable manufacturer supplied components.",
+      "Coordinating procurement and shipment of replacement time clocks to the applicable locations.",
+      "Providing final identification and approval of the mounting location for each replacement clock.",
+      "Providing existing functional AC power within five (5) feet of each approved installation location.",
+      "Providing existing functional network connectivity at each approved installation location, including sufficient WiFi connectivity when wireless connectivity is required."
     ],
     "assumptions": [
       "{when:additional clock|multi[- ]?clock|per additional|second clock|each additional} The additional clock rate applies only when the additional clocks are installed during the same mobilization and service window as the first clock.",
@@ -623,11 +754,19 @@
       "Replacement clocks will arrive onsite prior to the scheduled service date unless otherwise agreed.",
       "Existing wall construction will support normal surface mounting using standard installation hardware.",
       "Provider may reuse suitable existing pathways or cabling where applicable and approved.",
-      "Parking, access fees, permits, escorts, or special access requirements not identified before scheduling may result in additional charges."
+      "Parking, access fees, permits, escorts, or special access requirements not identified before scheduling may result in additional charges.",
+      "Extensive raceway installation, long cable routing, pathway construction, or structured cabling is not included."
     ],
     "exclusions": [
       "Extensive troubleshooting of UKG software, provisioning, Customer network infrastructure, or other systems outside the physical clock installation.",
-      "End user training unless specifically included."
+      "End user training unless specifically included.",
+      "Installation of new Ethernet or structured cabling.",
+      "Installation or modification of PoE network infrastructure.",
+      "Configuration activities.",
+      "Procurement or purchase of time clocks.",
+      "Extended wire mold, conduit, pathway, or raceway installation beyond basic cable cleanup immediately associated with the clock.",
+      "Core drilling or penetration through fire rated or structural surfaces.",
+      "Storage of legacy clocks outside the installation location."
     ],
     "deliverable_outcomes": [
       "The assigned replacement clock securely installed and powered on.",
