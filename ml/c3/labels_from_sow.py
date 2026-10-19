@@ -65,14 +65,27 @@ def _rows(env: dict) -> list[dict]:
 
 
 def _read(head: str, value: str, rule: str) -> tuple[str, str] | None:
-    if head == "sow_section":
-        return "sow_section", value
-    if head == "sow_keep":
-        if value == "keep":
-            return "co_action", "keep"
-        if value == "drop" and rule in NOISE_RULES:
-            return "co_action", "reject"
-    return None
+    """The trainer's (reads key, answer) for one decision, from c3_sow.TEACHABLE."""
+    from app.core.c3_sow import TEACHABLE
+
+    spec = TEACHABLE.get(head)
+    if not spec or not value:
+        return None
+    key, mapping = spec
+    if head == "sow_keep" and value == "drop" and rule not in NOISE_RULES and rule != "pm":
+        return None  # a duplicate or a contradiction says nothing about the line itself
+    answer = mapping.get(value) if mapping else value
+    if not answer:
+        return None
+    return key, answer
+
+
+def _target(read: tuple[str, str]) -> dict:
+    """A read: head is stored under reads_set; a col: head under its own field
+    (the label row's ``supplier``), as the labeling page writes them."""
+    key, answer = read
+    kind, name = key.split(":", 1)
+    return {name: answer, "reads_set": {}} if kind == "col" else {"reads_set": {name: answer}}
 
 
 def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, int]:
@@ -101,9 +114,8 @@ def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, 
             read = _read(head, value, "pm")
             if not read or not read[1]:
                 continue
-            labels[(aid, read[0])] = {"label_key": aid, "atom_id": aid, "labeler": r.get("by") or "pm@purtera-it.com",
-                                      "origin": "labeler", "text": have[aid], "weight_tier": "ordinary",
-                                      "reads_set": {read[0]: read[1]}}
+            labels[(aid, read[0])] = dict(_target(read), label_key=aid, atom_id=aid, labeler=r.get("by") or "pm@purtera-it.com",
+                                          origin="labeler", text=have[aid], weight_tier="ordinary")
             counts["counter" if verdict == "rejected" else "gold"] += 1
         # Unreviewed rule decisions: silver.
         for d in sow.get("rule_decisions") or []:
@@ -113,9 +125,8 @@ def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, 
             for aid in (d.get("atom_ids") or [])[:1]:
                 if aid not in have or (aid, read[0]) in labels:
                     continue
-                labels[(aid, read[0])] = {"label_key": aid, "atom_id": aid, "labeler": "rule:" + str(d.get("rule")),
-                                          "origin": "labeler", "text": have[aid], "weight_tier": "slight",
-                                          "reads_set": {read[0]: read[1]}}
+                labels[(aid, read[0])] = dict(_target(read), label_key=aid, atom_id=aid, labeler="rule:" + str(d.get("rule")),
+                                              origin="labeler", text=have[aid], weight_tier="slight")
                 counts["silver"] += 1
         if not labels:
             continue
@@ -123,7 +134,12 @@ def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, 
         merged: dict[str, dict] = {}
         for (aid, _), lb in labels.items():
             m = merged.setdefault(aid, dict(lb, reads_set={}))
-            m["reads_set"].update(lb["reads_set"])
+            m["reads_set"].update(lb.get("reads_set") or {})
+            for k2, v2 in lb.items():
+                if k2 not in ("reads_set",) and k2 not in m:
+                    m[k2] = v2
+            if "supplier" in lb:
+                m["supplier"] = lb["supplier"]
             if lb["weight_tier"] == "ordinary":
                 m["weight_tier"] = "ordinary"
         rec = {"deal_id": deal, "company": "purtera", "atoms": [dict(r, label_key=r["key"]) for r in rows],

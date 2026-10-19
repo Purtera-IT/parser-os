@@ -26,7 +26,7 @@ from pathlib import Path
 import torch
 
 from .head_fit import _cache
-from .labels_from_sow import _read, _rows
+from .labels_from_sow import _read, _rows, _target
 from .loop import live_student, load_split
 from .readiness import digest
 from .schema import load_schema
@@ -82,8 +82,8 @@ def main() -> None:
                     aid = (d.get("atom_ids") or [None])[0]
                     read = _read(str(d.get("head")), str(d.get("value")), str(d.get("rule")))
                     if aid in have and read:
-                        labels[aid] = {"label_key": aid, "atom_id": aid, "labeler": "rule:" + rule, "origin": "labeler",
-                                       "text": have[aid], "reads_set": {read[0]: read[1]}}
+                        labels[aid] = dict(_target(read), label_key=aid, atom_id=aid, labeler="rule:" + rule,
+                                           origin="labeler", text=have[aid])
                 if labels:
                     f = Path(tmp, f"{rule}-{key}-{deal}.json")
                     f.write_text(json.dumps({"deal_id": deal, "company": "purtera",
@@ -94,7 +94,7 @@ def main() -> None:
             if not files:
                 continue
             parts, _ = load_split(files, schema, a.max_atoms)
-            c = _cache(model, parts, [f"read:{key}"], dev).get(f"read:{key}")
+            c = _cache(model, parts, [key], dev).get(key)
             if not c or not len(c["y"]):
                 continue
             agree = (c["base"].argmax(-1) == c["y"]).float()
@@ -105,7 +105,7 @@ def main() -> None:
                     rv[v][1] += 1
             rate = k / n
             ready = n >= READY_MIN and rate >= READY_AGREE
-            report.append({"rule": rule, "head": f"read:{key}", "decisions": n, "head_agrees": round(rate, 3),
+            report.append({"rule": rule, "head": key, "decisions": n, "head_agrees": round(rate, 3),
                            "reviewed_accepted": rv["accepted"][1], "reviewed_rejected": rv["rejected"][1],
                            "status": "ready" if ready else "learning"})
     Path(a.report).write_text(json.dumps({"checkpoint": os.path.basename(a.checkpoint), "rules": report}, indent=1))

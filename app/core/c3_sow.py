@@ -733,6 +733,20 @@ def _snap(content: dict[str, Any]) -> dict[tuple[str, ...], tuple[str, str]]:
     return out
 
 
+#: Every kind of decision a rule (or a PM in SowSmith) makes, and the super head
+#: it trains. One row per kind: SowSmith's Teach queue, the PM feedback route
+#: (app/core/pm_feedback.py) and ml.c3.labels_from_sow all read this table, so a
+#: new kind of fix is one row here plus its mirror in headCorrections.ts.
+TEACHABLE: dict[str, tuple[str, dict[str, str] | None]] = {
+    "sow_section": ("read:sow_section", None),                      # which SOW section
+    "sow_keep": ("read:co_action", {"keep": "keep", "drop": "reject"}),  # belongs in the SOW at all
+    "sow_party": ("read:task_owner_role", None),                    # technician vs customer does it
+    "sow_supplier": ("col:supplier", None),                         # us / customer / partner supplies it
+}
+_PARTY = {"scope": "technician", "arrival_protocol": "technician", "customer_responsibilities": "customer"}
+_SUPPLIER_LIST = {"provider_materials": "us", "provider_tools": "us", "customer_materials": "customer"}
+
+
 def _decisions(rule: str, before: dict, after: dict) -> list[dict[str, Any]]:
     """What a rule decided, as head answers a PM can confirm or reject: a cited
     line moved to another list is a read:sow_section call on its atoms, a cited
@@ -744,9 +758,16 @@ def _decisions(rule: str, before: dict, after: dict) -> list[dict[str, Any]]:
         if now is None:
             out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(cites), "value": "drop",
                         "was": _LIST_SECTION[lst], "text": text[:300]})
-        elif _LIST_SECTION[now[0]] != _LIST_SECTION[lst]:
-            out.append({"rule": rule, "head": "sow_section", "atom_ids": list(cites), "value": _LIST_SECTION[now[0]],
-                        "was": _LIST_SECTION[lst], "text": now[1][:300]})
+        else:
+            if _LIST_SECTION[now[0]] != _LIST_SECTION[lst]:
+                out.append({"rule": rule, "head": "sow_section", "atom_ids": list(cites), "value": _LIST_SECTION[now[0]],
+                            "was": _LIST_SECTION[lst], "text": now[1][:300]})
+            if lst in _PARTY and now[0] in _PARTY and _PARTY[lst] != _PARTY[now[0]]:
+                out.append({"rule": rule, "head": "sow_party", "atom_ids": list(cites), "value": _PARTY[now[0]],
+                            "was": _PARTY[lst], "text": now[1][:300]})
+            if lst in _SUPPLIER_LIST and now[0] in _SUPPLIER_LIST and _SUPPLIER_LIST[lst] != _SUPPLIER_LIST[now[0]]:
+                out.append({"rule": rule, "head": "sow_supplier", "atom_ids": list(cites), "value": _SUPPLIER_LIST[now[0]],
+                            "was": _SUPPLIER_LIST[lst], "text": now[1][:300]})
     return out
 
 
@@ -1193,6 +1214,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["facts_given"] = len(fs)
     # Everything the rules changed after the writer, rule by rule where traced,
     # the rest as "writer_rules": the queue SowSmith shows as "Teach the heads".
+    content["teachable"] = {k: v[0] for k, v in TEACHABLE.items()}
     traced = {(tuple(d["atom_ids"]), d["head"]) for d in content.get("rule_decisions") or []}
     content["rule_decisions"] = (content.get("rule_decisions") or []) + [
         d for d in _decisions("writer_rules", writer_snap, _snap(content)) if (tuple(d["atom_ids"]), d["head"]) not in traced]

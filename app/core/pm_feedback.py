@@ -171,6 +171,8 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
                                         "assumptions", "customer_responsibilities", "provider_responsibilities",
                                         "timeline", "fees", "change_control", "terms", "contacts", "other")),
     "sow_keep":  HeadSpec("sow_keep",        "atom",   "Belongs in the SOW", candidates=("keep", "drop")),
+    "sow_party": HeadSpec("sow_party",       "atom",   "Who does it", candidates=("technician", "customer", "partner")),
+    "sow_supplier": HeadSpec("sow_supplier", "atom",   "Who supplies it", candidates=("us", "customer", "partner")),
     "image":     HeadSpec("pdf_image_kind",  "atom",   "Image kind"),
     # A house style is a judgment like any other: "SLO, not SLA, because we
     # guarantee objectives". The verdict IS the preferred wording, so this is

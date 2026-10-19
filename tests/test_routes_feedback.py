@@ -423,6 +423,8 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     # The Studio's SOW edit log: section moves and deletions of generated lines.
     "sow_section": "sow_section",
     "sow_keep": "sow_keep",
+    "sow_party": "sow_party",
+    "sow_supplier": "sow_supplier",
 }
 
 
