@@ -111,8 +111,8 @@
       "Integration with third-party applications not identified in this scope.",
       "Staging, warehousing, kitting, transport or freight of equipment.",
       "Repair of defective existing cabling.",
-      "Preconfiguration, imaging, staging, programming or enrollment of hardware.",
-      "Network design, remediation, firewall, wireless or switch configuration.",
+      "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Preconfiguration, imaging, staging, programming or enrollment of hardware.",
+      "{unless:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Network design, remediation, firewall, wireless or switch configuration.",
       "Application, payment processor or software configuration and troubleshooting not caused by Provider installation activity."
     ],
     "deliverable_outcomes": [

@@ -265,6 +265,13 @@ _WHEN = re.compile(r"^\{when:(.*?)\}\s+(?=[A-Z])")  # the regex may hold {n,m}: 
 
 def _standard_applies(t: str, facts_text: list[str]) -> tuple[bool, str]:
     """A standard item may carry "{when:<regex>}": written only when a deal fact matches."""
+    # "{unless:<regex>}": skipped when a deal fact matches (010198: config
+    # exclusions beside the router setup the job does).
+    u = re.match(r"^\{unless:(.*?)\}\s+(?=[A-Z{])", t)
+    if u:
+        if any(re.search(u.group(1), f, re.I) for f in facts_text):
+            return False, t[u.end():]
+        t = t[u.end():]
     m = _WHEN.match(t)
     if not m:
         return True, t
@@ -1920,6 +1927,19 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if re.search(r"(?i)\bconfigur", " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading")):
         content["customer_responsibilities"] = [x for x in content.get("customer_responsibilities") or []
                                                 if not re.search(r"(?i)perform all device configurations", str(x.get("text") if isinstance(x, dict) else x))]
+    # A device the customer asked to add gets an install line (010198: the
+    # router's setup steps but no "Install the Ubiquiti router").
+    sc_txt = " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict))
+    for f in fs:
+        m = re.search(r"(?i)\b(?:add|install|put in)\s+(?:an?|one|the)?\s*((?:[A-Z][\w-]*\s+){0,2}(router|gateway|firewall|access point|switch)(?:\s+with cellular backup)?)", f["text"])
+        if m and not re.search(r"(?i)\binstall\b[^.]{0,60}\b" + m.group(2), sc_txt) and not f.get("asked", False) is None:
+            sc = content.setdefault("scope", [])
+            close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                          and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
+            first_std = next((i for i, y in enumerate(sc[:close]) if isinstance(y, dict) and y.get("standard")
+                              and re.search(r"(?i)" + m.group(2), str(y.get("text")))), close)
+            sc.insert(first_std, {"text": f"Install the {m.group(1).strip()}.", "cites": [f["id"]], "kind": "fact"})
+            sc_txt += " install " + m.group(2)
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]
