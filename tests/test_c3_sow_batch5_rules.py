@@ -490,3 +490,27 @@ def test_every_keep_decision_is_in_the_output(deal, monkeypatch):
             assert set(ids) & cited or str(d.get("text")).strip() in shown, (deal, d)
         else:
             assert str(d.get("text")).strip() not in shown, (deal, d)
+
+
+# --- 010171 C+: rooms from the source, customer self-test, hours sentence ------
+
+def test_this_specific_room_is_the_room_the_sentence_before_names():
+    atoms = [{"id": "a", "artifact_id": "e", "text": "And one small conference room with a table with openings at the top.",
+              "locator": {"message_index": 0, "line_start": 12, "sentence_index": 0}},
+             {"id": "b", "artifact_id": "e", "text": "We would like to have the Logitech Sight installed in this specific room.",
+              "locator": {"message_index": 0, "line_start": 12, "sentence_index": 2}}]
+    c = {"scope": [{"text": "Conference room", "cites": [], "kind": "heading"},
+                   {"text": "Install one (1) Rally Bar in the small conference room.", "cites": ["a"], "kind": "fact"},
+                   {"text": "Common work", "cites": [], "kind": "heading"},
+                   {"text": "Install one (1) Logitech Sight in the main conference room.", "cites": ["b"], "kind": "fact"}]}
+    m._room_from_source(c, [], {"atoms": atoms})
+    t = [x["text"] for x in c["scope"]]
+    assert "Install one (1) Logitech Sight in the small conference room." in t
+    assert t.index("Install one (1) Logitech Sight in the small conference room.") < t.index("Common work")
+
+
+def test_a_customer_hours_sentence_becomes_the_slot_value():
+    c = {"schedule": [{"text": "Work Hours: This can be during office hours Monday and Friday (8am-5PM) or outside of business hours (Mon-Fri)",
+                       "cites": [], "kind": "fact"}]}
+    m._schedule_voice(c, "2026-08-11")
+    assert c["schedule"][0]["text"] == "Work Hours: Monday through Friday, 8:00 AM to 5:00 PM local site time"

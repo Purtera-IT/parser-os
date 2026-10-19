@@ -1593,6 +1593,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "not_job_terms", _not_job_terms, content)
     _traced(content, "summary_consistent", _summary_consistent, content)
     _traced(content, "facts_to_action_heading", _facts_to_action_heading, content)
+    _traced(content, "room_from_source", _room_from_source, content, fs, envelope)
     _traced(content, "explanation_not_exclusion", _explanation_not_exclusion, content, fs)
     _traced(content, "summary_order", _summary_order, content)
     _deliverables_hygiene(content)
@@ -1906,6 +1907,57 @@ def _facts_to_action_heading(content: dict[str, Any]) -> None:
                 body = re.sub(r"(?i)^\s*also\s+", "", x["text"])
                 x["text"] = body[:1].upper() + body[1:]
     content["scope"] = [x for g in groups for x in g if x is not None]
+
+
+#: A room a line names ("the small conference room", "executive office").
+_ROOM = re.compile(r"(?i)\b(?:(?:main|small|large|big|second|first|executive|training|board|huddle|break|front|back)\s+)?"
+                   r"(?:conference|meeting|training|board|executive|huddle|break)\s+(?:room|office)s?\b|\bexecutive (?:room|office)s?\b|\bboardroom\b")
+
+
+def _room_from_source(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dict[str, Any]) -> None:
+    """A room is never invented: a task naming a room its cited lines do not
+    name takes the room its source points at ("this specific room" is the one
+    the sentence before it names) and moves under that room's heading (010171 pass U: "Install one (1) Logitech Sight in the main
+    conference room" where the source's room is the small conference room;
+    "main" was the customer's existing, out-of-scope room)."""
+    atoms = [a for a in envelope.get("atoms") or [] if isinstance(a, dict)]
+    by_id = {str(a.get("id")): a for a in atoms}
+    key = lambda a: ((a.get("locator") or {}).get("message_index") or 0, (a.get("locator") or {}).get("line_start") or 0,
+                     (a.get("locator") or {}).get("sentence_index") or 0)
+    def antecedent(c: str) -> str | None:
+        a = by_id.get(c)
+        if not a or not re.search(r"(?i)\b(this|that|the same|this specific|that specific)\s+(room|office|space|area)\b", str(a.get("text"))):
+            return None
+        same = sorted((b for b in atoms if b.get("artifact_id") == a.get("artifact_id")), key=key)
+        i = next((j for j, b in enumerate(same) if b is a), 0)
+        for b in reversed(same[max(0, i - 4):i]):
+            mm = _ROOM.search(str(b.get("text")))
+            if mm:
+                return mm.group(0).lower()
+        return None
+    sc = content.get("scope") or []
+    for x in list(sc):
+        if not (isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading"):
+            continue
+        t = str(x.get("text"))
+        mm = _ROOM.search(t)
+        if not mm:
+            continue
+        cited = " ".join(str((by_id.get(c) or {}).get("text") or "") for c in x["cites"]).lower()
+        if mm.group(0).lower().rstrip("s") in cited:
+            continue
+        room = next((r for r in (antecedent(c) for c in x["cites"]) if r), None)
+        if room:
+            x["text"] = t[:mm.start()] + room + t[mm.end():]
+            words = {w for w in re.findall(r"[a-z]+", room) if w not in ("room", "office", "the")}
+            home = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                         and words & set(re.findall(r"[a-z]+", str(y.get("text")).lower()))), None)
+            if home is not None:
+                sc.remove(x)
+                nxt = next((i for i, y in enumerate(sc) if i > home and isinstance(y, dict) and y.get("kind") == "heading"), len(sc))
+                sc.insert(nxt, x)
+
+    content["scope"] = sc
 
 
 def _own_documents(content: dict[str, Any]) -> None:
@@ -2989,7 +3041,8 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         for t0 in fixed.get(sec) or []:
             ok, t = _standard_applies(t0, gate, facts_text or [])
             about_reuse = bool(re.match(r"^\{when:[^}]*(reuse|existing)", t0))
-            if ok and self_test and re.search(r"(?i)\btest|confirm .{0,90}\bfunction|verify (basic )?operation", t):
+            if ok and self_test and re.search(r"(?i)\btest|confirm .{0,90}\bfunction|verify (basic )?operation|verify\b.{0,40}\b(signal|video|source)|"
+                                              r"remote (engineering|av|network) support", t):
                 suppressed(sec, t, "the customer does its own testing")
                 continue
             if ok and (about_reuse or not contradicted(t)):
@@ -3160,7 +3213,7 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     for ok, t in (_standard_applies(o, gate, facts_text or []) for o in fixed.get("deliverable_outcomes") or []):
         if not ok:
             continue
-        if contradicted(t) or (self_test and re.search(r"(?i)\btest", t)):
+        if contradicted(t) or (self_test and re.search(r"(?i)\btest|verification|verif(y|ied)", t)):
             suppressed("deliverable_outcomes", t, "contradicted by a fact or the customer's own testing")
             continue
         outcomes.append(t)
@@ -3176,6 +3229,11 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
         off = [t for o in fixed.get("deliverable_outcomes") or [] if o.startswith("{unless:")
                for ok, t in [_standard_applies(o, gate, facts_text or [])] if not ok]
         own = [t for t in own if not any(_said(t, [o], 0.8) and _said(o, [t], 0.8) for o in off)]
+        # The customer doing its own testing: no test or verification outcome
+        # either (010171 pass U: "Power-on and video-source verification for
+        # each display").
+        if self_test:
+            own = [t for t in own if not re.search(r"(?i)\btest|verification|verif(y|ied)", t)]
         # Said by a line about the same thing: "Serial numbers of each new
         # switch" is not "New switches installed and cabled".
         head = lambda u: _stem((re.findall(r"[a-z]+", str(u).lower()) or [""])[0])
@@ -4650,6 +4708,19 @@ def _schedule_voice(c: dict[str, Any], as_of: str, theirs: set[str] | frozenset[
             t2 = re.sub(r"(\d{1,2}:\d\d [AP]M to \d{1,2}:\d\d [AP]M)(\s+(?=[A-Za-z]))?",
                         lambda m: m.group(1) + " local site time" + (", " if m.group(2) else ""), t2, count=1)
         t = t2
+        # A customer's sentence is not a slot value: "Work Hours: This can be
+        # during office hours Monday and Friday (8am-5PM) or outside of
+        # business hours" reads "Work Hours: Monday through Friday, 8:00 AM to
+        # 5:00 PM local site time" (010171 pass U); an after-hours option is a
+        # change order under the template's overtime line.
+        hm = re.match(r"(?i)\s*work hours\s*:\s*(.*)$", t)
+        if hm and re.search(r"(?i)\b(this|we|it|can|could|either|or outside|would|should)\b", hm.group(1)):
+            clk = re.search(r"\d{1,2}:\d\d [AP]M to \d{1,2}:\d\d [AP]M", hm.group(1))
+            body = hm.group(1).lower()
+            if clk:
+                days = "Monday through Friday" if (re.search(r"\bmon", body) and re.search(r"\bfri", body)) or \
+                    re.search(r"office hours|business hours", body) else ""
+                t = "Work Hours: " + (days + ", " if days else "") + clk.group(0) + " local site time"
         x["text"] = t[:1].upper() + t[1:]
 
 
