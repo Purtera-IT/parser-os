@@ -2964,8 +2964,14 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         if m:
             name, street, city, st, z = (g.strip() for g in m.groups())
             parsed.append({"name": name, "address": f"{street}, {city}, {st} {z}", "street": street, "city": city, "state": st, "postal_code": z})
-    if len(parsed) >= 6 and len(parsed) > len(c["sites"]) and len(parsed) >= 0.8 * len(c.get("locations") or []):
-        c["sites"] = parsed
+    if len(parsed) >= 6 and len(parsed) > len(c["sites"]) and len(parsed) >= 0.4 * len(c.get("locations") or []):
+        # Name-only rows ("Lakefront Substation.") are sites too (010326).
+        named = [{"name": str(x.get("text") if isinstance(x, dict) else x).strip().rstrip(".").split(" — ")[0], "address": "",
+                  "street": "", "city": "", "state": "", "postal_code": ""}
+                 for x in c.get("locations") or []
+                 if not re.search(r"\d{5}", str(x.get("text") if isinstance(x, dict) else x))
+                 and 1 <= len(str(x.get("text") if isinstance(x, dict) else x).split()) <= 6]
+        c["sites"] = parsed + [n for n in named if n["name"] and not any(n["name"].lower() == p_["name"].lower() for p_ in parsed)]
     locs = [str(x.get("text") or "") for x in c.get("locations") or [] if isinstance(x, dict) and x.get("cites")]
     if locs and len(c["sites"]) <= 5 and not table:
         rows = []
