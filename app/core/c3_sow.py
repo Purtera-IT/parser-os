@@ -6563,6 +6563,11 @@ def _deliverables_hygiene(content: dict[str, Any]) -> None:
     # the onsite-handoff outcome while the scope kept that step).
     live = [x for k in LISTS for x in content.get(k) or [] if isinstance(x, dict) and x.get("kind") != "heading"]
     gone = [g for g in gone if not _said(g, live, 0.8)]
+    # Nor an unsupported copy of a step the scope still holds (010279 pass V:
+    # the writer's uncited "Complete the Customer-provided installation and
+    # testing checklists" beside the same standard step struck the
+    # completed-checklists outcome).
+    unsupported = [g for g in unsupported if not _said(g, live, 0.8)]
     terms = " ".join(str(x.get("text") if isinstance(x, dict) else x) for k in ("assumptions", "out_of_scope")
                      for x in content.get(k) or []).lower()
     # A place named for shipping ("the designated shipment area") is where

@@ -134,3 +134,13 @@ def test_a_long_dropped_line_does_not_strike_an_outcome_it_only_mentions():
     c["deliverables"] = [{"item": "Work Completion Report", "description": ["Completed Customer installation and testing checklists."]}]
     m._deliverables_hygiene(c)
     assert c["deliverables"][0]["description"] == ["Completed Customer installation and testing checklists."]
+
+
+def test_an_unsupported_copy_of_a_live_step_does_not_strike_its_outcome():
+    c = _content()
+    c["job_family"] = "pos_install_refresh"
+    c["scope"] = [{"text": "Complete the Customer-provided installation and testing checklists.", "cites": [], "standard": True}]
+    c["dropped_unsupported"] = [{"text": "Complete the Customer-provided installation and testing checklists."}]
+    c["deliverables"] = [{"item": "Work Completion Report", "description": ["Completed Customer installation and testing checklists."]}]
+    m._deliverables_hygiene(c)
+    assert c["deliverables"][0]["description"] == ["Completed Customer installation and testing checklists."]
