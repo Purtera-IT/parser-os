@@ -715,6 +715,48 @@ def sow_model() -> str | None:
     return os.environ.get("SOWSMITH_C3_SOW_MODEL", "").strip() or None
 
 
+#: Writer list -> the read:sow_section answer a line placed there stands for.
+_LIST_SECTION = {"overview": "overview", "scope": "scope_of_work", "arrival_protocol": "scope_of_work",
+                 "equipment_in_scope": "scope_of_work", "customer_responsibilities": "customer_responsibilities",
+                 "customer_materials": "customer_responsibilities", "assumptions": "assumptions",
+                 "out_of_scope": "out_of_scope", "provider_materials": "provider_responsibilities",
+                 "provider_tools": "provider_responsibilities", "schedule": "timeline"}
+
+
+def _snap(content: dict[str, Any]) -> dict[tuple[str, ...], tuple[str, str]]:
+    """Each cited line, keyed by its cites, with the list it sits in and its text."""
+    out: dict[tuple[str, ...], tuple[str, str]] = {}
+    for k in _LIST_SECTION:
+        for x in content.get(k) or []:
+            if isinstance(x, dict) and x.get("cites") and x.get("kind") != "heading" and not x.get("standard"):
+                out.setdefault(tuple(x["cites"]), (k, str(x.get("text") or "")))
+    return out
+
+
+def _decisions(rule: str, before: dict, after: dict) -> list[dict[str, Any]]:
+    """What a rule decided, as head answers a PM can confirm or reject: a cited
+    line moved to another list is a read:sow_section call on its atoms, a cited
+    line removed is a sow_keep drop. These are the labels the heads must learn
+    before the rule can be retired (owner rule: heads decide)."""
+    out = []
+    for cites, (lst, text) in before.items():
+        now = after.get(cites)
+        if now is None:
+            out.append({"rule": rule, "head": "sow_keep", "atom_ids": list(cites), "value": "drop",
+                        "was": _LIST_SECTION[lst], "text": text[:300]})
+        elif _LIST_SECTION[now[0]] != _LIST_SECTION[lst]:
+            out.append({"rule": rule, "head": "sow_section", "atom_ids": list(cites), "value": _LIST_SECTION[now[0]],
+                        "was": _LIST_SECTION[lst], "text": now[1][:300]})
+    return out
+
+
+def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
+    before = _snap(content)
+    result = fn(*args, **kwargs)
+    content.setdefault("rule_decisions", []).extend(_decisions(rule, before, _snap(content)))
+    return result
+
+
 def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
           model: str | None = None) -> dict[str, Any]:
     """The SOW content for one deal: four focused calls (header, tasks, who
@@ -978,11 +1020,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
     # Picture captions never trigger standards (010120: "Two large TVs are
     # mounted on the front wall" fired the display-mounting block).
-    _apply_standards(content, family, [f["text"] for f in fs if not f.get("pictured")],
+    writer_snap = _snap(content)
+    _traced(content, "standards", _apply_standards, content, family, [f["text"] for f in fs if not f.get("pictured")],
                      [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")])
-    _tidy(content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
+    _traced(content, "tidy", _tidy, content, facts_say_permit=bool(re.search(r"(?i)\bpermit", pool_text)))
     _arrival_name_rule(content, fs)
-    content["slot_moved"] = _slot_by_head(content, envelope)
+    content["slot_moved"] = _traced(content, "slot_by_head", _slot_by_head, content, envelope)
     # A line the type head called small talk is never cited (010082: "This
     # work is for a new unit opening" from a signature's menu entry).
     chatter = {str(a.get("id")) for a in envelope.get("atoms") or []
@@ -990,8 +1033,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     if chatter:
         for k in LISTS:
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and all(c in chatter for c in x["cites"]))]
-    _grounding(content, fs)
-    _materials_hygiene(content, family, fs)
+    _traced(content, "grounding", _grounding, content, fs)
+    _traced(content, "materials", _materials_hygiene, content, family, fs)
     # An unanswered question is not a fact: a bullet cited only to open
     # questions goes (010085: PurTera's own "no remote access or console work?"
     # became scope), unless it asks the customer to confirm.
@@ -1148,6 +1191,11 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
             content["overview"] = [{"text": text[:1].upper() + text[1:], "cites": [bg["id"]], "kind": "fact"}]
     content.update(library_counts)
     content["facts_given"] = len(fs)
+    # Everything the rules changed after the writer, rule by rule where traced,
+    # the rest as "writer_rules": the queue SowSmith shows as "Teach the heads".
+    traced = {(tuple(d["atom_ids"]), d["head"]) for d in content.get("rule_decisions") or []}
+    content["rule_decisions"] = (content.get("rule_decisions") or []) + [
+        d for d in _decisions("writer_rules", writer_snap, _snap(content)) if (tuple(d["atom_ids"]), d["head"]) not in traced]
     return content
 
 
