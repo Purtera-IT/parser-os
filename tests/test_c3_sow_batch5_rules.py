@@ -77,3 +77,48 @@ def test_the_summary_leads_with_the_work_and_closes_with_cleanup():
                             {"text": "Provider will install sixteen (16) monitor arms.", "cites": ["a"], "kind": "fact"}]}
     m._traced(content, "summary_order", m._summary_order, content)
     assert content["overview"][0]["text"].startswith("Provider will install")
+
+
+# --- 000132 B-: a clause that loses its object goes whole ----------------------
+
+def test_a_withheld_commitment_takes_its_whole_clause():
+    rx = m.re.compile(r"(?i)24\s*/\s*7|on-?call")
+    t = "Provider will perform weekly on-site visits for four (4) to eight (8) hours as needed and remain available for 24/7 on-call support."
+    assert m._drop_clause(t, rx) == "Provider will perform weekly on-site visits for four (4) to eight (8) hours as needed."
+    assert m._drop_clause("Provide 24/7 on-call support.", rx) == ""
+
+
+def test_no_line_ends_on_a_preposition():
+    c = {"overview": [{"text": "Provider will perform weekly visits as needed and remain available for.", "cites": [], "kind": "fact"},
+                      {"text": "Provide support for.", "cites": [], "kind": "fact"}],
+         "arrival_protocol": [{"text": "Provide the visitor badge and parking pass at check-in.", "cites": [], "kind": "fact"},
+                              {"text": "Reconnect everything like for like.", "cites": [], "kind": "fact"},
+                              {"text": "Technicians check in.", "cites": [], "kind": "fact"}]}
+    m._sentence_integrity(c)
+    assert [x["text"] for x in c["overview"]] == ["Provider will perform weekly visits as needed."]
+    assert len(c["arrival_protocol"]) == 3
+
+
+def test_the_summary_never_names_visit_logistics_as_a_service():
+    c = {"services": ["support"], "overview": [{"text": "Provider will support network and servers.", "cites": ["a"], "kind": "fact"}],
+         "sites": [], "scope": [
+             {"text": "Coordinate arrival and site access with the designated onsite contact.", "cites": ["b"], "kind": "fact"},
+             {"text": "Provide end-user support, including O365/M365 clients.", "cites": ["c"], "kind": "fact"}]}
+    m._summary_names_job(c)
+    added = c["overview"][-1]["text"]
+    assert added == "Provider will also provide end-user support, including O365/M365 clients."
+
+
+def test_locations_name_every_site_of_a_city_list():
+    c = {"locations": [{"text": "Hudson, WI.", "cites": ["h"], "kind": "fact"}],
+         "sites": [{"city": "Delphos", "state": "OH"}, {"city": "Hudson", "state": "WI"}]}
+    m._locations_cover_sites(c)
+    assert [x["text"] for x in c["locations"]] == ["Hudson, WI.", "Delphos, OH."]
+
+
+def test_a_counted_task_the_summary_repeats_stays_a_task():
+    t = "Perform weekly on-site visits lasting approximately four (4) to eight (8) hours as needed."
+    c = {"overview": [{"text": "Provider will perform weekly on-site visits for four (4) to eight (8) hours as needed.", "cites": ["v"], "kind": "fact"}],
+         "scope": [{"text": "Onsite Support", "cites": [], "kind": "heading"}, {"text": t, "cites": ["v"], "kind": "fact"}]}
+    m._grounding(c, [_fact("v", "On-site visit once per week, 4-8 hours as needed")])
+    assert any(x["text"] == t for x in c["scope"])

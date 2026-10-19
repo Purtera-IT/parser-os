@@ -99,7 +99,7 @@ _PARTS = {
         "\"locations\": [each job site as \"City, ST | street address\", fact items citing where it is stated; never an "
         "office in a signature; empty on a job with many sites], \"overview\": [2-4 sentences in third-person proposal voice (\"Provider will ...\", never an order, never a \"Label: value\" line): what is installed or "
         "done, how many, where, for whom (each count exactly as its fact gives it for that same thing: a site total is not the count of single-switch sites): every device or system the job installs, including one a later request adds (a router asked for after the register and printer); the per-site facts the work is planned by when a fact states them (devices or register lanes per site, the time a fact estimates per site or per device); on a many-site job the site count: SITES count_in_site_lists when it is larger than a count a message states; a platform "
-        "or service migration the job is part of (the customer moving from one system to another), named as the facts name it; what stays in place; on recurring or on-call support, every service the facts request (end-user support, troubleshooting, coordination with local stakeholders) and the sites by city when there are a few], \"schedule\": [labeled "
+        "or service migration the job is part of (the customer moving from one system to another), named as the facts name it; what stays in place; on recurring or on-call support, every service the facts request (end-user support, troubleshooting, coordination with local stakeholders) and the sites by city when there are a few. The summary names the work and services only: a method step (arrival, check-in, site access, coordination with the onsite contact) is a task, never part of a summary sentence; a commitment the facts hedge (24/7 on-call) is left out as a whole clause, never as a bare object], \"schedule\": [labeled "
         "lines only when a fact gives them: \"Requested Start Date: ...\", \"Requested Completion Date: ...\", "
         "\"Arrival Time: ...\" (a lead time counts: \"Arrival Time: no less than 30 minutes before the site closes\"), \"Work Window: ...\" (after-hours, weekend or overnight), "
         "\"Number of Resources: ...\", \"Hardware Quantity: ...\" (\"Hardware Quantity: Not provided\" when a fact says the count is not known), "
@@ -3183,6 +3183,13 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             for x in content.get(k) or []:
                 t = str(x.get("text") if isinstance(x, dict) else x)
                 if isinstance(x, dict) and promise.search(t):
+                    # The whole clause goes, not its object (000132 pass U:
+                    # "... and remain available for.").
+                    t1 = _drop_clause(t, promise)
+                    if t1 and len(t1) >= 25 and not promise.search(t1):
+                        x["text"] = t1
+                        kept.append(x)
+                        continue
                     t2 = re.sub(r"(?i),?\s*(including |and |with |provide |offer |providing )*(24\s*/\s*7|24x7)?\s*on-?call( availability| support| coverage)?"
                                 r"|,?\s*(with |and |provide |providing )*24\s*/\s*7( availability| support| coverage)?", "", t).strip()
                     t2 = re.sub(r"\s+,", ",", re.sub(r",\s*,", ",", t2))
@@ -3582,6 +3589,12 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     ov_items = [x for x in content.get("overview") or [] if isinstance(x, dict)]
     def _restates(x: dict[str, Any]) -> bool:
         t = str(x.get("text"))
+        # A counted task is the contract's own line, whatever the summary says
+        # (000132 pass U: "Perform weekly on-site visits lasting approximately
+        # four (4) to eight (8) hours" went once the summary sentence read clean).
+        # A site count is the summary's; a count of the work itself is not.
+        if re.search(r"\d", re.sub(r"(?i)\b\d+\)?\s+(?:\w+\s+)?(locations?|sites?|stores?|offices?|branches|restaurants?)\b", "", _digits(t))):
+            return False
         return any(_said(t, [o], 0.75) and _said(re.sub(r"(?i)^\s*provider will\s+", "", str(o.get("text"))), [t], 0.9)
                    for o in ov_items)
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
@@ -4035,6 +4048,80 @@ def _service_groups(content: dict[str, Any]) -> None:
     content["scope"] = out
 
 
+def _locations_cover_sites(c: dict[str, Any]) -> None:
+    """The locations list names every site the site table holds when both are
+    "City, ST" lists (000132 pass U: the writer listed five cities, the sites
+    six; Delphos, OH was only in the table)."""
+    locs = [x for x in c.get("locations") or [] if isinstance(x, dict)]
+    city_st = re.compile(r"^\s*[A-Za-z][A-Za-z .'-]{1,30},\s*[A-Z]{2}\.?\s*$")
+    if not locs or not all(city_st.match(str(x.get("text"))) for x in locs):
+        return
+    have = " ".join(str(x.get("text")) for x in locs).lower()
+    for s_ in c.get("sites") or []:
+        ci, st = str(s_.get("city") or "").strip(), str(s_.get("state") or "").strip()
+        if ci and re.fullmatch(r"[A-Z]{2}", st) and f"{ci}, {st}".lower() not in have:
+            locs.append({"text": f"{ci}, {st}.", "cites": [], "kind": "method", "from": "sites"})
+    c["locations"] = locs
+
+
+#: A sentence that ends on a word that needs an object ("remain available for.").
+_DANGLING = re.compile(r"(?i)(?<![-/\w])(for|to|with|of|by|at|on|in|from|into|onto|via|than|including|and|or|the|a|an|such as)\s*[.:;]?\s*$")
+
+
+def _clip_dangling(t: str) -> str | None:
+    """A line that lost its object ends on a preposition: its last clause goes
+    whole ("... as needed and remain available for." -> "... as needed.");
+    with no clause left, the line goes (None)."""
+    t = str(t).strip()
+    if not _DANGLING.search(t) or re.search(r"(?i)\b(check|log|sign|plug|power|turn|switch|hand|fill|lock|clock|tie|dial|opt|carry|"
+                                            r"follow|come|move|drop|pick|swap|back|set|hook|roll|bring|wire|stay|stays|kept|left)"
+                                            r"(s|ed|ing|ged)?\s+(in|on|at|by|to)\s*[.:;]?\s*$", t):
+        return t
+    body = t.rstrip(" .:;")
+    cut = max((m.start() for m in re.finditer(r",\s+(?:and\s+|or\s+)?|\s+(?:and|or|then)\s+|;\s*", body)), default=-1)
+    if cut <= 0:
+        return None
+    head = body[:cut].rstrip(" ,;")
+    if len(head.split()) < 4 or _DANGLING.search(head):
+        return None
+    return head + "."
+
+
+def _drop_clause(t: str, rx: re.Pattern[str]) -> str:
+    """Remove the whole clause a match sits in, never just the matched words
+    (000132 pass U: stripping "24/7 on-call support" left "and remain
+    available for."). The sentence's first clause going takes the line."""
+    m = rx.search(t)
+    if not m:
+        return t
+    seps = list(re.finditer(r",\s+(?:and\s+|or\s+)?|\s+(?:and|or|then)\s+(?=[a-z])|;\s*", t))
+    left = max((x.start() for x in seps if x.end() <= m.start()), default=None)
+    right = min((x.start() for x in seps if x.start() >= m.end()), default=None)
+    if left is None:
+        return ""
+    end = right if right is not None else len(t.rstrip(" ."))
+    out = (t[:left] + t[end:]).strip()
+    return out if out.endswith((".", "?", "!", ":")) else out.rstrip(" ,;") + "."
+
+
+def _sentence_integrity(c: dict[str, Any]) -> None:
+    """No line ends on a preposition or a conjunction: a clause that lost its
+    object is clipped, a line with nothing left goes."""
+    for k in LISTS:
+        keep = []
+        for x in c.get(k) or []:
+            if isinstance(x, dict) and x.get("kind") != "heading" and isinstance(x.get("text"), str):
+                t = _clip_dangling(x["text"])
+                if t is None:
+                    continue
+                x["text"] = t
+            keep.append(x)
+        c[k] = keep
+
+
+#: Visit logistics, not a service the summary names.
+_LOGISTICS = re.compile(r"(?i)\b(arriv\w*|site access|check[- ]?in|parking|badg\w*|escort\w*|onsite contact|on-site contact|sign[- ]?in)\b")
+
 _NOMINAL = ((r"provide\s+", ""), (r"perform\s+", ""), (r"support\s+", "support for "), (r"coordinate\s+", "coordination "),
             (r"document\s+", "documentation of "), (r"troubleshoot\s+", "troubleshooting of "), (r"respond to\s+", "response to "),
             (r"maintain\s+", "maintenance of "), (r"monitor\s+", "monitoring of "))
@@ -4079,7 +4166,7 @@ def _summary_names_job(c: dict[str, Any]) -> None:
             t = tx(x).strip().rstrip(".")
             if cities and sum(1 for ci, _ in cities if re.search(r"\b" + re.escape(ci) + r"\b", t)) >= 2:
                 continue  # the site line
-            if _said(t, said_by, 0.5) or len(t.split()) > 10 or not _SERVICE_WORDS.search(t):
+            if _said(t, said_by, 0.5) or len(t.split()) > 10 or not _SERVICE_WORDS.search(t) or _LOGISTICS.search(t):
                 continue  # a service is named in a few words; a long line is a task, not a service
             for pat, rep in _NOMINAL:
                 mm = re.match(r"(?i)\s*" + pat, t)
@@ -5705,6 +5792,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         asm.append({"text": f"Work is performed on {day.group(1).capitalize()} as scheduled; site access is available that day.",
                     "cites": [], "kind": "method"})
         c["assumptions"] = [x for x in asm if not re.search(r"(?i)(regular|normal|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
+    _locations_cover_sites(c)
+    _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
