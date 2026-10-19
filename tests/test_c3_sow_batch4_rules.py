@@ -386,3 +386,19 @@ def test_a_site_count_is_never_multiplied_into_device_deliverables():
     c = {"deliverables": [{"description": ["160 printers installed"]}]}
     m._no_site_multiples(c, 161, {"a": "ship 160 printers to the stores"})
     assert c["deliverables"][0]["description"] == ["160 printers installed"]
+
+
+def test_a_per_site_planning_fact_no_line_states_is_an_assumption():
+    fs = [_fact("l", "Most stores have four register lanes and there are about 160 locations.", type="site_attribute")]
+    content = {"assumptions": [], "overview": [{"text": "Provider will install POS at 161 stores.", "cites": ["l"]}]}
+    m._planning_basis(content, fs)
+    assert [x["text"] for x in content["assumptions"]] == ["The Customer has indicated that most stores have four register lanes."]
+    content = {"assumptions": [], "scope": [{"text": "Install the POS at each of the four register lanes.", "cites": ["l"]}]}
+    m._planning_basis(content, fs)
+    assert content["assumptions"] == []
+
+
+def test_existing_registers_moved_away_gate_the_removal_standard():
+    content = {"scope": [], "assumptions": [], "customer_responsibilities": [], "out_of_scope": []}
+    m._apply_standards(content, "pos_install_refresh", ["The existing registers will be moved to the back room."])
+    assert any(x["text"] == "Disconnect and remove the existing POS equipment being replaced." for x in content["scope"])

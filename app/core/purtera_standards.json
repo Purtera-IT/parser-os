@@ -57,7 +57,7 @@
       "Confirm the installation locations and identify the register lanes in scope with the onsite contact.",
       "Verify that the required equipment, power and network connectivity are available before beginning installation.",
       "{when:\\bSOP\\b|runbook|run book|checklist|install(ation)? guide|procedures?\\b} Follow the Customer-provided installation runbook and checklist.",
-      "{when:replac|refresh|legacy|old (registers?|pos|terminals?|hardware|equipment)|(remov\\w*|de-?install\\w*) (the |all )?(existing|old|legacy)} Disconnect and remove the existing POS equipment being replaced.",
+      "{when:replac|refresh|legacy|old (registers?|pos|terminals?|hardware|equipment)|(remov\\w*|de-?install\\w*) (the |all )?(existing|old|legacy)|existing (registers?|terminals?|pos (hardware|equipment|systems?))\\b.{0,60}\\b(mov\\w*|back ?room|swap\\w*|dismantl\\w*)} Disconnect and remove the existing POS equipment being replaced.",
       "{when:\\bregisters?\\b|\\bterminals?\\b|pos stations?} Connect each register or terminal to power, the applicable network connection and its Customer-provided peripherals.",
       "Perform cable management and organize unused cabling as reasonable within the allotted onsite time.",
       "Power on the installed devices.",

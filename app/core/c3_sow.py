@@ -1474,6 +1474,14 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "service_groups", _service_groups, content)
     _overview_covers_scope(content, fs)
     _boundary_verbs(content)
+    _planning_basis(content, fs)
+    # "the above" points into the source note's list, not the SOW (000123
+    # pass T: "Use the cords for the above.").
+    for k in LISTS:
+        for x in content.get(k) or []:
+            if isinstance(x, dict) and isinstance(x.get("text"), str):
+                x["text"] = re.sub(r"(?i)\b(for|with|to|of|on) the above(?:[- ](?:gear|items?|equipment|devices?|list|hardware))?\b",
+                                   r"\1 the installed equipment", x["text"])
     _deliverables_hygiene(content)
     _reconcile_dropped(content)
     # A one-room job says "the room" (010120: "Verify the equipment for each
@@ -3944,6 +3952,40 @@ def _summary_names_job(c: dict[str, Any]) -> None:
                        "cites": [cc for x in tasks if any(_said(n, [x], 0.6) for n in names) for cc in x.get("cites") or []],
                        "kind": "fact"})
             added += 1
+
+
+_PLAN_BASIS = re.compile(r"(?i)\b(most|each|every|all|typical(?:ly)?|the average)\b[^.;?]{0,30}?\b(stores?|sites?|locations?|restaurants?|branches)\b[^.;?]{0,15}?"
+                         r"\b(have|has|take|takes|would take|will take|need|needs|require|requires|run|runs)\b[^.;?]{3,60}")
+
+
+def _planning_basis(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A per-site planning fact the brief kept and no line cites ("Most
+    stores have four register lanes", "each store would take 2 hours") is
+    a pricing assumption (000123 pass T: the lane count was never written).
+    At most two."""
+    said_by: dict[str, str] = {}
+    for k in LISTS:
+        for x in content.get(k) or []:
+            if isinstance(x, dict):
+                for c in x.get("cites") or []:
+                    said_by[c] = said_by.get(c, "") + " " + str(x.get("text")).lower()
+    asm = content.setdefault("assumptions", [])
+    added = 0
+    for f in fs:
+        if added >= 2 or f["section"] in ("also_kept", "unsure", "typed_only", "answered_question") or f.get("quoted"):
+            continue
+        mm = _PLAN_BASIS.search(f["text"])
+        if not mm or not re.search(r"\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|dozen)\b", mm.group(0), re.I):
+            continue
+        clause = re.split(r"(?i)\s+and\s+there\b|,\s+(?:and|but|so)\b|\s+but\b", mm.group(0))[0].strip(" ,")
+        num = re.search(r"\d+|\b(one|two|three|four|five|six|seven|eight|nine|ten|dozen)\b", clause, re.I)
+        if not num or num.group(0).lower() in said_by.get(f["id"], ""):
+            continue  # a line citing it already states the number
+        line = "The Customer has indicated that " + clause[:1].lower() + clause[1:] + "."
+        if _said(line, asm, 0.6):
+            continue
+        asm.append({"text": line, "cites": [f["id"]], "kind": "fact"})
+        added += 1
 
 
 def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | None = None) -> None:
