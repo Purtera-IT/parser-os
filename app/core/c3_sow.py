@@ -4788,7 +4788,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     by_t = {f["id"]: f["text"] for f in fs}
     content["scope"] = [x for x in content.get("scope") or [] if not (
         isinstance(x, dict) and x.get("cites") and re.match(r"(?i)\s*install\b", str(x.get("text")))
-        and all(re.search(r"(?i)\b(we|they) (already |currently )?have\b|\balready (have|installed|in place)\b|\bcurrently (have|has|installed)\b", by_t.get(c, ""))
+        and all(re.search(r"(?i)\b(we|they) (already |currently )?have\b|\balready (have|installed|in place)\b|(?<!than )\bcurrently (have|has|installed)\b", by_t.get(c, ""))
                 for c in x["cites"]))]
     # An uncited "limited to basic ..." cap is library text that narrows the
     # contract below the deal's own scope (000132: vSphere, NAS and patching
@@ -9746,7 +9746,7 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
     # provides, not equipment (010209: "The RL standard naming convention for
     # equipment labels" under Equipment in Scope).
     info = [x for x in content.get("equipment_in_scope") or [] if isinstance(x, dict) and re.search(
-        r"(?i)naming convention|\bstandards?\b(?! (power|cords?|cables?|mounts?))|\bmatrix\b|documentation|diagram|\binstructions\b|\bschedule\b|\bconvention\b", tx(x))]
+        r"(?i)naming convention|\bstandards?\b(?!\s+(?:[\w-]+\s+){0,2}(?:power|cords?|cables?|mounts?|cat\s?\d\w*|rj-?45|patch))|\bmatrix\b|documentation|diagram|\binstructions\b|\bschedule\b|\bconvention\b", tx(x))]
     for x in info:
         content["equipment_in_scope"].remove(x)
         line = {**x, "text": "Provide " + re.sub(r"(?i)^\s*the\s+", "the ", tx(x)).rstrip(".") + "."}
@@ -10082,7 +10082,10 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
         # pass Y: "Approve any packing-material removal or disposal before
         # Provider leaves the site." cited PurTera's own haul-away notes).
         if k not in ("provider_materials", "customer_materials", "equipment_in_scope"):
-            to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact" or (x["kind"] == "method" and x["cites"])]
+            # Only duties and assumptions: verifying scope method steps dropped
+            # 010264's clock install step and 010326's check-in step (pass Z).
+            to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact" or (
+                x["kind"] == "method" and x["cites"] and k in ("customer_responsibilities", "assumptions"))]
     ok = _verified([x for _, _, x in to_verify], lines)
     bad = {id(x) for _, _, x in to_verify} - {id(x) for x in ok}
     # A scope line rejected for one trailing clause keeps its main claim

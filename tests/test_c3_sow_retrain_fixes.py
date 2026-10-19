@@ -50,3 +50,18 @@ def test_a_dated_line_is_never_recited_by_number():
     c = {"schedule": [{"text": "Requested Completion Date: 11/19/2026", "cites": [], "kind": "fact"}]}
     m.check(c, {"hdr": "Sent: 11 Aug 2026 19:40 | Due 8/17/2026"})
     assert all(not x.get("cites") for x in c.get("schedule") or [])
+
+
+def test_rule_regexes_from_the_regression_map():
+    import inspect
+    import re
+    src = inspect.getsource(m)
+    # 4: a comparison with what is installed is not existing gear (010217 TR250 backing board)
+    assert "(?<!than )\\bcurrently (have|has|installed)\\b" in src
+    pat = re.compile(r"(?i)\b(we|they) (already |currently )?have\b|\balready (have|installed|in place)\b|(?<!than )\bcurrently (have|has|installed)\b")
+    assert not pat.search("the new boards must be moved up higher than currently installed")
+    assert pat.search("we currently have a Logitech Rally Plus")
+    # 5: "Standard Cat6 cable" is not a standards document (010082)
+    doc = re.compile(r"(?i)\bstandards?\b(?!\s+(?:[\w-]+\s+){0,2}(?:power|cords?|cables?|mounts?|cat\s?\d\w*|rj-?45|patch))")
+    assert not doc.search("Provide Standard Cat6 cable, not plenum-rated cable.")
+    assert doc.search("Provide the cabling standards for the naming convention.")
