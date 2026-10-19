@@ -113,6 +113,12 @@ _PARTS = {
         "type: write every one of its items, reworded to this job, unless a fact contradicts it; the other lists: method steps, tools, deliverables PurTera writes on such jobs; "
         "use, as kind method, every one that fits THIS job's facts, reworded to them, never one the facts contradict "
         "or one about work this job does not include): %s\n"
+        "When a source outlines a whole project in phases (hardware receipt, benching, configuration, shipping, onsite "
+        "install, removal), only the onsite phase is this SOW's: the other phases' steps (validate receipt, label equipment "
+        "before shipment, record serials of benched equipment) are another party's and are neither tasks nor customer "
+        "duties. A commercial term or emphasis a fact puts on a task (rework of Provider's own errors at no charge, "
+        "\"critical\", \"assume all\", a requirement that holds even where it seems not to apply) stays with that task or "
+        "becomes its own assumption; it is never dropped from a line that cites it.\n"
         "TASK: the task list. Return {\"scope_lead\": one line introducing the tasks (\"Provider will dispatch <N> (<n>) <trade> "
         "technicians to perform the following:\"; a count only when a fact states the staffing, never "
         "from meeting attendees), \"scope\": [group the tasks under short headings, one per area, system or room (an item "
@@ -209,9 +215,24 @@ _MUST_PROMPT = (
     "the floor cable) is a scope task that keeps its location. A fact in section answered_question "
     "was answered: a request in it (\"I would also like to add <X> - can you help?\") is scope to write. Same "
     "WHO rules: \"we\" under a customer heading is the customer; a reseller asked to provide materials means Provider "
-    "supplies them; \"tech to provide <X>\" means Provider supplies <X>. Return JSON only: {\"add\": [{\"list\": one "
+    "supplies them; \"tech to provide <X>\" means Provider supplies <X>. A commercial term or an emphasis the customer "
+    "puts on the work is placed whole, where it binds, even when another line already cites the fact for its task: rework "
+    "of Provider's own errors done at no charge is an assumption; work offered later at extra cost is out of scope; "
+    "\"critical\" or \"assume all\" goes on the task it qualifies (\"Label every active cable; cable identification is a "
+    "critical requirement\"); a requirement that holds where it seems not to apply (\"not all stores have a rack but "
+    "still need rack mount hardware\") keeps that case; a step the fact gives inside a longer answer (cut and dress very "
+    "long cable) is its own task. Return JSON only: {\"add\": [{\"list\": one "
     "of %s, \"text\": str, \"cites\": [ids], \"kind\": \"fact\"}]}.\nDRAFT: %s\nFACTS:\n%s"
 )
+
+#: A commercial term or emphasis a fact puts on the work: placed even when its
+#: atom is cited for something else (010209 pass U: "this extra time must be
+#: spent at no charge to RL" cited on "Label every cable", the term lost).
+_TERM = re.compile(r"(?i)\b(at|for) no (charge|cost)\b|\bno[- ]charge\b|\b(at|for) (a|an additional|extra) (cost|charge|fee)\b|"
+                   r"\bcritical\b|\bassume all\b|\bnot all\b[^.]{0,60}\bstill\b|\bcut\b[^.]{0,30}\bcable")
+_TERM_WORDS = {"charge": r"no[- ]charge|no cost|at no", "cost": r"no cost|extra cost|additional cost|at a cost|separately",
+               "critical": r"critical", "assume all": r"\ball\b", "still": r"no rack|without a rack|even where|still",
+               "cut": r"\bcut\b|excess|long cable"}
 
 _VERIFY_PROMPT = (
     "Each numbered SOW bullet cites deal lines. Say which bullets the cited lines support: every count, length, "
@@ -1175,8 +1196,21 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # A date from a quoted earlier email is history, not this job's schedule
     # (010043: CDW's May meeting slots became a "work window").
     quoted = {f["id"] for f in fs if f.get("quoted")}
+    # Only a dated line is history, and a quoted copy whose original the
+    # sources also hold is that original (010209 pass U: the RFQ's "If
+    # equipment is received earlier, we can start the project earlier", cited
+    # to a forward's quoted copy, never reached the schedule).
+    by_text = [f for f in fs if not f.get("quoted")]
+    for x in content.get("schedule") or []:
+        if x.get("cites") and all(c in quoted for c in x["cites"]):
+            src = " ".join(f["text"] for f in fs if f["id"] in x["cites"])
+            twin = [f["id"] for f in by_text if _said(src, [f["text"]], 0.8) and _said(f["text"], [src], 0.8)]
+            if twin:
+                x["cites"] = twin[:2]
+    dated = re.compile(r"(?i)\b\d{1,2}/\d{1,2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d|\b\d{4}-\d\d-\d\d\b|"
+                       r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}(:\d\d)?\s*(am|pm)\b")
     content["schedule"] = [x for x in content.get("schedule") or []
-                           if not (x.get("cites") and all(c in quoted for c in x["cites"])
+                           if not (x.get("cites") and all(c in quoted for c in x["cites"]) and dated.search(str(x.get("text")))
                                    and not re.match(r"(?i)\s*(number of resources|hardware quantity)", str(x.get("text"))))]
     sched = content.setdefault("schedule", [])
     if not any("completion date" in str(x.get("text", "")).lower() for x in sched if isinstance(x, dict)):
@@ -1518,6 +1552,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "service_groups", _service_groups, content)
     _overview_covers_scope(content, fs)
     _boundary_verbs(content)
+    _traced(content, "partner_phase", _partner_phase, content, fs)
     _planning_basis(content, fs)
     _room_counts(content)
     # "the above" points into the source note's list, not the SOW (000123
@@ -1576,6 +1611,22 @@ def _summary_order(content: dict[str, Any]) -> None:
     after the install sentences, as its step closes the task list (010373
     pass U: "Provider will haul away installation trash" opened the summary)."""
     ov = [x for x in content.get("overview") or [] if isinstance(x, dict)]
+    # One sentence per claim: a sentence whose counts another one with the
+    # same verb gives in full goes, the fuller one taking its place (010209
+    # pass U: "replace store switches ... thirty (30) sites ... two (2) to five
+    # (5) switches" and "replace two (2) to five (5) switches per store across
+    # approximately thirty (30) sites, with the project estimate at ...").
+    nums = lambda x: set(re.findall(r"\d+", _digits(str(x.get("text")))))
+    verb = lambda x: _action(re.sub(r"(?i)^\s*provider will\s+", "", str(x.get("text"))))[0]
+    for i, x in enumerate(list(ov)):
+        if len(nums(x)) < 2 or not any(x is y for y in ov):
+            continue
+        fuller = next((y for y in ov if y is not x and verb(y) == verb(x) and nums(x) < nums(y)), None)
+        if fuller is not None:
+            j = next(k for k, y in enumerate(ov) if y is x)
+            ov = [y for y in ov if y is not fuller]
+            ov[j:j + 1] = [fuller]
+    content["overview"] = ov
     work = [x for x in ov if not _CLEANUP.search(str(x.get("text")))]
     if work and len(work) < len(ov):
         content["overview"] = work + [x for x in ov if all(x is not w for w in work)]
@@ -2164,7 +2215,16 @@ def _must_include(content: dict[str, Any], fs: list[dict[str, Any]], model: str 
     used = {c for k in LISTS for x in content.get(k) or [] for c in x["cites"]}
     missing = []
     for f in fs:
-        if f["id"] in used or f.get("pictured"):
+        if f.get("pictured"):
+            continue
+        tm = _TERM.search(f["text"]) if f["section"] in MUST_SECTIONS or f.get("type") in ("scope_item", "constraint", "task") else None
+        if tm:  # a quoted copy too: 010209's Q&A answers live only in forwards
+            key = next((k for k in _TERM_WORDS if k in tm.group(0).lower()), "")
+            if key and not re.search(_TERM_WORDS[key], " ".join(x["text"] for k2 in LISTS for x in content.get(k2) or []
+                                                              if f["id"] in (x.get("cites") or [])), re.I):
+                missing.append(f)
+                continue
+        if f["id"] in used:
             continue
         # A written instruction about the work, or what stays in place, is
         # placed whatever its section: 010120's survey deck lines ("should be
@@ -3592,9 +3652,17 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         # A counted task is the contract's own line, whatever the summary says
         # (000132 pass U: "Perform weekly on-site visits lasting approximately
         # four (4) to eight (8) hours" went once the summary sentence read clean).
-        # A site count is the summary's; a count of the work itself is not.
-        if re.search(r"\d", re.sub(r"(?i)\b\d+\)?\s+(?:\w+\s+)?(locations?|sites?|stores?|offices?|branches|restaurants?)\b", "", _digits(t))):
-            return False
+        # A site count is the summary's; a count of the work itself is not,
+        # unless the line also spreads it across the sites and a summary
+        # sentence gives every number it does (010209 pass U: "Replace two (2)
+        # to five (5) switches per store across approximately thirty (30)
+        # sites, with the project estimate at ..." as a task).
+        site_n = r"(?i)\b\d+\)?\s+(?:\w+\s+)?(locations?|sites?|stores?|branches|restaurants?)\b"
+        if re.search(r"\d", re.sub(site_n, "", _digits(t))):
+            nums = set(re.findall(r"\d+", _digits(t)))
+            spread = r"(?i)\b(per|across|at each|for each)\s+(\w+\s+)?(\d+\)?\s+)?(\w+\s+)?(locations?|sites?|stores?|branches|restaurants?)\b"
+            return bool(re.search(spread, _digits(t)) and re.search(site_n, _digits(t))) and any(
+                nums <= set(re.findall(r"\d+", _digits(str(o.get("text"))))) for o in ov_items)
         return any(_said(t, [o], 0.75) and _said(re.sub(r"(?i)^\s*provider will\s+", "", str(o.get("text"))), [t], 0.9)
                    for o in ov_items)
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
@@ -3625,12 +3693,9 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                         or (i + 1 < len(sc) and not (isinstance(sc[i + 1], dict) and sc[i + 1].get("kind") == "heading"))]
 
 
-def _boundary_verbs(content: dict[str, Any]) -> None:
-    """The summary and the task list never claim work the SOW's own limits
-    rule out: the verbs of an assumption or exclusion that says Provider
-    "does not procure, receive, stage, configure, package or ship" leave a
-    "Provider will receive, bench, configure, ship, install ..." line (010209
-    pass T: the overview contradicted the physical-only boundary)."""
+def _ruled_out_verbs(content: dict[str, Any]) -> set[str]:
+    """The stems of the work the SOW's own limits rule out ("Provider does not
+    procure, receive, stage, configure, package or ship")."""
     verbs: set[str] = set()
     for k in ("assumptions", "out_of_scope"):
         for x in content.get(k) or []:
@@ -3640,10 +3705,68 @@ def _boundary_verbs(content: dict[str, Any]) -> None:
                     v = v.strip().lower()
                     if len(v) >= 4 and v not in ("include", "included", "perform", "provide", "responsible", "the", "any", "work"):
                         verbs.add(re.sub(r"(ing|es|e|s)$", "", v)[:6])
-    if not verbs:
-        return
     if verbs & {"receiv", "stag", "procur"}:
         verbs |= {"bench", "kit"}  # warehouse work goes with receiving and staging
+    return verbs
+
+
+#: The noun and verb forms of warehouse work, by the stem a limit line gives.
+_PHASE_WORDS = {"receiv": r"receiv\w*|receipt", "ship": r"ship(s|ped|ping|ment|ments)?\b|track shipment", "bench": r"bench\w*",
+                "procur": r"procur\w*", "configur": r"configuration (center|partner)|pre-?configur\w*", "packag": r"packag\w*|pack\b",
+                "stag": r"staging (center|warehouse|facility)", "kit": r"\bkitting\b"}
+
+
+def _partner_phase(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """Another party's phase of the project is not this SOW's work: under a
+    limit that rules out receiving, benching, configuring or shipping, a line
+    whose every cited source is a step of that phase (it names the work, or
+    sits in the same source list as one that does) is neither a Provider task
+    nor a customer duty, and a standard step whose only trigger is such a step
+    goes (010209 pass U: the RFQ's "Validate receipt with store manager" as a
+    Provider site-start step, the bench list's "Label all equipment with RL
+    standard naming convention" as a customer duty, its "serial numbers of
+    benched equipment" firing the serial-capture standard). A Provider task
+    that does the ruled-out work itself (pack removed switches for shipment)
+    goes too; staging removed gear onsite stays."""
+    verbs = _ruled_out_verbs(content)
+    pats = [p for v, p in _PHASE_WORDS.items() if v in verbs]
+    if not pats:
+        return
+    phase = re.compile(r"(?i)\b(" + "|".join(pats) + r")")
+    onsite = re.compile(r"(?i)\b(onsite|on site|on-site|customer[- ]designated|in place|existing|removed|old|legacy|decommission\w*)\b")
+    hit = {f["id"] for f in fs if phase.search(f["text"]) and not onsite.search(f["text"])}
+    groups = {f["under"] for f in fs if f["id"] in hit and f.get("under")}
+    hit |= {f["id"] for f in fs if f.get("under") and f["under"] in groups}
+    for k in ("scope", "customer_responsibilities", "arrival_protocol", "schedule", "customer_materials"):
+        content[k] = [x for x in content.get(k) or [] if not (
+            isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading" and x.get("cites")
+            and all(c in hit for c in x["cites"])
+            # When this job starts is this job's (the RFQ's "If equipment is
+            # received earlier, we can start the project earlier").
+            and not (k == "schedule" and re.search(r"(?i)\b(start|begin|commence)\w*\b", str(x.get("text")))))]
+    # A task doing the ruled-out work itself.
+    lead = lambda t: re.sub(r"(ing|es|e|s)$", "", (re.findall(r"[a-z]+", t.lower()) or [""])[0])[:6]
+    alias = {"pack": "packag"}
+    content["scope"] = [x for x in content.get("scope") or [] if not (
+        isinstance(x, dict) and not x.get("standard") and x.get("kind") != "heading"
+        and alias.get(lead(str(x.get("text"))), lead(str(x.get("text")))) in verbs - {"stag"}
+        and re.search(r"(?i)\bship|freight|return|dispos", str(x.get("text"))))]
+    # A standard serial step whose every serial fact is that phase's.
+    serial = [f for f in fs if re.search(r"(?i)\bserial", f["text"])]
+    if serial and all(f["id"] in hit for f in serial):
+        content["scope"] = [x for x in content.get("scope") or [] if not (
+            isinstance(x, dict) and x.get("standard") and re.match(r"(?i)\s*(capture|record|provide)\b[^.]{0,30}\bserial", str(x.get("text"))))]
+
+
+def _boundary_verbs(content: dict[str, Any]) -> None:
+    """The summary and the task list never claim work the SOW's own limits
+    rule out: the verbs of an assumption or exclusion that says Provider
+    "does not procure, receive, stage, configure, package or ship" leave a
+    "Provider will receive, bench, configure, ship, install ..." line (010209
+    pass T: the overview contradicted the physical-only boundary)."""
+    verbs = _ruled_out_verbs(content)
+    if not verbs:
+        return
     bad = re.compile(r"(?i)^(%s)" % "|".join(sorted(re.escape(v) for v in verbs)))
     for k in ("overview", "scope"):
         for x in content.get(k) or []:
@@ -4046,6 +4169,67 @@ def _service_groups(content: dict[str, Any]) -> None:
         if items or closing.search(str(h.get("text"))):
             out += [h] + items
     content["scope"] = out
+
+
+_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+
+
+def _schedule_voice(c: dict[str, Any], as_of: str, theirs: set[str] | frozenset[str] = frozenset()) -> None:
+    """Schedule lines in SOW voice, not the customer's: "we"/"our" is the
+    Customer, a date carries its month name and year (the next one after the
+    cutoff when the month has passed), and a clock range reads "7:00 AM to
+    10:00 AM local site time" (010209 pass U: "All work 7-10am Monday,
+    Tuesday, Thursday" and "scheduled once we are out of holiday blackout
+    starting mid-January", on a rollout across time zones)."""
+    # Work hours are the site's hours, never a call or meeting slot (010082
+    # pass U: "Work Hours: tomorrow (Wednesday 7/8) 2-3pm EST"; 010264: a
+    # meeting invite's "When:" line).
+    slot = re.compile(r"(?i)\b(tomorrow|today|tonight|yesterday|subject:|when:|meeting|call|intro|session|webinar|demo)\b")
+    c["schedule"] = [x for x in c.get("schedule") or [] if not (isinstance(x, dict)
+                     and re.match(r"(?i)\s*work (hours|window)\s*:", str(x.get("text"))) and slot.search(str(x.get("text"))))]
+    try:
+        y0, m0 = int(as_of[:4]), int(as_of[5:7])
+    except ValueError:
+        return
+    year = lambda mo: y0 + 1 if mo < m0 - 2 else y0
+
+    def md(m: re.Match) -> str:
+        mo, d, y = int(m.group(1)), int(m.group(2)), m.group(3)
+        if not (1 <= mo <= 12 and 1 <= d <= 31):
+            return m.group(0)
+        yy = (2000 + int(y) if len(y) == 2 else int(y)) if y else year(mo)
+        return f"{_MONTHS[mo - 1].capitalize()} {d}, {yy}"
+
+    def clock(m: re.Match) -> str:
+        h1, m1, a1, h2, m2, a2 = m.groups()
+        a2 = a2.upper().replace(".", "")
+        a1 = (a1 or ("AM" if a2 == "PM" and int(h1) > int(h2) else a2)).upper().replace(".", "")
+        return f"{int(h1)}:{m1 or '00'} {a1} to {int(h2)}:{m2 or '00'} {a2}"
+
+    for x in c.get("schedule") or []:
+        if not isinstance(x, dict) or not isinstance(x.get("text"), str):
+            continue
+        t = x["text"]
+        if x.get("cites") and all(cc in theirs for cc in x["cites"]):
+            # "we" in a customer's or reseller's line is the Customer; in
+            # PurTera's own it stays for the PM to read.
+            t = re.sub(r"\b[Ww]e are\b|\b[Ww]e're\b", "the Customer is", t)
+            t = re.sub(r"\b[Ww]e\b", "the Customer", t)
+            t = re.sub(r"\b[Oo]ur\b", "the Customer's", t)
+            t = re.sub(r"^([\w /-]{2,30}:\s+)the Customer", r"\1The Customer", t)
+        t = re.sub(r"(?i)^(work (hours|window)\s*:\s*)all work\s+", r"\1", t)
+        t = re.sub(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?![\d/])", md, t)
+        months = "|".join(mo.capitalize() for mo in _MONTHS)  # "may" is a verb
+        t = re.sub(r"\b((?:[Mm]id-|[Ee]arly |[Ll]ate )?)(%s)\b(?!\s+\d)(?!,?\s+(19|20)\d\d)" % months,
+                   lambda m: f"{m.group(1)}{m.group(2)} {year(_MONTHS.index(m.group(2).lower()) + 1)}", t)
+        t = re.sub(r"\b(%s)\s+(\d{1,2})(?:st|nd|rd|th)?\b(?!,?\s*(19|20)\d\d)(?!:)" % months,
+                   lambda m: f"{m.group(1)} {m.group(2)}, {year(_MONTHS.index(m.group(1).lower()) + 1)}", t)
+        t2 = re.sub(r"(?i)\b(\d{1,2})(?::(\d\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d\d))?\s*(am|pm|a\.m\.|p\.m\.)", clock, t)
+        if t2 != t and not re.search(r"(?i)\blocal\b|\b(e|c|m|p)[sd]?t\b|eastern|central|mountain|pacific", t2):
+            t2 = re.sub(r"(\d{1,2}:\d\d [AP]M to \d{1,2}:\d\d [AP]M)(\s+(?=[A-Za-z]))?",
+                        lambda m: m.group(1) + " local site time" + (", " if m.group(2) else ""), t2, count=1)
+        t = t2
+        x["text"] = t[:1].upper() + t[1:]
 
 
 def _locations_cover_sites(c: dict[str, Any]) -> None:
@@ -5793,6 +5977,15 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     "cites": [], "kind": "method"})
         c["assumptions"] = [x for x in asm if not re.search(r"(?i)(regular|normal|standard) business hours", str(x.get("text") if isinstance(x, dict) else x))]
     _locations_cover_sites(c)
+    # Lines an outside sender wrote, or a pasted copy of one (010209: the
+    # RFQ pasted into a HubSpot note and also in Ralph Lauren's own email).
+    sender = lambda a: str((a.get("locator") or {}).get("sender") or "")
+    norm = lambda t: re.sub(r"\W+", " ", str(t).lower()).strip()
+    outside = [a for a in envelope.get("atoms") or [] if sender(a) and "purtera" not in sender(a).lower()]
+    outside_text = {norm(a.get("text")) for a in outside}
+    theirs = {str(a.get("id")) for a in outside} | {str(a.get("id")) for a in envelope.get("atoms") or []
+                                                   if not sender(a) and norm(a.get("text")) in outside_text}
+    _traced(c, "schedule_voice", _schedule_voice, c, str((envelope.get("run_scope") or {}).get("as_of") or ""), theirs)
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)

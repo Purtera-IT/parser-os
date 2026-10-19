@@ -122,3 +122,77 @@ def test_a_counted_task_the_summary_repeats_stays_a_task():
          "scope": [{"text": "Onsite Support", "cites": [], "kind": "heading"}, {"text": t, "cites": ["v"], "kind": "fact"}]}
     m._grounding(c, [_fact("v", "On-site visit once per week, 4-8 hours as needed")])
     assert any(x["text"] == t for x in c["scope"])
+
+
+# --- 010209 B-: another party's phase, schedule voice, placed terms ------------
+
+_LIMIT = {"text": "Provider's scope is limited to physical onsite services; Provider does not procure, receive, stage, configure, "
+                  "package or ship equipment.", "cites": [], "kind": "method", "standard": True}
+
+
+def test_another_partys_phase_is_neither_a_task_nor_a_duty():
+    fs = [_fact("r", "Validate receipt with store manager"),
+          _fact("b", "Provide serial numbers of benched equipment relating to the defined store", under="48 port switch components:"),
+          _fact("n", "Label all equipment with RL standard naming convention", under="48 port switch components:"),
+          _fact("l", "Label every cable before removing the old switch")]
+    c = {"assumptions": [_LIMIT],
+         "scope": [{"text": "Validate receipt with the store manager before beginning work.", "cites": ["r"], "kind": "fact"},
+                   {"text": "Label every cable before removing any old switch.", "cites": ["l"], "kind": "fact"},
+                   {"text": "Pack removed switches for shipment for data wipe and disposal.", "cites": ["l"], "kind": "fact"},
+                   {"text": "Stage the removed legacy switches onsite in a customer-designated area.", "cites": [], "kind": "method", "standard": True},
+                   {"text": "Capture and provide the serial number of each new switch installed.", "cites": [], "kind": "method", "standard": True}],
+         "customer_responsibilities": [{"text": "Provide the RL standard naming convention for each store", "cites": ["n"], "kind": "fact"}],
+         "schedule": [{"text": "If equipment is received earlier, the project may start earlier.", "cites": ["r"], "kind": "fact"}]}
+    m._traced(c, "partner_phase", m._partner_phase, c, fs)
+    assert [x["text"] for x in c["scope"]] == ["Label every cable before removing any old switch.",
+                                               "Stage the removed legacy switches onsite in a customer-designated area."]
+    assert c["customer_responsibilities"] == [] and len(c["schedule"]) == 1
+
+
+def test_schedule_lines_read_in_sow_voice():
+    c = {"schedule": [{"text": "Work Hours: All work 7-10am Monday, Tuesday, Thursday", "cites": ["h"], "kind": "fact"},
+                      {"text": "Scheduling Constraint: Any site not complete by 11/19 will be scheduled once we are out of holiday "
+                               "blackout starting mid-January", "cites": ["h"], "kind": "fact"},
+                      {"text": "Work Hours: tomorrow (Wednesday 7/8) 2 - 3:00pm EST", "cites": ["h"], "kind": "fact"},
+                      {"text": "Requested Completion Date: week of July 6th", "cites": [], "kind": "fact"}]}
+    m._schedule_voice(c, "2026-08-16T00:00:00Z", {"h"})
+    assert [x["text"] for x in c["schedule"]] == [
+        "Work Hours: 7:00 AM to 10:00 AM local site time, Monday, Tuesday, Thursday",
+        "Scheduling Constraint: Any site not complete by November 19, 2026 will be scheduled once the Customer is out of "
+        "holiday blackout starting mid-January 2027",
+        "Requested Completion Date: week of July 6, 2026"]
+
+
+def test_purtera_we_is_not_the_customer():
+    c = {"schedule": [{"text": "Scheduling Constraint: We will ask about blackout dates", "cites": ["p"], "kind": "fact"}]}
+    m._schedule_voice(c, "2026-09-01", set())
+    assert c["schedule"][0]["text"] == "Scheduling Constraint: We will ask about blackout dates"
+
+
+def test_one_summary_sentence_per_claim():
+    c = {"overview": [
+        {"text": "Provider will replace store switches at about thirty (30) sites, with each store receiving two (2) to five (5) switches.",
+         "cites": ["a"], "kind": "fact"},
+        {"text": "Provider will label all cables before removal.", "cites": ["b"], "kind": "fact"},
+        {"text": "Provider will replace two (2) to five (5) switches per store across approximately thirty (30) sites, with "
+                 "approximately fifty (50) 24-port switches.", "cites": ["c"], "kind": "fact"}]}
+    m._summary_order(c)
+    assert [x["cites"] for x in c["overview"]] == [["c"], ["b"]]
+
+
+def test_a_cited_fact_whose_term_no_line_carries_goes_to_the_must_place_pass(monkeypatch):
+    seen = []
+    monkeypatch.setattr(m, "_complete", lambda prompt, *a, **k: (seen.append(prompt), '{"add": []}')[1])
+    fs = [_fact("n", "We have had issues where the tech did not label EVERY cable (this extra time must be spent at no charge to RL)"),
+          _fact("r", "Not all stores have a rack but still need rack mount hardware installed")]
+    c = {k: [] for k in m.LISTS}
+    c["scope"] = [{"text": "Label every cable before removing any old switch.", "cites": ["n"], "kind": "fact"},
+                  {"text": "Install rack mount hardware where required.", "cites": ["r"], "kind": "fact"}]
+    m._must_include(c, fs, None)
+    assert seen and "[n]" in seen[0] and "[r]" in seen[0]
+    c["assumptions"] = [{"text": "Time to correct Provider labeling errors is at no charge.", "cites": ["n"], "kind": "fact"},
+                        {"text": "Rack mount hardware is installed even where a store has no rack.", "cites": ["r"], "kind": "fact"}]
+    seen.clear()
+    m._must_include(c, fs, None)
+    assert not seen
+
