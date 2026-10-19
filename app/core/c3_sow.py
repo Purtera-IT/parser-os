@@ -2052,8 +2052,16 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     # standard (deployment list, staging area for removed phones) contradicted.
     keep_word = re.compile(r"(?i)\b(stay|stays|remain|remains|no change|left in place|already (mounted|installed|on the wall|in place)|"
                            r"keep (the )?existing|not (be )?(moved|replaced|removed)|reuse|re-use|reusing|reused)\b")
-    stays = " ".join(str(f)[max(0, k.start() - 45):k.end() + 30] for f in facts_text or [] for k in keep_word.finditer(str(f))).lower()
+    reuse_word = re.compile(r"(?i)^(reuse|re-use|reusing|reused)$")
+    # A reused thing still carries the new work: reusing the mounts rules out
+    # removing them, not mounting the new displays on them (010217: "Mount
+    # each display at the approved location" and "Adjust the mounts" were
+    # never written because the existing mounts are reused).
+    stays_all = " ".join(str(f)[max(0, k.start() - 45):k.end() + 30] for f in facts_text or [] for k in keep_word.finditer(str(f))).lower()
+    stays_fixed = " ".join(str(f)[max(0, k.start() - 45):k.end() + 30] for f in facts_text or [] for k in keep_word.finditer(str(f))
+                           if not reuse_word.match(k.group(0))).lower()
     def contradicted(t: str) -> bool:
+        stays = stays_all if re.match(r"(?i)\s*(remove|replace|relocate|dismantle|disconnect)\b", t) else stays_fixed
         if not stays:
             return False
         # Only a line that does the work: a check, a review or a supply duty
@@ -2166,7 +2174,14 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             items[work[0] + 1:work[0] + 1] = pre
             close0 = next((i for i, x in enumerate(items) if isinstance(x, dict) and x.get("kind") == "heading"
                            and re.search(r"(?i)clos|clean|wrap|complet", str(x.get("text")))), len(items))
-            items[close0:close0] = post
+            # With two or more rooms or areas, the steps for every one of them
+            # get their own heading, not the last room's (010217: dress, power
+            # and verify sat under "Room 247").
+            many = len(work) >= 2 and not (close0 > 0 and isinstance(items[close0 - 1], dict) and items[close0 - 1].get("kind") == "heading")
+            areas = any(re.search(r"(?i)\b(room|area|floor|office|suite|noc|closet|idf|mdf|lobby|wing|building|site)s?\b|\b\d{2,4}\b",
+                                  str(items[i].get("text"))) for i in work)
+            items[close0:close0] = ([{"text": "All Work Areas" if areas else "Installation and Testing", "cites": [], "kind": "heading"}]
+                                    if many else []) + post
         elif generic:
             items[work[0] + 1:work[0] + 1] = lead
         elif work:
@@ -2691,7 +2706,9 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         content["scope"] = rest[:at] + pre_ph + rest[at:]
     # A task the SOW also excludes goes (010326: "Provide help with racking/
     # stacking/wall mounting" beside rack-and-stack in Out of Scope).
-    oos_items = [x for x in content.get("out_of_scope") or [] if isinstance(x, dict)]
+    # The deal's own exclusions: a generic standard exclusion ("additional
+    # work from missing equipment") does not rule out the task of reporting it.
+    oos_items = [x for x in content.get("out_of_scope") or [] if isinstance(x, dict) and not x.get("standard")]
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
                         and not x.get("standard") and oos_items and _said(re.sub(r"(?i)^\s*(provide help with|assist with|help with)\s*", "", str(x.get("text"))), oos_items, 0.6))]
     # Vendor lease or financing terms are not SOW terms (010326 CDW lease text).

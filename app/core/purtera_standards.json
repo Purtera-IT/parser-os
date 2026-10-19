@@ -313,12 +313,14 @@
     ]
   },
   "av_conference_room": {
-    "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list; 010120 v1 TEMPLATE items (positioning, secure/PoE/video checks, J-hooks, room availability, final device locations, ceiling tile/structure, suspended-mount and finish exclusions, existing displays untouched)",
+    "_source": "owner standards loop 2026-10-18: generic AV display handling from the 010217 v1 TEMPLATE list; 010120 v1 TEMPLATE items (positioning, secure/PoE/video checks, J-hooks, room availability, final device locations, ceiling tile/structure, suspended-mount and finish exclusions, existing displays untouched); 010217 v1 batch-3 TEMPLATE items (relocation protect/transport, 3/4 in plywood spec, access credentials, parking/trash as assumptions, backing without demolition, large-display handling, rigging and defective-equipment exclusions); decommission lines skip relocated gear",
     "method_steps": [
-      "{when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Disconnect and remove the existing equipment designated for removal, including brackets, power supplies and unused cabling.",
+      "{unless:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} {when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Disconnect and remove the existing equipment designated for removal, including brackets, power supplies and unused cabling.",
+      "{when:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} Protect the removed displays being relocated within the facility.",
+      "{when:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} Transport the relocated displays to their new location within the facility.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Review each intended display mounting location with the onsite contact before installation.",
       "{when:(reuse|re-use|reusing|keep) (the )?(existing )?(display |tv |wall )?mounts?|existing (display |tv |wall )?mounts?} Inspect existing display mounts and confirm they suit the new display size, weight and VESA pattern before reuse.",
-      "{when:(reuse|re-use|reusing|keep) (the )?(existing )?(display |tv |wall )?mounts?|existing (display |tv |wall )?mounts?} Install plywood backing as required to securely support each wall mount.",
+      "{when:(reuse|re-use|reusing|keep) (the )?(existing )?(display |tv |wall )?mounts?|existing (display |tv |wall )?mounts?|backing board|plywood} Install three quarter (3/4) inch plywood backing, approximately twenty four (24) inches by forty eight (48) inches, as required to securely support each wall mount.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mount each display at the approved location and height.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Adjust the mounts for alignment and spacing.",
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Dress and secure accessible cabling associated with each display.",
@@ -334,7 +336,7 @@
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Route and dress visible cabling using existing pathways or Customer-approved surface raceway.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Confirm display connection, camera, microphone, speaker and controller function as site access allows.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Remove installation debris to the Customer-designated area onsite.",
-      "{when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Stage removed equipment in the Customer-designated onsite location.",
+      "{unless:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} {when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Stage removed equipment in the Customer-designated onsite location.",
       "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Secure ceiling-mounted devices to structure above the grid with manufacturer hardware and a secondary safety attachment.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Connect the network switch to the Customer network and patch the installed devices.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Label new and reused cables at both ends.",
@@ -358,16 +360,16 @@
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Complete device registration, account and software configuration.",
       "{when:controller|tc10|\\btap\\b|touch ?panel} Provide an in-floor or in-wall pathway to the table controller location, or approve surface raceway for that cable.",
       "Ensure furniture required for installation is assembled and in its final position.",
-      "{when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Confirm the equipment approved for removal and provide an onsite location for removed equipment.",
+      "{unless:relocat|re-?install|(would|will) (then )?(need to )?be (re-?)?installed in|mov(e|ed|ing) (them|those|these|the \\w+ (displays?|tvs?)) to} {when:decommission|remove (the )?existing|removal of|to be removed|replace (the |these |those |our )?(existing|old|current)?|swap out|take down} Confirm the equipment approved for removal and provide an onsite location for removed equipment.",
       "{when:poe switch|network switch|\\bms\\d{3}\\b|new (network |data )?drops?|cat ?6 (run|cable|plenum)} Provide the network port, VLAN, DHCP, firewall and internet access the installed devices require.",
       "{when:video bar|rally|neat|poly (x|studio)|teams room|zoom room|network switch|poe switch|\\bms\\d{3}\\b} Complete device enrollment, management dashboard, tenant and licensing setup.",
       "{when:video bar|rally|neat|poly (x|studio)|teams room|zoom room|network switch|poe switch|\\bms\\d{3}\\b} Provide remote AV or network engineering support during testing without delay.",
       "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Provide replacement ceiling tiles or blanking plates where needed.",
       "Provide technician access to the rooms, common areas, telecom spaces, elevators and corridors the work requires.",
       "Have onsite personnel available for access and approvals during the work.",
-      "Provide onsite parking and a trash area for installation debris.",
       "{when:video bar|rally bar|room bar|poly (x|studio)|neat (bar|board|center|camera|soundbar)|soundbar|logitech (rally|meetup)} Confirm the final mounting locations for all video devices before work begins.",
-      "Ensure the room is available and not occupied during the scheduled work period."
+      "Ensure the room is available and not occupied during the scheduled work period.",
+      "Provide any required building access credentials, escorts, parking instructions, security requirements and site-specific safety requirements before deployment."
     ],
     "assumptions": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Mounting walls can structurally support the displays, mounts and backing materials.",
@@ -383,7 +385,11 @@
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Power receptacles and cabling are operational and long enough for the installed display positions.",
       "Standard working conditions and reasonable access are available in each work area.",
       "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Existing ceiling tiles can be safely removed and reinstalled.",
-      "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Suitable structural support is accessible above the suspended ceiling."
+      "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Suitable structural support is accessible above the suspended ceiling.",
+      "Parking is available onsite, reimbursed if there is a fee.",
+      "There is a trash area onsite able to hold all debris.",
+      "{when:backing board|plywood} Installation of the backing boards can be completed without major demolition, reconstruction, wall opening or structural reinforcement.",
+      "{when:larger (displays?|tvs?|screens?)|\\b(7\\d|8\\d|9\\d|1\\d\\d) ?(inch|in\\b|\"|”)} The installation areas can safely accommodate the personnel required to handle the larger displays."
     ],
     "exclusions": [
       "AV system programming, control system configuration or network configuration.",
@@ -398,7 +404,9 @@
       "Troubleshooting of Customer network issues.",
       "{when:ceiling[- ]mount|suspended|hanging from (the )?ceiling|pendant|ceiling (camera|speaker|mic|device)s?|hung from} Structural reinforcement, custom mounting engineering or certification of suspended mounting systems.",
       "Ceiling grid repair, replacement ceiling tiles, drywall repair, painting, patching or finish work.",
-      "{unless:(install|mount|hang|replace|new|remove|removal of)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install|removed|replaced)\\b} Removal, relocation, replacement or adjustment of the existing displays."
+      "{unless:(install|mount|hang|replace|new|remove|removal of)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install|removed|replaced)\\b} Removal, relocation, replacement or adjustment of the existing displays.",
+      "Specialty rigging, lifts, scaffolding, furniture relocation, or installation of equipment not specifically identified within this Statement of Work.",
+      "Additional work resulting from defective, damaged, incompatible, incomplete or missing equipment, or from concealed and unforeseen site conditions."
     ],
     "deliverable_outcomes": [
       "{when:(install|mount|hang|replace|new)\\b.{0,60}\\b(displays?|tvs?|monitors?|screens?)|(displays?|tvs?|monitors?|screens?)\\b.{0,40}\\b(mount|hang|install)} Displays mounted at the approved locations and heights.",

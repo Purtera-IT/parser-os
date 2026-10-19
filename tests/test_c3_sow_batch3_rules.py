@@ -70,3 +70,50 @@ def test_a_zero_quantity_row_is_an_exclusion_never_a_task():
     m._grounding(content, [_fact("z", "6U-10U servers x 0")])
     assert not content["scope"]
     assert content["out_of_scope"][0]["text"].startswith("6U-10U servers")
+
+
+def _av_scope():
+    return {"job_family": "av_conference_room",
+            "scope": [{"text": "Training Room 250", "cites": [], "kind": "heading"},
+                      {"text": "Remove the two (2) existing 55 inch displays for relocation to the NOC.", "cites": ["r"], "kind": "fact"},
+                      {"text": "Room 247", "cites": [], "kind": "heading"},
+                      {"text": "Install one (1) new 98 inch display with its wall mount.", "cites": ["n"], "kind": "fact"},
+                      {"text": "Closeout", "cites": [], "kind": "heading"}]}
+
+
+_FACTS_217 = ["They have (2) 55 inch Philips displays mounted on a backwall. They want to replace these with (2) larger displays.",
+              "Those (2) 55 inch Philips displays would then need to be installed in their NOC (same location).",
+              "The existing mounts should be to be reused as they support 55-100 inch displays.",
+              "Lastly, they are buying (1) new 98 inch Philips display and need it installed in room 247. This will also need a backing board installed."]
+
+
+def test_reused_mounts_do_not_rule_out_mounting_the_new_displays():
+    content = _av_scope()
+    m._apply_standards(content, "av_conference_room", _FACTS_217)
+    texts = [x["text"] for x in content["scope"]]
+    assert "Mount each display at the approved location and height." in texts
+    assert "Adjust the mounts for alignment and spacing." in texts
+
+
+def test_relocated_displays_are_not_decommissioned():
+    """010217: "replace these" fired the removal/staging lines while the
+    displays move to the NOC."""
+    content = _av_scope()
+    m._apply_standards(content, "av_conference_room", _FACTS_217)
+    every = " ".join(x["text"] for k in ("scope", "customer_responsibilities") for x in content.get(k) or [])
+    assert "designated for removal" not in every and "Stage removed equipment" not in every
+    assert "approved for removal" not in every
+    assert "Transport the relocated displays" in every
+    # a real removal still decommissions
+    content = _av_scope()
+    m._apply_standards(content, "av_conference_room", ["Remove the existing projector and install a new 75 inch display."])
+    assert any("designated for removal" in x["text"] for x in content["scope"])
+
+
+def test_steps_for_every_room_get_their_own_heading():
+    content = _av_scope()
+    m._apply_standards(content, "av_conference_room", _FACTS_217)
+    texts = [x["text"] for x in content["scope"]]
+    room247 = texts.index("Room 247")
+    dress = texts.index("Dress and secure accessible cabling associated with each display.")
+    assert "All Work Areas" in texts[room247:dress]
