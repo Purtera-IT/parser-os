@@ -168,6 +168,37 @@ def rubric_reviews(paths: list[str]) -> list[dict]:
     return out
 
 
+#: Who wrote a judge label: a model applying the rubric, never a person or a PM.
+JUDGE_CREATED_BY = "judge"
+
+
+def judge_reviews(paths: list[str]) -> list[dict]:
+    """Lines placed by the rubric judge (jdg:sow_section, app/core/sow_rubric_judge.py)
+    over deals no person labeled. Model drafts, kept apart from the gold: they
+    train at the ``slight`` tier, lose to any rubric, real-SOW or PM answer on
+    the same line, and never enter the feedback store (they live only in these
+    files), so no run-time lookup can apply them as taught answers. Input:
+    ``<batch>.J.jsonl`` ({"id", "deal", "section", "owner", "model"}), deal on
+    each row."""
+    out = []
+    for path in paths:
+        for line in open(path):
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            aid, deal, sec, own = r.get("id"), r.get("deal"), r.get("section"), r.get("owner")
+            if not aid or not deal or not sec:
+                continue
+            by = f"{JUDGE_CREATED_BY}:{r.get('model') or 'unknown'}"
+            out.append({"deal": deal, "atom_id": aid, "head": "sow_section", "value": sec,
+                        "verdict": "judge", "by": by})
+            if own in ("technician", "customer", "partner", "other"):
+                out.append({"deal": deal, "atom_id": aid, "head": "sow_party", "value": own,
+                            "verdict": "judge", "by": by})
+    return out
+
+
 def outcome_reviews(envelopes: list[str]) -> list[dict]:
     """Where the graded SOW finally put each cited fact (the writer's LLM call
     plus every rule after it): one sow_section answer per atom, its first list
@@ -210,9 +241,10 @@ def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, 
         have = {r["key"]: r["text"] for r in rows}
         labels: dict[tuple[str, str], dict] = {}
         rev: dict[tuple[str, str], dict] = {}
-        for r in by_deal.get(deal, []):  # a human verdict beats a graded-draft outcome
+        draft = ("outcome", "judge")  # model or draft answers: any human verdict beats them
+        for r in by_deal.get(deal, []):
             k = (str(r.get("atom_id")), str(r.get("head")))
-            if k not in rev or rev[k].get("verdict") == "outcome":
+            if k not in rev or (rev[k].get("verdict") in draft and r.get("verdict") not in draft):
                 rev[k] = r
         # Human reviews and PM edits first: they win.
         for (aid, head), r in rev.items():
@@ -231,6 +263,14 @@ def build(envelopes: list[str], reviews: list[dict], out_dir: str) -> dict[str, 
                 labels[(aid, read[0])] = dict(_target(read), label_key=aid, atom_id=aid, labeler="sow_outcome",
                                               origin="labeler", text=have[aid], weight_tier="slight")
                 counts["outcome"] = counts.get("outcome", 0) + 1
+                continue
+            if verdict == "judge":
+                if (aid, read[0]) in labels:
+                    continue
+                labels[(aid, read[0])] = dict(_target(read), label_key=aid, atom_id=aid, labeler=r.get("by"),
+                                              created_by=JUDGE_CREATED_BY, origin="labeler", text=have[aid],
+                                              weight_tier="slight")
+                counts["judge"] = counts.get("judge", 0) + 1
                 continue
             labels[(aid, read[0])] = dict(_target(read), label_key=aid, atom_id=aid, labeler=r.get("by") or "pm@purtera-it.com",
                                           origin="labeler", text=have[aid], weight_tier="ordinary")
@@ -273,6 +313,7 @@ def main() -> None:
     p.add_argument("--reviews", default=None)
     p.add_argument("--real-sow", nargs="*", default=[], help="sem_g*.jsonl real-SOW alignments (gold)")
     p.add_argument("--rubric", nargs="*", default=[], help="rubric label files (<batch>.A.jsonl)")
+    p.add_argument("--judge", nargs="*", default=[], help="rubric-judge label files (<batch>.J.jsonl), model drafts")
     p.add_argument("--outcomes", action="store_true", help="add the graded SOW's placements as silver")
     p.add_argument("--out", required=True)
     a = p.parse_args()
@@ -282,6 +323,7 @@ def main() -> None:
     # is the consistent one (a real SOW's placement is one writer's choice).
     reviews += rubric_reviews([x for pat in a.rubric for x in glob.glob(pat)])
     reviews += real_sow_reviews([x for pat in a.real_sow for x in glob.glob(pat)])
+    reviews += judge_reviews([x for pat in a.judge for x in glob.glob(pat)])
     if a.outcomes:
         reviews += outcome_reviews(paths)
     print(json.dumps(build(paths, reviews, a.out)))

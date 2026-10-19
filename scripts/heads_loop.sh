@@ -26,6 +26,8 @@ extra=()
 [ -n "$REAL" ] && extra+=(--real-sow "$REAL")
 # Rubric labels (docs/C3_RUBRIC_SOW_SECTION.md): the consistent gold for section and owner.
 [ -n "$RUBRIC" ] && extra+=(--rubric "$RUBRIC")
+# Rubric-judge labels (jdg:sow_section drafts, created_by=judge): slight tier, never beat gold.
+[ -n "${JUDGE:-}" ] && extra+=(--judge "$JUDGE")
 python3.11 -m ml.c3.labels_from_sow --envelopes "$ENV_DIR"/final_*_env.json "${extra[@]}" --out "$OUT/records"
 deals=($(ls "$OUT/records" | sed 's/.json//' | sort))
 mkdir -p "$OUT/train" "$OUT/val"
