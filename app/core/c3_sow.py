@@ -2263,6 +2263,13 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if ours:
         pat = re.compile(r"(?i)\b(" + "|".join(re.escape(n) for n in ours) + r")\b")
         content["overview"] = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and pat.search(str(x.get("text"))))] or content.get("overview")
+    # Per-lane installs when the sites have several register lanes (000123:
+    # "one (1) printer at each Customer location" with four lanes a store).
+    if any(re.search(r"(?i)\b(two|three|four|five|six|\d)\s+(register |pos )?lanes?\b", f["text"]) for f in fs):
+        for x in content.get("scope") or []:
+            if isinstance(x, dict):
+                x["text"] = re.sub(r"(?i)\bone \(1\) ([\w +/()-]{2,60}?) at each (customer )?(location|store|site)\b",
+                                   r"\1 at each register lane", str(x.get("text")))
     # A site condition is an assumption, not a closing step (010082: the 12 ft
     # ceiling and the safe under Closeout).
     cond = [x for x in content.get("scope") or [] if isinstance(x, dict) and re.match(r"(?i)\s*site condition:\s*", str(x.get("text")))]

@@ -79,7 +79,7 @@
       "{when:router|gateway|ubiquiti|meraki mx|cellular backup|failover} Provide an active cellular service, SIM and data plan for the backup internet connection.",
       "Authorize test transactions or test prints where required for final validation.",
       "Provide all hardware, cables, adapters, accessories, labels and asset tags required for installation.",
-      "{when:retire|retired|removed|old (pos|terminals?|registers?)|existing (pos|terminals?|registers?)|replace} Provide pallets, boxes, shrink wrap and straps for retired equipment.",
+      "{when:retire|retired|remov(e|ed|al) (and|for) (ship|dispos|recycl)|ship (back|out) (the )?old|pallet} Provide pallets, boxes, shrink wrap and straps for retired equipment.",
       "Provide store access during the scheduled deployment windows.",
       "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Provide the full location list with addresses, site contacts, store hours, access and parking instructions.",
       "{when:\\b(\\d{2,}|several|multiple) (stores|sites|locations)\\b|store list|location list} Provide the final deployment schedule and location assignments.",
