@@ -5063,8 +5063,8 @@ def _no_site_multiples(c: dict[str, Any], n_sites: int, atom_text: dict[str, str
         n, rest = int(mm.group(1)), mm.group(2).strip()
         if abs(n - n_sites) > max(2, 0.1 * n_sites) or site_word.match(rest):
             return t
-        noun = " ".join(re.findall(r"[a-z]+", rest.lower())[:2])
-        if noun and re.search(r"\b%d\s+%s" % (n, re.escape(noun)), pool):
+        noun = (re.findall(r"[a-z]+", rest.lower()) or [""])[0]
+        if noun and re.search(r"\b%d\s+(?:[a-z-]+\s+){0,2}%s" % (n, re.escape(noun[:5])), pool):
             return t  # the deal states that device count
         rest = rest.rstrip(".")
         return rest[:1].upper() + rest[1:] + " at each location."
