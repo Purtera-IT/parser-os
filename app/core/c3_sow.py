@@ -2348,6 +2348,29 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
                 if isinstance(x, dict) and x.get("list") == "schedule" and x.get("cites")][:2]
         if back:
             content["schedule"] = back
+    # Form labels are not prose (010115: "... Specific Location(s): Sodexo
+    # Dining CAFE." in the summary).
+    for x in content.get("overview") or []:
+        if isinstance(x, dict):
+            x["text"] = re.sub(r"(?i)\s*specific location\(?s?\)?\s*:\s*[^.]*\.?", "", str(x.get("text"))).strip()
+    content["overview"] = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and len(str(x.get("text"))) < 12)] or content.get("overview")
+    # A scope line that only repeats the summary goes (010115 "POS Hardware"
+    # heading over "Assist Bernie Donnelly ...").
+    ov_items = [x for x in content.get("overview") or [] if isinstance(x, dict)]
+    content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+                        and ov_items and _said(str(x.get("text")), ov_items, 0.75))]
+    # Uncited padding about hidden repairs (010115).
+    for k in ("assumptions", "out_of_scope"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("cites") and not x.get("standard")
+                      and re.search(r"(?i)hidden (site )?(repairs?|infrastructure|conditions)", str(x.get("text"))))]
+    # The form's own tools line, when the tools list came back empty (010115:
+    # "Use Of Common Tools (Screwdriver, Wrenches)").
+    if not content.get("provider_tools"):
+        for f in fs:
+            m = re.search(r"(?i)use of common tools\s*\(([^)]+)\)", f["text"])
+            if m:
+                content["provider_tools"] = [{"text": f"Common hand tools, including {m.group(1).strip().lower()}.", "cites": [f["id"]], "kind": "fact"}]
+                break
     # Last: a heading left with nothing under it goes (010209 "Switch replacement").
     sc = content.get("scope") or []
     content["scope"] = [x for i, x in enumerate(sc)

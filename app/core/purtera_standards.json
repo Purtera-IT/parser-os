@@ -18,7 +18,7 @@
       "Ensure the onsite contact or designated representative is available throughout the engagement.",
       "Provide sufficient packing materials (boxes, pallets, tape and labels) onsite before the technician arrives.",
       "Designate a staging or shipment area for the packed equipment.",
-      "Provide packing and labeling instructions for the equipment.",
+      "Provide instructions for dismantling, packing, labeling, staging and shipment preparation.",
       "Provide any additional security, dock or escort requirements before arrival.",
       "Disconnect or arrange for the safe disconnection of any electrical, building, security, or specialized connections that require a licensed trade or manufacturer-authorized resource.",
       "Accept responsibility for the transportation, shipment, storage, and disposal of all equipment and materials.",
@@ -31,7 +31,6 @@
       "The engagement is limited to onsite physical labor and smart hands support.",
       "The hardware can be safely dismantled using common hand tools.",
       "No specialized lifting equipment or powered material handling equipment is required.",
-      "Provider does not supply packing materials or transport, ship or dispose of equipment.",
       "Services are limited to onsite smart hands support for the dismantle and packing."
     ],
     "exclusions": [
@@ -46,6 +45,9 @@
       "Packed equipment staged in the designated shipment area.",
       "Damage, missing materials or access issues reported to the onsite contact.",
       "Completion confirmed with the onsite contact."
+    ],
+    "tools": [
+      "Common hand tools, including screwdrivers and wrenches."
     ]
   },
   "pos_install_refresh": {
