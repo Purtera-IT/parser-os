@@ -2223,6 +2223,20 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if "assessment" in (content.get("services") or []) and not re.search(
             r"(?i)\bsurvey|assess|walk-?through|evaluat", " ".join(str(x.get("text")) for x in content.get("scope") or [] if isinstance(x, dict))):
         content["services"] = [v for v in content["services"] if v != "assessment"] or ["implementation"]
+    # A possible follow-up visit is never a planned one (010419: "some
+    # follow-up needed the next day" became a scheduled return on a one-day fee).
+    fu = re.compile(r"(?i)follow-?up (visit|day)|next[- ]day (visit|follow)|return (visit|trip)|second (visit|day of)|come back")
+    had = False
+    for k in ("overview", "schedule", "scope", "assumptions"):
+        kept = [x for x in content.get(k) or [] if not (isinstance(x, dict) and not x.get("standard") and fu.search(str(x.get("text"))))]
+        had = had or len(kept) < len(content.get(k) or [])
+        if kept or k != "overview":
+            content[k] = kept
+    if had:
+        oos = content.setdefault("out_of_scope", [])
+        t = "Follow-up or return visits, unless authorized in writing or by Change Order."
+        if not _said(t, oos, 0.5):
+            oos.append({"text": t, "cites": [], "kind": "method"})
     # Last: a heading left with nothing under it goes (010209 "Switch replacement").
     sc = content.get("scope") or []
     content["scope"] = [x for i, x in enumerate(sc)
@@ -3036,7 +3050,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     dn = re.sub(r"^\s*\d{5,6}\s*[-–:]?\s*", "", dn)
     dn = dn.split("|")[0].strip()  # 010419: "... | IT Transition & Onboarding Support | Wilmington, NC"
     dn = re.sub(r"(?i)\s*[-–]?\s*\b(cdw|shi|insight|presidio|computacenter)\s*$", "", dn).strip()  # 010147 "... Move CDW"
-    dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s+", "", dn).strip(" -–")
+    dn = re.sub(r"(?i)^(cdw|shi|insight|presidio|computacenter|paragon micro)\s*[-–:]?\s*", "", dn).strip(" -–")
     dn = re.sub(r"(?i)\s+w/\s*\w+.*$|\s+with\s+[A-Z][a-z]+$", "", dn).strip()  # "161 Site POS install w/ Ahmed"
     dn = re.sub(r"\s+-(\d+)\b", r" \1", dn)  # "NYC -48 monitor mounting"
     rq = str((c.get("requested_by") or {}).get("name") or "").strip()
