@@ -1667,6 +1667,10 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     desc = [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"
             and not x.get("standard") and re.match(r"(?i)\s*(the |two |three |one |an? |\d+ |existing )?[\w ()-]{0,40}\b(is|are) "
                                                  r"(currently |already )?(mounted|installed|located|present|in place)\b", str(x.get("text")))]
+    # And a statement about the sites (000123: "Most stores have four register
+    # lanes" as a Closeout task).
+    desc += [x for x in content.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
+             and x not in desc and re.match(r"(?i)\s*(most|all|each|every|some|the)?\s*(stores?|sites?|locations?|rooms?|offices?|buildings?)\s+(have|has|are|is|use|contain)\b", str(x.get("text")))]
     for x in desc:
         content["scope"].remove(x)
         content.setdefault("assumptions", []).append(x)
