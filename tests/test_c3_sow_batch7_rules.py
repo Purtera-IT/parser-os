@@ -446,3 +446,71 @@ def test_a_street_carrying_its_city_is_not_given_it_twice():
     got = m._sites({}, {"sites": [{"name": "6501 Legacy Dr, Plano, TX 75024, Plano, TX 75024", "address": "6501 Legacy Dr, Plano, TX 75024",
                                    "city": "Plano", "state": "TX", "postal_code": "75024"}]})
     assert got[0]["name"] == "6501 Legacy Dr, Plano, TX 75024" and got[0]["address"] == "6501 Legacy Dr, Plano, TX 75024"
+
+
+# --- 010012 A- / 010115 A-: said once, every room, plain wording -------------
+
+def test_a_standard_step_every_rooms_block_says_goes():
+    c = _content()
+    c["scope"] = [{"text": "Conference Room", "kind": "heading", "cites": []},
+                  {"text": "Connect the Conference Room bar and controller to power and to the network or Wi-Fi the Customer provides.", "cites": ["a"]},
+                  {"text": "Shared Office", "kind": "heading", "cites": []},
+                  {"text": "Connect the Shared Office bar and controller to power and to the network or Wi-Fi the Customer provides.", "cites": ["b"]},
+                  {"text": "All Work Areas", "kind": "heading", "cites": []},
+                  {"text": "Connect each device to power and to the network or Wi-Fi the customer provides.", "cites": [], "standard": True}]
+    m._one_statement(c)
+    assert "Connect each device to power and to the network or Wi-Fi the customer provides." not in _texts(c, "scope")
+
+
+def test_a_report_line_names_every_room_with_the_same_install():
+    c = _content()
+    c["scope"] = [{"text": "Conference Room", "kind": "heading", "cites": []},
+                  {"text": "Install one (1) Poly X72 bar and one (1) TC10 controller in the Conference Room.", "cites": ["a"]},
+                  {"text": "Shared Office", "kind": "heading", "cites": []},
+                  {"text": "Install one (1) Poly X72 bar and one (1) TC10 controller in the Shared Office.", "cites": ["b"]}]
+    c["deliverables"] = [{"item": "Work Completion Report", "description": [
+        "One (1) Poly X72 bar and one (1) TC10 controller installed and tested in the Conference Room"]}]
+    m._report_every_room(c)
+    assert c["deliverables"][0]["description"] == [
+        "One (1) Poly X72 bar and one (1) TC10 controller installed and tested in the Conference Room and Shared Office"]
+
+
+def test_plain_wording():
+    c = _content()
+    c["assumptions"] = [{"text": "All two (2) Poly X72 bars are on site.", "cites": []}]
+    c["customer_responsibilities"] = [{"text": "Customer inform Provider in advance of any security protocols.", "cites": []},
+                                      {"text": "Customer escort is required at eight (8) substations.", "cites": []}]
+    m._plain_wording(c)
+    assert _texts(c, "assumptions") == ["Both Poly X72 bars are on site."]
+    assert _texts(c, "customer_responsibilities") == ["Customer will inform Provider in advance of any security protocols.",
+                                                      "Customer escort is required at eight (8) substations."]
+
+
+def test_an_uncited_line_a_standard_says_goes():
+    c = _content()
+    c["assumptions"] = [{"text": "All everyday POS hardware is powered down and released for removal before arrival.", "cites": []},
+                        {"text": "Equipment is powered down and released for removal before the technician arrives.", "cites": [], "standard": True},
+                        {"text": "Provide a pathway for the Tap location, or approve surface raceway.", "cites": ["t"]}]
+    m._standard_says_it(c)
+    assert _texts(c, "assumptions") == ["Equipment is powered down and released for removal before the technician arrives.",
+                                        "Provide a pathway for the Tap location, or approve surface raceway."]
+
+
+def test_an_exclusion_most_of_whose_items_are_excluded_elsewhere_keeps_the_rest():
+    c = _content()
+    c["out_of_scope"] = [{"text": "Transport, shipping or freight of packed equipment.", "standard": True},
+                         {"text": "Inventory audit, asset reconciliation, disposal, recycling, data destruction, or certified IT asset disposition.", "standard": True},
+                         {"text": "Packing materials, transportation, shipping or disposal of equipment.", "standard": True},
+                         {"text": "Removal or disposal of existing monitors, arms, computers, furniture or unrelated site waste.", "standard": True}]
+    m._exclusion_items_once(c)
+    assert _texts(c, "out_of_scope")[2:] == ["Packing materials.",
+                                             "Removal or disposal of existing monitors, arms, computers, furniture or unrelated site waste."]
+
+
+def test_an_assumption_its_own_cite_assumes_comes_back():
+    c = _content()
+    c["dropped"] = [{"list": "assumptions", "text": "Packing materials are available onsite for boxing.", "cites": ["a1"],
+                     "reason": "check: the cited lines do not state it"}]
+    m._recite_exclusions(c, [{"id": "a1", "text": "Im so going to assume they will have all the packing materials onsite."}])
+    assert c["assumptions"] == [{"text": "Packing materials are available onsite for boxing.", "cites": ["a1"], "kind": "fact"}]
+    assert c["dropped"] == []

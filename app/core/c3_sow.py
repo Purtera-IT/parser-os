@@ -5554,8 +5554,24 @@ def _one_statement(c: dict[str, Any]) -> None:
         # one item (010198: "functional testing of each installed device"
         # beside "of the Square register").
         v, obj, every = cl
-        return any(v == dv and (not obj or len(obj & dobj) >= 0.5 * len(obj)) and (obj or not dobj) and (dev or not every)
-                   for dv, dobj, dev in deal)
+        if any(v == dv and (not obj or len(obj & dobj) >= 0.5 * len(obj)) and (obj or not dobj) and (dev or not every)
+               for dv, dobj, dev in deal):
+            return True
+        # A step said of each room is said when every room's own block says it
+        # (010012 pass V: "Unbox and inspect each room's video bar ..." beside
+        # the Conference Room's and the Shared Office's own unbox steps).
+        return every and len(rooms) >= 2 and all(any(v == dv and obj and len(obj & dobj) >= 0.4 * len(obj) for dv, dobj, _ in r) for r in rooms)
+    rooms: list[list[tuple[str, set[str], bool]]] = []
+    cur: list[Any] | None = None
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            generic = re.search(r"(?i)general|all (work )?areas|clos|arriv|setup|set-up|prework|pre-work|testing|wrap", str(x.get("text")))
+            cur = None if generic else []
+            if cur is not None:
+                rooms.append(cur)
+        elif cur is not None and isinstance(x, dict) and not x.get("standard"):
+            cur.extend(_clauses(str(x.get("text"))))
+    rooms = [r for r in rooms if r]
     gone = []
     for x in sc:
         if not (isinstance(x, dict) and x.get("standard") and x.get("kind") != "heading"):
@@ -5701,6 +5717,109 @@ def _observation_not_line(c: dict[str, Any]) -> None:
                 and _OBSERVED.search(tx(x)) and not _INTENT.search(tx(x)))]
 
 
+def _standard_says_it(c: dict[str, Any]) -> None:
+    """A writer assumption or customer duty a standard line already says,
+    with no count or date of its own, goes (010115 pass V: "All everyday POS
+    hardware is powered down and released for removal before arrival"
+    beside the standard "Equipment is powered down and released for removal
+    before the technician arrives"; 010012: "Standard commercial mounting
+    surfaces and fastening methods are suitable" beside "Standard commercial
+    wall construction and fastening methods can be used")."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    for k in ("assumptions", "customer_responsibilities"):
+        std = [_object_toks(tx(y)) for y in c.get(k) or [] if isinstance(y, dict) and y.get("standard")]
+        keep = []
+        for x in c.get(k) or []:
+            if isinstance(x, dict) and not x.get("standard") and not x.get("cites") and not re.search(r"\d", _digits(tx(x))):
+                ot = _object_toks(tx(x))
+                if len(ot) >= 3 and any(len(ot & so) >= 0.6 * len(ot) for so in std):
+                    continue
+            keep.append(x)
+        c[k] = keep
+
+
+def _exclusion_items_once(c: dict[str, Any]) -> None:
+    """Each excluded thing is excluded once: an exclusion list item another
+    exclusion already names leaves the later line, and a line left with no
+    item goes (010115 pass V: "Packing materials, transportation, shipping
+    or disposal of equipment" beside "Transport, shipping or freight of
+    packed equipment" and "... disposal, recycling ..." reads "Packing
+    materials.")."""
+    tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
+    stem6 = lambda w: w[:6]
+    oos = c.get("out_of_scope") or []
+    out: list[Any] = []
+    for x in oos:
+        t = tx(x).rstrip(".")
+        m_ = re.match(r"^([A-Z][^,;]*?(?:,\s*[^,;]+?)+,?\s+(?:or|and)\s+)([^,;]+?)(\s+of\s+[^,;]+)?$", t)
+        if not isinstance(x, dict) or not m_ or re.search(r"(?i)\b(unless|except|beyond|not|from|resulting)\b", t):
+            out.append(x)
+            continue
+        tail = m_.group(3) or ""
+        items = [i.strip() for i in re.split(r",\s*(?:or\s+|and\s+)?|\s+(?:or|and)\s+", t[: len(t) - len(tail)]) if i.strip()]
+        others = [{stem6(w) for w in _object_toks(tx(y))} for y in out if y is not x]
+        left = [i for i in items if not any({stem6(w) for w in _object_toks(i)} and {stem6(w) for w in _object_toks(i)} <= o for o in others)]
+        # Only a line most of whose items are already excluded elsewhere: one
+        # shared word is the ordinary overlap of two exclusions.
+        gone_n = len(items) - len(left)
+        if len(items) < 3 or gone_n < max(2, (len(items) + 1) // 2) or any(re.search(r"(?i)\bof\b", i) for i in items):
+            out.append(x)
+        elif left:
+            body = _join(left) + (tail if len(left) > 1 or not re.match(r"(?i)\s*packing materials", left[0]) else "")
+            out.append({**x, "text": body[:1].upper() + body[1:] + "."})
+    c["out_of_scope"] = out
+
+
+def _report_every_room(c: dict[str, Any]) -> None:
+    """A report line naming one room's install names every room that does
+    the same install (010012 pass V: "One (1) Poly X72 bar and one (1) TC10
+    controller installed and tested in the Conference Room", with the Shared
+    Office's identical install left out)."""
+    sc = c.get("scope") or []
+    heads = [str(x.get("text")).strip() for x in sc if isinstance(x, dict) and x.get("kind") == "heading"]
+    groups: dict[str, list[str]] = {}
+    cur = None
+    for x in sc:
+        if isinstance(x, dict) and x.get("kind") == "heading":
+            cur = str(x.get("text")).strip()
+        elif cur and isinstance(x, dict):
+            groups.setdefault(cur, []).append(str(x.get("text")))
+    for d in c.get("deliverables") or []:
+        if not isinstance(d, dict):
+            continue
+        out = []
+        for e in d.get("description") or []:
+            e = str(e)
+            m_ = re.search(r"\bin the ([A-Z][\w-]*(?: [A-Z][\w-]*){0,3})\b", e)
+            room = m_.group(1) if m_ and m_.group(1) in heads else None
+            if room:
+                ot = _object_toks(e[:m_.start()]) - _object_toks(room)
+                same = [h for h in heads if h != room and h in groups and ot and any(
+                    len(ot & (_object_toks(t) - _object_toks(h))) >= 0.6 * len(ot) and re.match(r"(?i)\s*install", t) for t in groups[h])]
+                if same:
+                    e = e[:m_.start()] + "in the " + _join([room] + same) + e[m_.end():]
+            out.append(e)
+        d["description"] = out
+
+
+def _plain_wording(c: dict[str, Any]) -> None:
+    """Sentences read as sentences: "All two (2) Poly X72 bars" is "Both
+    Poly X72 bars" (010012 pass V); "Customer inform Provider ..." and
+    "Provider submit ..." take their "will" (010115 pass V)."""
+    party = re.compile(r"^(\s*(?:The )?(?:Customer|Provider|Client))\s+(inform|submit|provide|ensure|notify|confirm|coordinate|perform|supply|designate|"
+                       r"deliver|send|complete|assist|arrange|maintain|schedule|furnish|identify|obtain|remove|install|verify|document|communicate)(?=\s)")
+    for k in LISTS:
+        for x in c.get(k) or []:
+            if not isinstance(x, dict) or x.get("kind") == "heading":
+                continue
+            t = re.sub(r"\bAll two \(2\) ", "Both ", str(x.get("text")))
+            t = re.sub(r"\ball two \(2\) ", "both ", t)
+            m_ = party.match(t)
+            if m_:
+                t = t[:m_.end(1)] + " will " + t[m_.start(2):]
+            x["text"] = t
+
+
 def _program_model(c: dict[str, Any], envelope: dict[str, Any]) -> None:
     """A rollout whose locations opt in writes its program model from the
     facts that record it (010264 pass V: opt-in, self-install, quantities
@@ -5826,7 +5945,19 @@ def _recite_exclusions(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
     oos = c.setdefault("out_of_scope", [])
     keep_dropped = []
+    by_id = {str(a.get("id")): str(a.get("text") or "") for a in atoms if isinstance(a, dict)}
     for d in c.get("dropped") or []:
+        # An assumption whose own cited line assumes it is stated (010115
+        # pass V: "Packing materials are available onsite for boxing" citing
+        # "Im so going to assume they will have all the packing materials
+        # onsite").
+        if isinstance(d, dict) and d.get("list") == "assumptions" and str(d.get("reason") or "").startswith("check"):
+            k = _object_toks(tx(d))
+            own = [ci for ci in d.get("cites") or [] if re.search(r"(?i)\bassum", by_id.get(ci, ""))
+                   and k and len(k & _object_toks(by_id.get(ci, ""))) >= 0.5 * len(k)]
+            if own and not _said(tx(d), c.get("assumptions") or [], 0.7):
+                c.setdefault("assumptions", []).append({"text": tx(d), "cites": own, "kind": "fact"})
+                continue
         if not (isinstance(d, dict) and d.get("list") == "out_of_scope" and str(d.get("reason") or "").startswith("check")):
             keep_dropped.append(d)
             continue
@@ -8469,6 +8600,10 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                     for s_ in c.get("sites") or [] if str(s_.get("street") or s_.get("address") or "").strip()):
                 c.setdefault("locations", []).append({"text": x["text"], "cites": [], "kind": "fact", "from": "sites"})
     _traced(c, "observation_not_line", _observation_not_line, c)
+    _traced(c, "standard_says_it", _standard_says_it, c)
+    _exclusion_items_once(c)
+    _report_every_room(c)
+    _plain_wording(c)
     _traced(c, "program_model", _program_model, c, envelope)
     _traced(c, "pricing_not_assumption", _pricing_not_assumption, c)
     _traced(c, "recite_exclusions", _recite_exclusions, c, envelope.get("atoms") or [])
