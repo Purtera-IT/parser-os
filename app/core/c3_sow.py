@@ -388,7 +388,9 @@ _SCOPE_TYPES = {"scope_item", "task", "dependency", "deliverable", "exclusion", 
 _CHATTER = re.compile(r"(?i)^(we('| a)re (on|good)|we('|wi)ll (get|send|be|let|have|usually)|i('|wi)ll |please |let me know|"
                       r"once (we|i) |thanks|thank you|reminder|i am free|we can do a call)|\?\s*$")
 TYPED_BAR = float(os.environ.get("SOWSMITH_C3_SOW_TYPED_BAR", "0.5"))
-TYPED_MAX = int(os.environ.get("SOWSMITH_C3_SOW_TYPED_MAX", "25"))
+#: 25 cut 010326's ATA split ("we would be handling phones on the desks, ATAs,
+#: wall mounting phones", _keep 0.42) behind sheet cells and table rows.
+TYPED_MAX = int(os.environ.get("SOWSMITH_C3_SOW_TYPED_MAX", "40"))
 
 
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
@@ -445,6 +447,11 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                              r"join-url|location|title|organizer|attendees|subject|from|to|sent)\s*:|https?://|"
                              r"^(hey|hi|hello|thanks|happy to|u the best|looping in)\b", txt.strip())
                 or re.search(r"(?i)^\[ocr|^enter .* here$|\|\s*$|rolled up\)|^\d+(\.\d+)*\s+[A-Z]", txt.strip())
+                # A table row ending in a count cell ("Zoo (1215 N 8th St ...) | 1")
+                # is a site-list row, which reaches the SOW as the site table; as
+                # typed-only lines 010326's phone-count rows took the slots of the
+                # RedSky migration decision and the ATA split.
+                or re.search(r"\|\s*\d{1,5}\s*$", txt) or re.match(r"(?i)\s*transcript[- ]id\s*:", txt)
                 or (abstained and len(txt) < 25) or "fireflies" in docs.get(str(a.get("artifact_id") or ""), "")
                 or "transcript" in docs.get(str(a.get("artifact_id") or ""), "").lower()):
             continue
@@ -1184,6 +1191,8 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     for k in LISTS:
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
                       and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]
+    _traced(content, "question_not_commitment", _question_not_commitment, content, fs)
+    _traced(content, "contradiction", _scope_contradictions, content, fs)
     # A lift in scope: no "lift by change request" assumption, no "specialty
     # lifting" exclusion (010085 rented a 40 ft lift and excluded lifts).
     lift_in = re.search(r"(?i)\b(lift|boom|scissor)\b", " ".join(str(x.get("text")) for k in ("scope", "provider_materials", "provider_tools")
@@ -1323,6 +1332,110 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["rule_decisions"] = (content.get("rule_decisions") or []) + [
         d for d in _decisions("writer_rules", writer_snap, _snap(content)) if (tuple(d["atom_ids"]), d["head"]) not in traced]
     return content
+
+
+_REQUESTS_WORK = re.compile(r"(?i)\b(would (also )?like|i'?d like|we need|need (you|us|to)|want to add|add (a|an|the)|can you help|"
+                            r"could you|please (install|add|quote))\b")
+
+
+def _only_asks(text: str) -> bool:
+    """A line that asks and is not answered on the same line: nothing of
+    substance follows its last question mark."""
+    t = str(text).strip()
+    return "?" in t and len(re.sub(r"\W+", "", t.rsplit("?", 1)[1])) < 3
+
+
+def _question_not_commitment(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A Provider task or schedule line resting only on questions is not a
+    commitment. 010326's "is there any type of registering, any type of E911
+    ...?" and "Are you talking about the E911 stuff?" became "Provider will
+    complete ... E911 verification"; the answer was "we're not doing any of
+    that". The type head's answered_question label marks the question as
+    answered, so the general open-question filter lets it through; the answer
+    is the fact, and the question that asks for work stays (010198's router)."""
+    by = {f["id"]: f for f in fs}
+    def asks(c: str) -> bool:
+        f = by.get(c)
+        return bool(f) and bool(f.get("asked")) and _only_asks(f["text"]) and not _REQUESTS_WORK.search(f["text"])
+    for k in ("scope", "schedule", "provider_materials"):
+        content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("kind") != "heading"
+                      and not x.get("standard") and x.get("cites") and all(asks(c) for c in x["cites"]))]
+
+
+#: Words that say how or that work is done, not what it acts on: two lines
+#: sharing only these do not name the same thing.
+_WORK_WORDS = frozenset("""provider customer will also help handle handling perform provide install installed
+installation installing equipment hardware gear each all any where required need needed work onsite site location locations
+existing new including include includes such other them their phone phones device devices""".split())
+_WORK_STEMS: set[str] = set()
+
+
+def _object_toks(t: str) -> set[str]:
+    if not _WORK_STEMS:
+        _WORK_STEMS.update(_stem(w) for w in _WORK_WORDS)
+    return {w for w in _toks(t) if w not in _WORK_STEMS and not w.isdigit() and len(w) > 2
+            and not re.fullmatch(r"(?:%s)" % _NUM_WORDS, w)}
+
+
+def _collides(a: str, b: str) -> bool:
+    """Two lines name the same work: at least two object words in common,
+    covering half of the first line's ("help with racking, stacking" and
+    "rack & stack gear, including the gateways")."""
+    ta, tb = _object_toks(a), _object_toks(b)
+    both = ta & tb
+    return len(both) >= 2 and len(both) >= 0.5 * len(ta)
+
+
+def _scope_contradictions(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """A SOW never says both sides do a thing. A Provider task that names the
+    same work as a customer duty or an exclusion goes when the other side is
+    backed by a cited fact: a cited customer duty, or an exclusion restating
+    one. 010326 printed "Provider will also help with racking, stacking" and
+    "Handle rack ears and brackets" beside the customer's "rack & stack gear,
+    including the gateways" and the exclusion "Rack hardware, rack ears, and
+    gateway installation". A Provider line whose cited facts are all dated
+    after the other side's keeps its place instead (a later fact replaces an
+    earlier one), and an exclusion nothing backs gives way to the task: the
+    draft never excludes what it includes. Standard steps are the template's
+    and are not judged here."""
+    by = {f["id"]: f for f in fs}
+    duties = [x for x in content.get("customer_responsibilities") or [] if isinstance(x, dict) and x.get("cites")]
+    def latest(cites: list[str]) -> str:
+        return max((by[c]["when"] for c in cites if c in by and by[c].get("when") and not by[c].get("quoted")), default="")
+    def later(x: dict[str, Any], other: list[str]) -> bool:
+        mine = [c for c in x.get("cites") or [] if c in by]
+        dated = [by[c]["when"] for c in mine if by[c].get("when") and not by[c].get("quoted")]
+        theirs = latest(other)
+        return bool(mine) and len(dated) == len(mine) and bool(theirs) and min(dated) > theirs
+    weak_oos: list[dict[str, Any]] = []
+    keep = []
+    for x in content.get("scope") or []:
+        if not isinstance(x, dict) or x.get("kind") == "heading" or x.get("standard"):
+            keep.append(x)
+            continue
+        t = str(x.get("text") or "")
+        hit = None
+        for d in duties:
+            if _collides(t, str(d.get("text"))):
+                hit = list(d.get("cites") or [])
+                break
+        if hit is None:
+            for o in content.get("out_of_scope") or []:
+                if not isinstance(o, dict) or not _collides(t, str(o.get("text"))):
+                    continue
+                backing = list(o.get("cites") or []) or [c for d in duties if _collides(str(o.get("text")), str(d.get("text")))
+                                                         for c in d.get("cites") or []]
+                if backing:
+                    hit = backing
+                    break
+                if x.get("cites"):
+                    weak_oos.append(o)
+        if hit is not None and not later(x, hit):
+            continue
+        keep.append(x)
+    content["scope"] = keep
+    if weak_oos:
+        content["out_of_scope"] = [o for o in content.get("out_of_scope") or [] if not any(o is w for w in weak_oos)]
 
 
 def _ship_list_siblings(content: dict[str, Any], envelope: dict[str, Any], fs: list[dict[str, Any]]) -> None:
@@ -1684,8 +1797,13 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
     # A standard item a deal fact contradicts is not written (the file's own
     # rule): 010120's survey says the TVs stay in place, and the AV standards
     # wrote "mount each display" and plywood backing.
-    stays = " ".join(str(f) for f in facts_text if re.search(r"(?i)\b(stay|stays|remain|remains|no change|left in place|already (mounted|installed|on the wall|in place)|"
-                                                                r"keep (the )?existing|not (be )?(moved|replaced|removed)|reuse|re-use|reusing|reused)\b", str(f))).lower()
+    # Only the words beside the keep word: what stays is what it is said of.
+    # Read over the whole line, 010326's "Existing wall mounts will be reused
+    # by swapping old mounts for new ones with new phones" made every phone
+    # standard (deployment list, staging area for removed phones) contradicted.
+    keep_word = re.compile(r"(?i)\b(stay|stays|remain|remains|no change|left in place|already (mounted|installed|on the wall|in place)|"
+                           r"keep (the )?existing|not (be )?(moved|replaced|removed)|reuse|re-use|reusing|reused)\b")
+    stays = " ".join(str(f)[max(0, k.start() - 45):k.end() + 30] for f in facts_text or [] for k in keep_word.finditer(str(f))).lower()
     def contradicted(t: str) -> bool:
         if not stays:
             return False
@@ -1741,6 +1859,12 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
             # A counted deal step is the standard step with the deal's numbers:
             # keep it, not both (010373: install/mount/cable/trash written twice).
             counted = [x for x in items if isinstance(x, dict) and x.get("kind") != "heading" and re.search(r"\d", str(x.get("text")))]
+            # So is a cited deal step kept for its exception word ("existing",
+            # "reuse"): 010326 printed "Remove each existing phone and install
+            # its replacement using the existing cabling" and the standard's
+            # "Disconnect and remove each existing phone ... reusing existing cabling".
+            counted += [x for x in items if isinstance(x, dict) and x.get("kind") != "heading" and x.get("cites")
+                        and re.search(r"(?i)\b(existing|reuse|reusing|reused)\b", str(x.get("text")))]
             std = [it for it in std if not _said(it["text"], counted, 0.6)]
         n += len(std)
         if lst == "provider_tools":

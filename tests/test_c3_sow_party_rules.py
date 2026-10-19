@@ -1,0 +1,115 @@
+"""SOW writer rules from the 010326 phone-swap grade: a Provider task never
+names work the SOW gives the customer or excludes, a question is never a
+commitment, transition standards stay off a phone swap, and a "reuse the
+existing mounts" line does not cancel every phone standard."""
+from __future__ import annotations
+
+from app.core import c3_sow as m
+
+
+def _fact(i, text, section="scope_of_work", **kw):
+    return {"id": i, "section": section, "text": text, "under": "", "type": kw.get("type", ""), "when": kw.get("when", ""),
+            "supplier": None, "pictured": False, "quoted": kw.get("quoted", False), "asked": kw.get("asked", False)}
+
+
+def _rack_content():
+    return {"scope": [{"text": "Phone replacements", "cites": [], "kind": "heading"},
+                      {"text": "Install three hundred seventeen (317) phones.", "cites": ["p"], "kind": "fact"},
+                      {"text": "Provider will also help with racking, stacking, and wall mounting the hardware.", "cites": ["early"], "kind": "fact"},
+                      {"text": "Handle rack ears and brackets for equipment installed in racks.", "cites": ["ears"], "kind": "fact"},
+                      {"text": "Remove each existing wall mount and install the replacement mount and phone.", "cites": ["wm"], "kind": "fact"}],
+            "customer_responsibilities": [{"text": "Handle rack hardware and rack & stack gear, including the gateways.",
+                                           "cites": ["split"], "kind": "fact"}],
+            "out_of_scope": [{"text": "Rack hardware, rack ears, and gateway installation.", "cites": [], "kind": "method"},
+                             {"text": "Core drilling, wall repair, painting, or structural modification.", "cites": [], "kind": "method"}]}
+
+
+def _rack_facts():
+    return [_fact("p", "317 physical phones"),
+            _fact("early", "they will need help with racking/stacking/wall mounting the hardware.", when="2026-09-14", quoted=True),
+            _fact("ears", "you guys are gonna be handling the gear that goes in the racks. Like putting the rack ears on the brackets.", "job_details"),
+            _fact("wm", "Existing wall mounts will be reused by swapping old mounts for new ones."),
+            _fact("split", "They will handle rack & stack gear", "customer_responsibilities")]
+
+
+def test_a_provider_task_never_names_a_customer_duty_or_a_backed_exclusion():
+    c = _rack_content()
+    m._traced(c, "contradiction", m._scope_contradictions, c, _rack_facts())
+    texts = [x["text"] for x in c["scope"]]
+    assert not any("racking" in t or "rack ears" in t for t in texts)
+    assert any("317" in t for t in texts) and any("wall mount" in t for t in texts)
+    assert len(c["out_of_scope"]) == 2  # the exclusions stand
+    drops = [d for d in c["rule_decisions"] if d["rule"] == "contradiction"]
+    assert {tuple(d["atom_ids"]) for d in drops} == {("early",), ("ears",)}
+    assert all(d["head"] == "sow_keep" and d["value"] == "drop" for d in drops)
+
+
+def test_a_later_fact_keeps_the_provider_task():
+    c = _rack_content()
+    fs = _rack_facts()
+    for f in fs:
+        if f["id"] == "early":
+            f.update(quoted=False, when="2026-10-01")
+        if f["id"] == "split":
+            f["when"] = "2026-09-17"
+    m._scope_contradictions(c, fs)
+    assert any("racking" in x["text"] for x in c["scope"])
+
+
+def test_an_exclusion_nothing_backs_gives_way_to_a_cited_task():
+    c = {"scope": [{"text": "Mount each display bracket on the wall.", "cites": ["d"], "kind": "fact"}],
+         "customer_responsibilities": [],
+         "out_of_scope": [{"text": "Display bracket mounting.", "cites": [], "kind": "method"}]}
+    m._scope_contradictions(c, [_fact("d", "Please mount the display brackets on the wall")])
+    assert c["scope"] and not c["out_of_scope"]
+
+
+def test_a_question_is_never_a_commitment():
+    c = {"scope": [{"text": "After each installation, Provider will complete phone registration, E911 verification, and test calls.",
+                    "cites": ["q1", "q2"], "kind": "fact"},
+                   {"text": "Install one (1) Ubiquiti router with cellular backup.", "cites": ["ask"], "kind": "fact"}]}
+    fs = [_fact("q1", "once phones are installed, is there any type of registering, any type of E911?", "answered_question", asked=True),
+          _fact("q2", "Are you talking about the E911 stuff?", "answered_question", asked=True),
+          _fact("ask", "I would also like to add a Ubiquiti router with cellular backup - is that something you can help with?",
+                "answered_question", asked=True)]
+    m._traced(c, "question_not_commitment", m._question_not_commitment, c, fs)
+    assert [x["text"] for x in c["scope"]] == ["Install one (1) Ubiquiti router with cellular backup."]
+    assert c["rule_decisions"][0]["atom_ids"] == ["q1", "q2"]
+
+
+def test_a_question_answered_on_the_same_line_stays():
+    c = {"scope": [{"text": "Work after hours with no weekends.", "cites": ["qa"], "kind": "fact"}]}
+    m._question_not_commitment(c, [_fact("qa", "What hours? [Betty] After hours, no weekends", "answered_question", asked=True)])
+    assert c["scope"]
+
+
+PHONE = ["We will swap 317 phones one for one", "They will be converting from intrado to redsky; cutover per site",
+         "Existing wall mounts will be reused by swapping old mounts for new ones with new phones."]
+
+
+def test_transition_standards_stay_off_a_phone_swap_and_phone_standards_are_written():
+    c = {"job_family": "smart_hands_general", "scope": [{"text": "Phone replacements", "cites": [], "kind": "heading"}],
+         "customer_responsibilities": [], "assumptions": [], "out_of_scope": []}
+    m._apply_standards(c, "smart_hands_general", PHONE)
+    every = " ".join(x["text"] for k in ("scope", "customer_responsibilities", "assumptions", "out_of_scope") for x in c[k])
+    assert "outgoing provider" not in every and "runbook" not in every and "nurse call" not in every
+    assert "estimates and are not guaranteed" not in every
+    assert "staging area for removed phones" in every and "final deployment list" in every
+    assert "may require a Change Order" in every and "Electrical installation" in every
+    assert "Coordinate technician scheduling" in every
+
+
+def test_transition_standards_still_fire_on_an_it_transition():
+    c = {"job_family": "smart_hands_general", "scope": [], "customer_responsibilities": [], "assumptions": [], "out_of_scope": []}
+    m._apply_standards(c, "smart_hands_general", ["IT Transition & Onboarding support for the clinic"])
+    every = " ".join(x["text"] for k in ("scope", "customer_responsibilities", "assumptions") for x in c[k])
+    assert "runbook" in every and "outgoing provider" in every
+
+
+def test_a_cited_reuse_step_is_not_written_twice_by_its_standard():
+    c = {"job_family": "smart_hands_general",
+         "scope": [{"text": "Phone replacements", "cites": [], "kind": "heading"},
+                   {"text": "Remove each existing phone and install its replacement using the existing cabling.", "cites": ["r"], "kind": "fact"}]}
+    m._apply_standards(c, "smart_hands_general", PHONE)
+    removes = [x["text"] for x in c["scope"] if x["text"].lower().startswith(("remove each existing phone", "disconnect and remove"))]
+    assert len(removes) == 1 and "using the existing cabling" in removes[0]

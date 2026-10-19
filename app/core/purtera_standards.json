@@ -431,7 +431,7 @@
     ]
   },
   "smart_hands_general": {
-    "_source": "owner standards loop 2026-10-18: conditional handling, monitor-arm/desk mounting from the 010373 v1 TEMPLATE list",
+    "_source": "owner standards loop 2026-10-18: conditional handling, monitor-arm/desk mounting from the 010373 v1 TEMPLATE list; 010326 v1 phone-swap TEMPLATE items (scheduling, completion criterion, SmartHands only, quantity change order, electrical); transition lines skip a phone swap",
     "method_steps": [
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Coordinate visit priorities with the customer's designated IT contact before or during each visit.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Validate reported issues and document observed site conditions, findings and recommended next steps.",
@@ -459,8 +459,9 @@
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Disconnect and remove each existing phone and install its replacement one for one, reusing existing cabling.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Validate basic connectivity of each installed phone and document its serial number and location.",
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Identify and escalate any device that cannot be installed or validated.",
-      "{when:transition|onboarding|cut-?over|takeover|take over} Validate that systems at the site function as they did before the transition and report exceptions.",
-      "{when:transition|onboarding|cut-?over|takeover|take over} Coordinate onsite checks with the Customer's remote engineer and the outgoing provider where applicable.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Validate that systems at the site function as they did before the transition and report exceptions.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Coordinate onsite checks with the Customer's remote engineer and the outgoing provider where applicable.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Coordinate technician scheduling and deployment across the Customer-designated locations.",
       "Confirm completion with the onsite contact before leaving site."
     ],
     "customer_responsibilities": [
@@ -479,8 +480,8 @@
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provide remote engineering support for provisioning and registration during the install.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Provide a remote IT contact to guide or approve work during visits.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Confirm whether equipment should be moved, stored, reused, disposed of or left in place.",
-      "{when:transition|onboarding|cut-?over|takeover|take over} Provide a remote engineer who owns configuration and cutover during the visit.",
-      "{when:transition|onboarding|cut-?over|takeover|take over} Provide the transition runbook, credentials and priorities before the visit."
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Provide a remote engineer who owns configuration and cutover during the visit.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Provide the transition runbook, credentials and priorities before the visit."
     ],
     "assumptions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Cable work is limited to physical routing of the provided power and video cables.",
@@ -495,8 +496,11 @@
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Customer provides timely access to supported locations, IT areas, equipment rooms, systems and contacts.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Customer identifies the IT contacts responsible for technical direction, approvals, escalation and prioritization.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Hardware, software, licensing, replacement parts, shipping and third-party vendor charges are not included.",
-      "{when:transition|onboarding|cut-?over|takeover|take over} Device counts are estimates and are not guaranteed.",
-      "{when:transition|onboarding|cut-?over|takeover|take over} Critical systems (nurse call, CCTV, life safety) are observed only and not reconfigured."
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Device counts are estimates and are not guaranteed.",
+      "{unless:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} {when:transition|onboarding|cut-?over|takeover|take over} Critical systems (nurse call, CCTV, life safety) are observed only and not reconfigured.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} A scheduled location is complete when the designated devices are physically installed, basic connectivity validation is completed where applicable, the installation information is documented, and unresolved issues are escalated to the Customer-designated technical resource.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Provider provides physical SmartHands support only and does not perform system configuration or programming.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Any increase in device quantities, locations or onsite activities may require a Change Order."
     ],
     "exclusions": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Furniture assembly or desk modification.",
@@ -511,7 +515,8 @@
       "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} End user training.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Electrical work, construction, wall repair, painting or structural modification.",
       "{when:once (a|per) week|weekly (on-?site|visit)|recurring|staff aug|on-?site (it )?support|dedicated (tech|resource)} Disposal, recycling or shipment of removed equipment unless separately approved.",
-      "{when:transition|onboarding|cut-?over|takeover|take over} Follow-up visits unless authorized in writing or by Change Order."
+      "{when:transition|onboarding|cut-?over|takeover|take over} Follow-up visits unless authorized in writing or by Change Order.",
+      "{when:\\b(phones?|handsets?|desk ?phones?|ata'?s?)\\b.{0,60}\\b(swap|replace|install|deploy|refresh)|\\b(swap|replace|install|deploy)\\b.{0,60}\\b(phones?|handsets?)\\b} Electrical installation or modification."
     ],
     "deliverable_outcomes": [
       "{when:monitor arm|monitor mount|monitors? (per|on each) (arm|desk)|desk mount} Monitor arms installed and monitors mounted, aligned and secured.",
