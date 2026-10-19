@@ -432,3 +432,11 @@ def test_one_item_is_never_both_provider_material_and_customer_provided():
          "customer_responsibilities": [], "assumptions": [], "scope": []}
     m._one_supplier(c, fs)
     assert len(c["provider_materials"]) == 1 and c["customer_materials"] == []
+
+
+def test_the_guard_never_restores_a_survey_the_sow_calls_optional():
+    content = {"assumptions": [{"text": "Assume a project survey is required.", "cites": ["s"], "kind": "fact"}],
+               "customer_responsibilities": [{"text": "Determine whether a site survey is required, as survey is optional.",
+                                              "cites": ["o"], "kind": "fact"}]}
+    m._traced(content, "grounding", lambda: content.__setitem__("assumptions", []))
+    assert content["assumptions"] == []

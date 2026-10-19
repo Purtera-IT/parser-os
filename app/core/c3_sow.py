@@ -915,6 +915,14 @@ def _guard_drops(content: dict[str, Any], rule: str, before: dict, lists_before:
             continue
         if lst == "equipment_in_scope" and re.search(r"(?i)\bexisting\b", text):
             continue  # gear the job does not touch
+        # A line the SOW elsewhere calls optional is not put back as a firm
+        # one (010082 pass T: "Assume a project survey is required" restored
+        # beside "Determine whether a site survey is required, as survey is optional").
+        if any(re.search(r"(?i)\boptional\b|\bdecide whether\b|\bdetermine whether\b", str(y.get("text")))
+               and len(_object_toks(text) & _object_toks(str(y.get("text")))) >= 1
+               and re.search(r"(?i)\b(survey|walk-?through|assessment|site visit)\b", text)
+               for y in live(lst)):
+            continue
         if lst == "schedule" or (lst == "overview" and re.match(r"^[A-Z][\w /&-]{1,30}:\s", text)):
             continue  # label hygiene: the schedule's own labels, form residue in the summary
         if _LEDGER.search(text) or re.search(r"\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}|point of contact|\b(main|primary|tech|backup) contact\b|"
