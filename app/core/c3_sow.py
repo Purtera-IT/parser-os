@@ -537,15 +537,22 @@ def _lead_ins(fs: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> None:
     for v in by_art.values():
         v.sort()
     for f in fs:
-        if f["under"] or f["id"] not in where:
+        if f["id"] not in where:
             continue
         art, ln = where[f["id"]]
         # The two nearest lead-ins: "Customer notes:" above "...we'd ship
         # out:" says whose list it is.
         heads = [t.strip() for _, t in by_art[art] if ln - 12 <= _ < ln and _LEAD_IN.search(t.strip())
                  and len(t.strip()) < 200]
-        if heads:
+        if not heads:
+            continue
+        if not f["under"]:
             f["under"] = " > ".join(h[:120] for h in heads[-2:])
+        elif len(f["text"]) <= 90 and heads[-1][:120] not in f["under"] and len(heads[-1]) > len(f["under"]):
+            # A list label ("Customer notes:") hides the sentence that opens
+            # the list (000123: "Cords for the above" under "...overall we'd
+            # ship out:" read as anyone's item).
+            f["under"] = f["under"][:120] + " > " + heads[-1][:120]
 
 
 # The type head's label, where it settles whose duty a line is.
@@ -917,28 +924,6 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                 sched.append({"text": f"Requested Completion Date: {m.group(2)}", "cites": [f["id"]], "kind": "fact"})
                 break
     _reseller_supplies(content, fs)
-    # Every member of the customer's ship-out list is customer-provided
-    # material (000123: "we'd ship out: ... Printer" and the printer vanished).
-    cm = content.setdefault("customer_materials", [])
-    # Short item lines right beside a cited customer-provided item, in the
-    # same document, are its list siblings (000123: "Printer", "Credit card
-    # reader (pin pad)" beside "Samsung Tablet"; the keep head left them out).
-    atoms = envelope.get("atoms") or []
-    pos = {str(a.get("id")): (str(a.get("artifact_id") or ""), a.get("order")) for a in atoms}
-    anchors = [pos.get(c) for x in cm if isinstance(x, dict) for c in x.get("cites") or [] if pos.get(c)]
-    for a in atoms:
-        t = str(a.get("text") or "").strip()
-        art, order = str(a.get("artifact_id") or ""), a.get("order")
-        if not t or len(t) > 60 or re.search(r"[.!?]\s|\b(will|we|you|please)\b", t, re.I):
-            continue
-        if any(art == aa for aa, _oo in anchors) and not _said(t, cm, 0.6) \
-                and re.fullmatch(r"(?i)[\w\s()/+&.-]{3,60}", t) \
-                and re.search(r"(?i)\b(printer|reader|pin ?pad|scanner|cash drawer|tablet|terminal|stand|hub|cords? for|cables?)\b", t):
-            cm.append({"text": t, "cites": [str(a.get("id"))], "kind": "fact"})
-    for f in fs:
-        if re.search(r"(?i)we'?d ship( out)?|we (will|'ll) (ship|provide)|customer (will )?provide|provided by (the )?customer|ship(ping)? out", f.get("under") or "") \
-                and len(f["text"]) <= 120 and not _said(f["text"], cm, 0.6):
-            cm.append({"text": f["text"].strip().rstrip(".") , "cites": [f["id"]], "kind": "fact"})
     # A customer duty cannot rest only on what PurTera itself wrote (010217:
     # Trent's sales intro "deep familiarity with Certinia, Agiloft" became a
     # CDW responsibility).
@@ -985,6 +970,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if isinstance(x, dict) and yr.isdigit() and re.match(r"(?i)\s*requested (start|completion) date: [A-Za-z, ]+\d{1,2}\s*$", str(x.get("text"))):
             x["text"] = str(x["text"]).rstrip() + f", {yr}"
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
+    _ship_list_siblings(content, envelope, fs)
     sup_of = {f["id"]: f.get("supplier") for f in fs}
     cust = lambda c: bool(sup_of.get(c)) and sup_of[c][0] == "customer" and float(sup_of[c][1] or 0) >= SUPPLIER_BAR
     eq = content.get("equipment_in_scope") or []
@@ -1226,6 +1212,36 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["rule_decisions"] = (content.get("rule_decisions") or []) + [
         d for d in _decisions("writer_rules", writer_snap, _snap(content)) if (tuple(d["atom_ids"]), d["head"]) not in traced]
     return content
+
+
+def _ship_list_siblings(content: dict[str, Any], envelope: dict[str, Any], fs: list[dict[str, Any]]) -> None:
+    """Every member of the customer's ship-out list is customer-provided
+    material (000123: "we'd ship out: ... Printer" and the printer vanished).
+    Runs after the supplier head has filed its items, so the list's anchors
+    are there (000123's tablet and hub reached the list only then, and the
+    printer, card reader and cords beside them never followed)."""
+    cm = content.setdefault("customer_materials", [])
+    # Short item lines right beside a cited customer-provided item, in the
+    # same document, are its list siblings.
+    atoms = envelope.get("atoms") or []
+    line_of = lambda a: (a.get("locator") or {}).get("line_start") if isinstance((a.get("locator") or {}).get("line_start"), int) else a.get("order")
+    pos = {str(a.get("id")): (str(a.get("artifact_id") or ""), line_of(a)) for a in atoms}
+    anchors = [pos.get(c) for x in cm if isinstance(x, dict) for c in x.get("cites") or [] if pos.get(c)]
+    near = lambda art, ln: any(art == aa and (ln is None or oo is None or abs(int(ln) - int(oo)) <= 6) for aa, oo in anchors)
+    for a in atoms:
+        t = str(a.get("text") or "").strip()
+        art, ln = str(a.get("artifact_id") or ""), line_of(a)
+        if not t or len(t) > 60 or re.search(r"[.!?]\s|\b(will|we|you|please)\b", t, re.I) \
+                or re.match(r"(?i)(reuse|re-use|install|use|unpack|notify|power|request|mount|remove|connect|test|confirm|provide)\b", t):
+            continue  # an item, never a task line beside the list
+        if near(art, ln) and not _said(t, cm, 0.6) \
+                and re.fullmatch(r"(?i)[\w\s()/+&.-]{3,60}", t) \
+                and re.search(r"(?i)\b(printer|reader|pin ?pad|scanner|cash drawer|tablet|terminal|stand|hub|cords? for|cables?)\b", t):
+            cm.append({"text": t, "cites": [str(a.get("id"))], "kind": "fact"})
+    for f in fs:
+        if re.search(r"(?i)we'?d ship( out)?|we (will|'ll) (ship|provide)|customer (will )?provide|provided by (the )?customer|ship(ping)? out", f.get("under") or "") \
+                and _ITEM_LINE.match(f["text"].strip()) and not _said(f["text"], cm, 0.6):
+            cm.append({"text": f["text"].strip().rstrip("."), "cites": [f["id"]], "kind": "fact"})
 
 
 COVER_FACTS = int(os.environ.get("SOWSMITH_C3_SOW_COVER_FACTS", "300"))
@@ -2405,9 +2421,18 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     content["overview"] = [x for x in content.get("overview") or [] if not (isinstance(x, dict) and len(str(x.get("text"))) < 12)] or content.get("overview")
     # A scope line that only repeats the summary goes (010115 "POS Hardware"
     # heading over "Assist Bernie Donnelly ...").
+    # Only a line that restates a whole summary sentence: a task the summary
+    # merely mentions among others is the contract's own line and stays
+    # (010198: "Install one (1) Square register" went because the summary
+    # says "install one register and one printer"; 000123 lost the scanner
+    # reuse and mounting-hardware tasks the same way).
     ov_items = [x for x in content.get("overview") or [] if isinstance(x, dict)]
+    def _restates(x: dict[str, Any]) -> bool:
+        t = str(x.get("text"))
+        return any(_said(t, [o], 0.75) and _said(re.sub(r"(?i)^\s*provider will\s+", "", str(o.get("text"))), [t], 0.9)
+                   for o in ov_items)
     content["scope"] = [x for x in content.get("scope") or [] if not (isinstance(x, dict) and x.get("kind") != "heading" and not x.get("standard")
-                        and ov_items and _said(str(x.get("text")), ov_items, 0.75))]
+                        and ov_items and _restates(x))]
     # A generic "install cable runs" line beside the measured runs repeats them
     # (010043: "Install CAT6 cable runs to the camera locations").
     sc_all = content.get("scope") or []
@@ -2586,6 +2611,14 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         if re.search(r"\d|\b(one|two|three|four|five|six|seven|eight|nine|ten)\b|\b[A-Z][A-Za-z]+\b(?<!^)", t[1:]):
             return False
         first = next(iter(re.findall(r"[a-z]+", t.lower())), "")
+        if x.get("cites"):
+            # A cited deal line repeats only a standard step that says it on
+            # its own, verb and object (000123: "Install the printer at each
+            # location" went because the standard steps' words, pooled, held
+            # "install", "printer" and "location" in three different lines).
+            return bool(first) and any(re.findall(r"[a-z]+", tx(s).lower())[:1] == [first]
+                                       and len(_toks(t) & _toks(tx(s))) >= 0.75 * max(1, len(_toks(t))) for s in std_scope) \
+                or bool(content.get("provider_tools") and re.search(r"(?i)\btools?\b|screwdriver|wrench", t))
         if first and _stem(first) in std_verbs and len(_toks(t) & std_words) >= 0.6 * max(1, len(_toks(t))):
             return True  # the standard step with that verb says it
         if content.get("provider_tools") and re.search(r"(?i)\btools?\b|screwdriver|wrench", t):
