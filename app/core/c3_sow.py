@@ -1070,6 +1070,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     content["writer_draft"] = {k: [{kk: x.get(kk) for kk in ("text", "cites", "kind") if kk in x}
                                    for x in content.get(k) or [] if isinstance(x, dict)]
                                for k in LISTS if content.get(k)}
+    _model_numbers(content, envelope)  # before the check reads "785 existing" as a count
     content["checks"] = check(content, lines)
     # A schedule or work-window line is a commitment: it needs a line the brief
     # kept, not only one it mentioned in passing (000132's "24/7 on-call",
@@ -1213,18 +1214,10 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _dedupe_items(content)
     content["withheld"] = _scrub(content)
     # A number that names a document ("785 POS Termainal Refresh RFP.doc") is a
-    # model or project number: an item using it as a count is wrong (010279
-    # "Remove the existing seven hundred eighty-five (785) POS terminals").
-    titled = {n for d in envelope.get("documents") or [] for n in re.findall(r"\b(\d{3,4})\b", str(d.get("filename") or ""))
-              if not re.fullmatch(r"(19|20)\d\d", n)}
-    if titled:
-        count_of = re.compile(r"\((%s)\)|\b(%s)\s+(existing\s+)?[A-Za-z]" % ("|".join(titled), "|".join(titled)))
-        for k in LISTS:
-            content[k] = [x for x in content.get(k) or []
-                          if not (isinstance(x, dict) and count_of.search(str(x.get("text") or "")))]
-        for d in content.get("deliverables") or []:  # 010279: "the 785 replaced POS terminals" in the report
-            if isinstance(d, dict):
-                d["description"] = [t for t in d.get("description") or [] if not count_of.search(str(t))]
+    # model or project number, never a count: the line is reworded, not
+    # dropped (010279 pass T: "replace 785 existing POS terminals at 113
+    # sites" went whole, and with it every terminal in the SOW).
+    _model_numbers(content, envelope)
     # A heading whose tasks the checks dropped is an empty promise in the SOW
     # (010043: "Camera mounting" with nothing under it).
     sc = content.get("scope") or []
@@ -2210,6 +2203,32 @@ def _party_check(content: dict[str, Any], lines: dict[str, str]) -> int:
     return moved
 
 
+def _model_numbers(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """A number a document's file name carries ("785 POS Termainal Refresh
+    RFP.doc") is a model or project number: where a line writes it as a
+    count it is reworded as the model ("seven hundred eighty-five (785) POS
+    terminals" -> "785 POS terminals", "replace 785 existing POS terminals"
+    -> "replace existing 785 POS terminals"); the line stays (010279)."""
+    titled = {n for d in envelope.get("documents") or [] for n in re.findall(r"\b(\d{3,4})\b", str(d.get("filename") or ""))
+              if not re.fullmatch(r"(19|20)\d\d", n)}
+    if not titled:
+        return
+    alt = "|".join(sorted(titled))
+    def fix(t: str) -> str:
+        t = re.sub(r"(?i)\b" + _NUMW + r"(?:[\s-]+" + _NUMW + r")*\s*\((%s)\)" % alt, r"\1", t)
+        t = re.sub(r"(?i)\(?\b(%s)\)?\s+(existing|old|current|legacy|replaced|removed)\s+" % alt, r"\2 \1 ", t)
+        t = re.sub(r"(?i)\b(replace|replacing|swap)\s+(all\s+)?(the\s+)?(%s)\b(?=[^.;]{0,60}\bwith\b)" % alt,
+                   lambda m: f"{m.group(1)} {m.group(2) or ''}{m.group(3) or ''}existing {m.group(4)}".replace("  ", " "), t)
+        return t
+    for k in LISTS:
+        for x in content.get(k) or []:
+            if isinstance(x, dict) and isinstance(x.get("text"), str):
+                x["text"] = fix(x["text"])
+    for d in content.get("deliverables") or []:
+        if isinstance(d, dict):
+            d["description"] = [fix(str(t)) for t in d.get("description") or []]
+
+
 def _dedupe_items(content: dict[str, Any]) -> None:
     """One line per thing in each list: the writer and the coverage pass both
     wrote 010082's drop-off arrangement."""
@@ -2699,7 +2718,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         if not keep:
             # Only captions: the writer's own summary drafts the check set aside
             # (010012: "Conference Room 2102 contains a large rectangular table").
-            keep = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+            keep = [{k: v for k, v in x.items() if k not in ("list", "reason")} for x in content.get("dropped") or []
                     if isinstance(x, dict) and x.get("list") == "overview" and x.get("text") and not pictured(x) and not room_desc(x)][:2]
         if keep:
             content["overview"] = keep
@@ -2755,7 +2774,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if not keep and ov:
         # Every line was a pasted email: the writer's own summary drafts the
         # fact check set aside are the better overview.
-        keep = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+        keep = [{k: v for k, v in x.items() if k not in ("list", "reason")} for x in content.get("dropped") or []
                 if isinstance(x, dict) and x.get("list") == "overview" and x.get("text") and not greet.search(str(x["text"]))][:2]
     if keep:
         content["overview"] = keep
@@ -3155,7 +3174,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
             content[k] = kept
     if not content.get("overview") or all(isinstance(x, dict) and ((x.get("cites") and all(c in bro for c in x["cites"])) or brochure.search(str(x.get("text"))))
                                           for x in content.get("overview") or []):
-        alt = [{k2: v for k2, v in x.items() if k2 != "list"} for x in content.get("dropped") or []
+        alt = [{k2: v for k2, v in x.items() if k2 not in ("list", "reason")} for x in content.get("dropped") or []
                if isinstance(x, dict) and x.get("list") == "overview" and not all(c in bro for c in x.get("cites") or ["-"])
                and not brochure.search(str(x.get("text")))][:2]
         if not alt:
@@ -3202,7 +3221,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
         if nums and nums <= have_nums and _stated_by(re.sub(r"\d+", "", str(x["text"])), all_facts) and not _said(str(x["text"]), sc, 0.7):
             close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
                           and re.search(r"(?i)clos|clean|wrap|complet", str(y.get("text")))), len(sc))
-            sc.insert(close, {k: v for k, v in x.items() if k != "list"})
+            sc.insert(close, {k: v for k, v in x.items() if k not in ("list", "reason")})
     # A line from an "Open Questions" list is a question, never a duty (010082:
     # the parking/loading-dock question became a customer responsibility).
     oq = {f["id"] for f in fs if re.search(r"(?i)open questions?|questions? for (the )?customer|to confirm|tbd items", str(f.get("under") or ""))}
@@ -3309,7 +3328,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     # (010116: "Provider will also install ..." alone).
     ov = content.get("overview") or []
     if ov and isinstance(ov[0], dict) and re.match(r"(?i)\s*(provider will )?also\b", str(ov[0].get("text"))):
-        lead = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+        lead = [{k: v for k, v in x.items() if k not in ("list", "reason")} for x in content.get("dropped") or []
                 if isinstance(x, dict) and x.get("list") == "overview" and not re.match(r"(?i)\s*(provider will )?also\b", str(x.get("text")))][:1]
         if lead:
             content["overview"] = lead + ov
@@ -3327,7 +3346,7 @@ def _grounding(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     if not content.get("schedule"):
         # Never a line the check dropped for a date its cites do not state
         # (010198: the writer's "2026-08-09" for "next Sunday, August 16th").
-        back = [{k: v for k, v in x.items() if k != "list"} for x in content.get("dropped") or []
+        back = [{k: v for k, v in x.items() if k not in ("list", "reason")} for x in content.get("dropped") or []
                 if isinstance(x, dict) and x.get("list") == "schedule" and x.get("cites")
                 and _dates_ok(str(x.get("text")), " ".join(by.get(c, {}).get("text", "") for c in x["cites"]))][:2]
         if back:
@@ -3786,7 +3805,10 @@ def _summary_names_job(c: dict[str, Any]) -> None:
     ov = c.setdefault("overview", [])
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
     cities = [(str(x.get("city") or "").strip(), str(x.get("state") or "").strip()) for x in c.get("sites") or []]
-    cities = [(ci, st) for ci, st in cities if ci]
+    # Only a clean city list names the sites (010376: a street and a suite
+    # number parsed as cities).
+    clean = all(re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,30}", ci) and re.fullmatch(r"[A-Z]{2}", st) for ci, st in cities)
+    cities = [(ci, st) for ci, st in cities if ci] if clean else []
     support = bool({"support", "staff_augmentation"} & set(c.get("services") or []))
     tasks = [x for x in c.get("scope") or [] if isinstance(x, dict) and x.get("kind") != "heading"
              and not x.get("standard") and x.get("cites")]
@@ -4496,6 +4518,9 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     pool = " ".join(lines.values()).lower()
     dropped = {"fact": 0, "method": 0, "uncited_fact": 0}
     to_verify: list[tuple[str, int, dict[str, Any]]] = []
+    # Every drop says why (010279 pass T: the terminal overview line sat in
+    # "dropped" with no reason anywhere).
+    unsupported = content.setdefault("dropped_unsupported", [])
     for k in LISTS:
         keep = []
         for i, x in enumerate(content.get(k) or []):
@@ -4509,15 +4534,18 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                 # it carries nothing deal-specific.
                 if _unsupported_specifics(x["text"], pool):
                     dropped["uncited_fact"] += 1
+                    unsupported.append({"list": k, **x, "reason": "uncited fact with a number or name no fact gives"})
                     continue
                 x["kind"] = "method"
             if x["kind"] == "method" and (k in ("customer_materials", "provider_materials", "locations")
                                           or (k == "provider_tools" and _unsupported_specifics(x["text"], pool))):
                 # Who supplies what is a deal fact, never a default.
                 dropped["method"] += 1
+                unsupported.append({"list": k, **x, "reason": "uncited supply, location or tool line"})
                 continue
             if x["kind"] == "method" and _unsupported_specifics(x["text"], pool):
                 dropped["method"] += 1
+                unsupported.append({"list": k, **x, "reason": "method line with a number or name no fact gives"})
                 continue
             keep.append(x)
         content[k] = keep
@@ -4550,7 +4578,7 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     gone = content.setdefault("dropped", [])
     for k in LISTS:
         before = len(content[k])
-        gone += [{"list": k, **x} for x in content[k] if id(x) in bad]
+        gone += [{"list": k, **x, "reason": "check: the cited lines do not state it"} for x in content[k] if id(x) in bad]
         content[k] = [x for x in content[k] if id(x) not in bad]
         dropped["fact"] += before - len(content[k])
     return dropped
@@ -4679,6 +4707,22 @@ def location_table(envelope: dict[str, Any]) -> list[dict[str, str]]:
                     row = dict(zip(head, cells))
         if row.get("city") and row.get("state"):
             by_doc.setdefault(art, []).append(row)
+    # The document's own table, whole: the row atoms lose rows whose cells
+    # repeat another row's (010279 pass T: stores 310 and 419 share Ashburn
+    # and Virginia Beach with other stores; their row atoms were cut to
+    # "Store: 419 |" and 111 of 113 stores reached the exhibit).
+    for d in envelope.get("documents") or []:
+        for pg in ((d.get("structured") or {}).get("pages") or []):
+            for sec in pg.get("sections") or []:
+                for b in sec.get("blocks") or []:
+                    cols = [str(c).strip().lower() for c in b.get("columns") or []] if isinstance(b, dict) else []
+                    if b.get("kind") != "table" or "city" not in cols or "state" not in cols:
+                        continue
+                    rows = [{str(k).strip().lower(): str(v or "").strip() for k, v in r.items()}
+                            for r in b.get("rows") or [] if isinstance(r, dict)]
+                    rows = [r for r in rows if r.get("city") and r.get("state")]
+                    key = "doc:" + str(d.get("artifact_id") or d.get("filename") or "")
+                    by_doc[key] = by_doc.get(key, []) + rows
     best = max(by_doc.values(), key=len, default=[])
     if len(best) < 3:
         return []
@@ -5229,7 +5273,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         back = [x for x in c.get("dropped") or [] if isinstance(x, dict) and x.get("list") == "overview"
                 and re.search(r"\b%d\b" % n_sites, str(x.get("text")))]
         if back:
-            c.setdefault("overview", []).insert(0, {k: v for k, v in back[0].items() if k != "list"})
+            c.setdefault("overview", []).insert(0, {k: v for k, v in back[0].items() if k not in ("list", "reason")})
     if len(c["sites"]) == 1:  # 010085: multi-site standards wording in a one-site SOW
         for k in LISTS:
             for x in c.get(k) or []:

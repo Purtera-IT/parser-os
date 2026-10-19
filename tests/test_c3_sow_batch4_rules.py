@@ -238,3 +238,39 @@ def test_a_requested_service_that_reads_like_an_exclusion_stays_a_task():
                "out_of_scope": []}
     m._exclusions_never_tasks(content, fs)
     assert len(content["scope"]) == 1 and content["out_of_scope"] == []
+
+
+def test_a_model_number_in_a_file_name_is_reworded_not_dropped():
+    """010279 pass T: "replace 785 existing POS terminals" (785 is the model,
+    from "785 POS Termainal Refresh RFP.doc") was dropped whole."""
+    c = {"overview": [{"text": "Perform installation labor to replace 785 existing POS terminals at 113 sites.", "cites": []}],
+         "scope": [{"text": "Remove the existing seven hundred eighty-five (785) POS terminals.", "cites": []},
+                   {"text": "Replace all 785 terminals with 913 terminals.", "cites": []}],
+         "deliverables": [{"item": "Work Completion Report", "description": ["Installed 200 wireless access points."]}]}
+    m._model_numbers(c, {"documents": [{"filename": "785 POS Termainal Refresh RFP.doc"}, {"filename": "200 AP_s.txt"}]})
+    assert [x["text"] for k in ("overview", "scope") for x in c[k]] == [
+        "Perform installation labor to replace existing 785 POS terminals at 113 sites.",
+        "Remove the existing 785 POS terminals.", "Replace all existing 785 terminals with 913 terminals."]
+    assert c["deliverables"][0]["description"] == ["Installed 200 wireless access points."]
+
+
+def test_the_store_table_comes_from_the_document_whole():
+    """010279 pass T: row atoms whose cells repeated another row's were cut
+    ("Store: 419 |"), so the exhibit listed 111 of 113 stores."""
+    rows = [{"Store": str(n), "Region": "Northern", "City": c, "State": "VA"} for n, c in
+            ((6, "Ashburn"), (310, "Ashburn"), (419, "Virginia Beach"), (7, "Virginia Beach"))]
+    env = {"atoms": [{"artifact_id": "x", "text": "Store: 6 | Region: Northern | City: Ashburn | State: VA"},
+                     {"artifact_id": "x", "text": "Store: 419 |"}],
+           "documents": [{"artifact_id": "x", "structured": {"pages": [{"sections": [{"blocks": [
+               {"kind": "table", "columns": ["Store", "Region", "City", "State"], "rows": rows}]}]}]}}]}
+    assert [r["name"] for r in m.location_table(env)] == ["Store 6", "Store 310", "Store 419", "Store 7"]
+
+
+def test_every_check_drop_says_why(monkeypatch):
+    monkeypatch.setattr(m, "_verified", lambda items, lines: [])
+    c = {k: [] for k in m.LISTS}
+    c["scope"] = [{"text": "Install the printer.", "cites": ["a"], "kind": "fact"},
+                  {"text": "Install 14 Zebra ZT411 printers.", "cites": [], "kind": "method"}]
+    m.check(c, {"a": "a printer"})
+    assert c["dropped"][0]["reason"].startswith("check:")
+    assert c["dropped_unsupported"][0]["reason"]
