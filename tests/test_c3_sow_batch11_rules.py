@@ -244,3 +244,75 @@ def test_one_atom_never_yields_a_part_and_its_sum():
     m._parts_and_sum(c)
     assert _texts(c, "equipment_in_scope") == ["2 x QM65C Samsung 65IN Display", "1 x QM75C Samsung 75IN Display",
                                                "3 x TS525TU Chief Thinstall Wall Mount"]
+
+
+# --- 010147 / 010120 pass Y regressions ------------------------------------------
+
+def test_a_counted_inventory_line_is_grounded_by_its_counts_and_thing():
+    lines = {"q": "Quantity 25-30 CU34G2X", "s": "#of individual devices: 1U-4U Server Quantity 3"}
+    c = _content()
+    c["equipment_in_scope"] = [_fact("Approximately twenty-five (25) to thirty (30) CU34G2X curved monitors are in scope.", ("q",)),
+                               _fact("Three (3) individual 1U-4U servers/devices are in scope.", ("s",)),
+                               _fact("Four (4) backer boards.", ("s",))]
+    m._supply_grounded(c, lines)
+    assert _texts(c, "equipment_in_scope") == ["Approximately twenty-five (25) to thirty (30) CU34G2X curved monitors are in scope.",
+                                               "Three (3) individual 1U-4U servers/devices are in scope."]
+
+
+def test_moved_gear_sharing_only_counts_is_not_the_same_row():
+    c = _content()
+    c["customer_materials"] = [_fact("Twenty-five (25) to thirty (30) curved monitors.", ("a",)),
+                               _fact("Twenty-five (25) to thirty (30) YeaLink phones.", ("b",))]
+    m._moved_gear(c, "relocation_move")
+    assert _texts(c, "equipment_in_scope") == ["Twenty-five (25) to thirty (30) curved monitors.",
+                                               "Twenty-five (25) to thirty (30) YeaLink phones."]
+
+
+def test_the_customers_own_team_member_is_never_re_partied():
+    c = _content()
+    c["customer_responsibilities"] = [_fact("Have a Lafayette team member available to meet the carrier and assist with packing.", ("t",))]
+    fs = [{"id": "t", "text": "A member of our Lafayette team will be available to meet the carrier, assist with packing.",
+           "supplier": ["us", 0.95]}]
+    m._duty_party(c, fs, {"atoms": []})
+    assert _texts(c, "customer_responsibilities") == ["Have a Lafayette team member available to meet the carrier and assist with packing."]
+    assert not c["scope"]
+
+
+def test_a_form_question_label_is_a_question():
+    assert m._form_question("If new cables: Will Customer have them pre-hung in racks and labeled")
+    assert m._form_question("Will cable/tracing and port mapping be in scope")
+    assert not m._form_question("Will installs be performed after hours? [Betty] After hours, no weekends.")
+    assert not m._form_question("Will Work be preformed during office hours: Enter Date | During office hours M-F: 2026-08-25")
+    assert not m._form_question("Do not completely close the Time clock front.")
+
+
+def test_a_sites_zip_comes_from_the_row_beside_its_street():
+    c = _content()
+    c["sites"] = [{"name": "Denver", "street": "1875 Lawrence Street, Suite 750", "city": "Denver", "state": "CO", "postal_code": ""}]
+    m._site_zips(c, [{"text": "Origin Address: Origin City, State & Zip | 1875 Lawrence Street, Suite 750: Denver, CO 80204"}])
+    assert c["sites"][0]["postal_code"] == "80204"
+
+
+def test_an_empty_deliverable_row_goes():
+    c = _content()
+    c["deliverables"] = [{"item": "Work Completion Report", "description": ["Done."]}, {"item": "Chain of Custody Documentation", "description": []}]
+    m._empty_deliverables(c)
+    assert [d["item"] for d in c["deliverables"]] == ["Work Completion Report"]
+
+
+def test_what_the_reseller_anticipates_including_is_customer_provided():
+    c = _content()
+    c["equipment_in_scope"] = [_fact("Provide and install a Cisco Meraki MS120 PoE switch to mount where the ceiling cable runs terminate.", ("r",))]
+    m._reseller_includes(c, [{"id": "r", "text": "Due to limited ports, SHI anticipates including a Cisco Meraki MS120 PoE switch."}])
+    assert not c["equipment_in_scope"]
+    assert _texts(c, "scope") == ["Install the Customer-provided Cisco Meraki MS120 PoE switch to mount where the ceiling cable runs terminate."]
+    assert _texts(c, "customer_materials") == ["The Cisco Meraki MS120 PoE switch."]
+
+
+def test_a_workmanship_requirement_is_the_providers():
+    c = _content()
+    c["customer_responsibilities"] = [_fact("No cables should be visible after the mount is complete.")]
+    c["scope"] = [_fact("Mount the device."), {"text": "Closeout", "cites": [], "kind": "heading"}]
+    m._workmanship_not_duty(c)
+    assert not c["customer_responsibilities"]
+    assert _texts(c, "scope") == ["Mount the device.", "Conceal the cables so none are visible after the mount is complete.", "Closeout"]

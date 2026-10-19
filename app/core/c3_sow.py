@@ -550,6 +550,19 @@ def _program_atoms(envelope: dict[str, Any], per_kind: int = 3) -> list[dict[str
     return picked
 
 
+def _form_question(t: str) -> bool:
+    """A form's question label with no answer beside it: "If new cables:
+    Will Customer have them pre-hung in racks and labeled", "Will
+    cable/tracing and port mapping be in scope" (010147 pass Y: both became
+    customer duties)."""
+    # The label is the text's last segment, with no "?" (a "?" question is
+    # judged elsewhere), no answer after it and no "[Name] answer".
+    if "?" in t or "[" in t:
+        return False
+    return bool(re.search(r"(?:^|[:|]\s*)(?:Will|Is|Are|Does|Should|Would)\s+(?:the\s+)?[A-Za-z/]+\s+[^:|.!]*$", t.strip())) and \
+        not re.search(r"(?i)\b(?:no|yes|n/?a)\s*[:|]|[:|]\s*(?:no|yes|n/?a)\b", t)
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -668,7 +681,11 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     quoted = {a.get("id") for a in envelope.get("atoms") or [] if (a.get("structured") or {}).get("quoted")}
     asked = {a.get("id") for a in envelope.get("atoms") or []
              if ((a.get("structured") or {}).get("c3_label") or {}).get("type") in ("open_question", "answered_question")
-             or str(a.get("text") or "").rstrip().endswith("?")}
+             or str(a.get("text") or "").rstrip().endswith("?")
+             # A form's question label with no answer beside it ("If new
+             # cables: Will Customer have them pre-hung in racks and labeled",
+             # 010147 pass Y, became a customer commitment).
+             or _form_question(str(a.get("text") or ""))}
     for f in out:
         f["pictured"] = f["id"] in pictured or f["section"] == "figure"
         f["quoted"] = f["id"] in quoted
@@ -1687,12 +1704,14 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     # when any "?" counted (schedule, hours, site mix: 30 items).
     def _unanswered(f: dict[str, Any]) -> bool:
         t = f["text"].strip()
+        if _form_question(t):
+            return True  # a form's unanswered question label, whatever its type
         if f.get("section") == "answered_question" or f.get("type") in ("answered_question", "constraint", "dependency",
                                                                         "milestone_phase", "scope_item"):
             return False
         if "?" in t and len(re.sub(r"\W+", "", t.rsplit("?", 1)[1])) >= 3:
             return False  # an answer follows the question (010083's site-list duty)
-        if f.get("type") == "open_question":
+        if f.get("type") == "open_question" or _form_question(t):
             return True
         return "?" in t
     # A working assumption put as a question ("Safe to assume no spotter is
@@ -1717,9 +1736,16 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                      + f"{m.group(2).capitalize()} {m.group(3)}" + (f", {m.group(4)}" if m.group(4) else ""),
                                      "cites": [f["id"]], "kind": "fact"})
                     break
+    # A confirm duty for a question a form already answered goes too (010147
+    # pass Y: "Customer to confirm whether cable tracing and port mapping are
+    # in scope" beside the questionnaire's "No: There will not be a need for
+    # a cable map").
+    answers = [mm.group(1) for f in fs for mm in re.finditer(r"(?:^|[|:]\s*)(?:No|Yes)\s*:\s*([^|]{8,})", f["text"])]
+    confirm = re.compile(r"(?i)\s*confirm\b")
+    answered = lambda t: any(len((_object_toks(t) - {"confirm", "scope", "customer"}) & _object_toks(a)) >= 2 for a in answers)
     for k in LISTS:
         content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites")
-                      and all(c in asked for c in x["cites"]) and not re.match(r"(?i)\s*confirm\b", str(x.get("text"))))]
+                      and all(c in asked for c in x["cites"]) and (not confirm.match(str(x.get("text"))) or answered(str(x.get("text")))))]
     _traced(content, "question_not_commitment", _question_not_commitment, content, fs)
     _traced(content, "cell_not_task", _cell_not_task, content, fs)
     _traced(content, "aside_not_block", _aside_not_block, content, fs)
@@ -2908,7 +2934,11 @@ def _moved_gear(content: dict[str, Any], family: str) -> None:
     content["customer_materials"] = [x for x in content.get("customer_materials") or [] if not any(x is g for g in gear)]
     eq = content.setdefault("equipment_in_scope", [])
     for g in gear:
-        if not _said(str(g.get("text")), eq, 0.6):
+        # Said by a row naming the same thing, never by a row sharing only
+        # its counts (010147 pass Y: "Twenty-five (25) to thirty (30) YeaLink
+        # phones" was "said" by the 25-30 curved monitors and vanished).
+        gt = _object_toks(str(g.get("text")))
+        if not any(isinstance(y, dict) and gt and gt <= _object_toks(str(y.get("text"))) for y in eq):
             eq.append(g)
 
 
@@ -3474,7 +3504,23 @@ def _supply_grounded(content: dict[str, Any], lines: dict[str, str]) -> None:
     so nothing leaves silently."""
     for k in ("provider_materials", "customer_materials", "equipment_in_scope"):
         content[k] = [x for x in content.get(k) or []
-                      if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines))]
+                      if not _NOT_SUPPLY.search(x["text"]) and (not x["cites"] or _grounded(x, lines) or _counted_row(x, lines))]
+
+
+def _counted_row(x: dict[str, Any], lines: dict[str, str]) -> bool:
+    """A counted inventory line is grounded when its cited lines give every
+    count it states and name one of its things (010147 pass Y:
+    "Approximately twenty-five (25) to thirty (30) CU34G2X curved monitors"
+    from "Quantity 25-30 CU34G2X", and the three 1U-4U servers, were
+    dropped as naming things their lines do not)."""
+    t = _digits(str(x.get("text") or "")).lower()
+    cited = _digits(" ".join(lines.get(c, "") for c in x.get("cites") or [])).lower()
+    nums = set(re.findall(r"(?<![\w.-])\d+(?![\w.])", t))
+    if not nums or not nums <= set(re.findall(r"\d+", cited)):
+        return False
+    things = [w for w in re.findall(r"[a-z0-9][a-z0-9-]{2,}", t) if not w.isdigit() and w not in _STOPWORDS
+              and not re.fullmatch(r"approximately|about|scope|individual|units?|items?|each|total", w)]
+    return any(w in cited or w.rstrip("s") in cited for w in things)
 
 
 def _party_check(content: dict[str, Any], lines: dict[str, str], art: dict[str, str] | None = None) -> int:
@@ -8941,6 +8987,18 @@ def _duty_party(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dic
         if own and re.search(r"(?i)\b(team|staff|office|employees?|personnel|members?|representatives?|IT|department|management)\b", own.group(1)) \
                 and not _OUR_SUBJECT.search(own.group(1)):
             continue
+        # "Have a Lafayette team member available ..." puts the customer's own
+        # person to work, and so does a cited sentence whose subject is one
+        # ("A member of the Lafayette team will be available ...", 010147 pass Y).
+        team = r"(?i)\b(team|staff|office|employees?|personnel|members?|representatives?|department|management|designee|contact)\b"
+        if re.match(r"(?i)\s*have\s+(?:a|an|the|one|your|their|its)?\s*(?:[\w-]+\s+){0,3}?(?:team member|staff|personnel|employee|representative|member|designee|contact)s?\b",
+                    str(x.get("text"))) and not _OUR_SUBJECT.search(str(x.get("text"))[:60]):
+            continue
+        raw = [re.match(r"\s*(.{3,80}?)\s+(?:will|shall|must|is to|are to|can|would)\b", sent)
+               for c in x["cites"] for sent in re.split(r"(?<=[.;!?])\s+", by.get(c, ""))
+               if len(_object_toks(sent) & _object_toks(str(x.get("text")))) >= 2]
+        if any(r_ and re.search(team, r_.group(1)) and not _OUR_SUBJECT.search(r_.group(1)) for r_ in raw):
+            continue
         subj = [_sentence_subject(str(x.get("text")), by.get(c, "")) for c in x["cites"]]
         named_theirs = any(s_ and not _OUR_SUBJECT.search(s_) for s_ in subj)
         if named_theirs:
@@ -10810,6 +10868,91 @@ def _parts_and_sum(c: dict[str, Any]) -> None:
             c[k] = [x for x in c.get(k) or [] if not any(x is g for g in gone)]
 
 
+def _site_zips(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """A site's ZIP is the one a source row gives beside its street and city
+    (010147 pass Y: "Origin City, State & Zip | 1875 Lawrence Street, Suite
+    750: Denver, CO 80204" and the Denver row printed no ZIP)."""
+    for x in c.get("sites") or []:
+        if not isinstance(x, dict) or str(x.get("postal_code") or "").strip():
+            continue
+        street = str(x.get("street") or str(x.get("address") or "").split(",")[0]).strip()
+        city, st = str(x.get("city") or "").strip(), str(x.get("state") or "").strip()
+        if len(street) < 6 or not city:
+            continue
+        rx = re.compile(re.escape(street) + r".{0,40}?\b" + re.escape(city) + r",?\s*" + (re.escape(st) if st else r"[A-Z]{2}") + r"\s+(\d{5})\b", re.I)
+        z = next((m_.group(1) for a in atoms for m_ in [rx.search(str(a.get("text") or ""))] if m_), None)
+        if z:
+            x["postal_code"] = z
+
+
+def _empty_deliverables(c: dict[str, Any]) -> None:
+    """A deliverable row with nothing in it is not one (010147 pass Y: an
+    empty, uncited "Chain of Custody Documentation" row)."""
+    ds = [d for d in c.get("deliverables") or [] if isinstance(d, dict)]
+    if len(ds) > 1:
+        c["deliverables"] = [d for d in ds if d.get("description")] or ds[:1]
+
+
+#: The reseller says it will include the gear in its order ("SHI
+#: anticipates including a Cisco Meraki MS120 PoE switch").
+_RESELLER_INCLUDES = re.compile(r"(?i)\b(cdw|shi|insight|presidio|connection|zones|computacenter|the reseller)\b[^.]{0,30}?\b"
+                                r"(anticipates?|plans?|expects?|intends?)\s+(?:on\s+|to\s+)?includ\w*|"
+                                r"\b(cdw|shi|insight|presidio|connection|zones|computacenter|the reseller)\b\s+(?:will|would|is going to)\s+(?:also\s+)?(?:be\s+)?includ\w*")
+
+
+def _reseller_includes(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
+    """What the reseller says it will include in its order is the
+    Customer's to furnish: a "Provide and install X" line citing it reads
+    "Install the Customer-provided X" and X is a Customer Provided Material
+    (010120 pass Y: "Provide and install a Cisco Meraki MS120 PoE switch"
+    from "SHI anticipates including a Cisco Meraki MS120 PoE switch")."""
+    by = {str(a.get("id")): str(a.get("text") or "") for a in atoms}
+    cm = c.setdefault("customer_materials", [])
+    for k in ("equipment_in_scope", "provider_materials", "scope"):
+        out = []
+        for x in c.get(k) or []:
+            t = str(x.get("text") if isinstance(x, dict) else x)
+            if not (isinstance(x, dict) and x.get("cites") and not x.get("standard")
+                    and any(_RESELLER_INCLUDES.search(by.get(cc, "")) for cc in x["cites"])):
+                out.append(x)
+                continue
+            m_ = re.match(r"(?i)\s*(?:provide|supply|furnish)(?:\s+and\s+(install|mount))?\s+(?:a|an|the|one\s*\(1\))?\s*(.+?)(?=\s+(?:to|for|that|where|which|so)\b|,|\.?$)(.*)$", t)
+            if not m_:
+                out.append(x)
+                continue
+            verb, thing, rest = m_.group(1), m_.group(2).strip(" ."), m_.group(3).strip()
+            if not any(_said(thing, [y], 0.8) for y in cm):
+                cm.append({"text": f"The {thing}.", "cites": list(x["cites"]), "kind": "fact"})
+            if verb:
+                line = {**x, "text": f"{verb.capitalize()} the Customer-provided {thing}{(' ' + rest) if rest and not rest.startswith(',') else rest}".rstrip(" .") + "."}
+                if k == "scope":
+                    out.append(line)
+                else:
+                    c.setdefault("scope", []).append(line)
+        c[k] = out
+
+
+def _workmanship_not_duty(c: dict[str, Any]) -> None:
+    """A workmanship requirement ("No cables should be visible after the
+    mount is complete.") is the Provider's, never a customer duty (010120
+    pass Y filed it under the customer's responsibilities)."""
+    keep, moved = [], []
+    for x in c.get("customer_responsibilities") or []:
+        t = str(x.get("text") if isinstance(x, dict) else x)
+        m_ = re.match(r"(?i)\s*no\s+((?:[\w-]+\s+){0,2}?(?:cables?|cabling|wires?|wiring|cords?))\s+(?:should|shall|must|will|may)\s+be\s+(visible|exposed|left exposed|showing)\b(.*)$", t)
+        if isinstance(x, dict) and not x.get("standard") and m_:
+            obj = m_.group(1).strip()
+            moved.append({**x, "text": f"Conceal the {obj} so none {'is' if obj.endswith('ing') else 'are'} {m_.group(2).lower()}{m_.group(3).rstrip(' .')}."})
+            continue
+        keep.append(x)
+    if moved:
+        c["customer_responsibilities"] = keep
+        sc = c.setdefault("scope", [])
+        close = next((i for i, y in enumerate(sc) if isinstance(y, dict) and y.get("kind") == "heading"
+                      and re.search(r"(?i)clos|wrap|complet", str(y.get("text")))), len(sc))
+        sc[close:close] = moved
+
+
 def _dropped_not_rendered(c: dict[str, Any]) -> None:
     """A line the check dropped never renders: a later pass that wrote the
     same line again loses it (000123 pass Y: the 161-locations summary line
@@ -11360,6 +11503,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _traced(c, "one_place_count", _one_place_count, c, atoms_)
     _traced(c, "equipment_from_installs", _equipment_from_installs, c)
     _traced(c, "parts_and_sum", _parts_and_sum, c)
+    _traced(c, "reseller_includes", _reseller_includes, c, atoms_)
+    _traced(c, "workmanship_not_duty", _workmanship_not_duty, c)
     _traced(c, "site_unit_counts", _site_unit_counts, c)
     _traced(c, "overview_numbers", _overview_numbers, c, atoms_)
     _traced(c, "task_by_party", _task_by_party, c)
@@ -11381,6 +11526,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _title_spelling(c, atoms_)
     _traced(c, "sentence_integrity", _sentence_integrity, c)
     _traced(c, "dropped_not_rendered", _dropped_not_rendered, c)
+    _site_zips(c, atoms_)
+    _empty_deliverables(c)
     _std_gone(c, "for_envelope")
     c.pop("_std_objs", None)
     c.pop("_merged", None)
