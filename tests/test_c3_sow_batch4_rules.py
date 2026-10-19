@@ -136,3 +136,15 @@ def test_service_groups_leave_install_jobs_alone():
     before = [x["text"] for x in content["scope"]]
     m._service_groups(content)
     assert [x["text"] for x in content["scope"]] == before
+
+
+def test_a_standard_contact_duty_that_says_more_than_the_template_stays():
+    """000132: the standards' "point of contact available by phone during
+    scheduled visits" was deduped against the template's generic line."""
+    content = {"customer_responsibilities": [
+        _std("Provide a Customer point of contact available by phone during scheduled visits."),
+        _std("Provide a point of contact for the project and onsite visit."),
+        {"text": "Provide an onsite point of contact.", "cites": ["x"], "kind": "fact"}]}
+    m._tidy(content)
+    assert [x["text"] for x in content["customer_responsibilities"]] == [
+        "Provide a Customer point of contact available by phone during scheduled visits."]
