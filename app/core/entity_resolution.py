@@ -1555,6 +1555,15 @@ _EXACT_MATCH_ENTITY_TYPES: frozenset[str] = frozenset({
 })
 
 
+def _numbers_differ(a: EntityRecord, b: EntityRecord) -> bool:
+    """Two site names whose digit runs differ name different places."""
+    if a.entity_type != "site":
+        return False
+    na = re.findall(r"\d+", a.canonical_name or "")
+    nb = re.findall(r"\d+", b.canonical_name or "")
+    return bool(na or nb) and na != nb
+
+
 def resolve_aliases(records: list[EntityRecord]) -> list[EntityRecord]:
     if not records:
         return []
@@ -1578,6 +1587,11 @@ def resolve_aliases(records: list[EntityRecord]) -> list[EntityRecord]:
             elif exact_only:
                 # Skip fuzzy merging for numeric / structured entity
                 # types — "100000" vs "10000" must NOT collapse.
+                continue
+            elif _numbers_differ(merged, other):
+                # "dc 7340" / "dc 7341", "Store 12" / "Store 13": the number IS
+                # the identity. A one-digit edit scores ~83 and used to fold
+                # 147 of 010447's roster sites into 29.
                 continue
             else:
                 score = _fuzzy_score(merged.canonical_name, other.canonical_name)

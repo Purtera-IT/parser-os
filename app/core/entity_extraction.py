@@ -5315,6 +5315,18 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
 ENRICH_SECONDS: dict[str, float] = {}
 
 
+def _roster_site_key(atom: Any) -> str | None:
+    """``site:<slug>`` of a site-roster row's own id: a physical_site whose value
+    carries its sheet row's cells (xlsx/csv rosters), else None."""
+    if str(getattr(getattr(atom, "atom_type", None), "value", "")) != "physical_site":
+        return None
+    v = getattr(atom, "value", None)
+    if not isinstance(v, dict) or not v.get("cells") or not isinstance(v.get("site_id"), str):
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "_", v["site_id"].strip().lower()).strip("_")
+    return f"site:{slug}" if slug else None
+
+
 def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     """Mutate ``atoms`` in place: populate ``entity_keys``.
 
@@ -5999,9 +6011,17 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         current = atom.entity_keys or []
         if not current:
             continue
+        # A site roster row's own key (its "Site No." cell, a header-matched
+        # column) is a site by structure. The wording filters below judge a
+        # bare slug: "dc5841" reads as a part code, which dropped 143 of
+        # 010447's 145 sites.
+        _roster_key = _roster_site_key(atom)
         kept = []
         dropped_any = False
         for k in current:
+            if k.startswith("site:") and k == _roster_key:
+                kept.append(k)
+                continue
             if k.startswith("site:"):
                 # Universal store-learned role gate first; denylist second.
                 if k in _site_role_drops:
