@@ -55,9 +55,11 @@ from app.parsers.checkbox_cells import is_checkbox_cell
 #     is the state column; "Estimated Cost" is not), and
 #   * a field is claimed at most once per table — the leftmost column that
 #     matches it wins, and later columns fall through to their next-best field.
+_COUNTRY_RE = re.compile(r"^\s*(usa|us|u\.s\.a?\.?|united states( of america)?|canada|ca|mexico|mx|uk|united kingdom)\s*$", re.I)
+
 _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Site identifier (most authoritative)
-    ("site_id", ("site id", "site #", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number")),
+    ("site_id", ("site id", "site #", "site no", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number")),
     # Street address — keep BEFORE facility_name so an "Address" or
     # "Street" header takes the address column even when a "Location"
     # header would also match facility_name's "location name".
@@ -932,6 +934,11 @@ def extract_site_roster(
         # sitting in plain sight in its own column.
         if not cs_city and not cs_state and state_code(cells.get("state")):
             cs_city = city_only_cell(cells.get("city_state"))
+
+        # A "Location" column that holds a country (USA / Canada) is not the
+        # facility's name: keep it with the row's other columns instead.
+        if _COUNTRY_RE.match(str(cells.get("facility_name") or "")):
+            extras.append(("country", str(cells.pop("facility_name")).strip()))
 
         loc = enrich_location_fields(
             street_address=cells.get("street_address"),
