@@ -3039,6 +3039,14 @@ class XlsxParser(BaseParser):
                 if val:
                     text_parts.append(f"{label}: {val}")
             row_text = " | ".join(text_parts) or canon_id
+            # A roster whose headers only gave us the id (010447: "Site No." plus
+            # y/n work columns) keeps the row as the sheet wrote it. "site_id: dc5841"
+            # alone reads to the base as metadata; the full row reads as a site.
+            if len(text_parts) <= 1 and 0 <= site_row.row_index < len(data_rows):
+                cells = [str(v).strip() for v in dict(data_rows[site_row.row_index]).values()
+                         if v is not None and str(v).strip()]
+                if len(cells) > 1:
+                    row_text = " | ".join(cells)
             source_ref = SourceRef(
                 id=stable_id("src", atom_id),
                 artifact_id=artifact_id,

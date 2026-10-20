@@ -65,6 +65,8 @@ _TRUE = ("1", "true", "yes", "on")
 #: scored on them (``ml.c3.loop.CHECK_SKIP_DOC_KINDS``).
 _SKIP_KINDS = ("deal_kit", "estimating_calc")
 _CALC_NAME = re.compile(r"estimat\w*calc")
+#: A file named as a site list ("Site List Project Bastion.xlsx") is one: training saw these as site_list.
+_SITE_LIST_NAME = re.compile(r"site(list|roster)|locationlist|storelist")
 
 #: The window the base was trained and scored with (ml/c3/pod/*.sh ATOMS):
 #: a deal past this is read in windows. Reading smaller windows than it saw
@@ -319,6 +321,8 @@ def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
         return "deal_kit"
     if _CALC_NAME.search(name):
         return "estimating_calc"
+    if _SITE_LIST_NAME.search(name):
+        return "site_list"
     return "file"
 
 
