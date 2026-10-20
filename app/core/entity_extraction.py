@@ -5321,7 +5321,9 @@ def _roster_site_key(atom: Any) -> str | None:
     if str(getattr(getattr(atom, "atom_type", None), "value", "")) != "physical_site":
         return None
     v = getattr(atom, "value", None)
-    if not isinstance(v, dict) or not v.get("cells") or not isinstance(v.get("site_id"), str):
+    roster = any("site_roster" in str(getattr(r, "extraction_method", "") or "")
+                 for r in (getattr(atom, "source_refs", None) or []))
+    if not isinstance(v, dict) or not (roster or v.get("cells")) or not isinstance(v.get("site_id"), str):
         return None
     slug = re.sub(r"[^a-z0-9]+", "_", v["site_id"].strip().lower()).strip("_")
     return f"site:{slug}" if slug else None

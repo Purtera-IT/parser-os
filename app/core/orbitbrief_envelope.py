@@ -1498,7 +1498,10 @@ def build_orbitbrief_envelope(
                         for _k in (getattr(_a, "entity_keys", None) or []):
                             if str(_k).startswith("site:"):
                                 _site_atoms.setdefault(str(_k), []).append(str(getattr(_a, "id", "")))
-                                _flags[str(getattr(_a, "id", ""))] = list(getattr(_a, "review_flags", None) or [])
+                                _flags[str(getattr(_a, "id", ""))] = list(getattr(_a, "review_flags", None) or []) + (
+                                    ["site_roster_row"] if any(
+                                        "site_roster" in str(getattr(_ref, "extraction_method", "") or "")
+                                        for _ref in (getattr(_a, "source_refs", None) or [])) else [])
                     _merged_rows, _aside = filter_roster(_merged_rows, _site_atoms, _lt, _flags)
                     if _aside:
                         _sr_block["set_aside_sites"] = _aside

@@ -207,6 +207,17 @@ def filter_roster(rows: list[dict[str, Any]], site_atoms: dict[str, list[str]],
         # stakeholder line is that signature.
         signature = any(line_types[i][0] == "stakeholder" and float(line_types[i][1] or 0) >= 0.9
                         for i in ids)
+        # A roster row (read off a header-matched site table) is the parser's
+        # site; the base answering "_keep" says that type stands. Only the base
+        # calling the line something else sets it aside (010447: 43 of 145
+        # roster sites went aside on "_keep" or a low physical_site read).
+        if any("site_roster_row" in (flags.get(i) or []) for i in ids):
+            # Unsure reads (below the floor) leave the parser's type standing,
+            # as SOWSMITH_C3_UNSURE_KEEP does for every other line.
+            if any(line_types[i][0] in ("physical_site", "_keep") or float(line_types[i][1] or 0) < MENTION_SITE_FLOOR
+                   for i in ids):
+                kept.append(r)
+                continue
         best = 0.0
         for i in ids:
             t, p = line_types[i]

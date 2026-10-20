@@ -290,8 +290,17 @@ def _is_authoritative_physical_site_atom(atom: Any) -> bool:
     ).lower()
     text_blob = str(getattr(atom, "raw_text", "") or "").lower()
     flags = {str(f).lower() for f in (getattr(atom, "review_flags", None) or [])}
+    # A row the roster extractor read off a header-matched table is a roster
+    # row whatever the file is called ("Site List Project Bastion.xlsx" never
+    # matched the name test, so one email-footer address made 010447's 145
+    # sites aliases of it).
+    extraction = " ".join(
+        f"{getattr(ref, 'extraction_method', '') or ''} {(getattr(ref, 'locator', None) or {}).get('extraction', '') if isinstance(getattr(ref, 'locator', None), dict) else ''}"
+        for ref in (getattr(atom, "source_refs", None) or [])
+    ).lower()
     return bool(
-        "authoritative" in filename_blob
+        "site_roster" in extraction
+        or "authoritative" in filename_blob
         or "site_roster" in filename_blob
         or "site roster" in filename_blob
         or "site roster" in text_blob
