@@ -1,0 +1,1330 @@
+{
+ "document": "010447 site list + footer",
+ "purpose": "train",
+ "compile_id": "bc3976c1-a3f6-49b8-93d4-8b4df69f89fa",
+ "labels": [
+  {
+   "labelKey": "lbl_585adcdb71fbe3560d8a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_ed2e49ae42555efe7510",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b6044d30cda51bbd841b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b968425fc8f991ac57dd",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_3a7a1ac6d35cd8fb73bd",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_278f712f755096023894",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_a8b3a6567a05c9f577f7",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b70a3caa3400fbe660cd",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_db14833c6d5ae3431f49",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0331ce7d44dcc08031a1",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_43649414ea2b05d500fe",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_a09c9465123192f26c11",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_4de320357bb9ba6e7bce",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_49d12b7f461363f9100e",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_4d3ddf8fd2c9061eb17b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_34950b49deef3f53d1dc",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_85033b02f430cd9baed3",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_d1bfc81449fedddfefaf",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_4d9fbe6f77913d95f926",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0897cad0dff31b88a3b0",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f2b8b619b6f4cb576e51",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_3408f0320a6e55b69611",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b01a9e4f677de6dd6178",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_001dac705a0f3269904a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_888a916c60aa15962728",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_4a4886034416a97b2c65",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_1e4cda10824c4de619b7",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f145f51aeec2969f2208",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_00e0978c21e717c642cb",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_e53114dbb78dff7ee687",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_3aadf15c65b8fd15525b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f469b358de7286c490ea",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_cfd1dd9f4c6ee7ad1abb",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_c8daee3ee132b38529f2",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_7579ae61fb969156b1ae",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_ae20dd333cc73b05836d",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f39683e14cbaa65c7f71",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_5933c659c609603d16c1",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_1205cad275c5a286fdf2",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_20dbcacdd5644b7f9947",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_5f6221522ca04153d3d1",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_80abd814061ef423f386",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_704f1e8eeaaa6dac4290",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_6535daa2146ff0ea3511",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_6082209fc4a17cbe3cd4",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_3baf5a6d90dac373a1a3",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f7c496d339d2a9135527",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_7c98dafab256eb562961",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f289610d3cb4ffe1195a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_50f22b466945bd9bd404",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_1d4ce7f5f711f416af33",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_58d3abf7f3f9823fc522",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_41adfe3f882d6df574c0",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_557ad153a7a13591ed0f",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_1c568d6ccb8a45ab814f",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_9186ca884e7e9903f9fb",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_415c471bf26f8e442bd5",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_40f16650a0cdd8b2eae5",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b6d128218a5400bb90fc",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_32e4316813f3485d4c2c",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_5201d21823c95d88dab7",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_ecca170569b9e0e4133e",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_d8a466c9fd716a5c8b8f",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_09e2cc8bc0e42742c269",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_54be5f0d8f9be4daeb6b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_a4b19358eb23e3b306f2",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b2e53ddcbe965cd8e21f",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f61f91cb355f040c3305",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_5a4e7e0290fdf5899c8b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_12c3034649b3a691f6bc",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_efacfbd46c3529763c70",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b0abfe25182fe3422750",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_1ca73f25cccad863a8e5",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0c9a21197735226f97ee",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_a0b08fea7d36d65d2906",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_6da459d20a4a484eca39",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_209d6c5ee27f2aa1c0b2",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_8a5b72787003950a49e7",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_495a50c9cb251f396b10",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_052926465ac54822720e",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_502d00da1ecd2516815e",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_378947ed862e3f96f019",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f0a3c5aceef48a61d735",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_95685266af17d89ceec9",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_82183dd9091f355f437d",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_68621d7b3a41def39951",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f4da23a659e5697aba9f",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_8df58b5a067b98d2c351",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_96fc261c8c1daca363b3",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_abbafdbc1adc165f12d8",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_105a5bd6561fad7fadf6",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_c5d1fa7c7954332effa9",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_865f430bba78c102174b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0fe487db1a4cceb3f65f",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_1008d908e0f8a9974443",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_27b07a60982cac31e237",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f5cb98c8b5d65ecb1ed3",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_30d192c4c055ac10188b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_a5e9862cf56d702b71c0",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_7d071e2c8c25baae6785",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_d188a4eeec86238fe92b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0d3ba410f1a251808da8",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_21fa23799f59bcd9901a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_4e84a6fbdaf63d2655a5",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_d02c3e5529af69bb1878",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_c2484dd7d32dae0758b4",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_d7d3db5412055da3fa17",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_44146113930220417b10",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_381bd394d851f54dd711",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_40c4fd98fa6d240832a4",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_cea8600d491fab6229ea",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_219fb4eba40f7bc66123",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_e0a75920cf71f8a739ba",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_c8c2a04f280e279d0e7a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_69765451caa7a9616b70",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_5f8bebe536f494b7814d",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_c62127daccfdb2ea1a36",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_90c7ed63ea204cf60d4a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_6683d7d968be717c28e6",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_4563d663fb86178f87b9",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_6c0418495c9a9b29a6bc",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_acf5ae211864e8ca33eb",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_41c29f5d8355a24fe9a6",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_1bb2031005f374adbf41",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_cae8d5ce2aecef32711c",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_140af743255a7b0a35b4",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0819fb9b014850ca930b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f26813ee5005c57f662a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_b27374280234ae28588a",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_c853a4b9e0ef0f261347",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_57a096a08b1e2fa146b0",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_c8480b92e21e75e318e5",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_a80acd50a8135bb63135",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_bdd3597a707907f77578",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_3c0f0c4fb1b8175c3f63",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_03225b2bd32a32dec8b5",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_519d9d92a49203723cf7",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_33cee01ae9a1c677302b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_ce65f8c8dddad073127b",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0609bf5e8130fa877a21",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_568e074a79df59b254d2",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_f555351e6d1cb52e4368",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_fe405c281321ee74ef64",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_0d143e4f36fbf03a8db3",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_35c615b2686d8b6e86c3",
+   "fields": {
+    "label_type": "physical_site",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "One row of the customer site list (Site List Project Bastion.xlsx, sheet 2027_145_Sites, header \"Site No.\"). Every row of this table is a job site; the y/n columns are the work at that site, Visits the trips."
+   }
+  },
+  {
+   "labelKey": "lbl_58ace72797862a48d6ef",
+   "fields": {
+    "label_type": "deal_metadata",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "Computacenter's legal footer (registered office). A company's mailing address in an email signature, not a job site."
+   }
+  },
+  {
+   "labelKey": "lbl_3d71c42cc90d513fa07a",
+   "fields": {
+    "label_type": "deal_metadata",
+    "about": "deal",
+    "weight_tier": "normal",
+    "note": "Computacenter's legal footer (registered office). A company's mailing address in an email signature, not a job site."
+   }
+  }
+ ]
+}
