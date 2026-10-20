@@ -2,10 +2,11 @@
 # The model is not in the image: start.sh fetches c3_base.tgz (pack_live.sh, or ml/c3/pod/bundle.sh)
 # from C3_BUNDLE_URL once per replica start. Ollama serves the quote heads' embedding model
 # (and, if it fits and is enabled, the wording model) on localhost.
-FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+# The encoder and tokenizer were saved by transformers 5.x: match the Mac host's stack.
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 # Same Ollama as the Mac host (qwen3-embedding needs >= 0.9).
 ARG OLLAMA_VERSION=v0.16.2
-RUN pip install --no-cache-dir "transformers==4.48.3" && apt-get update \
+RUN pip install --no-cache-dir "transformers==5.5.0" "tokenizers==0.22.2" "huggingface_hub==1.9.2" "safetensors==0.7.0" && apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates zstd && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst" | tar --zstd -xf - -C /usr
 COPY start.sh /start.sh
