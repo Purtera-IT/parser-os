@@ -698,8 +698,9 @@ def quote_enabled() -> bool:
 
 def _text_type(atom: Any) -> tuple[str, str, str]:
     kind = getattr(atom, "atom_type", "")
-    return (str(getattr(atom, "id", "") or ""), str(getattr(atom, "text", "") or ""),
-            str(getattr(kind, "value", kind) or ""))
+    # A compile's atoms carry their words in raw_text (as _rows reads them); text is a fallback.
+    text = getattr(atom, "raw_text", None) or getattr(atom, "text", "")
+    return (str(getattr(atom, "id", "") or ""), str(text or ""), str(getattr(kind, "value", kind) or ""))
 
 
 def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[str, Any]:

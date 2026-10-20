@@ -5,7 +5,8 @@ from app.core import c3_type_base as c
 
 
 def _atoms():
-    return [types.SimpleNamespace(id="atm_1", text="Install 4 TVs in the office", atom_type="deal_summary")]
+    # A compile's atoms hold their words in raw_text (the quote saw no text when it read .text).
+    return [types.SimpleNamespace(id="atm_1", raw_text="Install 4 TVs in the office", atom_type="deal_summary")]
 
 
 def test_quote_off_by_default(monkeypatch):
