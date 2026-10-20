@@ -691,6 +691,41 @@ def _request(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str
         return json.loads(resp.read())
 
 
+def quote_enabled() -> bool:
+    """Deal Kit quote heads (POST /v1/quote on the C3 server). Off unless SOWSMITH_C3_QUOTE is on."""
+    return os.environ.get("SOWSMITH_C3_QUOTE", "").strip().lower() in ("1", "on", "true", "yes")
+
+
+def _text_type(atom: Any) -> tuple[str, str, str]:
+    kind = getattr(atom, "atom_type", "")
+    return (str(getattr(atom, "id", "") or ""), str(getattr(atom, "text", "") or ""),
+            str(getattr(kind, "value", kind) or ""))
+
+
+def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[str, Any]:
+    """The quote heads' labor proposal for this deal: task line, job type, techs, hours per tech,
+    rate line and price, each with its reason. Sends the final atoms and the brief's sections and
+    job details; returns {} on any failure so a compile never waits on it."""
+    if not quote_enabled() or not _url():
+        return {}
+    deal = brief.get("deal") or {}
+    rows = []
+    for a in atoms:
+        aid, text, kind = _text_type(a)
+        if text.strip():
+            rows.append({"id": aid, "text": text[:4000], "type": kind})
+    body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
+                     "atoms": rows, "site_count": 0,
+                     "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
+                                               for k, v in (brief.get("sections") or {}).items()},
+                                  "job_details": brief.get("job_details") or []}}}
+    try:
+        return _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60")))
+    except Exception as exc:  # noqa: BLE001 - best effort, like every other C3 call
+        log.warning("quote heads unavailable: %s", type(exc).__name__)
+        return {}
+
+
 def warm() -> None:
     """Wake the base service when a compile starts, so a service that scaled
     to zero loads while the documents are read. Background, best-effort."""

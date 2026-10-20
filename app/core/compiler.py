@@ -3682,6 +3682,21 @@ def compile_project(
     except Exception as exc:
         warnings.append(f"WARNING: C3 brief failed: {type(exc).__name__}: {exc}")
 
+    # Deal Kit quote heads (POST /v1/quote on the C3 server): the labor proposal rides in the brief,
+    # so the PM handoff and the Deal Kit prefill read it. Off unless SOWSMITH_C3_QUOTE is on.
+    if _c3_brief is not None:
+        try:
+            from app.core import c3_type_base as _c3q
+
+            if _c3q.quote_enabled():
+                with telemetry.stage("c3_quote", input_count=len(atoms)):
+                    _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
+                if _q:
+                    _c3_brief["quote"] = _q
+                    warnings.append(f"INFO: quote heads: {_q.get('job_type')} {len(_q.get('lines') or [])} line(s)")
+        except Exception as exc:
+            warnings.append(f"WARNING: quote heads failed: {type(exc).__name__}: {exc}")
+
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.
     try:
