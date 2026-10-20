@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetch and unpack the bundle, start Ollama with the quote heads' embedding model, then serve.
-#   C3_BUNDLE_URL      a read-only (SAS) URL to c3_base.tgz
+#   C3_BUNDLE_URL      c3_base.tgz: a plain blob URL read with the managed identity, or a read-only SAS URL
 #   SOWSMITH_C3_TOKEN  the bearer token the worker sends (a secret)
 #   C3_DIR             where the bundle and Ollama models live (mount a volume here to skip re-downloads)
 set -euo pipefail
@@ -9,7 +9,16 @@ DST=${C3_DIR:-/models}
 # Some hosts run the container without root: fall back to a writable path.
 mkdir -p "$DST" 2>/dev/null || DST=/tmp/c3 && mkdir -p "$DST"
 if [[ ! -f "$DST/c3_base/checkpoint.pt" ]]; then
-  curl -fsSL "$C3_BUNDLE_URL" | tar -xzf - -C "$DST"
+  if [[ "$C3_BUNDLE_URL" != *"sig="* && -n "${IDENTITY_ENDPOINT:-}" ]]; then
+    # A plain blob URL: read it as the app's managed identity (Storage Blob Data Reader), no SAS to expire.
+    TOK=$(curl -fsS -H "X-IDENTITY-HEADER: $IDENTITY_HEADER" \
+      "$IDENTITY_ENDPOINT?resource=https://storage.azure.com/&api-version=2019-08-01${AZURE_CLIENT_ID:+&client_id=$AZURE_CLIENT_ID}" \
+      | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+    curl -fsSL -H "Authorization: Bearer $TOK" -H "x-ms-version: 2021-08-06" "$C3_BUNDLE_URL" | tar -xzf - -C "$DST"
+    unset TOK
+  else
+    curl -fsSL "$C3_BUNDLE_URL" | tar -xzf - -C "$DST"
+  fi
 fi
 export OLLAMA_MODELS="$DST/ollama"
 mkdir -p "$OLLAMA_MODELS"
