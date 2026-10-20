@@ -39,6 +39,9 @@ class QuoteHeads:
         self.b=json.load(open(bundle_path)); self.ollama=(ollama or os.environ.get('OLLAMA_URL') or 'http://localhost:11434').rstrip('/')
         self.fams=list(self.b['descriptions']); self.D=[self._norm(v) for v in self.b['description_embeddings']]
         self.version=self.b['version']
+        # Wording model: SOWSMITH_C3_QUOTE_WORDING = off | <ollama model>; default the bundle's (off on a T4).
+        w=os.environ.get('SOWSMITH_C3_QUOTE_WORDING','').strip()
+        self.wording=None if w.lower()=='off' else (w or self.b.get('wording_model'))
     # -- helpers ------------------------------------------------------------
     @staticmethod
     def _norm(v):
@@ -159,7 +162,8 @@ class QuoteHeads:
                 "the customer is asking us to do (not drawings, not other projects). The deal name is the most reliable statement of what the job is. The ONLY number allowed "
                 "is the checked count (if one is given, use it exactly); no other digits or number words. No customer, street or city names, no dates, weekdays or months, "
                 "no prices, no model or part numbers, no punctuation at the end.\n\n"+facts+"\nTask line:")
-        try: out=self._post('/api/generate',{'model':self.b['wording_model'],'prompt':prompt,'stream':False,'think':False,'options':{'temperature':0}})['response'].strip().split('\n')[0]
+        if not self.wording: return None
+        try: out=self._post('/api/generate',{'model':self.wording,'prompt':prompt,'stream':False,'think':False,'options':{'temperature':0}})['response'].strip().split('\n')[0]
         except Exception: return None
         out=re.sub(r'^[\-\*"\s]+|["\.\s]+$','',out)
         allowed={str(checked[1])} if checked else set()
@@ -169,7 +173,7 @@ class QuoteHeads:
         if bad(out):
             fix=("Rewrite this task line with no digits, sizes, model or part numbers, street names, dates or counts"+(f" except the count {checked[1]}" if checked else "")+
                  ". Under 9 words, start with a verb, plain words a project manager would use, nothing else:\n"+out)
-            try: out=re.sub(r'^[\-\*"\s]+|["\.\s]+$','',self._post('/api/generate',{'model':self.b['wording_model'],'prompt':fix,'stream':False,'think':False,'options':{'temperature':0}})['response'].strip().split('\n')[0])
+            try: out=re.sub(r'^[\-\*"\s]+|["\.\s]+$','',self._post('/api/generate',{'model':self.wording,'prompt':fix,'stream':False,'think':False,'options':{'temperature':0}})['response'].strip().split('\n')[0])
             except Exception: pass
         out=' '.join(w for w in out.split() if not (re.search(r'\d',w) and re.sub(r'\D','',w) not in allowed))
         # never echo the deal name or the account; a plain line beats a wrong one
