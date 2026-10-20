@@ -1353,11 +1353,13 @@ def _route_family(family: str, fs: list[dict[str, Any]]) -> str:
     # "Replace a 5K UPS", "install the new UPS and battery pack" routed to
     # decommission_packing, so the UPS standards never fired and its
     # "Hardware installation" exclusion negated the sold install).
+    installs_new_gear = False
     if family == "decommission_packing":
         scope_txt = " ".join(f["text"] for f in fs if f["section"] == "scope_of_work").lower()
         if len(re.findall(r"\b(install(s|ed|ing)?|replace(s|d|ment)?|replacing|upgrade|swap)\b(?![^.]{0,20}\bnot\b)", scope_txt)) >= 2 \
                 and not re.search(r"\bno (new )?(install|installation)\b|\bnot (be )?install", scope_txt):
             family = "smart_hands_general"
+            installs_new_gear = True
     if family in ("smart_hands_general", "other"):
         blob = " ".join(f["text"] for f in fs).lower()
         for fam_, pat in (("low_voltage_cabling", r"\bcat ?6a?\b|\bcat ?5e?\b|cable runs?|\bdrops?\b.{0,30}\b(cable|run|data)|terminat"),
@@ -1365,6 +1367,11 @@ def _route_family(family: str, fs: list[dict[str, Any]]) -> str:
                           ("network_switch_refresh", r"\bswitch(es)?\b.{0,40}\b(replace|refresh|swap)|replace .{0,20}switch"),
                           ("decommission_packing", r"\bdecommission|dismantl|pack(ing)? up|box(ing)? up"),
                           ("pos_install_refresh", r"\bpos\b|point of sale|register lanes?|kitchen printer")):
+            # A job just ruled a replacement (it installs new gear) is not sent back to
+            # dismantle-and-pack by its own decommission lines (010447: "install the Palo
+            # Alto pair AND decommission the old ones" flipped back and pulled in packing).
+            if fam_ == "decommission_packing" and installs_new_gear:
+                continue
             if re.search(pat, blob) and len(re.findall(pat, blob)) >= 2:
                 family = fam_
                 break
