@@ -269,6 +269,8 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
         def do_POST(self):
             if not self._allowed():
                 return
+            if self.path == "/v1/quote":
+                return self._quote()
             if self.path != "/read":
                 return self._send(404, {"error": "not found"})
             size = int(self.headers.get("Content-Length") or 0)
@@ -311,7 +313,49 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                      out["read_ms"])
             self._send(200, out)
 
+        def _quote(self):
+            """Deal Kit quote heads (ml/c3/quote_heads.py): a labor proposal from the deal's atoms and
+            c3_brief. No trunk pass, so it never waits on a compile's /read; it is not dumped to disk."""
+            size = int(self.headers.get("Content-Length") or 0)
+            if size <= 0 or size > MAX_BODY:
+                return self._send(413, {"error": "body size"})
+            try:
+                body = json.loads(self.rfile.read(size))
+                deal = body["deal"]
+            except (ValueError, KeyError, TypeError):
+                return self._send(400, {"error": "bad body"})
+            qh = _quote_heads()
+            if qh is None:
+                return self._send(503, {"error": "quote heads not loaded"})
+            started = time.monotonic()
+            try:
+                out = qh.quote(deal, word=bool(body.get("word", True)))
+            except Exception as exc:
+                log.error("quote failed: %s: %s", type(exc).__name__, str(exc)[:160])
+                return self._send(500, {"error": type(exc).__name__})
+            log.info("quote job=%s ms=%.0f", out.get("job_type"), (time.monotonic() - started) * 1000)
+            self._send(200, out)
+
     return Handler
+
+
+_QH: list[Any] = []
+_QH_LOCK = threading.Lock()
+
+
+def _quote_heads():
+    """Load the quote-heads bundle once (SOWSMITH_C3_QUOTE_HEADS, default next to the checkpoint)."""
+    with _QH_LOCK:
+        if _QH:
+            return _QH[0]
+        path = os.environ.get("SOWSMITH_C3_QUOTE_HEADS", "").strip() or os.path.expanduser("~/c3-serve/c3_base/quote_heads_bundle.json")
+        if not os.path.exists(path):
+            return None
+        from .quote_heads import QuoteHeads
+
+        _QH.append(QuoteHeads(path))
+        log.info("quote heads %s loaded", _QH[0].version)
+        return _QH[0]
 
 
 def main() -> None:
