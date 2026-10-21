@@ -327,3 +327,26 @@ def test_every_loss_term_reaches_the_weights(schema, deal):
     same = (t.view(-1, 1) == t.view(1, -1)) & ~torch.eye(len(t), dtype=torch.bool)
     assert torch.isfinite(s[same]).all()
     assert IGNORE in batch.targets["col:wants"]
+
+
+def test_reading_in_attention_blocks_gives_the_one_pass_answer(monkeypatch):
+    """A long window is attended ATTN_BLOCK query lines at a time when reading
+    (so an 8,192-line window fits a T4); the answer must be the full pass's."""
+    from ml.c3 import model as c3_model
+
+    torch.manual_seed(0)
+    blk = c3_model.GraphBlock(32, 4, 0.0).eval()
+    with torch.no_grad():
+        blk.w_doc.normal_()
+        blk.w_sec.normal_()
+    n = 300
+    x = torch.randn(n, 32)
+    allowed = torch.tril(torch.ones(n, n, dtype=torch.bool))
+    same_doc = (torch.rand(n, n) > 0.5).float()
+    same_sec = (torch.rand(n, n) > 0.7).float()
+    with torch.no_grad():
+        monkeypatch.setattr(c3_model, "ATTN_BLOCK", 10**9)
+        whole = blk(x, allowed, same_doc, same_sec)
+        monkeypatch.setattr(c3_model, "ATTN_BLOCK", 64)
+        blocks = blk(x, allowed, same_doc, same_sec)
+    assert torch.allclose(whole, blocks, atol=1e-6)

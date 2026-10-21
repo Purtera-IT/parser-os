@@ -49,6 +49,10 @@ from .operators import ReasonCompiler, apply_reasons
 from .schema import CAUSAL_RELATIONS, NUMBER, PAIR, RELATION, Schema
 from .text import HashingEncoder, TagEmbedding
 
+#: Query lines per attention pass when reading a window longer than this
+#: (inference only; training and short deals take the one-pass path).
+ATTN_BLOCK = 2048
+
 #: The claim slots the belief tracker and the absence head work over, with the
 #: readings that fill each one. Universal: any services company tracks these.
 CLAIM_SLOTS: dict[str, tuple[str, ...]] = {
@@ -142,13 +146,31 @@ class GraphBlock(nn.Module):
                 same_doc: torch.Tensor, same_sec: torch.Tensor) -> torch.Tensor:
         n, d = x.shape
         q, k, v = self.qkv(self.ln1(x)).view(n, 3, self.h, d // self.h).permute(1, 2, 0, 3)
-        # [heads, N, N] in the attention's own precision: at 8,192 lines a
-        # float32 bias alone is 4 GB a layer.
-        bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec).to(q.dtype)
-        bias = bias.masked_fill(~allowed, float("-inf"))
-        a = F.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+        if n > ATTN_BLOCK and not torch.is_grad_enabled():
+            a = self._attend_in_blocks(q, k, v, allowed, same_doc, same_sec)
+        else:
+            # [heads, N, N] in the attention's own precision: at 8,192 lines a
+            # float32 bias alone is 4 GB a layer.
+            bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec).to(q.dtype)
+            bias = bias.masked_fill(~allowed, float("-inf"))
+            a = F.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         x = x + self.drop(self.out(a.transpose(0, 1).reshape(n, d)))
         return x + self.drop(self.mlp(self.ln2(x)))
+
+    def _attend_in_blocks(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, allowed: torch.Tensor,
+                          same_doc: torch.Tensor, same_sec: torch.Tensor) -> torch.Tensor:
+        """The same attention, ATTN_BLOCK query lines at a time. Each line's
+        softmax runs over its own row only, so the answer is the full pass's;
+        the bias is [heads, block, N] instead of [heads, N, N], which is what
+        lets a T4 (16 GB) read an 8,192-line window. Reading only."""
+        out = torch.empty_like(q)
+        w_doc, w_sec = self.w_doc.view(-1, 1, 1), self.w_sec.view(-1, 1, 1)
+        for s in range(0, q.shape[1], ATTN_BLOCK):
+            e = min(s + ATTN_BLOCK, q.shape[1])
+            bias = (w_doc * same_doc[s:e] + w_sec * same_sec[s:e]).to(q.dtype)
+            bias = bias.masked_fill(~allowed[s:e], float("-inf"))
+            out[:, s:e] = F.scaled_dot_product_attention(q[:, s:e], k, v, attn_mask=bias)
+        return out
 
 
 class DealEncoder(nn.Module):
