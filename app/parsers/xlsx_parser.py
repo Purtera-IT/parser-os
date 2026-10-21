@@ -27,6 +27,7 @@ from app.core.schemas import (
     ParserCapability,
     ParserMatch,
 )
+from app.core.roster_locations import join_sheet_locations
 from app.core.sheet_profile import (
     has_header,
     header_index,
@@ -2770,6 +2771,9 @@ class XlsxParser(BaseParser):
             ))
         self._sheet_profiles = []
         self._sheet_supplies = []
+        # A site list that names its sites by id only takes each site's city/state from the
+        # sibling sheet keyed by the same id (010447: "2027_145_Sites" + "annette source").
+        join_sheet_locations(atoms, sheets)
 
         # Roster preference: several sheets in one workbook can all pass the
         # roster gate. Rank them so consumers can prefer the best one. Additive

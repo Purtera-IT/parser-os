@@ -1304,6 +1304,15 @@ def compile_project(
         _hh_ids = {id(a) for a in held_headings}
         atoms = [a for a in atoms if id(a) not in _hh_ids]
 
+    # The same roster sent twice (two workbooks): the copy without a city takes the other's,
+    # so whichever copy survives dedup knows where its site is.
+    try:
+        from app.core.roster_locations import share_roster_locations
+
+        share_roster_locations(atoms)
+    except Exception as exc:  # pragma: no cover - extraction enrichment never fails a compile
+        warnings.append(f"WARN: roster location share skipped: {type(exc).__name__}: {exc}")
+
     # Email threading: each .eml is a separate artifact, so a short reply
     # ("yes, go ahead with 36") parses as an atom with no idea what it answers.
     # Reconstruct the conversation across files (RFC In-Reply-To/References,
