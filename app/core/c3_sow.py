@@ -1353,13 +1353,13 @@ def _route_family(family: str, fs: list[dict[str, Any]]) -> str:
     # "Replace a 5K UPS", "install the new UPS and battery pack" routed to
     # decommission_packing, so the UPS standards never fired and its
     # "Hardware installation" exclusion negated the sold install).
-    installs_new_gear = False
-    if family == "decommission_packing":
-        scope_txt = " ".join(f["text"] for f in fs if f["section"] == "scope_of_work").lower()
-        if len(re.findall(r"\b(install(s|ed|ing)?|replace(s|d|ment)?|replacing|upgrade|swap)\b(?![^.]{0,20}\bnot\b)", scope_txt)) >= 2 \
-                and not re.search(r"\bno (new )?(install|installation)\b|\bnot (be )?install", scope_txt):
-            family = "smart_hands_general"
-            installs_new_gear = True
+    # Whatever the writer said first (it varies run to run), a scope that installs
+    # new gear is never dismantle-and-pack.
+    scope_txt = " ".join(f["text"] for f in fs if f["section"] == "scope_of_work").lower()
+    installs_new_gear = (len(re.findall(r"\b(install(s|ed|ing)?|replace(s|d|ment)?|replacing|upgrade|swap)\b(?![^.]{0,20}\bnot\b)", scope_txt)) >= 2
+                         and not re.search(r"\bno (new )?(install|installation)\b|\bnot (be )?install", scope_txt))
+    if family == "decommission_packing" and installs_new_gear:
+        family = "smart_hands_general"
     if family in ("smart_hands_general", "other"):
         blob = " ".join(f["text"] for f in fs).lower()
         for fam_, pat in (("low_voltage_cabling", r"\bcat ?6a?\b|\bcat ?5e?\b|cable runs?|\bdrops?\b.{0,30}\b(cable|run|data)|terminat"),
