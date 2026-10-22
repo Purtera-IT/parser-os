@@ -469,15 +469,37 @@ _ABSENCE_LINE = re.compile(r"(?i)^\s*(no\b.{3,80}\b(were|was|are|is|have been|ha
 _CHATTER_TYPES = ("small_talk", "signature")
 
 
+def _type_read(a: dict[str, Any]) -> tuple[str, float] | None:
+    """The type head's reading of an envelope atom: ``c3_read`` (stamped on
+    every line it read), else the ``c3_label`` it acted with."""
+    st = a.get("structured") or {}
+    for k in ("c3_read", "c3_label"):
+        r = st.get(k)
+        if isinstance(r, dict) and r.get("type") and r.get("p") is not None:
+            return str(r["type"]), float(r.get("p") or 0.0)
+    return None
+
+
+def _type_drops(envelope: dict[str, Any]) -> set[str]:
+    """Lines the type head reads as small_talk or _keep at its SURE bar: the
+    type head's drop, which no keep reading rescues (co_action was never
+    labeled on those lines)."""
+    from app.core.c3_type_base import is_chatter_reading
+
+    return {str(a.get("id")) for a in envelope.get("atoms") or [] if is_chatter_reading(_type_read(a))}
+
+
 def _head_kept(envelope: dict[str, Any]) -> set[str]:
     """The lines the keep head (read:co_action) kept, at the brief's MAYBE_BAR
     or above: those it filed in a section (``by`` names the head) and those it
-    kept as also mentioned. Empty when the brief had no keep reading."""
+    kept as also mentioned, less the lines the type head drops as chatter
+    (co_action decides only among lines the type head reads as substantive).
+    Empty when the brief had no keep reading."""
     brief = envelope.get("c3_brief") or {}
     out = {str(x.get("id")) for xs in (brief.get("sections") or {}).values() for x in xs or []
            if "read:co_action" in str(x.get("by") or "")}
     out |= {str(x.get("id")) for x in brief.get("also_mentioned") or []}
-    return out
+    return out - _type_drops(envelope)
 
 
 def _keep_gate(envelope: dict[str, Any]) -> set[str] | None:
@@ -487,7 +509,7 @@ def _keep_gate(envelope: dict[str, Any]) -> set[str] | None:
     brief = envelope.get("c3_brief") or {}
     if "read:co_action" not in ((brief.get("decided_by") or {}).get("heads_used") or []):
         return None
-    return _head_kept(envelope) | {str(x.get("id")) for x in brief.get("kept_unsure") or []}
+    return _head_kept(envelope) | ({str(x.get("id")) for x in brief.get("kept_unsure") or []} - _type_drops(envelope))
 
 
 def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
@@ -529,7 +551,7 @@ def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
         near = [c for l2, cs in lines[key].items() if l2 != ln and abs(l2 - ln) <= 3 for c in cs]
         if len(near) >= 2 and sum(near) >= 0.6 * len(near):
             out.add(i)
-    return out - _head_kept(envelope)
+    return (out - _head_kept(envelope)) | _type_drops(envelope)
 
 
 #: A written instruction about the work or what stays: "should be moved behind

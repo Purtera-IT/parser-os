@@ -81,6 +81,12 @@ def _default_reading(atom_id: str, head: str) -> tuple[str, float] | None:
     return line_reading(atom_id, head)
 
 
+def _default_type_drops(atom_id: str) -> bool:
+    from app.core.c3_type_base import type_head_drops
+
+    return type_head_drops(atom_id)
+
+
 def _keep_p(reading: tuple[str, float] | None) -> float | None:
     if reading and reading[0] == "keep" and float(reading[1] or 0.0) >= KEEP_BAR:
         return float(reading[1])
@@ -131,7 +137,7 @@ def _carry(winner: Any, loser: Any) -> None:
 
 
 def fold_by_heads(atoms: list[Any], ledger: list[Any], *, stages: frozenset[str] = PRE_HEAD_FOLDS,
-                  reading=None) -> tuple[list[Any], list[tuple[Any, Any]]]:
+                  reading=None, type_drops=None) -> tuple[list[Any], list[tuple[Any, Any]]]:
     """Settle each fold from ``stages`` by the keep head.
 
     For every survivor in ``atoms`` with folded copies in ``ledger``: when the
@@ -142,6 +148,14 @@ def fold_by_heads(atoms: list[Any], ledger: list[Any], *, stages: frozenset[str]
     this compile's base read. Returns ``(atoms, [(kept_copy, old_survivor)])``.
     """
     reading = reading or _default_reading
+    type_drops = type_drops or _default_type_drops
+
+    def kept_p(aid: str) -> float | None:
+        # A copy the type head reads as chatter (small_talk / _keep at its
+        # SURE bar) is the type head's drop: co_action never learned those
+        # lines, so its keep there decides nothing.
+        return None if type_drops(aid) else _keep_p(reading(aid, CO_ACTION))
+
     pos = {_id(a): i for i, a in enumerate(atoms)}
     groups: dict[str, list[Any]] = {}
     for loser in fold_losers(ledger, stages):
@@ -155,9 +169,9 @@ def fold_by_heads(atoms: list[Any], ledger: list[Any], *, stages: frozenset[str]
     for sid, losers in groups.items():
         survivor = out[pos[sid]]
         said = reading(sid, CO_ACTION)
-        if said is None or _keep_p(said) is not None:
+        if said is None or kept_p(sid) is not None:
             continue  # unread survivor: nothing to arbitrate; kept survivor: the fold stands
-        kept = [(p, c) for c in losers if (p := _keep_p(reading(_id(c), CO_ACTION))) is not None]
+        kept = [(p, c) for c in losers if (p := kept_p(_id(c))) is not None]
         if not kept:
             continue
         _, best = max(kept, key=lambda x: x[0])

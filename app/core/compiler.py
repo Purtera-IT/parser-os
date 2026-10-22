@@ -3727,6 +3727,9 @@ def compile_project(
             _sa2, _sf2 = _c3_final.settle_base_answers(atoms)
             if _sa2 or _sf2:
                 warnings.append(f"INFO: C3 base answers applied after the final pass: {_sa2} assigned, {_sf2} filled")
+        # Every line's type reading rides on it (value.c3_read), acted on or
+        # not: the SOW writer applies the type head's chatter drop from it.
+        _c3_final.stamp_type_reads(atoms)
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")

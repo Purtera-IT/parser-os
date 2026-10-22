@@ -573,6 +573,47 @@ def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
     return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else None
 
 
+#: Type answers that are the type head's reject: in training, chatter and
+#: "_keep" lines carry their drop in label_type (rejected=true) and never a
+#: read:co_action label, so co_action is answering outside what it learned on
+#: them (010388 "Yesterday's game was nuts.": small_talk 0.94, co_action keep
+#: 0.99). Whose call a line's keep is: the type head's here, co_action's on the
+#: lines the type head reads as substantive.
+CHATTER_ANSWERS = frozenset({"small_talk", "_keep"})
+
+
+def type_reading(atom_id: str) -> tuple[str, float] | None:
+    """This compile's type head (col:label_type) reading of one line."""
+    v = (_DEAL.get("types") or {}).get(str(atom_id))
+    return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else None
+
+
+def is_chatter_reading(reading: tuple[str, float] | None) -> bool:
+    """The type head reads the line as small_talk or _keep at its SURE bar."""
+    return bool(reading) and reading[0] in CHATTER_ANSWERS and float(reading[1] or 0.0) >= sure_for(reading[0])
+
+
+def type_head_drops(atom_id: str) -> bool:
+    """True when the type head drops this line (``is_chatter_reading``): no
+    keep head reading rescues it."""
+    return is_chatter_reading(type_reading(atom_id))
+
+
+def stamp_type_reads(atoms: list[Any]) -> int:
+    """Write the type head's reading on every line it read
+    (``value.c3_read = {"type", "p"}``), acted on or not, so the SOW writer
+    and audits see it without a re-read. Returns lines stamped."""
+    n = 0
+    for a in atoms:
+        got = type_reading(str(getattr(a, "id", "") or ""))
+        v = getattr(a, "value", None)
+        if got is None or not isinstance(v, dict):
+            continue
+        v["c3_read"] = {"type": got[0], "p": round(got[1], 4)}
+        n += 1
+    return n
+
+
 def brief_enabled() -> bool:
     return os.environ.get("SOWSMITH_C3_BRIEF", "").strip().lower() in _TRUE
 
