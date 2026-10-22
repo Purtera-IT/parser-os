@@ -146,6 +146,10 @@ for path in sys.argv[3:]:
     if deal_id in seen:
         sys.exit(f"{path}: deal_id {deal_id} also in {seen[deal_id]}")
     seen[deal_id] = path
+    if blob.get("skip") or not blob.get("atoms"):
+        # An empty view (no input lines: 000002's pre-quote view) is an empty part the loop cannot train.
+        print(f"skip {os.path.basename(path)}: {blob.get('skip_reason') or 'no atoms'}", file=sys.stderr)
+        continue
     rows = [r for k in ("labels", "judgments", "deal_answers") for r in blob.get(k) or [] if isinstance(r, dict)]
     if rows and not any(_is_a_person(r.get("labeler")) for r in rows):
         name = os.path.basename(path)
