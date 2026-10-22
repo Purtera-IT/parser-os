@@ -4,8 +4,11 @@
 
 ```bash
 cd ~/parser-os
+export TS_API_TOKEN=...   # Tailscale API token from the secret store
 ./smoke_test.sh
 ```
+
+The script stops straight away if `TS_API_TOKEN` is not set.
 
 This checks every part of the stack. If it ends with **🟢 ALL GREEN** — you're fine. The PM can use the system. Tell them to refresh the page.
 
