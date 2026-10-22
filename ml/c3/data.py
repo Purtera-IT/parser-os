@@ -826,7 +826,14 @@ def why_weight(label: dict[str, Any] | None) -> float:
     reads = label.get("reads_set")
     author = str((reads if isinstance(reads, dict) else {}).get("why_author")
                  or label.get("why_author") or "").strip().lower()
-    return DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
+    base = DRAFT_WHY_WEIGHT if author == "machine_draft" else 1.0
+    # Per-label multiplier from the training build (runE build.py: 0 on a WHY whose text also sits on lines
+    # of another type, 0.3 on one shared by > 5 lines of one type). The label loss is untouched.
+    try:
+        mult = float(label.get("why_weight", 1.0))
+    except (TypeError, ValueError):
+        mult = 1.0
+    return base * max(0.0, mult)
 
 
 #: Row weights by ``weight_tier`` (same values as app.learning.human_labels).
