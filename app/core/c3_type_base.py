@@ -719,8 +719,16 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
         aid, text, kind = _text_type(a)
         if text.strip():
             rows.append({"id": aid, "text": text[:4000], "type": kind})
+    # The deal's site list count (the same list the envelope's site_readiness shows), so the heads'
+    # "N places: check the site list" flag can fire. It was a literal 0, so it never did.
+    try:
+        from app.core.declared_scope import _found_site_count
+
+        site_count = int(_found_site_count(atoms) or 0)
+    except Exception:  # noqa: BLE001 - a count that cannot be read is sent as 0, as before
+        site_count = 0
     body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
-                     "atoms": rows, "site_count": 0,
+                     "atoms": rows, "site_count": site_count,
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
                                                for k, v in (brief.get("sections") or {}).items()},
                                   "job_details": brief.get("job_details") or []}}}
