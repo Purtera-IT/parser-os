@@ -197,6 +197,15 @@ def drop_banned_vendor_physical_sites(atoms: list[Any]) -> tuple[list[Any], int]
     for atom in atoms:
         if not is_banned_vendor_physical_site(atom):
             continue
+        # The type head read it as a site at its SURE bar (SOWSMITH_C3_SITE_HEAD):
+        # the heads decide, this pattern does not.
+        try:
+            from app.core.c3_type_base import head_site_locked
+
+            if head_site_locked(atom):
+                continue
+        except Exception:
+            pass
         aid = getattr(atom, "id", None)
         if aid:
             drop_ids.add(aid)

@@ -320,6 +320,20 @@ def suppress_vendor_sites(
     if len(sites) < 2:
         return atoms, det_dropped
 
+    # The heads decide (SOWSMITH_C3_SITE_HEAD): a line the type head reads as a
+    # site at its SURE bar is never dropped, and the vendor-letterhead call is
+    # the heads' (jdg:site_role, the type head's stakeholder, col:supplier),
+    # not the store's or a model's. 010194 lost all 33 of its labeled
+    # "site_id: … | address: …" store rows here as letterhead addresses.
+    try:
+        from app.core.c3_type_base import head_site_role, site_head_enabled
+
+        heads_decide = site_head_enabled()
+    except Exception:
+        heads_decide = False
+    if heads_decide:
+        return _suppress_by_heads(atoms, sites, det_dropped, head_site_role)
+
     scope = DecisionScope(deal_id=project_id or "")
     drop_ids: set[str] = set()
     # PERF: vendor-suppression exists to catch the vendor's OWN address (usually
@@ -427,6 +441,25 @@ def suppress_vendor_sites(
 
     kept = [a for a in atoms if getattr(a, "id", None) not in drop_ids]
     return kept, det_dropped + len(drop_ids)
+
+
+def _suppress_by_heads(atoms: list[Any], sites: list[Any], det_dropped: int, role_of) -> tuple[list[Any], int]:
+    """The vendor-address drop with the heads deciding: a site goes only when
+    a head reads it as the vendor's own address at its SURE bar, and never
+    every site. No store or LLM call."""
+    from types import SimpleNamespace
+
+    drop_ids: set[str] = set()
+    for a in sites:
+        aid = getattr(a, "id", None)
+        got = role_of(a) if aid else None
+        if got is None or got[0] != "vendor_or_billing_address":
+            continue
+        drop_ids.add(aid)
+        _stamp_decision(a, SimpleNamespace(source="c3", correction_id=got[2], confidence=got[1]))
+    if not drop_ids or len(drop_ids) >= len(sites):
+        return atoms, det_dropped
+    return [a for a in atoms if getattr(a, "id", None) not in drop_ids], det_dropped + len(drop_ids)
 
 
 def _existing_address_keys(atoms: list[Any]) -> set[str]:

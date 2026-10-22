@@ -205,3 +205,68 @@ def test_site_heads_ride_on_each_site_for_the_deal_kit(monkeypatch):
     assert len(out["pairs"]) == 3 and out["site_count"]["source"] == "site_list"
     monkeypatch.delenv("SOWSMITH_C3_SITE_HEAD")
     assert C.site_heads([s1]) is None
+
+
+# ------------------------------------------- site_geo_fallback: the vendor-address drop
+
+_STORES_010194 = [
+    ("DCA_Washington_529", "1110 U Street S.E."),
+    ("PHL_Philadelphia_176", "69-73 W. Chelten Ave."),
+    ("PHL_Philadelphia_132", "6161 Ridge Avenue, Suite A"),
+    ("PHL_Philadelphia_290", "3625 Tulip Street, Store #7"),
+    ("PHL_Philadelphia_RL_1567", "2715 S. Front Street, Suite 5"),
+]
+
+
+def _stores_010194():
+    rows = [_line(f"st{i}", f"site_id: {sid} | address: {addr}", "physical_site",
+                  {"kind": "physical_site", "site_id": sid, "street_address": addr}, artifact="art_xlsx")
+            for i, (sid, addr) in enumerate(_STORES_010194)]
+    letterhead = _line("lh", "Acme Networks LLC | 400 Commerce Blvd, Suite 210, Austin, TX 78701", "physical_site",
+                       {"kind": "physical_site", "street_address": "400 Commerce Blvd, Suite 210"})
+    return rows, letterhead
+
+
+def _store_says_vendor(monkeypatch):
+    """010194: a stored correction (not a teacher row) called every store row a
+    letterhead address, and all 33 labeled job-site rows were dropped."""
+    from app.core import decide as D
+
+    store_rows = {addr for _, addr in _STORES_010194}
+
+    def decide(kind, addr, *a, **k):
+        verdict = "vendor_or_billing_address" if addr in store_rows else "job_site"
+        return N(verdict=verdict, confidence=0.95, source="store", correction_id="corr_42")
+
+    monkeypatch.setattr(D, "decide", decide)
+
+
+def test_010194_store_rows_survive_the_vendor_drop_when_the_head_types_them(monkeypatch):
+    from app.core.site_geo_fallback import suppress_vendor_sites
+
+    _store_says_vendor(monkeypatch)
+    rows, letterhead = _stores_010194()
+    kept, dropped = suppress_vendor_sites(rows + [letterhead], project_id="010194")
+    assert dropped == 5 and [a.id for a in kept] == ["lh"]   # flag off: the store drops every store row
+    _on(monkeypatch)
+    C._DEAL["types"] = {r.id: ["physical_site", 0.9] for r in rows}
+    C._DEAL["types"]["lh"] = ["stakeholder", 0.92]           # the head reads the letterhead as a party's block
+    rows, letterhead = _stores_010194()
+    kept, dropped = suppress_vendor_sites(rows + [letterhead], project_id="010194")
+    assert {a.id for a in kept} == {r.id for r in rows} and dropped == 1
+    assert letterhead.value["_decision"]["source"] == "c3"
+
+
+def test_the_vendor_call_is_the_heads_not_the_stores(monkeypatch):
+    from app.core.site_geo_fallback import suppress_vendor_sites
+
+    _store_says_vendor(monkeypatch)
+    _on(monkeypatch)
+    rows, letterhead = _stores_010194()
+    # No head is sure about any line: nothing is dropped, whatever the store says.
+    kept, dropped = suppress_vendor_sites(rows + [letterhead], project_id="010194")
+    assert dropped == 0 and len(kept) == 6
+    # col:supplier on our side, or jdg:site_role vendor, at the bar: the heads drop it.
+    C._DEAL["reads"] = {"lh": {"col:supplier": ["us", 0.88]}}
+    kept, dropped = suppress_vendor_sites(rows + [letterhead], project_id="010194")
+    assert dropped == 1 and "lh" not in {a.id for a in kept}

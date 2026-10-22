@@ -621,7 +621,7 @@ BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "rea
 # Deal Kit. Off by default; on in the dev worker profile.
 
 #: Line heads asked for the sites (jdg:site_role is in BRIEF_LINE_HEADS too).
-SITE_LINE_HEADS = ("jdg:facility", "jdg:site_role")
+SITE_LINE_HEADS = ("jdg:facility", "jdg:site_role", "col:supplier")
 #: Group heads asked of each document: is it a site roster, what is the sheet for.
 SITE_DOCUMENT_HEADS = ("jdg:roster", "jdg:sheet")
 SITE_PAIR_KEY = "jdg:site"
@@ -655,6 +655,39 @@ def head_site_locked(atom: Any) -> bool:
     """True when the type head typed this line physical_site at its SURE bar:
     a rule may extract from it but not remove or retype it."""
     return head_site_reading(atom) is not None
+
+
+#: col:supplier answers that put a line on the provider's side (our own or a
+#: partner's), so an address there is the provider's, not the customer's.
+_PROVIDER_SIDE = frozenset({"us", "partner"})
+
+
+def head_site_role(atom: Any) -> tuple[str, float, str] | None:
+    """The heads' call on whether a site line is a job site or the vendor's own
+    letterhead / billing address, at their SURE bars: ``(verdict, p, by)`` or
+    None when no head is sure (flag on only).
+
+    A job site: the type head's physical_site (``head_site_reading``) or
+    jdg:site_role job_site. The vendor's address: jdg:site_role
+    vendor_or_billing_address, the type head's stakeholder (a contact or
+    signature block), or col:supplier on the provider's side. A job-site
+    reading wins: it is the line's own type."""
+    if not site_head_enabled():
+        return None
+    aid = str(getattr(atom, "id", "") or "")
+    t = head_site_reading(atom)
+    if t is not None:
+        return "job_site", t[1], "col:label_type"
+    role = line_reading(aid, "jdg:site_role")
+    if role and role[0] in ("job_site", "vendor_or_billing_address") and role[1] >= sure_for(role[0]):
+        return role[0], role[1], "jdg:site_role"
+    ty = type_reading(aid)
+    if ty and ty[0] == "stakeholder" and ty[1] >= sure_for("stakeholder"):
+        return "vendor_or_billing_address", ty[1], "col:label_type"
+    sup = line_reading(aid, "col:supplier")
+    if sup and sup[0] in _PROVIDER_SIDE and sup[1] >= sure_for(sup[0]):
+        return "vendor_or_billing_address", sup[1], "col:supplier"
+    return None
 
 
 def _site_fields(text: str, v: dict[str, Any]) -> dict[str, Any]:
