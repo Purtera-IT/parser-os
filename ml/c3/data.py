@@ -82,6 +82,11 @@ class DealExample:
     #: document pointers, self-links and unresolved links dropped, links
     #: anchored on a judgment card's line, card links with no line.
     link_stats: dict[str, int] = field(default_factory=dict)
+    #: Which of the blob's label and judgment rows the loader kept
+    #: (``_one_row_per_key``): person rows, twins a person superseded, keys
+    #: only a twin answered, duplicates; and deal answers no head reads.
+    label_stats: dict[str, int] = field(default_factory=dict)
+    judgment_stats: dict[str, int] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -120,7 +125,27 @@ class DealExample:
         labeling page uses. Relations come from each label's ``links`` list
         when the blob has one (``{"relation", "to"}``).
         """
-        labels = {lb["label_key"]: lb for lb in blob.get("labels", [])}
+        # One row per key, the person's (``_one_row_per_key``): labels by
+        # label_key (an assistant twin only where no person labeled the line),
+        # judgments by (head, target_key) and links by (from, to, relation),
+        # where a model's draft never trains.
+        label_stats: dict[str, int] = {}
+        judgment_stats: dict[str, int] = {}
+        link_stats: dict[str, int] = {}
+        label_rows = _one_row_per_key(blob.get("labels") or [], lambda r: r.get("label_key"),
+                                      when="labeled_at", twins=True, stats=label_stats)
+        judgments = _one_row_per_key(blob.get("judgments") or [],
+                                     lambda r: (str(r.get("head") or ""), str(r.get("target_key") or "")),
+                                     when="judged_at", twins=False, stats=judgment_stats)
+        link_rows: dict[str, int] = {}
+        blob_links = _one_row_per_key(blob.get("links") or [], _link_key, when="created_at",
+                                      twins=False, stats=link_rows)
+        # The deal-level answers (primary service, declared site count) have no
+        # head in this model: app.learning.human_labels trains them (deal_gold,
+        # rationale:deal). Counted, so a deal's skipped answers are visible.
+        judgment_stats["deal_answers_untrained"] = sum(
+            1 for a in blob.get("deal_answers") or [] if isinstance(a, dict) and _is_a_person(a.get("labeler")))
+        labels = {lb["label_key"]: lb for lb in label_rows}
         rows, edges = [], []
         for a in atoms:
             row = dict(a)
@@ -136,7 +161,7 @@ class DealExample:
         # lines from their own text, or the base never learns what the parser
         # misses.
         seen = {a.get("label_key") for a in atoms}
-        for lb in blob.get("labels", []):
+        for lb in label_rows:
             if lb.get("label_key") in seen or not str(lb.get("text") or "").strip():
                 continue
             if str(lb.get("origin") or "").strip().lower() != "labeler":
@@ -150,14 +175,17 @@ class DealExample:
                          "speaker_side": lb.get("speaker_side", "")})
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
-        link_stats: dict[str, int] = {}
-        linked, doc_pointers = _blob_links(blob.get("links") or [], rows,
-                                           judgments=blob.get("judgments") or [], stats=link_stats)
+        # Cards: every judgment's subject, a draft's too (it is the same card).
+        linked, doc_pointers = _blob_links(blob_links, rows, judgments=blob.get("judgments") or [],
+                                           labels=labels, stats=link_stats)
         edges += linked
+        link_stats.update({k: link_rows[k] for k in ("twin_superseded", "twin_only_skipped", "duplicate")})
         deal = DealExample.from_dict({"deal_id": deal_id, "company": company,
                                       "atoms": rows, "edges": edges, "doc_pointers": doc_pointers,
-                                      "judgments": blob.get("judgments") or []})
+                                      "judgments": judgments})
         deal.link_stats = link_stats
+        deal.label_stats = label_stats
+        deal.judgment_stats = judgment_stats
         return deal
 
 
@@ -169,8 +197,9 @@ _LATER_FIRST = ("contradicts",)
 _EMPTY_LINK_NOTES = ("drawn while labelling the whole deal", "drawn while labelling", "")
 #: Judgment cards a link can be drawn on whose key names no line: the link
 #: starts from the card's subject line (a conflict or site pair's a side, a
-#: question's source line, a site's first mention).
-_CARD_HEADS = ("conflict", "site", "gap", "site_role")
+#: question's source line, a site's first mention, the line a parser rule
+#: fired on).
+_CARD_HEADS = ("conflict", "site", "gap", "site_role", "rule")
 
 
 def _card_refs(target: Any) -> list[dict[str, Any]]:
@@ -186,69 +215,133 @@ def _card_refs(target: Any) -> list[dict[str, Any]]:
     return refs
 
 
+def _row_file(r: dict[str, Any]) -> str:
+    return str(r.get("filename") or (r.get("label") or {}).get("filename") or "")
+
+
 def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
-                judgments: Iterable[Any] = (), stats: dict[str, int] | None = None
+                judgments: Iterable[Any] = (), labels: dict[str, Any] | None = None,
+                stats: dict[str, int] | None = None
                 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
     """The evidence links the labeling page stores at the top of the training
     blob (``doc.links``: from_key, from_text, from_head, to_label_key,
-    to_atom_id, to_text, relation, note, labeler), as edges between lines.
+    to_atom_id, to_filename, to_artifact_id, to_text, relation, note,
+    labeler), as edges between lines.
 
     The from side is the card the link was drawn on: its label_key; a Dropped
     card's ``sup:<label_key>@...`` key names that exact copy and a Places
     card's ``site:<atom_id>`` (and an hours or task-tier card's
     ``atom:<atom_id>``) that atom (a dropped copy's text equals its
     original's, so text would find the wrong line); a conflict, site pair,
-    Questions or site-role card (``judgments``) starts from its subject line,
-    the a side (the b side when the link points at the a side itself);
-    otherwise its text is used. The to side is
-    resolved by label_key, then atom id, then text. An ``answers`` link always
-    runs answer -> question (a Questions card draws it the other way round),
-    and a contradiction runs later line -> earlier.
+    Questions, site-role or rule card (``judgments``) starts from its subject
+    line, the a side (the b side when the link points at the a side itself).
+    The to side is resolved by label_key, then atom id.
+
+    A key this parse does not have is never matched by its text across the
+    deal: the same words elsewhere are another line, and a link drawn on a
+    line that is gone would land on it. It is healed only when that is safe:
+    the link (to_filename / to_artifact_id), the old key's label row
+    (``labels``: filename) or the card's line (filename, artifactId) names a
+    file, and exactly one line of that file has the text. Otherwise the link
+    is dropped and counted (``stale_key_dropped``). An end that carries no key
+    at all (a highlighted span the parser made no atom of, to_kind text) is
+    found by its text, as it always was.
+
+    An ``answers`` link always runs answer -> question (a Questions card draws
+    it the other way round), and a contradiction runs later line -> earlier.
     Model-written drafts never train. The labeler's note goes with the edge.
-    A link whose ends are not in this parse (an older parse's keys) is dropped.
     A link to a whole document (to_kind text, an artifact and no line) is
-    returned as a document pointer. Text matching ignores which artifact a
-    line came from, so links drawn on an earlier parse of the same file still
-    resolve. ``stats`` counts what happened to each person's link."""
+    returned as a document pointer. ``stats`` counts what happened to each
+    person's link."""
     stats = stats if stats is not None else {}
-    for c in ("edges", "doc_pointers", "self_links", "unresolved", "card_anchored", "card_no_line"):
+    for c in ("edges", "doc_pointers", "self_links", "unresolved", "card_anchored", "card_no_line",
+              "stale_key_dropped", "healed_in_file", "text_span"):
         stats.setdefault(c, 0)
-    cards = {str(j.get("target_key")): j.get("target") for j in judgments
+    labels = labels or {}
+    targets = {str(j.get("target_key")): j.get("target") for j in judgments
+               if isinstance(j, dict) and j.get("target_key") and isinstance(j.get("target"), dict)}
+    cards = {str(j.get("target_key")) for j in judgments
              if isinstance(j, dict) and j.get("target_key") and str(j.get("head") or "") in _CARD_HEADS}
     by_key = {str(r.get("key")): r for r in rows if r.get("key")}
     by_id = {str(r.get("atom_id") or r.get("id")): r for r in rows if r.get("atom_id") or r.get("id")}
-    by_text: dict[str, dict[str, Any]] = {}
+    by_text: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        by_text.setdefault(_norm_text(r.get("text")), r)
+        by_text.setdefault(_norm_text(r.get("text")), []).append(r)
 
-    def find(key: Any, atom_id: Any, text: Any) -> dict[str, Any] | None:
-        return (by_key.get(str(key or "")) or by_id.get(str(atom_id or ""))
-                or (by_text.get(_norm_text(text)) if str(text or "").strip() else None))
+    def heal(text: Any, filename: Any, artifact_id: Any) -> dict[str, Any] | None:
+        """The one line of the named file with this text, or None."""
+        t, fn, art = _norm_text(text), str(filename or ""), str(artifact_id or "")
+        if not t or not (fn or art):
+            return None
+        hits = [r for r in by_text.get(t, ())
+                if (fn and _row_file(r) == fn) or (art and str(r.get("doc_id") or "") == art)]
+        return hits[0] if len(hits) == 1 else None
 
-    def find_from(k: dict[str, Any], to: dict[str, Any] | None) -> tuple[dict[str, Any] | None, bool]:
-        """The line a link starts from, and whether its key is a judgment card's."""
+    def stale(key: str, text: Any, filename: Any = "", artifact_id: Any = "") -> tuple[dict[str, Any] | None, str]:
+        """An end whose key this parse lacks: healed inside its file, or dropped."""
+        lb = labels.get(key) if isinstance(labels.get(key), dict) else {}
+        r = heal(text or lb.get("text"), filename or lb.get("filename"), artifact_id)
+        return r, ("healed" if r is not None else "stale")
+
+    def ref_line(ref: dict[str, Any]) -> dict[str, Any] | None:
+        """A card's line: its atom id, else its text inside its own file."""
+        r = by_id.get(str(ref.get("atomId") or ref.get("atom_id") or ""))
+        return r if r is not None else heal(ref.get("text"), ref.get("filename"),
+                                            ref.get("artifactId") or ref.get("artifact_id"))
+
+    def find_to(k: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        key, aid = str(k.get("to_label_key") or ""), str(k.get("to_atom_id") or "")
+        r = by_key.get(key) or by_id.get(aid)
+        if r is not None:
+            return r, "key"
+        if key or aid:
+            return stale(key, k.get("to_text"), k.get("to_filename"), k.get("to_artifact_id"))
+        hits = by_text.get(_norm_text(k.get("to_text"))) if str(k.get("to_text") or "").strip() else None
+        return (hits[0], "text") if hits else (None, "none")
+
+    def find_from(k: dict[str, Any], to: dict[str, Any] | None
+                  ) -> tuple[dict[str, Any] | None, bool, str]:
+        """The line a link starts from, whether its key is a judgment card's,
+        and how it was found (key, card, healed, stale, text, none)."""
         key = str(k.get("from_key") or "")
-        r = None
         if key.startswith("sup:"):
-            r = by_key.get(key[len("sup:"):].split("@", 1)[0])
-        elif key.startswith(("site:", "atom:")):
+            lk = key[len("sup:"):].split("@", 1)[0]
+            r = by_key.get(lk)
+            if r is not None:
+                return r, False, "key"
+            r, how = stale(lk, k.get("from_text"))
+            return r, False, how
+        if key.startswith(("site:", "atom:")):
             r = by_id.get(key.split(":", 1)[1])
-        elif key in cards:
-            for ref in _card_refs(cards[key]):
-                r = find(None, ref.get("atomId") or ref.get("atom_id"), ref.get("text"))
+            if r is not None:
+                return r, False, "key"
+            for ref in _card_refs(targets.get(key)):   # the atom is gone: its card's line
+                r = ref_line(ref)
+                if r is not None:
+                    return r, False, "healed"
+            return None, False, "stale"
+        if key in cards:
+            for ref in _card_refs(targets.get(key)):
+                r = ref_line(ref)
                 if r is not None and r is not to:
                     stats["card_anchored"] += 1
-                    return r, True
-            r = None
-        return (r or find(key, k.get("from_atom_id"), k.get("from_text"))), key in cards
+                    return r, True, "card"
+        r = by_key.get(key) or by_id.get(str(k.get("from_atom_id") or ""))
+        if r is not None:
+            return r, key in cards, "key"
+        if key:
+            r, how = stale(key, k.get("from_text"))
+            return r, key in cards, how
+        hits = by_text.get(_norm_text(k.get("from_text"))) if str(k.get("from_text") or "").strip() else None
+        return (hits[0], False, "text") if hits else (None, False, "none")
 
     out, doc_pointers = [], []
     for k in links:
         if not isinstance(k, dict) or not _is_a_person(k.get("labeler")):
             continue
         rel = str(k.get("relation") or "")
-        b = find(k.get("to_label_key"), k.get("to_atom_id"), k.get("to_text"))
-        a, on_card = find_from(k, b)
+        b, how_b = find_to(k)
+        a, on_card, how_a = find_from(k, b)
         if a is not None and b is None and k.get("to_artifact_id") and not k.get("to_label_key") \
                 and not k.get("to_atom_id") and str(k.get("to_kind") or "") == "text":
             doc_pointers.append((str(a["key"]), str(k["to_artifact_id"])))
@@ -257,11 +350,15 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
         if a is None and on_card:
             stats["card_no_line"] += 1          # e.g. a generated question with no source line
         if not rel or a is None or b is None:
+            if "stale" in (how_a, how_b):
+                stats["stale_key_dropped"] += 1
             stats["unresolved"] += 1
             continue
         if a is b:
             stats["self_links"] += 1
             continue
+        stats["healed_in_file"] += "healed" in (how_a, how_b)
+        stats["text_span"] += "text" in (how_a, how_b)
         if rel == "answers" and str(k.get("from_head") or "") == "gap":
             a, b = b, a                              # question card: question -> answer
         if rel in _LATER_FIRST and (_time(a.get("entered_at")), a.get("order", 0)) < \
@@ -360,6 +457,10 @@ class Batch:
     #: Labeled lines that read almost alike and got the same answers: (i, j),
     #: i < j. A difference in wording that the answer ignores.
     twins: list[tuple[int, int]] = field(default_factory=list)
+    #: What happened to the judgment-tab rows: the loader's row counts
+    #: (``DealExample.judgment_stats``) plus, per verdict, trained:<size>,
+    #: no_head / no_head:<head>, verdict_outside_set, no_line, set_aside, draft.
+    judgment_stats: dict[str, int] = field(default_factory=dict)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -645,13 +746,78 @@ def field_note_targets(schema: Schema) -> dict[str, str]:
 
 
 #: Labelers that are not people: drafts written for a person to accept
-#: (same markers as app.learning.human_labels.NOT_A_PERSON).
+#: (same markers as app.learning.human_labels.NOT_A_PERSON), and the coding
+#: assistant's own name however it is suffixed ("claude-code", "claude-code
+#: (assistant)").
 NOT_A_PERSON = ("(assistant)", "(bot)", "(model)")
+NOT_A_PERSON_PREFIX = ("claude-code",)
 
 
 def _is_a_person(labeler: Any) -> bool:
     v = str(labeler or "").strip().lower()
-    return bool(v) and not any(m in v for m in NOT_A_PERSON)
+    return bool(v) and not any(m in v for m in NOT_A_PERSON) and not v.startswith(NOT_A_PERSON_PREFIX)
+
+
+def _one_row_per_key(rows: Iterable[Any], key: Any, *, when: str = "", twins: bool,
+                     stats: dict[str, int] | None = None) -> list[dict[str, Any]]:
+    """The person's row for each key, which is the row that trains.
+
+    The page keeps a person's row and the assistant's twin of it (its draft,
+    saved under the same key) side by side, and the mirror writes them in time
+    order, so a plain "last row wins" let the twin overwrite the person on
+    most keys. Here a person's row always wins (the latest one when several
+    people answered); a twin stands in only when no person answered that key
+    and ``twins`` allows it (labels: a draft line still trains as before).
+    Judgments and links pass ``twins=False``: a model's draft verdict or link
+    never trains. Rows whose key is empty are kept as they are. ``when`` names
+    the row's timestamp field. ``stats`` counts person rows kept, twins a
+    person superseded, keys only a twin answered (used or skipped) and
+    duplicate person rows."""
+    stats = stats if stats is not None else {}
+    for c in ("person", "twin_superseded", "twin_used", "twin_only_skipped", "duplicate"):
+        stats.setdefault(c, 0)
+    groups: dict[Any, list[tuple[int, dict[str, Any]]]] = {}
+    loose: list[tuple[int, dict[str, Any]]] = []
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            continue
+        k = key(r)
+        if k in (None, "", ()) or (isinstance(k, tuple) and not all(k[:2])):
+            loose.append((i, r))
+        else:
+            groups.setdefault(k, []).append((i, r))
+    keep: list[tuple[int, dict[str, Any]]] = []
+    for i, r in loose:
+        if _is_a_person(r.get("labeler")):
+            stats["person"] += 1
+            keep.append((i, r))
+        elif twins:
+            stats["twin_used"] += 1
+            keep.append((i, r))
+        else:
+            stats["twin_only_skipped"] += 1
+    for group in groups.values():
+        people = [(i, r) for i, r in group if _is_a_person(r.get("labeler"))]
+        drafts = len(group) - len(people)
+        latest = (lambda g: max(g, key=lambda x: (str(x[1].get(when) or "") if when else "", x[0])))
+        if people:
+            keep.append(latest(people))
+            stats["person"] += 1
+            stats["duplicate"] += len(people) - 1
+            stats["twin_superseded"] += drafts
+        elif twins:
+            keep.append(latest(group))
+            stats["twin_used"] += 1
+            stats["duplicate"] += drafts - 1
+        else:
+            stats["twin_only_skipped"] += drafts
+    return [r for _, r in sorted(keep, key=lambda x: x[0])]
+
+
+def _link_key(k: dict[str, Any]) -> tuple[str, ...]:
+    """One link: where it starts, what it points at, and how."""
+    to = k.get("to_label_key") or k.get("to_atom_id") or k.get("to_artifact_id") or _norm_text(k.get("to_text"))
+    return (str(k.get("from_key") or ""), str(to or ""), str(k.get("relation") or ""))
 
 
 def _norm_text(text: Any) -> str:
@@ -888,26 +1054,52 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     # fills an existing question only where the card left it blank); a verdict
     # about two lines, a group or the deal is kept whole. The labeler's reason
     # and note go with it, for the teacher.
+    #
+    # What happened to each verdict is counted in ``judgment_stats`` (on top
+    # of the loader's row counts, ``DealExample.judgment_stats``). A head with
+    # no question in this model is skipped and counted as ``no_head:<head>``:
+    # judgment_heads.json ``not_trained`` says why for each (``rule``: a parser
+    # rule fires before atoms exist, so the model never sees its input, though
+    # a link drawn on a rule card still trains from the card's line; ``norm``,
+    # ``hours``, ``commercial``, ``term``: the answer is a value, not a class).
+    # Deal-size heads that do have a question (billing_type, the *_scope heads,
+    # tier) train as ``Judged`` over every line.
     by_key = by_key_all
     judged: list[Judged] = []
     lines = _Lines(atoms)
+    jstats: dict[str, int] = dict(deal.judgment_stats)
+
+    def count(what: str) -> None:
+        jstats[what] = jstats.get(what, 0) + 1
+
     for j in deal.judgments:
-        if not _is_a_person(j.get("labeler")) or excluded(j):
-            continue                               # a verdict itself set aside
         head, verdict = str(j.get("head") or ""), str(j.get("verdict") or "").strip()
+        if not _is_a_person(j.get("labeler")):
+            count("draft")                         # a model's verdict never trains
+            continue
+        if excluded(j):
+            count("set_aside")                     # a verdict itself set aside
+            continue
         if head in schema.judgment_aliases:
             key, vmap = schema.judgment_aliases[head]
             verdict = vmap.get(verdict, "")
         else:
             key = f"jdg:{head}"
         opp = by_key.get(key)
-        if opp is None or not verdict:
+        if opp is None:
+            count("no_head")
+            count(f"no_head:{head}")
             continue
-        ix = opp.index(verdict)
+        ix = opp.index(verdict) if verdict else None
+        if ix is None:
+            count("verdict_outside_set")
+            continue
         idx = _judged_lines(j, opp.size, lines)
-        if ix is None or idx is None:
+        if idx is None:
+            count("no_line")
             continue
         if opp.size == PAIR and any(excluded(deal.atoms[i].label) for i in idx):
+            count("set_aside")
             continue                               # a pair touching a row set aside, as links
         # The note splits as an atom's or a link's does: the universal WHY is
         # the teacher's, a [purtera] line goes to the company layer only.
@@ -915,7 +1107,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         if opp.size == LINE:
             i = idx[0]
             if excluded(deal.atoms[i].label):
+                count("set_aside")
                 continue                           # set aside: trains nothing
+            count(f"trained:{opp.size}")
             if targets[key][i] == IGNORE:
                 targets[key][i] = ix
                 if note:
@@ -929,6 +1123,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 policy[i] = " ".join(x for x in (policy[i], pol) if x)
         # A group or deal verdict keeps its company part on itself: copied to
         # every line of a sheet or deal it would repeat one rule hundreds of times.
+        count(f"trained:{opp.size}")
         judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
                              note=mask_verdict(note) if opp.universal else note,
                              why_weight=why_weight(j), policy=pol))
@@ -979,7 +1174,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
         field_notes=field_notes, weights=weights, why_weights=[why_weight(a.label) for a in atoms],
         hint_lines=hint_lines, entities=entities,
-        judged=judged, negatives=negatives,
+        judged=judged, negatives=negatives, judgment_stats=jstats,
         flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1])
 
 
