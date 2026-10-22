@@ -47,7 +47,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from .sender import SENDER_INPUTS, annotate, doc_direction, milestones, sender, stage_at  # noqa: F401
+from .sender import SENDER_INPUTS, annotate, doc_direction, is_ours, milestones, sender, stage_at  # noqa: F401
 
 #: Document kinds whose ``authored_at`` is the moment they entered the deal.
 EVENT_KINDS = ("meeting", "note", "email")
@@ -55,6 +55,22 @@ EVENT_KINDS = ("meeting", "note", "email")
 #: Speaker values the base was trained on; anything else reads as ''.
 ROLES = frozenset({"internal", "reseller", "vendor", "unknown"})
 SIDES = frozenset({"ours", "theirs", "partner", "vendor"})
+
+
+#: Where a line sits in its table, as the model reads it (``ml.c3.data._geometry``).
+GEOMETRY_KEYS = ("bbox", "table_row", "table_col", "row_span", "col_span")
+_TABLE_REF = re.compile(r"^(.*?)\s+r(\d+)$")
+
+
+def table_geometry(table_ref: Any) -> dict[str, int]:
+    """``{"table_row": n}`` for a table-row line, else ``{}``.
+
+    ``table_ref`` is the one string both sides already stamp on a table row:
+    the labeling page's ``tableRef`` and the parser's ``_atom_table_ref``
+    (``"<table id> r<row>"``). The row counts from 1, so the first row of a
+    table is not read as "not in a table" (0)."""
+    m = _TABLE_REF.match(str(table_ref or "").strip())
+    return {"table_row": int(m.group(2)) + 1} if m else {}
 
 
 def is_deal_kit(doc_kind: Any) -> bool:
@@ -113,9 +129,11 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         # given outright stands as the line's own.
         said = ln.get("said_by") or ({"side": side, "role": role} if side else None)
         row.update({k: ln.get(k) for k in SENDER_INPUTS if ln.get(k)}, said_by=said)
+        row.update({k: ln[k] for k in GEOMETRY_KEYS if ln.get(k) not in (None, "", [])})
         rows.append(row)
     annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
-                     "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin")} for d in docs])
+                     "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin"),
+                     "role": d.get("role")} for d in docs])
     return rows
 
 
@@ -124,5 +142,6 @@ def _sort_key(t: Any) -> tuple[int, Any]:
     return (0, float(t)) if isinstance(t, (int, float)) else (1, str(t))
 
 
-__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "is_deal_kit", "document_times", "speaker", "build_rows",
-           "annotate", "sender", "doc_direction", "milestones", "stage_at"]
+__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "GEOMETRY_KEYS", "is_deal_kit", "document_times", "speaker",
+           "build_rows", "table_geometry", "annotate", "sender", "doc_direction", "is_ours", "milestones",
+           "stage_at"]

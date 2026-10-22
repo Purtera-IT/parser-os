@@ -100,7 +100,8 @@ def _record_documents(documents: list[dict[str, Any]], doc_time: dict[str, str])
     who brought each."""
     return [{"doc_id": str(d.get("artifactId") or ""),
              "kind": str(d.get("docType") or d.get("kind") or "").strip().lower(),
-             "arrival": doc_time.get(str(d.get("artifactId") or "")), "origin": _origin(d)}
+             "arrival": doc_time.get(str(d.get("artifactId") or "")), "origin": _origin(d),
+             "role": str(d.get("docRole") or "")}
             for d in documents]
 
 
@@ -122,6 +123,8 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
         raise ValueError("Not a labeling page export (needs atoms and myLinks)")
     if not str(deal_id or "").strip():
         raise ValueError("A training file needs a deal_id")
+    from c3_record import table_geometry
+
     documents = [d for d in payload.get("documents") or [] if isinstance(d, dict)]
     doc_time = _doc_times(documents)
     kinds = {str(d.get("artifactId")): str(d.get("kind") or "") for d in documents}
@@ -147,6 +150,9 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
             "doc_kind": str(a.get("docType") or kinds.get(art) or "").strip().lower(),
             "section": section, "order": i, "speaker_role": "", "speaker_side": "",
             **_sender_inputs(a, doc_of.get(art, {})),
+            # Where the line sits in its table: the model input ``table_row``
+            # (c3_record.table_geometry), the same rule the parser's compile uses.
+            **table_geometry(a.get("tableRef")),
         })
         last_in[(art, section)] = i
         last_in[(art, "")] = i
