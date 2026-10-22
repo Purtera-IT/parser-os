@@ -611,6 +611,203 @@ BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "rea
                     "col:supplier")
 
 
+# ------------------------------------------------------------- site heads
+#
+# The owner's rule: the heads decide, rules only extract. With
+# SOWSMITH_C3_SITE_HEAD on, a line the type head reads as physical_site at its
+# SURE bar is a site: no rule stage removes or retypes it, the final pass
+# types it (its address fields are extracted from its own words, no LLM
+# fill), and the site heads no stage asked for travel with the sites to the
+# Deal Kit. Off by default; on in the dev worker profile.
+
+#: Line heads asked for the sites (jdg:site_role is in BRIEF_LINE_HEADS too).
+SITE_LINE_HEADS = ("jdg:facility", "jdg:site_role")
+#: Group heads asked of each document: is it a site roster, what is the sheet for.
+SITE_DOCUMENT_HEADS = ("jdg:roster", "jdg:sheet")
+SITE_PAIR_KEY = "jdg:site"
+SITE_COUNT_KEY = "deal:declared_site_count"
+
+
+def site_head_enabled() -> bool:
+    """``SOWSMITH_C3_SITE_HEAD``: the type head's site answer reaches the atoms
+    directly at its SURE bar, and the site heads are asked and carried."""
+    return os.environ.get("SOWSMITH_C3_SITE_HEAD", "").strip().lower() in _TRUE
+
+
+def head_site_reading(atom: Any) -> tuple[str, float] | None:
+    """The type head's ``physical_site`` reading of this line when it is at its
+    SURE bar (and the flag is on), else None. A Deal Kit or estimating sheet
+    line is never one: the base does not read those (``skipped``)."""
+    if not site_head_enabled():
+        return None
+    got = type_reading(str(getattr(atom, "id", "") or ""))
+    if not got or got[0] != "physical_site" or got[1] < sure_for("physical_site"):
+        return None
+    try:
+        if skipped(atom, _DEAL.get("sha")):
+            return None
+    except Exception:
+        pass
+    return got
+
+
+def head_site_locked(atom: Any) -> bool:
+    """True when the type head typed this line physical_site at its SURE bar:
+    a rule may extract from it but not remove or retype it."""
+    return head_site_reading(atom) is not None
+
+
+def _site_fields(text: str, v: dict[str, Any]) -> dict[str, Any]:
+    """Address fields the line states, extracted from its own words; fields the
+    parser already set stand."""
+    from app.core.address_parse import parse_us_address_line
+
+    out: dict[str, Any] = {}
+    have = lambda k: bool(str(v.get(k) or "").strip())  # noqa: E731
+    pa = parse_us_address_line(text)
+    if pa.city and pa.state:
+        street = pa.street_address if pa.street_address and re.match(r"\d{1,6}\b", pa.street_address) else None
+        for k, val in (("street_address", street), ("city", pa.city), ("state", pa.state), ("zip", pa.zip)):
+            if val and not have(k):
+                out[k] = val
+    else:
+        c = _CITY.search(text)
+        if c and not have("city") and not have("state"):
+            out.update(city=c.group(1), state=c.group(2))
+    if not (have("name") or have("facility_name")):
+        city, state = out.get("city") or v.get("city"), out.get("state") or v.get("state")
+        street = out.get("street_address") or v.get("street_address")
+        out["name"] = (str(street) if street else f"{city}, {state}" if city and state else text.strip()[:120])
+    return out
+
+
+def apply_site_head(atoms: list[Any]) -> int:
+    """Type every line the type head reads as physical_site at its SURE bar a
+    site, at the end of the compile (after every rule stage), without the LLM
+    fill: the line's address fields come from its own words. It was parked as
+    ``c3_base_says`` and reached the atom only through the fill behind
+    SOWSMITH_C3_TYPE + SOWSMITH_C3_AUTHORITY, so with either off, or a failed
+    fill, the head's site never reached the Deal Kit (sites_audit.md 4.1).
+    The rule's type rides on the line (``rule_type``). Returns lines typed."""
+    from app.core.schemas import AtomType
+
+    if not site_head_enabled():
+        return 0
+    n = 0
+    for a in atoms:
+        got = head_site_reading(a)
+        if got is None:
+            continue
+        t = getattr(a, "atom_type", None)
+        before = str(getattr(t, "value", t) or "")
+        v = dict(getattr(a, "value", None) or {}) if isinstance(getattr(a, "value", None), dict) else {}
+        lab = v.get("c3_label")
+        if before == "physical_site" and isinstance(lab, dict) and lab.get("type") == "physical_site":
+            continue
+        if before != "physical_site":
+            v.update(_site_fields(str(getattr(a, "raw_text", "") or ""), v))
+            alt = list(v.get("alt_atom_types") or [])
+            if before and before not in alt:
+                alt.append(before)
+            v["alt_atom_types"] = alt
+            if before:
+                v["rule_type"] = before
+            v.pop("c3_base_says", None)
+        v["c3_label"] = {"type": "physical_site", "p": round(got[1], 3), "act": "authority", "was": before,
+                         "by": "site_head"}
+        try:
+            a.atom_type = AtomType("physical_site")
+            a.value = v
+        except Exception:
+            continue
+        flags = list(getattr(a, "review_flags", None) or [])
+        if "c3_label" not in flags:
+            try:
+                a.review_flags = flags + ["c3_label"]
+            except Exception:
+                pass
+        n += before != "physical_site"
+    _STATUS["site_head_typed"] = n
+    return n
+
+
+def declared_site_count() -> tuple[float, float | None] | None:
+    """The deal head's declared site count ``(value, p)`` from this read, or
+    None. The live head is a regression and returns no p."""
+    v = (_DEAL.get("deal") or {}).get(SITE_COUNT_KEY)
+    if not v or v[0] is None:
+        return None
+    try:
+        return float(v[0]), (None if len(v) < 2 or v[1] is None else float(v[1]))
+    except (TypeError, ValueError):
+        return None
+
+
+def quote_site_count(atoms: list[Any]) -> tuple[int, str]:
+    """The site count the quote is sent: ``deal:declared_site_count`` when the
+    flag is on and the head is sure (a p at its SURE bar), else the deal's site
+    list count (the envelope's site_readiness list). Returns (count, source)."""
+    if site_head_enabled():
+        got = declared_site_count()
+        if got is not None and got[1] is not None and got[1] >= sure_for(SITE_COUNT_KEY) and got[0] >= 0:
+            return int(round(got[0])), "declared_site_count"
+    try:
+        from app.core.declared_scope import _found_site_count
+
+        return int(_found_site_count(atoms) or 0), "site_list"
+    except Exception:  # noqa: BLE001 - a count that cannot be read is sent as 0, as before
+        return 0, "none"
+
+
+def site_heads(atoms: list[Any]) -> dict[str, Any] | None:
+    """The site heads' answers for the envelope, and on each physical_site atom
+    (``value.c3_site``), which the Deal Kit reads: its facility and role
+    readings, its document's roster and sheet verdicts, and the site-pair
+    head's ``distinct_from`` / ``same_as`` among the sites that stand (at its
+    SURE bar). None when the flag is off."""
+    if not site_head_enabled():
+        return None
+    reads = _DEAL.get("reads") or {}
+    docs = _DEAL.get("site_docs") or {}
+    sites = [a for a in atoms
+             if str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", "")) or "") == "physical_site"]
+    ids = {str(getattr(a, "id", "") or "") for a in sites}
+    bar = sure_for(SITE_PAIR_KEY)
+    rel: dict[str, dict[str, list[str]]] = {}
+    pairs = []
+    for ka, kb, ans, p in _DEAL.get("site_pairs") or []:
+        pairs.append([ka, kb, ans, round(float(p), 4)])
+        if ka in ids and kb in ids and p >= bar and ans in ("distinct_site", "same_site"):
+            field = "distinct_from" if ans == "distinct_site" else "same_as"
+            rel.setdefault(ka, {}).setdefault(field, []).append(kb)
+            rel.setdefault(kb, {}).setdefault(field, []).append(ka)
+    lines: dict[str, dict[str, Any]] = {}
+    for a in sites:
+        aid = str(getattr(a, "id", "") or "")
+        got: dict[str, Any] = {}
+        for h in SITE_LINE_HEADS:
+            r = (reads.get(aid) or {}).get(h)
+            if r and r[0] is not None:
+                got[h.split(":", 1)[1]] = [str(r[0]), round(float(r[1] or 0.0), 4)]
+        for h, r in (docs.get(_doc_id(a)) or {}).items():
+            got[h.split(":", 1)[1]] = [r[0], round(float(r[1]), 4)]
+        got.update(rel.get(aid) or {})
+        tr = head_site_reading(a)
+        if tr is not None:
+            got["head_site"] = round(tr[1], 4)
+        if got:
+            lines[aid] = got
+            v = getattr(a, "value", None)
+            if isinstance(v, dict):
+                v["c3_site"] = got
+    count = declared_site_count()
+    n, src = quote_site_count(atoms)
+    return {"lines": lines, "documents": {d: {k: [x[0], round(x[1], 4)] for k, x in h.items()} for d, h in docs.items()},
+            "pairs": pairs, "pair_bar": bar,
+            "declared_site_count": list(count) if count else None,
+            "site_count": {"value": n, "source": src}}
+
+
 def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
     """This compile's base reading of one line, or None when the line was not
     read (created after the read) or the head was not asked."""
@@ -679,6 +876,16 @@ def _brief_body(body: dict[str, Any]) -> dict[str, Any]:
         qs = brief_questions()
         if qs:
             body["questions"] = qs
+    if site_head_enabled():
+        # The site heads no stage asked for (sites_audit.md section 4): the
+        # naming and role of each line, each document's roster and sheet
+        # verdicts, the site-pair head on the type head's site lines, and the
+        # deal's declared site count (a whole-deal answer, so ``full``).
+        heads = list(body.get("line_heads") or [])
+        body["line_heads"] = heads + [h for h in SITE_LINE_HEADS if h not in heads]
+        docs = list(body.get("document_heads") or [])
+        body["document_heads"] = docs + [h for h in SITE_DOCUMENT_HEADS if h not in docs]
+        body.update(site_pairs=True, full=True)
     return body
 
 
@@ -692,6 +899,13 @@ def _keep_full(got: dict[str, Any]) -> None:
             _DEAL["question_bar"] = float(got["question_bar"])
         _DEAL["links"].extend(got.get("links") or [])
         _DEAL["deal"].update(got.get("deal") or {})
+    if "site_docs" in _DEAL:
+        for d, heads in (got.get("documents") or {}).items():
+            for k, v in (heads or {}).items():
+                if k in SITE_DOCUMENT_HEADS and v and v[0] is not None:
+                    _DEAL["site_docs"].setdefault(str(d), {})[k] = (str(v[0]), float(v[1] or 0.0))
+        _DEAL["site_pairs"].extend([str(r[0]), str(r[1]), str(r[2]), float(r[3] or 0.0)]
+                                   for r in (got.get("site_pairs") or []) if len(r) >= 4)
 
 
 def full_read() -> dict[str, Any]:
@@ -702,7 +916,7 @@ def full_read() -> dict[str, Any]:
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
     _DEAL.clear()
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
-                 reads={}, links=[], deal={}, questions=[], also=[])
+                 reads={}, links=[], deal={}, questions=[], also=[], site_docs={}, site_pairs=[])
 
 
 def _delivered_at(sha256: str) -> Any:
@@ -943,12 +1157,7 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             rows.append({"id": aid, "text": text[:4000], "type": kind})
     # The deal's site list count (the same list the envelope's site_readiness shows), so the heads'
     # "N places: check the site list" flag can fire. It was a literal 0, so it never did.
-    try:
-        from app.core.declared_scope import _found_site_count
-
-        site_count = int(_found_site_count(atoms) or 0)
-    except Exception:  # noqa: BLE001 - a count that cannot be read is sent as 0, as before
-        site_count = 0
+    site_count, _src = quote_site_count(atoms)
     body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
                      "atoms": rows, "site_count": site_count,
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
@@ -1383,8 +1592,9 @@ def reread_if_new(atoms: list[Any]) -> int:
     # A failed re-read must not cost the first read: keep it, and take the
     # new one only when it came back (010038 lost every base reading when a
     # re-read timed out, 2026-10-17).
-    kept = {k: _DEAL.get(k) for k in ("docs", "reads", "links", "deal", "questions", "question_bar", "types")}
-    _DEAL.update(docs={}, reads={}, links=[], deal={}, questions=[])
+    kept = {k: _DEAL.get(k) for k in ("docs", "reads", "links", "deal", "questions", "question_bar", "types",
+                                      "site_docs", "site_pairs")}
+    _DEAL.update(docs={}, reads={}, links=[], deal={}, questions=[], site_docs={}, site_pairs=[])
     _DEAL["types"] = dict(kept["types"] or {})
     documents(atoms)
     if not _DEAL.get("reads"):
@@ -1473,7 +1683,10 @@ def own_site_keys(atoms: list[Any]) -> int:
                     name = str(v.get("name") or "")
                     if not name or not re.search(r",\s*[A-Z]{2}\b", name):
                         name = f"{c.group(1)}, {c.group(2)}"
-                    a.value = {**v, "site_id": slug, "name": name}
+                    # City and state too: the Deal Kit keeps a site with no
+                    # street only when it has both (sitesFromArtifactSources).
+                    town = {} if (v.get("city") or v.get("state")) else {"city": c.group(1), "state": c.group(2)}
+                    a.value = {**v, "site_id": slug, "name": name, **town}
                     a.entity_keys = keys
                     n += 1
                 except Exception:
@@ -1671,7 +1884,8 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
     out: dict[str, dict[str, tuple[str, float]]] = {}
     for d, heads in raw.items():
         for k, v in (heads or {}).items():
-            if v and v[0] is not None:
+            # The site heads asked in the same read are kept apart (site_docs).
+            if v and v[0] is not None and k in keys:
                 out.setdefault(str(d), {})[k] = (str(v[0]), float(v[1] or 0.0))
     if "docs" in _DEAL:
         _DEAL["docs"] = dict(out)

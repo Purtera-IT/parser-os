@@ -1209,6 +1209,9 @@ def build_orbitbrief_envelope(
     # so its list replaces the fixed head-start checklist and the gap map
     # (both are in the question catalog). The Questions card labels these
     # like any other question, and each verdict trains the Questions head.
+    _c3s = getattr(compile_result, "c3_sites", None)
+    if _c3s:
+        envelope["c3_sites"] = _c3s
     _c3b = getattr(compile_result, "c3_brief", None)
     if _c3b:
         envelope["c3_brief"] = _c3b

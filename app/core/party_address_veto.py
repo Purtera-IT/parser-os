@@ -49,6 +49,15 @@ def _street_of(atom: Any) -> str:
     return s if re.search(r"\d", s) and len(s.split()) >= 2 else ""
 
 
+def _head_site(atom: Any) -> bool:
+    try:
+        from app.core.c3_type_base import head_site_locked
+
+        return head_site_locked(atom)
+    except Exception:
+        return False
+
+
 def veto_party_page_sites(atoms: list[Any]) -> int:
     """Retype physical_site atoms that sit on a signature page. Returns count."""
     signature_pages: set[tuple[str, Any]] = set()
@@ -79,6 +88,11 @@ def veto_party_page_sites(atoms: list[Any]) -> int:
             street = _street_of(a)
             in_signature_text = bool(street) and street in signature_text.get(art, "")
         if not (on_signature_page or in_signature_text):
+            continue
+        # A line the type head reads as a site at its SURE bar keeps its type
+        # and its site keys (SOWSMITH_C3_SITE_HEAD): the heads decide, this
+        # shape rule does not (sites_audit.md 4.5).
+        if _head_site(a):
             continue
         # Nothing on a signature page is a site fact. Strip site keys from
         # every atom there, so no later stage can promote the signatures

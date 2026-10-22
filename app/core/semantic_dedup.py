@@ -1009,16 +1009,23 @@ class _NoDetail:
 _NO_DETAIL = _NoDetail()
 
 
+def _head_site(atom: Any, *, locks: bool = True) -> bool:
+    """The type head reads this line as physical_site at its SURE bar
+    (SOWSMITH_C3_SITE_HEAD), or (``locks``) the base decided it (c3
+    authority): a dedup rule neither removes nor retypes it."""
+    try:
+        from app.core.c3_type_base import head_site_locked, is_locked
+
+        return bool(head_site_locked(atom) or (locks and is_locked(atom)))
+    except Exception:
+        return False
+
+
 def _demote_from_site(atom: Any) -> None:
     """Keep the sentence, drop its claim to be a site declaration. Never for a
     line the base typed (c3 authority): a dedup rule does not outrank it."""
-    try:
-        from app.core.c3_type_base import is_locked
-
-        if is_locked(atom):
-            return
-    except Exception:
-        pass
+    if _head_site(atom):
+        return
     try:
         from app.core.schemas import AtomType
 
@@ -1070,6 +1077,13 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             if not _has_structured_site_location(a)
             and not _is_authoritative_physical_site_atom(a)
         }
+        # A name-only line the type head reads as a site at its SURE bar is
+        # not an alias to remove: it stays, a site, and out of the grouping
+        # below (sites_audit.md 4.3: this path had no lock check).
+        head_kept = {id(a) for a in physical if id(a) in name_only_ids and _head_site(a, locks=False)}
+        name_only_ids -= head_kept
+        kept_lines |= head_kept
+        physical = [a for a in physical if id(a) not in head_kept]
         if name_only_ids:
             # A name-only atom is an alias when it is a NAME -- "the new office
             # location". It is not an alias when it is a sentence that happens

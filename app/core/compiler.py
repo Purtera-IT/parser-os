@@ -2213,7 +2213,8 @@ def compile_project(
         # The deal's one base read normally happens in document_job_scope; with
         # that stage off (its set-asides were wrong on all 145 labeled lines),
         # read here so authority, typing and the brief all share it.
-        if _c3_auth.authority_enabled() and not (_c3_auth._DEAL.get("types") or {}) and _c3_auth.enabled():
+        if ((_c3_auth.authority_enabled() or _c3_auth.site_head_enabled())
+                and not (_c3_auth._DEAL.get("types") or {}) and _c3_auth.enabled()):
             with telemetry.stage("c3_base_read", input_count=len(atoms)) as _rstage:
                 _c3_auth.documents(atoms)
                 telemetry.end_stage(_rstage, output_count=len(_c3_auth._DEAL.get("types") or {}))
@@ -3714,6 +3715,11 @@ def compile_project(
             _late = _c3_final.apply_authority(atoms)
             warnings.append(f"INFO: C3 base re-read the deal for {_new} line(s) created after its read; "
                             f"typed {_late}")
+        # The type head's sure site lines are sites (SOWSMITH_C3_SITE_HEAD),
+        # their fields from their own words: no fill, after every rule stage.
+        _sh = _c3_final.apply_site_head(atoms)
+        if _sh:
+            warnings.append(f"INFO: C3 type head typed {_sh} line(s) physical_site at its SURE bar (site head)")
         _sa, _sf = _c3_final.settle_base_answers(atoms)
         if _sa or _sf:
             warnings.append(f"INFO: C3 base answers applied late: {_sa} assigned, {_sf} filled")
@@ -3735,6 +3741,15 @@ def compile_project(
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")
     except Exception as exc:
         warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
+    # The site heads' answers ride on each site (value.c3_site) and in the
+    # envelope (c3_sites), for the Deal Kit. Off unless SOWSMITH_C3_SITE_HEAD.
+    _c3_sites = None
+    try:
+        from app.core import c3_type_base as _c3_site
+
+        _c3_sites = _c3_site.site_heads(atoms)
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 site heads failed: {type(exc).__name__}: {exc}")
 
     # Brief v2: the super heads decide what the brief says, rules where a head
     # is not yet trusted (c3_brief.py). Off unless SOWSMITH_C3_BRIEF is on.
@@ -3798,6 +3813,7 @@ def compile_project(
         text_coverage=_coverage,
         ledger_audit=_ledger_audit,
         c3_brief=_c3_brief,
+        c3_sites=_c3_sites,
         entities=entities,
         edges=edges,
         packets=packets,

@@ -852,6 +852,9 @@ class CompileResult(BaseModel):
     # Brief v2 (app/core/c3_brief.py): what the super heads put in the brief,
     # each item marked with the head or rule that decided it. None when off.
     c3_brief: dict[str, Any] | None = None
+    # The site heads' answers (c3_type_base.site_heads, SOWSMITH_C3_SITE_HEAD):
+    # per site line, per document, the site pairs and the site count sent.
+    c3_sites: dict[str, Any] | None = None
     manifest: "CompileManifest | None" = None
     trace: "CompileTrace | None" = None
     candidate_summary: CandidateSummary | None = None
