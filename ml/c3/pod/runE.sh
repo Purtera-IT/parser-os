@@ -17,11 +17,15 @@
 # (supercharge.teach_rewrites) stay unwired in loop.py. FLIPS=1 adds the flips
 # lesson (teach_flip at 0.2).
 #
-#   TRAIN_DIR   training files (default $C3/runE/train). Every NNNNNN.json there
-#               trains, minus the validation deal and the fixed holdouts, unless
-#               TRAIN_DEALS lists the ids
-#   VALID_FILE  the validation deal (default TRAIN_DIR/010043.json, else
-#               $C3/train/010043.json); never trained
+#   TRAIN_DIR   training files (default $C3/runE/train); several dirs, space
+#               separated, train together (a quoting run: "$C3/runE/train_presow
+#               $C3/runE/train_estimator"). Every NNNNNN.json or NNNNNN@<view>.json
+#               there trains, minus the validation deal and the fixed holdouts,
+#               unless TRAIN_DEALS lists the file names (without .json). A listed
+#               validation or holdout deal is refused, and every chosen file's
+#               own deal_id is checked again before the run
+#   VALID_FILE  the validation deal (default <first TRAIN_DIR>/010043.json, else
+#               $C3/train/010043.json); never trained, in any view
 #   INIT        start checkpoint (default $C3/runC.pt.open_links.slim, the live
 #               one; its md5 is checked unless INIT_MD5=skip)
 #   LAYOUT_LOCK weight of layout_lock (0.5); 0 turns it off
@@ -87,30 +91,49 @@ PY
 }
 if [[ "${PICK_ONLY:-0}" == 1 ]]; then pick "$CK"; exit; fi
 
-# Training and validation files.
+# Training and validation files. A file is NNNNNN.json or a view of the deal,
+# NNNNNN@<view>.json; the deal number before the @ decides what may train.
 TRAIN_DIR=${TRAIN_DIR:-$C3/runE/train}
-[[ -d "$TRAIN_DIR" ]] || { echo "no TRAIN_DIR $TRAIN_DIR" >&2; exit 1; }
+read -ra dirs <<< "$TRAIN_DIR"
+for d in "${dirs[@]}"; do [[ -d "$d" ]] || { echo "no TRAIN_DIR $d" >&2; exit 1; }; done
 FIXED=$(python -c "from ml.c3.holdout import FIXED_HOLDOUT; print(' '.join(sorted(FIXED_HOLDOUT)))")
+NEVER=" $VALIDATION $FIXED "
+train_files=()
 if [[ -n "${TRAIN_DEALS:-}" ]]; then
-  ids=($TRAIN_DEALS)
+  for name in $TRAIN_DEALS; do
+    [[ "$NEVER" == *" ${name%%@*} "* ]] && { echo "TRAIN_DEALS lists $name: validation or holdout, never trained" >&2; exit 1; }
+    hit=""
+    for d in "${dirs[@]}"; do [[ -f "$d/$name.json" ]] && { train_files+=("$d/$name.json"); hit=1; }; done
+    [[ -n "$hit" ]] || { echo "missing $name.json in $TRAIN_DIR" >&2; exit 1; }
+  done
 else
-  ids=()
-  for f in "$TRAIN_DIR"/*.json; do
-    id=$(basename "$f" .json)
-    [[ "$id" =~ ^[0-9]{6}$ ]] || continue
-    [[ " $VALIDATION $FIXED " == *" $id "* ]] && continue
-    ids+=("$id")
+  for d in "${dirs[@]}"; do
+    for f in "$d"/*.json; do
+      name=$(basename "$f" .json)
+      [[ "$name" =~ ^[0-9]{6}(@[a-z_]+)?$ ]] || continue
+      [[ "$NEVER" == *" ${name%%@*} "* ]] && continue
+      train_files+=("$f")
+    done
   done
 fi
-train_files=()
-for id in "${ids[@]}"; do
-  [[ -f "$TRAIN_DIR/$id.json" ]] || { echo "missing $TRAIN_DIR/$id.json" >&2; exit 1; }
-  train_files+=("$TRAIN_DIR/$id.json")
-done
 (( ${#train_files[@]} )) || { echo "no training deals in $TRAIN_DIR" >&2; exit 1; }
-VALID_FILE=${VALID_FILE:-$TRAIN_DIR/$VALIDATION.json}
+# The file name can lie; the deal_id inside is what the loop trains.
+python - "$NEVER" "${train_files[@]}" <<'PY' || exit 1
+import json, sys
+never = set(sys.argv[1].split())
+seen = {}
+for path in sys.argv[2:]:
+    deal_id = str(json.load(open(path)).get("deal_id") or "")
+    base = deal_id.partition("#c3part")[0].partition("@")[0]
+    if base in never:
+        raise SystemExit(f"{path}: deal_id {deal_id} is the validation deal or a holdout, never trained")
+    if deal_id in seen:
+        raise SystemExit(f"{path}: deal_id {deal_id} also in {seen[deal_id]}")
+    seen[deal_id] = path
+PY
+VALID_FILE=${VALID_FILE:-${dirs[0]}/$VALIDATION.json}
 [[ -f "$VALID_FILE" ]] || VALID_FILE=$C3/train/$VALIDATION.json
-echo "train ${#ids[@]} deals from $TRAIN_DIR: ${ids[*]}"
+echo "train ${#train_files[@]} files from $TRAIN_DIR: $(for f in "${train_files[@]}"; do basename "$f" .json; done | tr '\n' ' ')"
 echo "validation $VALID_FILE"
 
 # The start checkpoint is the live one.
