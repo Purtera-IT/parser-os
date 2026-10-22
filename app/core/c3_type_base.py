@@ -364,11 +364,6 @@ def _section(atom: Any) -> str:
     return str(sheet) if sheet else ""
 
 
-#: The speaker values training saw; anything else is '' (as on ~95% of lines).
-_ROLES = frozenset({"internal", "reseller", "unknown"})
-_SIDES = frozenset({"ours", "theirs"})
-
-
 def _speaker(atom: Any) -> tuple[str, str]:
     """(role, side): the page's ``saidBy``, which is ``value.said_by``. A
     transcript line's locator ``speaker_role`` is not it: training has '' on
@@ -379,6 +374,36 @@ def _speaker(atom: Any) -> tuple[str, str]:
     if not isinstance(by, dict):
         return "", ""
     return speaker(by.get("role") or by.get("role_guess"), by.get("side"))
+
+
+def _sender_inputs(atom: Any) -> dict[str, Any]:
+    """What ``c3_record.sender`` reads off one line, as the labeling page
+    exports it (atom-labeling.js): ``saidBy`` / ``saidTo`` (``value.said_by``
+    / ``said_to``), the email message it was written in (``messageOf``: the
+    thread stage's ``email_thread.message.author``, else the locator's
+    ``sender``, for a line with a message index), and a call transcript's
+    speaker (the locator's ``speaker``, the page's section for that line)."""
+    v, loc = _value(atom), _locator(atom)
+    out: dict[str, Any] = {}
+    by = v.get("said_by")
+    if isinstance(by, dict):
+        out["said_by"] = {"name": by.get("name"), "email": by.get("email"), "side": by.get("side"),
+                          "role": by.get("role") or by.get("role_guess")}
+    to = v.get("said_to")
+    if isinstance(to, list):
+        out["said_to"] = [{"name": p.get("name"), "email": p.get("email")} for p in to if isinstance(p, dict)]
+    et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+    msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+    index = msg.get("index") if msg.get("index") is not None else loc.get("message_index", v.get("message_index"))
+    if index not in (None, ""):
+        author = msg.get("author") or loc.get("sender") or v.get("sender")
+        if author:
+            out["message_author"] = str(author)
+    if (_ref(atom, "artifact_type") or "").strip().lower() == "transcript" or "utterance_index" in loc:
+        name = str(loc.get("speaker") or "").strip()
+        if name:
+            out["speaker_name"] = name
+    return out
 
 
 def _when(raw: Any) -> float | None:
@@ -426,8 +451,11 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
       document: an artifact any of whose atoms is an email, note or meeting
       line is that kind throughout;
     * section: the locator's ``section_path`` joined with " > ", else its sheet;
-    * speaker_role / speaker_side: ``value.said_by`` role and side, else the
-      transcript locator's ``speaker_role``;
+    * speaker_side / speaker_role / speaker_org, doc_direction, stage_at:
+      ``c3_record.sender`` (``build_rows``), from ``value.said_by``, else the
+      line's email message author, else a transcript line's speaker, else its
+      document's ``origin`` (``deal_documents``: an attachment's is the
+      message that carried it); stage from the deal's own milestones;
     * entered_at: the locator's ``sent_at``; else the time of the document
       before it in arrival order (a document's own origin and ``authoredAt``
       are not on the atom); else the latest time in the deal; else 0 for every
@@ -485,7 +513,7 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         role, side = _speaker(a)
         lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
                       "section": _section(a), "order": float(i), "speaker_role": role,
-                      "speaker_side": side, "atom_id": aid})
+                      "speaker_side": side, "atom_id": aid, **_sender_inputs(a)})
     rank = _reading_rank(atoms, docs)
     if rank is not None:
         for ln, r in zip(lines, rank):
@@ -660,7 +688,7 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             sent = _delivered_at(sha[d])
         kind = event.get(d) or (_file_kind(first[d], sha) if d in first else "file")
         docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
-                     "filename": name, "pos": pos})
+                     "filename": name, "pos": pos, "origin": _origin(p, prov, first.get(d))})
     from c3_record import EVENT_KINDS
 
     def arrival(doc):
@@ -676,6 +704,23 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
         keyed.append(((prev if prev is not None else float("-inf")), doc["pos"], doc))
     keyed.sort(key=lambda x: (x[0], x[1]))
     return [doc for _, _, doc in keyed]
+
+
+def _origin(p: dict[str, Any], prov: dict[str, dict[str, Any]], atom: Any = None) -> dict[str, Any]:
+    """Who brought a document in, as the labeling page's ``origin`` says it:
+    ``doc_origin.origin_for`` on the manifest's provenance (an attachment's
+    is the email or note that carried it; an email's is its own sender)."""
+    try:
+        from app.core.doc_origin import origin_for
+
+        art = (_ref(atom, "artifact_type") if atom is not None else "") or ""
+        doc = {"carried_by": p.get("carried_by"), "direction": p.get("direction"),
+               "sender_email": p.get("sender_email"), "authored_at": p.get("authored_at"),
+               "artifact_type": "email" if art.strip().lower() in _EMAIL_TYPES else art}
+        o = origin_for(doc, prov)
+    except Exception:  # noqa: BLE001 - an origin that cannot be read is no sender, never a failed read
+        return {}
+    return {k: o.get(k) for k in ("direction", "sender_email", "sender_name", "sent_at", "via")}
 
 
 def _url() -> str:
@@ -760,7 +805,10 @@ def deal_payload(deal: Any) -> dict[str, Any]:
     return {"deal_id": deal.deal_id, "company": deal.company, "atoms": [
         {"key": a.key, "text": a.text, "entered_at": a.entered_at, "doc_id": a.doc_id,
          "doc_kind": a.doc_kind, "section": a.section, "order": a.order,
-         "speaker_role": a.speaker_role, "speaker_side": a.speaker_side, "atom_id": a.atom_id}
+         "speaker_role": a.speaker_role, "speaker_side": a.speaker_side, "atom_id": a.atom_id,
+         # Sender and stage (c3_record.sender), as the training export writes them.
+         "speaker_org": getattr(a, "speaker_org", ""), "doc_direction": getattr(a, "doc_direction", ""),
+         "stage_at": getattr(a, "stage_at", "")}
         for a in deal.atoms]}
 
 

@@ -268,11 +268,54 @@ def test_atoms_to_deal_maps_the_export_fields():
     # A file the lifecycle dataset does not know reads as training's "file".
     assert rows["atm1"].doc_kind == "file" and rows["atm1"].doc_id == "doc"
     assert rows["atm2"].doc_kind == "email"
-    assert (rows["atm2"].speaker_role, rows["atm2"].speaker_side) == ("reseller", "theirs")
+    # A reseller is the partner (c3_record.sender), still ``side:theirs`` to the model.
+    assert (rows["atm2"].speaker_role, rows["atm2"].speaker_side) == ("reseller", "partner")
     # "customer" is no speaker role training saw: it reads as ''.
     assert rows["atm3"].doc_kind == "meeting" and rows["atm3"].speaker_role == ""
     assert rows["atm1"].entered_at == rows["atm2"].entered_at
     assert rows["atm3"].entered_at < rows["atm2"].entered_at
+
+
+def test_rows_carry_each_lines_sender_and_stage_as_training_does():
+    """The compile sends what ml/c3/export.py writes (c3_record.sender): an
+    attachment takes its carrying email's sender, a transcript line its
+    speaker, every line the deal's stage by our own milestones."""
+    from app.core.schemas import (ArtifactType, AuthorityClass, EvidenceAtom, ReviewStatus,
+                                  SourceRef)
+
+    def make(i, artifact_id, kind, locator=None, value=None):
+        ref = SourceRef(id=f"src{i}", artifact_id=artifact_id, artifact_type=kind,
+                        filename=f"{artifact_id}.file", locator=locator or {},
+                        extraction_method="test", parser_version="test")
+        return EvidenceAtom(id=f"atm{i}", project_id="deal-test", artifact_id=artifact_id,
+                            atom_type="scope_item", raw_text=f"Line {i}.", normalized_text=f"line {i}.",
+                            value=value or {}, source_refs=[ref],
+                            authority_class=AuthorityClass.machine_extractor, confidence=0.5,
+                            review_status=ReviewStatus.auto_accepted, parser_version="test")
+
+    atoms = [make(1, "mail", ArtifactType.email), make(2, "map", ArtifactType.pdf),
+             make(3, "call", ArtifactType.transcript, {"utterance_index": 1, "speaker": "Andy Kusler"}),
+             make(4, "sow", ArtifactType.docx)]
+    cdw = {"via": "email", "direction": "customer_inbound", "sender_email": "andy@cdw.com",
+           "sender_name": "Andy Kusler", "sent_at": "2026-03-01T00:00:00Z"}
+    docs = [{"doc_id": "mail", "kind": "email", "sent_at": "2026-03-01T00:00:00Z", "origin": cdw},
+            {"doc_id": "map", "kind": "file", "sent_at": "2026-03-01T00:00:00Z", "origin": cdw},
+            {"doc_id": "call", "kind": "meeting", "authored_at": "2026-03-02T00:00:00Z",
+             "origin": {"via": "upload", "direction": "internal"}},
+            {"doc_id": "sow", "kind": "sow_draft", "sent_at": "2026-03-03T00:00:00Z",
+             "origin": {"via": "note", "direction": "internal", "sender_email": "t@purtera-it.com"}}]
+    _, rows, _ = c3._rows(atoms, {}, documents=docs)
+    got = {r["atom_id"]: (r["speaker_side"], r["speaker_role"], r["speaker_org"], r["doc_direction"],
+                          r["stage_at"]) for r in rows}
+    assert got == {"atm1": ("partner", "reseller", "external", "partner_inbound", "scoping"),
+                   "atm2": ("partner", "reseller", "external", "partner_inbound", "scoping"),
+                   "atm3": ("partner", "reseller", "external", "internal", "scoping"),
+                   "atm4": ("ours", "internal", "internal", "internal", "quoted")}
+    from ml.c3.data import DealExample
+
+    sent = c3.deal_payload(DealExample.from_dict({"deal_id": "d", "company": "purtera", "atoms": rows}))
+    assert {a["atom_id"]: a["stage_at"] for a in sent["atoms"]}["atm4"] == "quoted"
+    assert all({"speaker_org", "doc_direction", "stage_at"} <= set(a) for a in sent["atoms"])
 
 
 def test_atoms_to_deal_reads_through_a_tiny_model(monkeypatch):
@@ -334,7 +377,8 @@ def test_speaker_values_outside_training_read_empty():
               ref=_Ref(artifact_type="email"))
     a.value = {"said_by": {"role_guess": "installer", "side": "OURS"}}
     row = c3.atoms_to_deal([a]).atoms[0]
-    assert (row.speaker_role, row.speaker_side) == ("", "ours")
+    # Our own side is our own staff, whatever role the guess named.
+    assert (row.speaker_role, row.speaker_side) == ("internal", "ours")
 
 
 def test_a_deal_kit_found_by_sha_is_never_acted_on(monkeypatch, llm, lifecycle):

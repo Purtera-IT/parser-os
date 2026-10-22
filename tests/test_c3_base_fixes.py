@@ -23,7 +23,49 @@ def label(key, **kw):
 
 def page_atom(key, art, text, **kw):
     return {"labelKey": key, "atomId": f"at-{key}", "artifactId": art, "text": text,
-            "docType": "", "section": ["Scope", "Install"], "saidBy": {"role": "pm", "side": "us"}, **kw}
+            "docType": "", "section": ["Scope", "Install"], "saidBy": {"role": "internal", "side": "ours"}, **kw}
+
+
+def test_every_line_gets_its_sender_and_the_stage_it_arrived_in():
+    """saidBy first, then the line's message, a call's speaker, else the
+    document's sender (a file's carrier); stage from our own milestones."""
+    cdw = {"via": "email", "direction": "partner_inbound", "sender_email": "andy@cdw.com",
+           "sender_name": "Andy Kusler", "sent_at": "2026-03-01T00:00:00Z"}
+    page = {
+        "dealId": "uuid-2", "compileId": "c2", "myLinks": [], "judgments": [], "labels": [],
+        "documents": [
+            {"artifactId": "mail", "kind": "email", "origin": cdw},
+            # An attachment: its origin is the email that carried it.
+            {"artifactId": "map", "kind": "file", "docType": "FLOOR_PLAN", "origin": cdw},
+            {"artifactId": "call", "kind": "meeting", "artifactType": "transcript",
+             "authoredAt": "2026-03-02T00:00:00Z", "origin": {"via": "upload", "direction": "internal"}},
+            {"artifactId": "sow", "kind": "file", "docType": "SOW_DRAFT",
+             "origin": {"via": "note", "direction": "internal", "sender_email": "t@purtera-it.com",
+                        "sent_at": "2026-03-03T00:00:00Z"}},
+            {"artifactId": "po", "kind": "file", "docType": "PURCHASE_ORDER",
+             "origin": {"via": "email", "direction": "customer_inbound", "sender_email": "ap@acme.com",
+                        "sent_at": "2026-03-04T00:00:00Z"}},
+        ],
+        "atoms": [
+            {"labelKey": "a", "atomId": "a", "artifactId": "mail", "text": "Quoted.", "section": [],
+             "message": {"index": 1, "author": "Pat Lee <pat@acme.com>"}},
+            {"labelKey": "b", "atomId": "b", "artifactId": "map", "text": "Map.", "section": []},
+            {"labelKey": "c", "atomId": "c", "artifactId": "call", "text": "Said.", "section": ["Andy Kusler"]},
+            {"labelKey": "d", "atomId": "d", "artifactId": "call", "text": "Said.", "section": ["Someone New"]},
+            {"labelKey": "e", "atomId": "e", "artifactId": "sow", "text": "Scope.", "section": []},
+            {"labelKey": "f", "atomId": "f", "artifactId": "po", "text": "PO.", "section": []},
+        ],
+    }
+    got = {a["label_key"]: (a["speaker_side"], a["speaker_role"], a["speaker_org"], a["doc_direction"],
+                            a["stage_at"]) for a in from_page_export(page, "010998")["atoms"]}
+    assert got == {
+        "a": ("theirs", "unknown", "external", "partner_inbound", "scoping"),
+        "b": ("partner", "reseller", "external", "partner_inbound", "scoping"),
+        "c": ("partner", "reseller", "external", "internal", "scoping"),
+        "d": ("theirs", "unknown", "", "internal", "scoping"),
+        "e": ("ours", "internal", "internal", "internal", "quoted"),
+        "f": ("theirs", "unknown", "external", "inbound", "contracting"),
+    }
 
 
 def test_page_export_becomes_a_training_file_with_arrival_times():
@@ -43,7 +85,7 @@ def test_page_export_becomes_a_training_file_with_arrival_times():
     times = {a["label_key"]: a["entered_at"] for a in doc["atoms"]}
     assert times == {"a": "2026-02-01T00:00:00Z", "b": "2026-02-01T00:00:00Z", "c": "2026-02-01T00:00:00Z"}
     assert doc["atoms"][0]["section"] == "Scope > Install"
-    assert doc["atoms"][0]["speaker_role"] == "pm"
+    assert (doc["atoms"][0]["speaker_role"], doc["atoms"][0]["speaker_side"]) == ("internal", "ours")
     deal = DealExample.from_training_blob(doc, doc["atoms"], deal_id=doc["deal_id"])
     assert [a.key for a in deal.atoms] == ["a", "b", "c"]
     with pytest.raises(ValueError, match="share labelKey"):

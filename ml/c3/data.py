@@ -121,6 +121,12 @@ class Atom:
     order: float = 0
     speaker_role: str = ""
     speaker_side: str = ""
+    #: Who sent it and where the deal stood (c3_record.sender), carried so the
+    #: compile sends what the training export writes. The model reads them
+    #: once a checkpoint trained on them ships (runE-data).
+    speaker_org: str = ""
+    doc_direction: str = ""
+    stage_at: str = ""
     label: dict[str, Any] | None = None
     atom_id: str = ""
     pixels: tuple[float, ...] = ()
@@ -168,7 +174,10 @@ class DealExample:
                       doc_kind=str(a.get("doc_kind", "")),
                       section=str(a.get("section", "")), order=float(a.get("order", i)),
                       speaker_role=str(a.get("speaker_role", "")),
-                      speaker_side=str(a.get("speaker_side", "")), label=a.get("label"),
+                      speaker_side=str(a.get("speaker_side", "")),
+                      speaker_org=str(a.get("speaker_org") or ""),
+                      doc_direction=str(a.get("doc_direction") or ""),
+                      stage_at=str(a.get("stage_at") or ""), label=a.get("label"),
                       atom_id=str(a.get("atom_id") or a.get("id") or ""),
                       pixels=tuple(_pixels(a.get("image_pixels"))),
                       geometry=tuple(_geometry(a)),
