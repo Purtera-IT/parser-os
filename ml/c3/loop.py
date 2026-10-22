@@ -110,7 +110,8 @@ class BaseRun:
 def source_deal_id(deal_id: str) -> str:
     """Window ids are ``<deal>#c3part<n>``. The source deal is the part before that."""
     head, sep, _ = deal_id.partition("#c3part")
-    return head if sep else deal_id
+    # A view of a deal ("010003@pre_quote", "010003@planning") is that deal.
+    return (head if sep else deal_id).partition("@")[0]
 
 
 def lock_split(train: list[Batch], holdout: list[Batch],

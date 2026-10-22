@@ -168,6 +168,10 @@ class DealExample:
     link_stats: dict[str, int] = field(default_factory=dict)
     # Lossless training-only source packet. Never returned by Batch.inputs().
     source_supervision: dict[str, Any] = field(default_factory=dict)
+    #: Training only: a view of the deal ("pre_quote", "planning") and the
+    #: loss scale per opportunity key in that view (0 masks the head there).
+    view: str = ""
+    head_scale: dict[str, float] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -204,6 +208,8 @@ class DealExample:
             edge_notes={(str(e["src"]), str(e["dst"]), str(e["relation"])): str(e["note"])
                         for e in d.get("edges", []) if e.get("note")},
             doc_pointers=[(str(p[0]), str(p[1])) for p in d.get("doc_pointers", [])],
+            view=str(d.get("view") or ""),
+            head_scale={str(k): float(v) for k, v in (d.get("head_scale") or {}).items()},
             source_supervision=d.get("source_supervision") or {
                 "judgments": d.get("judgments") or [],
                 "deal_answers": d.get("deal_answers") or [],
@@ -279,7 +285,8 @@ class DealExample:
         edges += linked
         deal = DealExample.from_dict({"deal_id": deal_id, "company": company,
                                       "atoms": rows, "edges": edges, "doc_pointers": doc_pointers,
-                                      "judgments": blob.get("judgments") or []})
+                                      "judgments": blob.get("judgments") or [],
+                                      "view": blob.get("view"), "head_scale": blob.get("head_scale")})
         deal.link_stats = link_stats
         # Keep deferred fields and tab targets inspectable instead of claiming
         # that storing a row means the model has a loss for it.
@@ -615,6 +622,9 @@ class Batch:
     #: Training only: (line, text) for a labeled line in another layout
     #: (Atom.layout_rewrites), for the meaning lock. Never an input.
     layout_rewrites: list[tuple[int, str]] = field(default_factory=list)
+    #: Training only: loss scale per opportunity key for this deal view
+    #: (DealExample.head_scale); a key not listed counts 1.
+    head_scale: dict[str, float] = field(default_factory=dict)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -1700,7 +1710,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         pixels=[a.pixels or _pixels(None) for a in atoms],
         geometry=[a.geometry or _geometry({}) for a in atoms],
         link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
-        keys=[a.key for a in atoms], parser_targets=parser_targets,
+        keys=[a.key for a in atoms], parser_targets=parser_targets, head_scale=dict(deal.head_scale),
         layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
                          for t in a.layout_rewrites if t.strip() != a.text.strip()])
 

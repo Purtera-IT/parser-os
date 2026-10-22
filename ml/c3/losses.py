@@ -153,7 +153,9 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
         if opp.key not in out.logits:
             continue
         if has_answers(batch, opp.key):
-            share = w.head.get(opp.key, 1.0)
+            share = w.head.get(opp.key, 1.0) * batch.head_scale.get(opp.key, 1.0)
+            if not share:
+                continue
             ce = ce + share * w.space.get(opp.space, 1.0) * answer_loss(out.logits[opp.key], batch, opp.key, rw)
             terms += share
         if opp.kind == NUMBER and opp.key in out.numbers:
@@ -183,6 +185,9 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
             continue
         if sizes is not None and o.size not in sizes:
             continue
+        view_scale = batch.head_scale.get(key, 1.0)
+        if not view_scale:
+            continue
         logits = model.judge(out, key, [j.lines for j in js], desc, queries=[j.query for j in js])
         y = torch.tensor([j.answer for j in js], device=logits.device)
         if o.multiple:
@@ -191,9 +196,9 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
                 if j.answers is None:
                     raise ValueError("Set-valued judgment needs its complete answer set")
                 truth[i, list(j.answers)] = 1
-            total = total + F.binary_cross_entropy_with_logits(logits, truth)
+            total = total + view_scale * F.binary_cross_entropy_with_logits(logits, truth)
         else:
-            total = total + F.cross_entropy(logits, y)
+            total = total + view_scale * F.cross_entropy(logits, y)
         terms += 1
     return total / max(terms, 1)
 
