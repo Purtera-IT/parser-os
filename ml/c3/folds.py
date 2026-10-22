@@ -135,13 +135,21 @@ class DescribedRelation(nn.Module):
         self.dst = FoldStack(d_desc, d, n_folds)
         self.a = nn.Linear(d, d, bias=False)
         self.b = nn.Linear(d, d, bias=False)
+        self.none = nn.Parameter(torch.zeros(d))
 
-    def forward(self, x: torch.Tensor, desc: torch.Tensor) -> torch.Tensor:
-        """[R, N, N] scores: relation r from line i (source) to line j (target)."""
+    def forward(self, x: torch.Tensor, desc: torch.Tensor
+                ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Pair scores [R, N, N] and an abstain logit [R, N] per source line.
+
+        Abstain is "this line does not start the relation." The hop drops that
+        mass, so a line that should stay unlinked does not borrow another atom.
+        """
         ps, pd = self.src.params(desc), self.dst.params(desc)
-        out = []
+        out, nones = [], []
+        direction = self.none / self.none.norm().clamp(min=1.0)
         for r in range(desc.shape[0]):
             s = FoldStack.apply(self.a(x), ps, r)
             t = FoldStack.apply(self.b(x), pd, r)
             out.append(s @ t.T / s.shape[-1] ** 0.5)
-        return torch.stack(out)
+            nones.append(s @ direction)
+        return torch.stack(out), torch.stack(nones)

@@ -72,6 +72,13 @@ def heads_accuracy(model: C3Model, batch: Batch, eval_ids: list[int]) -> tuple[f
             continue
         pred = out.logits[o.key].argmax(-1)
         for i in eval_ids:
+            if o.multiple:
+                y_set = batch.multi_targets[o.key][i]
+                if y_set is not None:
+                    predicted = tuple((out.logits[o.key][i] > 0).nonzero().flatten().tolist())
+                    hit += int(predicted == y_set)
+                    total += 1
+                continue
             y = batch.targets[o.key][i]
             if y != IGNORE:
                 hit += int(pred[i] == y)
@@ -135,7 +142,7 @@ def _train_heads(schema: Schema, batch: Batch, seed: int, steps: int, cfg: C3Con
         if view is not None:
             out = model(batch.inputs(), company=batch.company or None)
             loss = loss + weighted(supercharge_loss(model, out, view, texts=batch.texts,
-                                                    batch=batch), TeachWeights())
+                                                    batch=batch), TeachWeights.for_base())
         opt.zero_grad()
         loss.backward()
         opt.step()
@@ -160,7 +167,7 @@ def _train_teacher(schema: Schema, batch: Batch, seed: int, steps: int, lr: floa
 def run_curve(deal: DealExample, schema: Schema | None = None, budgets=(2, 4, 6), seeds=(0,),
               steps: int = 30, teacher_steps: int = 10, cfg: C3Config = SMALL,
               lr: float = 3e-3,
-              make_lm: Callable[[], torch.nn.Module] = lambda: TinyCausalLM(32, 1, 2, 1024),
+              make_lm: Callable[[], torch.nn.Module] = lambda: TinyCausalLM(32, 1, 2, 4096),
               rewrites: bool = False) -> list[Row]:
     schema = schema or load_schema()
     full = featurize(deal, schema)

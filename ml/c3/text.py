@@ -53,7 +53,9 @@ class HashingEncoder(nn.Module):
     def tokens(self, texts: list[str], max_len: int = 128) -> tuple[torch.Tensor, torch.Tensor]:
         """Per-word vectors [B, T, d] and a mask [B, T]: every word kept, so a
         reader can attend to the exact words of a paragraph (operators.py)."""
-        words = [_WORD.findall(str(t or "").lower())[:max_len] or ["<empty>"] for t in texts]
+        words = [_WORD.findall(str(t or "").lower()) or ["<empty>"] for t in texts]
+        if any(len(w) > max_len for w in words):
+            raise ValueError("Encoder paragraph exceeds token budget; do not truncate rich supervision")
         T = max(len(w) for w in words)
         ids, offsets = [], []
         for ws in words:
@@ -74,27 +76,34 @@ class HashingEncoder(nn.Module):
 class HFEncoder(nn.Module):
     """A pretrained encoder, mean-pooled. ``pip install transformers`` first."""
 
-    def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256):
+    def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256,
+                 dtype: torch.dtype | None = None):
         super().__init__()
         from transformers import AutoModel, AutoTokenizer  # optional dependency
 
         self.tok = AutoTokenizer.from_pretrained(name)
-        self.model = AutoModel.from_pretrained(name)
+        kwargs = {"torch_dtype": dtype} if dtype is not None else {}
+        self.model = AutoModel.from_pretrained(name, **kwargs)
         self.dim = self.model.config.hidden_size
         self.max_length = max_length
 
     def forward(self, texts: list[str]) -> torch.Tensor:
         dev = next(self.model.parameters()).device
-        enc = self.tok(list(texts), padding=True, truncation=True,
-                       max_length=self.max_length, return_tensors="pt").to(dev)
+        self._check_budget(texts, self.max_length)
+        enc = self.tok(list(texts), padding=True, truncation=False, return_tensors="pt").to(dev)
         out = self.model(**enc).last_hidden_state
         mask = enc["attention_mask"].unsqueeze(-1).to(out.dtype)
         return (out * mask).sum(1) / mask.sum(1).clamp(min=1)
 
+    def _check_budget(self, texts: list[str], budget: int) -> None:
+        lengths = [len(self.tok(str(t), truncation=False)["input_ids"]) for t in texts]
+        if any(n > budget for n in lengths):
+            raise ValueError("Encoder paragraph exceeds token budget; do not truncate rich supervision")
+
     def tokens(self, texts: list[str], max_len: int = 256) -> tuple[torch.Tensor, torch.Tensor]:
         dev = next(self.model.parameters()).device
-        enc = self.tok(list(texts), padding=True, truncation=True,
-                       max_length=max_len, return_tensors="pt").to(dev)
+        self._check_budget(texts, max_len)
+        enc = self.tok(list(texts), padding=True, truncation=False, return_tensors="pt").to(dev)
         return self.model(**enc).last_hidden_state, enc["attention_mask"].bool()
 
 

@@ -68,12 +68,13 @@ class ParagraphMemory(nn.Module):
 
 
 def context_distillation_loss(teacher_logits: dict[str, torch.Tensor],
-                              student_logits: dict[str, torch.Tensor]) -> torch.Tensor:
+                              student_logits: dict[str, torch.Tensor], *,
+                              multiple: set[str] | None = None) -> torch.Tensor:
     """Mean KL(teacher || student) over the heads both produced. The teacher
     is detached: only the memory (and what reads it) learns from this."""
     keys = [k for k in teacher_logits if k in student_logits]
     if not keys:
         return next(iter(student_logits.values())).new_zeros(())
-    return torch.stack([
-        F.kl_div(student_logits[k].log_softmax(-1), teacher_logits[k].detach().log_softmax(-1),
-                 log_target=True, reduction="batchmean") for k in keys]).mean()
+    from .supercharge import _kl
+    return torch.stack([_kl(student_logits[k], teacher_logits[k].detach(), 1.0,
+                            k in (multiple or set())) for k in keys]).mean()

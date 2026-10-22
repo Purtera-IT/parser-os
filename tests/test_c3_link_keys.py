@@ -102,11 +102,12 @@ def test_ordinary_keys_and_text_fallback_unchanged():
         _link("k_other", "k_orig", rel="supports"),
         # An older parse's key: its text still finds the line.
         _link("lbl_stale", "k_other", rel="context", from_text="Plan for three techs."),
-        # A text key whose text is the target's own: a self-link, dropped and counted.
+        # Repeated text cannot identify which occurrence an old key named.
         _link("lbl_stale2", "k_orig", from_text=TWIN),
     ], JUDGMENTS)
     assert sorted(deal.edges) == [("k_ans", "k_other", "context"), ("k_other", "k_orig", "supports")]
-    assert deal.link_stats["self_links"] == 1
+    assert deal.link_stats["self_links"] == 0
+    assert deal.link_stats["unresolved"] == 1
     assert deal.link_stats["edges"] == 2
     assert deal.link_stats["card_anchored"] == 0
 

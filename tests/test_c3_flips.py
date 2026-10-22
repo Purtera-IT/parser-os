@@ -112,14 +112,14 @@ def test_teacher_practices_supposing_on_look_alikes(schema, batch):
     n = [(f.line, f.condition) for f in sup].index((0, ATOMS[1]["text"]))
     assert gold[n] == ("col:label_type", by_key["col:label_type"].index("dependency"))
     torch.manual_seed(0)
-    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 1024), context_lines=2)
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
     _, parts = brain_loss(teacher, batch, BrainWeights(consolidate=0.0))
     assert parts["flip"] > 0
 
 
 def test_heads_learn_from_the_teachers_reading(schema, batch):
     torch.manual_seed(0)
-    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 1024), context_lines=2)
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
     view = teacher_view(teacher, batch, grounding=False)
     assert view.flipped is not None
     assert next(iter(view.flipped.values())).shape[0] == len(batch.flips)
@@ -150,7 +150,7 @@ def test_masked_lines_carry_nothing_and_pairs_are_scored(schema, batch):
 
 def test_meaning_lock_rewrites(schema, batch):
     torch.manual_seed(0)
-    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 1024), context_lines=2)
+    teacher = Brain(schema, TinyCausalLM(32, 1, 2, 4096), context_lines=2)
     written = rewrite_lines(teacher, batch, max_new=12)   # untrained: noise, but well formed
     assert all(isinstance(r, Rewrite) and batch.labeled[r.line] for r in written)
     rewrites = [Rewrite(0, "Provider fits 4 wall brackets for the 55 inch screens.", True),
