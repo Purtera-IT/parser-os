@@ -47,7 +47,7 @@ from .losses import BrainWeights, LossWeights, brain_loss, c3_loss, teacher_chun
 from .longdeal import plan_long_deal
 from .model import C3Config, C3Model
 from .readiness import digest
-from .schema import GROUP, NUMBER, PAIR, RELATION, Schema, load_schema
+from .schema import GROUP, NUMBER, PAIR, RELATION, Schema, load_schema, shape_digest
 from .supercharge import TeachWeights, supercharge_loss, teacher_view, weighted
 
 SMALL = C3Config(d_text=64, d=64, n_layers=1, n_heads=4, d_r=32, d_q=16, d_head=32,
@@ -983,6 +983,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     views = None
     completed = 0
     schema_sha = digest([asdict(o) for o in schema.opportunities]) if checkpoint else ""
+    schema_shape = shape_digest(schema) if checkpoint else ""
     baseline = majority_baseline(train, validation) if validation else {}
     if baseline:
         print(f"validation baseline single_heads={len(baseline)} "
@@ -1078,7 +1079,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             if check_every and passed % check_every == 0 and passed < steps:
                 at = f"{stage}@{passed}"
                 if checkpoint:
-                    save_checkpoint(f"{checkpoint}.{at}", model, step=completed, schema_sha256=schema_sha)
+                    save_checkpoint(f"{checkpoint}.{at}", model, step=completed, schema_sha256=schema_sha,
+                                    shape_sha256=schema_shape)
                 if check(at):
                     stopped = at
                     break
@@ -1110,10 +1112,12 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         # A stage that took no step would only copy the last file (3.4 GB on
         # the live model), so it saves nothing.
         if checkpoint and completed and steps:
-            save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
+            save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha,
+                            shape_sha256=schema_shape)
             # Every stage keeps its own copy, so a later stage that makes
             # validation worse costs a file pick, not a rerun.
-            save_checkpoint(f"{checkpoint}.{stage}", model, step=completed, schema_sha256=schema_sha)
+            save_checkpoint(f"{checkpoint}.{stage}", model, step=completed, schema_sha256=schema_sha,
+                            shape_sha256=schema_shape)
             if validation_scores:
                 Path(f"{checkpoint}.validation.json").write_text(
                     json.dumps(validation_scores, indent=1, sort_keys=True), encoding="utf-8")
@@ -1125,7 +1129,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     if checkpoint and budget.teacher and teacher_ready:
         save_teacher(f"{checkpoint}.teacher", teacher, "end")
     if checkpoint and completed:
-        save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
+        save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha,
+                        shape_sha256=schema_shape)
     # The live runs leave the holdout to `ml.c3.predict --score`, once, on the
     # run the validation deals picked.
     scores = ({batch.deal_id: _score_oneshot(model, batch, device) for batch in holdout}
@@ -1267,6 +1272,13 @@ def main() -> None:
                              "validation on one part, teacher saved. For catching GPU-only errors")
     parser.add_argument("--init-from", default="",
                         help="Start the student from this checkpoint instead of from scratch")
+    parser.add_argument("--allow-text-change", action="store_true",
+                        help="With --init-from: accept a checkpoint whose schema digest differs when only "
+                             "description texts changed (same opportunity keys, order and answer values); "
+                             "refused otherwise. Re-run the start gate: step-0 scores move with the texts")
+    parser.add_argument("--init-schema-ref", default="",
+                        help="With --allow-text-change, for a checkpoint saved before shape digests: the git "
+                             "commit it was trained on; its schema digest must equal the checkpoint's")
     parser.add_argument("--stage-steps", default="",
                         help="Per-stage step overrides, e.g. lines=30,links=0,teach=0; a stage "
                              "with 0 steps neither trains nor scores")
@@ -1366,8 +1378,16 @@ def main() -> None:
         if args.init_from:
             from .gates import load_checkpoint
 
+            known = {}
+            if args.allow_text_change and args.init_schema_ref:
+                from .gates import schema_digests_at
+
+                full, shape = schema_digests_at(args.init_schema_ref)
+                known[full] = shape
             step = load_checkpoint(args.init_from, student,
-                                   schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+                                   schema_sha256=digest([asdict(o) for o in schema.opportunities]),
+                                   allow_text_change=args.allow_text_change,
+                                   shape_sha256=shape_digest(schema), known_shapes=known)
             print("init_from", args.init_from, "step", step, flush=True)
         released = release_encoder_top(student, args.train_encoder_layers)
         print("encoder_blocks_training", released, flush=True)

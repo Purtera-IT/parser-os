@@ -22,6 +22,7 @@ does not depend on this package, and this package does not depend on it.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -148,6 +149,19 @@ class Schema:
             out.append(o.description)
             out.extend(a.description for a in o.answers)
         return out
+
+
+def shape_of(schema: "Schema") -> list[tuple[str, list[str]]]:
+    """What the weights depend on: each opportunity's key, in order, with its
+    answer values in order. The texts are encoded at run time, so a schema that
+    changes only text keeps this shape (and every tensor's size)."""
+    return [(o.key, [a.value for a in o.answers]) for o in schema.opportunities]
+
+
+def shape_digest(schema: "Schema") -> str:
+    """sha256 of ``shape_of`` (canonical JSON, as ``readiness.digest``)."""
+    return hashlib.sha256(json.dumps(shape_of(schema), sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=False).encode()).hexdigest()
 
 
 def scrub(text: str, universal: bool) -> str:
