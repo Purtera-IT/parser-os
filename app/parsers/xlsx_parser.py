@@ -3019,17 +3019,25 @@ class XlsxParser(BaseParser):
             filename=filename, sheet_name=sheet_name, columns=header_raw
         )
         out: list[EvidenceAtom] = []
-        place_seen: dict[str, int] = {}
+
+        def _place(r: Any) -> str:
+            return f"{str(r.city).strip().title()} {str(r.zip).strip()}" if r.city and r.zip else ""
+
+        place_count: dict[str, int] = {}
+        for r in roster_rows:
+            if _place(r):
+                place_count[_place(r)] = place_count.get(_place(r), 0) + 1
         for site_row in roster_rows:
             sid = (site_row.site_id or "").strip()
             # An address identifies a site just as well as a name does; a
             # roster row with a blank display name is still a real location.
             canon_id = sid or site_row.facility_name or site_row.street_address or ""
-            if not canon_id and site_row.city and site_row.zip:
-                # A place table names a site by its city and ZIP; two sites in one ZIP stay two (010358).
-                place = f"{str(site_row.city).strip().title()} {str(site_row.zip).strip()}"
-                place_seen[place] = place_seen.get(place, 0) + 1
-                canon_id = place if place_seen[place] == 1 else f"{place} #{place_seen[place]}"
+            if not canon_id and _place(site_row):
+                # A place table names a site by its city and ZIP. Two buildings in one ZIP stay two, and neither
+                # name may be a prefix of the other (the duplicate pass reads "X" beside "X 2" as a clipped id
+                # and folds them): each takes its sheet row (010358: 30 buildings share a ZIP with another).
+                place = _place(site_row)
+                canon_id = place if place_count[place] == 1 else f"{place} (row {first_data_row + 1 + site_row.row_index})"
             if not canon_id:
                 continue
             row_index = first_data_row + 1 + site_row.row_index
@@ -3059,6 +3067,10 @@ class XlsxParser(BaseParser):
                          if v is not None and str(v).strip()]
                 if len(cells) > 1:
                     row_text = " | ".join(cells)
+            if not (sid or site_row.facility_name or site_row.street_address) and canon_id:
+                # A place-table row says its own name, the way the base read site rows in training
+                # ("site_id: … | …"): a name the text does not carry is stripped later as unsupported.
+                row_text = f"site_id: {canon_id} | {row_text}"
             source_ref = SourceRef(
                 id=stable_id("src", atom_id),
                 artifact_id=artifact_id,
@@ -3093,8 +3105,10 @@ class XlsxParser(BaseParser):
                     normalized_text=row_text.lower(),
                     value={
                         "kind": "physical_site",
-                        "id": sid or site_row.site_id,  # canonical id
-                        "site_id": sid or site_row.site_id,
+                        # A place-table row's id is its city + ZIP (+ "#2" for a second building there), so the
+                        # duplicate pass keys each building on its own id instead of folding same-ZIP ones (010358).
+                        "id": sid or site_row.site_id or place_name,  # canonical id
+                        "site_id": sid or site_row.site_id or place_name,
                         "name": site_row.facility_name or place_name,
                         "facility_name": site_row.facility_name or place_name,
                         "address": site_row.street_address,
