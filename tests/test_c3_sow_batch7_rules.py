@@ -514,3 +514,14 @@ def test_an_assumption_its_own_cite_assumes_comes_back():
     m._recite_exclusions(c, [{"id": "a1", "text": "Im so going to assume they will have all the packing materials onsite."}])
     assert c["assumptions"] == [{"text": "Packing materials are available onsite for boxing.", "cites": ["a1"], "kind": "fact"}]
     assert c["dropped"] == []
+
+
+def test_the_supplier_head_saying_ours_keeps_a_capability_line_a_provider_material():
+    """The fixup's wording test never overrules col:supplier (heads decide)."""
+    c = _content()
+    c["provider_materials"] = [{"text": "Four (4) access points.", "cites": ["f1"], "kind": "fact"}]
+    m._capability_not_supply(c, [_fact("f1", "We can install the four access points next week.", supplier=["us", 0.93])])
+    assert _texts(c, "provider_materials") == ["Four (4) access points."] and not c["equipment_in_scope"]
+    c["provider_materials"] = [{"text": "Four (4) access points.", "cites": ["f1"], "kind": "fact"}]
+    m._capability_not_supply(c, [_fact("f1", "We can install the four access points next week.", supplier=["us", 0.5])])
+    assert _texts(c, "equipment_in_scope") == ["Four (4) access points."]  # unsure head: the rule still guards

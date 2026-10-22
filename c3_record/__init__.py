@@ -86,6 +86,27 @@ def table_geometry(table_ref: Any) -> dict[str, int]:
     return {"table_row": int(m.group(2)) + 1} if m else {}
 
 
+#: Fold stages whose copies the deal's read holds besides the compile's kept
+#: lines (the parser's ``head_fold.PRE_HEAD_FOLDS``: ``c3_type_base.also_read``
+#: hands every folded copy of these stages to the heads, chrome-classed ones
+#: too). A stage's drop (no survivor) is never read.
+ALSO_READ_STAGES = frozenset({"quoted_history_dedup", "quoted_chatter_dedup", "pasted_note_dedup",
+                              "duplicate_atom_collapse", "pre_classify_dedup"})
+
+
+def read_with_deal(suppressed: Any) -> bool:
+    """True when a line is a model input: a kept line (no ``suppressed``), or
+    a copy a pre-read fold set aside. ``suppressed`` is the labeling page's
+    marker (``{kind: copy|chrome|dropped, stage}``) or an envelope ledger row
+    (``{kind: fold|drop, stage}``)."""
+    if not suppressed:
+        return True
+    if not isinstance(suppressed, dict):
+        return False
+    kind = str(suppressed.get("kind") or "").lower()
+    return str(suppressed.get("stage") or "") in ALSO_READ_STAGES and kind not in ("drop", "dropped")
+
+
 def is_deal_kit(doc_kind: Any) -> bool:
     """Our own pricing workbook, however the document kind is spelled. The
     base is never scored on, and never acts on, a Deal Kit line."""
@@ -151,4 +172,5 @@ def _sort_key(t: Any) -> tuple[int, Any]:
 __all__ = ["EVENT_KINDS", "ROLES", "SIDES", "GEOMETRY_KEYS", "TRAINED_KINDS", "is_deal_kit", "document_times",
            "speaker", "build_rows", "table_geometry", "annotate", "sender", "doc_direction", "is_ours",
            "milestones", "stage_at", "event_kind", "file_kind", "document_kind", "is_email_file", "document_rank",
-           "document_arrivals", "page_position", "page_group", "reading_order"]
+           "document_arrivals", "page_position", "page_group", "reading_order", "ALSO_READ_STAGES",
+           "read_with_deal"]

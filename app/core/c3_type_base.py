@@ -473,6 +473,7 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     from c3_record import build_rows
 
     sha = artifact_sha256 if artifact_sha256 is not None else _DEAL.get("sha")
+    atoms = _with_also(atoms)
     docs = list(documents if documents is not None else (_DEAL.get("documents") or []))
     have = {str(d.get("doc_id")) for d in docs}
     lines, keys, seen = [], [], set()
@@ -531,6 +532,25 @@ def _geometry(atom: Any) -> dict[str, int]:
         return table_geometry(_atom_table_ref(atom))
     except Exception:  # noqa: BLE001 - no geometry is a line read without it, never a failed read
         return {}
+
+
+def also_read(atoms: list[Any]) -> None:
+    """Lines the deal's read must hold that are not in the compile's list:
+    the copies a dedup folded before the heads read (``head_fold``) and the
+    lines an admission regex held aside. Each is read in its own document's
+    context, so the heads decide about it; the compile's list is unchanged.
+    Every read after this (``documents``, typing's ``classify``, the late
+    re-read) appends them after the compile's own lines."""
+    _DEAL["also"] = list(atoms or [])
+
+
+def _with_also(atoms: list[Any]) -> list[Any]:
+    extra = _DEAL.get("also") or []
+    if not extra:
+        return list(atoms)
+    have = {id(a) for a in atoms}
+    ids = {str(getattr(a, "id", "") or "") for a in atoms}
+    return list(atoms) + [a for a in extra if id(a) not in have and str(getattr(a, "id", "") or "") not in ids]
 
 
 def _reading_rank(atoms: list[Any], docs: list[dict[str, Any]]) -> list[int] | None:
@@ -598,6 +618,47 @@ def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
     return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else None
 
 
+#: Type answers that are the type head's reject: in training, chatter and
+#: "_keep" lines carry their drop in label_type (rejected=true) and never a
+#: read:co_action label, so co_action is answering outside what it learned on
+#: them (010388 "Yesterday's game was nuts.": small_talk 0.94, co_action keep
+#: 0.99). Whose call a line's keep is: the type head's here, co_action's on the
+#: lines the type head reads as substantive.
+CHATTER_ANSWERS = frozenset({"small_talk", "_keep"})
+
+
+def type_reading(atom_id: str) -> tuple[str, float] | None:
+    """This compile's type head (col:label_type) reading of one line."""
+    v = (_DEAL.get("types") or {}).get(str(atom_id))
+    return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else None
+
+
+def is_chatter_reading(reading: tuple[str, float] | None) -> bool:
+    """The type head reads the line as small_talk or _keep at its SURE bar."""
+    return bool(reading) and reading[0] in CHATTER_ANSWERS and float(reading[1] or 0.0) >= sure_for(reading[0])
+
+
+def type_head_drops(atom_id: str) -> bool:
+    """True when the type head drops this line (``is_chatter_reading``): no
+    keep head reading rescues it."""
+    return is_chatter_reading(type_reading(atom_id))
+
+
+def stamp_type_reads(atoms: list[Any]) -> int:
+    """Write the type head's reading on every line it read
+    (``value.c3_read = {"type", "p"}``), acted on or not, so the SOW writer
+    and audits see it without a re-read. Returns lines stamped."""
+    n = 0
+    for a in atoms:
+        got = type_reading(str(getattr(a, "id", "") or ""))
+        v = getattr(a, "value", None)
+        if got is None or not isinstance(v, dict):
+            continue
+        v["c3_read"] = {"type": got[0], "p": round(got[1], 4)}
+        n += 1
+    return n
+
+
 def brief_enabled() -> bool:
     return os.environ.get("SOWSMITH_C3_BRIEF", "").strip().lower() in _TRUE
 
@@ -641,7 +702,7 @@ def full_read() -> dict[str, Any]:
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
     _DEAL.clear()
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
-                 reads={}, links=[], deal={}, questions=[])
+                 reads={}, links=[], deal={}, questions=[], also=[])
 
 
 def _delivered_at(sha256: str) -> Any:
@@ -1206,8 +1267,8 @@ _OVERRIDE_TO = _SIMPLE | {"small_talk", "deal_state"}
 
 def _override_simple_types(atoms: list[Any]) -> int:
     """A line whose type the parser set by rule, before typing ever asked the
-    base, takes the base's type where the base is sure (at least 0.85 and its
-    own bar) and both types are simple. Validation deal 010043 (2026-10-15):
+    base, takes the base's type where the base is sure (its one bar,
+    ``sure_for``) and both types are simple. Validation deal 010043 (2026-10-15):
     on the gold-labeled lines this fixed 101 and broke none; at 0.85 the base
     reads 88% right where the parser is 45% on the same lines."""
     from app.core.schemas import AtomType
@@ -1221,7 +1282,7 @@ def _override_simple_types(atoms: list[Any]) -> int:
         if not got or got[0] not in _OVERRIDE_TO:
             continue
         ans, p = str(got[0]), float(got[1] or 0.0)
-        if p < max(0.85, sure_for(ans)):
+        if p < sure_for(ans):
             continue
         t = getattr(a, "atom_type", None)
         before = str(getattr(t, "value", t) or "")
@@ -1262,15 +1323,14 @@ def authority_enabled() -> bool:
 
 
 def _authority_bar(answer: str) -> float:
-    raw = os.environ.get("SOWSMITH_C3_AUTHORITY_SURE_BY_TYPE", "")
-    for part in raw.split(","):
-        k, _, v = part.partition(":")
-        if k.strip() == answer:
-            try:
-                return float(v)
-            except ValueError:
-                pass
-    return _env_float("SOWSMITH_C3_AUTHORITY_SURE", 0.9)
+    """The one bar every line's type answer must reach to act: the same
+    ``sure_for`` typing uses (``SOWSMITH_C3_SURE``, per type by
+    ``SOWSMITH_C3_SURE_BY_TYPE``). It was a second bar (0.9,
+    ``SOWSMITH_C3_AUTHORITY_SURE``) for every line typing did not route, so
+    a scope_item/entity line took the head's type at 0.5 and every other line
+    needed 0.9: 1549 of 2183 read lines on the 8 audited deals were off the
+    0.5 path (overrides.md point 7). The old variables are no longer read."""
+    return sure_for(answer)
 
 
 #: Never assigned by authority: a placeholder, or a type that only exists as
@@ -1492,13 +1552,14 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         t = getattr(a, "atom_type", None)
         before = str(getattr(t, "value", t) or "")
         v = dict(getattr(a, "value", None) or {}) if isinstance(getattr(a, "value", None), dict) else {}
-        # At the end the base's answer wins for every type that needs no
-        # values, locked or not: a later stage rebuilds a line's value and
-        # loses its lock (010043's "Do you have the model of the camera?" was
-        # read answered_question at 0.9985 and ended open_question, so the
-        # brief made it a customer responsibility).
-        if final and not is_locked(a) and ans not in _VALUELESS:
-            continue
+        # At the end the base's answer wins for every line it read at its bar,
+        # locked or not, valued or not: a later stage rebuilds a line's value
+        # and loses its lock (010043's "Do you have the model of the camera?"
+        # was read answered_question at 0.9985 and ended open_question, so
+        # the brief made it a customer responsibility; 010388's "Nick
+        # Robertow", stakeholder 0.99, ended deal_metadata). The rule's type
+        # rides on the line as a hint (value.rule_type). A value type whose
+        # values the line lacks is parked for the fill path (settle).
         if before == ans:
             if not final and not is_locked(a):
                 v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
@@ -1525,6 +1586,8 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         if before and before not in alt:
             alt.append(before)
         v["alt_atom_types"] = alt
+        if final and before:
+            v["rule_type"] = before
         v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
         if ans == "small_talk":
             v.setdefault("rejected_by", "c3")

@@ -1256,6 +1256,10 @@ def compile_project(
         from app.core.email_chrome import divert_chrome
 
         _n_before = len(atoms)
+        # Left as a pre-head drop on purpose (overrides.md point 2): the heads
+        # would surface most chrome keeps wrongly today (signature addresses
+        # as sites, "CONFIDENTIALITY NOTICE"), so the chrome keep-errors are
+        # labeled first; then this becomes value.chrome_reason, a feature.
         atoms = divert_chrome(atoms, suppressed_atoms)
         if len(atoms) != _n_before:
             warnings.append(
@@ -1285,11 +1289,14 @@ def compile_project(
     # Lines a parser's admission regex refused (a greeting, a sign-off, the
     # name under it) are KEPT atoms flagged chatter, so the labeling page can
     # show them and the admission head gets its negatives. They are held out
-    # of every stage from here to packetizing -- threading, dedup, the
+    # of the rule stages from here to packetizing -- threading, dedup, the
     # substance gate, typing, entity resolution, signals, packets -- and put
-    # back only for text coverage and the result. So no head ever reads one,
-    # and every other atom, entity, edge and packet is exactly what it would be
-    # without them.
+    # back for text coverage and the result, so every other atom, entity, edge
+    # and packet is exactly what it would be without them. The HEADS read
+    # them: the deal's read holds them (c3_type_base.also_read) and authority
+    # types them, so the regex is only a hint (value.admission_regex). 010358:
+    # "Physically locates and documents the carrier demarc ..." was held as a
+    # signature and ended small_talk; the type head read dependency 0.83.
     held_chatter = [a for a in atoms if _ADMISSION_REJECT_FLAG in (getattr(a, "review_flags", None) or [])]
     if held_chatter:
         _held_ids = {id(a) for a in held_chatter}
@@ -2131,9 +2138,21 @@ def compile_project(
             _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
                               {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")})
+            # The copies a dedup folded before this point are read with the
+            # deal: which copy survives is the keep head's call (head_fold).
+            from app.core.head_fold import fold_losers as _fold_losers
+
+            # And the lines an admission regex held aside (greetings, sign-offs,
+            # signature blocks): the regex is a hint on the line, the heads
+            # read it with its message and decide its type and keep.
+            _c3_deal.also_read(_fold_losers(suppressed_atoms) + list(held_chatter))
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
+    # document_job_scope is left as it is (overrides.md point 5): its set-aside
+    # is already a head decision (jdg:document_job), and it is off on dev
+    # (SOWSMITH_DOCUMENT_JOB_SCOPE=0). Passing the verdict to the line heads
+    # as context needs that feature in training first.
     with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
         _djs_dropped = 0
         _djs_notes: list[str] = []
@@ -2198,9 +2217,27 @@ def compile_project(
             with telemetry.stage("c3_base_read", input_count=len(atoms)) as _rstage:
                 _c3_auth.documents(atoms)
                 telemetry.end_stage(_rstage, output_count=len(_c3_auth._DEAL.get("types") or {}))
+        # Each fold made before the read keeps the copy the keep head keeps.
+        try:
+            from app.core.head_fold import fold_by_heads as _fold_by_heads
+
+            atoms, _head_swaps = _fold_by_heads(atoms, suppressed_atoms)
+            if held_chatter:
+                held_chatter, _held_swaps = _fold_by_heads(held_chatter, suppressed_atoms)
+                _head_swaps = _head_swaps + _held_swaps
+            if _head_swaps:
+                _c3_auth.also_read((_c3_auth._DEAL.get("also") or []) + [_old for _, _old in _head_swaps])
+                warnings.append(f"INFO: head_fold kept {len(_head_swaps)} head-kept copy(ies) over the "
+                                f"survivor a dedup picked")
+        except Exception as exc:
+            warnings.append(f"WARNING: head_fold failed: {type(exc).__name__}: {exc}")
         _auth_n = _c3_auth.apply_authority(atoms)
         if _auth_n:
             warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
+        if held_chatter:
+            _held_n = _c3_auth.apply_authority(held_chatter)
+            if _held_n:
+                warnings.append(f"INFO: C3 base typed {_held_n} admission-held line(s) (authority)")
     except Exception as exc:
         warnings.append(f"WARNING: C3 type authority failed: {type(exc).__name__}: {exc}")
 
@@ -2622,6 +2659,18 @@ def compile_project(
             _kept_ids = {id(a) for a in atoms}
             _sem_notes = _dropped_atom_notes("semantic_dedup", [a for a in before_sem_atoms if id(a) not in _kept_ids])
         telemetry.end_stage(stage, output_count=len(atoms), warnings=_sem_notes)
+
+    # Each semantic fold keeps the copy the keep head keeps (head_fold): the
+    # read holds every copy, so the survivor is chosen before entities, edges
+    # and packets name it.
+    try:
+        from app.core.head_fold import POST_HEAD_FOLDS as _post_folds, fold_by_heads as _fold_post
+
+        atoms, _post_swaps = _fold_post(atoms, suppressed_atoms, stages=_post_folds)
+        if _post_swaps:
+            warnings.append(f"INFO: head_fold kept {len(_post_swaps)} head-kept copy(ies) over semantic_dedup's survivor")
+    except Exception as exc:
+        warnings.append(f"WARNING: head_fold (post) failed: {type(exc).__name__}: {exc}")
 
     # Two documents, one clause template, different figures ($500 vs $300
     # cancellation fee, two weeks vs five business days, ZIP 30641 vs 30341 —
@@ -3655,6 +3704,11 @@ def compile_project(
     try:
         from app.core import c3_type_base as _c3_final
 
+        # A late re-read still holds every folded copy, so the readings the
+        # folds were settled on stand beside the new lines'.
+        from app.core.head_fold import FINAL_FOLDS as _final_folds, fold_losers as _final_losers
+
+        _c3_final.also_read(_final_losers(suppressed_atoms, _final_folds))
         _new = _c3_final.reread_if_new(atoms)
         if _new:
             _late = _c3_final.apply_authority(atoms)
@@ -3669,6 +3723,13 @@ def compile_project(
         _fa = _c3_final.apply_authority(atoms, final=True)
         if _fa:
             warnings.append(f"INFO: C3 base restored {_fa} line(s) a rule had re-typed (authority)")
+            # A value type the final pass gave back waits for its values.
+            _sa2, _sf2 = _c3_final.settle_base_answers(atoms)
+            if _sa2 or _sf2:
+                warnings.append(f"INFO: C3 base answers applied after the final pass: {_sa2} assigned, {_sf2} filled")
+        # Every line's type reading rides on it (value.c3_read), acted on or
+        # not: the SOW writer applies the type head's chatter drop from it.
+        _c3_final.stamp_type_reads(atoms)
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")

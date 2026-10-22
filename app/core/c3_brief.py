@@ -158,6 +158,15 @@ def _base_type(atom_id: str) -> tuple[str, float]:
     return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else ("_absent", 0.0)
 
 
+def _type_head_drops(atom_id: str) -> bool:
+    try:
+        from app.core.c3_type_base import type_head_drops
+
+        return type_head_drops(atom_id)
+    except Exception:
+        return False
+
+
 def _when_of(atom: Any) -> str:
     """The day the line's message or note was written (YYYY-MM-DD), or ''."""
     try:
@@ -269,6 +278,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         return fallback, "rule"
 
     kept_unsure: list[dict[str, Any]] = []
+    #: Lines the keep head kept whose base type is answered_question,
+    #: list_header or internal_question: kept, and the type rides on the item.
+    not_brief_kept: dict[str, str] = {}
     for a in atoms:
         aid, t = str(a.id), _type(a)
         status = str(getattr(getattr(a, "review_status", ""), "value", getattr(a, "review_status", "")))
@@ -288,6 +300,15 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             why["rule:derived"] += 1
             continue
         act, p = r(aid, "read:co_action") if use["read:co_action"] else ("_absent", 0.0)
+        # The type head decides chatter: a line it reads small_talk or _keep at
+        # its SURE bar goes, whatever co_action says (co_action was never
+        # labeled on those lines; their drop is the label_type). co_action
+        # decides keep among the lines the type head reads as substantive.
+        if _type_head_drops(aid):
+            tt, tp = _base_type(aid)
+            left_out.append({"id": aid, "reason": f"type head {tt}", "by": "base:col:label_type", "p": round(tp, 3)})
+            why["base:type_chatter"] += 1
+            continue
         # small_talk is a type, not a keep decision: when co_action keeps the
         # line it stays (in the body at KEEP_BAR, else "also mentioned").
         # 010426's only date, "the three weeks after Thanksgiving", read
@@ -297,11 +318,20 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                              "by": "rule:type"})
             why["rule:never"] += 1
             continue
+        # The base's type says HOW a kept line is used, not WHETHER it is kept:
+        # like rule:never above, an answered question, heading or internal
+        # question the keep head keeps stays, carrying its type for the writer
+        # (010043 "Can you guys provide a quote for installers for the Verkada
+        # cameras ...?" keep 0.98, answered_question 0.85; 010038 "Site
+        # Contacts:" list_header, keep 1.00). Only without a keep it goes.
         nb = _not_brief(a)
-        if nb:
+        if nb and not (act == "keep" and p >= MAYBE_BAR):
             left_out.append({"id": aid, "reason": f"base type {nb}", "by": "base:type"})
             why["base:type"] += 1
             continue
+        if nb:
+            not_brief_kept[aid] = nb
+            why["head:keep_over_base_type"] += 1
         if act != "_absent":
             if act == "keep" and p >= KEEP_BAR:
                 kept.append((a, p, _by("read:co_action")))
@@ -383,6 +413,8 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by}
         if v is not None:
             item["judge"] = {"section": v.section, "owner": v.owner, "p": round(float(v.section_conf), 3)}
+        if aid in not_brief_kept:
+            item["base_type"] = not_brief_kept[aid]
         sections[sec].append(item)
     _customer_furnished(sections, by_id, r if have_reads else None)
     for sec in sections:
@@ -462,7 +494,8 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             # Call chatter is typed open_question too ("can you meet us in
             # Tampa?"): the line must also be one co_action keeps.
             act, pa = r(aid, "read:co_action") if use["read:co_action"] else ("keep", 1.0)
-            if act == "keep" and pa >= MAYBE_BAR and not _deal_kit(a) and not _PLACEHOLDER.match(a.raw_text):
+            if act == "keep" and pa >= MAYBE_BAR and not _deal_kit(a) and not _PLACEHOLDER.match(a.raw_text) \
+                    and not _type_head_drops(aid):
                 hit = ("open_question", "rule:type+" + _by("read:co_action") if use["read:co_action"] else "rule:type")
         # A question the base reads as already answered is not asked.
         if hit and _not_brief(a):
@@ -482,7 +515,8 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             continue
         a = by_id[ids[0]]
         act, pa = r(ids[0], "read:co_action") if use["read:co_action"] else ("keep", 1.0)
-        if act != "keep" or pa < MAYBE_BAR or _deal_kit(a) or _PLACEHOLDER.match(a.raw_text) or _not_brief(a):
+        if act != "keep" or pa < MAYBE_BAR or _deal_kit(a) or _PLACEHOLDER.match(a.raw_text) or _not_brief(a) \
+                or _type_head_drops(ids[0]):
             continue
         seen_q.add(ids[0])
         # The packet's reason is boilerplate ("Open question from transcript
@@ -511,7 +545,8 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "version": 2,
         "service": service,
         "sections": dict(sections),
-        "also_mentioned": [{"id": str(a.id), "text": a.raw_text[:200], "keep_p": round(p, 3), "when": _when_of(a)}
+        "also_mentioned": [{"id": str(a.id), "text": a.raw_text[:200], "keep_p": round(p, 3), "when": _when_of(a),
+                            **({"base_type": not_brief_kept[str(a.id)]} if str(a.id) in not_brief_kept else {})}
                            for a, p in sorted(maybe, key=lambda x: -x[1])[:150]],
         "questions": questions,
         "conflicts": conflicts[:40],
@@ -1452,7 +1487,7 @@ def job_details(atoms: list[Any], kept: set[str] | None = None) -> list[dict[str
             continue
         # A line co_action kept is eligible whatever its type reads (small_talk
         # is a type, not a keep decision); the other types are never details.
-        if (t in _NOT_DETAIL and not (t == "small_talk" and kept is not None)) or _not_brief(a):
+        if (t in _NOT_DETAIL and not (t == "small_talk" and kept is not None)) or (kept is None and _not_brief(a)):
             continue
         v = a.value if isinstance(getattr(a, "value", None), dict) else {}
         if v.get("superseded_by") or _deal_kit(a):

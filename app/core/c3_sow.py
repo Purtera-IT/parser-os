@@ -469,13 +469,64 @@ _ABSENCE_LINE = re.compile(r"(?i)^\s*(no\b.{3,80}\b(were|was|are|is|have been|ha
 _CHATTER_TYPES = ("small_talk", "signature")
 
 
+def _type_read(a: dict[str, Any]) -> tuple[str, float] | None:
+    """The type head's reading of an envelope atom: ``c3_read`` (stamped on
+    every line it read), else the ``c3_label`` it acted with."""
+    st = a.get("structured") or {}
+    for k in ("c3_read", "c3_label"):
+        r = st.get(k)
+        if isinstance(r, dict) and r.get("type") and r.get("p") is not None:
+            return str(r["type"]), float(r.get("p") or 0.0)
+    return None
+
+
+def _type_drops(envelope: dict[str, Any]) -> set[str]:
+    """Lines the type head reads as small_talk or _keep at its SURE bar: the
+    type head's drop, which no keep reading rescues (co_action was never
+    labeled on those lines)."""
+    from app.core.c3_type_base import is_chatter_reading
+
+    return {str(a.get("id")) for a in envelope.get("atoms") or [] if is_chatter_reading(_type_read(a))}
+
+
+def _head_kept(envelope: dict[str, Any]) -> set[str]:
+    """The lines the keep head (read:co_action) kept, at the brief's MAYBE_BAR
+    or above: those it filed in a section (``by`` names the head) and those it
+    kept as also mentioned, less the lines the type head drops as chatter
+    (co_action decides only among lines the type head reads as substantive).
+    Empty when the brief had no keep reading."""
+    brief = envelope.get("c3_brief") or {}
+    out = {str(x.get("id")) for xs in (brief.get("sections") or {}).values() for x in xs or []
+           if "read:co_action" in str(x.get("by") or "")}
+    out |= {str(x.get("id")) for x in brief.get("also_mentioned") or []}
+    return out - _type_drops(envelope)
+
+
+def _keep_gate(envelope: dict[str, Any]) -> set[str] | None:
+    """Every line the keep head kept, at any confidence (``_head_kept`` plus
+    the brief's kept_unsure), or None when the brief had no keep reading and
+    the rules decide alone."""
+    brief = envelope.get("c3_brief") or {}
+    if "read:co_action" not in ((brief.get("decided_by") or {}).get("heads_used") or []):
+        return None
+    return _head_kept(envelope) | ({str(x.get("id")) for x in brief.get("kept_unsure") or []} - _type_drops(envelope))
+
+
 def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
     """Atoms that are not facts of the job whatever section the brief put them
     in: typed small talk or signature (the type head's label, else the
     parser's type), a parser admission reject, and the items of a list whose
     other items are mostly chatter (010082's signature menu "Need help with:
     Firewall Request / ISP Upgrade / Network Consultation/New Installation /
-    New Unit Opening": the one item typed scope_item became a Provider task)."""
+    New Unit Opening": the one item typed scope_item became a Provider task).
+
+    Never a line the keep head kept: whether a line is a fact of the job is
+    read:co_action's decision, and a type (the type head's small_talk, the
+    parser's chatter type, an admission regex) is not a veto. 010358's survey
+    lines ("Conducts the on-site Ekahau wireless RF survey ...", keep 0.96)
+    were typed small_talk by the email signature regex and removed here. The
+    rules still guard the lines the keep head did not keep (unsure, typed-only,
+    answered questions)."""
     out: set[str] = set()
     lines: dict[tuple, dict[int, list[bool]]] = {}
     items: list[tuple[str, tuple, int]] = []
@@ -500,7 +551,7 @@ def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
         near = [c for l2, cs in lines[key].items() if l2 != ln and abs(l2 - ln) <= 3 for c in cs]
         if len(near) >= 2 and sum(near) >= 0.6 * len(near):
             out.add(i)
-    return out
+    return (out - _head_kept(envelope)) | _type_drops(envelope)
 
 
 #: A written instruction about the work or what stays: "should be moved behind
@@ -578,7 +629,8 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": x.get("under") or "",
-                        "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or ""})
+                        "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or "",
+                        "base_type": x.get("base_type") or ""})
     # A line the keep head rejected at a coin flip has not been decided: the
     # SOW is where a dropped cable run becomes an unpriced one (010043's
     # "IDF to Front door 146ft", reject 0.53), so the writer sees it, marked.
@@ -603,14 +655,23 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # transcripts, where scope words are mostly talk.
     docs = {str(d.get("artifact_id") or d.get("id") or ""): str(d.get("filename") or "")
             for d in envelope.get("documents") or []}
+    # The keep head's own keeps (sections, also mentioned, kept below the bar):
+    # with a keep reading, a regex (_DIRECTIVE, _PROGRAM) only marks which of
+    # these lines say the job; it never adds a line the head left out.
+    gate = _keep_gate(envelope)
+    keep_read, head_kept = gate is not None, gate or set()
     typed = []
     for a in envelope.get("atoms") or []:
         lab = (a.get("structured") or {}).get("c3_label") or {}
         txt = str(a.get("text") or "")
-        # When the type head abstains (_keep), the parser's own scope type
-        # stands at a looser bar: 010171's "We would like to have the Logitech
-        # Sight installed in this specific room" (_keep 0.39, parsed scope_item).
-        abstained = lab.get("type") == "_keep" and str(a.get("atom_type") or "") in ("scope_item", "task", "requirement")
+        # A parser type never adds a line: when the type head abstains (_keep)
+        # and the keep head left the line out, it stays out. (It was let in at
+        # 0.35 on the parser's scope type: 22 lines on the 8 audited deals,
+        # 010387's "If you received this email in error, please contact the
+        # sender ..." among them; overrides.md point 9. 010171's "We would like
+        # to have the Logitech Sight installed ..." reaches the writer as
+        # kept_unsure: the keep head kept it, below the brief's bar.)
+        abstained = False
         if (a.get("id") in seen or (lab.get("type") not in _SCOPE_TYPES and not abstained)
                 or float(lab.get("p") or 0) < (0.35 if abstained else TYPED_BAR)
                 or not 15 < len(txt) < 600 or _CHATTER.search(txt.strip()) or txt.count("|") >= 2
@@ -639,6 +700,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
         txt = str(a.get("text") or "")
         name = docs.get(str(a.get("artifact_id") or ""), "").lower()
         if (a.get("id") in seen or a.get("id") in got or not 15 < len(txt) < 600 or not directive.search(txt)
+                or (keep_read and str(a.get("id")) not in head_kept)
                 or "fireflies" in name or "transcript" in name or (a.get("structured") or {}).get("quoted")
                 or txt.rstrip().endswith("?")):
             continue
@@ -649,7 +711,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # devices per site) is a fact for the program assumptions however low the
     # keep head's confidence (010264 pass V: all of it _keep 0.2-0.5 in notes
     # 116624101737 / 116628536395 and transcript 01M1KXT9, cut by the caps).
-    prog = _program_atoms(envelope)
+    prog = [x for x in _program_atoms(envelope) if not keep_read or x["id"] in head_kept]
     kinds = {k for a in prog for k, rx in _PROGRAM.items() if rx.search(a["text"])}
     for a in (prog if len(kinds) >= 2 and len(prog) >= 2 else []):  # as _program_model: a model, not a passing mention
         if a["id"] not in seen:
@@ -688,6 +750,13 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
              # cables: Will Customer have them pre-hung in racks and labeled",
              # 010147 pass Y, became a customer commitment).
              or _form_question(str(a.get("text") or ""))}
+    # The brief keeps a question the keep head kept although the base reads it
+    # answered (c3_brief: the base type says how a line is used): it is the
+    # request, asked, never a commitment.
+    asked |= {x["id"] for xs in secs.values() for x in xs or []
+              if x.get("base_type") in ("answered_question", "internal_question")}
+    asked |= {x["id"] for x in brief.get("also_mentioned") or []
+              if x.get("base_type") in ("answered_question", "internal_question")}
     for f in out:
         f["pictured"] = f["id"] in pictured or f["section"] == "figure"
         f["quoted"] = f["id"] in quoted
@@ -7492,7 +7561,8 @@ def _program_model(c: dict[str, Any], envelope: dict[str, Any]) -> None:
     one address were kept facts and none reached the SOW, which instead said
     "Install one clock at each address/location"). Each line cites the
     facts that state it; a kind no fact states is not written."""
-    found = _program_atoms(envelope, 99)
+    gate = _keep_gate(envelope)
+    found = [a for a in _program_atoms(envelope, 99) if gate is None or a["id"] in gate]
     if not found:
         return
     by: dict[str, list[dict[str, str]]] = {}
@@ -8971,10 +9041,17 @@ def _capability_not_supply(content: dict[str, Any], fs: list[dict[str, Any]]) ->
     a customer duty, customer material or procurement exclusion names it,
     else Equipment in Scope."""
     by = {f["id"]: f["text"] for f in fs}
+    # The supplier head (col:supplier) decides who supplies a cited line: a
+    # cite it reads as ours at its bar keeps the line a Provider material,
+    # whatever the capability wording says.
+    ours = {f["id"] for f in fs if f.get("supplier") and f["supplier"][0] == "us"
+            and float(f["supplier"][1] or 0) >= SUPPLIER_BAR}
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
     pm = content.get("provider_materials") or []
     for x in list(pm):
         if not isinstance(x, dict) or x.get("standard") or not x.get("cites"):
+            continue
+        if any(c in ours for c in x["cites"]):
             continue
         cited = [by.get(c, "") for c in x["cites"]]
         if any(_WE_SUPPLY.search(t) for t in cited) or not any(_CAPABILITY.search(t) for t in cited):

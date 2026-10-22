@@ -359,6 +359,21 @@ def _typed_by_base(atom: Any) -> bool:
     return str(getattr(t, "value", t) or "") == str(lab.get("type") or "")
 
 
+def _base_reads_otherwise(atom: Any) -> bool:
+    """The C3 base read this line and is sure it is something other than small
+    talk: the rule's small_talk (an admission regex, the chatter test) is a
+    hint, and the head's answer stands (010043: "6125 Tyvola Centre Dr
+    Charlotte NC 28217" read physical_site, ended small_talk by the rule)."""
+    try:
+        from app.core.c3_type_base import _DEAL, sure_for
+    except Exception:  # pragma: no cover - the base is optional
+        return False
+    got = (_DEAL.get("types") or {}).get(str(getattr(atom, "id", "") or ""))
+    if not got or got[0] in (None, "small_talk", "_keep"):
+        return False
+    return float(got[1] or 0.0) >= sure_for(str(got[0]))
+
+
 def retype_small_talk(atoms: list[Any]) -> int:
     """Type relationship talk as ``small_talk``, the reject type the labeler
     already has, instead of deal_metadata (010087: 478 of a call's 717 lines
@@ -370,7 +385,7 @@ def retype_small_talk(atoms: list[Any]) -> int:
     n = 0
     previous = _previous_turns(atoms)
     for atom in atoms:
-        if _typed_by_base(atom):
+        if _typed_by_base(atom) or _base_reads_otherwise(atom):
             continue
         if not is_small_talk_line(atom):
             t = getattr(atom, "atom_type", None)
