@@ -193,6 +193,14 @@ def _fit_calibrator() -> None:
 
 
 def main() -> int:
+    # The C3 base's daily report needs no embedder, so it runs first.
+    try:
+        from app.learning.c3_report import run as c3_report
+
+        c3_report()
+    except Exception as e:
+        print(f"[nightly] c3 report skipped: {e}")
+
     if not _embedder_live():
         print("[nightly] embedder unreachable — skipping retrain (no training on zero-vectors)")
         return 0
@@ -224,10 +232,10 @@ def main() -> int:
     except Exception as e:
         print(f"[nightly] gold import skipped: {e}")
 
-    # Serving deflector retrains — _type_head / _span_heads round-trip to the
-    # worker via write_back_ml -> fetch_ml, so promotions reach live serving.
+    # Serving deflector retrains — _span_heads round-trip to the worker via
+    # write_back_ml -> fetch_ml, so promotions reach live serving. (The
+    # atom-type head retrain is gone: the C3 base types lines now.)
     for mod_name, fn_name in (
-        ("app.core.type_head", "retrain_if_stale"),
         ("app.core.span_extractor", "retrain_span_heads"),
     ):
         try:

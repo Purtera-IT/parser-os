@@ -756,6 +756,16 @@ def _attach_rule_decisions(atoms: "list[Any]") -> int:
         return 0
 
 
+def _run_as_of(project_dir: Any) -> str | None:
+    """The cutoff this run was given (manifest context.as_of), or None."""
+    try:
+        from app.core.orbitbrief_envelope import _load_manifest_run_cutoff
+
+        return _load_manifest_run_cutoff(Path(project_dir))
+    except Exception:
+        return None
+
+
 def compile_project(
     project_dir: Path,
     project_id: str | None = None,
@@ -787,9 +797,28 @@ def compile_project(
     except Exception:  # pragma: no cover - never break a compile over this
         pass
 
+    # Setup before the first stage was untimed: 010043 (2026-10-15) spent
+    # 102 s here with no stage open. Each step's seconds go to the warnings.
+    import time as _setup_time
+
+    _setup_s: dict[str, float] = {}
+    _t0 = _setup_time.perf_counter()
+
+    # Wake the C3 base service now, so its start-up overlaps reading the
+    # documents. No-op unless SOWSMITH_C3_URL is set and the layer is on.
+    try:
+        from app.core import c3_type_base
+
+        c3_type_base.warm()
+    except Exception:  # pragma: no cover - never break a compile over this
+        pass
+    _setup_s["c3_warm"] = _setup_time.perf_counter() - _t0
+
     # Opt-in: activate the feedback store iff SOWSMITH_FEEDBACK_STORE_DB is set.
     # No-op otherwise, so default compiles (and the test suite) are unchanged.
+    _t0 = _setup_time.perf_counter()
     _maybe_wire_feedback_store()
+    _setup_s["wire_feedback_store"] = _setup_time.perf_counter() - _t0
     # Cross-container instant learning: pull PM corrections the SERVICE mirrored
     # to blob into this worker's live store so decide() honors them on THIS
     # compile. Gated + best-effort; no-op unless SOWSMITH_FEEDBACK_BLOB is on.
@@ -801,11 +830,24 @@ def compile_project(
     try:
         from app.core import cache_blob as _cb
 
-        _cb.sync_ocr_into_cache()
-        _cb.sync_embed_into_cache()
+        _t0 = _setup_time.perf_counter()
+        # In the background too: an OCR lookup waits for it (OcrCache.get),
+        # so only a deal that reads pictures can wait, and only on a merge.
+        _cb.sync_ocr_into_cache_background()
+        _cb.sync_vision_into_cache_background()
+        _setup_s["sync_ocr_cache_start"] = _setup_time.perf_counter() - _t0
+        # The embedding mirror is 1.7 GB (dev, 2026-10-15) and the warm worker
+        # scales from zero, so nearly every compile lands on an empty cache:
+        # merging it cost ~53 s to save a few seconds of batched re-embedding
+        # (same model, same vectors). Opt in with SOWSMITH_EMBED_CACHE_SYNC=1.
+        if os.environ.get("SOWSMITH_EMBED_CACHE_SYNC", "").strip().lower() in ("1", "true", "yes", "on"):
+            _t0 = _setup_time.perf_counter()
+            _cb.sync_embed_into_cache_background()
+            _setup_s["sync_embed_cache_start"] = _setup_time.perf_counter() - _t0
     except Exception:  # pragma: no cover - a cache restore must never break a compile
         pass
 
+    _t0 = _setup_time.perf_counter()
     try:
         from app.core import feedback_blob as _fb
         from app.core.decide import get_store as _get_store
@@ -815,6 +857,7 @@ def compile_project(
             _fb.sync_into_store(_st)
     except Exception:  # pragma: no cover - sync must never break a compile
         pass
+    _setup_s["sync_feedback_store"] = _setup_time.perf_counter() - _t0
 
     resolved_project_id = project_id or project_dir.name
 
@@ -835,12 +878,20 @@ def compile_project(
             project_dir, explicit=domain_pack
         )
     set_active_domain_pack(resolved_domain_pack)
+    try:
+        from app.core import telemetry as _tel_reset
+
+        _tel_reset.CALLS_BY_STAGE.clear()
+    except Exception:
+        pass
     telemetry = CompileTelemetry(
         project_id=resolved_project_id,
         on_stage_end=stage_callback,
         on_stage_start=stage_start_callback,
     )
     warnings: list[str] = []
+    warnings.append("INFO: compile setup seconds " + ", ".join(
+        f"{k}={v:.1f}" for k, v in _setup_s.items()))
     if pack_routing_decision is not None:
         warnings.append(
             f"INFO: domain pack '{resolved_domain_pack.pack_id}' selected via "
@@ -1253,6 +1304,15 @@ def compile_project(
         _hh_ids = {id(a) for a in held_headings}
         atoms = [a for a in atoms if id(a) not in _hh_ids]
 
+    # The same roster sent twice (two workbooks): the copy without a city takes the other's,
+    # so whichever copy survives dedup knows where its site is.
+    try:
+        from app.core.roster_locations import share_roster_locations
+
+        share_roster_locations(atoms)
+    except Exception as exc:  # pragma: no cover - extraction enrichment never fails a compile
+        warnings.append(f"WARN: roster location share skipped: {type(exc).__name__}: {exc}")
+
     # Email threading: each .eml is a separate artifact, so a short reply
     # ("yes, go ahead with 36") parses as an atom with no idea what it answers.
     # Reconstruct the conversation across files (RFC In-Reply-To/References,
@@ -1478,9 +1538,15 @@ def compile_project(
             # threading, so every downstream stage (and the labeler) can tell
             # our own account exec from the reseller's rep.
             try:
-                from app.core.deal_parties import stamp_parties
+                from app.core.deal_parties import stamp_note_parties, stamp_parties
 
                 _stamped = stamp_parties(atoms)
+                # A HubSpot note's lines too, here and not only in the
+                # envelope: the base reads the deal mid-compile, and it was
+                # trained on the labeling page, which shows the envelope's
+                # speakers. Read before this, every note line had no speaker
+                # (live 010387: 58 lines the training record had as ours).
+                _stamped += stamp_note_parties(atoms)
                 if _stamped:
                     warnings.append(f"INFO: deal_parties stamped who-said-it on {_stamped} atom(s)")
             except Exception as exc:
@@ -1979,6 +2045,13 @@ def compile_project(
         # downstream graph_builder anchors land on `device:unknown` and
         # quantity_conflict edges never form.  See PRODUCTION_GAPS.md P0.2.
         atoms_enriched, keys_added = enrich_entity_keys(atoms, resolved_domain_pack)
+        try:
+            from app.core.entity_extraction import ENRICH_SECONDS as _EES
+
+            enrich_warnings.append("INFO: enrich_entities seconds " + ", ".join(
+                f"{k}={v}" for k, v in _EES.items()))
+        except Exception:
+            pass
         if atoms_enriched:
             enrich_warnings.append(
                 f"INFO: enriched {atoms_enriched} atoms with {keys_added} entity keys "
@@ -2024,6 +2097,43 @@ def compile_project(
     # beside the SD-WAN scope). Judged per document through decide() -- a PM's
     # correction first, then the model -- and only a confident "other job" sets
     # a document aside. Lossless: its atoms go to the suppression ledger.
+    # Every lesson lookup from here on embeds its line's text, one network
+    # call per line on a replica whose cache is empty (the warm worker scales
+    # from zero): 010043 spent ~90 s across typing, span admission and open
+    # questions doing that (2026-10-15). One batched call warms the cache for
+    # the text form they look up; what they decide is unchanged.
+    # Not gated on the store being loaded: it loads in the background, and a
+    # warm-up that skipped because the store was not there YET left every later
+    # lookup embedding one line per round trip (010082, 2026-10-16: span
+    # admission 1,103 s, open questions 120 s, bom_owner 323 s; 655 s the night
+    # before, when the store happened to be ready).
+    try:
+        if True:
+            from app.core.embedding_retrieval import embed_texts as _warm_embed
+
+            _t_warm = time.perf_counter()
+            _warm = sorted({str(getattr(a, "raw_text", "") or "").strip()[:600] for a in atoms} - {""})
+            if _warm:
+                _warm_embed(_warm)
+            warnings.append(f"INFO: lesson-lookup embeddings warmed for {len(_warm)} lines "
+                            f"in {time.perf_counter() - _t_warm:.1f}s")
+    except Exception as exc:
+        warnings.append(f"WARNING: lesson-lookup warm-up failed: {type(exc).__name__}: {exc}")
+
+    # The C3 base reads this compile's deal as ONE record (ml/c3/record.py):
+    # every line with its document's arrival and kind, built the way the
+    # training export builds it, and read once for every stage that asks it.
+    try:
+        from app.core import c3_type_base as _c3_deal
+
+        _c3_deal.set_deal(None)
+        if _c3_deal.enabled() or _c3_deal.document_job_enabled():
+            _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
+            _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
+                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")})
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
+
     with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
         _djs_dropped = 0
         _djs_notes: list[str] = []
@@ -2075,11 +2185,38 @@ def compile_project(
     # electrical_acceptance_test, compliance_*, ...). LLM-driven so
     # it generalises across customer terminology variations without
     # hardcoded regex column headers.
+    # The base decides every line's type where it is sure (SOWSMITH_C3_AUTHORITY):
+    # the parser has split the lines and read their values; the typing LLM sees
+    # only what the base leaves.
+    try:
+        from app.core import c3_type_base as _c3_auth
+
+        # The deal's one base read normally happens in document_job_scope; with
+        # that stage off (its set-asides were wrong on all 145 labeled lines),
+        # read here so authority, typing and the brief all share it.
+        if _c3_auth.authority_enabled() and not (_c3_auth._DEAL.get("types") or {}) and _c3_auth.enabled():
+            with telemetry.stage("c3_base_read", input_count=len(atoms)) as _rstage:
+                _c3_auth.documents(atoms)
+                telemetry.end_stage(_rstage, output_count=len(_c3_auth._DEAL.get("types") or {}))
+        _auth_n = _c3_auth.apply_authority(atoms)
+        if _auth_n:
+            warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 type authority failed: {type(exc).__name__}: {exc}")
+
     with telemetry.stage("typed_atom_classification", input_count=len(atoms)) as stage:
         promoted = 0
         try:
             from app.core.typed_atom_classifier import classify_atoms
-            promoted = classify_atoms(atoms)
+            from app.core import c3_type_base as _c3
+            if _c3.enabled():
+                # The C3 base names each file's lifecycle type by its bytes,
+                # as the envelope does; nothing else reads this.
+                promoted = classify_atoms(
+                    atoms, artifact_sha256={fp.artifact_id: fp.sha256 for fp in fingerprints},
+                )
+            else:
+                promoted = classify_atoms(atoms)
         except Exception as exc:
             warnings.append(f"WARNING: typed_atom_classifier failed: {type(exc).__name__}: {exc}")
         if promoted:
@@ -2224,7 +2361,12 @@ def compile_project(
         if _os_sa.environ.get("SOWSMITH_SPAN_ADMISSION", "") in ("1", "true", "yes", "on"):
             try:
                 from app.core.span_admission import readmit_atom_types
-                readmitted = readmit_atom_types(atoms)
+                from app.core.c3_type_base import base_decided
+
+                # A line the base typed keeps the base's type (its final pass
+                # restores it), so re-typing it here is wasted: on a cold
+                # cache that was 335 one-line store lookups, 110 s, on 010043.
+                readmitted = readmit_atom_types([a for a in atoms if not base_decided(a)])
                 if readmitted:
                     warnings.append(
                         f"INFO: span_admission re-typed {readmitted} retained atom(s) "
@@ -3306,7 +3448,8 @@ def compile_project(
             pm_atoms = [
                 a
                 for a in load_pm_answer_atoms(
-                    project_id=resolved_project_id, deal_id=resolved_project_id
+                    project_id=resolved_project_id, deal_id=resolved_project_id,
+                    as_of=_run_as_of(project_dir),
                 )
                 if a.id not in existing_ids
             ]
@@ -3507,6 +3650,61 @@ def compile_project(
             warnings.append(f"INFO: {_st} small-talk line(s) typed small_talk")
     except Exception as exc:
         warnings.append(f"WARNING: small_talk typing failed: {type(exc).__name__}: {exc}")
+    # The base's own answer for the lines it kept, now that no stage will read
+    # it: small_talk and deal_state as the labeler types them.
+    try:
+        from app.core import c3_type_base as _c3_final
+
+        _new = _c3_final.reread_if_new(atoms)
+        if _new:
+            _late = _c3_final.apply_authority(atoms)
+            warnings.append(f"INFO: C3 base re-read the deal for {_new} line(s) created after its read; "
+                            f"typed {_late}")
+        _sa, _sf = _c3_final.settle_base_answers(atoms)
+        if _sa or _sf:
+            warnings.append(f"INFO: C3 base answers applied late: {_sa} assigned, {_sf} filled")
+        _fl = _c3_final.apply_final_labels(atoms)
+        if _fl:
+            warnings.append(f"INFO: {_fl} line(s) typed by the C3 base at the end of the compile")
+        _fa = _c3_final.apply_authority(atoms, final=True)
+        if _fa:
+            warnings.append(f"INFO: C3 base restored {_fa} line(s) a rule had re-typed (authority)")
+        _ok = _c3_final.own_site_keys(atoms)
+        if _ok:
+            warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
+
+    # Brief v2: the super heads decide what the brief says, rules where a head
+    # is not yet trusted (c3_brief.py). Off unless SOWSMITH_C3_BRIEF is on.
+    _c3_brief = None
+    try:
+        from app.core import c3_brief as _brief
+
+        if _brief.enabled():
+            with telemetry.stage("c3_brief", input_count=len(atoms)) as _bstage:
+                _c3_brief = _brief.run(atoms, packets, service_fallback=resolved_domain_pack.pack_id,
+                                        project_dir=project_dir)
+                telemetry.end_stage(_bstage, output_count=len(_c3_brief.get("questions") or []))
+            warnings.append(f"INFO: C3 brief built: heads {len(_c3_brief['decided_by']['heads_used'])}, "
+                            f"fell back {len(_c3_brief['decided_by']['fell_back'])}")
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 brief failed: {type(exc).__name__}: {exc}")
+
+    # Deal Kit quote heads (POST /v1/quote on the C3 server): the labor proposal rides in the brief,
+    # so the PM handoff and the Deal Kit prefill read it. Off unless SOWSMITH_C3_QUOTE is on.
+    if _c3_brief is not None:
+        try:
+            from app.core import c3_type_base as _c3q
+
+            if _c3q.quote_enabled():
+                with telemetry.stage("c3_quote", input_count=len(atoms)):
+                    _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
+                if _q:
+                    _c3_brief["quote"] = _q
+                    warnings.append(f"INFO: quote heads: {_q.get('job_type')} {len(_q.get('lines') or [])} line(s)")
+        except Exception as exc:
+            warnings.append(f"WARNING: quote heads failed: {type(exc).__name__}: {exc}")
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.
@@ -3538,6 +3736,7 @@ def compile_project(
         suppressed_atoms=sorted(suppressed_atoms, key=lambda x: x.id),
         text_coverage=_coverage,
         ledger_audit=_ledger_audit,
+        c3_brief=_c3_brief,
         entities=entities,
         edges=edges,
         packets=packets,
@@ -3730,6 +3929,13 @@ def compile_project(
         from app.core.ml_capabilities import build_compile_capabilities
 
         result.compile_capabilities = build_compile_capabilities()
+        try:
+            from app.core import telemetry as _tel_calls
+
+            result.compile_capabilities["calls_by_stage"] = dict(sorted(
+                _tel_calls.CALLS_BY_STAGE.items(), key=lambda kv: -(kv[1].get("llm_s", 0) + kv[1].get("embed_s", 0))))
+        except Exception:
+            pass
     except Exception:
         result.compile_capabilities = None
 
@@ -3753,6 +3959,7 @@ def compile_project(
 
         _cb.mirror_ocr()
         _cb.mirror_embed()
+        _cb.mirror_vision()
     except Exception:  # pragma: no cover - mirroring must never break a compile
         pass
 

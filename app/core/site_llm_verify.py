@@ -165,16 +165,25 @@ def extract_sites_with_llm(atoms: list[Any]) -> list[dict]:
         return _parse_sites_structured(response_text)
 
     # Strategy 2 — large project: per-artifact calls, merge results.
+    # The per-document calls are independent, so they run in parallel and are
+    # merged in the same (sorted) order as before: the same sites come out.
+    # One after another they took 35 s on 010043's 38 documents (2026-10-15).
     union_sites: list[dict] = []
+    prompts: list[str] = []
     for aid in sorted(by_artifact.keys()):
-        artifact_atoms = by_artifact[aid]
         docs_excerpt = _build_doc_excerpt(
-            artifact_atoms, max_per_doc=18000, max_total=18000,
+            by_artifact[aid], max_per_doc=18000, max_total=18000,
         )
-        if not docs_excerpt:
-            continue
-        prompt = _build_extract_prompt(docs_excerpt)
-        response_text = _call_ollama(prompt, max_tokens=2048)
+        if docs_excerpt:
+            prompts.append(_build_extract_prompt(docs_excerpt))
+    if not prompts:
+        return union_sites
+    import concurrent.futures
+
+    parallel = max(1, int(os.environ.get("SOWSMITH_SITE_EXTRACT_PARALLEL", "8") or 8))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
+        responses = list(pool.map(lambda p: _call_ollama(p, max_tokens=2048), prompts))
+    for response_text in responses:
         if not response_text:
             continue
         batch = _parse_sites_structured(response_text)

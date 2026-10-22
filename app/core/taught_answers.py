@@ -105,8 +105,11 @@ def resolve_taught_answers(atoms: list[Any], *, project_id: str = "") -> int:
         value = getattr(atom, "value", None)
         text = _atom_text(atom)
         try:
+            # Store only: a model guess is thrown away below, so asking one
+            # cost an LLM call per open question for nothing (204 s median
+            # stage, 2026-10-15).
             d = decide(RELATION, text[:600], list(CANDIDATES),
-                       instruction=INSTRUCTION, scope=scope, model=None)
+                       instruction=INSTRUCTION, scope=scope, model=None, llm=False)
         except Exception:
             # In the `finally` below the tick still happens: a question whose
             # decision RAISED is still a question this stage is done with, and

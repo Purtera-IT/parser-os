@@ -161,6 +161,18 @@ HEAD_REGISTRY: dict[str, HeadSpec] = {
     "norm":      HeadSpec("value_norm",      "atom",   "Value / amount", mode="extract"),
     "router":    HeadSpec("service_routing", "deal",   "Workstream / domain"),
     "facet":     HeadSpec("facet",           "atom",   "Brief section"),
+    # A PM's edit to the generated SOW, captured by the Studio's edit log: a
+    # line moved between sections labels the cited atom's SOW section (the
+    # read:sow_section super head); a line deleted labels it as not belonging
+    # in the SOW (keep/reject). Stored as gold for the next refit, never
+    # applied live (refits are gated on the full-line diff + golden).
+    "sow_section": HeadSpec("sow_section", "atom", "SOW section",
+                            candidates=("overview", "scope_of_work", "deliverables", "acceptance", "out_of_scope",
+                                        "assumptions", "customer_responsibilities", "provider_responsibilities",
+                                        "timeline", "fees", "change_control", "terms", "contacts", "other")),
+    "sow_keep":  HeadSpec("sow_keep",        "atom",   "Belongs in the SOW", candidates=("keep", "drop")),
+    "sow_party": HeadSpec("sow_party",       "atom",   "Who does it", candidates=("technician", "customer", "partner")),
+    "sow_supplier": HeadSpec("sow_supplier", "atom",   "Who supplies it", candidates=("us", "customer", "partner")),
     "image":     HeadSpec("pdf_image_kind",  "atom",   "Image kind"),
     # A house style is a judgment like any other: "SLO, not SLA, because we
     # guarantee objectives". The verdict IS the preferred wording, so this is

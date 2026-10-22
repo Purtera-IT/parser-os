@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 
 import json
+import threading
 import logging
 import os
 import sqlite3
@@ -274,6 +275,7 @@ class FeedbackStore:
         # opened the connection raises ProgrammingError. Behavior is otherwise
         # byte-identical to a thread-bound connection for single-threaded use.
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._fill_lock = threading.RLock()
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         # `CREATE TABLE IF NOT EXISTS` does not add a column to a table that
@@ -420,12 +422,16 @@ class FeedbackStore:
         cached = self._corrections_cache.get(key)
         if cached is not None:
             return cached
-        q = "SELECT * FROM corrections"
-        if active_only:
-            q += " WHERE status = 'active'"
-        rows = [Correction.from_row(r) for r in self._conn.execute(q)]
-        self._corrections_cache[key] = rows
-        return rows
+        with self._fill_lock:
+            cached = self._corrections_cache.get(key)
+            if cached is not None:
+                return cached
+            q = "SELECT * FROM corrections"
+            if active_only:
+                q += " WHERE status = 'active'"
+            rows = [Correction.from_row(r) for r in self._conn.execute(q)]
+            self._corrections_cache[key] = rows
+            return rows
 
     def _relations_present(self) -> frozenset[str]:
         """Which relations any ACTIVE correction actually carries.
@@ -487,12 +493,28 @@ class FeedbackStore:
         (mean of exemplar vectors). Cached until a write dirties it."""
         if not self._proto_dirty and all(c.id in self._proto for c in corrections):
             return
-        self._proto = {}
-        self._proto_ex = {}
+        with self._fill_lock:
+            self._build_protos(corrections)
+
+    def _build_protos(self, corrections: list[Correction]) -> None:
+        """``_ensure_protos`` under ``_fill_lock``: several threads may ask at
+        once (document_job_scope judges conversations in parallel)."""
+        if not self._proto_dirty and all(c.id in self._proto for c in corrections):
+            return
+        if self._proto_dirty:
+            # A write changed the corrections: every prototype is rebuilt.
+            self._proto = {}
+            self._proto_ex = {}
+        # Only the corrections not built yet. Wiping the cache whenever a call
+        # asked for one it lacked made two callers with different candidate
+        # sets (typing asks the full types, then the base types, per line)
+        # rebuild every prototype on every call: 599 rebuilds of 1,766
+        # corrections for 300 lines, ~22 s warm (2026-10-15).
+        missing = [c for c in corrections if c.id not in self._proto]
         # Batch-embed all exemplars in one call, then group back per correction.
         flat: list[str] = []
         spans: list[tuple[str, int, int]] = []
-        for c in corrections:
+        for c in missing:
             if not c.exemplars:
                 continue
             start = len(flat)

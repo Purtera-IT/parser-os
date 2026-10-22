@@ -44,15 +44,7 @@ def _patched(monkeypatch, tac):
     reachability gate, so we can see exactly what reaches _classify_batch."""
     monkeypatch.delenv("SOWSMITH_DISABLE_LLM", raising=False)
     monkeypatch.delenv("SOWSMITH_TYPED_CLASSIFIER_DISABLE", raising=False)
-    monkeypatch.setattr(tac, "_atom_type_deflect_enabled", lambda: False)
-    monkeypatch.setattr(tac, "_typed_student_enabled", lambda: False)
     monkeypatch.setattr(tac, "_ollama_reachable", lambda: True)
-    try:
-        from app.core import rubric_gate
-        monkeypatch.setattr(rubric_gate, "keep_deflect_flags",
-                             lambda texts: [False] * len(texts))
-    except Exception:
-        pass
     seen_batches = []
 
     def _fake_classify_batch(batch):

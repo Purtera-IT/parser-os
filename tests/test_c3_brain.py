@@ -42,16 +42,18 @@ def batch(schema):
     return featurize(DealExample.load(HERE / "synthetic_deal.json"), schema)
 
 
-def _brain(schema, d_graph=None):
+def _brain(schema, d_graph=None, max_len=4096):
     torch.manual_seed(0)
-    b = Brain(schema, TinyCausalLM(dim=32, layers=1, heads=2, max_len=1024),
+    b = Brain(schema, TinyCausalLM(dim=32, layers=1, heads=2, max_len=max_len),
               d_graph=d_graph, context_lines=2)
     b.eval()
     return b
 
 
 def test_every_brain_loss_reaches_the_weights(schema, batch):
-    b = _brain(schema)
+    # This full teacher pass includes three complete precedent paragraphs.
+    # The old 1024-byte toy budget silently discarded the end of the WHY.
+    b = _brain(schema, max_len=4096)
     b.train()
     loss, parts = brain_loss(b, batch, BrainWeights())
     for k in ("direct", "reasoned", "rationale", "distill", "consolidate"):
@@ -152,3 +154,27 @@ def test_the_v6_path_has_no_keyword_rules():
         assert not mods & {"clauses", "notes", "operators", "explain", "re"}, f
         assert not any(isinstance(n, ast.Import) and any(a.name == "re" for a in n.names)
                        for n in ast.walk(tree)), f
+
+
+def test_rationale_never_silently_truncates_an_expert_paragraph(schema, batch):
+    from dataclasses import replace
+    b = _brain(schema, max_len=128)
+    why = [None] * len(batch)
+    why[0] = "Complete explanation. " * 100
+    with pytest.raises(ValueError, match="Expert WHY exceeds"):
+        b.rationale_loss(replace(batch, why=why))
+
+
+def test_rationale_respects_per_paragraph_quality_weights(schema, batch):
+    from dataclasses import replace
+    b = _brain(schema)
+    why = [None] * len(batch)
+    why[0], why[1] = "The sentence states the location.", "This is an equipment quantity."
+    first, second = why.copy(), why.copy()
+    first[1], second[0] = None, None
+    weights = [1.0] * len(batch)
+    weights[1] = 0.5
+    a = b.rationale_loss(replace(batch, why=first, why_weights=weights))
+    c = b.rationale_loss(replace(batch, why=second, why_weights=weights))
+    combined = b.rationale_loss(replace(batch, why=why, why_weights=weights))
+    assert torch.allclose(combined, (a + 0.5 * c) / 1.5, atol=1e-5)

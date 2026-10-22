@@ -251,3 +251,19 @@ def test_corrupt_xlsx_emits_parse_error_warning(tmp_path) -> None:
     assert any(w.startswith(f"{ARTIFACT_PARSE_ERROR_PREFIX}art_bad:corrupt_xlsx:") for w in out.warnings)
     structured = out.derived_files[0].content_json
     assert any(str(m).startswith("parse_error: corrupt_xlsx:") for m in structured["document"]["metadata"])
+
+
+def test_a_counting_column_gets_one_total_line():
+    from types import SimpleNamespace as NS
+
+    from app.parsers.xlsx_parser import sheet_count_rollups
+
+    def row(t):
+        return NS(raw_text=t, source_refs=[NS(locator={"sheet": "AP LAG"})])
+    rows = [row("Closet: Floor 01E | Switch: A | AP LAG Ports Added: 10 | Spare: 0"),
+            row("Closet: Floor 01E | Switch: A | AP LAG Ports Added: 10 | Spare: 0"),
+            row("Closet: Floor 3W | Switch: B | AP LAG Ports Added: 4 | Spare: 1"),
+            row("Closet: Floor 3E | Switch: C | AP LAG Ports Added: 6 | Spare: 2"),
+            row("Closet:  | Switch:  | AP LAG Ports Added: 20 | Spare: 3")]
+    got = sheet_count_rollups(rows, project_id="p", artifact_id="a", filename="f.xlsx", parser_version="t")
+    assert len(got) == 1 and "totals 20 across 3 Closet rows" in got[0].raw_text

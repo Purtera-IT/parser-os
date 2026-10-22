@@ -1,5 +1,8 @@
 """A lesson taught for one deal fires on that deal's atoms -- and only there.
 
+(The atom-type half of this file was retired with the taught-type lookups:
+the C3 base types lines now and learns corrections at its retrain.)
+
 Live 000061 (compile 3689321 → 401c85a, 2026-09-15): nine lessons taught
 deal-scoped from the first quote ("this recap line is scope, not a task")
 never applied, while the two global ones did. Taught typing and learned
@@ -9,7 +12,7 @@ only.
 from types import SimpleNamespace
 
 from app.core import decide as decide_mod
-from app.core import task_hours, typed_atom_classifier as tac
+from app.core import task_hours
 from app.core.decide import Decision
 from app.core.schemas import AtomType
 
@@ -46,19 +49,6 @@ def _with_store(monkeypatch, store):
     monkeypatch.delenv("SOWSMITH_DISABLE_LLM", raising=False)
     prev = decide_mod.get_store(); decide_mod.set_store(store)
     return prev
-
-
-def test_a_deal_scoped_type_lesson_fires_for_its_deal_only(monkeypatch):
-    line = "AP relocation to lower height between 15 to 20 feet targets better user signal coverage"
-    store = _ScopedStore([(line, "scope_item", DEAL)])
-    prev = _with_store(monkeypatch, store)
-    try:
-        ours, theirs = _atom(line), _atom(line, deal="other-deal")
-        decided = tac._apply_taught_types([ours, theirs])
-    finally:
-        decide_mod.set_store(prev)
-    assert decided == {id(ours): "scope_item"}
-    assert DEAL in store.scopes and "other-deal" in store.scopes
 
 
 def test_a_deal_scoped_hours_lesson_fires_for_its_deal_only(monkeypatch):

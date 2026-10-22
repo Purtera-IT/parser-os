@@ -576,11 +576,36 @@ _STREET_DEDUP_NOISE = frozenset({
 })
 
 
+#: One spelling per street suffix, so "Blvd" and "Boulevard" are one street.
+_STREET_SUFFIX = {
+    "boulevard": "blvd", "avenue": "ave", "av": "ave", "street": "st", "road": "rd", "drive": "dr",
+    "lane": "ln", "court": "ct", "place": "pl", "parkway": "pkwy", "highway": "hwy", "circle": "cir",
+    "terrace": "ter", "square": "sq", "suite": "ste", "north": "n", "south": "s", "east": "e", "west": "w",
+}
+
+
+_SUFFIX_ENDS = frozenset({"blvd", "ave", "st", "rd", "dr", "ln", "ct", "pl", "pkwy", "hwy", "cir", "ter",
+                          "sq", "way", "loop", "trl", "pike"})
+
+
 def _street_for_dedup(street: str) -> str:
-    s = street.lower().strip()
+    """A street line as a comparable key. It ends at its first comma or tab:
+    whatever follows is a unit, a city, or a repeated fragment of the source
+    row (000123 published "3149 Stevens Creek Boulevard, Creek Boulevard" beside
+    "3149 Stevens Creek Boulevard", and the two never merged: 55 labeled
+    same-site pairs on one deal, every one missed)."""
+    s = re.split(r"[,\t]", street.lower().strip(), maxsplit=1)[0].strip()
     if not s:
         return ""
-    tokens = [t for t in s.split() if t not in _STREET_DEDUP_NOISE]
+    tokens = [_STREET_SUFFIX.get(t.strip("."), t.strip(".")) for t in s.split()]
+    tokens = [t for t in tokens if t and t not in _STREET_DEDUP_NOISE]
+    # A numbered street ends at its first suffix: the parser drops the comma,
+    # so the repeated fragment arrives as "3149 stevens creek blvd creek blvd".
+    if tokens and tokens[0][:1].isdigit():
+        for i, t in enumerate(tokens[1:], 1):
+            if t in _SUFFIX_ENDS:
+                tokens = tokens[:i + 1]
+                break
     return " ".join(tokens)
 
 

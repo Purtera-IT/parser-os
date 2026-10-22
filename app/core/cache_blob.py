@@ -46,6 +46,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 #: The two caches this mirrors. ``kind`` is the blob sub-prefix and the table.
 OCR = "ocr"
 EMBED = "embed"
+VISION = "vision"
 
 
 def _enabled() -> bool:
@@ -113,7 +114,7 @@ def jsonl_to_rows(text: str) -> list[dict]:
 
 def upload_rows(kind: str, rows: list[dict]) -> bool:
     """Mirror one batch of cache entries to its own blob. Best-effort."""
-    if not rows or kind not in (OCR, EMBED):
+    if not rows or kind not in (OCR, EMBED, VISION):
         return False
     cc = _container_client()
     if cc is None:
@@ -130,14 +131,66 @@ def upload_rows(kind: str, rows: list[dict]) -> bool:
         return False
 
 
+#: Batches this process already merged, by blob name -> etag. Every compile
+#: used to download and re-merge EVERY mirrored batch: 1.7 GB of embedding
+#: rows and 76 MB of OCR rows on dev (2026-10-15), ~100 s before a compile's
+#: first stage, growing with every compile. A batch is now merged once per
+#: local cache; a changed batch (new etag) is merged again.
+_MERGED: dict[str, str] = {}
+
+
+def _seen_path() -> str:
+    """Beside the local caches, so a wiped cache (a new container's /tmp)
+    wipes the record with it and everything is merged again."""
+    db = os.environ.get("SOWSMITH_EMBED_CACHE_DB", "").strip() or "/tmp/ml/_embed_cache.db"
+    return os.path.join(os.path.dirname(db) or ".", "_cache_rows_merged.json")
+
+
+def _load_seen() -> dict[str, str]:
+    if not _MERGED:
+        try:
+            with open(_seen_path(), encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _MERGED.update({str(k): str(v) for k, v in data.items()})
+        except Exception:
+            pass
+    return _MERGED
+
+
+def _save_seen() -> None:
+    try:
+        path = _seen_path()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_MERGED, f)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def _iter_batches(cc, kind: str):
+    seen = _load_seen()
+    merged_any = False
     for b in cc.list_blobs(name_starts_with=f"{_PREFIX}{kind}/"):
         if not b.name.endswith(".jsonl"):
             continue
+        tag = str(getattr(b, "etag", "") or getattr(b, "last_modified", "") or "")
+        if tag and seen.get(b.name) == tag:
+            continue
         try:
-            yield jsonl_to_rows(cc.download_blob(b.name).readall().decode("utf-8", "replace"))
+            rows = jsonl_to_rows(cc.download_blob(b.name).readall().decode("utf-8", "replace"))
         except Exception:
             continue
+        yield rows
+        # Marked only after the caller merged the rows (the generator resumes
+        # here), so a batch that failed part way is fetched again next time.
+        if tag:
+            seen[b.name] = tag
+            merged_any = True
+    if merged_any:
+        _save_seen()
 
 
 def sync_ocr_into_cache() -> int:
@@ -235,6 +288,69 @@ def sync_embed_into_cache() -> int:
     return n
 
 
+_EMBED_SYNC: dict[str, Any] = {"thread": None}
+_OCR_SYNC: dict[str, Any] = {"thread": None}
+#: Set whenever no OCR merge is running: an OCR lookup waits on it, so a
+#: picture is never re-read through the billed service because its cached
+#: text had not been merged yet, and a deal with no pictures never waits.
+OCR_MERGED = __import__("threading").Event()
+OCR_MERGED.set()
+
+
+def sync_ocr_into_cache_background() -> bool:
+    """``sync_ocr_into_cache`` on a background thread; ``OcrCache.get`` waits
+    for it (``wait_for_ocr_merge``). Returns True when a merge was started."""
+    import threading
+
+    t = _OCR_SYNC.get("thread")
+    if t is not None and t.is_alive():
+        return False
+    OCR_MERGED.clear()
+
+    def _run():
+        try:
+            sync_ocr_into_cache()
+        except Exception:
+            pass
+        finally:
+            OCR_MERGED.set()
+
+    t = threading.Thread(target=_run, daemon=True, name="ocr-cache-sync")
+    _OCR_SYNC["thread"] = t
+    t.start()
+    return True
+
+
+def wait_for_ocr_merge(timeout: float = 120.0) -> bool:
+    """Block until no OCR merge is running (at most ``timeout`` seconds)."""
+    return OCR_MERGED.wait(timeout)
+
+
+def sync_embed_into_cache_background() -> bool:
+    """``sync_embed_into_cache`` on a background thread, so a compile never
+    waits for it: a vector not merged yet is embedded again (the same vector
+    from the same model), and one merged in time is a cache hit. After a
+    container starts, the first merge is the whole mirror (1.7 GB on dev);
+    after that only new batches. Returns True when a sync was started; False
+    when one is still running."""
+    import threading
+
+    t = _EMBED_SYNC.get("thread")
+    if t is not None and t.is_alive():
+        return False
+
+    def _run():
+        try:
+            sync_embed_into_cache()
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run, daemon=True, name="embed-cache-sync")
+    _EMBED_SYNC["thread"] = t
+    t.start()
+    return True
+
+
 def export_embed_rows(limit: int = 4000) -> list[dict]:
     """The vectors this process computed."""
     try:
@@ -254,3 +370,78 @@ def mirror_embed(limit: int = 4000) -> bool:
     """Upload what this compile embedded. Called at the end of a compile."""
     rows = export_embed_rows(limit=limit)
     return upload_rows(EMBED, rows) if rows else False
+
+
+# ---- vision replies ----------------------------------------------------------
+#
+# The vision LLM's description of a picture, keyed by sha256(model, prompt,
+# mime, image). Unset SOWSMITH_VISION_CACHE_DB meant no cache at all, and the
+# worker scales from zero, so every compile asked again about every picture:
+# 42.8 s of a warm 010043 compile (2026-10-16). Same immutable-batch mirror as
+# OCR; only replies this process paid for are uploaded.
+
+
+def sync_vision_into_cache() -> int:
+    cc = _container_client()
+    if cc is None:
+        return 0
+    try:
+        from app.core import llm_client
+    except Exception:
+        return 0
+    conn = llm_client._vision_cache_conn()
+    if conn is None:
+        return 0
+    n = 0
+    for rows in _iter_batches(cc, VISION):
+        good = [(str(r["key"]), str(r.get("model") or ""), str(r.get("reply") or ""))
+                for r in rows if r.get("key") and str(r.get("reply") or "").strip()]
+        if not good:
+            continue
+        try:
+            with llm_client._VCACHE_LOCK:
+                conn.executemany("INSERT OR IGNORE INTO vision_cache (k, model, reply) VALUES (?,?,?)", good)
+                conn.commit()
+            n += len(good)
+        except Exception:
+            continue
+    return n
+
+
+def sync_vision_into_cache_background() -> bool:
+    """``sync_vision_into_cache`` on a thread; a vision lookup waits for it."""
+    import threading
+
+    try:
+        from app.core import llm_client
+    except Exception:
+        return False
+    if llm_client._vision_cache_conn() is None or not _enabled():
+        return False
+    llm_client.VCACHE_MERGED.clear()
+
+    def _run():
+        try:
+            sync_vision_into_cache()
+        except Exception:
+            pass
+        finally:
+            llm_client.VCACHE_MERGED.set()
+
+    threading.Thread(target=_run, daemon=True, name="vision-cache-sync").start()
+    return True
+
+
+def mirror_vision() -> bool:
+    """Upload the vision replies this process stored. Called at compile end."""
+    try:
+        from app.core import llm_client
+    except Exception:
+        return False
+    rows = list(llm_client.VCACHE_NEW)
+    if not rows:
+        return False
+    ok = upload_rows(VISION, rows)
+    if ok:
+        del llm_client.VCACHE_NEW[:len(rows)]
+    return ok

@@ -313,81 +313,7 @@ _TAXONOMY: dict[str, dict[str, Any]] = {
 }
 
 
-def _atom_type_deflect_enabled() -> bool:
-    return os.environ.get(
-        "SOWSMITH_ATOM_TYPE_DEFLECT", ""
-    ).strip().lower() not in ("", "0", "false", "no", "off")
-
-
-def _typed_student_enabled() -> bool:
-    """Grounded-Extractor #70: let the trained student front the LLM call.
-
-    OFF by default. Flip it ON (in deploy/env) only for relations the shadow
-    harness (:mod:`app.core.shadow_eval`) has certified ``ready`` — that is the
-    cutover gate. With it off, or with an empty training log, the student
-    abstains everywhere and this stage is byte-identical to the LLM-only path.
-    """
-    return os.environ.get(
-        "SOWSMITH_TYPED_STUDENT", ""
-    ).strip().lower() not in ("", "0", "false", "no", "off")
-
-
-# Process-wide student over the warm-base training log. Lazily built; reused so
-# the (cached) embeddings of the log's masked rows aren't recomputed per compile.
-_TYPED_STUDENT = None
-_TYPED_STUDENT_TRIED = False
-
-
-def _get_typed_student():
-    """The atom-type student, or None when no training log is configured."""
-    global _TYPED_STUDENT, _TYPED_STUDENT_TRIED
-    if _TYPED_STUDENT_TRIED:
-        return _TYPED_STUDENT
-    _TYPED_STUDENT_TRIED = True
-    try:
-        from app.core.extractor_student import ExtractionStudent
-        from app.core.training_log import get_training_log
-        log = get_training_log()
-        if log is None:
-            return None
-        _TYPED_STUDENT = ExtractionStudent(log)  # production: all rows in memory
-    except Exception:
-        _TYPED_STUDENT = None
-    return _TYPED_STUDENT
-
-
 _ATOM_TYPE_RELATION = "atom_type"
-_ATOM_TYPE_INSTRUCTION = (
-    "Classify this parsed deal-document atom into the typed taxonomy, or _keep "
-    "if no taxonomy entry fits and it should retain its current type."
-)
-
-
-def _atom_type_candidates() -> list[str]:
-    return list(_TAXONOMY) + ["_keep"]
-
-
-def _taught_base_candidates() -> list[str]:
-    """The types a teacher names that the model never promotes to: what a
-    line IS when the model should leave it -- "this is a scope_item, not a
-    task", "this is speech". Resolved against the model's candidates alone,
-    those verdicts could never fire (000061, 2026-09-15: "Expected four-hour
-    survey will confirm AP count" taught scope_item from the first quote,
-    re-promoted to task on every compile). They are resolved in a second
-    pass, by exemplar similarity only: the relation's neural head is fit over
-    every class and merely restricted to the candidates at decision time, so
-    offering it these classes let a six-exemplar scope_item class absorb
-    000020's eleven exact-match task lines (compile 014103ef)."""
-    try:
-        from app.core.schemas import AtomType
-        return [t.value for t in AtomType if t.value not in _TAXONOMY]
-    except Exception:  # pragma: no cover
-        return ["scope_item", "entity", "customer_instruction", "raw_utterance"]
-
-
-def _taught_type_candidates() -> list[str]:
-    """Every type a person or a Deal Kit can teach, plus _keep."""
-    return list(_TAXONOMY) + _taught_base_candidates() + ["_keep"]
 
 
 def _atom_row_view(atom: Any) -> tuple[list[str], list[Any]] | None:
@@ -512,70 +438,6 @@ def _atom_decide_text(atom: Any) -> str:
     return text
 
 
-def _apply_taught_types(atoms: list[Any]) -> dict[int, str]:
-    """Re-type atoms the feedback store confidently recognises.
-
-    Returns ``{id(atom): verdict}`` for every atom the store decided, ``_keep``
-    included (that leaves the type as it is). Never raises; no store -> ``{}``.
-    """
-    decided: dict[int, str] = {}
-    try:
-        from app.core.decide import DecisionScope, decide, get_store
-        from app.core.schemas import AtomType
-
-        if get_store() is None:
-            return decided
-        cands = _atom_type_candidates()
-        base = _taught_base_candidates()
-        for a in atoms:
-            text = str(getattr(a, "raw_text", "") or "").strip()
-            if not text:
-                continue
-            # The deal the atom belongs to. Without it the store searches its
-            # global tier only, and a lesson taught for THIS deal -- "on
-            # 000061 this recap line is scope, not a task" -- never fires
-            # (2026-09-15: nine deal-scoped lessons, none applied, while the
-            # two global ones did).
-            scope = DecisionScope(deal_id=str(getattr(a, "project_id", "") or ""))
-            # Judgments only: what a person or a finished Deal Kit taught. The
-            # model's own self-taught rows (created_by="teacher") are a cache
-            # for the deflect layer below, never a ruling -- applied here they
-            # carried one deal's LLM noise into the next (000061, 2026-09-15:
-            # 58 recap lines typed "task" from another deal's verdicts).
-            d = decide(
-                _ATOM_TYPE_RELATION, text[:600], cands,
-                instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
-                exclude_created_by=("teacher",),
-            )
-            if d is None or d.source != "store" or not d.verdict:
-                # Second pass, base types, exemplar similarity only: what was
-                # taught about text like this, never the head's generalisation.
-                d = decide(
-                    _ATOM_TYPE_RELATION, text[:600], base,
-                    instruction=_ATOM_TYPE_INSTRUCTION, llm=False, scope=scope,
-                    exclude_created_by=("teacher",), neural_head=False,
-                )
-            if d is None or d.source != "store" or not d.verdict:
-                continue
-            # A taught `_keep` only short-circuits the model when store
-            # deflection is on -- that is the existing, opt-in optimisation
-            # (SOWSMITH_ATOM_TYPE_DEFLECT). A taught TYPE always applies: it is
-            # a judgment, not a shortcut.
-            if d.verdict == "_keep" and not _atom_type_deflect_enabled():
-                continue
-            if d.verdict != "_keep":
-                try:
-                    a.atom_type = AtomType(d.verdict)
-                except ValueError:
-                    continue
-            # Taught as what it already is: a judgment that the model should
-            # leave it, recorded so the line never reaches the batch below.
-            decided[id(a)] = d.verdict
-    except Exception:
-        return decided
-    return decided
-
-
 def _is_speech(atom: Any) -> bool:
     """Was this atom minted from something somebody SAID -- a transcript
     utterance -- rather than something somebody wrote? The transcript parser
@@ -594,11 +456,15 @@ def _is_speech(atom: Any) -> bool:
     return False
 
 
-def classify_atoms(atoms: list[Any]) -> int:
+def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None = None) -> int:
     """Promote atoms from the v47 taxonomy where confident.
 
     Mutates ``atom.atom_type`` and ``atom.value`` in place. Returns the
     number of atoms reclassified.
+
+    ``artifact_sha256`` (artifact id -> the file's sha256, from the compile's
+    fingerprints) lets the C3 layer name each file's lifecycle type; every
+    other layer ignores it.
 
     No-op on LLM unreachable / malformed response — atoms keep their
     original types. NEVER demotes a domain-specific type (risk,
@@ -613,24 +479,12 @@ def classify_atoms(atoms: list[Any]) -> int:
     if not promotable:
         return 0
 
-    # Taught corrections first. A PM correction (or a finished Deal Kit's
-    # answer) about text like this outranks any head or model guess -- the same
-    # precedence decide() gives the store. Without this the LLM typed atoms
-    # before any correction was read: on 000020 Binghamton (dev, compile
-    # e029470d) it promoted 20 of 21 lines, three of them to `task` although
-    # they were taught as `dependency` (the customer's remote team's work), and
-    # span admission only sees what the LLM left untyped. Store-only, no LLM;
-    # abstain leaves the atom alone; runs even with the LLM switched off.
-    taught = _apply_taught_types(promotable)
-    taught_promoted = sum(1 for v in taught.values() if v != "_keep")
-    promotable = [a for a in promotable if id(a) not in taught]
-
     # Honour the global LLM kill-switch: this stage drives promotion via an
     # /api/generate call, so SOWSMITH_DISABLE_LLM must short-circuit it (it
     # previously ignored the flag and spent ~46s/compile hitting a reachable
     # but slow remote model even in "no-LLM" runs).
-    if _gates.models_disabled() or not promotable:
-        return taught_promoted
+    if _gates.models_disabled():
+        return 0
 
     # Deterministic deflect: a table_row already readable as a contact by
     # contact_property_block does not need the LLM to guess at it.
@@ -723,17 +577,21 @@ def classify_atoms(atoms: list[Any]) -> int:
     # deflection and the LLM. This emits one structured event per call so a
     # compile shows, per layer: deflected counts, the residual LLM batch size,
     # promoted count, and total vs LLM-only milliseconds. Pure observability.
-    _dfl = {"speech_not_task": 0, "store": 0, "student": 0, "type_head": 0, "type_head_gpu": 0,
-            "contrastive": 0, "rubric_gate": 0, "contact_block": contact_deflected,
+    _dfl = {"speech_not_task": 0, "c3": 0, "c3_fill": 0, "contact_block": contact_deflected,
             "marker": marker_deflected, "bare_identity": identity_deflected}
-    _dfl_ms = {"store": 0.0, "student": 0.0, "type_head": 0.0, "type_head_gpu": 0.0,
-               "contrastive": 0.0, "rubric_gate": 0.0, "post": 0.0}
+    _dfl_ms = {"c3": 0.0, "post": 0.0}
     # + contact_deflected: those atoms left `promotable` before this count was
     # taken, so the telemetry input must include them back or the deflect rate
     # under-reports what actually happened this call.
     _dfl_input = len(promotable) + contact_deflected + marker_deflected + identity_deflected
     _t_start = time.perf_counter()
     _t_llm = 0.0
+    # C3 shadow: what the base would have done, reported beside the outcome
+    # at whichever exit the stage takes. Empty unless SOWSMITH_C3_TYPE=shadow.
+    _c3_shadow: dict[int, tuple[Any, str, str, float, str]] = {}
+    # The shadow read running beside the stage: (job, atoms with their types
+    # before the stage, the act rule). Joined at the exit.
+    _c3_pending: list = []
 
     # HOW FAR THROUGH THE STAGE, IN ATOMS RESOLVED.
     #
@@ -763,6 +621,22 @@ def classify_atoms(atoms: list[Any]) -> int:
         return time.perf_counter()
 
     def _emit_deflect(*, llm_batch: int, promoted: int, reached_llm: bool) -> None:
+        if _c3_pending:
+            _w = time.perf_counter()
+            try:
+                from app.core import c3_type_base as _c3
+                job, before, act_rule = _c3_pending.pop()
+                # Shadow changes nothing, so it may not hold the stage long:
+                # past SOWSMITH_C3_SHADOW_WAIT_S the shadow is dropped.
+                readings = job.result(timeout=_c3._env_float("SOWSMITH_C3_SHADOW_WAIT_S", 20.0))
+                for a, was in before:
+                    got = act_rule(a, readings.get(id(a)))
+                    if got is not None:
+                        _c3_shadow[id(a)] = (a, was, got[1], got[2], got[0])
+            except Exception:
+                pass
+            # Only the wait the stage added, not the read that overlapped it.
+            _dfl_ms["c3"] += time.perf_counter() - _w
         payload = {
             "event": "typed_atom_deflect",
             "stage": "typed_atom_classification",
@@ -781,250 +655,186 @@ def classify_atoms(atoms: list[Any]) -> int:
             print(json.dumps(payload, ensure_ascii=True), file=sys.stderr)
         except Exception:
             pass
-
-    # upgrade #3: warm-store deflection on the atom-TYPE decision. STORE-ONLY
-    # (llm=False) pre-filter: an atom the store CONFIDENTLY classifies ``_keep``
-    # (no taxonomy entry fits → keep current type) is dropped from the LLM batch
-    # entirely — no round-trip, no value extraction needed. One-sided: the store
-    # can only ever REMOVE a promotion candidate (a no-op keep), never fabricate
-    # a promotion (those still go to the LLM, which alone synthesizes the value
-    # payload). Worst case is a missed promotion (recall, not correctness), and
-    # it's PM-correctable. OFF by default — production is byte-identical.
-    deflect = _atom_type_deflect_enabled()
-    if deflect:
-        _t = _lap()
-        try:
-            from app.core.decide import DecisionScope, decide
-            kept_by_store = 0
-            survivors: list[Any] = []
-            cands = _atom_type_candidates()
-            for a in promotable:
-                d = decide(
-                    _ATOM_TYPE_RELATION,
-                    _atom_decide_text(a),
-                    cands,
-                    instruction=_ATOM_TYPE_INSTRUCTION,
-                    llm=False,
-                    # The teacher's own cache rows are deal-scoped; without the
-                    # deal they could never deflect.
-                    scope=DecisionScope(deal_id=str(getattr(a, "project_id", "") or "")),
-                )
-                if d.source == "store" and d.verdict == "_keep":
-                    kept_by_store += 1
-                    _dfl["store"] += 1
-                    continue
-                survivors.append(a)
-            promotable = survivors
-        except Exception:
-            pass
-        _dfl_ms["store"] += _lap() - _t
-        _tick()
-        if not promotable:
-            _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
-            return 0
-
-    # Grounded-Extractor #70: STUDENT deflection — the trained head fronts the
-    # LLM. Same one-sided contract as the store deflect above: the student may
-    # only DROP a candidate it confidently classifies ``_keep`` (no taxonomy
-    # entry fits → no value payload needed), never fabricate a promotion (those
-    # require the LLM's value synthesis and stay in the batch). Worst case is a
-    # missed promotion (recall, PM-correctable), never a wrong write. The
-    # student abstains when unsure / log empty / embedder down, so OFF or
-    # cold → byte-identical to the LLM-only path. This is the call we are
-    # replacing; every confident keep here is one fewer atom in the 98s stage.
-    student_deflected = 0
-    if _typed_student_enabled():
-        _t = _lap()
-        student = _get_typed_student()
-        if student is not None:
+        if _c3_shadow:
             try:
-                cands = _atom_type_candidates()
-                survivors = []
-                for a in promotable:
-                    pred = student.classify(
-                        _atom_decide_text(a), _ATOM_TYPE_RELATION, candidates=cands,
-                    )
-                    if not pred.abstained and pred.label == "_keep":
-                        student_deflected += 1
-                        _dfl["student"] += 1
-                        continue
-                    survivors.append(a)
-                promotable = survivors
+                from app.core import c3_type_base as _c3
+                _c3.report_shadow(_c3_shadow)
             except Exception:
                 pass
-        _dfl_ms["student"] += _lap() - _t
-        _tick()
-        if not promotable:
-            _emit_deflect(llm_batch=0, promoted=0, reached_llm=False)
-            return 0
 
-    # Grounded-Extractor #70 (partial cutover): the TRAINED, learnable type head
-    # ASSIGNS a confident specific type and skips the LLM for that atom — but
-    # only for VALUE-LIGHT types (the label is the deliverable; no rich value
-    # payload to synthesize). Value-heavy types (commercial_total, milestone,
-    # bom_line, quantity, payment_term, stakeholder, site_*) still go to the LLM.
-    # Eval-gated + learnable (app.core.type_head): precision-first (~0.92 @
-    # conf>=0.85), abstains when unsure, retrains as the log grows. OFF by
-    # default; cold/abstain -> byte-identical to the LLM-only path.
     head_deflected = 0
-    # Grounded-Extractor #70 (GPU): the FINE-TUNED transformer type head (held-out
-    # 0.814, ~53% deflect @ 0.966) assigns a confident value-light type and skips the
-    # LLM for that atom. Same value-light contract + guess-free abstain as the CPU
-    # head below — this just swaps the sklearn-over-frozen-embeddings backend for the
-    # GPU-fine-tuned encoder. OFF by default; cold/abstain -> byte-identical to LLM-only.
-    if os.environ.get("SOWSMITH_TYPE_HEAD_GPU", "").strip().lower() in ("1", "true", "yes", "on"):
+    # C3 base (ml/c3): the trained deal reader types every line of the deal in
+    # context -- the whole compile is read once, in arrival order, and each
+    # promotable atom's reading looked up. The only learned layer in front of
+    # the typing LLM (the store / student / type_head / contrastive / rubric
+    # layers it replaced were retired): a SURE value-light answer is assigned and skips the LLM; a
+    # sure ``_keep`` drops the candidate (it keeps its type); an unsure or
+    # value-heavy answer falls through untouched, because the LLM alone
+    # synthesizes value payloads. Lines from a Deal Kit or an estimating calc
+    # are never acted on: the base was not scored on them. ``shadow`` reads and
+    # reports, changing nothing. OFF by default; cold/unloaded/abstain ->
+    # byte-identical to the LLM-only path.
+    _c3_mode = "off"
+    try:
+        from app.core import c3_type_base as _c3
+        _c3_mode = _c3.mode()
+    except Exception:
+        pass
+    if _c3_mode != "off":
         _t = _lap()
         try:
             from app.core.schemas import AtomType as _AT
-            from app.core import type_head_gpu as _thg
 
+            _BASE_ONLY = {"answered_question", "internal_question", "list_header", "commitment",
+                          "rate_card", "deal_summary", "certification", "source_caveat", "legend_entry"}
             _VALUE_LIGHT = {
                 "requirement", "exclusion", "contract_term", "deal_metadata",
                 "acceptance_criterion", "task", "change_order_rule", "constraint",
                 "dependency", "mitigation", "compliance_rule", "submission_req",
                 "addendum_qa",
             }
-            verdicts = _thg.classify_batch([_atom_decide_text(a) for a in promotable])
-            survivors = []
-            for a, res in zip(promotable, verdicts):
-                if res is not None and res[0] in _VALUE_LIGHT:
+            _sure = _c3.sure()
+            _acts = _c3.acts_on()
+
+            _unsure_keep = os.environ.get("SOWSMITH_C3_UNSURE_KEEP", "").strip().lower() in ("1", "true", "yes", "on")
+
+            def _c3_act(a, res):
+                """(act, answer, p, new type) for a reading the layer would act on, else None."""
+                if res is None or _c3.skipped(a, artifact_sha256):
+                    return None
+                if res[1] < _c3.sure_for(res[0]):
+                    # Under the bar the parser's type stands, not the LLM's
+                    # (SOWSMITH_C3_UNSURE_KEEP). Pre-quote, the base under 0.5
+                    # was right less often than the parser on all three graded
+                    # deals; with the bar at 0.5: 010038 29->46%, 010387
+                    # 50->52%, 010043 75->77%.
+                    return ("keep", "_keep", res[1], None) if _unsure_keep else None
+                answer, p = res
+                # "on" acts only on a list that cleared the route report; with
+                # no list it takes nothing. Shadow with no list reports every
+                # value-light type, the widest view of what "on" could take.
+                if (answer not in _acts) if _acts is not None else _c3_mode != "shadow":
+                    return None
+                # ``small_talk`` is the same drop as ``_keep`` with a name
+                # (``ml.c3.data._NOT_FACT``): the line keeps its type, skips
+                # the LLM, and ``deal_chatter`` names it later as before.
+                # ``list_header`` (a list's lead-in line) is not a parser type
+                # and not a fact to type: the line keeps its type, like _keep.
+                # The parser has no type for a deal's state, a commitment or an
+                # answered question (other stages read those lines): a sure one
+                # keeps its line and skips an LLM that cannot name it either.
+                if answer in ("_keep", "small_talk", "deal_state"):
+                    return "keep", answer, p, None
+                # The base's own types the parser now holds: assigned as the
+                # base said (they were kept as the parser's type, or sent to
+                # the LLM, which has no name for them either).
+                if answer in _BASE_ONLY:
+                    return "assign", answer, p, _AT(answer)
+                if answer in _VALUE_LIGHT:
                     try:
-                        a.atom_type = _AT(res[0])
-                        head_deflected += 1
-                        _dfl["type_head_gpu"] += 1
-                        continue
-                    except (ValueError, ImportError):
-                        pass
-                survivors.append(a)
-            promotable = survivors
-        except Exception:
-            pass
-        _dfl_ms["type_head_gpu"] += _lap() - _t
-        _tick()
-        if not promotable:
-            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
-            return head_deflected
+                        return "assign", answer, p, _AT(answer)
+                    except ValueError:
+                        return None
+                # A value-carrying type: the base decides WHAT the line is;
+                # the LLM is asked only for that type's fields (``_fill_values``),
+                # never to choose among the taxonomy -- and only for types whose
+                # fields something downstream reads (SOWSMITH_C3_FILL_TYPES).
+                # Every other type is assigned with no LLM call: filling every
+                # line's fields cost 010115 639 s of typing.
+                if answer in _TAXONOMY and answer not in _c3_fill_types():
+                    try:
+                        return "assign", answer, p, _AT(answer)
+                    except ValueError:
+                        return None
+                if answer in _TAXONOMY:
+                    try:
+                        return "fill", answer, p, _AT(answer)
+                    except ValueError:
+                        return None
+                return None
 
-    if os.environ.get("SOWSMITH_TYPE_HEAD_DEFLECT", "").strip().lower() in ("1", "true", "yes", "on"):
-        _t = _lap()
-        try:
-            from app.core.schemas import AtomType as _AT
-            from app.core.type_head import load_promoted_head
-
-            _VALUE_LIGHT = {
-                "requirement", "exclusion", "contract_term", "deal_metadata",
-                "acceptance_criterion", "task", "change_order_rule", "constraint",
-                "dependency", "mitigation", "compliance_rule", "submission_req",
-                "addendum_qa",
-            }
-            head = load_promoted_head()
-            if head is not None:
+            if _c3_mode == "shadow":
+                # Shadow changes nothing, so its read runs beside the LLM
+                # instead of in front of it: what the base reads is taken now,
+                # and the comparison is made at the stage's exit.
+                _c3_before = [(a, _atom_type_str(a)) for a in promotable]
+                _c3_job = _c3.start(atoms, artifact_sha256)
+                _c3_pending.append((_c3_job, _c3_before, _c3_act))
+            else:
+                readings = _c3.classify(atoms, artifact_sha256)
                 survivors = []
+                decided = []
+                _c3_keep_answer: dict[int, tuple[str, float]] = {}
+                _c3_answer: dict[int, tuple[str, float]] = {}
+                # Why each line the LLM still gets was not the base's: no
+                # reading, under the bar, a Deal Kit / calc line, or a sure
+                # answer the list does not take (by answer). Counts only.
+                _why: dict[str, Any] = {"lines": len(promotable), "taken": 0, "no_reading": 0,
+                                        "unsure": 0, "skipped_kind": 0, "sure_not_taken": {}}
                 for a in promotable:
-                    res = head.classify(_atom_decide_text(a))
-                    if res is not None and res[0] in _VALUE_LIGHT:
-                        try:
-                            a.atom_type = _AT(res[0])
-                            head_deflected += 1
-                            _dfl["type_head"] += 1
-                            continue
-                        except (ValueError, ImportError):
-                            pass
-                    survivors.append(a)
-                promotable = survivors
-        except Exception:
-            pass
-        _dfl_ms["type_head"] += _lap() - _t
-        _tick()
-        if not promotable:
-            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
-            return head_deflected
-
-    # Contrastive kNN keep-gate (Layer 2 of the cascade) — confidently-_keep atoms
-    # skip the LLM typing call and remain _keep. Guess-free + safe by direction: we
-    # only act on a confident _keep verdict (never emit a positive type here), so a
-    # wrong abstain just falls through to the LLM as before. Instant-learning store;
-    # OFF by default; cold/abstain -> byte-identical to the LLM-only path.
-    if os.environ.get("SOWSMITH_CONTRASTIVE_TYPE", "").strip().lower() in ("1", "true", "yes", "on"):
-        _t = _lap()
-        try:
-            from app.core.contrastive_type_knn import load_promoted as _load_cknn
-
-            ck = _load_cknn()
-            if ck is not None and ck.mode in ("unified", "gate"):
-                verdicts = ck.classify_batch([_atom_decide_text(a) for a in promotable])
-                survivors = []
-                for a, res in zip(promotable, verdicts):
-                    if res is not None and res[0] == "_keep":
-                        head_deflected += 1
-                        _dfl["contrastive"] += 1
+                    _res = readings.get(id(a))
+                    got = _c3_act(a, _res)
+                    if got is None:
+                        if _res is None:
+                            _why["no_reading"] += 1
+                        elif _res[1] < _c3.sure_for(_res[0]):
+                            _why["unsure"] += 1
+                        elif _c3.skipped(a, artifact_sha256):
+                            _why["skipped_kind"] += 1
+                        else:
+                            _n = _why["sure_not_taken"]
+                            _n[_res[0]] = _n.get(_res[0], 0) + 1
+                        survivors.append(a)
                         continue
-                    survivors.append(a)
-                promotable = survivors
-            elif ck is not None and ck.mode == "typed":
-                # Atom-run candidate (app/learning/build_atom_store.py): a
-                # fine-type kNN served through the SAME loader, at the STRICT
-                # operating point -- the meta ships tau=0.98, the measured
-                # near-unanimous-neighbourhood line (99.2% teacher agreement
-                # on the deal-split holdout; 49%@82% was the loose point and
-                # an 18% disagreement rate is a queue, not an assignment).
-                #
-                # Value-light contract preserved: value-heavy types still go
-                # to the LLM, which synthesises their value payloads -- the
-                # head's two best classes (bom_line 94%, commercial_total 94%)
-                # are deliberately NOT in this set. Guess-free: an abstain or
-                # a value-heavy answer falls through byte-identically.
-                from app.core.schemas import AtomType as _AT
-
-                _VALUE_LIGHT = {
-                    "requirement", "exclusion", "contract_term", "deal_metadata",
-                    "acceptance_criterion", "task", "change_order_rule", "constraint",
-                    "dependency", "mitigation", "compliance_rule", "submission_req",
-                    "addendum_qa",
-                }
-                verdicts = ck.classify_batch([_atom_decide_text(a) for a in promotable])
-                survivors = []
-                for a, res in zip(promotable, verdicts):
-                    if res is not None and res[0] in _VALUE_LIGHT:
-                        try:
-                            a.atom_type = _AT(res[0])
-                            head_deflected += 1
-                            _dfl["contrastive"] += 1
-                            continue
-                        except (ValueError, ImportError):
-                            pass
-                    survivors.append(a)
-                promotable = survivors
-        except Exception:
-            pass
-        _dfl_ms["contrastive"] += _lap() - _t
-        _tick()
-        if not promotable:
-            _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
-            return head_deflected
-
-    # Rubric GATE (the 0.864 bge-base keep-vs-typed classifier) — deflects
-    # confidently-_keep atoms off the LLM typing stage; they stay _keep. Guess-free
-    # + safe by direction (only acts on a confident _keep verdict). OFF by default;
-    # abstains (no-op) if torch/transformers or the model are absent.
-    if os.environ.get("SOWSMITH_RUBRIC_GATE", "").strip().lower() in ("1", "true", "yes", "on"):
-        _t = _lap()
-        try:
-            from app.core.rubric_gate import keep_deflect_flags
-
-            flags = keep_deflect_flags([_atom_decide_text(a) for a in promotable])
-            if any(flags):
-                survivors = []
-                for a, deflect in zip(promotable, flags):
-                    if deflect:
-                        head_deflected += 1
-                        _dfl["rubric_gate"] += 1
+                    _why["taken"] += 1
+                    act, _answer, _p, new_type = got
+                    _c3_answer[id(a)] = (_answer, _p)
+                    if act == "keep":
+                        _c3_keep_answer[id(a)] = (_answer, _p)
+                    decided.append((a, new_type if act == "assign" else (new_type, _answer) if act == "fill" else None))
+                # Applied only once every reading is in, so a failure part way
+                # leaves every atom as it was.
+                fills = [(a, t) for a, t in decided if isinstance(t, tuple)]
+                for a, new_type in decided:
+                    if isinstance(new_type, tuple):
                         continue
-                    survivors.append(a)
+                    if new_type is not None:
+                        a.atom_type = new_type
+                        head_deflected += 1
+                        _ans = _c3_answer.get(id(a))
+                        if _ans:
+                            _mark_c3(a, _ans[0], _ans[1], "assign")
+                    else:
+                        # A keep: the line keeps its type through the compile,
+                        # and the base's answer rides along for the final
+                        # labels (c3_type_base.apply_final_labels).
+                        _ans = _c3_keep_answer.get(id(a))
+                        if _ans:
+                            _mark_c3(a, _ans[0], _ans[1], "keep")
+                    _dfl["c3"] += 1
+                if fills:
+                    filled, back = _fill_values(fills)
+                    head_deflected += filled
+                    _dfl["c3_fill"] += filled
+                    _why["filled"] = filled
+                    _why["fill_back_to_llm"] = len(back)
+                    survivors.extend(back)
                 promotable = survivors
-        except Exception:
-            pass
-        _dfl_ms["rubric_gate"] += _lap() - _t
+                try:
+                    _c3.note_typing(_why)
+                except Exception:
+                    pass
+        except Exception as exc:
+            # The layer abstains (every atom goes on to the LLM as before),
+            # but never silently: the compile result says why.
+            try:
+                from app.core import c3_type_base as _c3e
+
+                _c3e.note_typing({"error": f"{type(exc).__name__}: {exc}"[:300]})
+            except Exception:
+                pass
+            print(f"WARNING: C3 typing layer failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        _dfl_ms["c3"] += _lap() - _t
         _tick()
         if not promotable:
             _emit_deflect(llm_batch=0, promoted=head_deflected, reached_llm=False)
@@ -1101,10 +911,9 @@ def classify_atoms(atoms: list[Any]) -> int:
     _t_post = _lap()
 
     promoted = 0
-    # upgrade #3: APPLIED outcome per atom (the verdict actually enacted, after
-    # hallucination guards) — fed back to the store so the SAME shape deflects
-    # next run. We teach the enacted decision, never the raw LLM label, so a
-    # rejected ghost teaches "_keep" (what we kept), not the bad promotion.
+    # APPLIED outcome per atom (the verdict actually enacted, after
+    # hallucination guards), logged below as a training row. The enacted
+    # decision, never the raw LLM label: a rejected ghost logs "_keep".
     applied_verdict: dict[str, str] = {}
     for atom in promotable:
         atom_id = _atom_id(atom)
@@ -1141,8 +950,7 @@ def classify_atoms(atoms: list[Any]) -> int:
         # 000061 (2026-09-15): eight utterances -- "But I can check that during
         # the site survey as well too", "I'll also include a site survey as
         # well too" -- became tasks beside the one survey line the kit priced.
-        # Judged by provenance, not by wording; a PM's taught verdict on a
-        # spoken line still applies, because the store decides before this.
+        # Judged by provenance, not by wording.
         if new_type == "task" and _is_speech(atom):
             _dfl["speech_not_task"] += 1
             applied_verdict[atom_id] = "_keep"
@@ -1167,8 +975,8 @@ def classify_atoms(atoms: list[Any]) -> int:
     # (silver) training row so the Type head (#70) can one day serve this stage
     # instead of qwen3:14b. Pure logging — no behavior change, no-op unless
     # SOWSMITH_TRAINING_LOG_DB is set. We log the ENACTED verdict (post
-    # hallucination-guard), never the raw LLM label, mirroring the self-teach
-    # contract above. raw_text is delexicalized into the feature on write.
+    # hallucination-guard), never the raw LLM label (see applied_verdict above).
+    # raw_text is delexicalized into the feature on write.
     try:
         from app.core.training_log import TEACHER_LLM, TrainingRow, log_rows
         _by_id = {_atom_id(a): a for a in promotable}
@@ -1195,43 +1003,6 @@ def classify_atoms(atoms: list[Any]) -> int:
         log_rows(_rows)
     except Exception:
         pass
-
-    # upgrade #3: self-teach the enacted type decisions so the store warms and
-    # deflects matching shapes next run (gated by the same teacher-cache flag
-    # decide() uses for its own LLM tier). Both classes accumulate so the
-    # relation head can calibrate; only a confident learned "_keep" ever
-    # deflects a candidate out of the LLM batch.
-    if deflect and applied_verdict:
-        try:
-            from app.core.decide import (
-                DecisionScope,
-                _teacher_cache_enabled,
-                get_store,
-            )
-            store = get_store()
-            if (
-                store is not None
-                and _teacher_cache_enabled()
-                and hasattr(store, "learn_from_teacher")
-            ):
-                by_id = {_atom_id(a): a for a in promotable}
-                for atom_id, verdict in applied_verdict.items():
-                    a = by_id.get(atom_id)
-                    if a is None:
-                        continue
-                    # Deal-scoped, as learn_from_teacher documents: a verdict
-                    # the model reached on this deal's wording deflects THIS
-                    # deal's re-runs. Global, it reached every other deal.
-                    store.learn_from_teacher(
-                        relation=_ATOM_TYPE_RELATION,
-                        text=_atom_decide_text(a),
-                        verdict=verdict,
-                        confidence=0.9,
-                        scope=DecisionScope(deal_id=str(getattr(a, "project_id", "") or "")),
-                        instruction=_ATOM_TYPE_INSTRUCTION,
-                    )
-        except Exception:
-            pass
 
     _dfl_ms["post"] += _lap() - _t_post
     _emit_deflect(llm_batch=_llm_batch_size, promoted=promoted, reached_llm=True)
@@ -1401,6 +1172,101 @@ If a field is not present in the atom text, omit it from value. Do not invent va
 /no_think"""
 
 
+def _mark_c3(atom: Any, answer: str, p: float | None, act: str) -> None:
+    """What the C3 base said about this line and what the stage did with it
+    (assign / fill / keep), on ``value.c3_label``: the end of the compile reads
+    it (final labels; deal_chatter leaves a base-typed line alone)."""
+    try:
+        v = dict(getattr(atom, "value", None) or {})
+        lab = {"type": answer, "act": act}
+        if p is not None:
+            lab["p"] = round(float(p), 3)
+        v["c3_label"] = lab
+        atom.value = v
+    except Exception:
+        pass
+
+
+def _build_value_prompt(batch: list[tuple[Any, str]]) -> str:
+    """Values only: each line's type is already decided (the C3 base), so the
+    model is shown just that type's fields, never the taxonomy to choose from."""
+    lines = []
+    for atom, typ in batch:
+        meta = _TAXONOMY.get(typ) or {}
+        text = _atom_text(atom).replace("\n", " ")
+        section = _atom_section_path(atom)
+        suffix = f" [section: {section}]" if section else ""
+        lines.append(f"  {_atom_id(atom) or '?'} | {typ} ({meta.get('desc', '')}) | value fields: "
+                     f"{','.join(meta.get('fields', []))}\n      text: {text}{suffix}")
+    block = "\n".join(lines)
+    return f"""Each deal-document line below already has its type. For EACH line, extract the named value fields for that type from the line's text.
+
+LINES:
+{block}
+
+OUTPUT -- strict JSON, one entry per line, echoing the given type:
+{{"results": [{{"atom_id": "...", "atom_type": "<the given type>", "value": {{...extracted fields...}}}}, ...]}}
+
+If a field is not present in the text, omit it. Do not invent values. Do not change a line's type.
+
+/no_think"""
+
+
+#: Types whose extracted fields something downstream reads: a site's address
+#: and id, money, payment terms, rates, quantities, dates, access windows,
+#: people. Lines the base types as anything else get no LLM fill.
+_C3_FILL_DEFAULT = (
+    "physical_site", "commercial_total", "payment_term", "rate_card", "pricing_assumption", "quantity",
+    "bom_line", "vendor_line_item", "milestone_phase", "deadline", "site_access_window",
+    "blackout_date_range", "stakeholder", "service_line", "site_budget", "expense", "license_subscription",
+)
+
+
+def _c3_fill_types() -> frozenset:
+    raw = os.environ.get("SOWSMITH_C3_FILL_TYPES", "").strip()
+    return frozenset(t.strip() for t in raw.split(",") if t.strip()) if raw else frozenset(_C3_FILL_DEFAULT)
+
+
+def _fill_values(fills: list[tuple[Any, tuple[Any, str]]]) -> tuple[int, list[Any]]:
+    """Fill the value payload of lines the base typed with a value-carrying
+    type, in parallel batches of ``SOWSMITH_C3_FILL_BATCH`` (24). Returns (lines
+    typed and filled, lines whose call failed). A failed line goes back to
+    the full LLM path untouched, so a dead endpoint costs nothing but time."""
+    import concurrent.futures
+
+    size = max(1, int(os.environ.get("SOWSMITH_C3_FILL_BATCH", "24") or 24))
+    jobs = [(a, t, name) for a, (t, name) in fills]
+    batches = [jobs[i:i + size] for i in range(0, len(jobs), size)]
+    parallel = int(os.environ.get("SOWSMITH_LLM_PARALLEL", str(DEFAULT_PARALLEL)))
+
+    def _one(batch):
+        try:
+            raw = _call_ollama(_build_value_prompt([(a, name) for a, _t, name in batch]))
+        except Exception:
+            raw = ""
+        return batch, (_parse_response(raw) if raw else {})
+
+    filled, back = 0, []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        for batch, got in pool.map(_one, batches):
+            if not got:
+                back.extend(a for a, _t, _n in batch)
+                continue
+            for a, t, name in batch:
+                payload = got.get(_atom_id(a) or "")
+                if payload is None:
+                    back.append(a)
+                    continue
+                a.atom_type = t
+                _mark_c3(a, name, None, "fill")
+                value = payload.get("value")
+                if isinstance(value, dict) and value:
+                    cur = getattr(a, "value", None)
+                    a.value = {**cur, **value} if isinstance(cur, dict) else value
+                filled += 1
+    return filled, back
+
+
 def _classify_batch(batch: list[Any]) -> dict[str, dict[str, Any]]:
     if not batch:
         return {}
@@ -1411,7 +1277,34 @@ def _classify_batch(batch: list[Any]) -> dict[str, dict[str, Any]]:
     return _parse_response(response_text)
 
 
+def _items_one_by_one(text: str) -> dict[str, dict[str, Any]]:
+    """Each ``{"atom_id": ...}`` object read on its own. gpt-4.1-nano writes a
+    stray ``}`` after an item, or two ``{"results": ...}`` objects back to back;
+    read as one document, one such slip lost a whole batch (010038: 74 of 100
+    value fills went back, 2026-10-16)."""
+    dec = json.JSONDecoder()
+    out: dict[str, dict[str, Any]] = {}
+    for m in re.finditer(r'\{\s*"atom_id"', text or ""):
+        try:
+            item, _ = dec.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict) and item.get("atom_id") and item.get("atom_type"):
+            out[str(item["atom_id"])] = {
+                "atom_type": str(item["atom_type"]),
+                "value": item.get("value") if isinstance(item.get("value"), dict) else {},
+            }
+    return out
+
+
 def _parse_response(response_text: str) -> dict[str, dict[str, Any]]:
+    whole = _parse_whole(response_text)
+    if whole:
+        return whole
+    return _items_one_by_one(response_text)
+
+
+def _parse_whole(response_text: str) -> dict[str, dict[str, Any]]:
     match = re.search(r"\{[\s\S]*\"results\"[\s\S]*\}", response_text)
     if not match:
         return {}

@@ -1205,6 +1205,23 @@ def build_orbitbrief_envelope(
     envelope["pm_dashboard"] = build_pm_dashboard(
         atoms=atoms, packets=packets, edges=edges, entities=entities,
     )
+    # Brief v2 (c3_brief): the base decides which questions this deal needs,
+    # so its list replaces the fixed head-start checklist and the gap map
+    # (both are in the question catalog). The Questions card labels these
+    # like any other question, and each verdict trains the Questions head.
+    _c3b = getattr(compile_result, "c3_brief", None)
+    if _c3b:
+        envelope["c3_brief"] = _c3b
+        try:
+            from app.core.c3_brief import envelope_questions
+
+            _dash = envelope["pm_dashboard"]
+            _keep = [q for q in _dash.get("open_questions") or []
+                     if q.get("kind") not in ("headstart", "generated_gap")]
+            _dash["open_questions"] = _keep + envelope_questions(_c3b)
+            _dash["blockers"] = [b for b in _dash.get("blockers") or [] if b.get("kind") != "generated_gap"]
+        except Exception as exc:  # the old list stands
+            envelope.setdefault("warnings", []).append(f"c3 questions not applied: {type(exc).__name__}")
     envelope["sow_readiness_scorecard"] = build_sow_readiness_scorecard(
         atoms=atoms, packets=packets, edges=edges, entities=entities,
     )
@@ -1267,6 +1284,31 @@ def build_orbitbrief_envelope(
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
     envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+    # A deal whose only place is a town named in its scope ("a potential
+    # monitor install in Philadelphia", 010426) had no site at all: the roster
+    # takes site lines only. With nothing else, the place its lines name most
+    # is the job site, marked as having no address yet.
+    try:
+        _sr = envelope["site_readiness"]
+        if isinstance(_sr, dict) and not (_sr.get("sites") or []):
+            from collections import Counter as _Ctr
+
+            _named = _Ctr()
+            for _a in atoms:
+                _v = getattr(_a, "value", None)
+                if isinstance(_v, dict) and _v.get("kind") in ("image_ocr_text", "image_fact"):
+                    continue
+                for _k in getattr(_a, "entity_keys", None) or []:
+                    if isinstance(_k, str) and _k.startswith("site:") and not re.search(r"\d", _k):
+                        _named[_k] += 1
+            if _named:
+                _key, _n = _named.most_common(1)[0]
+                _sr.setdefault("sites", []).append({
+                    "site": _key, "display_name": _key.split(":", 1)[1].replace("_", " ").title() + " (address not given)",
+                    "readiness": 0.0, "maturity": "named", "band": "red", "anchored": False, "signal_count": _n,
+                    "named_only": True})
+    except Exception:
+        pass
     # Does the number of sites we RESOLVED match the number the deal SAYS it has?
     #
     # On 010215 the emails stated "10" nine times and a quantity entity of 10 was
@@ -1388,6 +1430,8 @@ def build_orbitbrief_envelope(
     # city/state/ZIP. Consumers that glue slug and street together render
     # "2970 Brandywine RD STE 200 - 2970 Brandywine Rd" (live 010300); the
     # envelope now says "HQ — 2970 Brandywine Rd, STE 200, Atlanta, GA 30641".
+    _file_stems = {re.sub(r"[^a-z0-9]+", " ", str(d.get("filename") or "").rsplit(".", 1)[0].lower()).strip()
+                   for d in (envelope.get("documents") or []) if isinstance(d, dict)}
     try:
         for _row in ((envelope.get("site_readiness") or {}).get("sites") or []):
             _fac = str(_row.get("facility_name") or "").strip()
@@ -1397,12 +1441,30 @@ def build_orbitbrief_envelope(
                 " ".join(q for q in (str(_row.get("state") or "").strip(), str(_row.get("zip") or "").strip()) if q),
             ) if p)
             _place = ", ".join(p for p in (_street, _loc) if p)
+            # A "facility" that is only the site key spelled out came from a
+            # file name ("hou Houston Port Utilization 2wk", 010428), not from
+            # anything that names the place: show the place alone.
+            _key_words = re.sub(r"^site:", "", str(_row.get("site") or "")).replace("_", " ").strip().lower()
+            if (_fac and _key_words and _place and _key_words in _file_stems
+                    and re.sub(r"\W+", " ", _fac.lower()).strip() == _key_words):
+                _fac = ""
             if _fac and _place and _fac.lower() not in _place.lower():
                 _row["display_name"] = f"{_fac} — {_place}"
             elif _place:
                 _row["display_name"] = _place
             elif _fac:
                 _row["display_name"] = _fac
+            # A site named after a file ("HOU_Houston_Port_Utilization_2wk.xlsx",
+            # 010428) is no place: name it by the town the deal record gives.
+            _dn = str(_row.get("display_name") or "")
+            _filey = re.compile(r"\.(xlsx?|csv|docx?|pdf|pptx?)\b|_[a-z0-9]+_", re.I)
+            if _filey.search(str(_row.get("facility_name") or "")):
+                _row["facility_name"] = None
+            if (_filey.search(_dn) or not _row.get("facility_name")) and not _street:
+                _deal_name = str(((summary.get("crm") or {}) if isinstance(summary, dict) else {}).get("deal_name") or "")
+                _town = re.search(r"([A-Z][A-Za-z.' ]+,\s*[A-Z]{2})\s*$", _deal_name.split(" - ")[-1].strip())
+                if _town and (_filey.search(_dn) or not _dn):
+                    _row["display_name"] = f"{_town.group(1).strip()} (address not given)"
 
         # Pairs that look like one place, for a person to judge.
         #
@@ -1416,6 +1478,44 @@ def build_orbitbrief_envelope(
 
         _sr_block = envelope.get("site_readiness")
         if isinstance(_sr_block, dict):
+            # One building, one row (site_identity.py): the same site code, or a
+            # numbered street whose ZIP and city agree. Folded rows stay visible
+            # on the kept row under `merged_from`; weaker look-alikes remain
+            # duplicate candidates below for a PM.
+            try:
+                from app.core.site_identity import merge_roster
+                from app.core.site_count_reconcile import reconcile_site_count
+
+                _merged_rows, _folded = merge_roster(
+                    [r for r in (_sr_block.get("sites") or []) if isinstance(r, dict)])
+                _lt = ((getattr(compile_result, "c3_brief", None) or {}).get("site_line_types") or {})
+                if _lt:
+                    from app.core.site_identity import filter_roster
+
+                    _site_atoms: dict[str, list[str]] = {}
+                    _flags: dict[str, list[str]] = {}
+                    for _a in atoms:
+                        for _k in (getattr(_a, "entity_keys", None) or []):
+                            if str(_k).startswith("site:"):
+                                _site_atoms.setdefault(str(_k), []).append(str(getattr(_a, "id", "")))
+                                _flags[str(getattr(_a, "id", ""))] = list(getattr(_a, "review_flags", None) or []) + (
+                                    ["site_roster_row"] if any(
+                                        "site_roster" in str(getattr(_ref, "extraction_method", "") or "")
+                                        for _ref in (getattr(_a, "source_refs", None) or [])) else [])
+                    _merged_rows, _aside = filter_roster(_merged_rows, _site_atoms, _lt, _flags)
+                    if _aside:
+                        _sr_block["set_aside_sites"] = _aside
+                        _folded += len(_aside)
+                if _folded:
+                    _sr_block["sites"] = _merged_rows
+                    _sr_block["site_count"] = len(_merged_rows)
+                    _sr_block["anchored_count"] = sum(1 for r in _merged_rows if r.get("anchored"))
+                    _sr_block["merged_count"] = _folded
+                    envelope["site_count_reconciliation"] = reconcile_site_count(atoms, len(_merged_rows))
+            except Exception as _mr_exc:
+                import logging as _lg_mr
+
+                _lg_mr.getLogger(__name__).warning("site roster merge failed: %s", _mr_exc)
             # The deal's text, so a name printed beside its street ("Checkout
             # LLC, 40 10th Ave") is offered as one site.
             _evidence = " || ".join(
@@ -1586,6 +1686,18 @@ def build_orbitbrief_envelope(
     from app.core.doc_origin import annotate_doc_origin
 
     annotate_doc_origin(documents, envelope)
+    # SOW content (c3_sow): the deal's own part of a SOW, written only from
+    # the lines the heads kept, for SowSmith to fill its templates with.
+    try:
+        from app.core import c3_sow
+
+        if c3_sow.enabled() and envelope.get("c3_brief"):
+            envelope["c3_sow"] = c3_sow.for_envelope(envelope)
+            from app.core import c3_sow_trace
+
+            c3_sow_trace.attach(envelope)
+    except Exception as exc:  # pragma: no cover - a failed SOW draft never costs the envelope
+        envelope["c3_sow"] = {"error": type(exc).__name__}
     return envelope
 
 
@@ -2794,7 +2906,26 @@ def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
         if not isinstance(ctx, dict):
             return None
         crm = ctx.get("crm")
-        return dict(crm) if isinstance(crm, dict) else None
+        if not isinstance(crm, dict):
+            return None
+        crm = dict(crm)
+        if ctx.get("as_of") or ctx.get("quote_asof"):
+            # A run cut to a date carries no CRM amount: today's amount is the
+            # price set AFTER the cutoff, and Core cited it as every question's
+            # impact basis (010115: "deal value 3,830", the post-cutoff v3 price,
+            # in a pre-quote PM_HANDOFF). The CRM deal amount never reaches a
+            # pre-quote brief.
+            crm.pop("amount", None)
+            # Nor the stages the deal reached after it (010115 read "closedwon").
+            cut = str(ctx.get("as_of") or ctx.get("quote_asof"))
+            tl = crm.get("stage_timeline")
+            if isinstance(tl, dict):
+                tl = dict(tl)
+                kept = [t for t in tl.get("transitions") or [] if isinstance(t, dict) and str(t.get("ts") or "") <= cut]
+                tl["transitions"] = kept
+                tl["current_stage"] = (kept[-1].get("label") or kept[-1].get("stage_id")) if kept else None
+                crm["stage_timeline"] = tl
+        return crm
     except (json.JSONDecodeError, OSError, TypeError):
         return None
 
@@ -3890,6 +4021,47 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         if (et.get("message") or {}).get("index") == 0:
             own_pos[aid] = _int(p)
 
+    # A piece read out of a longer line on the same line (a signature's
+    # address or name pulled from a one-line email body) sits where its words
+    # sit in that line. Ordered by when it was made, live 010038's CDW
+    # signature address "625 W. Adams, Chicago" read right after the header,
+    # ahead of the body, and the site-role head took it for the job site
+    # (training had it after the body).
+    def _norm(t: Any) -> str:
+        return " ".join(str(t or "").split()).lower()
+
+    by_line: dict[tuple[str, Any], list[Any]] = {}
+    for a in atoms or []:
+        ln = _line(_loc(a))
+        if ln is not None and _loc(a).get("char_start") is None:
+            by_line.setdefault((str(getattr(a, "artifact_id", "") or ""), ln), []).append(a)
+    inside: dict[int, int] = {}
+    for group in by_line.values():
+        if len(group) < 2:
+            continue
+        texts = {id(a): _norm(getattr(a, "raw_text", "")) for a in group}
+        host = max(group, key=lambda a: len(texts[id(a)]))
+        body = texts[id(host)]
+        for a in group:
+            if a is host:
+                continue
+            probe = texts[id(a)][:24]
+            at = body.find(probe) if len(probe) >= 6 else -1
+            inside[id(a)] = at + 1 if at >= 0 else len(body) + 1
+
+    # A thread position orders a document only when its lines carry one. In
+    # a CRM note with an email pasted into it, a few lines had one and the
+    # rest did not, so those few jumped ahead of the note's own first line
+    # (live 010387: "Gents-", line 37 of Trent's note, read first; training
+    # had it where it is).
+    lined: dict[str, list[bool]] = {}
+    for a in atoms or []:
+        if _line(_loc(a)) is None:
+            continue
+        aid = str(getattr(a, "artifact_id", "") or "")
+        lined.setdefault(aid, []).append(_thread(a).get("position_in_file") is not None)
+    no_pos = {aid for aid, flags in lined.items() if flags and sum(flags) < 0.9 * len(flags)}
+
     # A workbook's sheets in the order the parser met them.
     sheet_rank: dict[tuple[str, str], int] = {}
     for a in atoms or []:
@@ -3912,7 +4084,7 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
             pos = pos_by_line.get((aid, line))
         if pos is None and line is None:
             pos = own_pos.get(aid)
-        pos = _int(pos, 10**6)
+        pos = 0 if aid in no_pos else _int(pos, 10**6)
         page = _int(loc.get("page"))
         if loc.get("sheet") is not None:
             page = sheet_rank.get((aid, str(loc.get("sheet"))), 0)
@@ -3939,7 +4111,7 @@ def _in_reading_order(atoms: list[Any], documents: list[dict[str, Any]]) -> list
         seq = _int(loc.get("sentence_index"))
         # Several atoms cut from one line without a sentence index (a note's
         # " - "-separated list, live 000132) still have a column.
-        col = _int(loc.get("char_start"))
+        col = _int(loc.get("char_start")) if loc.get("char_start") is not None else inside.get(id(a), 0)
         return (when, doc_pos.get(aid, 10**6), pos, page, blk, line or 0, seq, col,
                 emitted.get(id(a), 10**9), str(getattr(a, "id", "")))
 

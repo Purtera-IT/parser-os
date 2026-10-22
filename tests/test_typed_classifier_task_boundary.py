@@ -33,15 +33,7 @@ def _written(aid, text):
 def _past_every_layer(monkeypatch, verdicts):
     monkeypatch.delenv("SOWSMITH_DISABLE_LLM", raising=False)
     monkeypatch.delenv("SOWSMITH_TYPED_CLASSIFIER_DISABLE", raising=False)
-    monkeypatch.setattr(tac, "_atom_type_deflect_enabled", lambda: False)
-    monkeypatch.setattr(tac, "_typed_student_enabled", lambda: False)
     monkeypatch.setattr(tac, "_ollama_reachable", lambda: True)
-    monkeypatch.setattr(tac, "_apply_taught_types", lambda atoms: {})
-    try:
-        from app.core import rubric_gate
-        monkeypatch.setattr(rubric_gate, "keep_deflect_flags", lambda texts: [False] * len(texts))
-    except Exception:
-        pass
     monkeypatch.setattr(tac, "_classify_batch", lambda batch: {
         a.id: {"atom_type": verdicts.get(a.id, "_keep"), "value": {}} for a in batch})
 

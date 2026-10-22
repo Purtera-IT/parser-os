@@ -1100,6 +1100,15 @@ def _fold_answers_into_questions(atoms: list[EvidenceAtom]) -> list[EvidenceAtom
             return False
         return True
 
+    # The answer check is asked only under a question-ish line; ask those in one
+    # round trip (one call per line was 56 s on 010043's signed SOW).
+    try:
+        from app.core.semantic_rules import prewarm as _prewarm
+
+        _prewarm([(b.raw_text or "").strip() for a, b in zip(atoms, atoms[1:])
+                  if _is_questionish((a.raw_text or "").strip())], max_chars=3900)
+    except Exception:
+        pass
     out: list[EvidenceAtom] = []
     for a in atoms:
         txt = (a.raw_text or "").strip()
@@ -1125,7 +1134,7 @@ def _fold_answers_into_questions(atoms: list[EvidenceAtom]) -> list[EvidenceAtom
             )
             do_merge = prev_mergeable and (
                 explicit                                            # 1. 'Answer:' -> any non-answer prev
-                or (_is_answer_block(txt) and _is_questionish(ptxt))  # 2. embedding answer (online)
+                or (_is_questionish(ptxt) and _is_answer_block(txt))  # 2. embedding answer (online)
                 or (ptxt.endswith("?") and _is_declarative_answer(txt))  # 3. positional, no marker
             )
             if do_merge:
@@ -4824,7 +4833,11 @@ def _extract_header_grids(
         from app.parsers.pdf.layout_text import header_grid_tables
 
         with fitz.open(str(pdf_path)) as doc:
-            found = header_grid_tables(doc[page_index], exclude)
+            # The previous page's grid header, for a grid that carries on here.
+            carry: dict[str, Any] = {}
+            if page_index > 0:
+                header_grid_tables(doc[page_index - 1], [], carry)
+            found = header_grid_tables(doc[page_index], exclude, carry)
     except Exception:
         return [], []
     return [b for b, _ in found], [r for _, r in found]

@@ -55,9 +55,11 @@ from app.parsers.checkbox_cells import is_checkbox_cell
 #     is the state column; "Estimated Cost" is not), and
 #   * a field is claimed at most once per table — the leftmost column that
 #     matches it wins, and later columns fall through to their next-best field.
+_COUNTRY_RE = re.compile(r"^\s*(usa|us|u\.s\.a?\.?|united states( of america)?|canada|ca|mexico|mx|uk|united kingdom)\s*$", re.I)
+
 _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Site identifier (most authoritative)
-    ("site_id", ("site id", "site #", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number")),
+    ("site_id", ("site id", "site #", "site no", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number")),
     # Street address — keep BEFORE facility_name so an "Address" or
     # "Street" header takes the address column even when a "Location"
     # header would also match facility_name's "location name".
@@ -207,6 +209,10 @@ def _looks_like_billing_header(*parts: str) -> bool:
 # enough (BOMs, decision logs and port maps all reference a site); one of
 # these must be present for a table to be a roster. Shared with xlsx_parser
 # so the strict gate and the header finder agree on one definition.
+#: A per-place table identifies its sites by city and ZIP together (010358's survey workbook lists 101 medical
+#: buildings as City | Zip | Floors | Bldg SqFt, two of them in one ZIP).
+PLACE_TABLE_FIELDS: frozenset[str] = frozenset({"city", "zip"})
+
 ROSTER_SPECIFIC_FIELDS: frozenset[str] = frozenset({
     "facility_name", "street_address", "mdf_idf",
     "access_window", "escort_owner", "city_state",
@@ -243,7 +249,11 @@ def _roster_evidence_is_dominant(columns: Sequence[str]) -> bool:
     non-roster column (a Status / Type / Description) cannot be the truth of
     the table? Requires >=3 canonical fields AND >=2 roster-specific ones."""
     present = set(map_columns_to_fields(columns).values())
-    return len(present) >= 3 and len(present & ROSTER_SPECIFIC_FIELDS) >= 2
+    if len(present) >= 3 and len(present & ROSTER_SPECIFIC_FIELDS) >= 2:
+        return True
+    # A per-place cost or hours sheet (City | Zip | Bldg SqFt | ... | Extended Cost) is still one row per site:
+    # 010358's survey workbook prices each of its 101 buildings on its own row.
+    return len(present) >= 3 and PLACE_TABLE_FIELDS <= present and bool(present & {"sqft", "occupancy"})
 
 
 # A column that structurally IS the row's identifier: no spaces, short, and
@@ -274,6 +284,8 @@ def detect_site_id_column(
     n = len(rows)
     if n < 3:
         return None
+    found: list[int] = []
+    rank: dict[int, tuple] = {}
     for i, _col in enumerate(columns):
         if i in field_map:
             continue
@@ -288,8 +300,18 @@ def detect_site_id_column(
         if (len(widths) == 1 and all(v.isdigit() for v in vals)
                 and next(iter(widths)) in _NON_ID_UNIFORM_DIGIT_WIDTHS):
             continue  # uniform-width digits: phone / ZIP / EIN, not a site code
-        return i
-    return None
+        found.append(i)
+        rank[i] = (
+            len(set(vals)) == len(vals),                          # every row its own value
+            not (all(v.isdigit() for v in vals)                   # not a 1..N row counter
+                 and sorted(set(int(v) for v in vals)) == list(range(1, len(set(vals)) + 1))),
+            -i,
+        )
+    # 000123's BevMo roster: "BevMo Store" (1..161, one number typed twice)
+    # and "locid" (the store number, unique) both qualify; the leftmost was
+    # taken, two stores shared BEVMOSTO-155 and one was folded away. A column
+    # whose every value is unique, and one that is not a row counter, wins.
+    return max(found, key=lambda c: rank[c]) if found else None
 
 
 def _id_prefix_for(header: str) -> str:
@@ -423,6 +445,10 @@ def find_header_row(rows: Sequence[Any], scan_limit: int = 25) -> int:
         present = set(map_columns_to_fields(cells).values())
         if len(present) >= 2 and (present & ROSTER_SPECIFIC_FIELDS):
             return i
+        # A table of places by City + Zip with something measured per place (010358: City | Zip | Region |
+        # Floors | Bldg SqFt | ... hours per site) is headed here too, though none of its columns names a site.
+        if len(present) >= 3 and PLACE_TABLE_FIELDS <= present:
+            return i
     return first_nonblank
 
 
@@ -506,7 +532,7 @@ def _has_many_distinct_places(
     values in the city / street column separates them without knowing a single
     header word.
     """
-    place_cols = [i for i, f in col_map.items() if f in ("city", "street_address", "city_state")]
+    place_cols = [i for i, f in col_map.items() if f in ("city", "street_address", "city_state", "zip")]
     if not place_cols:
         return False
     # Distinct PLACES, one tuple per row — not distinct strings. Pooling the
@@ -514,7 +540,8 @@ def _has_many_distinct_places(
     # values and pass as a roster.
     seen: set[tuple[str, ...]] = set()
     for row in rows or []:
-        cells = row if isinstance(row, (list, tuple)) else getattr(row, "cells", None)
+        # The xlsx path hands rows over as {header: value} dicts, in column order; read them by position too.
+        cells = list(row.values()) if isinstance(row, dict) else row if isinstance(row, (list, tuple)) else getattr(row, "cells", None)
         if not isinstance(cells, (list, tuple)):
             continue
         place = tuple(
@@ -594,6 +621,10 @@ def looks_like_site_roster(
         if not (fields_present & _SITE_IDENTITY_FIELDS):
             if not _has_many_distinct_places(columns, rows, col_map):
                 continue
+        return True
+
+    # Signal 2b: places by City + Zip, a different place on row after row (not a letterhead's one address).
+    if PLACE_TABLE_FIELDS <= fields_present and _has_many_distinct_places(columns, rows, col_map):
         return True
 
     # Signal 3: row-shape — count rows whose leftmost non-empty cell
@@ -866,8 +897,10 @@ def extract_site_roster(
         # alone IS a site: rosters routinely leave the display name blank for
         # a store that hasn't been branded yet, and dropping those rows loses
         # real, fully-addressed locations.
+        # A place table's row is anchored by its city AND ZIP together (010358): still a site, named by the caller.
+        place_row = PLACE_TABLE_FIELDS <= set(field_map.values()) and cells.get("city") and cells.get("zip")
         if not (cells.get("site_id") or cells.get("facility_name")
-                or cells.get("street_address")):
+                or cells.get("street_address") or place_row):
             continue
 
         # Bucket unknown fields
@@ -920,6 +953,11 @@ def extract_site_roster(
         # sitting in plain sight in its own column.
         if not cs_city and not cs_state and state_code(cells.get("state")):
             cs_city = city_only_cell(cells.get("city_state"))
+
+        # A "Location" column that holds a country (USA / Canada) is not the
+        # facility's name: keep it with the row's other columns instead.
+        if _COUNTRY_RE.match(str(cells.get("facility_name") or "")):
+            extras.append(("country", str(cells.pop("facility_name")).strip()))
 
         loc = enrich_location_fields(
             street_address=cells.get("street_address"),

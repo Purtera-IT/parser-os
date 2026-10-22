@@ -1,0 +1,193 @@
+{
+ "_doc": "Facts a PM checks, per deal, from graded reviews of the deal's own documents (2026-10-16). check_golden.py scores a dev compile against them. Every mistake a grader found is a check here, so it cannot come back unnoticed.",
+ "010038": {
+  "uuid": "8fc3207b-c469-4dfc-ae03-ad881e1d31ec",
+  "fee": {
+   "must_include": [
+    "9,150"
+   ],
+   "must_not_include": [
+    "conflicting",
+    "7,890",
+    "1,260 "
+   ]
+  },
+  "sites": {
+   "must_have_any_of": [
+    [
+     "323 lakeside"
+    ],
+    [
+     "1220 w 6th",
+     "1220 w. 6th"
+    ]
+   ],
+   "must_not_have": [
+    "625 w",
+    "adams",
+    "2390 satellite",
+    "buford",
+    "955 yard",
+    "grandview",
+    "engineering services"
+   ]
+  },
+  "contacts": {
+   "must_include": [
+    "Nicole Tomasik",
+    "Nicholas Wallace"
+   ]
+  },
+  "overview": {
+   "must_not_include": [
+    "site survey",
+    "travel expenses will be billed",
+    "customer is responsible for equipment removal",
+    "customer will remove"
+   ]
+  },
+  "customer_responsibilities": {
+   "must_not_include": [
+    "remove the tvs",
+    "remove the nuc",
+    "plywood"
+   ]
+  },
+  "questions": {
+   "must_not_include": [
+    "cat6",
+    "camera"
+   ]
+  },
+  "pre_quote": {
+   "sites": {
+    "must_have_any_of": [
+     [
+      "323 lakeside"
+     ]
+    ],
+    "must_not_have": [
+     "625 w",
+     "adams",
+     "2390 satellite",
+     "buford",
+     "955 yard",
+     "grandview"
+    ]
+   },
+   "contacts": {
+    "must_include_any": [
+     "Nicole Tomasik",
+     "Nicholas Wallace"
+    ]
+   },
+   "overview": {
+    "must_include_any": [
+     "cleveland"
+    ],
+    "must_not_include": [
+     "9,150",
+     "7,890",
+     "1,260"
+    ]
+   }
+  }
+ },
+ "010387": {
+  "uuid": "8da41182-460a-497d-9259-9917fe34a9fb",
+  "fee": {
+   "must_include": [
+    "907.50"
+   ]
+  },
+  "sites": {
+   "must_have_any_of": [
+    [
+     "johns creek"
+    ]
+   ],
+   "must_not_have": [
+    "engineering services",
+    "laura street",
+    "76 s laura"
+   ]
+  },
+  "contacts": {
+   "must_include": [
+    "Rafael Fernandez",
+    "Bill Ort",
+    "Tanner Norris"
+   ]
+  },
+  "overview": {
+   "must_not_include": []
+  },
+  "customer_responsibilities": {
+   "must_not_include": [
+    "connect the replacement displays",
+    "connect replacement displays"
+   ]
+  },
+  "questions": {
+   "must_not_include": []
+  },
+  "pre_quote": {
+   "sites": {
+    "must_have_any_of": [
+     [
+      "johns creek"
+     ]
+    ],
+    "must_not_have": [
+     "engineering services",
+     "laura street"
+    ]
+   },
+   "contacts": {
+    "must_include_any": [
+     "Chris Heist",
+     "Bill Ort",
+     "Rafael Fernandez"
+    ]
+   },
+   "overview": {
+    "must_include_any": [
+     "video wall",
+     "display"
+    ],
+    "must_not_include": [
+     "907.50"
+    ]
+   }
+  }
+ },
+ "_pre_quote_doc": "pre_quote: facts true BEFORE we quoted (customer/partner material only). check_golden.py --pre-quote also checks the cutoff held: no document after the run's as_of, and none of our own files (Deal Kit, CALC, our SOW/change order).",
+ "010043": {
+  "uuid": "3ab856bc-d952-4388-a0ac-451e992ca32f",
+  "pre_quote": {
+   "sites": {
+    "must_have_any_of": [
+     [
+      "tyvola"
+     ]
+    ],
+    "must_not_have": []
+   },
+   "contacts": {
+    "must_include_any": [
+     "Nicole Tomasik",
+     "Lane"
+    ]
+   },
+   "overview": {
+    "must_include_any": [
+     "camera",
+     "verkada"
+    ],
+    "must_not_include": [
+     "1,668"
+    ]
+   }
+  }
+ }
+}

@@ -48,10 +48,9 @@ def _model(schema, **kw):
     return m
 
 
-def _universal(out):
-    return {k: v for k, v in out.logits.items() if not k.startswith("read:co_")
-            and k not in ("read:intake_gap", "read:needed_by", "read:scope_category",
-                          "read:delivery_field", "read:source_of_truth", "read:co_stage_raw")}
+def _universal(out, schema):
+    company = {o.key for o in schema.opportunities if not o.universal}
+    return {k: v for k, v in out.logits.items() if k not in company}
 
 
 # ---------------------------------------------------------------- schema
@@ -110,7 +109,7 @@ def test_programs_come_out_of_the_why_and_execute_exactly(deal):
 def test_inputs_carry_no_labels(schema, deal):
     batch = featurize(deal, schema)
     assert set(batch.inputs()) == {"texts", "numbers", "doc_kind", "role", "side", "times",
-                                   "same_doc", "same_section", "context"}
+                                   "same_doc", "same_section", "context", "pixels", "geometry"}
     m = _model(schema)
     relabeled = copy.deepcopy(deal)
     for a in relabeled.atoms:
@@ -122,6 +121,84 @@ def test_inputs_carry_no_labels(schema, deal):
         b = m(featurize(relabeled, schema).inputs(), company="purtera")
     for k in a.logits:
         assert torch.equal(a.logits[k], b.logits[k]), k
+
+
+def test_oneshot_sees_atoms_and_predicts_links_and_heads(schema, deal):
+    """Serving gets atoms. Gold links, notes and verdicts do not enter the trunk."""
+    batch = featurize(deal, schema)
+    shot = batch.oneshot()
+    assert set(shot) == set(batch.inputs())
+    assert all(v is None for col in shot["context"].values() for v in col)
+    for forbidden in ("edges", "why", "targets", "judged", "note", "verdict"):
+        assert forbidden not in shot
+    stripped = copy.deepcopy(deal)
+    for atom in stripped.atoms:
+        if atom.label:
+            atom.label = dict(atom.label)
+            atom.label["note"] = "A completely different reason."
+            atom.label["reads_set"] = {}
+    stripped.edges = []
+    other = featurize(stripped, schema).oneshot()
+    m = _model(schema).eval()
+    with torch.no_grad():
+        a, b = m(shot), m(other)
+    assert a.relations and a.governs is not None
+    rels = {o.field for o in schema.select(kind="relation", size=None) if o.field != "governs"}
+    assert rels <= set(a.relations)
+    for key in a.logits:
+        assert torch.equal(a.logits[key], b.logits[key]), key
+    for key in a.relations:
+        assert torch.equal(a.relations[key], b.relations[key]), key
+
+
+def test_the_models_own_links_steer_the_decision(schema, deal):
+    """A closed gate leaves the decision unchanged. An open gate lets the
+    proposed links move it, and the decision loss trains the link scorer.
+    Gold edges are not an input."""
+    batch = featurize(deal, schema)
+    shot = batch.oneshot()
+    m = _model(schema)
+    with torch.no_grad():
+        closed = m(shot).logits["col:label_type"].clone()
+        m.link_mix.weight.copy_(torch.eye(m.link_mix.in_features) * 0.05)
+        opened = m(shot).logits["col:label_type"]
+    assert not torch.equal(closed, opened)
+    m.train()
+    out = m(shot)
+    out.logits["col:label_type"].sum().backward()
+    assert m.link_mix.weight.grad is not None and m.link_mix.weight.grad.abs().sum() > 0
+    assert m.relation_head.a.weight.grad is not None and m.relation_head.a.weight.grad.abs().sum() > 0
+
+
+def test_an_answer_link_reaches_the_question_it_points_at(schema):
+    """The later line draws the link. The earlier line is classified with it."""
+    m = _model(schema)
+    width = m.link_mix.in_features
+    with torch.no_grad():
+        m.link_mix.weight.copy_(torch.eye(width))
+        m.link_mix.bias.zero_()
+    lines = torch.zeros(2, width)
+    lines[0, 0] = 1
+    lines[1, 1] = 4
+    scores = torch.full((2, 2), float("-inf"))
+    scores[1, 0] = 20
+    mixed = m._apply_links(lines, {"answers": scores}, {"answers": torch.tensor([-20.0, -20.0])})
+    assert mixed[0, 1] > mixed[0, 0]
+
+
+def test_labeled_lines_learn_which_links_not_to_draw(schema, deal):
+    """A gold edge picks its target. A labeled line with no edge of that kind
+    is taught to abstain, and that abstain score is a real parameter."""
+    from ml.c3.losses import relation_loss
+
+    batch = featurize(deal, schema)
+    m = _model(schema)
+    m.train()
+    out = m(batch.oneshot())
+    assert out.link_none
+    relation_loss(out, batch).backward()
+    assert m.relation_head.none.grad is not None
+    assert m.relation_head.none.grad.abs().sum() > 0
 
 
 def test_absence_targets_follow_the_timeline(schema, deal):
@@ -156,7 +233,7 @@ def test_universal_outputs_ignore_the_company(schema, deal):
         m.alpha[1].normal_()
         inp = featurize(deal, schema).inputs()
         a, b = m(inp, company="purtera"), m(inp, company="other_co")
-    for k, v in _universal(a).items():
+    for k, v in _universal(a, schema).items():
         assert torch.equal(v, b.logits[k]), k
     assert not torch.equal(a.logits["read:co_action"], b.logits["read:co_action"])
 
@@ -243,6 +320,33 @@ def test_every_loss_term_reaches_the_weights(schema, deal):
     with torch.no_grad():
         out = m(batch.inputs())
     s = out.relations["answers"]
-    upper = torch.triu(torch.ones_like(s, dtype=torch.bool), 1)
-    assert (s[upper] == float("-inf")).all()
+    t = torch.tensor(batch.times, dtype=torch.float64)
+    later = t.view(-1, 1) < t.view(1, -1)        # the target entered after the source
+    assert later.any() and (s[later] == float("-inf")).all()
+    # Lines that arrived together (one document) may point either way.
+    same = (t.view(-1, 1) == t.view(1, -1)) & ~torch.eye(len(t), dtype=torch.bool)
+    assert torch.isfinite(s[same]).all()
     assert IGNORE in batch.targets["col:wants"]
+
+
+def test_reading_in_attention_blocks_gives_the_one_pass_answer(monkeypatch):
+    """A long window is attended ATTN_BLOCK query lines at a time when reading
+    (so an 8,192-line window fits a T4); the answer must be the full pass's."""
+    from ml.c3 import model as c3_model
+
+    torch.manual_seed(0)
+    blk = c3_model.GraphBlock(32, 4, 0.0).eval()
+    with torch.no_grad():
+        blk.w_doc.normal_()
+        blk.w_sec.normal_()
+    n = 300
+    x = torch.randn(n, 32)
+    allowed = torch.tril(torch.ones(n, n, dtype=torch.bool))
+    same_doc = (torch.rand(n, n) > 0.5).float()
+    same_sec = (torch.rand(n, n) > 0.7).float()
+    with torch.no_grad():
+        monkeypatch.setattr(c3_model, "ATTN_BLOCK", 10**9)
+        whole = blk(x, allowed, same_doc, same_sec)
+        monkeypatch.setattr(c3_model, "ATTN_BLOCK", 64)
+        blocks = blk(x, allowed, same_doc, same_sec)
+    assert torch.allclose(whole, blocks, atol=1e-6)

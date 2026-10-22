@@ -40,13 +40,18 @@ from typing import Any
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
 from .lattice import AskedLattice, company_description, space_descriptions
 from .operators import ReasonCompiler, apply_reasons
-from .schema import NUMBER, PAIR, RELATION, Schema
+from .schema import CAUSAL_RELATIONS, NUMBER, PAIR, RELATION, Schema
 from .text import HashingEncoder, TagEmbedding
+
+#: Query lines per attention pass when reading a window longer than this
+#: (inference only; training and short deals take the one-pass path).
+ATTN_BLOCK = 2048
 
 #: The claim slots the belief tracker and the absence head work over, with the
 #: readings that fill each one. Universal: any services company tracks these.
@@ -65,12 +70,18 @@ CLAIM_SLOTS: dict[str, tuple[str, ...]] = {
 
 #: Relations whose source must enter the deal no earlier than its target
 #: (the answer comes after the question; a derived total after its inputs).
-CAUSAL_RELATIONS = {"answers": 1, "derived_from": 1, "contradicts": 1}
 
 #: What a line can change, per the WHY grammar ("what it changes in hours,
 #: crew, sites, tasks or price"), plus the schedule. Directions: down, none, up.
 CHANGE_SLOTS = ("hours", "crew", "sites", "price", "tasks", "schedule")
 DIRECTIONS = ("down", "none", "up")
+
+
+def pair_tensor(x, dev) -> torch.Tensor:
+    """A row-pair mask as float32 on ``dev``, from a tensor or nested lists."""
+    if isinstance(x, torch.Tensor):
+        return x.to(device=dev, dtype=torch.float32)
+    return torch.tensor(x, dtype=torch.float32, device=dev)
 
 
 @dataclass
@@ -135,11 +146,31 @@ class GraphBlock(nn.Module):
                 same_doc: torch.Tensor, same_sec: torch.Tensor) -> torch.Tensor:
         n, d = x.shape
         q, k, v = self.qkv(self.ln1(x)).view(n, 3, self.h, d // self.h).permute(1, 2, 0, 3)
-        bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec)
-        bias = bias.masked_fill(~allowed, float("-inf"))
-        a = F.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+        if n > ATTN_BLOCK and not torch.is_grad_enabled():
+            a = self._attend_in_blocks(q, k, v, allowed, same_doc, same_sec)
+        else:
+            # [heads, N, N] in the attention's own precision: at 8,192 lines a
+            # float32 bias alone is 4 GB a layer.
+            bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec).to(q.dtype)
+            bias = bias.masked_fill(~allowed, float("-inf"))
+            a = F.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         x = x + self.drop(self.out(a.transpose(0, 1).reshape(n, d)))
         return x + self.drop(self.mlp(self.ln2(x)))
+
+    def _attend_in_blocks(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, allowed: torch.Tensor,
+                          same_doc: torch.Tensor, same_sec: torch.Tensor) -> torch.Tensor:
+        """The same attention, ATTN_BLOCK query lines at a time. Each line's
+        softmax runs over its own row only, so the answer is the full pass's;
+        the bias is [heads, block, N] instead of [heads, N, N], which is what
+        lets a T4 (16 GB) read an 8,192-line window. Reading only."""
+        out = torch.empty_like(q)
+        w_doc, w_sec = self.w_doc.view(-1, 1, 1), self.w_sec.view(-1, 1, 1)
+        for s in range(0, q.shape[1], ATTN_BLOCK):
+            e = min(s + ATTN_BLOCK, q.shape[1])
+            bias = (w_doc * same_doc[s:e] + w_sec * same_sec[s:e]).to(q.dtype)
+            bias = bias.masked_fill(~allowed[s:e], float("-inf"))
+            out[:, s:e] = F.scaled_dot_product_attention(q[:, s:e], k, v, attn_mask=bias)
+        return out
 
 
 class DealEncoder(nn.Module):
@@ -152,6 +183,14 @@ class DealEncoder(nn.Module):
         self.tags = TagEmbedding(cfg.d)
         self.nums = TagEmbedding(cfg.d)
         self.time = nn.Linear(2, cfg.d)
+        # Zero-initialized so missing pixels and geometry leave every existing
+        # activation unchanged. Nonzero inputs still receive gradients.
+        self.pixels = nn.Linear(8 * 8 * 3, cfg.d)
+        self.geometry = nn.Linear(8, cfg.d)
+        nn.init.zeros_(self.pixels.weight)
+        nn.init.zeros_(self.pixels.bias)
+        nn.init.zeros_(self.geometry.weight)
+        nn.init.zeros_(self.geometry.bias)
         self.ln = nn.LayerNorm(cfg.d)
         self.blocks = nn.ModuleList(GraphBlock(cfg.d, cfg.n_heads, cfg.dropout)
                                     for _ in range(cfg.n_layers))
@@ -164,21 +203,43 @@ class DealEncoder(nn.Module):
         days = (t - t.min()).clamp(min=0) / 86400.0
         rank = torch.arange(len(t), device=dev, dtype=torch.float32) / max(1, len(t) - 1)
         time = torch.stack([torch.log1p(days), rank], -1)
+        n = len(inp["texts"])
+        pixels = inp.get("pixels")
+        geometry = inp.get("geometry")
+        pix = (torch.zeros(n, self.pixels.in_features, device=dev) if not pixels
+               else torch.tensor(pixels, dtype=torch.float32, device=dev))
+        geo = (torch.zeros(n, self.geometry.in_features, device=dev) if not geometry
+               else torch.tensor(geometry, dtype=torch.float32, device=dev))
         return self.ln(self.lift(self.text(inp["texts"])) + self.tags(tags)
-                       + self.nums(inp["numbers"]) + self.time(time))
+                       + self.nums(inp["numbers"]) + self.time(time)
+                       + self.pixels(pix) + self.geometry(geo))
 
     def forward(self, inp: dict[str, Any], *, hindsight: bool = False) -> torch.Tensor:
         x = self.embed_atoms(inp)
         n, dev = x.shape[0], x.device
-        same_doc = torch.tensor(inp["same_doc"], dtype=torch.float32, device=dev)
-        same_sec = torch.tensor(inp["same_section"], dtype=torch.float32, device=dev)
+        same_doc = pair_tensor(inp["same_doc"], dev)
+        same_sec = pair_tensor(inp["same_section"], dev)
         # Atoms arrive sorted by (entered_at, order): the foresight mask is
         # "j entered no later than i", which with ties in order is j <= i.
         allowed = (torch.ones(n, n, dtype=torch.bool, device=dev) if hindsight
                    else torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev)))
         for blk in self.blocks:
-            x = blk(x, allowed, same_doc, same_sec)
+            if _remember_less(n):
+                x = checkpoint(blk, x, allowed, same_doc, same_sec, use_reentrant=False)
+            else:
+                x = blk(x, allowed, same_doc, same_sec)
         return x
+
+
+# Long parts recompute their N x N work in backward instead of keeping it: at
+# 8,192 lines one graph block's attention bias is 2 GB, and the containment
+# boxes are [N, N, 32] per step. Same numbers, a fraction of the memory.
+CHECKPOINT_LINES = 512
+BOX_ROWS = 512
+
+
+def _remember_less(n: int) -> bool:
+    return n >= CHECKPOINT_LINES and torch.is_grad_enabled()
 
 
 @dataclass
@@ -193,6 +254,7 @@ class C3Output:
     logits: dict[str, torch.Tensor] = field(default_factory=dict)      # opportunity -> [N, A]
     numbers: dict[str, torch.Tensor] = field(default_factory=dict)     # opportunity -> [N]
     relations: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N, N]
+    link_none: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N] abstain logit
     governs: torch.Tensor | None = None                                # [N, N] log P(j ⊂ i)
     absence: torch.Tensor | None = None                                # [N, slots] logits
     company_logits: torch.Tensor | None = None                         # adversary
@@ -223,6 +285,7 @@ class C3Model(nn.Module):
         c = self.cfg
         self.text = text or HashingEncoder(c.d_text)
         self.encoder = DealEncoder(c, self.text)
+        self._frozen_desc = None
         self.teacher = None                    # built lazily by hindsight_targets()
         self.teacher_proj = None
 
@@ -249,8 +312,17 @@ class C3Model(nn.Module):
         self.space_in = nn.ModuleDict({s: nn.Linear(c.d_r + (c.d_q if s == "consequence" else 0),
                                                     c.d_head) for s in spaces})
         self.heads = nn.ModuleDict({s: DescribedHead(c.d_text, c.d_head, c.n_folds) for s in spaces})
+        # Opt-in free weights per answer, on top of the described logits
+        # (add_free_head). Empty by default, so older checkpoints load as before.
+        self.free_heads = nn.ModuleDict()
         self.relation_head = DescribedRelation(c.d_text, c.d_head, c.n_folds)
         self.rel_in = nn.Linear(c.d_r, c.d_head)
+        # One hop over the links this model just proposed. Zero at init, so a
+        # fresh model matches the no-link decision; the decision loss opens it.
+        # Gold edges never enter. Foresight: a line cannot read a later line.
+        self.link_mix = nn.Linear(c.d_r, c.d_r)
+        nn.init.zeros_(self.link_mix.weight)
+        nn.init.zeros_(self.link_mix.bias)
         self.box = nn.Linear(c.d_r, 2 * c.box_dim)
         self.absence = nn.Linear(c.d_q + c.d_r, len(CLAIM_SLOTS))
 
@@ -294,8 +366,13 @@ class C3Model(nn.Module):
         self.pool_in = nn.Linear(c.d_r, c.d_head)
         self.pool_score_company = nn.Linear(c.d_head, 1)
         self.pool_in_company = nn.Linear(c.d_head, c.d_head)
+        self.judgment_query = nn.Linear(c.d_text, c.d_head)
+        self.judgment_note = nn.Linear(c.d_text, c.d_head)
         self.judgment_head = DescribedHead(c.d_text, c.d_head, c.n_folds)
         self.judgment_head_company = DescribedHead(c.d_text, c.d_head, c.n_folds)
+        self.deal_number = nn.Linear(c.d_r, 1)
+        nn.init.zeros_(self.deal_number.weight)
+        nn.init.zeros_(self.deal_number.bias)
         self.companies = list(companies)
         # Starting codes are small and dense so every atom gets a gradient; the
         # L1 term then makes them sparse. A zero code would starve the atoms.
@@ -304,16 +381,49 @@ class C3Model(nn.Module):
                                        nn.Linear(c.d // 2, max(2, len(companies))))
 
     # ------------------------------------------------------------ schema text
+    def train(self, mode: bool = True):
+        super().train(mode)
+        # A frozen pretrained encoder stays in eval so its dropout does not
+        # move the line features between steps.
+        body = getattr(self.text, "model", None)
+        if body is not None and all(not p.requires_grad for p in body.parameters()):
+            body.eval()
+        return self
+
+    def aux_text(self, texts: list[str]) -> torch.Tensor:
+        """The encoder on texts other than the deal's lines: no gradient into
+        a released pretrained encoder (text.HFEncoder.fixed). The hashed test
+        encoder has no such split and trains from every text."""
+        fixed = getattr(self.text, "fixed", None)
+        return fixed(texts) if fixed is not None else self.text(texts)
+
+    def _encoder_frozen(self) -> bool:
+        body = getattr(self.text, "model", None)
+        return body is not None and all(not p.requires_grad for p in body.parameters())
+
     def describe(self) -> dict[str, Any]:
-        """Encode every opportunity and answer description (re-run each step:
-        the encoder trains, so the descriptions move with it)."""
+        """Encode every opportunity and answer description.
+
+        A trainable encoder is re-run each step, because the descriptions
+        move with it. A frozen pretrained encoder is read once.
+        """
+        frozen = self._encoder_frozen()
+        if frozen and self._frozen_desc is not None:
+            return self._frozen_desc
         opps = [o for o in self.schema.opportunities]
         texts = self.schema.texts()
-        emb = self.text(texts)
+        if frozen:
+            self.text.eval()
+            with torch.no_grad():
+                emb = self.text(texts).float()
+        else:
+            emb = self.text(texts)
         out, i = {}, 0
         for o in opps:
             out[o.key] = (emb[i], emb[i + 1:i + 1 + len(o.answers)])
             i += 1 + len(o.answers)
+        if frozen:
+            self._frozen_desc = out
         return out
 
     def add_company(self, name: str, policy_text: str = "") -> int:
@@ -323,7 +433,7 @@ class C3Model(nn.Module):
         with torch.no_grad():
             seed = torch.zeros(1, self.cfg.n_policy_atoms, device=self.alpha.device)
             if policy_text:
-                seed = self.alpha_from_text(self.text([policy_text]))
+                seed = self.alpha_from_text(self.aux_text([policy_text]))
             self.alpha = nn.Parameter(torch.cat([self.alpha.data, seed]))
         self.companies.append(name)
         return len(self.companies) - 1
@@ -357,21 +467,35 @@ class C3Model(nn.Module):
         if self.lattice is not None:
             self._ask(out, inp, desc, company)
         if bank_emb is None and bank is not None and len(bank):
-            bank_emb = self.text([e.text for e in bank.items])
-        self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
+            bank_emb = self.aux_text([e.text for e in bank.items])
 
-        # Links: described pair scores, boxes for governs.
+        # Propose links from the atoms, then let that proposal move the line
+        # the heads read. The scores stay the pre-hop proposal so the loss
+        # trains the link itself, and the hop is what makes the link matter.
         rels = [o for o in self.schema.select(kind=RELATION) if o.field != "governs"]
         if rels:
             x = self.rel_in(r)
-            scores = self.relation_head(x, torch.stack([desc[o.key][0] for o in rels]))
-            t = torch.arange(n, device=h.device)
-            for o, s in zip(rels, scores):
+            scores, nones = self.relation_head(x, torch.stack([desc[o.key][0] for o in rels]))
+            # A causal link points back in arrival time. A document arrives
+            # whole, so within one arrival a total may derive from the rows
+            # below it and an answer may sit above its question's line.
+            # Compared in float64 on the CPU (MPS has no float64; float32
+            # would round arrival times together), then moved as a mask.
+            t = torch.tensor(inp["times"], dtype=torch.float64)
+            later = (t.view(-1, 1) < t.view(1, -1)).to(h.device)
+            for o, s, z in zip(rels, scores, nones):
                 if CAUSAL_RELATIONS.get(o.field):
-                    s = s.masked_fill(t.view(-1, 1) < t.view(1, -1), float("-inf"))
+                    s = s.masked_fill(later, float("-inf"))
                 out.relations[o.field] = s.masked_fill(torch.eye(n, dtype=torch.bool,
                                                                  device=h.device), float("-inf"))
+                out.link_none[o.field] = z
         out.governs = self._box_containment(r)
+        proposed = dict(out.relations)
+        if out.governs is not None:
+            proposed["governs"] = out.governs
+        r = self._apply_links(r, proposed, out.link_none)
+        out.r = r
+        self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
         out.absence = self.absence(torch.cat([q_mean, r], -1))
         out.changes = self.changes_head(torch.cat([q_mean, r], -1)).view(n, len(CHANGE_SLOTS), 3)
         out.company_logits = self.adversary(GradReverse.apply(z_c, adv_lambda))
@@ -380,6 +504,37 @@ class C3Model(nn.Module):
         if company is not None:
             self.conduct(out, company, q_mean, desc, bank, bank_emb)
         return out
+
+    def _apply_links(self, r: torch.Tensor, relations: dict[str, torch.Tensor],
+                     link_none: dict[str, torch.Tensor] | None = None) -> torch.Tensor:
+        """Each line reads earlier lines in proportion to the links it proposed.
+
+        An abstain logit takes the mass of "do not link," and that mass is not
+        a message. ``link_mix`` is zero at initialization, so this adds nothing
+        until the decision loss opens it.
+        """
+        if not relations:
+            return r
+        n = r.shape[0]
+        allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=r.device), diagonal=-1)
+        link_none = link_none or {}
+        msgs = []
+        for name, scores in relations.items():
+            finite = torch.isfinite(scores) & allowed
+            logits = scores.masked_fill(~finite, float("-inf"))
+            none = link_none.get(name)
+            if none is not None:
+                logits = torch.cat([logits, none.unsqueeze(1)], -1)
+            weights = torch.nan_to_num(logits.softmax(-1), nan=0.0)[:, :n]
+            # The line that draws the link reads what it points at.
+            msgs.append(weights @ r)
+            if CAUSAL_RELATIONS.get(name):
+                # An answer is a later line pointing at an earlier question.
+                # Hand that later line back, so the question is classified
+                # with the answer that points at it. The encoder still cannot
+                # read a future line unless the model itself drew this link.
+                msgs.append(weights.transpose(0, 1) @ r)
+        return r + self.link_mix(torch.stack(msgs).mean(0))
 
     def universal_heads(self, out: C3Output, r: torch.Tensor, q_mean: torch.Tensor,
                         desc: dict[str, Any], bank: ExplanationBank | None = None,
@@ -405,6 +560,33 @@ class C3Model(nn.Module):
                     out.numbers[o.key] = nums[:, j]
             self._read(out, x, opps, desc, bank, bank_emb, "universal", "",
                        self.reader_universal, self.compiler_universal, head)
+            for o in opps:
+                if o.key in self.free_heads:
+                    free = self.free_heads[o.key](torch.cat([x, out.h.to(x.dtype)], -1))
+                    out.logits[o.key] = out.logits[o.key] + free.to(out.logits[o.key].dtype)
+
+    def add_free_head(self, key: str) -> nn.Linear:
+        """One free weight row per answer of a universal opportunity, added to
+        its described logits. Zero at init, so the model reads as before until
+        training opens it. A described head has no per-answer weight of its
+        own: answers live where their descriptions put them, and many answers
+        share one projection. This lets a busy head (line type) separate them.
+        It reads the head's input and the line's deal-graph state ``h``, which
+        carries the line's own text features straight through the residual
+        stream: a plain linear read of those features already types lines.
+        A company-layer class head (read:co_action) takes one too; conduct()
+        adds it to that head's logits the same way."""
+        if key in self.free_heads:
+            return self.free_heads[key]
+        opp = self.schema.by_key()[key]
+        if opp.kind == RELATION or opp.kind == NUMBER:
+            raise ValueError(f"{key} is not a class head")
+        lin = nn.Linear(self.cfg.d_head + self.cfg.d, len(opp.answers))
+        nn.init.zeros_(lin.weight)
+        nn.init.zeros_(lin.bias)
+        ref = next(self.heads.parameters())
+        self.free_heads[key] = lin.to(device=ref.device)
+        return lin
 
     def _read(self, out: C3Output, x: torch.Tensor, opps: list, desc: dict[str, Any],
               bank: ExplanationBank | None, bank_emb: torch.Tensor | None,
@@ -454,18 +636,22 @@ class C3Model(nn.Module):
             out.logits[o.key] = lg
             if o.kind == NUMBER:
                 out.numbers[o.key] = nums[:, j]
+            elif o.key in self.free_heads:  # a refit's free row, read like the universal ones
+                free = self.free_heads[o.key](torch.cat([y, out.h.to(y.dtype)], -1))
+                out.logits[o.key] = lg + free.to(lg.dtype)
         self._read(out, y, opps, desc, bank, bank_emb, "company", company,
                    self.reader_company, self.compiler_company, self.conduct_head)
         out.alpha = alpha
         out.conduct_x = y
 
-    def judge(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
-              desc: dict[str, Any] | None = None) -> torch.Tensor:
+    def judgment_features(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
+                          queries: list[str] | None = None) -> torch.Tensor:
         """Logits [len(subjects), A] for a judgment asked about two lines, a
         group of lines or the whole deal. A pair is (i, j); a group or the deal
         is its lines. A company question needs ``model(..., company=...)``."""
         o = self.schema.by_key()[key]
-        desc = desc if desc is not None else self.describe()
+        if queries is not None and len(queries) != len(subjects):
+            raise ValueError("One source query is required per judgment subject")
         if o.universal:
             x, score, proj, head = out.r, self.pool_score, self.pool_in, self.judgment_head
         else:
@@ -483,7 +669,21 @@ class C3Model(nn.Module):
                 xs = x[idx]
                 w = score(xs).softmax(0)
                 rows.append(proj((w * xs).sum(0)))
-        logits, _ = head(torch.stack(rows), desc[key][0].unsqueeze(0), [desc[key][1]])
+        features = torch.stack(rows)
+        if queries is not None:
+            # Empty queries preserve the old pair/group/deal computation.
+            mask = features.new_tensor([bool(q) for q in queries]).unsqueeze(1)
+            features = features + mask * self.judgment_query(self.aux_text(queries))
+        return features
+
+    def judge(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
+              desc: dict[str, Any] | None = None, *, queries: list[str] | None = None
+              ) -> torch.Tensor:
+        o = self.schema.by_key()[key]
+        desc = desc if desc is not None else self.describe()
+        features = self.judgment_features(out, key, subjects, queries)
+        head = self.judgment_head if o.universal else self.judgment_head_company
+        logits, _ = head(features, desc[key][0].unsqueeze(0), [desc[key][1]])
         return logits[0]
 
     def _ask(self, out: C3Output, inp: dict[str, Any], desc: dict[str, Any],
@@ -493,8 +693,8 @@ class C3Model(nn.Module):
         sd = space_descriptions(self.schema, desc)
         space_desc = torch.stack([sd[s] for s in self.lattice.spaces])
         allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev))
-        same_doc = torch.tensor(inp["same_doc"], dtype=torch.float32, device=dev)
-        same_sec = torch.tensor(inp["same_section"], dtype=torch.float32, device=dev)
+        same_doc = pair_tensor(inp["same_doc"], dev)
+        same_sec = pair_tensor(inp["same_section"], dev)
         cdesc = company_description(self.schema, desc) if company is not None else None
         out.slots, out.company_slot, out.citations = self.lattice(
             out.h, space_desc, allowed, same_doc, same_sec, cdesc)
@@ -509,7 +709,7 @@ class C3Model(nn.Module):
         sentences. Returns opportunity -> logits [len(lines), A]."""
         from .losses import moved_heads  # noqa: PLC0415 (cycle)
 
-        move = self.flip_proj(self.text(sentences))
+        move = self.flip_proj(self.aux_text(sentences))
         return moved_heads(self, out, lines, move, desc if desc is not None else self.describe()).logits
 
     def _context(self, context: dict[str, list], n: int, dev) -> torch.Tensor:
@@ -537,18 +737,21 @@ class C3Model(nn.Module):
         s = s.masked_fill(later, float("-inf"))
         return torch.cat([s, self.cite_self.expand(n, 1)], -1).log_softmax(-1)
 
-    def word_weights(self, out: "C3Output", texts: list[str]) -> list[torch.Tensor | None]:
-        """log p(word w of line i carries its reason), over text.word_spans."""
+    def word_weights(self, out: "C3Output", texts: list[str],
+                     rows: set[int] | None = None) -> list[torch.Tensor | None]:
+        """log p(word w of line i carries its reason), over text.word_spans.
+        ``rows`` limits it to the lines a loss reads (None elsewhere): each
+        line is one pass of the encoder over its words."""
         from .text import word_spans  # noqa: PLC0415
 
         res: list[torch.Tensor | None] = []
         q = self.word_r(out.r)
         for i, t in enumerate(texts):
-            ws = [w for w, _, _ in word_spans(t)]
+            ws = [w for w, _, _ in word_spans(t)] if rows is None or i in rows else []
             if not ws:
                 res.append(None)
                 continue
-            k = self.word_w(self.text(ws))
+            k = self.word_w(self.aux_text(ws))
             res.append((k @ q[i] / k.shape[-1] ** 0.5).log_softmax(-1))
         return res
 
@@ -557,10 +760,24 @@ class C3Model(nn.Module):
         governs is transitive by construction (v3 section 2.5)."""
         c, o = self.box(r).chunk(2, -1)
         lo, hi = c - F.softplus(o), c + F.softplus(o)
-        inter = F.softplus(torch.minimum(hi.unsqueeze(1), hi.unsqueeze(0))
-                           - torch.maximum(lo.unsqueeze(1), lo.unsqueeze(0)))
         child = F.softplus(hi - lo).unsqueeze(0)
-        score = (torch.log(inter + 1e-9) - torch.log(child + 1e-9)).sum(-1)   # [i parent, j child]
+
+        def rows(lo_i, hi_i):
+            inter = F.softplus(torch.minimum(hi_i.unsqueeze(1), hi.unsqueeze(0))
+                               - torch.maximum(lo_i.unsqueeze(1), lo.unsqueeze(0)))
+            return (torch.log(inter + 1e-9) - torch.log(child + 1e-9)).sum(-1)   # [i parent, j child]
+
+        n = r.shape[0]
+        if _remember_less(n):
+            score = torch.cat([checkpoint(rows, lo[a:a + BOX_ROWS], hi[a:a + BOX_ROWS], use_reentrant=False)
+                               for a in range(0, n, BOX_ROWS)])
+        elif not torch.is_grad_enabled() and n > BOX_ROWS:
+            # A read holds no activations, so the same rows in slices: at
+            # 8,192 lines one pass is [N, N, box_dim], about 8 GB a step.
+            score = torch.cat([rows(lo[a:a + BOX_ROWS], hi[a:a + BOX_ROWS])
+                               for a in range(0, n, BOX_ROWS)])
+        else:
+            score = rows(lo, hi)
         return score.masked_fill(torch.eye(r.shape[0], dtype=torch.bool, device=r.device),
                                  float("-inf"))
 
@@ -570,7 +787,11 @@ class C3Model(nn.Module):
         """The EMA teacher reads the WHOLE deal; its latent per line is what
         q_i (which saw only the past) is trained to predict."""
         if self.teacher is None:
-            self.teacher = copy.deepcopy(self.encoder).requires_grad_(False)
+            # A frozen line encoder is shared, not copied: EMA of a constant
+            # is the constant, and a second ModernBERT would only cost memory.
+            frozen_text = not any(p.requires_grad for p in self.text.parameters())
+            memo = {id(self.text): self.text} if frozen_text else {}
+            self.teacher = copy.deepcopy(self.encoder, memo).requires_grad_(False)
             self.teacher_proj = copy.deepcopy(self.q_target).requires_grad_(False)
         self.teacher.eval()
         return self.teacher_proj(self.teacher(inp, hindsight=True))
@@ -581,6 +802,8 @@ class C3Model(nn.Module):
             return
         m = self.cfg.ema
         for t, s in zip(self.teacher.parameters(), self.encoder.parameters()):
+            if t is s or not s.requires_grad:
+                continue                       # the shared or frozen line encoder
             t.mul_(m).add_(s.detach(), alpha=1 - m)
         for t, s in zip(self.teacher_proj.parameters(), self.q_target.parameters()):
             t.mul_(m).add_(s.detach(), alpha=1 - m)

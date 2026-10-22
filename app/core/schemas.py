@@ -142,6 +142,19 @@ class AtomType(str, Enum):
     # (``deal_chatter.retype_small_talk``); every stage before it sees
     # deal_metadata + chatter, as it always has.
     small_talk = "small_talk"
+    # The base's own line types the parser had no slot for: its sure answer
+    # was thrown away and the line kept the parser's type (an answered
+    # question stayed open_question, a heading scope_item, a reseller's price
+    # row vendor_line_item). The base decides; these hold what it says.
+    answered_question = "answered_question"
+    internal_question = "internal_question"
+    list_header = "list_header"
+    commitment = "commitment"
+    rate_card = "rate_card"
+    deal_summary = "deal_summary"
+    certification = "certification"
+    source_caveat = "source_caveat"
+    legend_entry = "legend_entry"
     commercial_total = "commercial_total"
     payment_term = "payment_term"
     change_order_rule = "change_order_rule"
@@ -836,6 +849,9 @@ class CompileResult(BaseModel):
     # survivor, merged/lossy survivors, partly folded lists. Counts plus
     # examples with atom ids -- see app/core/ledger_audit.py.
     ledger_audit: dict[str, Any] = Field(default_factory=dict)
+    # Brief v2 (app/core/c3_brief.py): what the super heads put in the brief,
+    # each item marked with the head or rule that decided it. None when off.
+    c3_brief: dict[str, Any] | None = None
     manifest: "CompileManifest | None" = None
     trace: "CompileTrace | None" = None
     candidate_summary: CandidateSummary | None = None
@@ -865,6 +881,7 @@ class CompileResult(BaseModel):
                 "suppressed_atoms": data.get("suppressed_atoms", []),
                 "text_coverage": data.get("text_coverage", []),
                 "ledger_audit": data.get("ledger_audit", {}),
+                "c3_brief": data.get("c3_brief"),
                 "manifest": data.get("manifest"),
                 "trace": data.get("trace"),
                 "candidate_summary": data.get("candidate_summary"),

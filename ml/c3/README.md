@@ -24,9 +24,9 @@ python -m ml.c3.card --deal ml/c3/fixtures/synthetic_deal.json --params
 
 | Step | File | What happens |
 |---|---|---|
-| Schema | `schema.py` | Every head in label_heads.json becomes a list of **labeling opportunities**: `col:label_type`, `read:sow_coverage`, `rel:answers`… Each carries the head's question, the reading's description and one description per answer. Universal descriptions are scrubbed of company words. 80 opportunities today. |
+| Schema | `schema.py` | Every head in label_heads.json becomes a list of **labeling opportunities**: `col:label_type`, `read:sow_coverage`, `rel:answers`… Each carries the head's question, the reading's description and one description per answer. Universal descriptions are scrubbed of company words. Registry-derived opportunities; count with the pinned schema. |
 | Contract | `data.py` | One JSON per deal: atoms (text, entered_at, doc, section, speaker role and side), each with an optional label (`label_type`, `about`, `wants`, `reads_set`, `note`), edges, and an optional outcome. `from_training_blob` joins the real blob's labels onto atom rows by `label_key`. |
-| Split | `data.featurize` | **Inputs:** the line, number-magnitude tokens, doc kind, role/side, time, same-document and same-section structure. **Targets:** every label field. The only label fields that are also inputs are the stage and geo context slots, dropped to null at random. A test relabels every atom and checks the outputs do not move. |
+| Split | `data.featurize` | **Inputs:** the line, number-magnitude tokens, doc kind, role/side, time, same-document and same-section structure. **Targets:** fields with implemented consumers. Other saved supervision is retained and blocked by preflight until consumed. The only label fields that are also inputs are the stage and geo context slots, dropped to null at random. A test relabels every atom and checks the outputs do not move. |
 | Note | `notes.py` | `split_note` (same grammar as the ingest; a test checks they agree) gives the universal WHY and the company line. The WHY is verdict-masked before encoding. `extract_programs` turns "2 techs x 8 hours = 16 hours" into an executable program, kept only if it reproduces its own stated number. |
 
 A missing reading on a labeled card is **unknown, not negative**, by default
@@ -197,8 +197,12 @@ Extra ablations:
 ## 5. v6 (current): the long labels teach the heads in training
 
 The product is the heads above. At run time nothing else runs: no WHY, no
-language model, no text generation. The WHY paragraphs do their work in
-training, as privileged information:
+language model, no text generation, and no gold links. The model proposes
+its own links from the atoms and takes one foresight-safe hop over them
+before the heads decide (`link_mix`, zero until the decision loss opens it).
+A gold edge teaches the right target; a labeled line with no edge teaches
+abstain, and that "no link" mass does not borrow another atom.
+The WHY paragraphs do their work in training, as privileged information:
 
 | File | What it does |
 |---|---|
@@ -277,3 +281,156 @@ So the components aren't new; the combination and the fold mechanism likely
 are. Whether it *helps* is an empirical question that D1 to D4 answer. If D4
 shows no drop, the words aren't doing the work, and the claim should be
 dropped.
+# Supervision preflight
+
+Before a real corpus run, audit each frozen export with
+`python -m ml.c3.readiness --blob /outside/repo/blob.json --atoms
+/outside/repo/atoms.json --deal-id <id> --split-manifest
+/outside/repo/split.json --output /outside/repo/report.json` (one shell line).
+Exit 2 means blocked; exit 0 means the supplied contract and split checks
+passed. This does **not** certify model quality, source-audit completion,
+live-card coverage, GPU capacity, or production deployment readiness. Reports
+contain categorical counts and hashes, not customer source text.
+
+The split manifest has nonempty `train`, `validation`, and `holdout` lists.
+Every entry has `deal_id`, `snapshot_sha256`, `audit_status: "verified"`, and
+`source_groups` identifying shared source documents or related job versions.
+Set `holdout_used_for_tuning: false` only when it is true. The final holdout
+must not be used in teacher training, note retrieval, calibration or tuning.
+Freeze all source snapshots and schema/model/tokenizer revisions before a
+run; validate each snapshot hash against the manifest rather than treating
+the existence of a manifest as proof of a frozen corpus.
+
+The loader now selects named human labels before assistant mirrors and
+rejects conflicting saved labels. Equal text is an occurrence fallback only
+when unique; suppression keys resolve their precise dropped occurrence.
+Retired-card links are filtered by author, **head and key**, so an excluded
+hours card cannot erase a live task card sharing that key.
+
+Multi-select hints and parser routing train independent sigmoid answers in
+the heads, teacher, rationale-sufficiency and distillation paths. Scalar gold
+targets remain unknown for these opportunities. The diagnostic efficiency
+metric scores exact selected sets rather than their first member. Missing
+selections remain unknown; they are not invented negative labels. Unlabeled
+distillation is off by default and requires explicit warmup/calibration
+enablement plus a confidence gate.
+
+`DealExample.source_supervision` preserves the selected labels, raw cards,
+links, Deal answers and missed history as a training-only packet. It is not
+a model input or a claim that every field has an implemented loss. Preflight
+blocks deferred fields/tabs, ambiguous occurrences, colliding targets or
+card rationale, missing vision inputs and dense-attention budget overflow.
+The 4,096-atom ceiling is a guard against accidental quadratic allocation,
+not a GPU capacity guarantee. Do not truncate long deals to pass it.
+
+Question reason codes, structured Values (hours, terms, kit shape), open
+strings, Deal service and site-count, pixel and table-geometry inputs, and
+relation-preserving long-deal windows now have targets and losses. See
+`python -m ml.c3.coverage` for the surface table. Norm and terminology strings
+are exact teacher-token targets plus a unique in-line span; they are not a
+student string decoder. Rules remain a separate export. `ml.c3.gates.train`
+refuses to start. The base experiment is a separate loop,
+`python -m ml.c3.loop --train <deal.json> --holdout <deal.json> --checkpoint <path>`,
+which on an H100 trains the design model in bf16. The line encoder
+(ModernBERT-large) stays frozen. The teacher defaults to
+`Qwen/Qwen2.5-7B-Instruct`, with its body frozen and a low-rank slot trained,
+and reads long deals in row slices. The student schedule is lines, links,
+pair and group cards, numbers, deal answers, then the link gate, then blank
+cells filled by the teacher. AdamW with a cosine schedule is the H100 optimizer. After the link gate
+opens, the teacher is shown the deal graph the student built, then a light
+boundary pass runs, then only questions seen many times may fill a blank line.
+The teacher does not invent new line text. `--tiny` is the CPU stand-in, not the base.
+
+The labeling page's export becomes a training file with
+`python -m ml.c3.export --page <export.json> --deal-id <deal> --output <file>`
+(outside the repository; `--manifest` records its sha256). Every line gets the
+time it reached the deal. A Dropped card about a copy of a kept line gets its
+own line, so its verdict never lands on the line that was kept.
+
+A deal past the atom budget (`ml.c3.longdeal`) becomes overlapping windows,
+edge packs and one digest, never a truncated deal. Each line's labels train in
+one window only. A link no window holds whole trains in a pack of its two lines
+and their neighbours. Whole-deal cards and saved deal answers train on the
+digest: the deal's commercial documents first, then labeled lines, latest
+first. A long deal's parts are weighted so the deal counts sqrt(parts), not
+parts.
+
+`--validation <deal.json>...` scores those deals after every stage, which is
+how steps are chosen. The labeling holdout (`010172`, `010038`, `010387`,
+`010194`, in `ml.c3.holdout`) and the five kits never train in either run, and
+the H100 run refuses to start unless all four labeling holdouts are passed as
+`--holdout`. The holdout is scored once and is not used to stop or tune. A
+frozen line encoder's vectors are computed once and reused. `--max-atoms`
+sets the window (4,096 by default; 8,192 keeps most labeled deals whole and
+needs a bigger GPU). `--train-encoder-layers K` lets the encoder's top K
+blocks learn at `--encoder-lr`; keep it only if the validation deals say it
+beats the frozen encoder. Each stage also writes `<checkpoint>.<stage>` and the validation scores so far to `<checkpoint>.validation.json`, so the best stage is a file to pick, not a rerun. The live runs leave the holdout alone; the winning
+checkpoint is scored once with `python -m ml.c3.predict --score`, which
+refuses a second time. `python -m ml.c3.predict --checkpoint <run.pt> --deal
+<deal.json> --output <read.json>` writes the base's read of any deal, labeled
+or not: each line's words and readings, the links it draws, the whole-deal
+answers and the lines it is unsure of. That file is what the Deal Kit, the
+SOW step and prompted models read; `--kit <kit.json> --kit-output <file>`
+rewrites a Deal Kit file so its atoms carry the base's types and links. That loop does
+not flip `READY_FOR_TRAINING`. The deal kit is a second model:
+`python -m ml.c3.kit --train <kit json> --holdout <kit json>`. `--tiny` is the
+CPU check. The live run is the H100: ModernBERT-large stays frozen, and a
+slot reader trains on top. Every atom from before the kit was attached is a
+token. When one atom is decided, every other atom stays in the attention,
+tagged as evidence, the same fact, a lookalike, a sibling, or by its section.
+A section the tab filled teaches the atoms left off it. A section left empty
+teaches nothing. A reason sentence is stored and is not an input. A site the
+tab kept is also a `job_site` mark for the atom model's site head. Billing
+reads each present section once, plus the other training kits. The kits
+`000051`, `010095`, `010164`, `010253`, and `010287` are the holdout and
+never train. The run does not flip `READY_FOR_TRAINING`. `READY_FOR_TRAINING` is false until a frozen audited corpus,
+an untouched holdout, a certified pretrained budget and a separate Rules
+evaluation exist. Synthetic tests do not measure learned accuracy.
+
+Rules preparation has an explicit separate caller:
+`python -m app.learning.rule_feedback --manifest /outside/repo/rules-split.json
+--output /outside/repo/rules.jsonl` (one shell line). Its manifest has the
+same three verified deal partitions and untouched-holdout certification;
+training entries additionally carry `blob_path` and a byte-level
+`blob_sha256`. This exporter opens **only** the training blobs, rejects
+evaluation-purpose sources and conflicting saved verdicts, filters
+assistant proposals/excluded cards, and publishes the JSONL atomically with
+private permissions. The existing semantic-rule trainer reads this shape
+through `SOWSMITH_RULE_LOG`; exporting does not invoke that trainer. A
+separate rule export/evaluation is still required before calling the whole
+corpus ready: the C3 preflight cannot certify an external learner's artifact.
+
+## Source-conditioned card supervision
+
+Questions with source query text are separate subjects in `Batch.judged`.
+Two questions sharing one evidence line retain independent answers and WHYs.
+An unanchored question reads non-excluded deal evidence; a stale named anchor
+is rejected rather than replaced by arbitrary equal text. Legacy query-less
+line cards keep their existing line-target behavior.
+
+`model.judge(..., queries=[...])` combines learned source-query embeddings
+with evidence representations. Saved answers, fields and expert notes do not
+enter that inference API. Card fields `deal_stage`, `needed_by` and `intake_gap`
+train their registry heads on the same subject; `needed_by` is a set trained
+with sigmoid BCE. Unknown values fail; blanks remain unknown. Company intake
+heads require the company pass, while the universal stage head remains separate.
+
+Card explanations have an explicit privileged embedding-alignment loss.
+The training-only teacher also reads each card's evidence/query directly and
+with its complete WHY, supervised by card-specific target losses. Its detached
+reasoned logits reach the student through `teach_judgments`; subject identity
+binds those targets to source text, question and expert annotation. These tests
+verify wiring and gradients, not pretrained semantic quality.
+
+Expert paragraph token loss now respects paragraph-quality weights and rejects
+over-budget pages. Card teacher pages also reject over-budget source/WHY text.
+Teacher tokenization and encoder paragraph/token readers also reject overflow
+instead of silently clipping text. Real-model budget configuration and long-deal
+context preparation still need validation before release. The default legacy clause/compiler
+loss is off; explicit opt-in is retained for ablation tests.
+
+Training readiness remains blocked by the frozen audited corpus, the untouched
+holdout, pretrained-budget certification, separate Rules evaluation, and the
+missing student decoder for normalized strings that are not spans.
+`READY_FOR_TRAINING` is false. Neither synthetic tests nor saved raw JSON
+certify learned accuracy or that every release gate has passed.

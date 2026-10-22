@@ -946,7 +946,7 @@ class DocxParser(BaseParser):
             # the first data row, and not in a merged-title property block
             # ("City | Marion | State | SC" is label/value pairs, not names).
             from app.parsers.table_headers import (
-                bind_lone_cell, is_banner_row, is_caption_row, is_header_only_row, merge_header,
+                bind_lone_cell, is_banner_row, is_caption_row, is_header_only_row, is_label_cell, merge_header,
             )
 
             active_header = list(header_cells)
@@ -1017,13 +1017,29 @@ class DocxParser(BaseParser):
                         not any(_pos_cells[i] for i in range(1, len(_pos_cells), 2))
                         # or one title repeated across every merged cell
                         # ("Response | Response | Response | Response"): a
-                        # section heading, not a fact.
-                        or len(set(_pos_cells)) == 1
+                        # section heading, not a fact. Only a short title:
+                        # a paragraph merged across the row is a fact (010115:
+                        # CDW's "Additional Terms & Conditions / Technician
+                        # Arrival Protocol ..." clause was dropped as a heading).
+                        or (len(set(_pos_cells)) == 1 and (is_label_cell(_pos_cells[0]) or (
+                            len(_pos_cells[0].split()) <= 8 and not re.search(r"[.;:!?]", _pos_cells[0]))))
                     )
                 ):
                     continue
                 _seen_data = True
                 row_text = " | ".join(cell_texts)
+                # A form row of label/value pairs with a blank value ("TECH
+                # Contact | Bernie 404-918-0783 | Escalation Contact | ''") read
+                # as "... 404-918-0783 | Escalation Contact": the orphan label
+                # sat beside the previous value and the writer called Bernie's
+                # phone the escalation number (010115). Drop a label whose value
+                # cell is blank.
+                _uniq = _row_texts_once(row_cells)
+                if len(_uniq) >= 4 and len(_uniq) % 2 == 0:
+                    _pairs = [(_uniq[i], _uniq[i + 1]) for i in range(0, len(_uniq), 2)]
+                    if all(lbl and len(lbl) <= 40 and not re.search(r"\d", lbl) for lbl, _v in _pairs if lbl) \
+                            and any(not v for lbl, v in _pairs if lbl) and any(v for _l, v in _pairs):
+                        row_text = " | ".join(f"{lbl} | {v}" for lbl, v in _pairs if lbl and v)
                 # One value alone on its row ("Chase Smith", the rest blank)
                 # says nothing without its column's name: "Name: Chase Smith".
                 if row_idx > 0:
@@ -3801,4 +3817,51 @@ class DocxParser(BaseParser):
                     review_flags=["binary_region_marker"],
                     parser_version=self.parser_version,
                 ))
+                if kind == "image_marker":
+                    atoms.extend(self._image_fact_atoms(zf, name, rel, filename, artifact_id, project_id))
         return atoms
+
+    def _image_fact_atoms(self, zf: Any, name: str, rel: str, filename: str, artifact_id: str,
+                          project_id: str) -> list[EvidenceAtom]:
+        """What an embedded image shows, one line per fact (image_describe):
+        010038's floor plans hold the only AP, TV and printer counts."""
+        from app.core import image_describe
+
+        if not image_describe.enabled():
+            return []
+        done = getattr(self, "_described_images", 0)
+        if done >= image_describe.MAX_PER_FILE:
+            return []
+        try:
+            data = zf.read(name)
+        except Exception:  # pragma: no cover
+            return []
+        ctx = getattr(self, "_doc_text_for_images", None)
+        if ctx is None:
+            try:
+                xml = zf.read("word/document.xml").decode("utf-8", "ignore")
+                ctx = " ".join(re.sub(r"<[^>]+>", " ", xml.replace("</w:p>", "\n")).split())
+            except Exception:
+                ctx = ""
+            self._doc_text_for_images = ctx
+        facts = image_describe.describe(data, filename, ctx)
+        self._described_images = done + 1
+        out: list[EvidenceAtom] = []
+        for i, fact in enumerate(facts):
+            atom_id = stable_id("atm", artifact_id, "docx_image_fact", rel, str(i))
+            src = SourceRef(
+                id=stable_id("src", atom_id), artifact_id=artifact_id, artifact_type=ArtifactType.docx,
+                filename=filename,
+                locator={"region_ref": rel, "extraction": "docx_image_vision_v1", "sentence_index": i},
+                extraction_method="docx_image_vision_v1", parser_version=self.parser_version,
+            )
+            out.append(EvidenceAtom(
+                id=atom_id, project_id=project_id, artifact_id=artifact_id, atom_type=AtomType.scope_item,
+                raw_text=fact, normalized_text=normalize_text(fact),
+                value={"kind": "image_fact", "region_ref": rel, "from_image": True},
+                entity_keys=[], source_refs=[src], receipts=[], authority_class=AuthorityClass.meeting_note,
+                confidence=0.6, confidence_raw=0.6, calibrated_confidence=0.6,
+                review_status=ReviewStatus.needs_review, review_flags=["image_vision_fact"],
+                parser_version=self.parser_version,
+            ))
+        return out

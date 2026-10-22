@@ -37,7 +37,7 @@ def _ensure_defaults() -> None:
     from app.parsers.hubspot_note_parser import HubspotNoteParser
     from app.parsers.transcript_parser import TranscriptParser
     from app.parsers.universal_parsers import (
-        HtmlParser, IcsParser, MboxParser, RtfParser, ZipParser,
+        DocParser, HtmlParser, IcsParser, MboxParser, RtfParser, ZipParser,
     )
     from app.parsers._universal_extras import (
         MsgParser, OdtParser, OdsParser, VsdxParser, MppParser,
@@ -58,6 +58,7 @@ def _ensure_defaults() -> None:
         HtmlParser(),
         MboxParser(),
         RtfParser(),
+        DocParser(),
         IcsParser(),
         ZipParser(),
         MsgParser(),
@@ -82,11 +83,11 @@ def _artifact_type_for_suffix(suffix: str) -> ArtifactType:
     # .xls/.xlsb/.ods are converted to .xlsx on entry by the spreadsheet
     # parser (legacy_spreadsheet), so they are the same artifact type. A
     # CDW pricing sheet is a pricing sheet whichever decade it was saved in.
-    if suffix in {".xlsx", ".xls", ".xlsb", ".ods"}:
+    if suffix in {".xlsx", ".xlsm", ".xls", ".xlsb", ".ods"}:
         return ArtifactType.xlsx
     if suffix == ".csv":
         return ArtifactType.csv
-    if suffix == ".docx":
+    if suffix in (".docx", ".doc", ".dot"):
         return ArtifactType.docx
     if suffix == ".eml":
         return ArtifactType.email
