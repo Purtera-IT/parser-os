@@ -64,9 +64,6 @@ _TRUE = ("1", "true", "yes", "on")
 #: estimating calc. The live parser does not read them and the base was not
 #: scored on them (``ml.c3.loop.CHECK_SKIP_DOC_KINDS``).
 _SKIP_KINDS = ("deal_kit", "estimating_calc")
-_CALC_NAME = re.compile(r"estimat\w*calc")
-#: A file named as a site list ("Site List Project Bastion.xlsx") is one: training saw these as site_list.
-_SITE_LIST_NAME = re.compile(r"site(list|roster)|locationlist|storelist")
 
 #: The window the base was trained and scored with (ml/c3/pod/*.sh ATOMS):
 #: a deal past this is read in windows. Reading smaller windows than it saw
@@ -270,18 +267,10 @@ def _value(atom: Any) -> dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
-#: Every document kind the base trained on: the lowercased lifecycle types
-#: (document_lifecycle/taxonomy.py) the training files carry, plus the three
-#: event kinds and ``file``, training's own bucket for a document of no known
-#: type. Anything else reads as ``file``, so the model never sees a tag it
-#: never trained on.
-TRAINED_KINDS = frozenset({
-    "email", "meeting", "note", "file", "sow_draft", "deal_kit", "site_survey",
-    "estimating_calc", "sow_signed", "site_list", "runbook", "cost_breakdown", "w9",
-    "purchase_order", "rfq", "rate_card", "engineering_design", "install_instructions",
-    "credit_application", "sow", "intake_request", "checklist", "quote", "bom",
-    "vendor_datasheet", "floor_plan", "case_manifest", "sow_template", "nda", "crm_note",
-})
+#: Every document kind the base trained on (``c3_record.TRAINED_KINDS``):
+#: anything else reads as ``file``, so the model never sees a tag it never
+#: trained on.
+from c3_record import TRAINED_KINDS  # noqa: E402
 _EMAIL_TYPES = ("email", "msg", "mbox")
 
 
@@ -301,29 +290,28 @@ def _event_kind(atom: Any) -> str:
     return ""
 
 
-def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
-    """A file's lifecycle type, looked up by its bytes' sha256 as the envelope
-    does; else ``deal_kit`` / ``estimating_calc`` by the file's name; else
-    ``file``."""
-    sha = (artifact_sha256 or {}).get(_doc_id(atom))
-    if sha:
-        try:
-            from app.core.document_lifecycle.dataset import lookup
+def _lifecycle(sha: str | None) -> dict[str, Any]:
+    """The document lifecycle record for a file's bytes, as the envelope looks
+    it up (its ``lifecycle``: type, role, delivered), else {}."""
+    if not sha:
+        return {}
+    try:
+        from app.core.document_lifecycle.dataset import lookup
 
-            rec = lookup(sha)
-        except Exception:
-            rec = None
-        kind = str((rec or {}).get("type") or "").strip().lower()
-        if kind:
-            return kind if kind in TRAINED_KINDS else "file"
-    name = re.sub(r"[^a-z]", "", _ref(atom, "filename").lower())
-    if "dealkit" in name:
-        return "deal_kit"
-    if _CALC_NAME.search(name):
-        return "estimating_calc"
-    if _SITE_LIST_NAME.search(name):
-        return "site_list"
-    return "file"
+        return lookup(sha) or {}
+    except Exception:
+        return {}
+
+
+def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
+    """A file's kind by the deal record's rule (``c3_record.file_kind``, the
+    one the training export uses): its lifecycle type, looked up by its bytes'
+    sha256 as the envelope does (the page's ``docType``); else ``deal_kit`` /
+    ``estimating_calc`` / ``site_list`` by the file's name; else ``file``."""
+    from c3_record import file_kind
+
+    sha = (artifact_sha256 or {}).get(_doc_id(atom))
+    return file_kind(_ref(atom, "filename"), _lifecycle(sha).get("type"))
 
 
 def doc_kind(atom: Any, artifact_sha256: dict[str, str] | None = None) -> str:
@@ -460,7 +448,9 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
       before it in arrival order (a document's own origin and ``authoredAt``
       are not on the atom); else the latest time in the deal; else 0 for every
       line, so the deal reads in compile order;
-    * order: position in the compile.
+    * order: rank in the deal record's reading order (``_reading_rank``,
+      ``c3_record.reading_order``), the rule the training export uses;
+    * table_row: ``c3_record.table_geometry`` of the line's table ref.
 
     Returns the deal and each atom's key, in the compile's order.
     """
@@ -513,7 +503,7 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         role, side = _speaker(a)
         lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
                       "section": _section(a), "order": float(i), "speaker_role": role,
-                      "speaker_side": side, "atom_id": aid, **_sender_inputs(a)})
+                      "speaker_side": side, "atom_id": aid, **_sender_inputs(a), **_geometry(a)})
     rank = _reading_rank(atoms, docs)
     if rank is not None:
         for ln, r in zip(lines, rank):
@@ -530,20 +520,47 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     return deal_id, rows, keys
 
 
-def _reading_rank(atoms: list[Any], docs: list[dict[str, Any]]) -> list[int] | None:
-    """Each atom's place in the envelope's reading order (``_in_reading_order``,
-    the order the labeling page lists lines in, which is training's ``order``):
-    documents by authored time, ties by their place in the compile manifest,
-    then page, paragraph or row, line and sentence. None without the compile's
-    documents; the atoms' own order stands."""
-    if not docs or not all("pos" in d for d in docs):
-        return None
+def _geometry(atom: Any) -> dict[str, int]:
+    """Where a table-row line sits (``c3_record.table_geometry``), from the
+    table ref the labeling page also stamps (``_atom_table_ref``: the page's
+    ``tableRef``, which training's ``table_row`` is read from)."""
     try:
-        from app.core.orbitbrief_envelope import _in_reading_order
+        from app.core.typed_atom_classifier import _atom_table_ref
+        from c3_record import table_geometry
 
-        reading = [{"artifact_id": d["doc_id"], "authored_at": d.get("authored_at") or ""}
-                   for d in sorted(docs, key=lambda d: d["pos"])]
-        place = {id(a): i for i, a in enumerate(_in_reading_order(list(atoms), reading))}
+        return table_geometry(_atom_table_ref(atom))
+    except Exception:  # noqa: BLE001 - no geometry is a line read without it, never a failed read
+        return {}
+
+
+def _reading_rank(atoms: list[Any], docs: list[dict[str, Any]]) -> list[int] | None:
+    """Each atom's rank in the deal record's reading order
+    (``c3_record.reading_order``), the rule the training export orders the
+    labeling page's lines by: documents by authored time, ties by manifest
+    place; inside one, the page's own order (``c3_record.page_position``:
+    message, page, block, line, sentence, column), a workbook's sheets one
+    after another. Ties fall to the envelope's order (``_in_reading_order``,
+    which is the page's envelope order), else the compile's."""
+    try:
+        from c3_record import is_email_file, page_group, page_position, reading_order
+
+        envelope = list(atoms)
+        if docs and all("pos" in d for d in docs):
+            try:
+                from app.core.orbitbrief_envelope import _in_reading_order
+
+                reading = [{"artifact_id": d["doc_id"], "authored_at": d.get("authored_at") or ""}
+                           for d in sorted(docs, key=lambda d: d["pos"])]
+                envelope = _in_reading_order(list(atoms), reading)
+            except Exception:
+                envelope = list(atoms)
+        lines = [{"doc_id": _doc_id(a),
+                  "within": page_position(_locator(a), _value(a), getattr(a, "raw_text", "") or "",
+                                          email=is_email_file(_ref(a, "artifact_type"), _ref(a, "filename"))),
+                  "group": page_group(_locator(a))} for a in envelope]
+        rank = reading_order(lines, [{"doc_id": d.get("doc_id"), "authored_at": d.get("authored_at"),
+                                      "pos": d.get("pos")} for d in docs or []])
+        place = {id(a): r for a, r in zip(envelope, rank)}
         return [place[id(a)] for a in atoms]
     except Exception:
         return None
@@ -628,12 +645,7 @@ def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, 
 
 
 def _delivered_at(sha256: str) -> Any:
-    try:
-        from app.core.document_lifecycle.dataset import lookup
-
-        rec = lookup(sha256) or {}
-    except Exception:
-        return None
+    rec = _lifecycle(sha256)
     for d in rec.get("delivered") or []:
         if isinstance(d, dict) and d.get("ts"):
             return d["ts"]
@@ -648,8 +660,11 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
     from the manifest Purpulse writes: the email or note that carried a file
     (``carried_by.sent_at``, else that carrier's authored time), and an
     event's own authored time; a file nothing carried has none (it takes the
-    one before it, as on the labeling page). Kind is the atoms' event kind,
-    else the file's type by its bytes (``_file_kind``)."""
+    arrival of the document before it in reading order, ``c3_record.
+    document_times``, as the training export does). Kind is the labeling
+    page's event kind (``c3_record.event_kind``), else the file's type by its
+    bytes (``_file_kind``); role is the lifecycle's (the page's ``docRole``);
+    origin is ``doc_origin.origin_for`` with the deal roster's names."""
     prov: dict[str, dict[str, Any]] = {}
     index: dict[str, dict[str, Any]] = {}
     if project_dir:
@@ -665,19 +680,29 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             index = manifest_index(project_dir) or {}
         except Exception:
             index = {}
+    from c3_record import event_kind
+
     first: dict[str, Any] = {}
-    event: dict[str, str] = {}
+    own: dict[str, list[Any]] = {}
     for a in atoms:
         d = _doc_id(a)
         first.setdefault(d, a)
-        if d not in event or not event[d]:
-            event[d] = _event_kind(a)
+        own.setdefault(d, []).append(a)
+    # A document is an email, note or meeting by the labeling page's rule
+    # (c3_record.event_kind: its type, its name, its own atoms), which is the
+    # kind training reads.
+    event = {d: event_kind(_ref(a, "artifact_type"), (fingerprints or {}).get(d, {}).get("filename")
+                           or _ref(a, "filename"), [_value(x) for x in own[d]]) for d, a in first.items()}
     sha = {k: str(v.get("sha256") or "") for k, v in (fingerprints or {}).items() if v.get("sha256")}
+    by_name = {str(fp.get("filename") or ""): d for d, fp in (fingerprints or {}).items()}
+    prov = _as_envelope_documents(prov, own, by_name, sha)
+    names = _roster_names(atoms, prov)
     docs = []
     for pos, (d, fp) in enumerate((fingerprints or {}).items()):
         name = str(fp.get("filename") or "")
         p = prov.get(name) or {}
-        authored = p.get("authored_at") or (index.get(name) or {}).get("authored_at") or None
+        authored = (p.get("authored_at") or (index.get(name) or {}).get("authored_at")
+                    or _own_date(own.get(d) or [], event.get(d) or "") or None)
         cb = p.get("carried_by") if isinstance(p.get("carried_by"), dict) else {}
         carrier = prov.get(str(cb.get("filename") or "")) or {}
         sent = (cb.get("sent_at") or carrier.get("authored_at")) if cb else None
@@ -687,8 +712,12 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             # arrived with the note at 23:32:57.777, as the page had it).
             sent = _delivered_at(sha[d])
         kind = event.get(d) or (_file_kind(first[d], sha) if d in first else "file")
+        # The lifecycle's role sentence, the page's docRole: whose paper it is
+        # (c3_record.sender.is_ours reads it for the stage).
+        role = str(_lifecycle(sha.get(d)).get("role") or "")
         docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
-                     "filename": name, "pos": pos, "origin": _origin(p, prov, first.get(d))})
+                     "filename": name, "pos": pos, "role": role,
+                     "origin": _origin(p, prov, first.get(d), names)})
     from c3_record import EVENT_KINDS
 
     def arrival(doc):
@@ -706,18 +735,105 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
     return [doc for _, _, doc in keyed]
 
 
-def _origin(p: dict[str, Any], prov: dict[str, dict[str, Any]], atom: Any = None) -> dict[str, Any]:
+def _as_envelope_documents(prov: dict[str, dict[str, Any]], own: dict[str, list[Any]],
+                           by_name: dict[str, str], sha: dict[str, str] | None = None
+                           ) -> dict[str, dict[str, Any]]:
+    """The manifest provenance with what the envelope adds to each document
+    before it reads the document's origin (``orbitbrief_envelope``): from its
+    own atoms, an email's thread block (its MIME sender), the sender a
+    forwarded chain started with and a HubSpot note's author; its lifecycle
+    record; then the envelope's own passes over the documents -- who sent the
+    message that delivered a file (``_resolve_delivered_by``), a file's
+    direction from its originator, and the note that captions an upload
+    (``_link_caption_notes``). ``doc_origin.origin_for`` reads these on the
+    page's side."""
+    try:
+        from app.core.orbitbrief_envelope import (_direction_from_originator, _document_thread,
+                                                  _link_caption_notes, _note_author, _originating_sender,
+                                                  _resolve_delivered_by)
+    except Exception:
+        return prov
+    out: dict[str, dict[str, Any]] = {}
+    for name, p in prov.items():
+        q = dict(p)
+        d = by_name.get(name, "")
+        mine = own.get(d) or []
+        art = _ref(mine[0], "artifact_type").strip().lower() if mine else ""
+        q.update(artifact_id=d, filename=name, artifact_type=art)
+        try:
+            if mine:
+                q.setdefault("email_thread", _document_thread(mine, artifact_id=d, is_message=art == "email"))
+            if mine and (p.get("attachment_ids") or []):
+                q.setdefault("originated_by", _originating_sender(mine, artifact_id=d))
+            if mine:
+                for k, v in _note_author(mine, d).items():
+                    q.setdefault(k, v)
+        except Exception:  # noqa: BLE001 - what cannot be read is left as the manifest has it
+            pass
+        lc = _lifecycle((sha or {}).get(d))
+        if lc:
+            q.setdefault("lifecycle", lc)
+        out[name] = q
+    docs = list(out.values())
+    compact = {"atoms": [{"artifact_id": d, "structured": _value(a)} for d, xs in own.items() for a in xs]}
+    for step in (lambda: _resolve_delivered_by(docs), lambda: _direction_from_originator(docs, None),
+                 lambda: _link_caption_notes(docs, compact, None)):
+        try:
+            step()  # in place, in the envelope's order
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
+def _roster_names(atoms: list[Any], prov: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """The deal's people, address -> name, as the envelope's ``deal_roster``
+    has them (the labeling page passes ``rosterNames(env)`` to the origin of
+    every document): message senders and signatures."""
+    try:
+        from app.core.deal_roster import build_deal_roster
+
+        roster = build_deal_roster(atoms=list(atoms), documents=[
+            {"sender_email": p.get("sender_email"), "filename": name} for name, p in prov.items()])
+    except Exception:
+        return {}
+    return {str(p["email"]).lower(): str(p["name"]) for p in roster.get("people") or []
+            if isinstance(p, dict) and p.get("email") and p.get("name")}
+
+
+def _own_date(own: list[Any], kind: str) -> Any:
+    """The page's fallback for a document's authored time: an email's thread
+    date, a note's own date (atom-labeling.js: ``th.date``, ``note.date``)."""
+    from c3_record.reading import is_note_meta
+
+    for a in own:
+        v = _value(a)
+        if kind == "email":
+            et = v.get("email_thread")
+            if isinstance(et, dict) and et.get("thread_id") and et.get("date"):
+                return et["date"]
+        elif kind == "note" and is_note_meta(v):
+            return v.get("date") or None
+    return None
+
+
+def _origin(p: dict[str, Any], prov: dict[str, dict[str, Any]], atom: Any = None,
+            names: dict[str, str] | None = None) -> dict[str, Any]:
     """Who brought a document in, as the labeling page's ``origin`` says it:
     ``doc_origin.origin_for`` on the manifest's provenance (an attachment's
-    is the email or note that carried it; an email's is its own sender)."""
+    is the email or note that carried it; an email's is its own sender), with
+    the deal roster's names (``names``: address -> name, as the page passes
+    them), so a sender known only by address still has a name a quoted
+    message author can be matched to."""
     try:
         from app.core.doc_origin import origin_for
 
         art = (_ref(atom, "artifact_type") if atom is not None else "") or ""
         doc = {"carried_by": p.get("carried_by"), "direction": p.get("direction"),
                "sender_email": p.get("sender_email"), "authored_at": p.get("authored_at"),
-               "artifact_type": "email" if art.strip().lower() in _EMAIL_TYPES else art}
-        o = origin_for(doc, prov)
+               "artifact_type": "email" if art.strip().lower() in _EMAIL_TYPES else art,
+               **{k: p[k] for k in ("email_thread", "originated_by", "note_author", "lifecycle", "delivered_by",
+                                    "delivered_by_source", "forwarded_by", "hubspot_note") if p.get(k)}}
+        o = origin_for(doc, prov, names or {})
     except Exception:  # noqa: BLE001 - an origin that cannot be read is no sender, never a failed read
         return {}
     return {k: o.get(k) for k in ("direction", "sender_email", "sender_name", "sent_at", "via")}
@@ -808,8 +924,17 @@ def deal_payload(deal: Any) -> dict[str, Any]:
          "speaker_role": a.speaker_role, "speaker_side": a.speaker_side, "atom_id": a.atom_id,
          # Sender and stage (c3_record.sender), as the training export writes them.
          "speaker_org": getattr(a, "speaker_org", ""), "doc_direction": getattr(a, "doc_direction", ""),
-         "stage_at": getattr(a, "stage_at", "")}
+         "stage_at": getattr(a, "stage_at", ""),
+         # Geometry: training writes table_row only (c3_record.table_geometry).
+         **_table_row(a)}
         for a in deal.atoms]}
+
+
+def _table_row(atom: Any) -> dict[str, int]:
+    """``{"table_row": n}`` as the training export writes it, read back off
+    the base's geometry (``ml.c3.data._geometry``: slot 4), else {}."""
+    geo = tuple(getattr(atom, "geometry", ()) or ())
+    return {"table_row": int(geo[4])} if len(geo) > 4 and geo[4] else {}
 
 
 #: The base's name for a type the parser calls by another. ``work_scope_item``
