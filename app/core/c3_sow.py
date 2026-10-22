@@ -480,6 +480,16 @@ def _head_kept(envelope: dict[str, Any]) -> set[str]:
     return out
 
 
+def _keep_gate(envelope: dict[str, Any]) -> set[str] | None:
+    """Every line the keep head kept, at any confidence (``_head_kept`` plus
+    the brief's kept_unsure), or None when the brief had no keep reading and
+    the rules decide alone."""
+    brief = envelope.get("c3_brief") or {}
+    if "read:co_action" not in ((brief.get("decided_by") or {}).get("heads_used") or []):
+        return None
+    return _head_kept(envelope) | {str(x.get("id")) for x in brief.get("kept_unsure") or []}
+
+
 def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
     """Atoms that are not facts of the job whatever section the brief put them
     in: typed small talk or signature (the type head's label, else the
@@ -623,14 +633,23 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # transcripts, where scope words are mostly talk.
     docs = {str(d.get("artifact_id") or d.get("id") or ""): str(d.get("filename") or "")
             for d in envelope.get("documents") or []}
+    # The keep head's own keeps (sections, also mentioned, kept below the bar):
+    # with a keep reading, a regex (_DIRECTIVE, _PROGRAM) only marks which of
+    # these lines say the job; it never adds a line the head left out.
+    gate = _keep_gate(envelope)
+    keep_read, head_kept = gate is not None, gate or set()
     typed = []
     for a in envelope.get("atoms") or []:
         lab = (a.get("structured") or {}).get("c3_label") or {}
         txt = str(a.get("text") or "")
-        # When the type head abstains (_keep), the parser's own scope type
-        # stands at a looser bar: 010171's "We would like to have the Logitech
-        # Sight installed in this specific room" (_keep 0.39, parsed scope_item).
-        abstained = lab.get("type") == "_keep" and str(a.get("atom_type") or "") in ("scope_item", "task", "requirement")
+        # A parser type never adds a line: when the type head abstains (_keep)
+        # and the keep head left the line out, it stays out. (It was let in at
+        # 0.35 on the parser's scope type: 22 lines on the 8 audited deals,
+        # 010387's "If you received this email in error, please contact the
+        # sender ..." among them; overrides.md point 9. 010171's "We would like
+        # to have the Logitech Sight installed ..." reaches the writer as
+        # kept_unsure: the keep head kept it, below the brief's bar.)
+        abstained = False
         if (a.get("id") in seen or (lab.get("type") not in _SCOPE_TYPES and not abstained)
                 or float(lab.get("p") or 0) < (0.35 if abstained else TYPED_BAR)
                 or not 15 < len(txt) < 600 or _CHATTER.search(txt.strip()) or txt.count("|") >= 2
@@ -659,6 +678,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
         txt = str(a.get("text") or "")
         name = docs.get(str(a.get("artifact_id") or ""), "").lower()
         if (a.get("id") in seen or a.get("id") in got or not 15 < len(txt) < 600 or not directive.search(txt)
+                or (keep_read and str(a.get("id")) not in head_kept)
                 or "fireflies" in name or "transcript" in name or (a.get("structured") or {}).get("quoted")
                 or txt.rstrip().endswith("?")):
             continue
@@ -669,7 +689,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # devices per site) is a fact for the program assumptions however low the
     # keep head's confidence (010264 pass V: all of it _keep 0.2-0.5 in notes
     # 116624101737 / 116628536395 and transcript 01M1KXT9, cut by the caps).
-    prog = _program_atoms(envelope)
+    prog = [x for x in _program_atoms(envelope) if not keep_read or x["id"] in head_kept]
     kinds = {k for a in prog for k, rx in _PROGRAM.items() if rx.search(a["text"])}
     for a in (prog if len(kinds) >= 2 and len(prog) >= 2 else []):  # as _program_model: a model, not a passing mention
         if a["id"] not in seen:
@@ -7519,7 +7539,8 @@ def _program_model(c: dict[str, Any], envelope: dict[str, Any]) -> None:
     one address were kept facts and none reached the SOW, which instead said
     "Install one clock at each address/location"). Each line cites the
     facts that state it; a kind no fact states is not written."""
-    found = _program_atoms(envelope, 99)
+    gate = _keep_gate(envelope)
+    found = [a for a in _program_atoms(envelope, 99) if gate is None or a["id"] in gate]
     if not found:
         return
     by: dict[str, list[dict[str, str]]] = {}

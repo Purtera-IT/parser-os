@@ -47,3 +47,43 @@ def test_the_type_heads_small_talk_is_no_veto_on_an_also_mentioned_line():
     a = _atom("x", "But the biggest thing is the conference room displays for all.", label="small_talk")
     env = {"atoms": [a], "c3_brief": {"sections": {}, "also_mentioned": [{"id": "x", "text": a["text"], "keep_p": 0.7}]}}
     assert "x" not in m._rejected_atoms(env)
+
+
+def _left_out_env(heads_used=("read:co_action",)):
+    atoms = [_atom("dis", "If you received this email in error, please contact the sender and delete it from all computers.",
+                   "scope_item", 30, c3_label={"type": "_keep", "p": 0.6}),
+             _atom("dir", "The cable should be moved behind the wall so it is not visible.", "assumption", 31, c3_label={"type": "_keep", "p": 0.6}),
+             _atom("prog", "Each location may opt in, and quantities TBD are billed on actuals once installed.",
+                   "scope_item", 32, label="_keep", source="hubspot_note"),
+             _atom("kept", "The two TVs should be mounted at 60 inches on the north wall.", "scope_item", 33, label="_keep")]
+    return {"atoms": atoms, "documents": [{"artifact_id": "mail", "filename": "mail.eml"}],
+            "c3_brief": {"sections": {}, "also_mentioned": [], "label_next": [],
+                         "kept_unsure": [{"id": "kept", "text": atoms[3]["text"], "p": 0.4}],
+                         "decided_by": {"heads_used": list(heads_used)}}}
+
+
+def test_the_sow_adds_no_line_the_keep_head_left_out_by_parser_type_or_regex():
+    got = {f["id"]: f["section"] for f in m.facts(_left_out_env())}
+    assert "dis" not in got   # parser scope_item under an abstaining type head: no longer a fact
+    assert "dir" not in got   # _DIRECTIVE matched, the keep head left it out
+    assert "prog" not in got  # _PROGRAM matched, the keep head left it out
+    assert got.get("kept") in ("typed_only", "unsure")  # the head kept it (below the bar): the writer sees it
+
+
+def test_without_a_keep_reading_the_regex_routes_still_feed_the_writer():
+    got = {f["id"] for f in m.facts(_left_out_env(heads_used=()))}
+    assert "dir" in got
+    assert "dis" not in got   # the parser-type route is gone either way
+
+
+def test_the_program_model_fixup_writes_only_from_lines_the_keep_head_kept():
+    notes = [_atom("o", "Each location will opt in to the install program over the summer.", "scope_item", 40, source="hubspot_note"),
+             _atom("t", "Clock quantities TBD until the survey closes for each district.", "scope_item", 41, source="hubspot_note")]
+    env = {"atoms": notes, "documents": [], "c3_brief": {"sections": {}, "also_mentioned": [], "kept_unsure": [],
+                                                         "decided_by": {"heads_used": ["read:co_action"]}}}
+    c = {"assumptions": [], "customer_responsibilities": []}
+    m._program_model(c, env)
+    assert not c["assumptions"]
+    env["c3_brief"]["also_mentioned"] = [{"id": "o", "text": notes[0]["text"]}, {"id": "t", "text": notes[1]["text"]}]
+    m._program_model(c, env)
+    assert c["assumptions"]
