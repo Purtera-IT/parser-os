@@ -1829,6 +1829,11 @@ def compile_project(
                 _pval = getattr(parent, "value", None)
                 if isinstance(_pval, dict) and _pval.get("kind") == "table_row" and _pval.get("columns"):
                     continue
+                # The same holds for the parser's raw_table_row ({_columns, _row}): 010358's 101-building site list
+                # reached the heads as 445 lone cells ("| Zip: 77002 |"), and identical cells then folded together,
+                # so 30 buildings that share a ZIP never reached them at all.
+                if isinstance(_pval, dict) and "_columns" in _pval and "_row" in _pval:
+                    continue
                 _ptext = getattr(parent, "raw_text", "") or ""
                 items = split_prose_paragraph(_ptext)
                 if not items:
