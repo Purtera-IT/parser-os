@@ -46,7 +46,7 @@ import torch
 from .notes import drop_meta, judgment_note, mask_verdict, sentences, split_note, without_opener
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
-from .values import (DEAL_SERVICES, HOURS_BASES, LITERAL_HEADS, TERM_ENUMS, TERM_LINE_TYPES,
+from .values import (DEAL_SERVICES, HOURS_BASES, LITERAL_HEADS, hours_per, TERM_ENUMS, TERM_LINE_TYPES,
                      TERM_NUMBERS, UNSTATED, canonical_commercial, canonical_term_verdict,
                      hours_canonical, hours_judgment_basis, judged_atom_type,
                      parse_commercial_verdict, parse_hours_verdict, parse_term_verdict,
@@ -1264,6 +1264,13 @@ def _consume_extract(head: str, verdict: str, j: dict[str, Any], i: int, atoms: 
         _set_class(targets, key, i, opp.index("present"))
         _set_number(numbers, key, i, float(parsed["hours"]))
         _remember_literal(literals, line, i, key, hours_canonical(parsed))
+        # The unit and count the hours multiply by, as heads of their own.
+        per = hours_per(parsed.get("per"))
+        if per and "jdg:hours:per" in by_key:
+            _set_class(targets, "jdg:hours:per", i, by_key["jdg:hours:per"].index(per))
+            if parsed.get("qty") is not None and "jdg:hours:qty" in by_key:
+                _set_class(targets, "jdg:hours:qty", i, by_key["jdg:hours:qty"].index("present"))
+                _set_number(numbers, "jdg:hours:qty", i, float(parsed["qty"]))
         return True
     if head == "term":
         parsed = parse_term_verdict(verdict)

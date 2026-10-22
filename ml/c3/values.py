@@ -89,6 +89,23 @@ TERM_LINE_TYPES = frozenset({
 
 UNSTATED = "unstated"
 HOURS_BASES = ("stated", "estimate", "deal_kit")
+#: What one unit of an hours verdict's hours is (``per=``), as the main model's
+#: jdg:hours:per class. Other spellings fold in here; anything else is not taught.
+HOURS_PER = ("site", "visit", "device", "job")
+_HOURS_PER_ALIASES = {
+    "location": "site", "store": "site", "school": "site", "building": "site", "office": "site",
+    "trip": "visit", "day": "visit", "shift": "visit",
+    "display": "device", "tv": "device", "camera": "device", "ap": "device", "unit": "device",
+    "phone": "device", "printer": "device", "rack": "device", "server": "device", "drop": "device",
+    "project": "job", "whole_job": "job",
+}
+
+
+def hours_per(value: Any) -> str | None:
+    """The jdg:hours:per class of a verdict's ``per=`` value, or None (not taught)."""
+    v = str(value or "").strip().lower().replace(" ", "_")
+    v = v[:-1] if v.endswith("s") and v[:-1] in (*HOURS_PER, *_HOURS_PER_ALIASES) else v
+    return v if v in HOURS_PER else _HOURS_PER_ALIASES.get(v)
 LITERAL_HEADS = frozenset({"norm", "terminology"})
 
 _WORD = re.compile(r"[a-z0-9$\"]+|\[mask\]")

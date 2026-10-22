@@ -19,9 +19,10 @@ Not written: crew_size / equipment_qty line reads. They need a line label, and a
 "no link" on every relation head (losses.relation_loss), which head_scale does not reach. The target's qty
 rides in the hours literal (hours=..;per=..;qty=..).
 
-The cards are machine drafts (why_author machine_draft, status draft in the source file). data.py trains only
-person-labeled rows; the labeler below names the source so it passes that gate, on the owner's instruction
-to train the train:true targets.
+The cards are machine drafts (labeler claude-code (assistant), why_author machine_draft): the loader skips
+them until the owner approves a file. Approve by listing it, with the sha256 of its bytes, in a manifest
+passed as `loop.py --accept-drafts <manifest.json>` (runE.sh ACCEPT_DRAFTS). This script writes
+train_estimator_work/approval_candidates.json: every file and its sha256, with an empty "files" list.
 """
 import argparse
 import collections
@@ -44,9 +45,9 @@ sys.path.insert(0, os.environ.get("C3_REPO", f"{HOME}/c3-runE-wt"))
 from ml.c3.data import _is_a_person, _time  # noqa: E402
 from ml.c3.holdout import FIXED_HOLDOUT  # noqa: E402
 from ml.c3.schema import load_schema  # noqa: E402
-from ml.c3.values import hours_judgment_basis, parse_hours_verdict  # noqa: E402
+from ml.c3.values import hours_judgment_basis, hours_per, parse_hours_verdict  # noqa: E402
 
-LABELER = "deal-kit estimator draft (Max's kits)"
+LABELER = "claude-code (assistant)"       # the drafts' author; the loader skips it unless approved
 VIEW = "pre_quote"
 EXCLUDE = {
     "010270": "carries other deals' documents", "010328": "carries other deals' documents",
@@ -55,7 +56,7 @@ EXCLUDE = {
     "010003": "duplicate of a Run E view deal", "010172": "duplicate of a Run E view deal",
 }
 QUOTE_HEADS = ("read:co_hours_estimate", "read:labor_hours", "read:crew_size", "read:equipment_qty",
-               "jdg:hours:reason", "deal:primary_service")
+               "jdg:hours:reason", "jdg:hours:per", "jdg:hours:qty", "deal:primary_service")
 # Max's job type -> deal:primary_service, only where it is one service (what the person labels on the 17 use).
 SERVICE = {"conference_room": "audio_visual", "tv_mount": "audio_visual", "camera_mast": "security_camera",
            "camera_install": "security_camera", "ap_swap": "wireless", "ap_install": "wireless",
@@ -126,7 +127,7 @@ def main():
     keys = [o.key for o in schema.opportunities]
     scale = head_scale(keys)
     service_opp = schema.by_key()["deal:primary_service"]
-    assert _is_a_person(LABELER)
+    assert not _is_a_person(LABELER)
     src = json.load(open(TARGETS))
     T, date = src["targets"], src.get("date")
     tasks = json.load(open(TASKS))
@@ -171,6 +172,9 @@ def main():
             basis = hours_judgment_basis(r["verdict"])
             assert parsed and basis in ("stated", "estimate"), r["verdict"]
             per_head["read:labor_hours" if basis == "stated" else "read:co_hours_estimate"] += 1
+            if hours_per(parsed.get("per")):
+                per_head["jdg:hours:per"] += 1
+                per_head["jdg:hours:qty"] += parsed.get("qty") is not None
             cards.append({
                 "id": r["id"], "deal_id": deal, "head": "hours", "target_key": f"atom:{a['atom_id']}",
                 "text": a["text"], "parser_value": None, "verdict": r["verdict"], "note": "", "reason": "",
@@ -199,6 +203,12 @@ def main():
         with open(f"{OUT}/{deal}@{VIEW}.json", "w") as fh:
             json.dump(out, fh)
         rows.append((deal, len(atoms), len(cards), svc or "-"))
+    cands = [{"file": f"{r[0]}@{VIEW}.json",
+              "sha256": hashlib.sha256(open(f"{OUT}/{r[0]}@{VIEW}.json", "rb").read()).hexdigest()} for r in rows]
+    with open(f"{HOME}/c3-local/runE/train_estimator_work/approval_candidates.json", "w") as fh:
+        json.dump({"about": "Copy the entries you approved into files and pass the manifest as --accept-drafts. "
+                            "A file rebuilt after approval no longer matches its sha256 and is refused.",
+                   "approved_by": "", "approved_at": "", "files": [], "candidates": cands}, fh, indent=1)
     print(f"{'deal':7} {'atoms':>5} {'cards':>5} service")
     for r in rows:
         print(f"{r[0]:7} {r[1]:5} {r[2]:5} {r[3]}")

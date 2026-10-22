@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from .values import (BILLING_TYPES, COMMERCIAL_NUMBERS, DEAL_SERVICE_DESC, DEAL_SERVICES,
+from .values import (BILLING_TYPES, COMMERCIAL_NUMBERS, DEAL_SERVICE_DESC, DEAL_SERVICES, HOURS_PER,
                      TERM_ENUMS, TERM_KINDS, TERM_NUMBERS)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -330,6 +330,21 @@ def _add_extract_and_reason_opportunities(opps: list[Opportunity], homes: dict[s
             key=f"jdg:commercial:{key}", field=key, source="judgment", kind=NUMBER, size=LINE,
             description=f"The kit's {_spell(key)}.",
             answers=_answers(NUMBER, [], key, {}), **commercial))
+
+    # The hours verdict's unit and count (hours=..;per=..;qty=..), on the main model.
+    hours = home("hours")
+    per_docs = {"site": "The hours are counted per site or location.",
+                "visit": "The hours are counted per visit or trip.",
+                "device": "The hours are counted per device or unit installed.",
+                "job": "The hours are for the whole job."}
+    opps.append(Opportunity(
+        key="jdg:hours:per", field="hours_per", source="judgment", kind=CLASS, size=LINE,
+        description="What one unit of the hours estimate for this request is: a site, a visit, a device or the whole job.",
+        answers=_answers(CLASS, {v: per_docs[v] for v in HOURS_PER}, "hours per", per_docs), **hours))
+    opps.append(Opportunity(
+        key="jdg:hours:qty", field="hours_qty", source="judgment", kind=NUMBER, size=LINE,
+        description="How many of those units the hours estimate for this request multiplies by.",
+        answers=_answers(NUMBER, [], "hours qty", {}), **hours))
 
     by_key = {o.key: o for o in opps}
     for name, items in reason_heads.items():

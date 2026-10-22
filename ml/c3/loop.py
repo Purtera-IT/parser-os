@@ -25,12 +25,14 @@ is not changed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
 from typing import Any
 import time
 import random
+import re
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -1160,11 +1162,58 @@ def training_batches(deal: DealExample, schema: Schema, *, max_atoms: int = 4096
     return [replace(part, deal_id=f"{deal.deal_id}#c3part{i}") for i, part in enumerate(parts)], notes
 
 
-def load_deal(path: str | Path) -> DealExample:
-    """A joined deal file, or a labeling export that still has ``labels`` and ``atoms``."""
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+#: Marks a draft row the owner approved through ``--accept-drafts``.
+APPROVED_DRAFT = "[owner-approved draft]"
+
+
+def read_draft_approvals(path: str | Path) -> dict[str, str]:
+    """The owner's approval manifest: ``{"files": [{"file": "<name>.json", "sha256": "<of its bytes>"}]}``.
+    Returns file name -> sha256. Only these files' draft rows train."""
+    m = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = m.get("files") if isinstance(m, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("A draft approval manifest needs a files list")
+    out = {}
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("file") or not r.get("sha256"):
+            raise ValueError("Each approved draft needs its file name and sha256")
+        out[Path(str(r["file"])).name] = str(r["sha256"]).lower()
+    return out
+
+
+def accept_drafts(payload: dict[str, Any]) -> int:
+    """Turn a file's assistant-drafted rows into rows the loader trains (the
+    file is on the owner's approval manifest). The row keeps who drafted it."""
+    from .data import NOT_A_PERSON, _is_a_person  # noqa: PLC0415
+
+    n = 0
+    for part in ("labels", "judgments", "deal_answers", "links", "missed_history"):
+        for row in payload.get(part) or []:
+            if not isinstance(row, dict) or not row.get("labeler") or _is_a_person(row.get("labeler")):
+                continue
+            who = str(row["labeler"])
+            for mark in NOT_A_PERSON:
+                who = re.sub(re.escape(mark), "", who, flags=re.I)
+            row["labeler"] = f"{who.strip()} {APPROVED_DRAFT}".strip()
+            n += 1
+    return n
+
+
+def load_deal(path: str | Path, accepted: dict[str, str] | None = None) -> DealExample:
+    """A joined deal file, or a labeling export that still has ``labels`` and ``atoms``.
+
+    ``accepted`` (``--accept-drafts``): file name -> sha256 the owner approved.
+    A listed file's draft rows train; a listed file whose bytes changed since
+    the approval is refused. Any other file's draft rows are skipped as always."""
+    raw = Path(path).read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("A training file must be one JSON object")
+    name = Path(path).name
+    if accepted and name in accepted:
+        if hashlib.sha256(raw).hexdigest() != accepted[name]:
+            raise ValueError(f"{name} changed since the owner approved its drafts")
+        accept_drafts(payload)
     from .export import is_page_export
 
     if is_page_export(payload):
@@ -1187,14 +1236,25 @@ def load_deal(path: str | Path) -> DealExample:
     return DealExample.from_dict(payload)
 
 
-def load_split(paths: list[str], schema: Schema, max_atoms: int = 4096) -> tuple[list[Batch], list[str]]:
+def load_split(paths: list[str], schema: Schema, max_atoms: int = 4096,
+               accepted: dict[str, str] | None = None) -> tuple[list[Batch], list[str]]:
     batches: list[Batch] = []
     notes: list[str] = []
     for path in paths:
-        parts, part_notes = training_batches(load_deal(path), schema, max_atoms=max_atoms)
+        parts, part_notes = training_batches(load_deal(path, accepted), schema, max_atoms=max_atoms)
         batches.extend(parts)
         notes.extend(part_notes)
     return batches, notes
+
+
+def without_heads(schema: Schema, keys: str) -> Schema:
+    """The schema without the opportunities ``keys`` (comma separated) names:
+    the shape a checkpoint saved before those heads were added has."""
+    drop = {k.strip() for k in str(keys or "").split(",") if k.strip()}
+    unknown = drop - {o.key for o in schema.opportunities}
+    if unknown:
+        raise SystemExit("--allow-new-heads: no such question " + ", ".join(sorted(unknown)))
+    return replace(schema, opportunities=[o for o in schema.opportunities if o.key not in drop]) if drop else schema
 
 
 def require_live_teacher(teacher: str, tiny: bool) -> None:
@@ -1279,6 +1339,13 @@ def main() -> None:
     parser.add_argument("--init-schema-ref", default="",
                         help="With --allow-text-change, for a checkpoint saved before shape digests: the git "
                              "commit it was trained on; its schema digest must equal the checkpoint's")
+    parser.add_argument("--allow-new-heads", default="",
+                        help="With --allow-text-change: opportunity keys this schema adds over the checkpoint's "
+                             "(comma separated, e.g. jdg:hours:per,jdg:hours:qty). The rest must keep the "
+                             "checkpoint's shape; the added heads start from their descriptions")
+    parser.add_argument("--accept-drafts", default="",
+                        help="The owner's approval manifest of draft training files "
+                             '({"files": [{"file", "sha256"}]}): only those files\' assistant drafts train')
     parser.add_argument("--stage-steps", default="",
                         help="Per-stage step overrides, e.g. lines=30,links=0,teach=0; a stage "
                              "with 0 steps neither trains nor scores")
@@ -1329,7 +1396,10 @@ def main() -> None:
                     flips=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4),
                     spread=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4))
     budget = with_stage_steps(budget, args.stage_steps)
-    train, train_notes = load_split(args.train, schema, args.max_atoms)
+    accepted = read_draft_approvals(args.accept_drafts) if args.accept_drafts else None
+    if accepted:
+        print("accept_drafts", len(accepted), "approved files", flush=True)
+    train, train_notes = load_split(args.train, schema, args.max_atoms, accepted)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
     validation, val_notes = load_split(args.validation, schema, args.max_atoms)
     caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, args.view_parts
@@ -1387,7 +1457,8 @@ def main() -> None:
             step = load_checkpoint(args.init_from, student,
                                    schema_sha256=digest([asdict(o) for o in schema.opportunities]),
                                    allow_text_change=args.allow_text_change,
-                                   shape_sha256=shape_digest(schema), known_shapes=known)
+                                   shape_sha256=shape_digest(without_heads(schema, args.allow_new_heads)),
+                                   known_shapes=known)
             print("init_from", args.init_from, "step", step, flush=True)
         released = release_encoder_top(student, args.train_encoder_layers)
         print("encoder_blocks_training", released, flush=True)

@@ -170,12 +170,13 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
                 continue
             ce = ce + share * w.space.get(opp.space, 1.0) * answer_loss(out.logits[opp.key], batch, opp.key, rw)
             terms += share
-        if opp.kind == NUMBER and opp.key in out.numbers:
+        scale = batch.head_scale.get(opp.key, 1.0)
+        if opp.kind == NUMBER and opp.key in out.numbers and scale:
             vals = batch.numbers_target.get(opp.key, [])
             mask = torch.tensor([v is not None for v in vals], device=dev)
             if mask.any():
                 t = torch.tensor([v or 0.0 for v in vals], device=dev)
-                num = num + F.smooth_l1_loss(out.numbers[opp.key][mask], torch.log1p(t[mask]))
+                num = num + scale * F.smooth_l1_loss(out.numbers[opp.key][mask], torch.log1p(t[mask]))
     return ce / max(terms, 1), num
 
 
@@ -325,7 +326,8 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
 
     Other lines in the row are the "not this one" choices. Abstain is the last
     class when the model has a no-link score. Unlabeled lines are left alone:
-    a missing card is not a lesson that nothing connects.
+    a missing card is not a lesson that nothing connects. A relation the deal
+    view masks (head_scale ``rel:<name>`` 0) teaches nothing there.
     """
     total, terms = out.r.new_zeros(()), 0
     labeled = {i for i, on in enumerate(batch.labeled) if on}
@@ -336,7 +338,7 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     rels = set(out.relations) | set(gold)
     for rel in rels:
         s = out.relations.get(rel)
-        if s is None:
+        if s is None or not batch.head_scale.get(f"rel:{rel}", 1.0):
             continue
         none = out.link_none.get(rel)
         by_src = gold.get(rel, {})
@@ -363,7 +365,7 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
 
 def governs_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     pairs = batch.edges.get("governs", [])
-    if not pairs or out.governs is None:
+    if not pairs or out.governs is None or not batch.head_scale.get("rel:governs", 1.0):
         return out.r.new_zeros(())
     n = out.governs.shape[0]
     pos = torch.zeros(n, n, dtype=torch.bool, device=out.r.device)
@@ -432,7 +434,12 @@ def hindsight_loss(model: C3Model, out: C3Output, batch: Batch) -> tuple[torch.T
 def absence_targets(batch: Batch) -> torch.Tensor:
     """Free labels from the timeline: slot s is empty at line i (no earlier or
     current line fills it) and some later line fills it -> 1; empty now and
-    never filled -> 0; already filled -> ignored (-1)."""
+    never filled -> 0; already filled -> ignored (-1).
+
+    A deal view that masks heads (a quote-only or planning file, head_scale 0
+    on some key) is not fully labeled, so "never filled" is not known there:
+    a slot with a masked reading teaches nothing, and the others teach only
+    on labeled lines."""
     n = len(batch)
     keys = {s: [f"read:{r}" for r in reads] for s, reads in CLAIM_SLOTS.items()}
     filled = torch.zeros(n, len(keys), dtype=torch.bool)
@@ -447,6 +454,14 @@ def absence_targets(batch: Batch) -> torch.Tensor:
     later_strict = torch.cat([later[1:], torch.zeros_like(later[:1])])
     t = later_strict.float()
     t[seen] = -1.0
+    scale = batch.head_scale or {}
+    if any(not v for v in scale.values()):
+        for j, ks in enumerate(keys.values()):
+            if any(not scale.get(k, 1.0) for k in ks):
+                t[:, j] = -1.0
+        unlabeled = torch.tensor([not on for on in batch.labeled], dtype=torch.bool) \
+            if len(batch.labeled) == n else torch.ones(n, dtype=torch.bool)
+        t[unlabeled] = -1.0
     return t
 
 
@@ -587,7 +602,10 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
         keep["out"], keep["desc"] = out, desc
     parts: dict[str, torch.Tensor] = {}
     parts["heads"], parts["numbers"] = head_losses(model, out, batch, w, "universal")
-    parts["conduct"], _ = head_losses(model, out, batch, w, "company")
+    # Company number heads (read:co_hours_estimate's value) train with the
+    # universal ones, under the same numbers weight.
+    parts["conduct"], co_numbers = head_losses(model, out, batch, w, "company")
+    parts["numbers"] = parts["numbers"] + co_numbers
     parts["relations"] = relation_loss(out, batch)
     parts["governs"] = governs_loss(out, batch)
     parts["why_align"], parts["why_sufficiency"] = why_losses(model, out, batch, desc, w)
