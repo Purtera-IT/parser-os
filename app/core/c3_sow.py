@@ -469,13 +469,32 @@ _ABSENCE_LINE = re.compile(r"(?i)^\s*(no\b.{3,80}\b(were|was|are|is|have been|ha
 _CHATTER_TYPES = ("small_talk", "signature")
 
 
+def _head_kept(envelope: dict[str, Any]) -> set[str]:
+    """The lines the keep head (read:co_action) kept, at the brief's MAYBE_BAR
+    or above: those it filed in a section (``by`` names the head) and those it
+    kept as also mentioned. Empty when the brief had no keep reading."""
+    brief = envelope.get("c3_brief") or {}
+    out = {str(x.get("id")) for xs in (brief.get("sections") or {}).values() for x in xs or []
+           if "read:co_action" in str(x.get("by") or "")}
+    out |= {str(x.get("id")) for x in brief.get("also_mentioned") or []}
+    return out
+
+
 def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
     """Atoms that are not facts of the job whatever section the brief put them
     in: typed small talk or signature (the type head's label, else the
     parser's type), a parser admission reject, and the items of a list whose
     other items are mostly chatter (010082's signature menu "Need help with:
     Firewall Request / ISP Upgrade / Network Consultation/New Installation /
-    New Unit Opening": the one item typed scope_item became a Provider task)."""
+    New Unit Opening": the one item typed scope_item became a Provider task).
+
+    Never a line the keep head kept: whether a line is a fact of the job is
+    read:co_action's decision, and a type (the type head's small_talk, the
+    parser's chatter type, an admission regex) is not a veto. 010358's survey
+    lines ("Conducts the on-site Ekahau wireless RF survey ...", keep 0.96)
+    were typed small_talk by the email signature regex and removed here. The
+    rules still guard the lines the keep head did not keep (unsure, typed-only,
+    answered questions)."""
     out: set[str] = set()
     lines: dict[tuple, dict[int, list[bool]]] = {}
     items: list[tuple[str, tuple, int]] = []
@@ -500,7 +519,7 @@ def _rejected_atoms(envelope: dict[str, Any]) -> set[str]:
         near = [c for l2, cs in lines[key].items() if l2 != ln and abs(l2 - ln) <= 3 for c in cs]
         if len(near) >= 2 and sum(near) >= 0.6 * len(near):
             out.add(i)
-    return out
+    return out - _head_kept(envelope)
 
 
 #: A written instruction about the work or what stays: "should be moved behind
