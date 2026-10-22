@@ -51,6 +51,18 @@ class LossWeights:
     # The meaning lock for table rows: the same row in another layout keeps
     # its answers. A no-op unless the data carries layout_rewrites (run E).
     layout_lock: float = 0.5
+    # The WHY carries the decision, teacher-free (why_carry.py). Each is a
+    # part of c3_loss; 0 turns it off. why_contrast supersedes why_align
+    # (identical WHYs are never negatives) and why_alone supersedes
+    # why_sufficiency (the free heads' h and the asked slots are blanked).
+    why_contrast: float = 0.5      # r_i toward its distinct WHY; near-miss WHYs as hard negatives
+    why_hard_negative: float = 4.0 # the near-miss partner's WHY counts this many times (not a part)
+    why_swap: float = 0.5          # r_i with j's WHY direction must answer like j (twins: hold)
+    why_swap_cap: float = 64       # flip pairs per part (not a part)
+    why_alone: float = 0.3         # the encoded WHY alone, surface paths blank, reaches the answer
+    keyword_dropout: float = 0.5   # surface cues masked: same answers, same reading, same WHY
+    keyword_dropout_p: float = 0.5 # share of labeled lines masked per step (not a part)
+    keyword_dropout_cap: float = 256  # masked lines per part (not a part)
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
     # Optional per-question weight in the heads average. The average is over
     # the weights, so line type at 20 is ~20 of ~90 shares, not 1 of ~70.
@@ -599,6 +611,9 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.layout_lock and batch.layout_rewrites:
         parts["layout_lock"] = layout_lock_loss(model, out, batch, w)
+    from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
+
+    parts.update(why_carry_losses(model, out, batch, desc, w))
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
