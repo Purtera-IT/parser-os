@@ -9,7 +9,8 @@ complete example)::
       "atoms": [
         {"key": "a1", "text": "...", "entered_at": "2026-05-01T14:02:00Z",
          "doc_id": "email-3", "doc_kind": "email", "section": "body",
-         "order": 0, "speaker_role": "customer", "speaker_side": "customer",
+         "order": 0, "speaker_role": "unknown", "speaker_side": "theirs",
+         "speaker_org": "external", "doc_direction": "inbound", "stage_at": "scoping",
          "label": {"label_type": "...", "about": "deal", "reads_set": {...},
                    "rejected": null, "note": "WHY...\\n[acme_av] keep: ..."}}
       ],
@@ -21,8 +22,9 @@ complete example)::
 ``label_key``) by joining it to the atom rows on that key.
 
 The split this module enforces is the one docs/C3_HEADS.md section 5 states:
-**inputs** are the line, where it sits, when it entered, who said it (role and
-side, never a name). **Every label field is a target.** The only exception is
+**inputs** are the line, where it sits, when it entered, who said it (role,
+side and organisation kind, never a name), its document's direction and the
+deal's stage when it arrived (``c3_record.sender``). **Every label field is a target.** The only exception is
 the two context slots (stage, geography), which are passed as *optional*
 inputs with dropout, so the model uses them when present and works without.
 ``Batch.inputs()`` is all ``C3Model.forward`` ever receives; targets reach the
@@ -121,6 +123,12 @@ class Atom:
     order: float = 0
     speaker_role: str = ""
     speaker_side: str = ""
+    #: Who sent it and where the deal stood (c3_record.sender): the sender's
+    #: organisation kind, its document's direction, the deal's stage when it
+    #: arrived. Inputs, like the speaker.
+    speaker_org: str = ""
+    doc_direction: str = ""
+    stage_at: str = ""
     label: dict[str, Any] | None = None
     atom_id: str = ""
     pixels: tuple[float, ...] = ()
@@ -181,7 +189,10 @@ class DealExample:
                       doc_kind=str(a.get("doc_kind", "")),
                       section=str(a.get("section", "")), order=float(a.get("order", i)),
                       speaker_role=str(a.get("speaker_role", "")),
-                      speaker_side=str(a.get("speaker_side", "")), label=a.get("label"),
+                      speaker_side=str(a.get("speaker_side", "")),
+                      speaker_org=str(a.get("speaker_org") or ""),
+                      doc_direction=str(a.get("doc_direction") or ""),
+                      stage_at=str(a.get("stage_at") or ""), label=a.get("label"),
                       atom_id=str(a.get("atom_id") or a.get("id") or ""),
                       pixels=tuple(_pixels(a.get("image_pixels"))),
                       geometry=tuple(_geometry(a)),
@@ -256,7 +267,8 @@ class DealExample:
                          "doc_id": lb.get("doc_id", ""), "doc_kind": lb.get("doc_kind", ""),
                          "section": lb.get("section", ""), "order": lb.get("order", len(rows)),
                          "speaker_role": lb.get("speaker_role", ""),
-                         "speaker_side": lb.get("speaker_side", "")})
+                         "speaker_side": lb.get("speaker_side", ""),
+                         **{k: lb.get(k, "") for k in ("speaker_org", "doc_direction", "stage_at")}})
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
         for n, lb in enumerate(blob.get("missed_history") or []):
@@ -349,6 +361,7 @@ def dropped_copy_rows(judgments: Iterable[Any], rows: list[dict[str, Any]]) -> l
                     "order": float(survivor.get("order", place[str(survivor.get("key"))])) + 0.5,
                     "speaker_role": survivor.get("speaker_role", ""),
                     "speaker_side": survivor.get("speaker_side", ""),
+                    **{k: survivor.get(k, "") for k in ("speaker_org", "doc_direction", "stage_at")},
                     "dropped_copy": True, "row_weight": DROPPED_COPY_WEIGHT.get(verdict, 1.0)})
     return out
 
@@ -625,10 +638,16 @@ class Batch:
     #: Training only: loss scale per opportunity key for this deal view
     #: (DealExample.head_scale); a key not listed counts 1.
     head_scale: dict[str, float] = field(default_factory=dict)
+    #: Inputs: the sender's organisation kind, the document's direction and
+    #: the deal's stage when the line arrived (c3_record.sender), per line.
+    org: list[str] = field(default_factory=list)
+    direction: list[str] = field(default_factory=list)
+    stage: list[str] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
                 "role": self.role, "side": self.side, "times": self.times,
+                "org": self.org, "direction": self.direction, "stage": self.stage,
                 "same_doc": self.same_doc, "same_section": self.same_section,
                 "context": self.context, "pixels": self.pixels, "geometry": self.geometry}
 
@@ -1697,6 +1716,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         texts=[a.text for a in atoms], numbers=[number_tokens(a.text) for a in atoms],
         doc_kind=[a.doc_kind for a in atoms], role=[a.speaker_role for a in atoms],
         side=[a.speaker_side for a in atoms], times=[a.entered_at for a in atoms],
+        org=[a.speaker_org for a in atoms], direction=[a.doc_direction for a in atoms],
+        stage=[a.stage_at for a in atoms],
         same_doc=_pair_mask([a.doc_id or None for a in atoms]),
         same_section=_pair_mask([(a.doc_id, a.section) if a.section else None for a in atoms]),
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,

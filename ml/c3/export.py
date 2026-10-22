@@ -4,7 +4,15 @@ The page export (``dealId``, ``documents``, ``atoms``, ``labels``,
 ``judgments``, ``myLinks``) is what every labeling thread pulls and checks.
 The trainer needs the same rows in its own contract: every atom with its
 ``label_key``, the time its source entered the deal, its document kind,
-section and speaker, plus the person's links under ``links``.
+section and sender, plus the person's links under ``links``.
+
+Every line's sender (``speaker_side`` ours / theirs / partner / vendor,
+``speaker_role``, ``speaker_org``), its document's ``doc_direction`` and the
+deal's ``stage_at`` when it arrived come from ``c3_record.sender``, the rules
+the parser's compile also reads them by: the line's ``saidBy``, else the
+message it was written in, else a call transcript's speaker, else its
+document's sender (an email's From, a note's author, and for an attachment
+the email or note that carried it, the page's ``origin``).
 
 When a line entered the deal is what the foresight mask, the direction of
 ``contradicts`` and the hindsight targets read, so it is never left blank:
@@ -55,9 +63,45 @@ def _doc_times(documents: list[dict[str, Any]]) -> dict[str, str]:
         for d in documents).items()}
 
 
-def _speaker(atom: dict[str, Any]) -> tuple[str, str]:
-    said = atom.get("saidBy") if isinstance(atom.get("saidBy"), dict) else {}
-    return str(said.get("role") or ""), str(said.get("side") or "")
+def _sender_inputs(atom: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
+    """What ``c3_record.sender`` reads off one line: its own speaker, the
+    message it was written in, and a call transcript's speaker (the line's
+    section on the page)."""
+    out: dict[str, Any] = {}
+    if isinstance(atom.get("saidBy"), dict):
+        out["said_by"] = atom["saidBy"]
+    if isinstance(atom.get("saidTo"), list):
+        out["said_to"] = [p for p in atom["saidTo"] if isinstance(p, dict)]
+    msg = atom.get("message") if isinstance(atom.get("message"), dict) else {}
+    if msg.get("author"):
+        out["message_author"] = str(msg["author"])
+    if str(doc.get("artifactType") or "") == "transcript":
+        name = _section(atom.get("section"))
+        if name:
+            out["speaker_name"] = name
+    return out
+
+
+def _origin(doc: dict[str, Any]) -> dict[str, Any]:
+    """The page's ``origin`` (a file's is its carrier's); a note nobody is
+    recorded as sending takes its author, when the author has an address."""
+    o = dict(doc.get("origin") if isinstance(doc.get("origin"), dict) else {})
+    if not o.get("sender_email") and str(doc.get("kind") or "") == "note":
+        from c3_record.sender import address
+
+        email = address(doc.get("authorEmail")) or address(doc.get("author"))
+        if email:
+            o.update(sender_email=email, sender_name=str(doc.get("author") or "") or None, via="note")
+    return o
+
+
+def _record_documents(documents: list[dict[str, Any]], doc_time: dict[str, str]) -> list[dict[str, Any]]:
+    """The documents as ``c3_record.annotate`` reads them: kind, arrival and
+    who brought each."""
+    return [{"doc_id": str(d.get("artifactId") or ""),
+             "kind": str(d.get("docType") or d.get("kind") or "").strip().lower(),
+             "arrival": doc_time.get(str(d.get("artifactId") or "")), "origin": _origin(d)}
+            for d in documents]
 
 
 def _section(value: Any) -> str:
@@ -81,6 +125,7 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
     documents = [d for d in payload.get("documents") or [] if isinstance(d, dict)]
     doc_time = _doc_times(documents)
     kinds = {str(d.get("artifactId")): str(d.get("kind") or "") for d in documents}
+    doc_of = {str(d.get("artifactId")): d for d in documents}
     by_file = {str(d.get("filename")): str(d.get("artifactId")) for d in documents if d.get("filename")}
     atoms: list[dict[str, Any]] = []
     keys: set[str] = set()
@@ -95,13 +140,13 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
         art = str(a.get("artifactId") or "")
         origin = a.get("docOrigin") if isinstance(a.get("docOrigin"), dict) else {}
         when = origin.get("sent_at") or doc_time.get(art) or ""
-        role, side = _speaker(a)
         section = _section(a.get("section"))
         atoms.append({
             "label_key": key, "atom_id": str(a.get("atomId") or ""), "text": str(a.get("text") or ""),
             "entered_at": str(when), "doc_id": art,
             "doc_kind": str(a.get("docType") or kinds.get(art) or "").strip().lower(),
-            "section": section, "order": i, "speaker_role": role, "speaker_side": side,
+            "section": section, "order": i, "speaker_role": "", "speaker_side": "",
+            **_sender_inputs(a, doc_of.get(art, {})),
         })
         last_in[(art, section)] = i
         last_in[(art, "")] = i
@@ -111,6 +156,11 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
             if latest is None:
                 raise ValueError(f"No arrival time for atom {a['atom_id']}")
             a["entered_at"] = latest
+    # Who sent each line and where the deal stood when it arrived: the same
+    # rules the parser's compile uses (c3_record.sender).
+    from c3_record import annotate
+
+    annotate(atoms, _record_documents(documents, doc_time))
     labels = []
     for lb in payload.get("labels") or []:
         row = dict(lb)

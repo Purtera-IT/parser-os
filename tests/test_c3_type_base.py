@@ -270,7 +270,8 @@ def test_atoms_to_deal_maps_the_export_fields():
     # A file the lifecycle dataset does not know reads as training's "file".
     assert rows["atm1"].doc_kind == "file" and rows["atm1"].doc_id == "doc"
     assert rows["atm2"].doc_kind == "email"
-    assert (rows["atm2"].speaker_role, rows["atm2"].speaker_side) == ("reseller", "theirs")
+    # A reseller is the partner (c3_record.sender), still ``side:theirs`` to the model.
+    assert (rows["atm2"].speaker_role, rows["atm2"].speaker_side) == ("reseller", "partner")
     # "customer" is no speaker role training saw: it reads as ''.
     assert rows["atm3"].doc_kind == "meeting" and rows["atm3"].speaker_role == ""
     assert rows["atm1"].entered_at == rows["atm2"].entered_at
@@ -336,7 +337,8 @@ def test_speaker_values_outside_training_read_empty():
               ref=_Ref(artifact_type="email"))
     a.value = {"said_by": {"role_guess": "installer", "side": "OURS"}}
     row = c3.atoms_to_deal([a]).atoms[0]
-    assert (row.speaker_role, row.speaker_side) == ("", "ours")
+    # Our own side is our own staff, whatever role the guess named.
+    assert (row.speaker_role, row.speaker_side) == ("internal", "ours")
 
 
 def test_a_deal_kit_found_by_sha_is_never_acted_on(monkeypatch, llm, lifecycle):

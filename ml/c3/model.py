@@ -2,7 +2,7 @@
 
 Forward pass for one deal (one sequence of atoms in time order)::
 
-  atoms ─ AtomEncoder (text + doc kind + role/side + number magnitudes + time)
+  atoms ─ AtomEncoder (text + doc kind + role/side/org + direction + stage + numbers + time)
         ─ DealGraph, FORESIGHT mask (line i attends only to lines that entered
           no later than it) + structural biases (same document, same section)
         ─ h_i
@@ -175,8 +175,18 @@ class DealEncoder(nn.Module):
 
     def embed_atoms(self, inp: dict[str, Any]) -> torch.Tensor:
         dev = self.lift.weight.device
-        tags = [[f"doc:{k}", f"role:{r}", f"side:{s}"]
+        # A partner or vendor is the other side of the table: ``side:theirs``,
+        # as the trained speakers read, plus ``party:`` for which one.
+        tags = [[f"doc:{k}", f"role:{r}", f"side:{'theirs' if s in ('partner', 'vendor') else s}"]
+                + ([f"party:{s}"] if s in ("partner", "vendor") else [])
                 for k, r, s in zip(inp["doc_kind"], inp["role"], inp["side"])]
+        # Sender and stage (c3_record.sender), the same hashed bag. Only a
+        # known value adds a tag, so a deal without them embeds as before.
+        n_tags = len(tags)
+        for name, slot in (("org", "org"), ("dir", "direction"), ("stage", "stage")):
+            for i, v in enumerate((inp.get(slot) or [])[:n_tags]):
+                if v:
+                    tags[i].append(f"{name}:{v}")
         t = torch.tensor(inp["times"], dtype=torch.float32, device=dev)
         days = (t - t.min()).clamp(min=0) / 86400.0
         rank = torch.arange(len(t), device=dev, dtype=torch.float32) / max(1, len(t) - 1)

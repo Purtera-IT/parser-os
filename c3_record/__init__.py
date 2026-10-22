@@ -15,9 +15,16 @@ Document (one per source file, email, note or meeting), in arrival order:
     sent_at      when it reached the deal (the email or note that carried it,
                  or the message itself), if known
     authored_at  when it was written or held, if known
+    origin       who brought it: ``{direction, sender_email, sender_name, via}``
+                 (a file's is the email or note that carried it), if known
 
 Line (one per atom), in the order it appears in its source:
-    key, text, doc_id, section, speaker_role, speaker_side, atom_id
+    key, text, doc_id, section, speaker_role, speaker_side, atom_id, and when
+    known said_by, message_author (an email line's message), speaker_name (a
+    meeting line's speaker)
+
+Each row also gets speaker_org, doc_direction and stage_at; the sender and
+stage rules are ``c3_record.sender``.
 
 When a line entered the deal is what the base's time order, its foresight
 mask and the direction of its causal links read, so every line gets one, and
@@ -40,12 +47,14 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+from .sender import SENDER_INPUTS, annotate, doc_direction, milestones, sender, stage_at  # noqa: F401
+
 #: Document kinds whose ``authored_at`` is the moment they entered the deal.
 EVENT_KINDS = ("meeting", "note", "email")
 
 #: Speaker values the base was trained on; anything else reads as ''.
-ROLES = frozenset({"internal", "reseller", "unknown"})
-SIDES = frozenset({"ours", "theirs"})
+ROLES = frozenset({"internal", "reseller", "vendor", "unknown"})
+SIDES = frozenset({"ours", "theirs", "partner", "vendor"})
 
 
 def is_deal_kit(doc_kind: Any) -> bool:
@@ -93,13 +102,20 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
     for i, ln in enumerate(lines):
         doc = str(ln.get("doc_id") or "")
         role, side = speaker(ln.get("speaker_role"), ln.get("speaker_side"))
-        rows.append({
+        row = {
             "key": str(ln.get("key") or ""), "text": str(ln.get("text") or ""),
             "entered_at": times.get(doc, latest), "doc_id": doc,
             "doc_kind": kinds.get(doc, str(ln.get("doc_kind") or "")),
             "section": str(ln.get("section") or ""), "order": float(ln.get("order", i)),
             "speaker_role": role, "speaker_side": side, "atom_id": str(ln.get("atom_id") or ""),
-        })
+        }
+        # Who sent it and where the deal stood (c3_record.sender): a speaker
+        # given outright stands as the line's own.
+        said = ln.get("said_by") or ({"side": side, "role": role} if side else None)
+        row.update({k: ln.get(k) for k in SENDER_INPUTS if ln.get(k)}, said_by=said)
+        rows.append(row)
+    annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
+                     "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin")} for d in docs])
     return rows
 
 
@@ -108,4 +124,5 @@ def _sort_key(t: Any) -> tuple[int, Any]:
     return (0, float(t)) if isinstance(t, (int, float)) else (1, str(t))
 
 
-__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "is_deal_kit", "document_times", "speaker", "build_rows"]
+__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "is_deal_kit", "document_times", "speaker", "build_rows",
+           "annotate", "sender", "doc_direction", "milestones", "stage_at"]
