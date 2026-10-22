@@ -19,7 +19,9 @@ FA=purpulse-dev-api-eus2
 WORKER=parser-os-worker-dev-eus2
 SVC=parser-os-service-dev-eus2
 TAILNET=griffin-purtera-it.github
-TS_API_TOKEN="${TS_API_TOKEN:-tskey-api-kNqqGA1BYf11CNTRL-64MXE2udYx5UT7L2eYXYx5MZoRZgxLT99}"
+# Tailscale API token (devices:read, plus delete for --fix). Never commit a value:
+# export it from your secret store before running. The script stops if it is unset.
+TS_API_TOKEN="${TS_API_TOKEN:?TS_API_TOKEN is not set. Export a Tailscale API token before running smoke_test.sh}"
 
 BASE="https://${FA}.azurewebsites.net/api/proxy/api/quoting/deal/${DEAL}"
 SVC_URL="https://parser-os-service-dev-eus2.whitehill-a3348ba5.eastus2.azurecontainerapps.io"
