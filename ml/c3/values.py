@@ -21,6 +21,38 @@ DEAL_SERVICES = (
     "other",
 )
 
+#: What each primary service means: the answer texts of deal:primary_service.
+#: OWNER-CHECK: alm, camera_vms_operations and msp were drafted from the value
+#: names alone (no training deal uses them); confirm them with the owner.
+DEAL_SERVICE_DESC = {
+    "audio_visual": "Installing displays, projectors, video-conferencing systems, kiosks or speakers and making them work; any cabling is only there to serve them.",
+    "low_voltage_cabling": "Running, terminating, labelling and testing data or voice cable (copper or fibre), with the racks, cabinets, patch panels and backboards that hold it.",
+    "wireless": "Wireless networks: surveying, installing or moving access points and the runs that feed them.",
+    "staff_augmentation": "Technicians supplied by the day or the hour for recurring or on-call on-site support under the customer's direction, not a defined install.",
+    "security_camera": "Installing and connecting security cameras, with their mounts, power and runs.",
+    "camera_vms_operations": "Operating or maintaining a video system after the install: configuration, health checks, footage requests.",  # OWNER-CHECK
+    "security_access": "Access control: card readers, door hardware, controllers and intercom entry.",
+    "fire_safety": "Fire alarm, detection or suppression work.",
+    "paging_mass_notification": "Paging, overhead speakers and mass-notification systems.",
+    "das": "A distributed antenna system or cellular signal boosting inside a building.",
+    "electrical": "Line-voltage electrical work: circuits, outlets, panels.",
+    "telecom": "Telephony and carrier work: phone systems, handsets, voice migrations, circuits and demarcation points.",
+    "network_maintenance": "Ongoing upkeep of an existing network: switch and router changes, troubleshooting, scheduled maintenance.",
+    "building_management_systems": "Building controls: HVAC, lighting or sensor controllers and their networks.",
+    "datacenter": "Work inside a data centre: build-outs, moves, structured power and cooling for computer rooms.",
+    "rack_and_stack": "Mounting servers and network gear in racks and cabling them, with no wider install.",
+    "hardware": "Supplying equipment is the main thing sold; labour is incidental.",
+    "imac": "Install, move, add or change of end-user and point-of-sale devices: computers, Chromebooks, registers, printers, peripherals, including removing and packing old ones.",
+    "itad": "Retiring IT assets: decommission, data wipe, recycling or resale.",
+    "data_migration": "Moving data or systems from one platform to another.",
+    "msp": "A standing managed-services contract: remote monitoring and support for a monthly fee.",  # OWNER-CHECK
+    "alm": "Asset lifecycle management: tagging, tracking and refresh logistics for a fleet of devices.",  # OWNER-CHECK
+    "audit": "The deliverable is a survey, inventory or assessment of what is on site, not an install.",
+    "professional_services": "Design, consulting or project management with no field install.",
+    "other": "A field service none of the others names.",
+}
+assert tuple(DEAL_SERVICE_DESC) == DEAL_SERVICES
+
 BILLING_TYPES = ("fixed", "t_and_m", "milestone", "per_site")
 COMMERCIAL_NUMBERS = ("pm_hours", "pc_hours", "travel_days")
 

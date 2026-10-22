@@ -21,10 +21,10 @@
     },
     "site_role": {
       "size": "line", "subject": "Where the work happens",
-      "question": "A place the deal names. Is it a place where the work happens?",
+      "question": "A place the deal names. Does work happen there? A site later removed from the job still answers as it was planned.",
       "answers": {
-        "job_site": "A place where the work is done.",
-        "vendor_or_billing_address": "An office, vendor or billing address; no work happens there."
+        "job_site": "Technicians go there to do the work, now or as planned before a removal.",
+        "vendor_or_billing_address": "No work happens there: a head office, billing or remit-to address, a vendor's or partner's office, a ship-from warehouse."
       }
     },
     "geo_mention": {
@@ -62,10 +62,10 @@
     },
     "task_tier": {
       "size": "line", "subject": "Line or step",
-      "question": "A task line. Is it a whole line of work, or a step inside one?",
+      "question": "A task line. Is it priced as a line of its own on the quote, or is it a step inside a priced line? Decide by the deal's priced lines, not by the wording or the indentation.",
       "answers": {
-        "parent": "A line of work that other steps sit under.",
-        "child": "A step inside a larger line of work."
+        "parent": "A price attaches to this task by itself.",
+        "child": "No price of its own: a step inside a priced line, or a seller step outside the quote."
       }
     },
     "image": {
@@ -117,10 +117,12 @@
     },
     "billing_type": {
       "size": "deal", "subject": "How the job is billed",
-      "question": "How is this job billed?",
+      "question": "How does the signed or latest scope of work bill this job?",
       "answers": {
-        "fixed": "One fixed price.", "t_and_m": "Time and materials: billed for hours and parts used.",
-        "milestone": "In payments tied to milestones.", "per_site": "A unit price times the number of sites."
+        "fixed": "One price for the stated scope, whatever the hours turn out to be.",
+        "t_and_m": "Hours, days or units times a rate, so every total is an estimate; a per-day rate times sites and days is still time and materials.",
+        "milestone": "Payments tied to stages of the work: a deposit, a mid-point and a completion payment.",
+        "per_site": "A fixed price per site, times the number of sites."
       }
     },
     "hardware_scope": {

@@ -28,8 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from .values import (BILLING_TYPES, COMMERCIAL_NUMBERS, DEAL_SERVICES, TERM_ENUMS,
-                     TERM_KINDS, TERM_NUMBERS)
+from .values import (BILLING_TYPES, COMMERCIAL_NUMBERS, DEAL_SERVICE_DESC, DEAL_SERVICES,
+                     TERM_ENUMS, TERM_KINDS, TERM_NUMBERS)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HEADS_PATH = REPO_ROOT / "app" / "core" / "label_heads.json"
@@ -160,8 +160,21 @@ def scrub(text: str, universal: bool) -> str:
     return " ".join(keep).strip()
 
 
+#: How a stored value is written in the text the model reads, where its name
+#: would mislead: the noise type is stored as ``_keep`` but "keep" is the
+#: opposite answer in admission and co_action.
+_SPELLING = {"_keep": "noise"}
+
+
 def _spell(value: str) -> str:
-    return value.replace("_", " ").replace("-", " ")
+    return _SPELLING.get(value) or value.replace("_", " ").replace("-", " ").strip()
+
+
+def _named(name: str, doc: str) -> str:
+    """"<name>: <doc>", without saying the name twice when the doc opens with it."""
+    if doc.lower().startswith(name.lower() + ":"):
+        doc = doc[len(name) + 1:].lstrip()
+    return f"{name}: {doc}"
 
 
 def _value_kind(values: str) -> tuple[str, list[str]]:
@@ -176,8 +189,13 @@ def _value_kind(values: str) -> tuple[str, list[str]]:
 
 
 def _answers(kind: str, values: Iterable[str], subject: str,
-             docs: dict[str, str] | None = None) -> tuple[Answer, ...]:
-    docs = docs or {}
+             docs: dict[str, str] | None = None,
+             names: dict[str, str] | None = None) -> tuple[Answer, ...]:
+    """Answer texts. A closed-list answer reads "<value>. <its description>":
+    the subject stays in the question, so the answers of one head do not all
+    open with the same words (a shared prefix pulls their prototypes together).
+    ``names`` writes a value by its label instead of its spelled name."""
+    docs, names = docs or {}, names or {}
     if kind == BINARY:
         return (Answer(ABSENT, f"{subject}: not marked"),
                 Answer("true", f"{subject}: yes"),
@@ -187,7 +205,7 @@ def _answers(kind: str, values: Iterable[str], subject: str,
                 Answer("present", f"{subject}: the line says it"))
     out = [Answer(ABSENT, f"{subject}: not this kind of line")]
     for v in values:
-        out.append(Answer(v, f"{subject}: {_spell(v)}. {docs.get(v, '')}".strip()))
+        out.append(Answer(v, f"{names.get(v) or _spell(v)}. {docs.get(v, '')}".strip()))
     return tuple(out)
 
 
@@ -239,6 +257,17 @@ def guidance_template(schema: Schema) -> dict[str, Any]:
             for o in schema.opportunities if o.kind != RELATION}
 
 
+#: The term kinds are line types; their answer texts say what each one is.
+_TERM_KIND_DESC = {
+    "payment_term": "When and how invoices are raised and paid.",
+    "contract_term": "A legal term of the agreement: length, renewal, warranty, liability, termination.",
+    "change_order_rule": "How changes to the work are requested, priced and charged, including cancellation fees.",
+    "pricing_assumption": "A term that sets how the price is worked out: billing basis, increments, minimums, rates.",
+    "commercial_total": "A total or subtotal of the price.",
+    "not_a_term": "The line states no commercial term.",
+}
+
+
 def _add_extract_and_reason_opportunities(opps: list[Opportunity], homes: dict[str, dict[str, Any]],
                                          aliases: dict[str, tuple[str, dict[str, str]]],
                                          reason_heads: dict[str, list[dict[str, Any]]]) -> None:
@@ -248,20 +277,24 @@ def _add_extract_and_reason_opportunities(opps: list[Opportunity], homes: dict[s
         return dict(homes.get(name) or {"head": name, "space": "content", "layer": "universal"})
 
     deal = {"head": "deal.answers", "space": "content", "layer": "universal"}
-    service_docs = {v: f"Primary service: {_spell(v)}." for v in DEAL_SERVICES}
+    # OWNER-CHECK: the alm, camera_vms_operations and msp texts in
+    # values.DEAL_SERVICE_DESC were drafted from the value names alone.
+    service_docs = {v: DEAL_SERVICE_DESC.get(v, "") for v in DEAL_SERVICES}
     opps.append(Opportunity(
         key="deal:primary_service", field="primary_service", source="judgment", kind=CLASS, size=DEAL,
-        description="What primary service is this job?",
+        description=("The deal as a whole. What kind of field work is this job mainly? Decide from the signed or "
+                     "latest scope of work: the work most of the labour goes to, not the equipment brand, "
+                     "the customer's industry or a side task."),
         answers=_answers(CLASS, service_docs, "primary service", service_docs), **deal))
 
     term = home("term")
-    kind_docs = {k: f"Term kind: {_spell(k)}." for k in TERM_KINDS}
+    kind_docs = {k: _TERM_KIND_DESC.get(k, "") for k in TERM_KINDS}
     opps.append(Opportunity(
         key="jdg:term", field="term_kind", source="judgment", kind=CLASS, size=LINE,
         description="What kind of commercial term does this line state?",
         answers=_answers(CLASS, kind_docs, "term kind", kind_docs), **term))
     for key, allowed in TERM_ENUMS.items():
-        docs = {v: f"{_spell(key)}: {_spell(v)}." for v in allowed}
+        docs = {v: f"The {_spell(key)} is {_spell(v)}." for v in allowed}
         opps.append(Opportunity(
             key=f"jdg:term:{key}", field=key, source="judgment", kind=CLASS, size=LINE,
             description=f"The {_spell(key)} this term states.",
@@ -273,7 +306,7 @@ def _add_extract_and_reason_opportunities(opps: list[Opportunity], homes: dict[s
             answers=_answers(NUMBER, [], key, {}), **term))
 
     commercial = home("commercial")
-    billing_docs = {v: f"Kit billing: {_spell(v)}." for v in BILLING_TYPES}
+    billing_docs = {v: f"The finished kit bills it {_spell(v)}." for v in BILLING_TYPES}
     opps.append(Opportunity(
         key="jdg:commercial", field="commercial_billing", source="judgment", kind=CLASS, size=LINE,
         description="What billing shape did the finished kit give this request?",
@@ -334,26 +367,26 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 opps.append(Opportunity(
                     key="col:label_type", field="label_type", source="column", kind=CLASS,
                     description=lead(h, universal) + " What kind of fact the line states.",
-                    answers=tuple(Answer(v, f"{_spell(v)}: {docs[v]}") for v in values), **base))
+                    answers=tuple(Answer(v, _named(_spell(v), docs[v])) for v in values), **base))
             elif col in ("about", "wants", "supplier"):
                 options = types[col if col != "supplier" else "suppliers"]
-                docs = {o["key"]: scrub(f"{o.get('label', '')}. {o.get('desc', '')}", universal)
-                        for o in options}
+                docs = {o["key"]: scrub(o.get("desc", ""), universal) for o in options}
+                names = {o["key"]: scrub(o.get("label", ""), universal) for o in options}
                 opps.append(Opportunity(
                     key=f"col:{col}", field=col, source="column", kind=CLASS,
                     # The supplier options and their question live under the
                     # plural key ("suppliers", "suppliers_doc").
                     description=f"{lead(h, universal)} {scrub(types.get(_DOC_KEYS.get(col, col + '_doc'), ''), universal)}".strip(),
-                    answers=_answers(CLASS, docs, col, docs), **base))
+                    answers=_answers(CLASS, docs, col, docs, names), **base))
             elif col == "hints":
                 # "What told you?": which part of the context decided the label
                 # The context-hint chips permit several simultaneous answers.
-                docs = {c["key"]: scrub(f"{c.get('label', '')}. {c.get('desc', '')}", universal)
-                        for c in types.get("context_hints", [])}
+                docs = {c["key"]: scrub(c.get("desc", ""), universal) for c in types.get("context_hints", [])}
+                names = {c["key"]: scrub(c.get("label", ""), universal) for c in types.get("context_hints", [])}
                 opps.append(Opportunity(
                     key="col:hints", field="hints", source="column", kind=CLASS, multiple=True,
                     description=f"{lead(h, universal)} Which part of the context decided it.",
-                    answers=_answers(CLASS, docs, "what told you", docs), **base))
+                    answers=_answers(CLASS, docs, "what told you", docs, names), **base))
             # entity_keys, weight_tier, hint_refs, note, rejected: spans, weights
             # and text, trained by the claim, rationale and conduct paths.
 
@@ -361,11 +394,19 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
             # Should this text be an atom at all? keep, or drop as not a fact
             # (wreckage, boilerplate, small talk, a fragment). Derived per row
             # in data.featurize the way app.learning.human_labels does.
-            docs = {"keep": "keep: a real fact about the work, worth an atom",
-                    "drop": "drop: not a fact; wreckage, boilerplate, small talk or a torn fragment"}
+            # A drop is noise or background (data._derived drops copies,
+            # repeats, pointers, summaries and reasons, which are real facts).
+            docs = {"keep": "The line states a fact of its own about the work and is the learned line for it, "
+                            "even when the company sets that fact aside on purpose.",
+                    "drop": "The line teaches no fact of its own. Either it is noise (a greeting, sign-off, "
+                            "message header, footer, page chrome, empty cell, filler speech) or it is background, "
+                            "not an input: a copy or repeat of an earlier line, a heading or lead-in that only points "
+                            "at the lines under it, a summary that more specific lines already say, a reason that only "
+                            "explains another line, or an introduction that only says who someone is."}
             opps.append(Opportunity(
                 key="col:admission", field="admission", source="column", kind=CLASS,
-                description=lead(h, universal), answers=_answers(CLASS, docs, "admission", docs),
+                description="Which lines are inputs. Should this line be learned as a fact, or is it noise or background?",
+                answers=_answers(CLASS, docs, "admission", docs),
                 **base))
 
         for rk in h.get("reads", []):
