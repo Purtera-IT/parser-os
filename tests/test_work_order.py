@@ -382,3 +382,164 @@ def test_an_invented_source_ref_would_have_been_capped(judge, extractor):
     before = real.authority_class
     assert cap_authority_to_source([real], artifact_ids={"art-scope"}) == 0
     assert real.authority_class == before
+
+
+# ── determinism (PUR-47) ─────────────────────────────────────────────
+
+import json as _json
+import random as _random
+
+
+def _deal():
+    docs = []
+    for fn, aid in (("b.eml", "art-b"), ("a.eml", "art-a"), ("c.eml", "art-c")):
+        for i in range(3):
+            docs.append(
+                _atom(
+                    f"Install {i + 2} access points in building {fn} floor {i}",
+                    artifact_id=aid,
+                    filename=fn,
+                    atom_id=f"{aid}-{i}",
+                )
+            )
+            docs[-1].source_refs[0].locator = {"line": i + 1}
+    return docs
+
+
+def test_document_ranking_tie_break_is_stable_under_shuffle():
+    atoms = _deal()
+    want = None
+    for seed in range(10):
+        shuffled = list(atoms)
+        _random.Random(seed).shuffle(shuffled)
+        by = work_order.group_by_document(shuffled)
+        ranked = work_order.rank_documents(by, top_n=2)
+        got = [(fn, [a.id for a in doc]) for fn, doc in ranked]
+        want = want or got
+        assert got == want
+    assert [fn for fn, _ in want] == ["a.eml", "b.eml"]
+    assert want[0][1] == ["art-a-0", "art-a-1", "art-a-2"]
+
+
+def test_the_extraction_prompt_is_identical_under_shuffle(judge, monkeypatch):
+    prompts = []
+    monkeypatch.setattr(
+        "app.core.llm_client.complete",
+        lambda p, **k: prompts.append(p) or _json.dumps(WORK_ORDER),
+    )
+    atoms = _deal()
+    for seed in range(5):
+        shuffled = list(atoms)
+        _random.Random(seed).shuffle(shuffled)
+        work_order.apply_work_order(shuffled, project_id="p1", deal_name="d")
+    assert len(set(prompts)) == 1
+
+
+def test_minted_output_order_does_not_follow_model_order(judge, monkeypatch):
+    lines = [
+        {"work": "terminate and test cable drops", "count": 40},
+        {"work": "install and ceiling-mount access points", "count": 11},
+        {"work": "configure the wireless controller", "count": 1},
+    ]
+    outs = []
+    for order in (lines, list(reversed(lines))):
+        monkeypatch.setattr(
+            "app.core.llm_client.complete",
+            lambda *a, _o=order, **k: _json.dumps({"work_lines": _o}),
+        )
+        atoms, minted, _ = work_order.apply_work_order(
+            list(SCOPE), project_id="p1", deal_name="d"
+        )
+        assert minted == 3
+        outs.append([(a.id, a.raw_text) for a in _minted(atoms)])
+    assert outs[0] == outs[1]
+    assert [t for _, t in outs[0]] == sorted(t for _, t in outs[0])
+
+
+def test_duplicate_labels_resolve_the_same_way_regardless_of_order(judge, monkeypatch):
+    lines = [
+        {"work": "install access points", "count": 11},
+        {"work": "Install access points", "count": 12},
+    ]
+    counts = []
+    for order in (lines, list(reversed(lines))):
+        monkeypatch.setattr(
+            "app.core.llm_client.complete",
+            lambda *a, _o=order, **k: _json.dumps({"work_lines": _o}),
+        )
+        atoms, minted, _ = work_order.apply_work_order(
+            list(SCOPE), project_id="p1", deal_name="d"
+        )
+        assert minted == 1
+        counts.append(_minted(atoms)[0].value["count"])
+    assert counts[0] == counts[1]
+
+
+def test_support_tie_break_does_not_depend_on_candidate_order():
+    a = _atom("install access points here", atom_id="z-atom")
+    b = _atom("install access points here", atom_id="a-atom")
+    assert work_order.pick_support("install access points", [a, b]).id == "a-atom"
+    assert work_order.pick_support("install access points", [b, a]).id == "a-atom"
+
+
+def test_parse_takes_the_work_order_out_of_a_reply_with_several_objects():
+    wo = _json.dumps(WORK_ORDER)
+    raw = f'Note: {{"draft": true}}\n```json\n{wo}\n```\nThat is {{all}}.'
+    assert work_order._parse_work_order(raw)["site_count"] == 1
+    assert work_order._parse_work_order("sorry, no") == {}
+
+
+def test_work_line_agreement():
+    assert work_order.work_line_agreement([]) == 1.0
+    assert work_order.work_line_agreement([["a b"]]) == 1.0
+    assert work_order.work_line_agreement([["X  y", "z"], ["x y", "Z"]]) == 1.0
+    assert work_order.work_line_agreement([["a"], ["b"]]) == 0.0
+    assert work_order.work_line_agreement([[], []]) == 1.0
+    # pairs: {a,b}-{a}=0.5, {a,b}-{a,b}=1, {a}-{a,b}=0.5
+    assert work_order.work_line_agreement([["a", "b"], ["a"], ["a", "b"]]) == pytest.approx(2 / 3)
+    row = work_order.deal_agreement("d1", [["a", "b"], ["a"]])
+    assert row == {
+        "deal_id": "d1",
+        "runs": 2,
+        "agreement": 0.5,
+        "stable_lines": ["a"],
+        "unstable_lines": ["b"],
+    }
+
+
+def test_extraction_cache_replays_identically(judge, monkeypatch, tmp_path):
+    monkeypatch.setenv("SOWSMITH_WORK_ORDER_CACHE_DB", str(tmp_path / "wo.sqlite"))
+    replies = iter(
+        [
+            _json.dumps(WORK_ORDER),
+            _json.dumps({"work_lines": [{"work": "something else entirely"}]}),
+        ]
+    )
+    calls = []
+
+    def fake(prompt, **k):
+        calls.append(k)
+        return next(replies)
+
+    monkeypatch.setattr("app.core.llm_client.complete", fake)
+    first, _, _ = work_order.apply_work_order(list(SCOPE), project_id="p1", deal_name="d")
+    second, _, _ = work_order.apply_work_order(list(SCOPE), project_id="p1", deal_name="d")
+    assert len(calls) == 1
+    assert calls[0]["seed"] == 0
+    assert [a.raw_text for a in _minted(first)] == [a.raw_text for a in _minted(second)]
+
+    # A different deal name is a different prompt, so a live call.
+    work_order.apply_work_order(list(SCOPE), project_id="p1", deal_name="other")
+    assert len(calls) == 2
+
+
+def test_cache_is_off_by_default(judge, monkeypatch):
+    monkeypatch.delenv("SOWSMITH_WORK_ORDER_CACHE_DB", raising=False)
+    calls = []
+    monkeypatch.setattr(
+        "app.core.llm_client.complete",
+        lambda *a, **k: calls.append(1) or _json.dumps(WORK_ORDER),
+    )
+    for _ in range(2):
+        work_order.apply_work_order(list(SCOPE), project_id="p1", deal_name="d")
+    assert len(calls) == 2
