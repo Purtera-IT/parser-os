@@ -33,7 +33,10 @@ dependencies = [
   "rapidfuzz>=3.0",
   "numpy>=1.26",
   "scikit-learn>=1.3",
-  "PyMuPDF>=1.24",
+  # 2.0 (2026-10-19) changed find_tables / word grouping: 17 PDF table tests
+  # fail on it, and the worker bundles whatever resolves. Hold below 2 until
+  # the parsers are moved to it on purpose.
+  "PyMuPDF>=1.24,<2",
   "opencv-python-headless>=4.9",
   "Pillow>=10.0",
   "pypdfium2>=4.30",
