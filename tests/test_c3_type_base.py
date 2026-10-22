@@ -649,9 +649,9 @@ def test_a_sure_base_reading_replaces_a_simple_rule_type_at_the_end(monkeypatch)
     assert c3.apply_final_labels([a, b]) == 1
     assert a.atom_type.value == "contract_term" and a.value["c3_label"]["was"] == "acceptance_criterion"
     assert b.atom_type.value == "stakeholder"          # carries values: never replaced
-    c3._DEAL["types"]["r1"] = ["contract_term", 0.8]
+    c3._DEAL["types"]["r1"] = ["contract_term", 0.6]
     a.atom_type = AtomType("acceptance_criterion")
-    assert c3.apply_final_labels([a]) == 0             # under 0.85
+    assert c3.apply_final_labels([a]) == 0             # under the one SURE bar (0.7 by default)
     c3.set_deal(None)
 
 
@@ -823,3 +823,23 @@ def test_a_town_only_site_line_gets_a_site_id_and_key():
     a = N(atom_type=AtomType("physical_site"), raw_text="Location is Fairfield, CA.", entity_keys=[], value={})
     assert C.own_site_keys([a]) == 1
     assert a.value["site_id"] == "fairfield_ca" and "site:fairfield_ca" in a.entity_keys
+
+
+def test_authority_uses_the_one_sure_bar_typing_uses(monkeypatch):
+    """overrides.md point 7: no 0.9 authority bar beside typing's SOWSMITH_C3_SURE."""
+    from app.core.schemas import AtomType
+
+    monkeypatch.setenv("SOWSMITH_C3_AUTHORITY", "on")
+    monkeypatch.setenv("SOWSMITH_C3_SURE", "0.5")
+    monkeypatch.setenv("SOWSMITH_C3_AUTHORITY_SURE", "0.9")  # no longer read
+    a = _Atom("o1", "Please secure the ethernet cabling used to connect the APs to the switch.", "dependency")
+    a.atom_type = AtomType("dependency")
+    c3.set_deal([], {})
+    c3._DEAL["types"].update({"o1": ["task", 0.56]})
+    assert c3._authority_bar("task") == 0.5
+    assert c3.apply_authority([a]) == 1 and a.atom_type.value == "task"
+    monkeypatch.setenv("SOWSMITH_C3_SURE_BY_TYPE", "task:0.6")
+    b = _Atom("o2", "Mount the four lobby displays.", "dependency")
+    b.atom_type = AtomType("dependency")
+    c3._DEAL["types"]["o2"] = ["task", 0.56]
+    assert c3.apply_authority([b]) == 0 and b.atom_type.value == "dependency"

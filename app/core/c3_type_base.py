@@ -1045,8 +1045,8 @@ _OVERRIDE_TO = _SIMPLE | {"small_talk", "deal_state"}
 
 def _override_simple_types(atoms: list[Any]) -> int:
     """A line whose type the parser set by rule, before typing ever asked the
-    base, takes the base's type where the base is sure (at least 0.85 and its
-    own bar) and both types are simple. Validation deal 010043 (2026-10-15):
+    base, takes the base's type where the base is sure (its one bar,
+    ``sure_for``) and both types are simple. Validation deal 010043 (2026-10-15):
     on the gold-labeled lines this fixed 101 and broke none; at 0.85 the base
     reads 88% right where the parser is 45% on the same lines."""
     from app.core.schemas import AtomType
@@ -1060,7 +1060,7 @@ def _override_simple_types(atoms: list[Any]) -> int:
         if not got or got[0] not in _OVERRIDE_TO:
             continue
         ans, p = str(got[0]), float(got[1] or 0.0)
-        if p < max(0.85, sure_for(ans)):
+        if p < sure_for(ans):
             continue
         t = getattr(a, "atom_type", None)
         before = str(getattr(t, "value", t) or "")
@@ -1101,15 +1101,14 @@ def authority_enabled() -> bool:
 
 
 def _authority_bar(answer: str) -> float:
-    raw = os.environ.get("SOWSMITH_C3_AUTHORITY_SURE_BY_TYPE", "")
-    for part in raw.split(","):
-        k, _, v = part.partition(":")
-        if k.strip() == answer:
-            try:
-                return float(v)
-            except ValueError:
-                pass
-    return _env_float("SOWSMITH_C3_AUTHORITY_SURE", 0.9)
+    """The one bar every line's type answer must reach to act: the same
+    ``sure_for`` typing uses (``SOWSMITH_C3_SURE``, per type by
+    ``SOWSMITH_C3_SURE_BY_TYPE``). It was a second bar (0.9,
+    ``SOWSMITH_C3_AUTHORITY_SURE``) for every line typing did not route, so
+    a scope_item/entity line took the head's type at 0.5 and every other line
+    needed 0.9: 1549 of 2183 read lines on the 8 audited deals were off the
+    0.5 path (overrides.md point 7). The old variables are no longer read."""
+    return sure_for(answer)
 
 
 #: Never assigned by authority: a placeholder, or a type that only exists as
