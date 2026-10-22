@@ -265,7 +265,15 @@ def _ollama_vision_direct(
 
 def _use_ollama_for_pdf_images() -> bool:
     """PDF embedded images always need a real VLM. Default ON so a text-only
-    teacher (DeepSeek) never silently kills the path."""
+    teacher (DeepSeek) never silently kills the path.
+
+    ``PARSER_OS_NO_LOCAL_MODELS`` wins: a run that must not dial the tailnet
+    host reads images through the hosted vision route instead, whatever this
+    flag says."""
+    from app.core import model_gates
+
+    if model_gates.no_local_models():
+        return False
     return os.environ.get("SOWSMITH_PDF_IMAGE_FORCE_OLLAMA", "1").strip().lower() in (
         "1", "true", "yes", "on",
     )

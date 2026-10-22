@@ -20,7 +20,8 @@ EMBED = "https://ollama.ollamapurpulse.com/api/embed"
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     for var in ("OLLAMA_HOST", "OLLAMA_BASE_URL", "OLLAMA_EMBED_URL",
-                "SOWSMITH_DISABLE_LLM", "PARSER_OS_LLM_PREFLIGHT_TTL"):
+                "SOWSMITH_DISABLE_LLM", "PARSER_OS_LLM_PREFLIGHT_TTL",
+                "PARSER_OS_NO_LOCAL_MODELS"):
         monkeypatch.delenv(var, raising=False)
     ollama_host.reset_preflight_cache()
     yield
@@ -208,3 +209,35 @@ def test_the_kill_switch_covers_embeddings(monkeypatch):
     monkeypatch.setattr(ollama_host.urllib.request, "urlopen", _boom)
     monkeypatch.setenv("SOWSMITH_DISABLE_LLM", "1")
     assert ollama_host.embed_ready(PROXY, "m") is False
+
+
+# ── hosted-only runs ─────────────────────────────────────────────────────
+
+def test_no_local_models_never_opens_a_socket(monkeypatch):
+    """With the Mac relay gone, an app that still has a local-only call path
+    must skip it at once, not dial the tailnet fallback and wait out a
+    preflight to learn the box is not there."""
+    def _boom(*a, **k):
+        raise AssertionError("dialled the local host under PARSER_OS_NO_LOCAL_MODELS")
+    monkeypatch.setattr(ollama_host.urllib.request, "urlopen", _boom)
+    monkeypatch.setenv("PARSER_OS_NO_LOCAL_MODELS", "1")
+    assert ollama_host.generation_ready(PROXY, "qwen2.5:3b") is False
+    assert ollama_host.embed_ready(PROXY, "qwen3-embedding:8b") is False
+
+
+def test_no_local_models_sends_pdf_images_to_the_hosted_route(monkeypatch):
+    from app.core import pdf_image_vision
+
+    monkeypatch.delenv("SOWSMITH_PDF_IMAGE_FORCE_OLLAMA", raising=False)
+    assert pdf_image_vision._use_ollama_for_pdf_images() is True
+    monkeypatch.setenv("PARSER_OS_NO_LOCAL_MODELS", "1")
+    assert pdf_image_vision._use_ollama_for_pdf_images() is False
+
+
+def test_retrain_pins_heads_to_the_embedder_that_made_the_vectors(monkeypatch):
+    from app.learning import retrain
+
+    monkeypatch.setenv("PARSER_OS_NO_LOCAL_MODELS", "1")
+    monkeypatch.setenv("AZURE_OPENAI_EMBED_MODEL", "text-embedding-3-small")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "qwen3-embedding:8b")
+    assert retrain._embed_model_id() == "azure:text-embedding-3-small"
