@@ -445,18 +445,27 @@ def suppress_vendor_sites(
 
 def _suppress_by_heads(atoms: list[Any], sites: list[Any], det_dropped: int, role_of) -> tuple[list[Any], int]:
     """The vendor-address drop with the heads deciding: a site goes only when
-    a head reads it as the vendor's own address at its SURE bar, and never
-    every site. No store or LLM call."""
+    the type head (stakeholder) or col:supplier (our side) reads it as the
+    vendor's own address at its SURE bar, and never every site. jdg:site_role
+    alone only proposes (flags it for a person). A row of a locations table is
+    a job site by the document's own shape and is not judged. No store or
+    LLM call."""
     from types import SimpleNamespace
 
     drop_ids: set[str] = set()
     for a in sites:
         aid = getattr(a, "id", None)
-        got = role_of(a) if aid else None
+        if not aid or _is_roster_site(a):
+            continue
+        got = role_of(a)
         if got is None or got[0] != "vendor_or_billing_address":
             continue
+        decision = SimpleNamespace(verdict=got[0], source="c3", correction_id=got[2], confidence=got[1])
+        if got[2] == "jdg:site_role":
+            _propose_vendor_address(a, decision)
+            continue
         drop_ids.add(aid)
-        _stamp_decision(a, SimpleNamespace(source="c3", correction_id=got[2], confidence=got[1]))
+        _stamp_decision(a, decision)
     if not drop_ids or len(drop_ids) >= len(sites):
         return atoms, det_dropped
     return [a for a in atoms if getattr(a, "id", None) not in drop_ids], det_dropped + len(drop_ids)

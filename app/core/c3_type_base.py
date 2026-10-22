@@ -668,10 +668,12 @@ def head_site_role(atom: Any) -> tuple[str, float, str] | None:
     None when no head is sure (flag on only).
 
     A job site: the type head's physical_site (``head_site_reading``) or
-    jdg:site_role job_site. The vendor's address: jdg:site_role
-    vendor_or_billing_address, the type head's stakeholder (a contact or
-    signature block), or col:supplier on the provider's side. A job-site
-    reading wins: it is the line's own type."""
+    jdg:site_role job_site. The vendor's address: the type head's stakeholder
+    (a contact or signature block) or col:supplier on the provider's side.
+    A job-site reading wins: it is the line's own type. jdg:site_role's
+    vendor answer comes last, with ``by`` jdg:site_role, for the caller to
+    propose only: live it reads 26 of 010447's DC roster rows as vendor
+    addresses at 0.70-0.97 (col:supplier reads them customer)."""
     if not site_head_enabled():
         return None
     aid = str(getattr(atom, "id", "") or "")
@@ -679,7 +681,7 @@ def head_site_role(atom: Any) -> tuple[str, float, str] | None:
     if t is not None:
         return "job_site", t[1], "col:label_type"
     role = line_reading(aid, "jdg:site_role")
-    if role and role[0] in ("job_site", "vendor_or_billing_address") and role[1] >= sure_for(role[0]):
+    if role and role[0] == "job_site" and role[1] >= sure_for(role[0]):
         return role[0], role[1], "jdg:site_role"
     ty = type_reading(aid)
     if ty and ty[0] == "stakeholder" and ty[1] >= sure_for("stakeholder"):
@@ -687,6 +689,8 @@ def head_site_role(atom: Any) -> tuple[str, float, str] | None:
     sup = line_reading(aid, "col:supplier")
     if sup and sup[0] in _PROVIDER_SIDE and sup[1] >= sure_for(sup[0]):
         return "vendor_or_billing_address", sup[1], "col:supplier"
+    if role and role[0] == "vendor_or_billing_address" and role[1] >= sure_for(role[0]):
+        return role[0], role[1], "jdg:site_role"
     return None
 
 

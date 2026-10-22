@@ -270,3 +270,22 @@ def test_the_vendor_call_is_the_heads_not_the_stores(monkeypatch):
     C._DEAL["reads"] = {"lh": {"col:supplier": ["us", 0.88]}}
     kept, dropped = suppress_vendor_sites(rows + [letterhead], project_id="010194")
     assert dropped == 1 and "lh" not in {a.id for a in kept}
+
+
+def test_site_role_alone_only_proposes_and_a_roster_row_is_not_judged(monkeypatch):
+    """Live jdg:site_role reads 26 of 010447's DC roster rows ("dc 5593 | Yes | No |
+    PA-850 | Yes | 1") as vendor addresses at 0.70-0.97; col:supplier reads them customer."""
+    from app.core.site_geo_fallback import VENDOR_SUSPECT_FLAG, suppress_vendor_sites
+
+    _on(monkeypatch)
+    rows, letterhead = _stores_010194()
+    C._DEAL["reads"] = {r.id: {"jdg:site_role": ["vendor_or_billing_address", 0.95],
+                               "col:supplier": ["customer", 0.9]} for r in rows}
+    kept, dropped = suppress_vendor_sites(rows + [letterhead], project_id="010447")
+    assert dropped == 0 and len(kept) == 6
+    assert all(VENDOR_SUSPECT_FLAG in r.review_flags for r in rows)
+    roster = _line("dc", "dc 5593 | Yes | No | PA-850 | Yes | 1", "physical_site", {"site_id": "dc 5593"})
+    roster.source_refs[0].extraction_method = "xlsx_site_roster_v1"
+    C._DEAL["types"] = {"dc": ["stakeholder", 0.99]}
+    kept, dropped = suppress_vendor_sites([roster, letterhead], project_id="010447")
+    assert dropped == 0
