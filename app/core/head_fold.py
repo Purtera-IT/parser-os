@@ -33,11 +33,19 @@ KEEP_BAR = 0.5
 CO_ACTION = "read:co_action"
 
 #: Fold stages that run before the deal's read: their copies are read with the
-#: deal and the survivor is chosen right after it.
-PRE_HEAD_FOLDS = frozenset({"quoted_history_dedup"})
+#: deal and the survivor is chosen right after it (quoted_chatter_dedup's
+#: survivors are admission-held lines, settled over that list).
+PRE_HEAD_FOLDS = frozenset({"quoted_history_dedup", "quoted_chatter_dedup", "pasted_note_dedup",
+                            "duplicate_atom_collapse", "pre_classify_dedup"})
 
-#: Fold stages settled at the end of the compile, after every stage has run.
-FINAL_FOLDS = PRE_HEAD_FOLDS
+#: Fold stages after the read whose losers the read already holds: settled
+#: right after them, before entities, edges and packets are built. Stakeholder
+#: and site merges are left alone: they merge the copies' fields into one
+#: record (0 head-keep lost on the audited deals).
+POST_HEAD_FOLDS = frozenset({"semantic_dedup"})
+
+#: Every fold the heads settle, for the late re-read.
+FINAL_FOLDS = PRE_HEAD_FOLDS | POST_HEAD_FOLDS
 
 #: ``value`` key on a copy the heads kept over the stage's survivor.
 HEAD_FOLD_KEY = "head_fold"
@@ -106,6 +114,22 @@ def _suppress(atom: Any, winner: Any, stage: str) -> None:
                            "stage": stage}
 
 
+def _carry(winner: Any, loser: Any) -> None:
+    """The survivor's evidence goes with the line: its source refs, receipts
+    and entity keys (what a dedup had merged into it) join the kept copy's."""
+    for attr in ("source_refs", "receipts", "entity_keys"):
+        mine = getattr(winner, attr, None)
+        theirs = getattr(loser, attr, None) or []
+        if not isinstance(mine, list):
+            continue
+        for x in theirs:
+            if x not in mine:
+                try:
+                    mine.append(x)
+                except Exception:  # pragma: no cover - defensive
+                    break
+
+
 def fold_by_heads(atoms: list[Any], ledger: list[Any], *, stages: frozenset[str] = PRE_HEAD_FOLDS,
                   reading=None) -> tuple[list[Any], list[tuple[Any, Any]]]:
     """Settle each fold from ``stages`` by the keep head.
@@ -141,6 +165,7 @@ def fold_by_heads(atoms: list[Any], ledger: list[Any], *, stages: frozenset[str]
         _unsuppress(best)
         _value(best)[HEAD_FOLD_KEY] = {"over": sid, "stage": stage, "head": CO_ACTION,
                                        "survivor_said": [said[0], round(float(said[1] or 0.0), 3)]}
+        _carry(best, survivor)
         out[pos[sid]] = best
         ledger[:] = [a for a in ledger if a is not best]
         _suppress(survivor, best, stage)
@@ -154,4 +179,5 @@ def fold_by_heads(atoms: list[Any], ledger: list[Any], *, stages: frozenset[str]
     return out, swaps
 
 
-__all__ = ["FINAL_FOLDS", "HEAD_FOLD_KEY", "KEEP_BAR", "PRE_HEAD_FOLDS", "fold_by_heads", "fold_losers"]
+__all__ = ["FINAL_FOLDS", "HEAD_FOLD_KEY", "KEEP_BAR", "POST_HEAD_FOLDS", "PRE_HEAD_FOLDS", "fold_by_heads",
+           "fold_losers"]

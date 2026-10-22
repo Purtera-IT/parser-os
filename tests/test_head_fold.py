@@ -85,3 +85,55 @@ def test_folded_copies_are_read_with_the_deal(monkeypatch):
     c3.set_deal([])
     _deal, rows, keys = c3._rows(kept, {})
     assert keys == ["k1", "k2"]
+
+
+def test_every_dedup_fold_is_settled_by_the_keep_head_and_the_survivor_hands_on_its_evidence():
+    from app.core.head_fold import POST_HEAD_FOLDS, PRE_HEAD_FOLDS
+
+    assert {"duplicate_atom_collapse", "pre_classify_dedup", "pasted_note_dedup",
+            "quoted_chatter_dedup"} <= PRE_HEAD_FOLDS and "semantic_dedup" in POST_HEAD_FOLDS
+    site = "San Diego Office - 4250 Executive Square, Suite 900, La Jolla, CA 92037"
+    s = _A("s", site, artifact="sig")
+    s.source_refs, s.entity_keys = ["ref-sig", "ref-other"], ["site:4250_executive_square"]
+    c = _A("c", site, artifact="rfp", stage="semantic_dedup", survivor="s")
+    c.source_refs, c.entity_keys = ["ref-rfp"], []
+    ledger = [c]
+    atoms, swaps = fold_by_heads([s], ledger, stages=POST_HEAD_FOLDS,
+                                 reading=_reads({"s": ("reject", 0.8), "c": ("keep", 0.99)}))
+    assert atoms == [c] and ledger == [s]
+    assert c.source_refs == ["ref-rfp", "ref-sig", "ref-other"] and c.entity_keys == ["site:4250_executive_square"]
+    # The pre-head pass does not touch a post-head fold.
+    atoms2, swaps2 = fold_by_heads([c], [s], reading=_reads({"c": ("reject", 0.8), "s": ("keep", 0.99)}))
+    assert swaps2 == []
+
+
+def test_the_final_pass_gives_a_rule_retyped_line_back_its_head_type(monkeypatch):
+    """overrides.md point 10: a post-head rule re-typed a line the head read
+    surely; the final pass restores it whatever its type carries, and keeps the
+    rule's type as a hint."""
+    from app.core.schemas import AtomType
+
+    class _T(_A):
+        pass
+
+    monkeypatch.setenv("SOWSMITH_C3_AUTHORITY", "on")
+    monkeypatch.setenv("SOWSMITH_C3_SURE", "0.5")
+    monkeypatch.setattr(c3, "_DEAL", {})
+    c3.set_deal([])
+    a = _T("n", "Nick Robertow")
+    a.atom_type = AtomType.deal_metadata
+    a.value = {"kind": "stakeholder", "name": "Nick Robertow"}  # a rule kept the values, dropped the lock
+    b = _T("e", "I just sent an email to the pricing desk asking to move this up the list.")
+    b.atom_type = AtomType.deal_metadata
+    b.value = {}
+    c3._DEAL["types"].update({"n": ["stakeholder", 0.99], "e": ["exclusion", 0.56]})
+    assert c3.apply_authority([a, b], final=True) == 2
+    assert a.atom_type.value == "stakeholder" and a.value["rule_type"] == "deal_metadata"
+    assert b.atom_type.value == "exclusion" and b.value["rule_type"] == "deal_metadata"
+    # A value type the line has no values for waits for the fill path.
+    d = _T("p", "VyStar Tower - 76 S Laura Street, Jacksonville, FL 32202")
+    d.atom_type = AtomType.deal_metadata
+    d.value = {}
+    c3._DEAL["types"]["p"] = ["physical_site", 0.9]
+    assert c3.apply_authority([d], final=True) == 0
+    assert d.atom_type.value == "deal_metadata" and d.value["c3_base_says"]["type"] == "physical_site"

@@ -1330,13 +1330,14 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         t = getattr(a, "atom_type", None)
         before = str(getattr(t, "value", t) or "")
         v = dict(getattr(a, "value", None) or {}) if isinstance(getattr(a, "value", None), dict) else {}
-        # At the end the base's answer wins for every type that needs no
-        # values, locked or not: a later stage rebuilds a line's value and
-        # loses its lock (010043's "Do you have the model of the camera?" was
-        # read answered_question at 0.9985 and ended open_question, so the
-        # brief made it a customer responsibility).
-        if final and not is_locked(a) and ans not in _VALUELESS:
-            continue
+        # At the end the base's answer wins for every line it read at its bar,
+        # locked or not, valued or not: a later stage rebuilds a line's value
+        # and loses its lock (010043's "Do you have the model of the camera?"
+        # was read answered_question at 0.9985 and ended open_question, so
+        # the brief made it a customer responsibility; 010388's "Nick
+        # Robertow", stakeholder 0.99, ended deal_metadata). The rule's type
+        # rides on the line as a hint (value.rule_type). A value type whose
+        # values the line lacks is parked for the fill path (settle).
         if before == ans:
             if not final and not is_locked(a):
                 v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
@@ -1363,6 +1364,8 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         if before and before not in alt:
             alt.append(before)
         v["alt_atom_types"] = alt
+        if final and before:
+            v["rule_type"] = before
         v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
         if ans == "small_talk":
             v.setdefault("rejected_by", "c3")

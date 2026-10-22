@@ -2214,6 +2214,9 @@ def compile_project(
             from app.core.head_fold import fold_by_heads as _fold_by_heads
 
             atoms, _head_swaps = _fold_by_heads(atoms, suppressed_atoms)
+            if held_chatter:
+                held_chatter, _held_swaps = _fold_by_heads(held_chatter, suppressed_atoms)
+                _head_swaps = _head_swaps + _held_swaps
             if _head_swaps:
                 _c3_auth.also_read((_c3_auth._DEAL.get("also") or []) + [_old for _, _old in _head_swaps])
                 warnings.append(f"INFO: head_fold kept {len(_head_swaps)} head-kept copy(ies) over the "
@@ -2648,6 +2651,18 @@ def compile_project(
             _kept_ids = {id(a) for a in atoms}
             _sem_notes = _dropped_atom_notes("semantic_dedup", [a for a in before_sem_atoms if id(a) not in _kept_ids])
         telemetry.end_stage(stage, output_count=len(atoms), warnings=_sem_notes)
+
+    # Each semantic fold keeps the copy the keep head keeps (head_fold): the
+    # read holds every copy, so the survivor is chosen before entities, edges
+    # and packets name it.
+    try:
+        from app.core.head_fold import POST_HEAD_FOLDS as _post_folds, fold_by_heads as _fold_post
+
+        atoms, _post_swaps = _fold_post(atoms, suppressed_atoms, stages=_post_folds)
+        if _post_swaps:
+            warnings.append(f"INFO: head_fold kept {len(_post_swaps)} head-kept copy(ies) over semantic_dedup's survivor")
+    except Exception as exc:
+        warnings.append(f"WARNING: head_fold (post) failed: {type(exc).__name__}: {exc}")
 
     # Two documents, one clause template, different figures ($500 vs $300
     # cancellation fee, two weeks vs five business days, ZIP 30641 vs 30341 —
@@ -3681,6 +3696,11 @@ def compile_project(
     try:
         from app.core import c3_type_base as _c3_final
 
+        # A late re-read still holds every folded copy, so the readings the
+        # folds were settled on stand beside the new lines'.
+        from app.core.head_fold import FINAL_FOLDS as _final_folds, fold_losers as _final_losers
+
+        _c3_final.also_read(_final_losers(suppressed_atoms, _final_folds))
         _new = _c3_final.reread_if_new(atoms)
         if _new:
             _late = _c3_final.apply_authority(atoms)
@@ -3695,6 +3715,10 @@ def compile_project(
         _fa = _c3_final.apply_authority(atoms, final=True)
         if _fa:
             warnings.append(f"INFO: C3 base restored {_fa} line(s) a rule had re-typed (authority)")
+            # A value type the final pass gave back waits for its values.
+            _sa2, _sf2 = _c3_final.settle_base_answers(atoms)
+            if _sa2 or _sf2:
+                warnings.append(f"INFO: C3 base answers applied after the final pass: {_sa2} assigned, {_sf2} filled")
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")
