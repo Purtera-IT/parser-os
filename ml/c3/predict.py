@@ -177,8 +177,14 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
               deadline: float | None = None,
               heads: tuple[str, ...] | None = None,
               document_heads: tuple[str, ...] = (),
-              questions: tuple[str, ...] = ()) -> dict[str, Any]:
-    """``questions``: question texts asked of the whole deal through the
+              questions: tuple[str, ...] = (),
+              site_pairs: bool = False) -> dict[str, Any]:
+    """``site_pairs``: the site-pair head (``jdg:site``) asked of every pair
+    of lines in one window that the type head reads as ``physical_site``
+    (``_judge_site_pairs``), under ``site_pairs``: ``[[key_a, key_b, answer,
+    p]]``.
+
+    ``questions``: question texts asked of the whole deal through the
     Questions head (``jdg:gap``, unanchored, as training asks a checklist or
     generated question): ``{"questions": [{"text", "answer", "p_valid"}]}``,
     where valid means this deal needs it asked and nothing answers it yet.
@@ -203,6 +209,8 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     shaky: list[dict[str, Any]] = []
     documents: dict[str, dict[str, Any]] = {}
     covered: dict[str, int] = {}
+    pairs: list[list[Any]] = []
+    judged: set[tuple[str, str]] = set()
     atoms = {a.key: a for a in deal.atoms}
     for batch in windows:
         if deadline is not None and time.monotonic() > deadline:
@@ -218,6 +226,8 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
                             "reads": reads}
         if document_heads:
             _judge_documents(model, out, batch, atoms, schema, document_heads, documents, covered)
+        if site_pairs:
+            _judge_site_pairs(model, out, batch, lines, schema, pairs, judged)
         if lines_only:
             continue
         found, maybe = _links(out, batch, home, link_min, governs_top)
@@ -234,8 +244,11 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
             asked = _ask_questions(model, out, whole, schema, questions)
     low = sorted(k for k, r in lines.items()
                  if r["reads"].get("col:label_type", {}).get("p", 1.0) < unsure)
-    return {"deal_id": deal.deal_id, "lines": lines, "links": links, "deal": answers,
-            "documents": documents, "questions": asked, "unsure": {"lines": low, "links": shaky}}
+    got = {"deal_id": deal.deal_id, "lines": lines, "links": links, "deal": answers,
+           "documents": documents, "questions": asked, "unsure": {"lines": low, "links": shaky}}
+    if site_pairs:
+        got["site_pairs"] = pairs
+    return got
 
 
 QUESTION_KEY = "jdg:gap"
@@ -321,6 +334,50 @@ def _judge_documents(model: C3Model, out, batch: Batch, atoms: dict[str, Any], s
             documents.setdefault(d, {})[key] = {"answer": _answer(opp, jj), "p": round(pj, 4)}
     for d in take:
         covered[d] = len(rows[d])
+
+
+SITE_PAIR_KEY = "jdg:site"
+#: Site lines per window the pair head is asked about (every pair among them):
+#: 300 lines is 44,850 pairs. Past it, the first 300 in reading order.
+SITE_PAIR_MAX_LINES = 300
+_PAIR_CHUNK = 4096
+
+
+def _judge_site_pairs(model: C3Model, out, batch: Batch, lines: dict[str, dict[str, Any]], schema: Schema,
+                      pairs: list[list[Any]], judged: set[tuple[str, str]]) -> None:
+    """The site-pair head (``jdg:site``: same_site / distinct_site) on every
+    pair of lines in this window that the type head reads as
+    ``physical_site``, as training asks it (the pair's two lines, in reading
+    order). A pair already judged in an earlier window is not asked again.
+    The Deal Kit reads the answers so it never merges two rows the head calls
+    different sites."""
+    opp = schema.by_key().get(SITE_PAIR_KEY)
+    if opp is None or not hasattr(model, "judge"):
+        return
+    site = [i for i, k in enumerate(batch.keys)
+            if ((lines.get(k) or {}).get("reads", {}).get("col:label_type") or {}).get("answer") == "physical_site"]
+    site = site[:SITE_PAIR_MAX_LINES]
+    todo = [(i, j) for n, i in enumerate(site) for j in site[n + 1:]
+            if (batch.keys[i], batch.keys[j]) not in judged]
+    refit = (getattr(model, "judgment_refits", None) or {}).get(SITE_PAIR_KEY)
+    for at in range(0, len(todo), _PAIR_CHUNK):
+        chunk = todo[at:at + _PAIR_CHUNK]
+        subjects, queries = [tuple(x) for x in chunk], ["" for _ in chunk]
+        try:
+            logits = model.judge(out, SITE_PAIR_KEY, subjects, queries=queries).float()
+            if refit is not None:
+                feats = model.judgment_features(out, SITE_PAIR_KEY, subjects, queries).float()
+                logits = logits + refit(feats.to(next(refit.parameters()).device)).float().to(logits.device)
+        except (ValueError, KeyError):
+            return
+        p = logits.softmax(-1)
+        top, j = p.max(-1)
+        for (a, b), pj, jj in zip(chunk, top.tolist(), j.tolist()):
+            ka, kb = batch.keys[a], batch.keys[b]
+            judged.add((ka, kb))
+            answer = _answer(opp, jj)
+            if answer != "_absent":
+                pairs.append([ka, kb, answer, round(pj, 4)])
 
 
 def kit_from_read(kit: dict[str, Any], read: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:

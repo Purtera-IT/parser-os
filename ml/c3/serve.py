@@ -10,10 +10,10 @@ It loads the base once, on the GPU when there is one (the live layer's
   it when a compile starts, so a service that scaled to zero starts loading
   while the documents are still being read.
 * ``POST /read``: body ``{"deal": <DealExample dict>, "budget_s": float,
-  "line_heads"?: [key], "document_heads"?: [key]}`` (the rows
+  "line_heads"?: [key], "document_heads"?: [key], "site_pairs"?: bool}`` (the rows
   ``c3_type_base.deal_payload`` builds). Answer: ``{"types": {key: [answer,
   p]}, "reads"?: {key: {head: [answer, p]}}, "documents"?: {doc_id: {head:
-  [answer, p]}}, "read_ms", "lines"}``, or 504 when the read passes its
+  [answer, p]}}, "site_pairs"?: [[key_a, key_b, answer, p]], "read_ms", "lines"}``, or 504 when the read passes its
   budget, or 503 at once while it is still loading (that compile's atoms go
   to the LLM, so a cold start never slows a compile). One read at a time.
 
@@ -136,7 +136,8 @@ class Base:
 
     def read(self, payload: dict[str, Any], budget_s: float, *,
              line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = (),
-             full: bool = False, questions: tuple[str, ...] = ()) -> dict[str, Any]:
+             full: bool = False, questions: tuple[str, ...] = (),
+             site_pairs: bool = False) -> dict[str, Any]:
         """Line types always; with ``line_heads``, those readings of every
         line under ``reads``; with ``document_heads``, each document's group
         judgments under ``documents``. One pass of the model answers all of
@@ -157,6 +158,8 @@ class Base:
             kwargs["document_heads"] = tuple(document_heads)
         if questions:
             kwargs["questions"] = tuple(questions)
+        if site_pairs:
+            kwargs["site_pairs"] = True
         with self._lock:
             started = time.monotonic()
             # ``full``: the links between lines and the whole-deal answers
@@ -188,6 +191,8 @@ class Base:
             out["documents"] = {
                 d: {k: [str(v["answer"]), round(float(v.get("p") or 0.0), 4)] for k, v in heads.items()}
                 for d, heads in (doc.get("documents") or {}).items()}
+        if site_pairs:
+            out["site_pairs"] = doc.get("site_pairs") or []
         if questions:
             out["questions"] = doc.get("questions") or []
             # The bar the refit was chosen at on held-out deals (question_fit),
@@ -251,6 +256,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 line_heads = _asked(body.get("line_heads"))
                 document_heads = _asked(body.get("document_heads"))
                 full = bool(body.get("full"))
+                site_pairs = bool(body.get("site_pairs"))
                 questions = tuple(str(q)[:500] for q in (body.get("questions") or [])[:400])
             except (ValueError, KeyError, TypeError):
                 return self._send(400, {"error": "bad body"})
@@ -262,7 +268,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
             try:
                 out = base.read(deal, max(1.0, budget - (time.monotonic() - started)),
                                 line_heads=line_heads, document_heads=document_heads, full=full,
-                                questions=questions)
+                                questions=questions, site_pairs=site_pairs)
             except TimeoutError as exc:
                 log.warning("read over budget: %s", exc)
                 return self._send(504, {"error": "over budget"})
