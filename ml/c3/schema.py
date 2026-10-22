@@ -59,6 +59,9 @@ CAUSAL_RELATIONS = {"answers": 1, "derived_from": 1, "contradicts": 1}
 LINE, PAIR, GROUP, DEAL = "line", "pair", "group", "deal"
 SIZES = (LINE, PAIR, GROUP, DEAL)
 
+#: Registry key of a column's question text where it is not "<col>_doc".
+_DOC_KEYS = {"supplier": "suppliers_doc"}
+
 #: Absent is always a class: a reading the line does not have.
 ABSENT = "_absent"
 
@@ -338,7 +341,9 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                         for o in options}
                 opps.append(Opportunity(
                     key=f"col:{col}", field=col, source="column", kind=CLASS,
-                    description=f"{lead(h, universal)} {scrub(types.get(col + '_doc', ''), universal)}".strip(),
+                    # The supplier options and their question live under the
+                    # plural key ("suppliers", "suppliers_doc").
+                    description=f"{lead(h, universal)} {scrub(types.get(_DOC_KEYS.get(col, col + '_doc'), ''), universal)}".strip(),
                     answers=_answers(CLASS, docs, col, docs), **base))
             elif col == "hints":
                 # "What told you?": which part of the context decided the label
