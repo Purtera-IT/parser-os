@@ -9019,10 +9019,17 @@ def _capability_not_supply(content: dict[str, Any], fs: list[dict[str, Any]]) ->
     a customer duty, customer material or procurement exclusion names it,
     else Equipment in Scope."""
     by = {f["id"]: f["text"] for f in fs}
+    # The supplier head (col:supplier) decides who supplies a cited line: a
+    # cite it reads as ours at its bar keeps the line a Provider material,
+    # whatever the capability wording says.
+    ours = {f["id"] for f in fs if f.get("supplier") and f["supplier"][0] == "us"
+            and float(f["supplier"][1] or 0) >= SUPPLIER_BAR}
     tx = lambda x: str(x.get("text") if isinstance(x, dict) else x)
     pm = content.get("provider_materials") or []
     for x in list(pm):
         if not isinstance(x, dict) or x.get("standard") or not x.get("cites"):
+            continue
+        if any(c in ours for c in x["cites"]):
             continue
         cited = [by.get(c, "") for c in x["cites"]]
         if any(_WE_SUPPLY.search(t) for t in cited) or not any(_CAPABILITY.search(t) for t in cited):
