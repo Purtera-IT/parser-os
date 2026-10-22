@@ -27,6 +27,7 @@ def deal_number(deal_id: str) -> str:
 
 
 def refuse_fixed_holdout(train_ids: Iterable[str]) -> None:
-    hit = sorted({deal_number(i) for i in train_ids} & FIXED_HOLDOUT)
+    # A deal view ("010038@pre_quote") is that deal.
+    hit = sorted({deal_number(i).partition("@")[0] for i in train_ids} & FIXED_HOLDOUT)
     if hit:
         raise ValueError("A fixed holdout deal is in the training set: " + ", ".join(hit))
