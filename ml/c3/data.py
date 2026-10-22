@@ -135,6 +135,15 @@ class Atom:
     #: Row weight for a line that carries no label of its own (a dropped
     #: copy); a labeled row takes its weight_tier instead.
     row_weight: float | None = None
+    #: Training-only multiplier on this line's loss (run E's data build):
+    #: below 1 for a repeated copy of a line learned elsewhere, or for a deal
+    #: capped to its share of the learned lines. Scales the row weight and
+    #: the WHY weight; never an input.
+    loss_weight: float = 1.0
+    #: Training-only: the same row in other layouts (header-tagged, bare
+    #: values, tabs, reversed cells). The meaning lock (losses.layout_lock)
+    #: reads the deal with the line rewritten and holds its saved answers.
+    layout_rewrites: tuple[str, ...] = ()
 
 
 @dataclass
@@ -176,7 +185,9 @@ class DealExample:
                       geometry_present=_geometry_present(a),
                       history_only=bool(a.get("history_only")),
                       dropped_copy=bool(a.get("dropped_copy")),
-                      row_weight=(float(a["row_weight"]) if a.get("row_weight") is not None else None))
+                      row_weight=(float(a["row_weight"]) if a.get("row_weight") is not None else None),
+                      loss_weight=(float(a["loss_weight"]) if a.get("loss_weight") is not None else 1.0),
+                      layout_rewrites=tuple(str(t) for t in a.get("layout_rewrites") or () if str(t).strip()))
                  for i, a in enumerate(d["atoms"])]
         # Time order is the deal's order: ties keep document order.
         atoms.sort(key=lambda a: (a.entered_at, a.order))
@@ -601,6 +612,9 @@ class Batch:
     #: IGNORE). Never an input or a target: the training checks score the
     #: base-where-sure, parser-elsewhere split with it.
     parser_targets: dict[str, list[int]] = field(default_factory=dict)
+    #: Training only: (line, text) for a labeled line in another layout
+    #: (Atom.layout_rewrites), for the meaning lock. Never an input.
+    layout_rewrites: list[tuple[int, str]] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
@@ -1502,8 +1516,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             else:
                 notes.setdefault(k, f"not {key}: {mask_verdict(t) if opp_layer[k] == 'universal' else t}")
         field_notes.append(notes)
-        weights.append(a.row_weight if a.row_weight is not None and not a.label
-                       else TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0))
+        weights.append(a.loss_weight * (
+            a.row_weight if a.row_weight is not None and not a.label
+            else TIER_WEIGHT.get(str(lb.get("weight_tier") or "").strip().lower(), 1.0)))
         refs = [r for r in (lb.get("hint_refs") or []) if isinstance(r, dict)]
         # A ref names a line by atom id, or (on most real rows) only by the
         # text the labeler pointed at; a heading points at its heading line
@@ -1677,7 +1692,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,
         labeled=[a.label is not None for a in atoms], why=why, policy_note=policy,
         outcome=dict(deal.outcome), rule_links=rule_links, changes=changes,
-        field_notes=field_notes, weights=weights, why_weights=[why_weight(a.label) for a in atoms],
+        field_notes=field_notes, weights=weights, why_weights=[why_weight(a.label) * a.loss_weight for a in atoms],
         hint_lines=hint_lines, entities=entities,
         judged=judged, negatives=negatives,
         flips=suppositions(why_raw), near_misses=alike[0], twins=alike[1],
@@ -1685,7 +1700,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         pixels=[a.pixels or _pixels(None) for a in atoms],
         geometry=[a.geometry or _geometry({}) for a in atoms],
         link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
-        keys=[a.key for a in atoms], parser_targets=parser_targets)
+        keys=[a.key for a in atoms], parser_targets=parser_targets,
+        layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
+                         for t in a.layout_rewrites if t.strip() != a.text.strip()])
 
 
 def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:

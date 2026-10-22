@@ -48,6 +48,9 @@ class LossWeights:
     near_miss_margin: float = 1.0
     literals: float = 0.4          # unique in-line spans of open value strings
     deal_numbers: float = 0.2      # deal-answer site count
+    # The meaning lock for table rows: the same row in another layout keeps
+    # its answers. A no-op unless the data carries layout_rewrites (run E).
+    layout_lock: float = 0.5
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
     # Optional per-question weight in the heads average. The average is over
     # the weights, so line type at 20 is ~20 of ~90 shares, not 1 of ~70.
@@ -490,6 +493,53 @@ def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: Explanati
     return F.relu(margin - kl)
 
 
+def layout_lock_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
+                     rng=None) -> torch.Tensor:
+    """The meaning lock without a teacher: one more forward with each table
+    row that has layout rewrites (header-tagged, bare, tabs, reversed cells)
+    replaced by one of them, picked at random each step. The rewritten line
+    must give its saved answers (the same head losses, weighted to those
+    lines only) and match its own reading in the real layout (KL to the
+    first pass, detached), so a head that keyed on the layout stops paying."""
+    import random as _random
+
+    from .data import number_tokens  # noqa: PLC0415
+
+    zero = out.r.new_zeros(())
+    if not batch.layout_rewrites:
+        return zero
+    rng = rng or _random
+    by_line: dict[int, list[str]] = {}
+    for i, t in batch.layout_rewrites:
+        by_line.setdefault(i, []).append(t)
+    texts, numbers = list(batch.texts), list(batch.numbers)
+    for i, ts in by_line.items():
+        texts[i] = rng.choice(ts)
+        numbers[i] = number_tokens(texts[i])
+    lines = sorted(by_line)
+    keep = set(lines)
+    base = batch.weights if len(batch.weights) == len(batch) else [1.0] * len(batch)
+    b = replace(batch, texts=texts, numbers=numbers,
+                weights=[x if i in keep else 0.0 for i, x in enumerate(base)])
+    moved = model(b.inputs(), company=batch.company)
+    ce, _ = head_losses(model, moved, b, w, "universal")
+    co, _ = head_losses(model, moved, b, w, "company")
+    rows = torch.tensor(lines, device=out.r.device)
+    rw = row_weights(b, out.r.device)[rows]
+    kl, n = zero, 0
+    for key, logits in moved.logits.items():
+        ref = out.logits.get(key)
+        opp = model.schema.by_key().get(key)
+        if ref is None or opp is None or opp.multiple or logits.shape != ref.shape:
+            continue
+        per = F.kl_div(F.log_softmax(logits[rows].float(), -1),
+                       F.log_softmax(ref[rows].detach().float(), -1),
+                       reduction="none", log_target=True).sum(-1)
+        kl = kl + (per * rw).sum() / rw.sum().clamp(min=1e-6)
+        n += 1
+    return ce + w.conduct * co + (kl / n if n else zero)
+
+
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None,
@@ -542,6 +592,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["deal_numbers"] = deal_number_loss(model, out, batch)
     parts["negatives"] = negative_loss(out, batch)
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
+    if w.layout_lock and batch.layout_rewrites:
+        parts["layout_lock"] = layout_lock_loss(model, out, batch, w)
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
