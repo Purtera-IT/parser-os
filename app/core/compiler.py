@@ -1256,6 +1256,10 @@ def compile_project(
         from app.core.email_chrome import divert_chrome
 
         _n_before = len(atoms)
+        # Left as a pre-head drop on purpose (overrides.md point 2): the heads
+        # would surface most chrome keeps wrongly today (signature addresses
+        # as sites, "CONFIDENTIALITY NOTICE"), so the chrome keep-errors are
+        # labeled first; then this becomes value.chrome_reason, a feature.
         atoms = divert_chrome(atoms, suppressed_atoms)
         if len(atoms) != _n_before:
             warnings.append(
@@ -2145,6 +2149,10 @@ def compile_project(
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
+    # document_job_scope is left as it is (overrides.md point 5): its set-aside
+    # is already a head decision (jdg:document_job), and it is off on dev
+    # (SOWSMITH_DOCUMENT_JOB_SCOPE=0). Passing the verdict to the line heads
+    # as context needs that feature in training first.
     with telemetry.stage("document_job_scope", input_count=len(atoms)) as stage:
         _djs_dropped = 0
         _djs_notes: list[str] = []
