@@ -597,7 +597,8 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": x.get("under") or "",
-                        "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or ""})
+                        "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or "",
+                        "base_type": x.get("base_type") or ""})
     # A line the keep head rejected at a coin flip has not been decided: the
     # SOW is where a dropped cable run becomes an unpriced one (010043's
     # "IDF to Front door 146ft", reject 0.53), so the writer sees it, marked.
@@ -707,6 +708,13 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
              # cables: Will Customer have them pre-hung in racks and labeled",
              # 010147 pass Y, became a customer commitment).
              or _form_question(str(a.get("text") or ""))}
+    # The brief keeps a question the keep head kept although the base reads it
+    # answered (c3_brief: the base type says how a line is used): it is the
+    # request, asked, never a commitment.
+    asked |= {x["id"] for xs in secs.values() for x in xs or []
+              if x.get("base_type") in ("answered_question", "internal_question")}
+    asked |= {x["id"] for x in brief.get("also_mentioned") or []
+              if x.get("base_type") in ("answered_question", "internal_question")}
     for f in out:
         f["pictured"] = f["id"] in pictured or f["section"] == "figure"
         f["quoted"] = f["id"] in quoted

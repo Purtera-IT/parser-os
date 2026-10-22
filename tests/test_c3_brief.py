@@ -213,20 +213,37 @@ def _trusted_all(monkeypatch):
     monkeypatch.setenv("SOWSMITH_C3_BRIEF_TRUST", "read:co_action,read:sow_section,read:co_reason")
 
 
-def test_a_line_the_base_reads_as_answered_or_a_heading_stays_out(monkeypatch):
+def test_a_line_the_base_reads_as_answered_or_a_heading_follows_the_keep_head(monkeypatch):
+    """The base type says how a kept line is used, not whether it is kept
+    (overrides.md point 6): co_action keeps -> it stays, carrying base_type;
+    co_action does not keep -> it stays out as before."""
     from app.core import c3_type_base as T
 
     _trusted_all(monkeypatch)
-    monkeypatch.setitem(T._DEAL, "types", {"a1": ["answered_question", 0.9985], "a2": ["list_header", 0.997]})
-    atoms = [_atom(1, "open_question", "Do you happen to have the model of the camera?"),
-             _atom(2, "deal_metadata", "Site Contacts:"), _atom(3, "scope_item", "Mount 3 cameras")]
+    monkeypatch.setitem(T._DEAL, "types", {"a1": ["answered_question", 0.9985], "a2": ["list_header", 0.997],
+                                           "a4": ["answered_question", 0.9], "a5": ["list_header", 0.95]})
+    atoms = [_atom(1, "open_question", "Can you guys provide a quote for installers for the cameras we purchased"),
+             _atom(2, "deal_metadata", "Site Contacts:"), _atom(3, "scope_item", "Mount 3 cameras"),
+             _atom(4, "open_question", "Do you happen to have the model of the camera?"),
+             _atom(5, "deal_metadata", "Notes:")]
     reads = {a.id: {"read:co_action": ["keep", 0.99], "read:sow_section": ["customer_responsibilities", 0.6]}
              for a in atoms}
+    reads["a4"]["read:co_action"] = ["reject", 0.8]
+    reads["a5"]["read:co_action"] = ["keep", 0.3]
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
-    kept = [x["id"] for v in b["sections"].values() for x in v]
-    assert kept == ["a3"]
+    items = {x["id"]: x for v in b["sections"].values() for x in v}
+    assert sorted(items) == ["a1", "a2", "a3"]
+    assert items["a1"]["base_type"] == "answered_question" and items["a2"]["base_type"] == "list_header"
+    assert "base_type" not in items["a3"]
     assert b["left_out"]["by_reason"] == {"base type answered_question": 1, "base type list_header": 1}
-    assert "a1" not in [q["id"] for q in b["questions"]]
+    assert "a1" not in [q["id"] for q in b["questions"]]  # answered: never asked again
+    # The SOW writer reads the kept answered question as the request, asked, not a duty.
+    from app.core import c3_sow
+
+    env = {"atoms": [{"id": a.id, "artifact_id": "m", "text": a.raw_text, "atom_type": a.atom_type,
+                      "structured": {}, "locator": {}} for a in atoms], "c3_brief": b}
+    asked = {f["id"]: f["asked"] for f in c3_sow.facts(env)}
+    assert asked["a1"] is True and asked["a3"] is False
 
 
 def test_the_owner_head_wins_when_surer_than_the_section_head(monkeypatch):
