@@ -2999,7 +2999,9 @@ class XlsxParser(BaseParser):
             # A roster-specific column is sufficient on its own; otherwise the
             # sheet must name a facility AND place it somewhere. A sheet with
             # neither is a generic table, not a site roster.
-            if not (mapped & ROSTER_SPECIFIC_FIELDS) and not (has_name and has_location):
+            # A table of places by City + Zip with a size per place is a site list too (010358).
+            place_table = {"city", "zip"} <= mapped and bool(mapped & {"sqft", "occupancy"})
+            if not (mapped & ROSTER_SPECIFIC_FIELDS) and not (has_name and has_location) and not place_table:
                 return []
             roster_rows = extract_site_roster(
                 columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
@@ -3017,11 +3019,17 @@ class XlsxParser(BaseParser):
             filename=filename, sheet_name=sheet_name, columns=header_raw
         )
         out: list[EvidenceAtom] = []
+        place_seen: dict[str, int] = {}
         for site_row in roster_rows:
             sid = (site_row.site_id or "").strip()
             # An address identifies a site just as well as a name does; a
             # roster row with a blank display name is still a real location.
             canon_id = sid or site_row.facility_name or site_row.street_address or ""
+            if not canon_id and site_row.city and site_row.zip:
+                # A place table names a site by its city and ZIP; two sites in one ZIP stay two (010358).
+                place = f"{str(site_row.city).strip().title()} {str(site_row.zip).strip()}"
+                place_seen[place] = place_seen.get(place, 0) + 1
+                canon_id = place if place_seen[place] == 1 else f"{place} #{place_seen[place]}"
             if not canon_id:
                 continue
             row_index = first_data_row + 1 + site_row.row_index
@@ -3067,8 +3075,10 @@ class XlsxParser(BaseParser):
                 parser_version=self.parser_version,
             )
             entity_keys: list[str] = []
-            if sid:
-                slug = re.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+            # A place-table row has no id, name or street: its city + ZIP is its name and its key.
+            place_name = canon_id if not (sid or site_row.facility_name or site_row.street_address) else None
+            if sid or place_name:
+                slug = re.sub(r"[^a-z0-9]+", "_", (sid or place_name).lower()).strip("_")
                 if slug:
                     entity_keys.append(f"site:{slug}")
             out.append(
@@ -3085,8 +3095,8 @@ class XlsxParser(BaseParser):
                         "kind": "physical_site",
                         "id": sid or site_row.site_id,  # canonical id
                         "site_id": sid or site_row.site_id,
-                        "name": site_row.facility_name,
-                        "facility_name": site_row.facility_name,
+                        "name": site_row.facility_name or place_name,
+                        "facility_name": site_row.facility_name or place_name,
                         "address": site_row.street_address,
                         "street_address": site_row.street_address,
                         "mdf_idf": site_row.mdf_idf,
