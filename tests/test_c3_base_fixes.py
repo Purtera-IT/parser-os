@@ -87,7 +87,9 @@ def test_page_export_becomes_a_training_file_with_arrival_times():
     assert doc["atoms"][0]["section"] == "Scope > Install"
     assert (doc["atoms"][0]["speaker_role"], doc["atoms"][0]["speaker_side"]) == ("internal", "ours")
     deal = DealExample.from_training_blob(doc, doc["atoms"], deal_id=doc["deal_id"])
-    assert [a.key for a in deal.atoms] == ["a", "b", "c"]
+    # Same arrival: reading order (c3_record.reading_order) puts the dated file
+    # before the undated email; the line with no document reads last.
+    assert [a.key for a in deal.atoms] == ["b", "a", "c"]
     with pytest.raises(ValueError, match="share labelKey"):
         from_page_export({**page, "atoms": page["atoms"] + [page_atom("a", "mail", "Again.")]}, "010999")
 
@@ -102,7 +104,8 @@ def test_dropped_copy_trains_on_its_own_line_not_the_kept_one():
          "verdict": "should_have_been_kept", "text": "Line k.",
          "target": {"isFold": True, "survivor": "Line k.", "text": "Line k."}},
     ]}
-    deal = DealExample.from_training_blob(blob, [atom("k"), atom("z", t=1)], deal_id="synthetic")
+    deal = DealExample.from_training_blob(blob, [atom("k"), atom("z", t=1)], deal_id="synthetic",
+                                          serve_lines_only=False)
     keys = [a.key for a in deal.atoms]
     assert keys[:3] == ["k", "sup:k@line_start=4", "sup:k@line_start=9"]
     batch = featurize(deal, schema)

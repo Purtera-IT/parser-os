@@ -232,13 +232,23 @@ class DealExample:
 
     @staticmethod
     def from_training_blob(blob: dict[str, Any], atoms: list[dict[str, Any]], *,
-                           deal_id: str, company: str = "purtera") -> "DealExample":
+                           deal_id: str, company: str = "purtera",
+                           serve_lines_only: bool = True) -> "DealExample":
         """Join the training blob's labels onto atom rows by ``label_key``.
 
         ``atoms`` are the parser's atom rows for the deal (text, source date,
         document, section, speaker); each must carry the ``label_key`` the
         labeling page uses. Relations come from each label's ``links`` list
         when the blob has one (``{"relation", "to"}``).
+
+        ``serve_lines_only`` (default): the deal's lines are its atom rows and
+        nothing else, the lines the parser's compile sends the base. A
+        labeler-added Missed row, a ``missed_history`` row and a Dropped
+        card's copy (``dropped_copy_rows``) are text the compile never sends;
+        as model input they changed every other line's context and rank
+        (model ``embed_atoms``: index / line count) away from serving. Their
+        targets stay in ``source_supervision``; they train nothing until the
+        compile sends such lines. False adds them as lines, as before.
         """
         labels = select_labels(blob.get("labels", []))
         rows, edges = [], []
@@ -256,7 +266,7 @@ class DealExample:
         # lines from their own text, or the base never learns what the parser
         # misses.
         seen = {a.get("label_key") for a in atoms}
-        for lb in labels.values():
+        for lb in (() if serve_lines_only else labels.values()):
             if lb.get("label_key") in seen or not str(lb.get("text") or "").strip():
                 continue
             if str(lb.get("origin") or "").strip().lower() != "labeler":
@@ -271,7 +281,7 @@ class DealExample:
                          **{k: lb.get(k, "") for k in ("speaker_org", "doc_direction", "stage_at")}})
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
-        for n, lb in enumerate(blob.get("missed_history") or []):
+        for n, lb in enumerate(() if serve_lines_only else blob.get("missed_history") or []):
             if not isinstance(lb, dict) or not _is_a_person(lb.get("labeler")):
                 continue
             if str(lb.get("origin") or "labeler").strip().lower() != "labeler":
@@ -290,7 +300,8 @@ class DealExample:
                          "doc_id": lb.get("doc_id", ""), "doc_kind": lb.get("doc_kind", ""),
                          "section": lb.get("section", ""), "order": lb.get("order", len(rows)),
                          "history_only": True})
-        rows.extend(dropped_copy_rows(blob.get("judgments") or [], rows))
+        if not serve_lines_only:
+            rows.extend(dropped_copy_rows(blob.get("judgments") or [], rows))
         link_stats: dict[str, int] = {}
         linked, doc_pointers = _blob_links(blob.get("links") or [], rows,
                                            judgments=blob.get("judgments") or [], stats=link_stats)

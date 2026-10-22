@@ -119,7 +119,7 @@ def test_c3_trains_the_cause_on_missed_lines_only():
          "reads_shown": [MISS_CAUSE]},
         _missed(label_key="m1", reads_set={MISS_CAUSE: "heading_as_section"}),
     ]}
-    batch = featurize(DealExample.from_training_blob(blob, atoms, deal_id="d-miss"), schema)
+    batch = featurize(DealExample.from_training_blob(blob, atoms, deal_id="d-miss", serve_lines_only=False), schema)
     i_parser = next(i for i, t in enumerate(batch.texts) if "four panels" in t)
     i_missed = next(i for i, t in enumerate(batch.texts) if "dock by 7am" in t)
     col = batch.targets[f"read:{MISS_CAUSE}"]
