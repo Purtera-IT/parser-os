@@ -1285,11 +1285,14 @@ def compile_project(
     # Lines a parser's admission regex refused (a greeting, a sign-off, the
     # name under it) are KEPT atoms flagged chatter, so the labeling page can
     # show them and the admission head gets its negatives. They are held out
-    # of every stage from here to packetizing -- threading, dedup, the
+    # of the rule stages from here to packetizing -- threading, dedup, the
     # substance gate, typing, entity resolution, signals, packets -- and put
-    # back only for text coverage and the result. So no head ever reads one,
-    # and every other atom, entity, edge and packet is exactly what it would be
-    # without them.
+    # back for text coverage and the result, so every other atom, entity, edge
+    # and packet is exactly what it would be without them. The HEADS read
+    # them: the deal's read holds them (c3_type_base.also_read) and authority
+    # types them, so the regex is only a hint (value.admission_regex). 010358:
+    # "Physically locates and documents the carrier demarc ..." was held as a
+    # signature and ended small_talk; the type head read dependency 0.83.
     held_chatter = [a for a in atoms if _ADMISSION_REJECT_FLAG in (getattr(a, "review_flags", None) or [])]
     if held_chatter:
         _held_ids = {id(a) for a in held_chatter}
@@ -2135,7 +2138,10 @@ def compile_project(
             # deal: which copy survives is the keep head's call (head_fold).
             from app.core.head_fold import fold_losers as _fold_losers
 
-            _c3_deal.also_read(_fold_losers(suppressed_atoms))
+            # And the lines an admission regex held aside (greetings, sign-offs,
+            # signature blocks): the regex is a hint on the line, the heads
+            # read it with its message and decide its type and keep.
+            _c3_deal.also_read(_fold_losers(suppressed_atoms) + list(held_chatter))
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
@@ -2217,6 +2223,10 @@ def compile_project(
         _auth_n = _c3_auth.apply_authority(atoms)
         if _auth_n:
             warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
+        if held_chatter:
+            _held_n = _c3_auth.apply_authority(held_chatter)
+            if _held_n:
+                warnings.append(f"INFO: C3 base typed {_held_n} admission-held line(s) (authority)")
     except Exception as exc:
         warnings.append(f"WARNING: C3 type authority failed: {type(exc).__name__}: {exc}")
 
