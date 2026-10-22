@@ -1,0 +1,6 @@
+{"deal_id": "SYN-K", "atoms": [
+ {"id": "k1", "artifact_id": "sow1", "atom_type": "physical_site", "text": "Site: SAINT LOUIS OFFICE", "entity_keys": ["site:st_louis_office"], "locator": {"page": 1}},
+ {"id": "k2", "artifact_id": "sow1", "atom_type": "scope_item", "text": "Install 4 APs at the Saint Louis office lobby", "entity_keys": [], "locator": {"page": 2}},
+ {"id": "k3", "artifact_id": "sow2", "atom_type": "physical_site", "text": "Harbor Warehouse", "entity_keys": ["site:harbor_warehouse"], "locator": {"page": 1}},
+ {"id": "k4", "artifact_id": "sow2", "atom_type": "scope_item", "text": "Unlike St. Louis Office, no lift needed", "entity_keys": [], "locator": {"page": 3}}
+]}
