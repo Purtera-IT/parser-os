@@ -766,9 +766,8 @@ class C3Model(nn.Module):
 
     # ------------------------------------------------------------ hindsight
     @torch.no_grad()
-    def hindsight_targets(self, inp: dict[str, Any]) -> torch.Tensor:
-        """The EMA teacher reads the WHOLE deal; its latent per line is what
-        q_i (which saw only the past) is trained to predict."""
+    def build_hindsight_teacher(self) -> None:
+        """The EMA copy, once (a resumed run builds it before its saved state loads)."""
         if self.teacher is None:
             # A frozen line encoder is shared, not copied: EMA of a constant
             # is the constant, and a second ModernBERT would only cost memory.
@@ -776,6 +775,12 @@ class C3Model(nn.Module):
             memo = {id(self.text): self.text} if frozen_text else {}
             self.teacher = copy.deepcopy(self.encoder, memo).requires_grad_(False)
             self.teacher_proj = copy.deepcopy(self.q_target).requires_grad_(False)
+
+    @torch.no_grad()
+    def hindsight_targets(self, inp: dict[str, Any]) -> torch.Tensor:
+        """The EMA teacher reads the WHOLE deal; its latent per line is what
+        q_i (which saw only the past) is trained to predict."""
+        self.build_hindsight_teacher()
         self.teacher.eval()
         return self.teacher_proj(self.teacher(inp, hindsight=True))
 

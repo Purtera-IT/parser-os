@@ -526,13 +526,17 @@ def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: Explanati
 
 
 def layout_lock_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
-                     rng=None) -> torch.Tensor:
+                     rng=None, desc: dict[str, Any] | None = None) -> torch.Tensor:
     """The meaning lock without a teacher: one more forward with each table
     row that has layout rewrites (header-tagged, bare, tabs, reversed cells)
     replaced by one of them, picked at random each step. The rewritten line
     must give its saved answers (the same head losses, weighted to those
     lines only) and match its own reading in the real layout (KL to the
-    first pass, detached), so a head that keyed on the layout stops paying."""
+    first pass, detached), so a head that keyed on the layout stops paying.
+
+    ``desc``: the step's encoded descriptions, reused. Without it the model
+    encodes every description again, with grad, through the trainable
+    encoder: a fourth graph on the step's memory."""
     import random as _random
 
     from .data import number_tokens  # noqa: PLC0415
@@ -553,7 +557,7 @@ def layout_lock_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights
     base = batch.weights if len(batch.weights) == len(batch) else [1.0] * len(batch)
     b = replace(batch, texts=texts, numbers=numbers,
                 weights=[x if i in keep else 0.0 for i, x in enumerate(base)])
-    moved = model(b.inputs(), company=batch.company)
+    moved = model(b.inputs(), company=batch.company, desc=desc)
     ce, _ = head_losses(model, moved, b, w, "universal")
     co, _ = head_losses(model, moved, b, w, "company")
     rows = torch.tensor(lines, device=out.r.device)
@@ -628,7 +632,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["negatives"] = negative_loss(out, batch)
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.layout_lock and batch.layout_rewrites:
-        parts["layout_lock"] = layout_lock_loss(model, out, batch, w)
+        parts["layout_lock"] = layout_lock_loss(model, out, batch, w, desc=desc)
     from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
 
     parts.update(why_carry_losses(model, out, batch, desc, w))
