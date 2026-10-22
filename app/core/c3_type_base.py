@@ -455,6 +455,7 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     from c3_record import build_rows
 
     sha = artifact_sha256 if artifact_sha256 is not None else _DEAL.get("sha")
+    atoms = _with_also(atoms)
     docs = list(documents if documents is not None else (_DEAL.get("documents") or []))
     have = {str(d.get("doc_id")) for d in docs}
     lines, keys, seen = [], [], set()
@@ -500,6 +501,25 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
                     if getattr(a, "project_id", None)), "") or "live"
     return deal_id, rows, keys
+
+
+def also_read(atoms: list[Any]) -> None:
+    """Lines the deal's read must hold that are not in the compile's list:
+    the copies a dedup folded before the heads read (``head_fold``) and the
+    lines an admission regex held aside. Each is read in its own document's
+    context, so the heads decide about it; the compile's list is unchanged.
+    Every read after this (``documents``, typing's ``classify``, the late
+    re-read) appends them after the compile's own lines."""
+    _DEAL["also"] = list(atoms or [])
+
+
+def _with_also(atoms: list[Any]) -> list[Any]:
+    extra = _DEAL.get("also") or []
+    if not extra:
+        return list(atoms)
+    have = {id(a) for a in atoms}
+    ids = {str(getattr(a, "id", "") or "") for a in atoms}
+    return list(atoms) + [a for a in extra if id(a) not in have and str(getattr(a, "id", "") or "") not in ids]
 
 
 def _reading_rank(atoms: list[Any], docs: list[dict[str, Any]]) -> list[int] | None:
@@ -596,7 +616,7 @@ def full_read() -> dict[str, Any]:
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
     _DEAL.clear()
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
-                 reads={}, links=[], deal={}, questions=[])
+                 reads={}, links=[], deal={}, questions=[], also=[])
 
 
 def _delivered_at(sha256: str) -> Any:

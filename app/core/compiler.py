@@ -2131,6 +2131,11 @@ def compile_project(
             _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
                               {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")})
+            # The copies a dedup folded before this point are read with the
+            # deal: which copy survives is the keep head's call (head_fold).
+            from app.core.head_fold import fold_losers as _fold_losers
+
+            _c3_deal.also_read(_fold_losers(suppressed_atoms))
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
@@ -2198,6 +2203,17 @@ def compile_project(
             with telemetry.stage("c3_base_read", input_count=len(atoms)) as _rstage:
                 _c3_auth.documents(atoms)
                 telemetry.end_stage(_rstage, output_count=len(_c3_auth._DEAL.get("types") or {}))
+        # Each fold made before the read keeps the copy the keep head keeps.
+        try:
+            from app.core.head_fold import fold_by_heads as _fold_by_heads
+
+            atoms, _head_swaps = _fold_by_heads(atoms, suppressed_atoms)
+            if _head_swaps:
+                _c3_auth.also_read((_c3_auth._DEAL.get("also") or []) + [_old for _, _old in _head_swaps])
+                warnings.append(f"INFO: head_fold kept {len(_head_swaps)} head-kept copy(ies) over the "
+                                f"survivor a dedup picked")
+        except Exception as exc:
+            warnings.append(f"WARNING: head_fold failed: {type(exc).__name__}: {exc}")
         _auth_n = _c3_auth.apply_authority(atoms)
         if _auth_n:
             warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
