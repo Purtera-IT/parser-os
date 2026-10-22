@@ -34,7 +34,14 @@
 #               doubles activations: with the lock 4096 at >=120 GB (H200), 2048
 #               at >=70 GB (H100 / A100 80 GB); without it 8192 / 4096. Under
 #               70 GB it refuses. Prove the peak with SMOKE=1 C3_SMOKE_LARGEST=1
-#   LINES LINKS CARDS OPEN_LINKS   passes per student stage (12 6 6 4)
+#   LINES LINKS CARDS NUMBERS OPEN_LINKS   passes per student stage (12 6 6 2 4);
+#               numbers trains the hours value and the hours per / qty heads
+#   ACCEPT_DRAFTS the owner's approval manifest ({"files": [{"file", "sha256"}]}):
+#               a file of assistant drafts only (runE/train_estimator) trains
+#               only when listed here; otherwise it is left out
+#   INIT_SCHEMA_REF  the commit INIT was trained on, when INIT predates shape
+#               digests (loop.py --init-schema-ref). The init allows text changes
+#               and the two added heads jdg:hours:per / jdg:hours:qty
 #   TEACH=0     no bind/teach and the 7B is never loaded (student stages only)
 #   TEACHER     saved teacher (default $C3/runA.pt.teacher)
 #   TEACHER_CONTINUE=1  one more teacher pass first (+~2.6 h on an H200)
@@ -117,20 +124,42 @@ else
   done
 fi
 (( ${#train_files[@]} )) || { echo "no training deals in $TRAIN_DIR" >&2; exit 1; }
-# The file name can lie; the deal_id inside is what the loop trains.
-python - "$NEVER" "${train_files[@]}" <<'PY' || exit 1
-import json, sys
+# The file name can lie; the deal_id inside is what the loop trains. A file
+# whose every row is an assistant draft trains only when the owner approved it
+# (ACCEPT_DRAFTS, a manifest of file names and sha256s); otherwise it is left
+# out here, so it costs no step and teaches nothing.
+kept=$(python - "$NEVER" "${ACCEPT_DRAFTS:-}" "${train_files[@]}" <<'PY'
+import hashlib, json, os, sys
+from ml.c3.data import _is_a_person
 never = set(sys.argv[1].split())
+approved = {}
+if sys.argv[2]:
+    approved = {os.path.basename(r["file"]): r["sha256"] for r in json.load(open(sys.argv[2]))["files"]}
 seen = {}
-for path in sys.argv[2:]:
-    deal_id = str(json.load(open(path)).get("deal_id") or "")
+for path in sys.argv[3:]:
+    raw = open(path, "rb").read()
+    blob = json.loads(raw)
+    deal_id = str(blob.get("deal_id") or "")
     base = deal_id.partition("#c3part")[0].partition("@")[0]
     if base in never:
-        raise SystemExit(f"{path}: deal_id {deal_id} is the validation deal or a holdout, never trained")
+        sys.exit(f"{path}: deal_id {deal_id} is the validation deal or a holdout, never trained")
     if deal_id in seen:
-        raise SystemExit(f"{path}: deal_id {deal_id} also in {seen[deal_id]}")
+        sys.exit(f"{path}: deal_id {deal_id} also in {seen[deal_id]}")
     seen[deal_id] = path
+    rows = [r for k in ("labels", "judgments", "deal_answers") for r in blob.get(k) or [] if isinstance(r, dict)]
+    if rows and not any(_is_a_person(r.get("labeler")) for r in rows):
+        name = os.path.basename(path)
+        if name not in approved:
+            print(f"skip {name}: assistant drafts only, not on ACCEPT_DRAFTS", file=sys.stderr)
+            continue
+        if hashlib.sha256(raw).hexdigest() != approved[name]:
+            sys.exit(f"{path}: changed since the owner approved it")
+    print(path)
 PY
+) || exit 1
+train_files=()
+while IFS= read -r f; do [[ -n "$f" ]] && train_files+=("$f"); done <<< "$kept"
+(( ${#train_files[@]} )) || { echo "no training deals left in $TRAIN_DIR" >&2; exit 1; }
 VALID_FILE=${VALID_FILE:-${dirs[0]}/$VALIDATION.json}
 [[ -f "$VALID_FILE" ]] || VALID_FILE=$C3/train/$VALIDATION.json
 echo "train ${#train_files[@]} files from $TRAIN_DIR: $(for f in "${train_files[@]}"; do basename "$f" .json; done | tr '\n' ' ')"
@@ -155,13 +184,15 @@ fi
 echo "atoms per part $ATOMS"
 
 args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "$VALID_FILE"
-      --init-from "$INIT" --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}"
+      --init-from "$INIT" --allow-text-change --allow-new-heads jdg:hours:per,jdg:hours:qty
+      ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"}
+      --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}"
       --lr "${LR:-1e-4}" --warmup-passes "${WARMUP:-1}"
       --free-head all --head-weight col:label_type=20
       --loss-weight why_align=0.1 --loss-weight entities=0.05 --loss-weight hindsight=0.1
       --loss-weight pointers=0.1 --loss-weight near_misses=0.2
       --loss-weight layout_lock="${LAYOUT_LOCK:-0.5}")
-stages="lines=${LINES:-12},links=${LINKS:-6},cards=${CARDS:-6},numbers=0,deal=0,open_links=${OPEN_LINKS:-4}"
+stages="lines=${LINES:-12},links=${LINKS:-6},cards=${CARDS:-6},numbers=${NUMBERS:-2},deal=0,open_links=${OPEN_LINKS:-4}"
 TIER_GATE=${TIER_GATE:-0.98}
 gates=(--gate 'lines@2.valid_exact>=0.50')
 # A start that does not reproduce run C's check means the files or the part
@@ -186,6 +217,7 @@ if [[ "$TEACH" == 1 ]]; then
 else
   args+=(--teacher-steps 0); stages+=",bind=0,teach=0,flips=0,spread=0"
 fi
+[[ -n "${ACCEPT_DRAFTS:-}" ]] && args+=(--accept-drafts "$ACCEPT_DRAFTS")
 args+=(--stage-steps "$stages")
 echo "stages $stages"
 
