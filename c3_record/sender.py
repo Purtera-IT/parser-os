@@ -27,12 +27,19 @@ trained vocabulary: ``internal``, ``reseller``, ``vendor``, ``unknown``.
 ``doc_direction`` (per document): ``outbound``, ``partner_outbound``,
 ``inbound``, ``partner_inbound``, ``internal``, or ''.
 
-``stage_at`` (per line): where the deal stood when the line arrived, from our
-own milestones among the deal's documents, the line's own document included:
-``scoping`` until the first SOW draft or quote arrives, then ``quoted``, then
-``contracting`` from the first signed SOW or purchase order. The CRM stage
-history is not used: the training deals carry none, and a field read one way
-in training and another in serving is worse than none.
+``stage_at`` (per line): where the deal stood when the line arrived, from OUR
+own milestones, the same cut the training views use (runE provenance.py):
+``scoping`` until our first priced paper (a SOW draft, quote, Deal Kit, calc,
+rate card, proposal, ...) or our first priced outbound message, then
+``quoted``, then ``contracting`` from the first signed SOW or purchase order
+at or after that. A document counts as ours only when nothing shows it came
+in from the customer or a partner (an inbound direction or carrier, an
+outside sender) and its role does not name another party as its author or
+call it a blank template: a customer's own SOW draft or a partner's PO is
+not our milestone (010043: a partner PO made every pre-quote line
+"contracting"). The CRM stage history is not used: the training deals carry
+none, and a field read one way in training and another in serving is worse
+than none.
 """
 from __future__ import annotations
 
@@ -56,8 +63,14 @@ ORG_KINDS = ("internal", "external")
 DIRECTIONS = ("outbound", "partner_outbound", "inbound", "partner_inbound", "internal")
 STAGES = ("scoping", "quoted", "contracting")
 
-QUOTE_KINDS = frozenset({"sow_draft", "quote", "sow"})
-WON_KINDS = frozenset({"sow_signed", "purchase_order"})
+QUOTE_KINDS = frozenset({"sow_draft", "quote", "sow", "deal_kit", "estimating_calc", "cost_breakdown",
+                         "rate_card", "pricing_workbook", "change_order", "loe", "proposal", "estimate"})
+WON_KINDS = frozenset({"sow_signed", "signed_sow", "purchase_order"})
+#: A price in a line (runE provenance.PRICE): our priced outbound message is the quote.
+PRICE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,.]*\s*(?:/\s?(?:hr|hour|site|tech|day)|per\s+(?:hour|hr|site|"
+                   r"tech|technician|day|visit|location|drop|ap|camera|unit))\b|\b(?:usd|eur)\s?\d", re.I)
+_PROVIDER = re.compile(r"\b(?:supplied|provided|prepared|issued)\s+by\s+([A-Za-z][\w&.-]*)", re.I)
+_MESSAGE_KINDS = frozenset({"email", "note", "meeting", "crm_note"})
 
 _ADDR = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 
@@ -204,20 +217,52 @@ def epoch(t: Any) -> float | None:
     return None
 
 
-def milestones(documents: Iterable[dict[str, Any]]) -> list[tuple[float, str]]:
-    """(arrival, stage) at each of our milestones: the first quote or SOW
-    draft (``quoted``), the first signed SOW or purchase order
-    (``contracting``). ``documents``: ``{"kind", "arrival"}``."""
-    first: dict[str, float] = {}
-    for d in documents:
+def is_ours(doc: dict[str, Any]) -> bool:
+    """Our own paper: no sign it came in from outside, and its role (the
+    parser's ``docRole``, when known) names no other author and no blank
+    template."""
+    o = doc.get("origin") if isinstance(doc.get("origin"), dict) else {}
+    direction = doc_direction(o.get("direction"), o.get("sender_email"))
+    if direction in ("inbound", "partner_inbound"):
+        return False
+    if party(o.get("sender_email"))[0] in ("theirs", "partner", "vendor"):
+        return False
+    role = str(doc.get("role") or "").lower()
+    named = [m.lower() for m in _PROVIDER.findall(role)]
+    if named and not any(n.startswith(("pur", "sales")) for n in named) and "purtera" not in role:
+        return False
+    return "template" not in role or "purtera" in role
+
+
+def milestones(documents: Iterable[dict[str, Any]],
+               rows: Iterable[dict[str, Any]] | None = None) -> list[tuple[float, str]]:
+    """(arrival, stage) at each of our milestones: our first priced paper or
+    priced outbound message (``quoted``), then the first signed SOW or
+    purchase order at or after it (``contracting``). ``documents``:
+    ``{"kind", "arrival", "origin", "role"?}``; ``rows`` (optional): lines
+    with ``text``, ``doc_id``, ``entered_at``, ``speaker_side`` and
+    ``doc_direction`` (an outbound line of ours with a price is the quote)."""
+    docs = [d for d in documents if isinstance(d, dict)]
+    quoted: float | None = None
+    for d in docs:
         kind = str(d.get("kind") or "").strip().lower()
         t = epoch(d.get("arrival"))
-        if t is None:
-            continue
-        stage = "quoted" if kind in QUOTE_KINDS else "contracting" if kind in WON_KINDS else ""
-        if stage and (stage not in first or t < first[stage]):
-            first[stage] = t
-    return sorted((t, s) for s, t in first.items())
+        if t is not None and kind in QUOTE_KINDS and is_ours(d) and (quoted is None or t < quoted):
+            quoted = t
+    kinds = {str(d.get("doc_id") or ""): str(d.get("kind") or "").strip().lower() for d in docs}
+    for r in rows or ():
+        if (r.get("speaker_side") == "ours" and r.get("doc_direction") == "outbound"
+                and (kinds.get(str(r.get("doc_id") or "")) in _MESSAGE_KINDS
+                     or str(r.get("doc_kind") or "") in _MESSAGE_KINDS)
+                and PRICE.search(str(r.get("text") or ""))):
+            t = epoch(r.get("entered_at"))
+            if t is not None and (quoted is None or t < quoted):
+                quoted = t
+    if quoted is None:
+        return []
+    won = [t for d in docs if str(d.get("kind") or "").strip().lower() in WON_KINDS
+           for t in [epoch(d.get("arrival"))] if t is not None and t >= quoted]
+    return [(quoted, "quoted")] + ([(min(won), "contracting")] if won else [])
 
 
 def stage_at(entered_at: Any, marks: list[tuple[float, str]]) -> str:
@@ -257,12 +302,13 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
             if isinstance(p, dict):
                 people.add(p.get("name"), p.get("email"))
         people.add(r.get("message_author"))
-    marks = milestones(docs)
     for r in rows:
         o = origin.get(str(r.get("doc_id") or ""), {})
         r.update(sender(said_by=r.get("said_by"), message_author=r.get("message_author"),
                         speaker_name=r.get("speaker_name"), origin=o, people=people))
         r["doc_direction"] = doc_direction(o.get("direction"), o.get("sender_email"))
+    marks = milestones(docs, rows)
+    for r in rows:
         r["stage_at"] = stage_at(r.get("entered_at"), marks)
         for k in SENDER_INPUTS:
             r.pop(k, None)
@@ -270,5 +316,5 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
 
 
 __all__ = ["OUR_DOMAINS", "PARTNER_DOMAINS", "SIDES_FULL", "ROLES_FULL", "ORG_KINDS", "DIRECTIONS",
-           "STAGES", "SENDER_INPUTS", "People", "party", "doc_direction", "sender", "epoch", "milestones",
-           "stage_at", "annotate"]
+           "STAGES", "SENDER_INPUTS", "People", "party", "doc_direction", "sender", "epoch", "is_ours",
+           "milestones", "stage_at", "annotate", "PRICE"]

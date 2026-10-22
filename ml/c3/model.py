@@ -97,6 +97,10 @@ class C3Config:
     box_dim: int = 32
     dropout: float = 0.1
     context_dropout: float = 0.4
+    #: Training only: the share of lines whose sender and stage tags (role,
+    #: side, party, org, direction, stage) are blanked together, so the
+    #: model never rests a reading on the tags alone. Off in eval / serving.
+    tag_dropout: float = 0.15
     ema: float = 0.996
     #: v5 explanation bank on by default in c3_loss (reader votes, compiled
     #: operators, clause slots). Off: v6 reads explanations with the
@@ -156,6 +160,7 @@ class DealEncoder(nn.Module):
 
     def __init__(self, cfg: C3Config, text: nn.Module):
         super().__init__()
+        self.cfg = cfg
         self.text = text
         self.lift = nn.Linear(cfg.d_text, cfg.d)
         self.tags = TagEmbedding(cfg.d)
@@ -187,6 +192,10 @@ class DealEncoder(nn.Module):
             for i, v in enumerate((inp.get(slot) or [])[:n_tags]):
                 if v:
                     tags[i].append(f"{name}:{v}")
+        if self.training and self.cfg.tag_dropout > 0 and n_tags:
+            # Tag dropout: a blanked line keeps only its document kind.
+            drop = (torch.rand(n_tags) < self.cfg.tag_dropout).tolist()
+            tags = [t[:1] if d else t for t, d in zip(tags, drop)]
         t = torch.tensor(inp["times"], dtype=torch.float32, device=dev)
         days = (t - t.min()).clamp(min=0) / 86400.0
         rank = torch.arange(len(t), device=dev, dtype=torch.float32) / max(1, len(t) - 1)
@@ -198,6 +207,9 @@ class DealEncoder(nn.Module):
                else torch.tensor(pixels, dtype=torch.float32, device=dev))
         geo = (torch.zeros(n, self.geometry.in_features, device=dev) if not geometry
                else torch.tensor(geometry, dtype=torch.float32, device=dev))
+        # Table row / column / spans are counts (row 1..thousands): log-scaled
+        # so one long sheet cannot swamp the input. 0 (not in a table) stays 0.
+        geo = torch.cat([geo[:, :4], torch.log1p(geo[:, 4:].clamp(min=0))], -1)
         return self.ln(self.lift(self.text(inp["texts"])) + self.tags(tags)
                        + self.nums(inp["numbers"]) + self.time(time)
                        + self.pixels(pix) + self.geometry(geo))

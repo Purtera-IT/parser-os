@@ -29,6 +29,13 @@ When a line entered the deal is what the foresight mask, the direction of
    labeling page) the latest time in the deal: it was written after
    everything the deal had seen.
 
+Only the atoms the parser kept become lines: the page also lists the
+compile's suppressed copies and mail chrome (``suppressed``), which the
+compile never sends the base. A line's ``order`` is its rank in the deal
+record's reading order (``c3_record.reading_order``), its document kind
+``c3_record.document_kind`` and a missing arrival is filled in reading order
+(``c3_record.document_times``): the rules the parser's compile uses.
+
 Only the person's rows travel (``labels``, ``judgments``, ``myLinks``); the
 assistant's mirrored proposals never do. No source text is written anywhere
 but the output file, which belongs outside the repository.
@@ -51,16 +58,29 @@ from typing import Any
 _EVENT_KINDS = ("meeting", "note", "email")
 
 
+def _doc_kind(doc: dict[str, Any], atom: dict[str, Any] | None = None) -> str:
+    """The document's kind by the deal record's one rule
+    (``c3_record.document_kind``): the page's event kind, else the file's
+    lifecycle type (``docType``) when the base trained on it, else its name."""
+    from c3_record import document_kind
+
+    a = atom or {}
+    return document_kind(doc.get("kind"), doc.get("docType") or a.get("docType"),
+                         doc.get("filename") or a.get("filename"))
+
+
 def _doc_times(documents: list[dict[str, Any]]) -> dict[str, str]:
-    """Arrival time per artifact, filled forward in the export's arrival order
-    (the deal record's rules, ``record.document_times``)."""
+    """Arrival time per artifact, a missing one filled forward in reading
+    order (the deal record's rules, ``record.document_times``). The page lists
+    documents as a time story that keeps an undated document's manifest place,
+    so the list index stands in for the manifest ``pos``."""
     from .record import document_times
 
     return {k: str(v) for k, v in document_times(
-        {"doc_id": str(d.get("artifactId") or ""), "kind": d.get("kind"),
+        {"doc_id": str(d.get("artifactId") or ""), "kind": _doc_kind(d),
          "sent_at": (d.get("origin") if isinstance(d.get("origin"), dict) else {}).get("sent_at"),
-         "authored_at": d.get("authoredAt")}
-        for d in documents).items()}
+         "authored_at": d.get("authoredAt"), "pos": n}
+        for n, d in enumerate(documents)).items()}
 
 
 def _sender_inputs(atom: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
@@ -98,9 +118,9 @@ def _origin(doc: dict[str, Any]) -> dict[str, Any]:
 def _record_documents(documents: list[dict[str, Any]], doc_time: dict[str, str]) -> list[dict[str, Any]]:
     """The documents as ``c3_record.annotate`` reads them: kind, arrival and
     who brought each."""
-    return [{"doc_id": str(d.get("artifactId") or ""),
-             "kind": str(d.get("docType") or d.get("kind") or "").strip().lower(),
-             "arrival": doc_time.get(str(d.get("artifactId") or "")), "origin": _origin(d)}
+    return [{"doc_id": str(d.get("artifactId") or ""), "kind": _doc_kind(d),
+             "arrival": doc_time.get(str(d.get("artifactId") or "")), "origin": _origin(d),
+             "role": str(d.get("docRole") or "")}
             for d in documents]
 
 
@@ -122,15 +142,28 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
         raise ValueError("Not a labeling page export (needs atoms and myLinks)")
     if not str(deal_id or "").strip():
         raise ValueError("A training file needs a deal_id")
+    from c3_record import reading_order, table_geometry
+
     documents = [d for d in payload.get("documents") or [] if isinstance(d, dict)]
     doc_time = _doc_times(documents)
-    kinds = {str(d.get("artifactId")): str(d.get("kind") or "") for d in documents}
+    kinds = {str(d.get("artifactId")): _doc_kind(d) for d in documents}
     doc_of = {str(d.get("artifactId")): d for d in documents}
     by_file = {str(d.get("filename")): str(d.get("artifactId")) for d in documents if d.get("filename")}
     atoms: list[dict[str, Any]] = []
     keys: set[str] = set()
     last_in: dict[tuple[str, str], int] = {}
-    for i, a in enumerate(payload["atoms"]):
+    # Only the lines the parser kept are model input: the compile never sends
+    # a suppressed copy or mail chrome (the page shows them, marked
+    # ``suppressed``, so a person can label what the parser dropped).
+    kept = [a for a in payload["atoms"] if not a.get("suppressed")]
+    # Reading order (c3_record.reading_order), the rule the compile uses: the
+    # page's own place inside each document, documents by authored time.
+    rank = reading_order(
+        [{"doc_id": str(a.get("artifactId") or ""), "within": float(a.get("position", n) or 0),
+          "group": a.get("page") if isinstance(a.get("page"), str) else None} for n, a in enumerate(kept)],
+        [{"doc_id": str(d.get("artifactId") or ""), "authored_at": d.get("authoredAt"), "pos": n}
+         for n, d in enumerate(documents)])
+    for i, a in enumerate(kept):
         key = str(a.get("labelKey") or "")
         if not key:
             raise ValueError(f"Atom {a.get('atomId')} has no labelKey")
@@ -144,9 +177,12 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
         atoms.append({
             "label_key": key, "atom_id": str(a.get("atomId") or ""), "text": str(a.get("text") or ""),
             "entered_at": str(when), "doc_id": art,
-            "doc_kind": str(a.get("docType") or kinds.get(art) or "").strip().lower(),
-            "section": section, "order": i, "speaker_role": "", "speaker_side": "",
+            "doc_kind": kinds.get(art) or _doc_kind({}, a),
+            "section": section, "order": rank[i], "speaker_role": "", "speaker_side": "",
             **_sender_inputs(a, doc_of.get(art, {})),
+            # Where the line sits in its table: the model input ``table_row``
+            # (c3_record.table_geometry), the same rule the parser's compile uses.
+            **table_geometry(a.get("tableRef")),
         })
         last_in[(art, section)] = i
         last_in[(art, "")] = i
@@ -173,7 +209,7 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
             row.setdefault("doc_id", art)
             row.setdefault("doc_kind", str(row.get("doc_type") or kinds.get(art) or "").lower())
             row.setdefault("entered_at", atoms[at]["entered_at"] if atoms else doc_time.get(art))
-            row.setdefault("order", at + 0.5)
+            row.setdefault("order", (atoms[at]["order"] if atoms else 0) + 0.5)
             row["section"] = section
         labels.append(row)
     return {

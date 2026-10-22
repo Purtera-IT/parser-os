@@ -17,11 +17,19 @@ Document (one per source file, email, note or meeting), in arrival order:
     authored_at  when it was written or held, if known
     origin       who brought it: ``{direction, sender_email, sender_name, via}``
                  (a file's is the email or note that carried it), if known
+    pos          its place in the compile manifest (the page export: its
+                 place in the page's document list), if known
+    role         the lifecycle's role sentence (the page's ``docRole``), if known
 
 Line (one per atom), in the order it appears in its source:
     key, text, doc_id, section, speaker_role, speaker_side, atom_id, and when
     known said_by, message_author (an email line's message), speaker_name (a
-    meeting line's speaker)
+    meeting line's speaker), order (``reading_order``: the same rank from the
+    page export and the compile), table_row (``table_geometry``)
+
+Only the lines the parser kept are lines: a suppressed copy, mail chrome, a
+Dropped card's copy and a hand-added Missed line are never sent by the
+compile, so they are never model input in training either.
 
 Each row also gets speaker_org, doc_direction and stage_at; the sender and
 stage rules are ``c3_record.sender``.
@@ -33,9 +41,11 @@ it is its DOCUMENT's arrival, the same for every line of a document:
 1. the document's ``sent_at``;
 2. else, for an event (meeting, note, email), its ``authored_at``: a meeting
    enters the deal when it happens;
-3. else the arrival of the document before it in arrival order (a file's
-   ``authored_at`` is when someone wrote it, often years earlier, and says
-   nothing about when the deal saw it);
+3. else the arrival of the document before it in reading order
+   (``c3_record.reading.document_rank``: authored time, ties by manifest
+   place ``pos``), the one order both the page export and the compile have
+   (a file's ``authored_at`` is when someone wrote it, often years earlier,
+   and says nothing about when the deal saw it; it only places the file);
 4. else (no document, or nothing before it) the latest time in the deal.
 
 A line's own timestamp (one message inside a thread, one utterance in a
@@ -47,7 +57,9 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from .sender import SENDER_INPUTS, annotate, doc_direction, milestones, sender, stage_at  # noqa: F401
+from .reading import (TRAINED_KINDS, document_arrivals, document_kind, document_rank,  # noqa: F401
+                      event_kind, file_kind, is_email_file, page_group, page_position, reading_order)
+from .sender import SENDER_INPUTS, annotate, doc_direction, is_ours, milestones, sender, stage_at  # noqa: F401
 
 #: Document kinds whose ``authored_at`` is the moment they entered the deal.
 EVENT_KINDS = ("meeting", "note", "email")
@@ -57,6 +69,23 @@ ROLES = frozenset({"internal", "reseller", "vendor", "unknown"})
 SIDES = frozenset({"ours", "theirs", "partner", "vendor"})
 
 
+#: Where a line sits in its table, as the model reads it (``ml.c3.data._geometry``).
+GEOMETRY_KEYS = ("bbox", "table_row", "table_col", "row_span", "col_span")
+#: "<table id> r<row>"; a row the parser stamped as a float ("r3.0") is the same row.
+_TABLE_REF = re.compile(r"^(.*?)\s+r(\d+)(?:\.0+)?$")
+
+
+def table_geometry(table_ref: Any) -> dict[str, int]:
+    """``{"table_row": n}`` for a table-row line, else ``{}``.
+
+    ``table_ref`` is the one string both sides already stamp on a table row:
+    the labeling page's ``tableRef`` and the parser's ``_atom_table_ref``
+    (``"<table id> r<row>"``). The row counts from 1, so the first row of a
+    table is not read as "not in a table" (0)."""
+    m = _TABLE_REF.match(str(table_ref or "").strip())
+    return {"table_row": int(m.group(2)) + 1} if m else {}
+
+
 def is_deal_kit(doc_kind: Any) -> bool:
     """Our own pricing workbook, however the document kind is spelled. The
     base is never scored on, and never acts on, a Deal Kit line."""
@@ -64,20 +93,13 @@ def is_deal_kit(doc_kind: Any) -> bool:
 
 
 def document_times(documents: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    """Arrival per document (rules 1-3), filled forward in arrival order.
+    """Arrival per document (rules 1-3), filled forward in reading order
+    (``reading.document_arrivals``), whatever order the list is in.
 
-    Each document is ``{"doc_id", "kind", "sent_at", "authored_at"}``; the
+    Each document is ``{"doc_id", "kind", "sent_at", "authored_at"}`` and,
+    when known, ``pos`` (its manifest place; the list index otherwise); the
     times are returned as given (ISO strings or numbers), never converted."""
-    docs = [d for d in documents if isinstance(d, dict)]
-    known = [d.get("sent_at") or (d.get("authored_at") if str(d.get("kind") or "") in EVENT_KINDS else None)
-             for d in docs]
-    prev = next((t for t in known if t), None)
-    out: dict[str, Any] = {}
-    for d, t in zip(docs, known):
-        prev = t or prev
-        if d.get("doc_id") and prev:
-            out[str(d["doc_id"])] = prev
-    return out
+    return document_arrivals(documents, EVENT_KINDS)
 
 
 def speaker(role: Any, side: Any) -> tuple[str, str]:
@@ -113,9 +135,11 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         # given outright stands as the line's own.
         said = ln.get("said_by") or ({"side": side, "role": role} if side else None)
         row.update({k: ln.get(k) for k in SENDER_INPUTS if ln.get(k)}, said_by=said)
+        row.update({k: ln[k] for k in GEOMETRY_KEYS if ln.get(k) not in (None, "", [])})
         rows.append(row)
     annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
-                     "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin")} for d in docs])
+                     "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin"),
+                     "role": d.get("role")} for d in docs])
     return rows
 
 
@@ -124,5 +148,7 @@ def _sort_key(t: Any) -> tuple[int, Any]:
     return (0, float(t)) if isinstance(t, (int, float)) else (1, str(t))
 
 
-__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "is_deal_kit", "document_times", "speaker", "build_rows",
-           "annotate", "sender", "doc_direction", "milestones", "stage_at"]
+__all__ = ["EVENT_KINDS", "ROLES", "SIDES", "GEOMETRY_KEYS", "TRAINED_KINDS", "is_deal_kit", "document_times",
+           "speaker", "build_rows", "table_geometry", "annotate", "sender", "doc_direction", "is_ours",
+           "milestones", "stage_at", "event_kind", "file_kind", "document_kind", "is_email_file", "document_rank",
+           "document_arrivals", "page_position", "page_group", "reading_order"]
