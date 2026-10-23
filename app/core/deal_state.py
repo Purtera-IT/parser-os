@@ -197,19 +197,6 @@ _WANTS_FIRM = re.compile(
     r"firm (?:quote|price|pricing|number)|true quote|detailed SOW|dial in"
     r"|final (?:quote|pricing)", re.I)
 
-#: Pure coordination: no deal kit will ever contain it.
-_COORDINATION = (
-    ("scheduling", re.compile(
-        r"provide availability|what days|specific days|week of the|next week"
-        r"|are you free|calendar invite|does that work for you", re.I)),
-    ("acknowledgement", re.compile(
-        r"^(thanks|thank you|gotcha|sounds good|will do|got it|perfect|noted"
-        r"|yes,? got|ok[.,!]?$)", re.I)),
-    ("chasing", re.compile(
-        r"following up|circling back|checking in|any update|per my last"
-        r"|let me know your thoughts|bumping this", re.I)),
-)
-
 
 @dataclass
 class StateLine:
@@ -226,7 +213,6 @@ class StateLine:
 @dataclass
 class DealState:
     lines: list[StateLine] = field(default_factory=list)
-    coordination: list[Any] = field(default_factory=list)
 
     def get(self, key: str) -> StateLine | None:
         return next((l for l in self.lines if l.key == key), None)
@@ -276,10 +262,6 @@ def read_deal_state(atoms: list[Any]) -> DealState:
             survey_done.append(atom)
         if _WANTS_FIRM.search(t):
             wants_firm.append(atom)
-        for kind, rx in _COORDINATION:
-            if rx.search(t):
-                state.coordination.append(atom)
-                break
 
     # ---- the price basis, and what follows from it -------------------------
     if rom:

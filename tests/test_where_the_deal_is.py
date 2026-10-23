@@ -70,16 +70,19 @@ def test_a_deal_with_no_rom_says_nothing_about_price_basis():
     assert st.lines == []
 
 
-def test_coordination_is_gathered_not_judged():
-    """Scheduling, acknowledgements and chasing are the deal moving. They are
-    collected so they can be consolidated -- never deleted here."""
+def test_coordination_is_not_collected():
+    """Step 0 (regex_retirement row 199): the _COORDINATION regex list fed a
+    ``coordination`` list nothing read; it is gone, and chatter changes no
+    state line."""
+    import dataclasses
+
+    from app.core import deal_state
+
+    assert not hasattr(deal_state, "_COORDINATION")
     st = _state(ROM, "Can you provide availability for the walkthrough?",
-                "Thanks, got the floor plans.",
-                "Following up on this one.",
-                "Two Cat6A drops per workstation.")
-    said = {getattr(a, "raw_text", "") for a in st.coordination}
-    assert "Thanks, got the floor plans." in said
-    assert "Two Cat6A drops per workstation." not in said   # that is content
+                "Thanks, got the floor plans.", "Following up on this one.")
+    assert "coordination" not in {f.name for f in dataclasses.fields(st)}
+    assert [l.key for l in st.lines] == [l.key for l in _state(ROM).lines]
 
 
 def test_the_money_is_carried_into_the_line():
