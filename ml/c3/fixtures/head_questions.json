@@ -1,0 +1,96 @@
+{
+  "_doc": "DRAFT, not loaded by any run (arch_review §7c). Question-style text for the generalization-critical heads, in schema.apply_guidance's shape: how_to_decide is the head's plain question with its decision criteria, answers are 'pick this when ...' in the WHY vocabulary. Loading it changes the descriptions the heads are built from, so training (loop) and every reader (predict, serve, gate_lib) must load it together: see why2 report 'per-head questions'. Universal text only: no company names or company rules (schema.POLICY_WORDS).",
+  "col:label_type": {
+    "question": "What kind of fact does this line state about the job?",
+    "how_to_decide": "Ask what the line is for in the job, not how it is laid out. Read it as a sentence even when it is a table row, a list item or a cell: the same fact keeps its type in any layout. Decide from what a reader would do with it: go to a place, do a piece of work, pay or charge an amount, wait for a date, check a condition, answer a question. A heading, a label or a legend only points at other lines. A greeting or a signature states nothing about the job.",
+    "answers": {
+      "physical_site": "Pick this when the line names one place where the work happens: a street address, a building, a store or a numbered location of the job, whatever the columns around it are called.",
+      "site_attribute": "Pick this when the line describes a place already named: its size, floors, rooms, hours or equipment, not the place itself.",
+      "task": "Pick this when the line is a piece of work someone on the job will do: install, mount, test, survey, remove, configure.",
+      "requirement": "Pick this when the line says what the finished work must be or must meet, without being a step of the work itself.",
+      "exclusion": "Pick this when the line says the job does not include some work or cost.",
+      "assumption": "Pick this when the line is a condition the price or plan takes for granted: access, existing conditions, working hours, a standard.",
+      "deadline": "Pick this when the line gives a date or time the work or a decision must be done by.",
+      "open_question": "Pick this when the line asks something the job still needs answered and nothing in the line answers it.",
+      "answered_question": "Pick this when the line asks something and the deal already answers it, here or in a reply.",
+      "list_header": "Pick this when the line only names the list or table below it: it points at other lines and states no fact of its own.",
+      "small_talk": "Pick this when the line is a greeting, thanks, a sign-off or chatter that states nothing about the job.",
+      "stakeholder": "Pick this when the line names a person or a party and their role in the job, and nothing else."
+    }
+  },
+  "read:site": {
+    "question": "Does this line say which place the work is at?",
+    "how_to_decide": "Answer yes when the words of the line name or point at one place of the job: an address, a building, a store number, a named location. A place that only appears in a heading above the line does not count for the line. The layout does not decide it: a row of cells and a sentence that name the same place answer the same.",
+    "answers": {
+      "present": "Pick this when the line itself names the place of the work.",
+      "_absent": "Pick this when the line names no place, or only a company or a region."
+    }
+  },
+  "jdg:site_role": {
+    "question": "Do technicians go to this place to do the work?",
+    "how_to_decide": "Ask what happens at the address. A place is a job site when crews are sent there to install, test or survey, now or as planned before it was removed. An address where nobody works, a head office, a billing or remit-to address, a vendor's office or a ship-from warehouse, is not a job site even when it looks like a site row.",
+    "answers": {
+      "job_site": "Pick this when work is done at the place, now or as planned.",
+      "vendor_or_billing_address": "Pick this when the place is only where paperwork, money or goods come from or go to, and no work happens there."
+    }
+  },
+  "col:admission": {
+    "question": "Does this line state a fact of its own about the job, worth learning?",
+    "how_to_decide": "Keep a line that states something about the work, even a small fact or a fact the provider later sets aside. Drop a line that states nothing of its own: noise (a greeting, a signature, a header or footer, an empty cell, filler) or background that only repeats or frames other lines. Whether a company chooses to act on the fact is not this question.",
+    "answers": {
+      "keep": "Pick this when the line states a fact of its own about the work.",
+      "drop": "Pick this when the line states no fact of its own: noise, chrome, or a repeat of a line that already states it."
+    }
+  },
+  "col:supplier": {
+    "question": "Whose fact is this: who does, supplies or owns what the line states?",
+    "how_to_decide": "Find the party that must act on or answer for the line. The provider wrote the quote and does the priced work; the customer owns the sites, the decisions and the inputs it owes; a partner resells between them; anyone else is a third party. When the deal does not say who, answer not settled rather than guessing from who sent the message.",
+    "answers": {
+      "us": "Pick this when the provider does, supplies or prices it: its work, its terms, its exclusions.",
+      "partner": "Pick this when the reseller between provider and customer does or supplies it.",
+      "customer": "Pick this when the end customer does, supplies, decides or owns it.",
+      "third_party": "Pick this when another contractor, a manufacturer, a carrier, a landlord or an inspector does or supplies it.",
+      "unresolved": "Pick this when the deal does not say who, or the role could be either side."
+    }
+  },
+  "read:sow_section": {
+    "question": "Which section of a statement of work would this line belong in?",
+    "how_to_decide": "Judge by what the line does in the job, not by the heading it sits under: work to be done is scope, what is handed over is deliverables, what the job leaves out is out of scope, what the plan takes for granted is assumptions, what the customer owes is customer responsibilities, dates are the timeline, money is fees.",
+    "answers": {
+      "scope_of_work": "Pick this when the line is work to be done: a task, a quantity, a place.",
+      "deliverables": "Pick this when the line is something handed over at the end.",
+      "out_of_scope": "Pick this when the line says the job does not include it.",
+      "assumptions": "Pick this when the line is a condition the price or plan rests on.",
+      "customer_responsibilities": "Pick this when the customer must do, supply or decide it.",
+      "timeline": "Pick this when the line is a date, a duration, a phase or an order of work.",
+      "fees": "Pick this when the line is a price, a rate, a payment term or an invoice rule."
+    }
+  },
+  "read:sow_element": {
+    "question": "What does this line become once the statement of work is written?",
+    "how_to_decide": "Follow the fact into the finished SOW: crew work becomes a task, what the customer owes becomes a customer responsibility, a condition becomes an assumption, a left-out item becomes an exclusion, a price becomes a fee, a place becomes a site, a date becomes the schedule. One ask can become more than one element.",
+    "answers": {
+      "task": "Pick this when the provider's crew will do it.",
+      "customer_responsibility": "Pick this when the customer or its partner must do, supply or decide it for the work to go ahead.",
+      "assumption": "Pick this when the price and plan rest on it being true.",
+      "exclusion": "Pick this when the SOW will say the job does not include it.",
+      "fee": "Pick this when it is priced or billed.",
+      "site": "Pick this when it is a place the work happens.",
+      "schedule": "Pick this when it is a date, a window or an order of the work."
+    }
+  },
+  "read:task_owner_role": {
+    "question": "Who owns the task this line states or starts?",
+    "how_to_decide": "Name the role that must do the step, not the person who wrote the line. Running the job is the project manager's; booking, shipping and paperwork are the coordinator's; design and how it is built are the architect's; on-site work is the technician's; a sales follow-up is the seller's; anything the customer, the partner or an outside party must do is theirs.",
+    "answers": {
+      "project_manager": "Pick this when the step is running the job: schedule, budget, customer updates.",
+      "project_coordinator": "Pick this when the step is booking visits, shipping equipment or moving paperwork.",
+      "solutions_architect": "Pick this when the step is designing or scoping how the system is built.",
+      "technician": "Pick this when the step is done on site: install, test, document.",
+      "seller": "Pick this when the step is a sales follow-up: a quote, a call, an offer.",
+      "customer": "Pick this when someone on the customer's side must do it.",
+      "partner": "Pick this when the reseller must do it.",
+      "other": "Pick this when an outside party must do it."
+    }
+  }
+}
