@@ -757,6 +757,19 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
     sha = {k: str(v.get("sha256") or "") for k, v in (fingerprints or {}).items() if v.get("sha256")}
     by_name = {str(fp.get("filename") or ""): d for d, fp in (fingerprints or {}).items()}
     prov = _as_envelope_documents(prov, own, by_name, sha)
+    # The HubSpot note each file was attached to (note_attachments), which the envelope's own
+    # documents carry as ``hubspot_note`` and the labeling page's origin reads ("Uploaded internally by
+    # Trent Torrence · Jul 27 note"): without it every note-attached file read "Uploaded internally",
+    # with no sender and no arrival (11,577 speaker and 2,988 arrival differences from training, run E).
+    try:
+        from app.core.note_attachments import note_attachment_links
+
+        _links = note_attachment_links(project_dir) if project_dir else None
+        for name, link in ((_links.attachments if _links else {}) or {}).items():
+            if name in prov and isinstance(link, dict):
+                prov[name].setdefault("hubspot_note", link)
+    except Exception:  # noqa: BLE001 - no links is today's behaviour
+        pass
     names = _roster_names(atoms, prov)
     docs = []
     for pos, (d, fp) in enumerate((fingerprints or {}).items()):
@@ -776,9 +789,15 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
         # The lifecycle's role sentence, the page's docRole: whose paper it is
         # (c3_record.sender.is_ours reads it for the stage).
         role = str(_lifecycle(sha.get(d)).get("role") or "")
+        origin = _origin(p, prov, first.get(d), names)
+        # The arrival training reads is the page's ``origin.sent_at`` (export.py) and nothing else: the
+        # carrier's time, a HubSpot note's when the file came on one, the delivering message's when the
+        # lifecycle matched one (doc_origin.origin_for). A file nothing delivered has none and takes the
+        # arrival of the document before it (c3_record.document_times), as in training -- not the
+        # lifecycle's own delivered_at guess (010050's 2022 predictive survey, 207 lines a day apart).
+        sent = origin.get("sent_at") if origin else sent
         docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
-                     "filename": name, "pos": pos, "role": role,
-                     "origin": _origin(p, prov, first.get(d), names)})
+                     "filename": name, "pos": pos, "role": role, "origin": origin})
     from c3_record import EVENT_KINDS
 
     def arrival(doc):

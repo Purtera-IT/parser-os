@@ -137,8 +137,11 @@ def doc_direction(direction: Any, sender_email: Any = None) -> str:
     d = {"purtera_outbound": "outbound", "customer_inbound": "inbound"}.get(d, d)
     if d not in DIRECTIONS:
         return ""
-    if d == "inbound" and party(sender_email)[0] == "partner":
-        return "partner_inbound"
+    if d in ("inbound", "partner_inbound") and address(sender_email):
+        # Whose side an inbound document came from is its sender's domain (PARTNER_DOMAINS), on both
+        # sides: the labeling page's own partner list (a deal's third party, 010224 Network Dynamics) and
+        # the compile's customer_inbound for every outside sender both read the same way here.
+        return "partner_inbound" if party(sender_email)[0] == "partner" else "inbound"
     return d
 
 
@@ -337,12 +340,15 @@ def stage_at(entered_at: Any, marks: list[tuple[float, str]]) -> str:
     return STAGES[best]
 
 
+_NOTE_HEADER = re.compile(r"^\s*note_id=\d+\s*\|\s*author=([^|]*)\|\s*author_email=([^|\s]+)", re.I)
+
 #: What a row may carry for ``annotate``; taken off the row once read.
 SENDER_INPUTS = ("said_by", "said_to", "message_author", "speaker_name")
 
 #: The CRM's own records: a HubSpot meeting, note or call export, and a note the CRM itself wrote
 #: ("HubSpot user": the AI call recap). Ours, internal, whatever direction the upload was stamped with.
 _CRM_RECORD = re.compile(r"-hs-(?:meeting|note|call)-", re.I)
+_CRM_MEETING = re.compile(r"-hs-meeting-", re.I)
 _CRM_SYSTEM = re.compile(r"^\s*hubspot(?:\s+user)?\s*$", re.I)
 #: Words a filename stem is matched on (runE provenance._stem_words): letters only, four or more.
 _STEM_STOP = frozenset({"the", "and", "for", "with", "from", "this", "that", "copy", "final", "draft", "updated",
@@ -546,6 +552,21 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
     docs = [d for d in documents if isinstance(d, dict)]
     origin = {str(d.get("doc_id") or ""): (d.get("origin") if isinstance(d.get("origin"), dict) else {})
               for d in docs}
+    # A HubSpot note's own export header names its author ("note_id=... | author=Trent Torrence |
+    # author_email=t@purtera-it.com | ..."): a note whose origin records no sender takes it, so a compile
+    # whose note header carries no structured meta reads the author the labeling page shows.
+    kinds = {str(d.get("doc_id") or ""): str(d.get("kind") or "").strip().lower() for d in docs}
+    for r in rows:
+        doc = str(r.get("doc_id") or "")
+        o = origin.get(doc)
+        if o is None or kinds.get(doc) != "note" or address(o.get("sender_email")):
+            continue
+        m = _NOTE_HEADER.search(str(r.get("text") or ""))
+        if m and address(m.group(2)):
+            email = address(m.group(2))
+            origin[doc] = dict(o, sender_email=email, sender_name=m.group(1).strip() or None, via="note",
+                               direction="internal" if party(email)[0] == "ours" else "inbound")
+    docs = [dict(d, origin=origin.get(str(d.get("doc_id") or ""), {})) for d in docs]
     people = People()
     for o in origin.values():
         people.add(o.get("sender_name"), o.get("sender_email"))
@@ -555,12 +576,17 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
                 people.add(p.get("name"), p.get("email"))
         people.add(r.get("message_author"))
     authors = document_authors(docs, rows, people)
+    names = {str(d.get("doc_id") or ""): str(d.get("filename") or "") for d in docs}
     for r in rows:
         doc = str(r.get("doc_id") or "")
         o = origin.get(doc, {})
         who = authors.get(doc)
-        r.update(sender(said_by=r.get("said_by"), message_author=r.get("message_author"),
-                        speaker_name=r.get("speaker_name"),
+        # A CRM meeting record (an invite, a recap) is the CRM's own text, neither a call nor a mail thread:
+        # its lines name no speaker and no message author, whatever a locator calls them.
+        crm_meeting = bool(who and who.get("why") == "crm_record" and _CRM_MEETING.search(names.get(doc, "")))
+        r.update(sender(said_by=r.get("said_by"),
+                        message_author=None if crm_meeting else r.get("message_author"),
+                        speaker_name=None if who and who.get("why") == "crm_record" else r.get("speaker_name"),
                         origin=_side_origin(who["side"], who["why"]) if who else o, people=people))
         r["doc_direction"] = (who or {}).get("direction") or doc_direction(o.get("direction"), o.get("sender_email"))
     marks = milestones(docs, rows, authors)
