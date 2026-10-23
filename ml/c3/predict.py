@@ -177,6 +177,7 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
               deadline: float | None = None,
               heads: tuple[str, ...] | None = None,
               document_heads: tuple[str, ...] = (),
+              table_heads: tuple[str, ...] = (),
               questions: tuple[str, ...] = ()) -> dict[str, Any]:
     """``questions``: question texts asked of the whole deal through the
     Questions head (``jdg:gap``, unanchored, as training asks a checklist or
@@ -195,7 +196,15 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     subject is every line of the document (data.py ``_Lines.document``). A
     document split across windows is judged in the window holding most of
     its lines. They come back under ``documents``: ``{doc_id: {key:
-    {"answer", "p"}}}``."""
+    {"answer", "p"}}}``.
+
+    ``table_heads`` (``jdg:roster``, ``jdg:sheet``) are asked of each table,
+    the lines of one document and section, as training groups them
+    (data.py ``_Lines.group``). They come back under ``tables``:
+    ``{"<doc_id>||<section>": {key: {"answer", "p"}, "lines": n, "kind":
+    {"answer", "p"}}}``, where ``kind`` is the table node's row type
+    (graph.py) when the model has nodes. Rows read their node in the same
+    pass, so the line types already carry the table's decision."""
     model.eval()
     windows, whole = deal_parts(deal, schema, max_atoms, lines_only=lines_only and not questions)
     lines: dict[str, dict[str, Any]] = {}
@@ -203,6 +212,8 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     shaky: list[dict[str, Any]] = []
     documents: dict[str, dict[str, Any]] = {}
     covered: dict[str, int] = {}
+    tables: dict[str, dict[str, Any]] = {}
+    table_cover: dict[str, int] = {}
     atoms = {a.key: a for a in deal.atoms}
     for batch in windows:
         if deadline is not None and time.monotonic() > deadline:
@@ -218,6 +229,8 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
                             "reads": reads}
         if document_heads:
             _judge_documents(model, out, batch, atoms, schema, document_heads, documents, covered)
+        if table_heads:
+            _judge_tables(model, out, batch, atoms, schema, table_heads, tables, table_cover)
         if lines_only:
             continue
         found, maybe = _links(out, batch, home, link_min, governs_top)
@@ -235,7 +248,7 @@ def _read_deal(model: C3Model, deal: DealExample, schema: Schema, *, max_atoms: 
     low = sorted(k for k, r in lines.items()
                  if r["reads"].get("col:label_type", {}).get("p", 1.0) < unsure)
     return {"deal_id": deal.deal_id, "lines": lines, "links": links, "deal": answers,
-            "documents": documents, "questions": asked, "unsure": {"lines": low, "links": shaky}}
+            "documents": documents, "tables": tables, "questions": asked, "unsure": {"lines": low, "links": shaky}}
 
 
 QUESTION_KEY = "jdg:gap"
@@ -316,6 +329,44 @@ def _judge_documents(model: C3Model, out, batch: Batch, atoms: dict[str, Any], s
             documents.setdefault(d, {})[key] = {"answer": _answer(opp, jj), "p": round(pj, 4)}
     for d in take:
         covered[d] = len(rows[d])
+
+
+def _judge_tables(model: C3Model, out, batch: Batch, atoms: dict[str, Any], schema: Schema,
+                  keys: tuple[str, ...], tables: dict[str, dict[str, Any]],
+                  covered: dict[str, int]) -> None:
+    """Each table's group judgments (and its node's row type) from this
+    window, kept where the window holds the most of its lines."""
+    rows: dict[str, list[int]] = {}
+    for i, k in enumerate(batch.keys):
+        a = atoms[k]
+        if a.doc_id and a.section:
+            rows.setdefault(f"{a.doc_id}||{a.section}", []).append(i)
+    take = [t for t, r in rows.items() if len(r) >= 2 and len(r) > covered.get(t, 0)]
+    if not take or not hasattr(model, "judge"):
+        return
+    by_key = schema.by_key()
+    for key in keys:
+        opp = by_key.get(key)
+        if opp is None:
+            continue
+        try:
+            logits = model.judge(out, key, [tuple(rows[t]) for t in take],
+                                 queries=["" for _ in take]).float()
+        except (ValueError, KeyError):
+            continue
+        p = logits.softmax(-1)
+        top, j = p.max(-1)
+        for t, pj, jj in zip(take, top.tolist(), j.tolist()):
+            tables.setdefault(t, {})[key] = {"answer": _answer(opp, jj), "p": round(pj, 4)}
+    nodes = getattr(out, "nodes", None)
+    type_opp = by_key.get("col:label_type")
+    for t in take:
+        tables.setdefault(t, {})["lines"] = len(rows[t])
+        if nodes is not None and type_opp is not None:
+            p = nodes["kind"][rows[t][0]].float().softmax(-1)
+            jj = int(p.argmax())
+            tables[t]["kind"] = {"answer": _answer(type_opp, jj), "p": round(float(p[jj]), 4)}
+        covered[t] = len(rows[t])
 
 
 def kit_from_read(kit: dict[str, Any], read: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:

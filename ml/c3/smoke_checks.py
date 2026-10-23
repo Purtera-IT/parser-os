@@ -166,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-h-share", type=float, default=0.10)
     p.add_argument("--free-head", action="append", default=[],
                    help="the run's free rows after --free-head all (runE.sh why2_free: r:<key>, company rows)")
+    p.add_argument("--graph", default="", help="the run's cross-line flags for a fresh model (a checkpoint carries its own)")
     p.add_argument("--free-h-out", type=float, default=1.0,
                    help="free_h_out after the ramp (runE.sh: 1, so r-only rows read no h)")
     p.add_argument("--heads", default=",".join(CRITICAL))

@@ -81,6 +81,13 @@ class LossWeights:
     link_why_contrast: float = 0.3      # edge pair representation toward its distinct note
     link_why_alone: float = 0.2         # the note alone names the relation, through the relation head
     link_why_hard_negative: float = 4.0 # near-miss / other-relation edges' notes count this many times (not a part)
+    # Cross-line reasoning (graph.py / graph_losses.py). Each is 0 when its
+    # path is off (no lattice, no nodes), so older runs read as before.
+    citations: float = 0.1         # the asked slots' attention lands on the gold hint rows
+    derived_cards: float = 0.5     # roster / sheet verdicts derived from the gold line types
+    table_kind: float = 0.2        # a single-kind table's node names its row type
+    coherence: float = 0.2         # unlabeled rows of a single-kind table read the table's type
+    node_pointers: float = 0.2     # a line naming another file points at that file's node
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
     # Optional per-question weight in the heads average. The average is over
     # the weights, so line type at 20 is ~20 of ~90 shares, not 1 of ~70.
@@ -155,16 +162,25 @@ def has_answers(batch: Batch, key: str) -> bool:
 
 def pointer_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     """hint_refs name the lines a decision came from: the pointer head puts
-    its mass on the earlier ones (the heads see only the past)."""
+    its mass on the ones this pass let the line read (by default the earlier
+    ones; graph.py's view mask lets a later line count too)."""
     if out.pointers is None or not batch.hint_lines:
         return out.r.new_zeros(())
-    total, terms = out.r.new_zeros(()), 0
+    n = out.pointers.shape[0]
+    lses, oks = [], []
     for i, js in enumerate(batch.hint_lines):
-        js = [j for j in js if j < i]
-        if js:
-            total = total - torch.logsumexp(out.pointers[i, js], 0)
-            terms += 1
-    return total / max(terms, 1)
+        js = [j for j in js if j != i and j < n]
+        if js and i < n:
+            v = out.pointers[i, js]
+            fin = torch.isfinite(v)
+            # A row of -inf (no hint row visible) has a NaN logsumexp gradient:
+            # keep it finite and leave the row out.
+            lses.append(torch.logsumexp(torch.where(fin, v, torch.full_like(v, -1e4)), 0))
+            oks.append(fin.any())
+    if not lses:
+        return out.r.new_zeros(())
+    lse, ok = torch.stack(lses), torch.stack(oks)
+    return -(lse * ok).sum() / ok.sum().clamp(min=1)
 
 
 def entity_loss(out: C3Output, batch: Batch, tau: float = 0.1) -> torch.Tensor:
@@ -704,6 +720,9 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     from .link_why import link_why_losses  # noqa: PLC0415 (cycle)
 
     parts.update(link_why_losses(model, out, batch, desc, w))
+    from .graph_losses import graph_losses  # noqa: PLC0415 (cycle)
+
+    parts.update(graph_losses(model, out, batch, desc, w, judgment_sizes))
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:

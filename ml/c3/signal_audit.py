@@ -537,8 +537,15 @@ def build_model(schema, args):
     from .schema import NUMBER, RELATION  # noqa: PLC0415
 
     torch.manual_seed(args.seed)
+    graph = None
+    if getattr(args, "graph", ""):
+        from .graph import parse_graph  # noqa: PLC0415
+
+        graph = parse_graph(args.graph)
     if args.tiny:
         model = C3Model(schema, SMALL)
+        if graph is not None:         # the run's cross-line flags (runE.sh GRAPH); a checkpoint's own win
+            model.enable_graph(graph)
         if args.init_from:        # a tiny run's own checkpoint (the smoke's)
             from .gates import load_checkpoint  # noqa: PLC0415
             from .readiness import digest  # noqa: PLC0415
@@ -552,6 +559,8 @@ def build_model(schema, args):
         from .schema import shape_digest  # noqa: PLC0415
 
         model = live_student(schema, args.encoder)
+        if graph is not None:
+            model.enable_graph(graph)
         if args.init_from:        # as loop.main: --allow-text-change, the new heads, the schema ref
             known = {}
             if args.init_schema_ref:
@@ -938,6 +947,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-atoms", type=int, default=512)
     p.add_argument("--free-head", action="append", default=[],
                    help="the run's free rows after --free-head all (runE.sh: r:<key>, company rows)")
+    p.add_argument("--graph", default="", help="the run's cross-line flags (loop.py --graph; runE.sh GRAPH)")
     p.add_argument("--loss-weight", action="append", default=[])
     p.add_argument("--head-weight", action="append", default=[])
     p.add_argument("--stage-steps", default="")
