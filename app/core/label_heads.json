@@ -322,7 +322,9 @@
         "sow_element",
         "sow_element_note",
         "sow_transform",
-        "sow_transform_note"
+        "sow_transform_note",
+        "feeds_decision",
+        "feeds_decision_note"
       ],
       "relations": [],
       "judgments": [],

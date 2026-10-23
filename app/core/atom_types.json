@@ -1778,6 +1778,40 @@
       "values": "free text",
       "desc": "The reasoning behind sow_transform on this line, in a sentence: how the SOW line's words relate to this line's.",
       "layer": "universal"
+    },
+    {
+      "key": "feeds_decision",
+      "label": "Which decision it feeds",
+      "values": "sites | visits | work_scope | work_quantity | labor_hours | crew | skill_level | work_window | site_access | travel | materials | commercial | schedule | scope_boundary | deliverables | parties | risk_flag",
+      "desc": "Which decisions of the quote and the statement of work this line is evidence for: the decisions whose answer would change if the line said something different. A list: one line can set the site list and the visits, or the hours and the crew. Judge by what the line's own words let a quoter or SOW writer decide, not by its type, its heading or where it sits in the document: a roster row that gives a site and its visit count feeds sites and visits; a standard the work must meet feeds work_scope; a line that only greets, thanks or forwards feeds none and is _absent here. Name a decision only when the line states or plainly entails its answer, not when it merely mentions the topic.",
+      "layer": "universal",
+      "multi": true,
+      "value_desc": {
+        "sites": "Which places get work and how many: a site's name, code, address or city on a list of work locations, a stated site count, or a line that adds, drops or closes a location. Not a billing, shipping, vendor or head-office address where no work happens.",
+        "visits": "How many separate trips technicians make to a site: a stated visit count, a return trip to finish or remove work, phases that send the crew back, or a revisit after cutover.",
+        "work_scope": "What field work is done: the tasks, the steps of a method, the equipment installed, removed, moved, tested or configured, and standards the work must meet. This names the tasks and their wording; it is not the count or the time.",
+        "work_quantity": "How much of the work there is: a count of devices, drops, cable runs, ports, rooms, doors or registers, a length of cable or an area in square feet, the number that labor is multiplied by.",
+        "labor_hours": "How long the work takes: hours or minutes per device, per site or per visit, days on site, a productivity rate (square feet per day), or a stated cap on hours.",
+        "crew": "How many technicians work together: a stated headcount, two-person work (lifts, heavy racks, masts), or a request for an extra technician.",
+        "skill_level": "What trade and level the technician needs: a certification, a license, an engineer rather than a technician, a junior or senior level, or a specialty such as RF survey or programming. This sets the rate line.",
+        "work_window": "When work may happen: business hours, after hours, nights, weekends, holidays, a store's closed hours, a maintenance or outage window, a shift cap. This sets the day type, any uplift and the hours assumption.",
+        "site_access": "The physical conditions of getting to the work: ceiling heights, lifts or ladders, escorts, badges, background checks, parking, loading docks, roofs, safety gear, union rules or hazardous materials.",
+        "travel": "Getting technicians to the sites: distance from a technician base, out-of-market or remote sites, mileage, lodging, airfare, per diem or a trip charge.",
+        "materials": "What equipment, cable and material the job needs and who furnishes it: a bill of materials, models and parts, consumables, shipping and receiving of gear, or a line saying the customer or a partner supplies it.",
+        "commercial": "How the job is priced and billed: a price, rate, budget or total, fixed fee versus time and materials, not-to-exceed, purchase order, payment and invoicing terms, a discount, markup or project-management fee.",
+        "schedule": "When the job runs: a start date, a deadline, a duration in weeks or months, the order of phases, a lead time, or a go-live or cutover date.",
+        "scope_boundary": "Who does what: a duty the customer or a partner keeps, work stated as excluded or out of scope, existing conditions the provider does not fix, or work explicitly assigned to the provider against someone else.",
+        "deliverables": "What is handed over and how the work is judged complete: as-built drawings, reports, photos, test or certification results, labels, a punch list, sign-off or acceptance criteria.",
+        "parties": "Who is involved: the end customer, the reseller or partner, the requester, project contacts with their names, emails or phone numbers, the project name.",
+        "risk_flag": "Something open or risky that the quote must flag or assume: an unknown site condition, a quantity or model still to be confirmed, a hazard, a penalty, prevailing wage or certified payroll, insurance or bonding, a permit, or a dependency that could move the price or the plan."
+      }
+    },
+    {
+      "key": "feeds_decision_note",
+      "label": "Why it feeds that decision",
+      "values": "free text",
+      "desc": "The reasoning behind feeds_decision on this line, in a sentence: which of its words settle which decision, and what the line would have to say to feed a different one or none.",
+      "layer": "universal"
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
