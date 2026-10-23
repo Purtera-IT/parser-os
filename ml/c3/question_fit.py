@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
+import os
 import json
 import random
 import time
@@ -50,6 +52,28 @@ class QuestionRefit(nn.Module):
 
     def forward(self, deal: torch.Tensor, query: torch.Tensor) -> torch.Tensor:
         return self.net(torch.cat([deal, query, deal * query], -1))
+
+
+def file_md5(path: str) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def stale_refit(refit_path: str, checkpoint_path: str) -> str:
+    """Why an overlay must not be used with this base checkpoint ("" when it
+    may): it carries no base md5 (fitted before the guard), or it was fitted
+    on another file. The swap gate and serve both refuse a stale overlay."""
+    saved = torch.load(refit_path, map_location="cpu", weights_only=False)
+    base = saved.get("base_md5")
+    if not base:
+        return "the overlay records no base md5: refit it on this checkpoint"
+    got = file_md5(checkpoint_path)
+    if base != got:
+        return f"fitted on base {base[:8]}, serving {got[:8]}: refit it on this checkpoint"
+    return ""
 
 
 def load_refit(path: str, device: str = "cpu") -> QuestionRefit:
@@ -138,7 +162,23 @@ def train(rows, answers: int, valid: int, *, epochs: int = 300, lr: float = 3e-3
     return m.eval()
 
 
+def check_main(argv: list[str]) -> int:
+    """``--check <refit.pt> --checkpoint <base.pt>``: exit 1 (and say why) when
+    the overlay was not fitted on that base. For the swap gate."""
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", required=True)
+    ap.add_argument("--checkpoint", required=True)
+    a = ap.parse_args(argv)
+    why = stale_refit(a.check, a.checkpoint)
+    print(f"question refit {'STALE: ' + why if why else 'fitted on this base'}")
+    return 1 if why else 0
+
+
 def main() -> None:
+    import sys
+
+    if "--check" in sys.argv[1:]:
+        raise SystemExit(check_main(sys.argv[1:]))
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--deals", nargs="+", required=True)
     ap.add_argument("--feedback", default="")
@@ -215,7 +255,10 @@ def main() -> None:
                "per_deal": report, "read_s": round(time.time() - started)}
     final = train([r for rs in by_deal.values() for r in rs], len(names), valid)
     torch.save({"state": final.state_dict(), "d": final.net[0].in_features // 3, "answers": names,
-                "key": QUESTION_KEY, "summary": summary}, a.out)
+                "key": QUESTION_KEY, "summary": summary,
+                # The base this overlay corrects (stale_refit): serve and the
+                # swap gate refuse it on any other checkpoint.
+                "base_md5": file_md5(os.environ["SOWSMITH_C3_CHECKPOINT"].strip())}, a.out)
     print(json.dumps({k: v for k, v in summary.items() if k not in ("per_deal",)}, indent=1))
     print(json.dumps(report, indent=1))
 

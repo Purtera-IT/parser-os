@@ -95,6 +95,18 @@
 #               above MAX_H_SHARE (0.10), or if one company-layer refit step moves
 #               any base output
 #   PICK_ONLY=1 only the pick step, on an existing $C3/out/runE.pt.checks.json
+#   GRAPH       cross-line flags (ml/c3/graph.py, arch_graph_review fixes 2-7): default rune =
+#               the view mask (a later line can change an earlier reading; the cut is the
+#               leak boundary) with cut dropout 0.3, the hop both ways with per-relation
+#               maps, governs child->parent with a no-parent column, a second hop, the hop
+#               into h, the pointer edge, no near_miss message, table/document nodes with
+#               pointers, card slots. off = run C's graph. Saved in every checkpoint, so
+#               serve builds the same graph
+#   VALID_ATOMS the validation window (8192, serve's): the checks and the pick read what
+#               serve reads; the training window is recorded in each checkpoint
+#   DEAL        passes of the deal stage (2), at a rate floor of DEAL_RATE (0.3) x LR
+#   REFIT=1     (default) after the pick, refit the Questions overlay on the picked
+#               checkpoint ($CK.best.question_refit.pt, base md5 inside); 0 = serve without it
 source "$(dirname "$0")/common.sh"
 cd "$REPO"
 CK=${CK:-$C3/out/runE.pt}
@@ -222,6 +234,9 @@ WHY_CONTRAST=${WHY_CONTRAST:-0.3} WHY_ALONE=${WHY_ALONE:-0.2} WHY_SWAP=${WHY_SWA
 TYPE_WEIGHT=${TYPE_WEIGHT:-10} RAMP=${RAMP:-2}
 WHY_ALIGN=${WHY_ALIGN:-0} WHY_SUFFICIENCY=${WHY_SUFFICIENCY:-0}   # E-base ablation: 0.1 / 0.5 (run C)
 LINK_WHY_CONTRAST=${LINK_WHY_CONTRAST:-0.3} LINK_WHY_ALONE=${LINK_WHY_ALONE:-0.2}   # link notes (link_why.py)
+GRAPH=${GRAPH:-rune}
+CITATIONS=${CITATIONS:-0.1} DERIVED_CARDS=${DERIVED_CARDS:-0.5} TABLE_KIND=${TABLE_KIND:-0.2}
+COHERENCE=${COHERENCE:-0.2} NODE_POINTERS=${NODE_POINTERS:-0.2}   # graph_losses.py
 weights=(
   heads=1 conduct=1 numbers=0.2 relations=0.5 governs=0.5
   judgments=1 judgment_rationale=0.2 literals=0.4 deal_numbers=0.2
@@ -236,12 +251,15 @@ weights=(
   residual=0.01 variance=0.1 absence=0.2 adversary=0.1 policy_l1=0.01
   explanation_only=0.5 changes=0.3 claims=0.3 rule_links=0.5 why_echo=0.2 negatives=0.3
   clause_use=0
+  citations="$CITATIONS" derived_cards="$DERIVED_CARDS" table_kind="$TABLE_KIND"
+  coherence="$COHERENCE" node_pointers="$NODE_POINTERS"
 )
 loss_args=()
 for kv in "${weights[@]}"; do loss_args+=(--loss-weight "$kv"); done
 ramp_args=()
 if [[ "$RAMP" != 0 ]]; then
-  for t in why_contrast why_alone why_swap keyword_dropout layout_lock link_why_contrast link_why_alone; do ramp_args+=(--ramp "$t=$RAMP"); done
+  for t in why_contrast why_alone why_swap keyword_dropout layout_lock link_why_contrast link_why_alone \
+           citations derived_cards table_kind coherence node_pointers; do ramp_args+=(--ramp "$t=$RAMP"); done
   ramp_args+=(--ramp numbers=1)   # the numbers stage opens on the new hours heads
 fi
 
@@ -261,12 +279,16 @@ if [[ -z "${ATOMS:-}" ]]; then
   fi
 fi
 echo "atoms per part $ATOMS ($graphs graphs per step)"
+if [[ "$TINY" == 1 ]]; then VALID_ATOMS=${VALID_ATOMS:-$ATOMS}; else VALID_ATOMS=${VALID_ATOMS:-8192}; fi
+echo "validation window $VALID_ATOMS (serve reads 8192)"
 
 args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_files[@]}"
       --lr "${LR:-1e-4}" --warmup-passes "${WARMUP:-1}"
       --free-head all --head-weight col:label_type="$TYPE_WEIGHT"
       "${loss_args[@]}" ${ramp_args[@]+"${ramp_args[@]}"}
-      --keep-checkpoints "$KEEP" --pick-floors "$FLOORS")
+      --keep-checkpoints "$KEEP" --pick-floors "$FLOORS"
+      --validation-max-atoms "$VALID_ATOMS" --deal-rate "${DEAL_RATE:-0.3}")
+[[ "$GRAPH" != off ]] && args+=(--graph "$GRAPH")
 new_heads=${NEW_HEADS:-jdg:hours:per,jdg:hours:qty,read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot,read:feeds_decision,read:work_window,read:access_need,read:job_detail,read:run_length,read:price_basis,read:party_role,deal:site_count,jdg:services,jdg:end_customer,jdg:delivery_model,jdg:exclusion_set}
 if [[ "$TINY" == 1 ]]; then
   args+=(--tiny)
@@ -275,13 +297,15 @@ else
          ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"}
          --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}")
 fi
-stages="lines=${LINES:-12},links=${LINKS:-6},cards=${CARDS:-6},numbers=${NUMBERS:-2},deal=0,open_links=${OPEN_LINKS:-4}"
+stages="lines=${LINES:-12},links=${LINKS:-6},cards=${CARDS:-6},numbers=${NUMBERS:-2},deal=${DEAL:-2},open_links=${OPEN_LINKS:-4}"
 TIER_GATE=${TIER_GATE:-0.98}
 gates=()
 [[ "${LINES_GATE:-0.50}" != 0 ]] && gates+=(--gate "lines@2.valid_exact>=${LINES_GATE:-0.50}")
 # A start that does not reproduce run C's check means the files or the part
-# size moved; only comparable at run C's 8192 lines per part.
-[[ "$ATOMS" == 8192 ]] && gates+=(--gate "start.valid_exact>=${START_FLOOR:-0.648}")
+# size moved; only comparable at run C's 8192-line validation window and run
+# C's mask (the view mask lets the start's attention read more than it trained on).
+[[ "$VALID_ATOMS" == 8192 && ( "$GRAPH" == off || "$GRAPH" == *mask=index* ) ]] &&
+  gates+=(--gate "start.valid_exact>=${START_FLOOR:-0.648}")
 if [[ "$TEACH" == 1 ]]; then
   [[ -f "$TEACHER" ]] || { echo "no TEACHER $TEACHER (TEACH=0 skips the teach stage)" >&2; exit 1; }
   args+=(--teacher-from "$TEACHER" --teacher-steps 1
@@ -381,7 +405,18 @@ run() {
     best=$(readlink "$CK.best") &&
     if [[ "$best" == "$(readlink -f "$INIT")" ]]; then echo "pick is the start: nothing to slim" >> "$C3/out/runE.log"
     elif [[ "$TINY" == 1 ]]; then echo "tiny: no slim" >> "$C3/out/runE.log"
-    else python -m ml.c3.slim --checkpoint "$best" --out "$CK.best.slim" >> "$C3/out/runE.log" 2>&1; fi
+    else python -m ml.c3.slim --checkpoint "$best" --out "$CK.best.slim" >> "$C3/out/runE.log" 2>&1
+      refit "$CK.best.slim"; fi
+}
+# The Questions overlay reads the base's pooled features: one fitted on run C
+# is stale on any run E checkpoint. Refit it on the pick (its md5 goes in the
+# file; serve and gate.sh refuse it on another base), or REFIT=0 and serve
+# without SOWSMITH_C3_QUESTION_REFIT.
+refit() {
+  [[ "${REFIT:-1}" == 1 ]] || { echo "REFIT=0: serve this checkpoint without the question overlay" >> "$C3/out/runE.log"; return; }
+  SOWSMITH_C3_CHECKPOINT="$1" SOWSMITH_C3_ENCODER="${ENCODER:-answerdotai/ModernBERT-large}" \
+    python -m ml.c3.question_fit --deals "${train_files[@]}" "${valid_files[@]}" --out "$1.question_refit.pt" \
+    >> "$C3/out/runE.log" 2>&1 || echo "question refit failed: serve without the overlay" >> "$C3/out/runE.log"
 }
 [[ "${RESUME:-0}" == 1 ]] || : > "$C3/out/runE.log"
 if [[ "${FG:-0}" == 1 ]]; then run; exit; fi
