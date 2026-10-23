@@ -80,6 +80,20 @@
 #   SMOKE=1     every stage the run trains, once on two parts, every term at its
 #               full weight (no ramp), no gates, peak memory printed (torch and
 #               nvidia-smi); with C3_SMOKE_LARGEST=1 the largest part
+#   SIGNAL_AUDIT (1 with SMOKE=1; 0 skips) the pre-launch gates, numbers in
+#               $C3/out/smoke_gate.md. Before the loop, ml/c3/signal_audit.py on
+#               the training files (the run's model, loss table and stages; one
+#               step): every labeled signal (label fields, readings, note kinds,
+#               link relations and notes, card heads, notes and fields, deal
+#               answers) is removed in turn and the step's gradient compared. NO-GO
+#               if a signal with >= SIGNAL_MIN (50) rows is UNUSED or ZERO-GRAD and
+#               not in SIGNAL_ALLOWLIST (ml/c3/runE/signal_allowlist.json, with a
+#               reason), if a reasoning-text kind with >= SIGNAL_KIND_WORDS (10000)
+#               words reaches no loss, or if under SIGNAL_COVERAGE (0.95) of all
+#               reasoning words do. After the loop, ml/c3/smoke_checks.py on the
+#               smoke's checkpoint: NO-GO if a critical head's h-path share is
+#               above MAX_H_SHARE (0.10), or if one company-layer refit step moves
+#               any base output
 #   PICK_ONLY=1 only the pick step, on an existing $C3/out/runE.pt.checks.json
 source "$(dirname "$0")/common.sh"
 cd "$REPO"
@@ -253,10 +267,11 @@ args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_fil
       --free-head all --head-weight col:label_type="$TYPE_WEIGHT"
       "${loss_args[@]}" ${ramp_args[@]+"${ramp_args[@]}"}
       --keep-checkpoints "$KEEP" --pick-floors "$FLOORS")
+new_heads=${NEW_HEADS:-jdg:hours:per,jdg:hours:qty,read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot,read:feeds_decision,read:work_window,read:access_need,read:job_detail,read:run_length,read:price_basis,read:party_role,deal:site_count,jdg:services,jdg:end_customer,jdg:delivery_model,jdg:exclusion_set}
 if [[ "$TINY" == 1 ]]; then
   args+=(--tiny)
 else
-  args+=(--init-from "$INIT" --allow-text-change --allow-new-heads "${NEW_HEADS:-jdg:hours:per,jdg:hours:qty,read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot,read:work_window,read:access_need,read:job_detail,read:run_length,read:price_basis,read:party_role,deal:site_count,jdg:services,jdg:end_customer,jdg:delivery_model,jdg:exclusion_set}"
+  args+=(--init-from "$INIT" --allow-text-change --allow-new-heads "$new_heads"
          ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"}
          --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}")
 fi
@@ -292,6 +307,32 @@ echo "stages $stages"
 echo "commit $(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 if [[ "${SMOKE:-0}" == 1 ]]; then
+  # The pre-launch gates (on by default; SIGNAL_AUDIT=0 skips them, for a
+  # memory-only smoke): the signal audit before the loop, the bypass and
+  # portability checks on the smoke's checkpoint after it. The go/no-go
+  # numbers: $C3/out/smoke_gate.md.
+  model_args=()
+  if [[ "$TINY" == 1 ]]; then model_args=(--tiny)
+  else
+    model_args=(--allow-new-heads "$new_heads" --train-encoder-layers 2
+                ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"})
+  fi
+  if [[ "${SIGNAL_AUDIT:-1}" == 1 ]]; then
+    # Every labeled signal and every kind of reasoning text must reach the
+    # step's gradient (ml/c3/signal_audit.py).
+    audit=(--train "${train_files[@]}" --max-atoms "$ATOMS" "${loss_args[@]}"
+           --head-weight col:label_type="$TYPE_WEIGHT" --stage-steps "$stages"
+           --min-count "${SIGNAL_MIN:-50}" --allowlist "${SIGNAL_ALLOWLIST:-$REPO/ml/c3/runE/signal_allowlist.json}"
+           --min-kind-words "${SIGNAL_KIND_WORDS:-10000}" --min-coverage "${SIGNAL_COVERAGE:-0.95}"
+           --out "$C3/out/signal_audit.md" --json "$C3/out/signal_audit.json" "${model_args[@]}")
+    [[ -n "${ACCEPT_DRAFTS:-}" ]] && audit+=(--accept-drafts "$ACCEPT_DRAFTS")
+    [[ "$TINY" != 1 ]] && audit+=(--init-from "$INIT")
+    set +e
+    python -m ml.c3.signal_audit "${audit[@]}" 2>&1 | tee "$C3/out/signal_audit.log"
+    s=${PIPESTATUS[0]}
+    set -e
+    (( s == 0 )) || { echo "NO-GO: a labeled signal or reasoning text trains nothing ($C3/out/signal_audit.md)" >&2; exit 1; }
+  fi
   export C3_PROGRESS_EVERY=1
   MEM=""
   if [[ "$TINY" != 1 ]] && command -v nvidia-smi >/dev/null; then
@@ -312,6 +353,16 @@ for line in open(sys.argv[1]):
     peak[i] = max(peak[i], int(mib.split()[0]))
 print("peak GPU memory MiB (nvidia-smi):", dict(peak))
 PY
+  fi
+  if (( status == 0 )) && [[ "${SIGNAL_AUDIT:-1}" == 1 ]]; then
+    # Critical heads decide from r, not the raw h path; a company refit step
+    # leaves the base outputs bit-identical (ml/c3/smoke_checks.py).
+    python -m ml.c3.smoke_checks --checkpoint "$C3/out/smokeE.pt" --train "${train_files[@]}" \
+      --max-atoms "$ATOMS" --max-h-share "${MAX_H_SHARE:-0.10}" "${model_args[@]}" \
+      --signal-json "$C3/out/signal_audit.json" --out "$C3/out/smoke_gate.md" --json "$C3/out/smoke_gate.json" \
+      2>&1 | tee "$C3/out/smoke_gate.log"
+    status=${PIPESTATUS[0]}
+    (( status == 0 )) || echo "NO-GO: smoke checks failed ($C3/out/smoke_gate.md)" >&2
   fi
   (( status == 0 )) && pick "$C3/out/smokeE.pt"
   exit "$status"
