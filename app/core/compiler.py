@@ -2136,8 +2136,13 @@ def compile_project(
         _c3_deal.set_deal(None)
         if _c3_deal.enabled() or _c3_deal.document_job_enabled():
             _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
+            # The deal's CRM stage history, the envelope's crm.stage_timeline (parser manifest
+            # context.crm, cut to the run's as_of): stage_at reads it as training does.
+            from app.core.orbitbrief_envelope import _load_manifest_crm as _c3_crm
+
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
-                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")})
+                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")},
+                              stage_timeline=(_c3_crm(project_dir) or {}).get("stage_timeline"))
             # The copies a dedup folded before this point are read with the
             # deal: which copy survives is the keep head's call (head_fold).
             from app.core.head_fold import fold_losers as _fold_losers

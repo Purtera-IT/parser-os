@@ -443,7 +443,9 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
       ``c3_record.sender`` (``build_rows``), from ``value.said_by``, else the
       line's email message author, else a transcript line's speaker, else its
       document's ``origin`` (``deal_documents``: an attachment's is the
-      message that carried it); stage from the deal's own milestones;
+      message that carried it); stage from the deal's CRM stage history when
+      it has two or more transitions (``set_deal``'s ``stage_timeline``),
+      else from the deal's own milestones;
     * entered_at: the locator's ``sent_at``; else the time of the document
       before it in arrival order (a document's own origin and ``authoredAt``
       are not on the atom); else the latest time in the deal; else 0 for every
@@ -513,7 +515,7 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         if not e["kind"]:
             first = next(a for a in atoms if _doc_id(a) == d)
             e["kind"] = _file_kind(first, sha)
-    rows = build_rows(lines, docs + list(extra.values()), latest_fallback=0.0)
+    rows = build_rows(lines, docs + list(extra.values()), latest_fallback=0.0, timeline=_DEAL.get("stage_timeline"))
     _STATUS["rows"] = {"documents": len(docs), "documents_from_atoms": len(extra),
                        "times": len({r["entered_at"] for r in rows})}
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
@@ -699,10 +701,14 @@ def full_read() -> dict[str, Any]:
     return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions", "question_bar")}
 
 
-def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
+def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None,
+             stage_timeline: dict[str, Any] | None = None) -> None:
+    """``stage_timeline``: the deal's ``crm.stage_timeline`` from the parser manifest (the envelope's,
+    cut to the run's as_of date), which ``c3_record.build_rows`` reads for ``stage_at``."""
     _DEAL.clear()
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
-                 reads={}, links=[], deal={}, questions=[], also=[])
+                 reads={}, links=[], deal={}, questions=[], also=[],
+                 stage_timeline=stage_timeline if isinstance(stage_timeline, dict) else None)
 
 
 def _delivered_at(sha256: str) -> Any:

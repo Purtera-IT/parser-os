@@ -43,9 +43,14 @@ in from the customer or a partner (an inbound direction or carrier, an
 outside sender) and its role does not name another party as its author or
 call it a blank template: a customer's own SOW draft or a partner's PO is
 not our milestone (010043: a partner PO made every pre-quote line
-"contracting"). The CRM stage history is not used: the training deals carry
-none, and a field read one way in training and another in serving is worse
-than none.
+"contracting"). When the deal's CRM stage history (``crm.stage_timeline``,
+the envelope's, which the compile reads from the parser manifest) has at
+least two transitions, the stage is instead the CRM stage the deal stood in
+when the line arrived (``crm_marks`` / ``crm_stage_at``): an open or
+pre-quote stage is ``scoping``, "Submitted for Quoting" and "Decision
+Pending" are ``quoted``, "Closed Won" is ``contracting``; "Closed Lost",
+archive and unnamed stage ids keep the stage before them. A deal with no
+timeline, or one transition (no movement to read), keeps the milestones.
 """
 from __future__ import annotations
 
@@ -88,10 +93,31 @@ _ASKS_FOR_QUOTE = re.compile(r"\brequest(?:ing)?\s+(?:for\s+)?(?:a\s+)?(?:quot|p
                              re.I)
 
 
+#: Asking the other party for ITS price is our cost side, not our quote (owner ruling, 010224: "What travel
+#: budget would you need to get the rate down to $95?" to the French subcontractor).
+ASKS_THEIR_PRICE = re.compile(
+    r"\byour\s+(?:best\s+)?(?:rates?|prices?|pricing|costs?|fees?|quotes?|quotation)\b|"
+    r"\b(?:would|could|can|will)\s+you\s+(?:need|charge|accept|do|go|offer|bill)\b[^.?!]{0,60}(?:\brate|\bprice|\bcost|\$)|"
+    r"\b(?:get|bring)\s+(?:the|your)\s+(?:rate|price|cost)\s+down\b", re.I)
+
+
 def sends_quote(text: Any) -> bool:
-    """A line of ours that carries a price or sends our quote (``PRICE`` / ``QUOTE_SENT``)."""
+    """A line of ours that carries a price or sends our quote (``PRICE`` / ``QUOTE_SENT``), unless it asks
+    the other party for its own price (``ASKS_THEIR_PRICE``)."""
     t = str(text or "")
+    if ASKS_THEIR_PRICE.search(t):
+        return False
     return bool(PRICE.search(t) or (QUOTE_SENT.search(t) and not _ASKS_FOR_QUOTE.search(t)))
+
+
+def to_supplier_only(said_to: Any, suppliers: Iterable[str]) -> bool:
+    """Every outside recipient of a line is at a supplier's domain (``suppliers``: the deal's vendors and
+    subcontractors, as its record names them): a priced line to them is our cost side, never our quote."""
+    doms = {str(d).lower() for d in suppliers or ()}
+    outside = [address(p.get("email")) for p in (said_to or []) if isinstance(p, dict) and address(p.get("email"))
+               and party(p.get("email"))[0] != "ours"]
+    return bool(outside and doms) and all(any(x.split("@", 1)[1] == d or x.split("@", 1)[1].endswith("." + d)
+                                              for d in doms) for x in outside)
 
 _ADDR = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 
@@ -340,6 +366,52 @@ def stage_at(entered_at: Any, marks: list[tuple[float, str]]) -> str:
     return STAGES[best]
 
 
+#: HubSpot pipeline labels (lower-cased, letters and digits only; prefix match) -> STAGES. People type these
+#: ("Submitted for Quoting ", "Closed Won: 100%"); a label not listed (an unnamed stage id, "Closed Lost",
+#: archive) moves nothing.
+CRM_STAGES = (("openawaitingscope", "scoping"), ("appointmentscheduled", "scoping"), ("qualifiedtobuy", "scoping"),
+              ("presentationscheduled", "scoping"), ("submittedforquoting", "quoted"), ("decisionpending", "quoted"),
+              ("closedwon", "contracting"))
+#: A timeline with fewer transitions than this shows no movement: the milestones decide.
+CRM_MIN_TRANSITIONS = 2
+
+
+def crm_stage(label: Any) -> str:
+    """The STAGES name of one CRM pipeline label, '' when it names none."""
+    n = re.sub(r"[^a-z0-9]+", "", str(label or "").lower())
+    return next((st for pre, st in CRM_STAGES if n.startswith(pre)), "")
+
+
+def crm_marks(timeline: Any) -> list[tuple[float, str]] | None:
+    """(time, stage) at each CRM transition that names a stage, in time order, when the timeline has at least
+    ``CRM_MIN_TRANSITIONS`` transitions; else None (the milestones decide)."""
+    if not isinstance(timeline, dict):
+        return None
+    moves = [t for t in timeline.get("transitions") or [] if isinstance(t, dict)]
+    if len(moves) < CRM_MIN_TRANSITIONS:
+        return None
+    marks = []
+    for t in moves:
+        when, stage = epoch(t.get("ts")), crm_stage(t.get("label"))
+        if when is not None and stage:
+            marks.append((when, stage))
+    return sorted(marks) or None
+
+
+def crm_stage_at(entered_at: Any, marks: list[tuple[float, str]]) -> str:
+    """The CRM stage in force when the line arrived (the last named transition at or before it), ``scoping``
+    before the first; '' when the line has no time."""
+    t = epoch(entered_at)
+    if t is None:
+        return ""
+    current = "scoping"
+    for when, stage in marks:
+        if when > t:
+            break
+        current = stage
+    return current
+
+
 _NOTE_HEADER = re.compile(r"^\s*note_id=\d+\s*\|\s*author=([^|]*)\|\s*author_email=([^|\s]+)", re.I)
 
 #: What a row may carry for ``annotate``; taken off the row once read.
@@ -540,9 +612,12 @@ def document_authors(documents: Iterable[dict[str, Any]], rows: Iterable[dict[st
     return out
 
 
-def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]],
+             timeline: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Give every row ``speaker_side``, ``speaker_role``, ``speaker_org``,
-    ``doc_direction`` and ``stage_at``, in place.
+    ``doc_direction`` and ``stage_at``, in place. ``timeline``: the deal's
+    ``crm.stage_timeline`` when known (``crm_marks`` decides whether it is
+    read; otherwise the milestones are).
 
     A row: ``doc_id``, ``entered_at`` and, when known, ``said_by`` / ``said_to``
     (``{name, email, side, role}``), ``message_author`` and ``speaker_name``.
@@ -589,9 +664,10 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
                         speaker_name=None if who and who.get("why") == "crm_record" else r.get("speaker_name"),
                         origin=_side_origin(who["side"], who["why"]) if who else o, people=people))
         r["doc_direction"] = (who or {}).get("direction") or doc_direction(o.get("direction"), o.get("sender_email"))
-    marks = milestones(docs, rows, authors)
+    crm = crm_marks(timeline)
+    marks = milestones(docs, rows, authors) if crm is None else crm
     for r in rows:
-        r["stage_at"] = stage_at(r.get("entered_at"), marks)
+        r["stage_at"] = stage_at(r.get("entered_at"), marks) if crm is None else crm_stage_at(r.get("entered_at"), crm)
         for k in SENDER_INPUTS:
             r.pop(k, None)
     return rows
@@ -599,5 +675,6 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
 
 __all__ = ["OUR_DOMAINS", "PARTNER_DOMAINS", "SIDES_FULL", "ROLES_FULL", "ORG_KINDS", "DIRECTIONS",
            "STAGES", "SENDER_INPUTS", "People", "party", "doc_direction", "sender", "epoch", "is_ours",
-           "milestones", "stage_at", "annotate", "PRICE", "QUOTE_SENT", "sends_quote", "role_author",
+           "milestones", "stage_at", "CRM_STAGES", "CRM_MIN_TRANSITIONS", "crm_stage", "crm_marks", "crm_stage_at",
+           "annotate", "PRICE", "QUOTE_SENT", "sends_quote", "ASKS_THEIR_PRICE", "to_supplier_only", "role_author",
            "document_authors", "PARTNER_NAMES"]

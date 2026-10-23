@@ -61,7 +61,8 @@ from typing import Any, Iterable
 
 from .reading import (TRAINED_KINDS, document_arrivals, document_kind, document_rank,  # noqa: F401
                       event_kind, file_kind, is_email_file, page_group, page_position, reading_order)
-from .sender import SENDER_INPUTS, annotate, doc_direction, is_ours, milestones, sender, stage_at  # noqa: F401
+from .sender import (SENDER_INPUTS, annotate, crm_marks, crm_stage_at, doc_direction, is_ours,  # noqa: F401
+                     milestones, sender, stage_at)
 
 #: Document kinds whose ``authored_at`` is the moment they entered the deal.
 EVENT_KINDS = ("meeting", "note", "email")
@@ -133,12 +134,13 @@ def speaker(role: Any, side: Any) -> tuple[str, str]:
 
 
 def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, Any]],
-               *, latest_fallback: Any = None) -> list[dict[str, Any]]:
+               *, latest_fallback: Any = None, timeline: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """The base's rows: each line with its document's arrival and kind.
 
     ``order`` is the line's position in ``lines``. A line whose document has
     no arrival takes the latest arrival in the deal (rule 4); with no arrival
-    anywhere, ``latest_fallback`` (export.py refuses that deal instead)."""
+    anywhere, ``latest_fallback`` (export.py refuses that deal instead).
+    ``timeline``: the deal's ``crm.stage_timeline`` (``sender.crm_marks``)."""
     docs = [d for d in documents if isinstance(d, dict)]
     times = document_times(docs)
     kinds = {str(d.get("doc_id")): str(d.get("kind") or "").strip().lower() for d in docs}
@@ -163,7 +165,7 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
     annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
                      "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin"),
                      "role": d.get("role"), "filename": d.get("filename"), "sent_at": d.get("sent_at")}
-                    for d in docs])
+                    for d in docs], timeline=timeline)
     return rows
 
 
@@ -174,6 +176,6 @@ def _sort_key(t: Any) -> tuple[int, Any]:
 
 __all__ = ["EVENT_KINDS", "ROLES", "SIDES", "GEOMETRY_KEYS", "TRAINED_KINDS", "is_deal_kit", "document_times",
            "speaker", "build_rows", "table_geometry", "annotate", "sender", "doc_direction", "is_ours",
-           "milestones", "stage_at", "event_kind", "file_kind", "document_kind", "is_email_file", "document_rank",
+           "milestones", "stage_at", "crm_marks", "crm_stage_at", "event_kind", "file_kind", "document_kind", "is_email_file", "document_rank",
            "document_arrivals", "page_position", "page_group", "reading_order", "ALSO_READ_STAGES",
            "read_with_deal"]
