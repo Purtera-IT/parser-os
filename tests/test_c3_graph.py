@@ -299,7 +299,7 @@ def test_cards_train_queried_lines_and_read_their_slot(schema):
     assert m.node_q.weight.grad.abs().sum() > 0             # the pointer to the node trains
 
 
-def _train_tables(schema, steps=900, seed=5):
+def _train_tables(schema, steps=900, seed=5, lr=1e-3):
     """Tiny model, toy deals: rows say nothing about their kind (the same rows
     come as a site list in one deal and a task list in its twin); the email
     naming the attachment, arriving after the table, does. Half the rows are
@@ -333,7 +333,7 @@ def _train_tables(schema, steps=900, seed=5):
                 a["label"] = {"label_type": "physical_site" if site else "task"}
         deals.append(featurize(DealExample.from_dict(blob), schema))
     m = _model(schema, RUNE_GRAPH, seed=seed).train()
-    opt = torch.optim.Adam(m.parameters(), lr=3e-3)
+    opt = torch.optim.Adam(m.parameters(), lr=lr)
     # Line type weighted as run E weighs it (TYPE_WEIGHT=10), plus the graph's
     # own terms; the rest of the table is off so a few hundred tiny steps are enough.
     from dataclasses import fields
@@ -342,12 +342,20 @@ def _train_tables(schema, steps=900, seed=5):
            and not f.name.endswith(("_p", "_cap", "_margin", "_negative"))}
     w = replace(LossWeights(**off), heads=1.0, coherence=0.5, table_kind=0.5, node_pointers=0.5,
                 derived_cards=0.5, head={"col:label_type": 10.0})
-    for s in range(steps):
-        b = deals[s % len(deals)]
-        loss, _ = c3_loss(m, b, w, judgment_sizes=(GROUP,))
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
+    # One thread and a gentler rate: a few hundred tiny steps at 3e-3 landed on
+    # different answers by seed, by thread count and by schema size (every new
+    # head moves the init), so the test checked luck, not the graph.
+    threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        for s in range(steps):
+            b = deals[s % len(deals)]
+            loss, _ = c3_loss(m, b, w, judgment_sizes=(GROUP,))
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+    finally:
+        torch.set_num_threads(threads)
     return m.eval()
 
 
