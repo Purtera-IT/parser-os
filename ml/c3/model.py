@@ -44,6 +44,7 @@ from torch.utils.checkpoint import checkpoint
 
 from .explain import ExplanationBank, ExplanationReader
 from .folds import DescribedHead, DescribedRelation
+from . import graph as cross
 from .lattice import AskedLattice, company_description, space_descriptions
 from .operators import ReasonCompiler, apply_reasons
 from .schema import CAUSAL_RELATIONS, NUMBER, PAIR, RELATION, Schema
@@ -214,15 +215,18 @@ class DealEncoder(nn.Module):
                        + self.nums(inp["numbers"]) + self.time(time)
                        + self.pixels(pix) + self.geometry(geo))
 
-    def forward(self, inp: dict[str, Any], *, hindsight: bool = False) -> torch.Tensor:
+    def forward(self, inp: dict[str, Any], *, hindsight: bool = False,
+                allowed: torch.Tensor | None = None) -> torch.Tensor:
         x = self.embed_atoms(inp)
         n, dev = x.shape[0], x.device
         same_doc = pair_tensor(inp["same_doc"], dev)
         same_sec = pair_tensor(inp["same_section"], dev)
-        # Atoms arrive sorted by (entered_at, order): the foresight mask is
-        # "j entered no later than i", which with ties in order is j <= i.
-        allowed = (torch.ones(n, n, dtype=torch.bool, device=dev) if hindsight
-                   else torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev)))
+        # Atoms arrive sorted by (entered_at, order). Without a mask from the
+        # model (graph.visibility) the foresight mask is the old "j <= i".
+        if hindsight:
+            allowed = torch.ones(n, n, dtype=torch.bool, device=dev)
+        elif allowed is None:
+            allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev))
         for blk in self.blocks:
             if _remember_less(n):
                 x = checkpoint(blk, x, allowed, same_doc, same_sec, use_reentrant=False)
@@ -273,6 +277,10 @@ class C3Output:
     company_slot: torch.Tensor | None = None                           # [N, 1, d] read by conduct only
     citations: torch.Tensor | None = None                              # [N, S, N] where each slot looked
     conduct_x: torch.Tensor | None = None                              # [N, d_head] the company layer's lines
+    #: [N, N] bool, who may read whom in this pass (graph.visibility).
+    allowed: torch.Tensor | None = None
+    #: graph.node_pass: table / document node features, pointers to nodes.
+    nodes: dict[str, torch.Tensor] | None = None
 
     @property
     def q_mean(self) -> torch.Tensor:
@@ -382,6 +390,11 @@ class C3Model(nn.Module):
         self.alpha = nn.Parameter(torch.full((len(companies), m), 0.1))
         self.adversary = nn.Sequential(nn.Linear(c.d, c.d // 2), nn.GELU(),
                                        nn.Linear(c.d // 2, max(2, len(companies))))
+        # Cross-line reasoning flags (graph.py); the defaults read as before.
+        self.graph: dict[str, Any] = dict(cross.GRAPH_DEFAULTS)
+
+    def enable_graph(self, flags: dict[str, Any] | None) -> dict[str, Any]:
+        return cross.enable_graph(self, flags)
 
     # ------------------------------------------------------------ schema text
     def train(self, mode: bool = True):
@@ -453,8 +466,12 @@ class C3Model(nn.Module):
                 bank: ExplanationBank | None = None,
                 bank_emb: torch.Tensor | None = None) -> C3Output:
         c = self.cfg
-        h = self.encoder(inp)
-        n = h.shape[0]
+        g = self.graph
+        n = len(inp["texts"])
+        cut = (cross.training_cut(inp["times"], g["cut_dropout"])
+               if self.training and g["mask"] == "view" else None)
+        allowed = cross.visibility(inp["times"], n, self.encoder.lift.weight.device, g["mask"], cut)
+        h = self.encoder(inp, allowed=allowed)
         z_c = self.p_c(h)
         q = self.q_head(h).view(n, c.q_components, 2 * c.d_q + 1)
         q_mu, q_logvar, q_logit = q[..., :c.d_q], q[..., c.d_q:2 * c.d_q].clamp(-6, 4), q[..., -1]
@@ -464,11 +481,11 @@ class C3Model(nn.Module):
         residual = self.res_down(z_c)
         r = self.rationale(torch.cat([z_c, q_mean, ctx], -1)) + self.res_up(residual)
         out = C3Output(h=h, z_c=z_c, q_mu=q_mu, q_logvar=q_logvar, q_logit=q_logit,
-                       r=r, residual=residual)
+                       r=r, residual=residual, allowed=allowed)
 
         desc = desc if desc is not None else self.describe()
         if self.lattice is not None:
-            self._ask(out, inp, desc, company)
+            self._ask(out, inp, desc, company, allowed)
         if bank_emb is None and bank is not None and len(bank):
             bank_emb = self.aux_text([e.text for e in bank.items])
 
@@ -494,23 +511,59 @@ class C3Model(nn.Module):
                                                                  device=h.device), float("-inf"))
                 out.link_none[o.field] = z
         out.governs = self._box_containment(r)
-        proposed = dict(out.relations)
-        if out.governs is not None:
-            proposed["governs"] = out.governs
-        r = self._apply_links(r, proposed, out.link_none)
+        off = allowed & ~torch.eye(n, dtype=torch.bool, device=allowed.device)
+        if g["pointer_edge"]:
+            # The trained pointer head is an edge: "this line's decision rests on j".
+            out.pointers = self._pointers(r, allowed)
+        if g["hop_both"]:
+            r = self._graph_hops(out, r, inp, allowed, off)
+        else:
+            proposed = {k: v for k, v in out.relations.items()
+                        if g["hop_near_miss"] or k != "near_miss"}
+            if out.governs is not None:
+                proposed["governs"] = out.governs
+            r = self._apply_links(r, proposed, out.link_none, off)
+            if g["nodes"]:
+                r = cross.node_pass(self, out, r, inp, allowed)
+        if g["hop_to_h"]:
+            # The free heads read h: the hop reaches the type decision there too.
+            out.h = out.h + self.link_mix_h(r - out.r).to(out.h.dtype)
         out.r = r
         self.universal_heads(out, r, q_mean, desc, bank, bank_emb)
         out.absence = self.absence(torch.cat([q_mean, r], -1))
         out.changes = self.changes_head(torch.cat([q_mean, r], -1)).view(n, len(CHANGE_SLOTS), 3)
         out.company_logits = self.adversary(GradReverse.apply(z_c, adv_lambda))
-        out.pointers = self._pointers(r)
+        if not g["pointer_edge"]:
+            out.pointers = self._pointers(r, allowed)
 
         if company is not None:
             self.conduct(out, company, q_mean, desc, bank, bank_emb)
         return out
 
+    def _graph_hops(self, out: C3Output, r: torch.Tensor, inp: dict[str, Any],
+                    allowed: torch.Tensor, off: torch.Tensor) -> torch.Tensor:
+        """graph.py's hop: every relation both ways, governs child -> parent
+        with a "no parent" column, the pointer edge; then the nodes; then the
+        same link distributions read again on the updated lines."""
+        g = self.graph
+        proposed = {k: v for k, v in out.relations.items() if g["hop_near_miss"] or k != "near_miss"}
+        nones = dict(out.link_none)
+        if out.governs is not None:
+            proposed["governs"] = out.governs.transpose(0, 1)   # row i = child, reads parent j
+        if out.pointers is not None:
+            proposed["rests_on"] = out.pointers[:, :-1]
+            nones["rests_on"] = out.pointers[:, -1]
+        weights = cross.link_weights(proposed, nones, off)
+        r = cross.hop(self, r, weights, off)
+        if g["nodes"]:
+            r = cross.node_pass(self, out, r, inp, allowed)
+        if g["hop2"]:
+            r = cross.hop(self, r, weights, off)
+        return r
+
     def _apply_links(self, r: torch.Tensor, relations: dict[str, torch.Tensor],
-                     link_none: dict[str, torch.Tensor] | None = None) -> torch.Tensor:
+                     link_none: dict[str, torch.Tensor] | None = None,
+                     allowed: torch.Tensor | None = None) -> torch.Tensor:
         """Each line reads earlier lines in proportion to the links it proposed.
 
         An abstain logit takes the mass of "do not link," and that mass is not
@@ -520,7 +573,8 @@ class C3Model(nn.Module):
         if not relations:
             return r
         n = r.shape[0]
-        allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=r.device), diagonal=-1)
+        if allowed is None:
+            allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=r.device), diagonal=-1)
         link_none = link_none or {}
         msgs = []
         for name, scores in relations.items():
@@ -653,6 +707,11 @@ class C3Model(nn.Module):
             raise ValueError("One source query is required per judgment subject")
         if o.universal:
             x, score, proj, head = out.r, self.pool_score, self.pool_in, self.judgment_head
+            slot = getattr(self, "pool_slot", None)
+            if self.graph.get("card_slots") and slot is not None and out.slots is not None \
+                    and o.space in self.lattice.spaces:
+                # The card reads its own question's asked slot beside r.
+                x = x + slot(out.slots[:, self.lattice.spaces.index(o.space)]).to(x.dtype)
         else:
             if out.conduct_x is None:
                 raise ValueError(f"{key} is a company question: run the model with company=")
@@ -704,12 +763,13 @@ class C3Model(nn.Module):
         return logits[0]
 
     def _ask(self, out: C3Output, inp: dict[str, Any], desc: dict[str, Any],
-             company: str | None) -> None:
+             company: str | None, allowed: torch.Tensor | None = None) -> None:
         """Run the asked layers on h (lattice.py)."""
         n, dev = out.h.shape[0], out.h.device
         sd = space_descriptions(self.schema, desc)
         space_desc = torch.stack([sd[s] for s in self.lattice.spaces])
-        allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev))
+        if allowed is None:
+            allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev))
         same_doc = pair_tensor(inp["same_doc"], dev)
         same_sec = pair_tensor(inp["same_section"], dev)
         cdesc = company_description(self.schema, desc) if company is not None else None
@@ -745,12 +805,14 @@ class C3Model(nn.Module):
         empty = torch.tensor([not g for g in groups], device=dev).unsqueeze(-1)
         return torch.where(empty, self.ctx_null.expand(n, -1), emb)
 
-    def _pointers(self, r: torch.Tensor) -> torch.Tensor:
-        """log p(line i's reason rests on earlier line j), plus a last column
-        for "on the line itself". Foresight: only j < i."""
+    def _pointers(self, r: torch.Tensor, allowed: torch.Tensor | None = None) -> torch.Tensor:
+        """log p(line i's reason rests on line j), plus a last column for "on
+        the line itself". Only lines i may read (``allowed``; by default the
+        old foresight, j < i), never i itself."""
         n = r.shape[0]
         s = self.cite_q(r) @ self.cite_k(r).T / self.cite_q.out_features ** 0.5
-        later = torch.triu(torch.ones(n, n, dtype=torch.bool, device=r.device))
+        later = (torch.triu(torch.ones(n, n, dtype=torch.bool, device=r.device)) if allowed is None
+                 else ~allowed | torch.eye(n, dtype=torch.bool, device=r.device))
         s = s.masked_fill(later, float("-inf"))
         return torch.cat([s, self.cite_self.expand(n, 1)], -1).log_softmax(-1)
 

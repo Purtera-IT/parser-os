@@ -162,7 +162,7 @@ def slim_state(state: dict[str, torch.Tensor], model: C3Model) -> tuple[dict[str
 
 def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha256: str,
                     torch_version: str | None = None, slim: bool = False,
-                    shape_sha256: str | None = None) -> None:
+                    shape_sha256: str | None = None, max_atoms: int | None = None) -> None:
     state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
     body: dict[str, Any] = {}
     if slim:
@@ -180,6 +180,16 @@ def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha25
         payload["shape_sha256"] = shape_sha256
     if body:
         payload["pretrained_body"] = body
+    graph = getattr(model, "graph", None)
+    from .graph import GRAPH_DEFAULTS  # noqa: PLC0415
+
+    if graph and dict(graph) != GRAPH_DEFAULTS:
+        # The cross-line flags (graph.py): load_checkpoint builds the same
+        # graph, so serve reads with the mask and hops the run trained with.
+        payload["graph"] = dict(graph)
+    if max_atoms:
+        # The training window, for the record (the pick scores at serve's window).
+        payload["max_atoms"] = int(max_atoms)
     if any(isinstance(v, str) and len(v) > 80 for v in payload.values()):
         raise ValueError("Checkpoint metadata must stay free of source text")
     torch.save(payload, path)
@@ -213,6 +223,9 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
             raise ValueError("Checkpoint schema differs in more than text: the opportunity keys, their order "
                              "or an answer-value list changed")
     state = payload["state"]
+    if payload.get("graph") and hasattr(model, "enable_graph"):
+        # Built before the weights load, as the free heads are below.
+        model.enable_graph(payload["graph"])
     # The EMA hindsight copy (teacher, teacher_proj) is built lazily during
     # training; a model that has not built it (predict) reads without it.
     for name in ("teacher", "teacher_proj"):
@@ -240,6 +253,14 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
         raise RuntimeError(f"Checkpoint does not match the model: missing {missing[:5]} "
                            f"unexpected {unexpected[:5]}")
     return int(payload["step"])
+
+
+def checkpoint_meta(path: str | Path) -> dict[str, Any]:
+    """A checkpoint's metadata without its weights' meaning: step, digests,
+    graph flags, training window."""
+    with torch.serialization.safe_globals([torch.torch_version.TorchVersion]):
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+    return {k: v for k, v in payload.items() if k != "state"}
 
 
 _DIGESTS_AT = """
