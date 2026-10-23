@@ -61,12 +61,12 @@
 #               a file of assistant drafts only (runE/train_estimator) trains
 #               only when listed here; otherwise it is left out
 #   INIT_SCHEMA_REF  the commit INIT was trained on, when INIT predates shape
-#               digests (loop.py --init-schema-ref). The init allows text changes
-#               and the heads added since run C (NEW_HEADS)
-#   NEW_HEADS   heads INIT does not have, comma separated (loop.py --allow-new-heads).
-#               Default: jdg:hours:per,jdg:hours:qty and the SOW / site heads
-#               read:visit_count, read:work_action, read:sow_element,
-#               read:sow_transform, jdg:sow_slot
+#               digests (loop.py --init-schema-ref). Default: INIT_SHAPE, the saved
+#               run C schema (ref 0b6efce). The init allows text changes and the
+#               heads added since (NEW_HEADS)
+#   NEW_HEADS   heads INIT does not have (loop.py --allow-new-heads). Default: derived
+#               from the schema diff (ml/c3/new_heads.py, INIT_SCHEMA_REF or INIT_SHAPE);
+#               set by hand it must equal the derived list
 #   TEACH=0     (default) no bind/teach and the 7B is never loaded; TEACH=1 turns
 #               the gated teach stage back on
 #   TEACHER     saved teacher (default $C3/runA.pt.teacher)
@@ -316,12 +316,29 @@ args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_fil
       --free-head all --head-weight col:label_type="$TYPE_WEIGHT"
       "${loss_args[@]}" ${ramp_args[@]+"${ramp_args[@]}"}
       --keep-checkpoints "$KEEP" --pick-floors "$FLOORS")
-new_heads=${NEW_HEADS:-jdg:hours:per,jdg:hours:qty,read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot,read:feeds_decision,read:work_window,read:access_need,read:job_detail,read:run_length,read:price_basis,read:party_role,deal:site_count,jdg:services,jdg:end_customer,jdg:delivery_model,jdg:exclusion_set}
+# The heads INIT does not have: derived at launch from the schema diff against
+# INIT's schema (ml/c3/new_heads.py): INIT_SCHEMA_REF when set, else the saved
+# run C shape (INIT_SHAPE, ml/c3/runE/init_shape.json, ref 0b6efce). Fails when
+# a difference is not a head addition, or INIT was not saved under that schema.
+# NEW_HEADS set by hand is checked against the derived list.
+INIT_SHAPE=${INIT_SHAPE:-$REPO/ml/c3/runE/init_shape.json}
+new_heads=""
+if [[ "$TINY" != 1 ]]; then
+  if [[ -n "${INIT_SCHEMA_REF:-}" ]]; then shape_src=(--ref "$INIT_SCHEMA_REF"); else shape_src=(--shape "$INIT_SHAPE"); fi
+  derived=$(python -m ml.c3.new_heads "${shape_src[@]}" --checkpoint "$INIT") || {
+    echo "NO-GO: the schema is not INIT's plus new heads (ml/c3/new_heads.py)" >&2; exit 1; }
+  if [[ -n "${NEW_HEADS:-}" ]]; then
+    a=$(tr ',' '\n' <<< "$NEW_HEADS" | sort | tr '\n' ' '); b=$(tr ',' '\n' <<< "$derived" | sort | tr '\n' ' ')
+    [[ "$a" == "$b" ]] || { echo "NEW_HEADS ($NEW_HEADS) is not the derived list ($derived)" >&2; exit 1; }
+  fi
+  new_heads=$derived
+  echo "new heads since INIT: $new_heads"
+fi
 if [[ "$TINY" == 1 ]]; then
   args+=(--tiny)
 else
   args+=(--init-from "$INIT" --allow-text-change --allow-new-heads "$new_heads"
-         ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"}
+         --init-schema-ref "${INIT_SCHEMA_REF:-$INIT_SHAPE}"
          --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}")
 fi
 stages="lines=${LINES:-12},links=${LINKS:-6},cards=${CARDS:-6},numbers=${NUMBERS:-2},deal=0,open_links=${OPEN_LINKS:-4}"
@@ -365,7 +382,7 @@ if [[ "${SMOKE:-0}" == 1 ]]; then
   if [[ "$TINY" == 1 ]]; then model_args=(--tiny)
   else
     model_args=(--allow-new-heads "$new_heads" --train-encoder-layers 2
-                ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"})
+                --init-schema-ref "${INIT_SCHEMA_REF:-$INIT_SHAPE}")
   fi
   if [[ "${SIGNAL_AUDIT:-1}" == 1 ]]; then
     # Every labeled signal and every kind of reasoning text must reach the

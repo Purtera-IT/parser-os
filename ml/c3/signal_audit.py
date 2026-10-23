@@ -379,13 +379,14 @@ def batch_diff(a: Batch, b: Batch) -> list[str]:
 #: LossWeights fields that are settings of a term, not a term's weight.
 NOT_A_TERM = frozenset({"why_hard_negative", "why_swap_cap", "keyword_dropout_p",
                         "keyword_dropout_cap", "near_miss_margin", "link_why_hard_negative",
+                        "described_alone_p", "card_cap", "free_h_out", "company_r_grad",
                         "space", "head"})
 #: Terms that need a bank or a teacher this audit does not build.
 NEVER_ON = frozenset({"clause_use"})
 
 
 def _term_functions() -> dict[str, Callable]:
-    from . import consequence, link_why, losses, why_carry  # noqa: PLC0415
+    from . import consequence, link_why, losses, why2, why_carry  # noqa: PLC0415
 
     def get(mod, name):
         return getattr(mod, name, None)
@@ -410,6 +411,10 @@ def _term_functions() -> dict[str, Callable]:
         "keyword_dropout": get(why_carry, "keyword_dropout_loss"),
         "link_why_contrast": get(link_why, "link_why_contrast_loss"),
         "link_why_alone": get(link_why, "link_why_alone_loss"),
+        "described_alone": get(why2, "described_alone_loss"), "card_alone": get(why2, "card_alone_loss"),
+        "card_contrast": get(why2, "card_contrast_loss"), "co_why_contrast": get(why2, "co_why_contrast_loss"),
+        "co_why_alone": get(why2, "co_why_alone_loss"), "number_why_alone": get(why2, "number_why_alone_loss"),
+        "judgment_why_alone": get(why2, "judgment_why_alone_loss"),
     }
     return {k: v for k, v in table.items() if v is not None}
 
@@ -464,7 +469,8 @@ def probe_weights(union: LossWeights) -> LossWeights:
 
 def weights_from_script(path: str) -> tuple[dict[str, float], dict[str, float], str]:
     """The loss table, the head weights and the stages of a pod run script
-    (runE.sh): ``K=${K:-default}`` defaults, overridden by the environment."""
+    (runE.sh): ``K=${K:-default}`` defaults, overridden by the environment.
+    The table is every ``weights=( ... )`` block and the why2 one (``why2=( ... )``)."""
     text = Path(path).read_text(encoding="utf-8")
     defaults = {m.group(1): m.group(2) for m in re.finditer(r"\b([A-Z_]+)=\$\{\1:-([^}]*)\}", text)}
 
@@ -475,11 +481,11 @@ def weights_from_script(path: str) -> tuple[dict[str, float], dict[str, float], 
             return os.environ.get(name, fallback)
         return re.sub(r"\$\{(\w+)(?::-([^}]*))?\}|\$(\w+)", sub, v.strip().strip('"'))
 
-    block = re.search(r"^weights=\((.*?)^\)", text, re.S | re.M)
-    if not block:
+    blocks = re.findall(r"^(?:weights|why2)=\((.*?)^\)", text, re.S | re.M)
+    if not re.search(r"^weights=\(", text, re.M):
         raise SystemExit(f"{path}: no weights=( ... ) loss table")
     loss = {}
-    for line in block.group(1).splitlines():
+    for line in "\n".join(blocks).splitlines():
         for tok in line.split("#", 1)[0].split():
             k, _, v = tok.partition("=")
             if k and v:

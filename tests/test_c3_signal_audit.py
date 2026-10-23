@@ -86,11 +86,14 @@ def test_audit_statuses_and_gate(tmp_path):
 def test_weights_from_run_script():
     loss, heads, stages = sa.weights_from_script(str(sa.REPO / "ml/c3/pod/runE.sh"))
     assert loss["why_contrast"] == 0.3 and loss["why_align"] == 0.0 and loss["link_why_contrast"] == 0.3
-    assert heads == {"col:label_type": 10.0}
+    assert heads == {"col:label_type": 5.0}
+    # The why2 block is part of the table; its knobs are not terms.
+    assert loss["card_alone"] == 0.2 and loss["co_why_contrast"] == 0.2 and loss["company_r_grad"] == 0.1
     assert stages.startswith("lines=12,links=6,cards=6")
     union, first = sa.run_weights(loss, heads, stages)
     assert union.judgments == 1.0 and first["judgments"] == "cards" and first["relations"] == "links"
     assert union.why_align == 0.0 and union.deal_numbers == 0.2
+    assert union.card_contrast == 0.2 and "free_h_out" not in first and "card_cap" not in first
 
 
 def test_bypass_and_portability():

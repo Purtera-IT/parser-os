@@ -267,7 +267,15 @@ def schema_digests_at(ref: str, repo: str | Path | None = None) -> tuple[str, st
     """(schema digest, shape digest) of the schema at git commit ``ref``: its own
     registries and its own schema code, read from a scratch copy of that commit
     in a separate interpreter. A pre-shape checkpoint is matched only when the
-    first equals the digest it was saved under."""
+    first equals the digest it was saved under.
+
+    ``ref`` may instead be a saved shape file (``new_heads.py --write-shape``,
+    ml/c3/runE/init_shape.json): its two digests, for a copy with no git history."""
+    if str(ref).endswith(".json") and Path(ref).is_file():
+        import json  # noqa: PLC0415
+
+        blob = json.loads(Path(ref).read_text(encoding="utf-8"))
+        return str(blob["schema_sha256"]), str(blob["shape_sha256"])
     import subprocess
     import sys
     import tarfile

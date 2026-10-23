@@ -230,7 +230,12 @@ def test_a_checkpoint_from_before_the_heads_loads_with_allow_new_heads(schema, t
 
 
 def test_run_e_script_allows_the_heads():
+    # runE.sh derives NEW_HEADS from the schema diff against INIT's (ml/c3/new_heads.py).
+    from ml.c3 import new_heads
+
     text = (REPO / "ml/c3/pod/runE.sh").read_text(encoding="utf-8")
-    m = re.search(r'NEW_HEADS:-([^}"\s]*)\}', text)
-    assert m and set(NEW.split(",")) <= set(m.group(1).split(","))
+    assert "python -m ml.c3.new_heads" in text
+    blob = json.loads((REPO / "ml/c3/runE/init_shape.json").read_text())
+    added = new_heads.derive(load_schema(), [(k, v) for k, v in blob["shape"]])
+    assert set(NEW.split(",")) <= set(added)
     assert json.loads((REPO / "ml/c3/judgment_heads.json").read_text())["heads"]["sow_slot"]["size"] == "deal"
