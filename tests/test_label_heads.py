@@ -28,9 +28,12 @@ LABELED_COLUMNS = {"label_type", "about", "wants", "supplier", "entity_keys", "h
                    "note", "rejected", "weight_tier"}
 
 #: Judgment surfaces the page has that parser-os HEAD_REGISTRY does not: the
-#: suppression card is aliased onto `admission`, and the rule card feeds the
-#: SemanticRule trainer.
-PAGE_ONLY_JUDGMENTS = {"rule", "suppression"}
+#: suppression card is aliased onto `admission`, the rule card feeds the
+#: SemanticRule trainer, and the SOW slot card (where a SOW section's slot gets
+#: its content) and the deal cards that retire c3_sow rules (services, end_customer,
+#: delivery_model, exclusion_set) are C3 training cards the PM correction loop does not take.
+PAGE_ONLY_JUDGMENTS = {"rule", "suppression", "sow_slot", "services", "end_customer", "delivery_model",
+                       "exclusion_set"}
 
 
 def _all(field: str) -> list[str]:

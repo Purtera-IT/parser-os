@@ -21,10 +21,10 @@
     },
     "site_role": {
       "size": "line", "subject": "Where the work happens",
-      "question": "A place the deal names. Is it a place where the work happens?",
+      "question": "A place the deal names. Does work happen there? A site later removed from the job still answers as it was planned.",
       "answers": {
-        "job_site": "A place where the work is done.",
-        "vendor_or_billing_address": "An office, vendor or billing address; no work happens there."
+        "job_site": "Technicians go there to do the work, now or as planned before a removal.",
+        "vendor_or_billing_address": "No work happens there: a head office, billing or remit-to address, a vendor's or partner's office, a ship-from warehouse."
       }
     },
     "geo_mention": {
@@ -62,10 +62,10 @@
     },
     "task_tier": {
       "size": "line", "subject": "Line or step",
-      "question": "A task line. Is it a whole line of work, or a step inside one?",
+      "question": "A task line. Is it priced as a line of its own on the quote, or is it a step inside a priced line? Decide by the deal's priced lines, not by the wording or the indentation.",
       "answers": {
-        "parent": "A line of work that other steps sit under.",
-        "child": "A step inside a larger line of work."
+        "parent": "A price attaches to this task by itself.",
+        "child": "No price of its own: a step inside a priced line, or a seller step outside the quote."
       }
     },
     "image": {
@@ -117,10 +117,12 @@
     },
     "billing_type": {
       "size": "deal", "subject": "How the job is billed",
-      "question": "How is this job billed?",
+      "question": "How does the signed or latest scope of work bill this job?",
       "answers": {
-        "fixed": "One fixed price.", "t_and_m": "Time and materials: billed for hours and parts used.",
-        "milestone": "In payments tied to milestones.", "per_site": "A unit price times the number of sites."
+        "fixed": "One price for the stated scope, whatever the hours turn out to be.",
+        "t_and_m": "Hours, days or units times a rate, so every total is an estimate; a per-day rate times sites and days is still time and materials.",
+        "milestone": "Payments tied to stages of the work: a deposit, a mid-point and a completion payment.",
+        "per_site": "A fixed price per site, times the number of sites."
       }
     },
     "hardware_scope": {
@@ -150,6 +152,48 @@
       "size": "deal", "subject": "Project tier",
       "question": "Which of the company's project tiers is this job?",
       "answers": {"1": "Tier 1.", "2": "Tier 2.", "3": "Tier 3."}
+    },
+    "services": {
+      "size": "deal", "multi": true, "subject": "Services the job includes",
+      "question": "The deal as a whole. Which kinds of field service does the job include, all of them, not only the main one? Decide from what the customer and partner ask for and what the scope of work carries: a camera install that also runs the camera cable is security_camera and low_voltage_cabling; a side task that is part of another service (mounting a bracket for a display) is not a service of its own.",
+      "answers": {"audio_visual": "Installing displays, projectors, video-conferencing systems, kiosks or speakers and making them work; any cabling is only there to serve them.", "low_voltage_cabling": "Running, terminating, labelling and testing data or voice cable (copper or fibre), with the racks, cabinets, patch panels and backboards that hold it.", "wireless": "Wireless networks: surveying, installing or moving access points and the runs that feed them.", "staff_augmentation": "Technicians supplied by the day or the hour for recurring or on-call on-site support under the customer's direction, not a defined install.", "security_camera": "Installing and connecting security cameras, with their mounts, power and runs.", "camera_vms_operations": "Operating or maintaining a video system after the install: configuration, health checks, footage requests.", "security_access": "Access control: card readers, door hardware, controllers and intercom entry.", "fire_safety": "Fire alarm, detection or suppression work.", "paging_mass_notification": "Paging, overhead speakers and mass-notification systems.", "das": "A distributed antenna system or cellular signal boosting inside a building.", "electrical": "Line-voltage electrical work: circuits, outlets, panels.", "telecom": "Telephony and carrier work: phone systems, handsets, voice migrations, circuits and demarcation points.", "network_maintenance": "Ongoing upkeep of an existing network: switch and router changes, troubleshooting, scheduled maintenance.", "building_management_systems": "Building controls: HVAC, lighting or sensor controllers and their networks.", "datacenter": "Work inside a data centre: build-outs, moves, structured power and cooling for computer rooms.", "rack_and_stack": "Mounting servers and network gear in racks and cabling them, with no wider install.", "hardware": "Supplying equipment is the main thing sold; labour is incidental.", "imac": "Install, move, add or change of end-user and point-of-sale devices: computers, Chromebooks, registers, printers, peripherals, including removing and packing old ones.", "itad": "Retiring IT assets: decommission, data wipe, recycling or resale.", "data_migration": "Moving data or systems from one platform to another.", "msp": "A standing managed-services contract: remote monitoring and support for a monthly fee.", "alm": "Asset lifecycle management: tagging, tracking and refresh logistics for a fleet of devices.", "audit": "The deliverable is a survey, inventory or assessment of what is on site, not an install.", "professional_services": "Design, consulting or project management with no field install.", "other": "A field service none of the others names."}
+    },
+    "end_customer": {
+      "size": "deal", "subject": "Who the work is for",
+      "question": "The deal as a whole; the card's query asks it. Is the company the work is ultimately for named, and where? When a reseller or partner buys the work, the end customer is the company at whose sites it happens; when the buyer is that company, the buyer is the end customer. The card links to the line that names it.",
+      "answers": {
+        "named": "A line names the company the work is ultimately for; the card links to it.",
+        "not_named": "No line names the company the work is for: only the buyer, a brand or a site is given, so it has to be asked."
+      }
+    },
+    "delivery_model": {
+      "size": "deal", "subject": "What shape the delivery takes",
+      "question": "The deal as a whole. What does the field work mainly consist of: building something out, configuring what is already in place, or surveying and designing before anything is built? Decide from what is asked and what the scope carries, not from the equipment brand.",
+      "answers": {
+        "install_buildout": "Equipment or cable is put in place: mounting, running, terminating, racking, with any configuration that comes with it.",
+        "config_only": "Everything is already physically installed; the work is configuration, programming or bring-up only.",
+        "survey_design": "The work is a survey, assessment or design before any build: walks, measurements, RF readings, inventories, drawings.",
+        "service_support": "Ongoing or on-call hands on site: break-fix, smart hands, maintenance visits, with no defined build."
+      }
+    },
+    "exclusion_set": {
+      "size": "deal", "subject": "A standard exclusion for this job",
+      "question": "The deal as a whole; the card's query names one exclusion jobs of this trade commonly carry (electrical work, lift rental, core drilling, wall repair, network configuration, licensing, transport, disposal, data destruction, permits, equipment supply). Does this job leave it out, take it on, or not touch it at all?",
+      "answers": {
+        "excluded": "The job leaves it out: it is the customer's or someone else's, or not done at all, and the scope of work says so or the customer says so.",
+        "included": "The job takes it on: the provider does or supplies it as part of the work.",
+        "not_applicable": "The job's work never comes near it, so there is nothing to include or exclude."
+      }
+    },
+    "sow_slot": {
+      "size": "deal", "subject": "Where the SOW slot's content comes from",
+      "question": "One slot of one section of the statement of work this job will need; the card's query names the section and the kind of fact the slot holds (a start date, a site contact, the site list, a price, the work steps). Before the SOW is written, where will that slot's content come from? Judge from what the customer and partner have said so far, not from how any document is laid out.",
+      "answers": {
+        "template": "The section's standard wording covers it; no fact of this job is needed.",
+        "filled": "A line the customer or partner wrote before the SOW states the fact the slot needs; the card links to that line.",
+        "house_default": "The provider fills it from its own standing values (its own contact, document version, standard rates, uplifts or payment terms), not from anything the customer said.",
+        "missing_chase": "The slot needs a fact of this job that no earlier line states, so someone has to ask for it before the SOW can be finished."
+      }
     },
     "suppression": {
       "alias": {"target": "col:admission", "map": {"should_have_been_kept": "keep", "correctly_dropped": "drop"}}

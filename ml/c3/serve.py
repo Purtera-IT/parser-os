@@ -73,9 +73,15 @@ def _load() -> tuple[Any, Any, str]:
     model.eval()
     refit = os.environ.get("SOWSMITH_C3_QUESTION_REFIT", "").strip()
     if refit and os.path.exists(refit):
-        from .question_fit import load_refit
+        from .question_fit import load_refit, stale_refit
 
-        model.question_refit = load_refit(refit, device)
+        why = stale_refit(refit, path)
+        if why:
+            # An overlay fitted on another base reads that base's features:
+            # serve the head alone rather than a correction for other numbers.
+            log.error("question refit not used: %s", why)
+        else:
+            model.question_refit = load_refit(refit, device)
     # Judgment add-ons (judgment_fit.py, e.g. jdg:document_job) on the frozen heads.
     jrefit = os.environ.get("SOWSMITH_C3_JUDGMENT_REFIT", "").strip()
     if jrefit and os.path.exists(jrefit):
@@ -136,7 +142,8 @@ class Base:
 
     def read(self, payload: dict[str, Any], budget_s: float, *,
              line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = (),
-             full: bool = False, questions: tuple[str, ...] = ()) -> dict[str, Any]:
+             full: bool = False, questions: tuple[str, ...] = (),
+             table_heads: tuple[str, ...] = ()) -> dict[str, Any]:
         """Line types always; with ``line_heads``, those readings of every
         line under ``reads``; with ``document_heads``, each document's group
         judgments under ``documents``. One pass of the model answers all of
@@ -157,6 +164,8 @@ class Base:
             kwargs["document_heads"] = tuple(document_heads)
         if questions:
             kwargs["questions"] = tuple(questions)
+        if table_heads:
+            kwargs["table_heads"] = tuple(table_heads)
         with self._lock:
             started = time.monotonic()
             # ``full``: the links between lines and the whole-deal answers
@@ -176,6 +185,12 @@ class Base:
                 r = got_all.get(head)
                 if r and r.get("answer") is not None:
                     reads.setdefault(key, {})[head] = [str(r["answer"]), round(float(r.get("p") or 0.0), 4)]
+                elif r and isinstance(r.get("answers"), list):
+                    # A set-valued head (read:feeds_decision): the answers over 0.5 and every answer's p.
+                    opp = schema.by_key().get(head)
+                    names = [a.value for a in opp.answers] if opp is not None else []
+                    reads.setdefault(key, {})[head] = [[str(a) for a in r["answers"]],
+                                                       {n: round(float(p), 4) for n, p in zip(names, r.get("p") or [])}]
         out: dict[str, Any] = {"types": types, "read_ms": read_ms, "lines": len(deal.atoms)}
         if line_heads:
             out["reads"] = reads
@@ -188,6 +203,13 @@ class Base:
             out["documents"] = {
                 d: {k: [str(v["answer"]), round(float(v.get("p") or 0.0), 4)] for k, v in heads.items()}
                 for d, heads in (doc.get("documents") or {}).items()}
+        if table_heads:
+            # Per table (doc_id||section): the roster / sheet verdicts, the
+            # node's row type and the line count (predict._judge_tables).
+            out["tables"] = {
+                t: {k: ([str(v["answer"]), round(float(v.get("p") or 0.0), 4)] if isinstance(v, dict) else v)
+                    for k, v in heads.items()}
+                for t, heads in (doc.get("tables") or {}).items()}
         if questions:
             out["questions"] = doc.get("questions") or []
             # The bar the refit was chosen at on held-out deals (question_fit),
@@ -250,6 +272,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 deal = body["deal"]
                 line_heads = _asked(body.get("line_heads"))
                 document_heads = _asked(body.get("document_heads"))
+                table_heads = _asked(body.get("table_heads"))
                 full = bool(body.get("full"))
                 questions = tuple(str(q)[:500] for q in (body.get("questions") or [])[:400])
             except (ValueError, KeyError, TypeError):
@@ -262,7 +285,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
             try:
                 out = base.read(deal, max(1.0, budget - (time.monotonic() - started)),
                                 line_heads=line_heads, document_heads=document_heads, full=full,
-                                questions=questions)
+                                questions=questions, table_heads=table_heads)
             except TimeoutError as exc:
                 log.warning("read over budget: %s", exc)
                 return self._send(504, {"error": "over budget"})

@@ -161,7 +161,8 @@ def slim_state(state: dict[str, torch.Tensor], model: C3Model) -> tuple[dict[str
 
 
 def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha256: str,
-                    torch_version: str | None = None, slim: bool = False) -> None:
+                    torch_version: str | None = None, slim: bool = False,
+                    shape_sha256: str | None = None, max_atoms: int | None = None) -> None:
     state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
     body: dict[str, Any] = {}
     if slim:
@@ -173,20 +174,58 @@ def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha25
         "torch": str(torch_version or torch.__version__),
         "state": state,
     }
+    if shape_sha256:
+        # The schema's (key, answer values) digest: lets a later run whose
+        # registries changed only text start from this one (allow_text_change).
+        payload["shape_sha256"] = shape_sha256
     if body:
         payload["pretrained_body"] = body
+    graph = getattr(model, "graph", None)
+    from .graph import GRAPH_DEFAULTS  # noqa: PLC0415
+
+    if graph and dict(graph) != GRAPH_DEFAULTS:
+        # The cross-line flags (graph.py): load_checkpoint builds the same
+        # graph, so serve reads with the mask and hops the run trained with.
+        payload["graph"] = dict(graph)
+    if max_atoms:
+        # The training window, for the record (the pick scores at serve's window).
+        payload["max_atoms"] = int(max_atoms)
     if any(isinstance(v, str) and len(v) > 80 for v in payload.values()):
         raise ValueError("Checkpoint metadata must stay free of source text")
     torch.save(payload, path)
 
 
-def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str) -> int:
+def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
+                    allow_text_change: bool = False, shape_sha256: str | None = None,
+                    known_shapes: dict[str, str] | None = None) -> int:
+    """Load weights saved under the same schema digest.
+
+    ``allow_text_change`` (``loop.py --init-from --allow-text-change`` only;
+    never serving) accepts a different schema digest when the opportunity keys,
+    their order and every answer-value list are identical, so only description
+    texts differ: ``shape_sha256`` is this schema's ``schema.shape_digest`` and
+    must equal the checkpoint's. A checkpoint saved before shape digests were
+    stored is matched through ``known_shapes`` (its schema digest -> shape
+    digest, from ``schema_digests_at`` on the commit it was trained on)."""
     # Checkpoints saved before the str() above carry a TorchVersion.
     with torch.serialization.safe_globals([torch.torch_version.TorchVersion]):
         payload = torch.load(path, map_location="cpu", weights_only=True)
     if payload.get("schema_sha256") != schema_sha256:
-        raise ValueError("Checkpoint schema hash does not match this model")
+        if not allow_text_change:
+            raise ValueError("Checkpoint schema hash does not match this model")
+        if not shape_sha256:
+            raise ValueError("allow_text_change needs this schema's shape digest")
+        stored = payload.get("shape_sha256") or (known_shapes or {}).get(str(payload.get("schema_sha256")))
+        if not stored:
+            raise ValueError("Checkpoint schema hash does not match this model, and the checkpoint carries "
+                             "no shape digest: name the commit it was trained on (--init-schema-ref)")
+        if stored != shape_sha256:
+            raise ValueError("Checkpoint schema differs in more than text: the opportunity keys, their order "
+                             "or an answer-value list changed")
     state = payload["state"]
+    if payload.get("graph") and hasattr(model, "enable_graph"):
+        # Built before the weights load, as the free heads are below.
+        model.enable_graph(payload["graph"])
     # The EMA hindsight copy (teacher, teacher_proj) is built lazily during
     # training; a model that has not built it (predict) reads without it.
     for name in ("teacher", "teacher_proj"):
@@ -214,6 +253,51 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str) -> 
         raise RuntimeError(f"Checkpoint does not match the model: missing {missing[:5]} "
                            f"unexpected {unexpected[:5]}")
     return int(payload["step"])
+
+
+def checkpoint_meta(path: str | Path) -> dict[str, Any]:
+    """A checkpoint's metadata without its weights' meaning: step, digests,
+    graph flags, training window."""
+    with torch.serialization.safe_globals([torch.torch_version.TorchVersion]):
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+    return {k: v for k, v in payload.items() if k != "state"}
+
+
+_DIGESTS_AT = """
+import hashlib, json, sys
+from dataclasses import asdict
+sys.path.insert(0, sys.argv[1])
+from ml.c3.schema import load_schema
+s = load_schema()
+d = lambda v: hashlib.sha256(json.dumps(v, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=False).encode()).hexdigest()
+print(d([asdict(o) for o in s.opportunities]), d([(o.key, [a.value for a in o.answers]) for o in s.opportunities]))
+"""
+
+
+def schema_digests_at(ref: str, repo: str | Path | None = None) -> tuple[str, str]:
+    """(schema digest, shape digest) of the schema at git commit ``ref``: its own
+    registries and its own schema code, read from a scratch copy of that commit
+    in a separate interpreter. A pre-shape checkpoint is matched only when the
+    first equals the digest it was saved under."""
+    import subprocess
+    import sys
+    import tarfile
+    import tempfile
+
+    repo = Path(repo) if repo else Path(__file__).resolve().parents[2]
+    paths = ["ml/__init__.py", "ml/c3", "app/core/label_heads.json", "app/core/atom_types.json",
+             "app/core/judgment_reasons.json"]
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "ref.tar"
+        with open(archive, "wb") as fh:
+            subprocess.run(["git", "-C", str(repo), "archive", ref, *paths], stdout=fh, check=True)
+        root = Path(tmp) / "tree"
+        with tarfile.open(archive) as tar:
+            tar.extractall(root, filter="data")
+        out = subprocess.run([sys.executable, "-I", "-c", _DIGESTS_AT, str(root)], cwd=tmp,
+                             capture_output=True, text=True, check=True).stdout.split()
+    return out[0], out[1]
 
 
 def certify_page_budget(texts: list[str], max_tokens: int, count) -> None:

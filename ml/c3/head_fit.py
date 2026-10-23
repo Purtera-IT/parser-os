@@ -254,7 +254,9 @@ def main() -> None:
         return
     for k, st in best_state.items():
         model.free_heads[k].load_state_dict(st)
-    save_checkpoint(args.out, model, step=step, schema_sha256=sha)
+    from .schema import shape_digest
+
+    save_checkpoint(args.out, model, step=step, schema_sha256=sha, shape_sha256=shape_digest(schema))
     print(f"saved {args.out} (valid_exact {best:.3f})", flush=True)
 
 

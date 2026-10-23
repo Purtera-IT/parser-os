@@ -3,7 +3,7 @@
   "doc": "THE list of atom types. Labelers, the type heads' label space, the facet map and the prod enum are all checked against this file (tests/test_atom_type_registry.py). To add a type: add it here with status 'v2', then follow the test failures.",
   "keep": {
     "name": "_keep",
-    "desc": "Not a fact worth typing: boilerplate, headers, signatures, table scaffolding, legal footer. The parser should drop or ignore it."
+    "desc": "Noise: a line with no fact for anyone. Greetings and closers are small talk; this is the rest: message headers and wrappers, legal and confidentiality footers, page chrome, empty cells and value-less column labels, template instructions, a broad heading with no list under it, a sentence that only points at another clause or an attachment. A signature line names a person and is a stakeholder; a heading over a list is a list header."
   },
   "coarse": [
     "scope",
@@ -82,7 +82,7 @@
       "name": "physical_site",
       "coarse": "site",
       "facet": "SITE",
-      "desc": "Authoritative site declaration: site_id + facility name + street address. One per real building / location.",
+      "desc": "A place the work happens at or is about, named in any form: a street address, a store or building name with a number, a campus, or only a town and state. One learned line per place; other mentions are copies. A removed site stays a site line, marked superseded. Unlike a site attribute (a count or size about the place), a site implementation note (what to install there or how) or a stakeholder (the person at the place).",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -93,7 +93,7 @@
       "name": "site_attribute",
       "coarse": "site",
       "facet": "SITE",
-      "desc": "A scalar attribute of a site: user count, room count, square feet, priority, floors.",
+      "desc": "A number or property of one site: users, rooms, phones, floors, buildings, square feet, priority. Unlike a site line it does not name the place; unlike a quantity it belongs to a named site.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -159,7 +159,7 @@
       "name": "service_line",
       "coarse": "commercial",
       "facet": "COMMERCIAL",
-      "desc": "A services-row line item: service id + description + unit + qty + unit price + extended cost.",
+      "desc": "A priced service with a quantity and a rate, in any form: \"Technician per day, 4 locations x 52 days, $920, $191,360\".",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -170,7 +170,7 @@
       "name": "bom_line",
       "coarse": "commercial",
       "facet": "COMMERCIAL",
-      "desc": "A hardware-BOM table row: item id + description + SKU + qty + unit price + extended cost + lead time + serial-capture flag.",
+      "desc": "A material or part with a quantity, and often a model or price: \"12 x outdoor access point\".",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -181,7 +181,7 @@
       "name": "payment_term",
       "coarse": "commercial",
       "facet": "COMMERCIAL",
-      "desc": "One row of a billing/payment schedule, e.g. '30% at order acceptance'. Each tier is its own atom.",
+      "desc": "When and how invoices are raised and paid: monthly in arrears, a deposit and a balance, net 30, remit-to details.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -203,7 +203,7 @@
       "name": "pricing_assumption",
       "coarse": "commercial",
       "facet": "COMMERCIAL",
-      "desc": "An explicit pricing assumption or rate term (taxes excluded, hardware substitutions require approval, after-hours work billed at 150% of the standard rate, etc.).",
+      "desc": "A term that sets how the price is worked out: billing basis (time and materials), billing increments, minimums, the standard day, after-hours or weekend rates, \"merely an estimate\", quote validity, taxes. Invoice timing is a payment term; cancellation charges are a change-order rule.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -225,7 +225,7 @@
       "name": "rate_card",
       "coarse": "commercial",
       "facet": "COMMERCIAL",
-      "desc": "A priced rate table row: role or service with a bill rate, OT/holiday multiplier, minimum hours.",
+      "desc": "A rate for a role or service with no quantity: a bill rate, overtime or holiday multiplier, minimum hours.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -236,7 +236,7 @@
       "name": "work_scope_item",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "A general statement of work to be performed that is not a discrete task, deliverable or requirement.",
+      "desc": "A service the customer is buying, said at the level of the service, not one step: a recurring visit and its hours, on-call coverage, end-user support, the broad first line that names a support area, one site's row in a per-site scope grid, or a side remark that opens new work.",
       "label_space": "head",
       "status": "v2",
       "value_light": false,
@@ -247,7 +247,7 @@
       "name": "deal_summary",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "THE line the whole deal can be read from: service, quantity, site and deal type in one sentence -- \"4 TVs install in CheckOut New York office.\" At most one per deal. Not every scope line -- a work_scope_item says one thing the job includes; this says what the job IS. Proposed on 010087.",
+      "desc": "The one line the whole deal can be read from: the service-model or job overview sentence (\"4 TVs install in the New York office\"). At most one per deal; a scope opener that restates one line is not it.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -269,7 +269,7 @@
       "name": "task",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "Billable work we will perform for the customer on this job -- the labor the quote prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devices at the site', 'looking for a partner to install their new display', 'please quote a technician onsite for 2-3 hours to get the register and printer running'), as a statement of what will be set up or installed on the job ('we will be setting 1 register and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the site survey'), or as a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to check something, a question about the site, a call summary of what was agreed, a description of the site as it is, or a quantity or date alone is not a task: _keep.",
+      "desc": "One step of work someone performs, with an owner: the provider's billable work (\"install three cameras at the side, back and front doors\", \"relocate 10 access points\", \"perform basic network validation\"), or a step the provider's seller, architect or coordinator takes (\"let me get this in front of my architect\"; those are the seller's own steps, not priced work). Unlike a work scope item, it is one step, not the service bought. Unlike a dependency, the provider does it, not the customer. Unlike a commitment, it names no promise to the other party by a date. Unlike a deliverable, nothing is handed over.",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -280,7 +280,7 @@
       "name": "deliverable",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "A named deliverable that a phase produces (e.g. 'Network closet readiness checklist').",
+      "desc": "Something handed over when the work is done: a report, as-built drawings, test results, completion status, documentation.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -291,7 +291,7 @@
       "name": "acceptance_criterion",
       "coarse": "quality",
       "facet": "WORK",
-      "desc": "A row from an acceptance-criteria table \u2014 area + criteria + pass threshold.",
+      "desc": "A row from an acceptance-criteria table — area + criteria + pass threshold.",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -302,7 +302,7 @@
       "name": "milestone_phase",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "A row from a project phase/milestone table \u2014 phase number + name + start date + end date + owner + exit criteria. Synonyms accepted: phase, sprint, wave, milestone, stage.",
+      "desc": "A row from a project phase/milestone table — phase number + name + start date + end date + owner + exit criteria. Synonyms accepted: phase, sprint, wave, milestone, stage.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -313,7 +313,7 @@
       "name": "cutover_step",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "A row from a cutover/runbook checklist \u2014 step number + timing relative to cutover + owner + action + evidence required.",
+      "desc": "A row from a cutover/runbook checklist — step number + timing relative to cutover + owner + action + evidence required.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -335,7 +335,7 @@
       "name": "site_implementation_note",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "Site-specific implementation instruction (asset-tag prefix, receiving rule, install rule).",
+      "desc": "How or with what the work is done at one site: the equipment there and its models, where a cable lands, a receiving or install rule, an asset-tag prefix. Unlike a constraint, it describes the build, not a limit on when or how.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -346,7 +346,7 @@
       "name": "site_access_window",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "When a site is accessible \u2014 days + hours + escort owner.",
+      "desc": "When a site is accessible — days + hours + escort owner.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -357,7 +357,7 @@
       "name": "exclusion",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "Negative scope: something explicitly NOT included (\"electrical by others\", \"no patching\").",
+      "desc": "Work or items the job explicitly leaves out, from either side: \"electrical by others\", \"we don't provide parts\", \"remote support not included\".",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -379,7 +379,7 @@
       "name": "data_flow_step",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "One step of a data-flow pipeline (source system \u2192 sink system, what payload).",
+      "desc": "One step of a data-flow pipeline (source system → sink system, what payload).",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -390,7 +390,7 @@
       "name": "system_mapping",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "A field mapping between two systems (e.g. HubSpot dealname \u2192 'OPTBOT Atlanta Office Refresh').",
+      "desc": "A field mapping between two systems: which field in one fills which field in the other.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -412,7 +412,7 @@
       "name": "constraint",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "A limit on how the work may be done: working hours, noise, dust, union labor, escort required.",
+      "desc": "A limit on how, when or where the provider may work: hours, noise, dust, union labour, escalate only when approved, ports to leave unused. Unlike an exclusion, the work is still in scope.",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -467,7 +467,7 @@
       "name": "change_order_rule",
       "coarse": "governance",
       "facet": "COMPLIANCE",
-      "desc": "A rule that governs change orders \u2014 when one is required, T&M rate caps, materials markup, the rate for change-order work. A standing rate term (after-hours billed at 150%) is a pricing_assumption.",
+      "desc": "A rule that governs change orders — when one is required, T&M rate caps, materials markup, the rate for change-order work. A standing rate term (after-hours billed at 150%) is a pricing_assumption.",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -489,7 +489,7 @@
       "name": "contract_term",
       "coarse": "governance",
       "facet": "COMPLIANCE",
-      "desc": "A contractual term governing the resulting agreement: contract length, renewal/option years, payment terms (net 30), warranty period, retainage, liquidated-damages clause reference.",
+      "desc": "A legal term of the agreement: length and renewal, warranty, liability, rate adjustments, fee definitions, acceptance by signature, termination. Payment timing is a payment term.",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -511,7 +511,7 @@
       "name": "stakeholder",
       "coarse": "people",
       "facet": "PARTY",
-      "desc": "A named person on the deal with their role and email. Synonyms accepted: owner, lead, sponsor, accountable, contact.",
+      "desc": "A line that names a person: an email signature (name, title, phone, email), an introduction or CC (\"looping in Sean\"), a contact-table row, a requester cell, a site contact with a role. It says who the person is and whose side they are on, not what the job is. Unlike a signatory, nobody signs here; unlike an entity, the name is a person.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -555,7 +555,7 @@
       "name": "dependency",
       "coarse": "timeline",
       "facet": "TIMING",
-      "desc": "A dependency on a customer-provided input, third party, or infrastructure readiness.",
+      "desc": "Something the customer or a third party must do or supply before the work can go ahead: send floor plans, provide access or a reachable contact, have equipment on site. If the provider did it, it would be a task.",
       "label_space": "head",
       "status": "live",
       "value_light": true,
@@ -577,7 +577,7 @@
       "name": "source_caveat",
       "coarse": "meta",
       "facet": "META",
-      "desc": "A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it, what it is out of date against. Not scope -- it must never reach the SOW -- and it must travel WITH the document it is about, because anything that reads that document without it builds from something we already know is wrong. Found in 11 deals across the dev corpus, typed scope_item in 9 of them: \"the Dates are incorrect as per the submitted SOW\", \"except as otherwise superseded by terms contained in a mutually executed Master Purchase Agreement\".",
+      "desc": "A fact about a document that changes how it must be read: it is a draft, it is not a contract, part of it is wrong, something supersedes it. Never scope; it travels with the document it is about.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -588,7 +588,7 @@
       "name": "legend_entry",
       "coarse": "meta",
       "facet": "META",
-      "desc": "The key that makes a document decodable: what a colour, symbol, hatch or abbreviation MEANS on the sheet it is printed on (\"Huzzard supplied Components\", \"orange = existing\", \"hatched = by others\"). Not a fact about the work and never scope -- its content transfers into the parts it governs, each of which names the side it was drawn in. It exists as an atom so a correction can point AT it: on 010288 the sender writes \"the 'Installer Supplied Components' are not accurate\", and a caveat aimed at a whole drawing says only that the drawing is unreliable, while one aimed at a single key says which eighteenth of it to distrust. Distinct from source_caveat, which is the correction rather than the thing corrected.",
+      "desc": "The key to a drawing or sheet: what a colour, symbol, hatch or abbreviation means there (\"hatched = by others\"). Not scope; it exists so a correction can point at it. Unlike a source caveat, it is the thing corrected, not the correction.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -599,7 +599,7 @@
       "name": "list_header",
       "coarse": "meta",
       "facet": "META",
-      "desc": "A pointer line that introduces a list and says nothing on its own: \"Locations:\", \"The following items are excluded:\". Its meaning lives in the items under it, which carry it as their lead-in. Not _keep -- the list it names is real -- and not the type of the items it introduces.",
+      "desc": "A heading or lead-in that only points at the lines under it (\"Locations:\", \"The following items are excluded:\"). Background, not an input: its meaning lives in the items it governs.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -643,7 +643,7 @@
       "name": "signatory",
       "coarse": "people",
       "facet": "META",
-      "desc": "A signature-block entry \u2014 role + named person who signs.",
+      "desc": "A signature-block entry — role + named person who signs.",
       "label_space": "head",
       "status": "live",
       "value_light": false,
@@ -698,7 +698,7 @@
       "name": "assumption",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "Something the proposal assumes to be true (\"customer provides lift\", \"pathways exist\").",
+      "desc": "A condition of the site or job the price and plan take to be true, which if false changes them: \"pathways exist\", \"existing cable is reusable\". Unlike a dependency, nobody is asked to do anything; unlike a pricing assumption, it is about the site or work, not the price terms.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -709,7 +709,7 @@
       "name": "open_question",
       "coarse": "meta",
       "facet": "META",
-      "desc": "An unanswered question in the documents that someone must resolve.",
+      "desc": "A question or an unknown left unanswered in the deal (\"no idea of ticket volume yet\"), which someone must resolve.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -731,7 +731,7 @@
       "name": "action_item",
       "coarse": "scope",
       "facet": "WORK",
-      "desc": "A to-do assigned to a person, usually from meeting notes or email.",
+      "desc": "A to-do assigned to a named person, without a price or a promise to the other party: \"Mark to send the floor plan\".",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -786,7 +786,7 @@
       "name": "answered_question",
       "coarse": "meta",
       "facet": "META",
-      "desc": "A question together with its answer, in the same message or a later reply (\"How many doors?\" / \"1 external door\"). The answer is the fact; keep both.",
+      "desc": "A question that a later line answers, or a note that two documents disagree that a later line settles. The answer is its own line and links back with answers.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -808,7 +808,7 @@
       "name": "commitment",
       "coarse": "governance",
       "facet": "TIMING",
-      "desc": "Someone promises to do something (\"we will send the floorplan Friday\", \"I will get a conversation going with the owner\").",
+      "desc": "A promise to act made to the other party: \"we will send the floor plan Friday\", an assurance the provider can support the sites, an offered call time. Unlike a task, the promise itself is the fact.",
       "label_space": "extractor",
       "status": "live",
       "value_light": false,
@@ -858,80 +858,80 @@
   "suppliers": [
     {
       "key": "us",
-      "label": "Us (Purtera)",
-      "desc": "The service provider writing the quote supplies or does it."
+      "label": "The provider",
+      "desc": "The provider that wrote the quote does or supplies it: its work, steps, terms, prices, exclusions and risks, and a customer's ask for work the provider would do."
     },
     {
       "key": "partner",
       "label": "Partner / reseller",
-      "desc": "A reseller or partner working with the provider supplies or does it."
+      "desc": "The reseller or channel partner between provider and customer does or supplies it: its paperwork, its practice, its own chasing, a line naming the partner company."
     },
     {
       "key": "customer",
       "label": "End customer",
-      "desc": "The end customer supplies or does it."
+      "desc": "The end customer does, supplies or owns it: its sites, its decisions, its equipment, the inputs it owes before work can go ahead, its own situation."
     },
     {
       "key": "third_party",
-      "label": "Another vendor",
-      "desc": "Another vendor or contractor outside the deal's main parties supplies or does it."
+      "label": "Another party",
+      "desc": "Someone outside provider, partner and customer: another contractor, a manufacturer or vendor, a carrier, a landlord, an inspector."
     },
     {
       "key": "unresolved",
-      "label": "Named but not resolved",
-      "desc": "The document names a ROLE and not an organisation -- \"Provided by Club/installer\" when we are the installer, so it means the club or us. Leaving it blank reads as \"not answered\"; this says the deal does not say, which is a finding and usually an unpriced cost."
+      "label": "Not settled",
+      "desc": "The deal does not say who: a question that names nobody to answer it, or a role that could be either side (\"provided by installer\"). Usually an unpriced cost."
     }
   ],
-  "suppliers_doc": "Who supplies or does an item: the labeler's answer to 'who provides this?' (a scope list under 'Provided by us:' names the SENDER's org, not ours).",
-  "about_doc": "Whose fact is it? The type says WHAT a statement is; this says what it is ABOUT. Only 'deal' reaches the SOW -- 'account' and 'partner' belong in the brief's why-you-should-care, and are lost entirely if a labeler is forced to call them scope. See _LABELING_DOCTRINE.md.",
+  "suppliers_doc": "Who supplies, does or owns what the line states. The provider is the company that wrote the quote; the customer is the end customer whose site it is; a partner is the reseller between them; a third party is anyone else (another contractor, a manufacturer, a carrier, a landlord). A person's line takes the side of the person's employer. A status report takes the side whose progress it reports. A question takes unresolved unless it names who must answer. An answer takes the party whose fact it is. Headings, totals, noise and lines with no party take none.",
+  "about_doc": "Whose fact is it? The type says what a line is; this says what it is about. deal: this job. account: the customer relationship beyond this job. partner: how the reseller works. internal: how the provider itself works. A person's contact or signature line is about the side the person works for (provider staff internal, partner staff partner, customer staff account) unless it gives the person's role on this job (site contact, requester, contact table), which makes it deal.",
   "about": [
     {
       "key": "deal",
       "label": "This job",
-      "desc": "This quote, this scope, this site. The only one that reaches the SOW."
+      "desc": "This job's scope, sites, price, schedule or people in their role on it."
     },
     {
       "key": "account",
       "label": "The customer relationship",
-      "desc": "True beyond this job: room to grow, who decides, how they buy."
+      "desc": "True of the customer beyond this job: who decides, how they buy, room to grow, their own staff and process."
     },
     {
       "key": "partner",
-      "label": "A partner's behaviour",
-      "desc": "How a reseller, vendor or installer works with us -- their drawings, their terms, what they get wrong."
+      "label": "The partner's way of working",
+      "desc": "How the reseller works: its paperwork, approvals, chasing and its own staff."
     },
     {
       "key": "internal",
-      "label": "How we work",
-      "desc": "Our own routing and process. Never a deliverable."
+      "label": "The provider's own process",
+      "desc": "How the provider works inside: its routing, its own staff and its own bookkeeping. Never a deliverable."
     }
   ],
-  "wants_doc": "What does this statement want from us? Turns 'there is something we are missing' into a list someone can work. See _LABELING_DOCTRINE.md.",
+  "wants_doc": "What the line asks someone to do before the job can be priced or run. Most lines want nothing. A line wants something only when it leaves a gap open: a document named but not held, a conversation referred to but not in the deal, a question for the customer, or a choice the provider must make.",
   "wants": [
     {
       "key": "nothing",
-      "label": "Nothing \u2014 it is just true",
-      "desc": "The line is simply true; nobody has to fetch, ask or decide anything."
+      "label": "Nothing",
+      "desc": "The line is simply true or settled; nobody has to fetch, ask or decide anything."
     },
     {
       "key": "chase-artifact",
-      "label": "Go get a document",
-      "desc": "It points at a drawing, quote or photo the deal does not hold."
+      "label": "Get a document",
+      "desc": "It names a drawing, floor plan, photo, quote or report the deal does not hold."
     },
     {
       "key": "chase-conversation",
       "label": "Find the conversation",
-      "desc": "It refers to a call or thread we do not have (\"as discussed earlier\")."
+      "desc": "It refers to a call, meeting or thread the deal does not hold (\"as discussed\")."
     },
     {
       "key": "confirm-with-customer",
       "label": "Ask the customer",
-      "desc": "We cannot price or build it until they answer."
+      "desc": "An open question only the customer can answer, and the price, scope or schedule waits on it."
     },
     {
       "key": "decide-internally",
-      "label": "We must decide",
-      "desc": "Nobody else can answer it; it is our call to make."
+      "label": "The provider decides",
+      "desc": "Only the provider can settle it: a staffing, method or pricing choice of its own."
     }
   ],
   "reads_doc": "What an atom TELLS US. Each key is a learned head: a rule fills it today as a prediction (source=rule, low confidence) purely so a labeler has something to confirm or drop, and the confirmations train the head that replaces the rule. A keyword list cannot make these calls -- it hid a promise naming a deal's decision maker because the words looked like banter. See _LABELING_DOCTRINE.md. `layer` says who a reading is true for. universal: any field-services company reading the same line would give the same answer; the base model trains it. company: the answer depends on our business model, roles, pricing, product names or CRM; only that company's profile trains it, and its keys start co_ when new. meta: stored on the row for bookkeeping (whose policy, how the deal ended) and never a task or a model input. staging: a temporary key a backfill uses, never a task. A labeling page shows universal and company chips only. `multi: true` means the value is a list, one class per item. `value_desc` gives every answer of a closed list its written description. The heads are built from these words (a question's description, then each answer's), so they say what the answer means for any company and name no company's tools; a company reading may name ours.",
@@ -1073,7 +1073,7 @@
       "key": "blocked_on",
       "label": "It cannot happen until somebody answers",
       "values": "us | customer | partner",
-      "desc": "The line is conditional: \"if you all would be able to\u2026, I will\u2026\". Whoever must answer owns the deal's next move, and a promise waiting on the provider is a task on the provider before it is one on anyone else. This is the critical path, and it is invisible if the conditional is flattened into the type.",
+      "desc": "The line is conditional: \"if you all would be able to…, I will…\". Whoever must answer owns the deal's next move, and a promise waiting on the provider is a task on the provider before it is one on anyone else. This is the critical path, and it is invisible if the conditional is flattened into the type.",
       "layer": "universal",
       "value_desc": {
         "us": "The service provider writing or receiving the quote must answer or act first; the line waits on the provider's own side.",
@@ -1155,17 +1155,17 @@
       "key": "task_owner_role",
       "label": "Whose task it is",
       "values": "project_manager | project_coordinator | solutions_architect | technician | seller | customer | partner | other",
-      "desc": "The role that owns the triggered task. Put the person in entity_keys. Only PM, PC, SA or tech work counts: sellers do not get tasks from this. seller, customer, partner and other say who owns it when it is none of the delivery roles; which owners a company plans work for is that company's policy.",
+      "desc": "Who owns the step or task the line states or starts. Delivery roles: project manager, project coordinator, solutions architect, technician. A step the provider's seller takes (taking a request to an architect, offering call times) is seller. Steps the customer, the partner or anyone else owns take their side. Put the named person in entity_keys.",
       "layer": "universal",
       "value_desc": {
         "project_manager": "The project manager who runs the job day to day: schedule, budget and customer updates.",
         "project_coordinator": "The coordinator who books visits, ships equipment and keeps the paperwork moving.",
         "solutions_architect": "The technical designer who scopes the system, draws it and answers how it should be built.",
         "technician": "The technician on site who installs, tests and documents the work.",
-        "seller": "The salesperson or account manager who sold the deal.",
+        "seller": "The provider's salesperson or account manager owns the step: a sales follow-up, sending a quote, offering call times. It is a step, not work the quote prices.",
         "customer": "Someone on the customer's side owns the task.",
-        "partner": "A reseller, vendor or other contractor owns the task.",
-        "other": "Someone in none of the roles above owns the task, such as a landlord or an inspector."
+        "partner": "The reseller or channel partner owns the task.",
+        "other": "Someone outside the provider, partner and customer owns it: another contractor, a manufacturer, a landlord, an inspector."
       }
     },
     {
@@ -1235,7 +1235,7 @@
       "key": "deal_stage",
       "label": "Where the deal was when this was said",
       "values": "quoting | planning | delivery | closeout",
-      "desc": "quoting: before the SOW is signed or the PO is received. planning: after the PO, before the first on-site visit. delivery: visits underway. closeout: after the last visit (completion reports, invoicing). Set it from the source's date against the deal's milestones. The same question or promise means different things at different stages.",
+      "desc": "The coarse stage when this source entered the deal (from its arrival date, not a date inside it): quoting runs until the statement of work is signed or the order arrives; planning until the first visit; delivery while visits run; closeout after the last.",
       "layer": "universal",
       "value_desc": {
         "quoting": "Before the SOW is signed or the purchase order is received; the price is still being worked out.",
@@ -1303,26 +1303,26 @@
       "key": "sow_fill",
       "label": "Filled in or still the template",
       "values": "filled | template | template_applies",
-      "desc": "On a SOW line: the deal's own words (filled), the template's placeholder text left as is (template), or standard template wording that still sets a real term for this deal (template_applies).",
+      "desc": "Is the statement-of-work line written for this deal or the provider's standing wording? Judge it across the provider's SOWs: the same wording appears in other SOWs from the same provider when it is template. A template clause that sets a real term here, including a condition that could bite (an after-hours uplift, a minimum, billing in arrears), is template_applies and is a learned line; template wording that sets nothing on this job is background. This is about the wording; how a value was reached is the derivation reading.",
       "layer": "universal",
       "value_desc": {
-        "filled": "The SOW line carries this deal's own facts: names, counts, dates or sites written for this job.",
-        "template": "The SOW line is the template's placeholder or boilerplate left as it was, not written for this deal.",
-        "template_applies": "The SOW line is standard template wording, but it still sets a real term for this deal, such as a rate uplift, a minimum or a cancellation fee."
+        "filled": "Written for this deal: its names, counts, dates, sites or steps.",
+        "template": "The provider's standing wording or an unfilled placeholder that sets nothing on this job: background.",
+        "template_applies": "The provider's standing wording that still sets a term this job follows or could trigger: a rate uplift, minimum, cancellation fee, billing timing, quote validity."
       }
     },
     {
       "key": "sow_coverage",
       "label": "How the SOW covers it",
       "values": "in_sow | missing_from_sow | differs | sow_not_available | sow_only",
-      "desc": "in_sow: the SOW says the same. missing_from_sow: the fact is real and the SOW omits it. differs: the SOW says something else. sow_not_available: there is no SOW to check. sow_only: the line exists only in the SOW.",
+      "desc": "How the final statement of work treats the fact. On a request line (an ask): in_sow if the SOW carries it unchanged, differs if the SOW carries it with another number, site, date or party, missing_from_sow if it never arrived. On a SOW line: in_sow or differs when an earlier ask lies behind it, sow_only when no customer or partner asked and the provider's own document is the first to offer it. sow_not_available when the deal holds no SOW. Sites always carry coverage. Copies, pointers, contact and signature rows, chatter and status lines take none.",
       "layer": "universal",
       "value_desc": {
         "in_sow": "The SOW states the same fact, possibly in other words.",
         "missing_from_sow": "The fact is real and affects the work, but the SOW never states it.",
-        "differs": "The SOW states the fact with a different number, site, date or party.",
+        "differs": "The SOW states the same fact with another value; the line that states the changed value carries it, and rows computed from the agreed values do not.",
         "sow_not_available": "The deal holds no SOW to check against yet.",
-        "sow_only": "The fact appears only in the SOW; nothing else in the deal says it."
+        "sow_only": "No customer or partner asked for it; the provider's own SOW (or its own earlier quote) is where it first appears: template terms, rates, house clauses."
       }
     },
     {
@@ -1336,7 +1336,7 @@
       "key": "sow_section",
       "label": "Which SOW section it belongs in",
       "values": "overview | scope_of_work | deliverables | acceptance | out_of_scope | assumptions | customer_responsibilities | provider_responsibilities | timeline | fees | change_control | terms | contacts | other",
-      "desc": "The standard SOW section this line lands in. overview is the introduction, executive summary or project overview; acceptance is how the work is accepted; change_control is how scope changes are requested and priced; terms is termination and the other legal terms. provider_responsibilities is the service provider's side; no company name belongs in the value.",
+      "desc": "The standard section of a statement of work this line belongs in, judged by what the line does, not by the words of the heading it sits under: a heading named 'Scope of Services' or 'Project Scope' is scope_of_work; 'Pricing and Invoice Schedule', 'Billing Terms', 'Travel' and 'Expenses' are fees; 'Duration' and 'Project Scheduling' are timeline; 'Contact Information' and 'Team' are contacts; a per-site exhibit row is scope_of_work. provider_responsibilities is the provider's side and customer_responsibilities the customer's, whatever the document calls them. Lines that are not in a statement of work take the section they would land in.",
       "layer": "universal",
       "value_desc": {
         "overview": "The introduction, executive summary or project overview: what the project is and why.",
@@ -1459,15 +1459,15 @@
       "key": "stage_std",
       "label": "Canonical deal stage when written",
       "values": "pre_deal | intake | scoping | quoted | contracting | planning | delivery | closeout | unknown",
-      "desc": "The stage of the deal when the line was written, in a vocabulary any company can map its own stages to. A learning target, never an input.",
+      "desc": "The stage of the deal when this source entered it: its arrival date against the deal's milestones, never a date printed inside it. Every line of one message or document takes the same stage.",
       "layer": "universal",
       "value_desc": {
         "pre_deal": "Before there is a deal: an intro, a relationship note or a general inquiry.",
-        "intake": "The request has just come in: first details, sites and contacts.",
-        "scoping": "The work is being defined: walkthroughs, questions and drawings.",
-        "quoted": "A price has been sent and is waiting on a decision.",
-        "contracting": "The SOW, purchase order or contract is being agreed and signed.",
-        "planning": "After signing, before work on site: scheduling, staffing and shipping.",
+        "intake": "The request has just arrived: first details, sites and contacts, before any walkthrough or price.",
+        "scoping": "The work is being defined before a price: walkthroughs, questions, drawings, site lists.",
+        "quoted": "A price has been sent and the deal waits on a decision; no statement of work is out yet.",
+        "contracting": "A statement-of-work draft or contract is out for review or signature.",
+        "planning": "Signed or ordered, before the first visit: scheduling, staffing, shipping.",
         "delivery": "Work is underway on site.",
         "closeout": "The work is done: sign-off, reports, invoicing and punch list.",
         "unknown": "The line does not show which stage the deal was in."
@@ -1477,20 +1477,20 @@
       "key": "scope_facet",
       "label": "What kind of scope line",
       "values": "summary | work_step | schedule | tooling | materials | staffing | testing | documentation | responsibility | exclusion | other",
-      "desc": "The universal kind of scope line. A company's own SOW group name goes in scope_category.",
+      "desc": "The kind of scope line, the same for any provider. Set it on learned scope lines only, never on copies. A customer duty or dependency is responsibility; an exclusion is exclusion.",
       "layer": "universal",
       "value_desc": {
-        "summary": "A one-line summary of the whole job or a whole phase.",
-        "work_step": "One task the crew performs, such as mount, run, terminate or configure.",
-        "schedule": "When the work happens or how long it takes.",
+        "summary": "Says what the whole job or a whole phase is, in one line.",
+        "work_step": "One step the crew performs: mount, run, terminate, configure, test-and-hand-over of one item.",
+        "schedule": "When the work happens, how often, or how long it takes: dates, windows, cadence.",
         "tooling": "Tools, lifts or equipment the crew needs to do the work.",
         "materials": "The parts and materials installed or consumed.",
-        "staffing": "How many people, which skills and how many visits.",
+        "staffing": "How many people, which skills or how many visits.",
         "testing": "Tests, certification or verification of the work.",
         "documentation": "Drawings, as-builts, photos, reports or labels handed over.",
-        "responsibility": "Who does what, said as a split of duties.",
+        "responsibility": "What one side owes the other: a customer input or duty, or a split of duties.",
         "exclusion": "Something the job leaves out.",
-        "other": "A scope line that fits none of the kinds above."
+        "other": "A scope line none of the kinds above fits."
       }
     },
     {
@@ -1558,7 +1558,7 @@
       "key": "co_action",
       "label": "What we do with it",
       "values": "keep | reject | ignore",
-      "desc": "keep: we use the line. reject: a real fact we drop on purpose; it trains our filter. ignore: we neither use it nor teach dropping it. Noise rows get none.",
+      "desc": "What Purtera does with the line. keep: a learned fact Purtera uses, including sites, kept site copies, SOW cover cells and kept risk lines. reject: a real fact Purtera drops on purpose under one of its rules (signature lines, seller promises and status, call scheduling, hardware prices, partner paperwork); it trains the filter. ignore: an excluded input, neither used nor taught as a drop: old hand-built Deal Kit rows and values the parser made up. Noise and background lines (copies, repeats, pointers, summaries) take none.",
       "layer": "company",
       "value_desc": {
         "keep": "We use the line in our quote or plan.",
@@ -1573,23 +1573,23 @@
       "desc": "Required when co_action is reject or ignore. The [purtera] part of the note states the rule for this line.",
       "layer": "company",
       "value_desc": {
-        "seller_promise": "A seller's promise: under our rule sellers own no delivery tasks, so it plans no work.",
+        "seller_promise": "The provider's seller promises or offers to act, assures capability, or states pricing posture; sellers own no delivery work, so it plans none.",
         "hw_price_not_ours": "A hardware price: we do not price hardware we do not sell.",
         "bom_total_not_ours": "A BOM total or subtotal that is not our price.",
         "quote_reference": "A reference to a quote number or quote document, not a fact about the work.",
         "vendor_terms": "A vendor's own terms and conditions.",
-        "contact_from_crm": "A contact detail copied from the CRM, already held there.",
+        "contact_from_crm": "A person's contact or email-signature line (name, title, phone, email, address block): the CRM already holds the contact, so the line plans nothing.",
         "handoff_announcement": "A note that the deal is being handed to another person or team.",
         "customer_internal_process": "The customer's own internal process, which does not change our work.",
-        "date_only_logistics": "A date or scheduling remark with no work content.",
-        "superseded": "Replaced by a later line that says otherwise.",
-        "old_manual_deal_kit": "A row from an old, hand-built Deal Kit.",
+        "date_only_logistics": "Meeting slots and call scheduling, by either side; a date with no work in it.",
+        "superseded": "Do not use: a replaced value is kept with the superseded reading, never rejected for it.",
+        "old_manual_deal_kit": "A row of an old hand-built Deal Kit; its figures feed only Purtera's own estimate.",
         "out_of_service_line": "Work in a service line we do not offer.",
-        "seller_status_update": "A seller's progress update with no fact about the work.",
-        "partner_internal_process": "A partner's own internal process, which does not change our work.",
-        "parser_derived": "A value the parser worked out rather than one the deal states.",
+        "seller_status_update": "The provider's seller reports what it did or expects (sent the quote, tried calling) with no fact about the work.",
+        "partner_internal_process": "The partner's own paperwork, approvals or chasing, which do not change the work.",
+        "parser_derived": "A line the parser wrote itself (a count, a disagreement note, an image placeholder), not a line of the deal.",
         "internal_housekeeping": "Our own bookkeeping, not part of the deal.",
-        "other": "Another reason, stated in the [purtera] line."
+        "other": "Another Purtera rule, named in the [purtera] line."
       }
     },
     {
@@ -1689,6 +1689,249 @@
       "values": "person | edited_draft | accepted_draft | machine_draft",
       "desc": "Who wrote the WHY in this row's note. person: the labeler wrote it. edited_draft: a model's draft the labeler changed. accepted_draft: a model's draft a person saved as is (one card, or accept-all). machine_draft: a model or deal thread wrote it and no person has saved it since. Set by the page and the accept route on save, and by deal threads on the rows they write.",
       "layer": "meta"
+    },
+    {
+      "key": "visit_count",
+      "label": "How many visits a site gets",
+      "values": "a number",
+      "desc": "How many separate trips technicians make to one site for this job, as the line states it or as its own words plainly entail: \"two visits, install then removal\" is 2; a site the line sends technicians back to after the first trip is 2; \"3 WLAN visits\" at one location is 3. Count trips to the place, not technicians, hours, days on site, devices or sites: \"2 techs for 3 days\" says nothing about visits unless it says they leave and come back. A line that names a site but never says how often anyone goes there is _absent, and so is a line that is not about visits to a site at all.",
+      "layer": "universal"
+    },
+    {
+      "key": "visit_count_note",
+      "label": "Why that many visits",
+      "values": "free text",
+      "desc": "The reasoning behind visit_count on this line, in a sentence: which words give the number, or why the line gives none.",
+      "layer": "universal"
+    },
+    {
+      "key": "work_action",
+      "label": "What work is done at the site",
+      "values": "install | decommission | replace | relocate | cabling | survey | test | configure | troubleshoot | return_visit",
+      "desc": "The kind of field work the line says is done at a site, named by the job family it belongs to. A list: a site that gets new equipment and loses the old is install and decommission; a swap of one unit for another in the same place is replace. Read the work the words name, not the equipment brand, the customer's industry or who pays for it. A line that names no work at a site (a contact, a price, a date, an address alone) is _absent.",
+      "layer": "universal",
+      "multi": true,
+      "value_desc": {
+        "install": "New equipment is mounted, connected and brought up where there was none.",
+        "decommission": "Existing equipment is taken out of service and removed, boxed or left for pickup.",
+        "replace": "One unit is swapped for another in the same place: the old one out and the new one in as one piece of work.",
+        "relocate": "Equipment already in place is moved to another spot or another site.",
+        "cabling": "Cable is pulled, terminated, labeled or certified: new runs, drops or patching.",
+        "survey": "The site is walked and documented before any work: measurements, RF readings, photos, an inventory of what is there.",
+        "test": "Something already installed is tested or certified: a circuit, a link, a device's function.",
+        "configure": "Equipment is programmed or set up in software on site, without new hardware work.",
+        "troubleshoot": "A technician is sent to find and fix a fault or to be hands on site for someone remote.",
+        "return_visit": "Technicians go back to the site a second time to finish, remove or check work from the first trip."
+      }
+    },
+    {
+      "key": "work_action_note",
+      "label": "Why that work",
+      "values": "free text",
+      "desc": "The reasoning behind work_action on this line, in a sentence: which words name the work.",
+      "layer": "universal"
+    },
+    {
+      "key": "sow_element",
+      "label": "What it becomes in the SOW",
+      "values": "task | customer_responsibility | assumption | exclusion | deliverable | acceptance | fee | site | schedule | overview",
+      "desc": "What a line written before the statement of work turns into once the provider writes that SOW, judged by what the SOW does with the fact, not by the line's own type or the heading it later sits under. A list: one ask can become a task and an assumption, or an exclusion and a customer responsibility. A customer's standard for how work is done becomes an assumption the price rests on; one entry in a list of drops or devices becomes part of the task that installs them; a request the provider will not take on becomes an exclusion or the customer's own duty. A line the SOW never carries is _absent.",
+      "layer": "universal",
+      "multi": true,
+      "value_desc": {
+        "task": "Work the provider's crew does: a step of the scope or a provider duty.",
+        "customer_responsibility": "Something the customer or its partner must do, supply or decide for the work to go ahead.",
+        "assumption": "A condition the price and plan rest on: access, hours, existing equipment, a standard the work must meet.",
+        "exclusion": "Work or cost the SOW says the job does not include.",
+        "deliverable": "Something handed over at the end: documents, drawings, test results, equipment in place.",
+        "acceptance": "How the work is judged complete: criteria, tests or sign-off.",
+        "fee": "A price, a priced quantity or a billing term in the fees.",
+        "site": "A place where the work happens, listed as a site of the job.",
+        "schedule": "A date, window, duration or order of the work in the timeline.",
+        "overview": "Who the parties are and what the project is, in the introduction."
+      }
+    },
+    {
+      "key": "sow_element_note",
+      "label": "Why it becomes that",
+      "values": "free text",
+      "desc": "The reasoning behind sow_element on this line, in a sentence: what the SOW does with the fact and why.",
+      "layer": "universal"
+    },
+    {
+      "key": "sow_transform",
+      "label": "How its words change in the SOW",
+      "values": "verbatim | restated | generalized | inverted | merged",
+      "desc": "How the line's fact changes on its way into the statement of work, read against the SOW line it becomes. Set it only where the SOW carries the fact; a line the SOW never carries, or carries with a different number, date or party, is _absent here.",
+      "layer": "universal",
+      "value_desc": {
+        "verbatim": "The SOW carries the line's words as they are, or with only spelling, case or punctuation changed.",
+        "restated": "The SOW says the same single fact in its own words.",
+        "generalized": "A specific entry (one drop, one device, one site's detail) is folded into a broader SOW statement that covers it and others like it.",
+        "inverted": "The SOW turns the ask around: what the customer asked the provider to do becomes an exclusion or the customer's own responsibility.",
+        "merged": "The SOW combines this fact with separate facts from other lines into one statement."
+      }
+    },
+    {
+      "key": "sow_transform_note",
+      "label": "Why it changes that way",
+      "values": "free text",
+      "desc": "The reasoning behind sow_transform on this line, in a sentence: how the SOW line's words relate to this line's.",
+      "layer": "universal"
+    },
+    {
+      "key": "feeds_decision",
+      "label": "Which decision it feeds",
+      "values": "sites | visits | work_scope | work_quantity | labor_hours | crew | skill_level | work_window | site_access | travel | materials | commercial | schedule | scope_boundary | deliverables | parties | risk_flag",
+      "desc": "Which decisions of the quote and the statement of work this line is evidence for: the decisions whose answer would change if the line said something different. A list: one line can set the site list and the visits, or the hours and the crew. Judge by what the line's own words let a quoter or SOW writer decide, not by its type, its heading or where it sits in the document: a site list entry that gives a site and its visit count feeds sites and visits; a standard the work must meet feeds work_scope; a line that only greets, thanks or forwards feeds none and is _absent here. Name a decision only when the line states or plainly entails its answer, not when it merely mentions the topic.",
+      "layer": "universal",
+      "multi": true,
+      "value_desc": {
+        "sites": "Which places get work and how many: a site's name, code, address or city on a list of work locations, a stated site count, or a line that adds, drops or closes a location. Not a billing, shipping, vendor or head-office address where no work happens.",
+        "visits": "How many separate trips technicians make to a site: a stated visit count, a return trip to finish or remove work, phases that send the crew back, or a revisit after cutover.",
+        "work_scope": "What field work is done: the tasks, the steps of a method, the equipment installed, removed, moved, tested or configured, and standards the work must meet. This names the tasks and their wording; it is not the count or the time.",
+        "work_quantity": "How much of the work there is: a count of devices, drops, cable runs, ports, rooms, doors or registers, a length of cable or an area in square feet, the number that labor is multiplied by.",
+        "labor_hours": "How long the work takes: hours or minutes per device, per site or per visit, days on site, a productivity rate (square feet per day), or a stated cap on hours.",
+        "crew": "How many technicians work together: a stated headcount, two-person work (lifts, heavy racks, masts), or a request for an extra technician.",
+        "skill_level": "What trade and level the technician needs: a certification, a license, an engineer rather than a technician, a junior or senior level, or a specialty such as RF survey or programming. This sets the rate line.",
+        "work_window": "When work may happen: business hours, after hours, nights, weekends, holidays, a store's closed hours, a maintenance or outage window, a shift cap. This sets the day type, any uplift and the hours assumption.",
+        "site_access": "The physical conditions of getting to the work: ceiling heights, lifts or ladders, escorts, badges, background checks, parking, loading docks, roofs, safety gear, union rules or hazardous materials.",
+        "travel": "Getting technicians to the sites: distance from a technician base, out-of-market or remote sites, mileage, lodging, airfare, per diem or a trip charge.",
+        "materials": "What equipment, cable and material the job needs and who furnishes it: a bill of materials, models and parts, consumables, shipping and receiving of gear, or a line saying the customer or a partner supplies it.",
+        "commercial": "How the job is priced and billed: a price, rate, budget or total, fixed fee versus time and materials, not-to-exceed, purchase order, payment and invoicing terms, a discount, markup or project-management fee.",
+        "schedule": "When the job runs: a start date, a deadline, a duration in weeks or months, the order of phases, a lead time, or a go-live or cutover date.",
+        "scope_boundary": "Who does what: a duty the customer or a partner keeps, work stated as excluded or out of scope, existing conditions the provider does not fix, or work explicitly assigned to the provider against someone else.",
+        "deliverables": "What is handed over and how the work is judged complete: as-built drawings, reports, photos, test or certification results, labels, a punch list, sign-off or acceptance criteria.",
+        "parties": "Who is involved: the end customer, the reseller or partner, the requester, project contacts with their names, emails or phone numbers, the project name.",
+        "risk_flag": "Something open or risky that the quote must flag or assume: an unknown site condition, a quantity or model still to be confirmed, a hazard, a penalty, prevailing wage or certified payroll, insurance or bonding, a permit, or a dependency that could move the price or the plan."
+      }
+    },
+    {
+      "key": "feeds_decision_note",
+      "label": "Why it feeds that decision",
+      "values": "free text",
+      "desc": "The reasoning behind feeds_decision on this line, in a sentence: which of its words settle which decision, and what the line would have to say to feed a different one or none.",
+      "layer": "universal"
+    },
+    {
+      "key": "work_window",
+      "label": "When the crew may work",
+      "values": "business_hours | after_hours | overnight | weekend | holiday | blackout",
+      "layer": "universal",
+      "multi": true,
+      "desc": "The time the line says the field work may or must happen, or must avoid. A list: \"nights and weekends\" is overnight and weekend. Read what the words require of the crew's hours, not who sets them or what they cost: \"normal business hours\" is business_hours, \"after 6 pm\" is after_hours, \"between 10 pm and 6 am\" is overnight, \"do not take the system down between 6 and 8 am\" is blackout. A line that only states a rate, a deadline date or a duration, with no time of day or day of week for the work, is _absent.",
+      "value_desc": {
+        "business_hours": "During ordinary working hours on working days.",
+        "after_hours": "Outside ordinary working hours, in the evening or before opening, on a working day.",
+        "overnight": "Through the night, typically after closing and before opening.",
+        "weekend": "On Saturday or Sunday.",
+        "holiday": "On a public holiday.",
+        "blackout": "A time when the work must not happen or the system must not be down."
+      }
+    },
+    {
+      "key": "work_window_note",
+      "label": "Why that window",
+      "values": "free text",
+      "desc": "The reasoning behind work_window on this line, in a sentence: which words give the time, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "access_need",
+      "label": "What it takes to reach the work",
+      "values": "lift | ladder | ground_level | escort | credential | restricted_area",
+      "layer": "universal",
+      "multi": true,
+      "desc": "What the crew needs to physically reach the work or get into the place, as the line states it. A list: a ceiling at 35 ft that needs a lift and a badge to enter is lift and credential. ground_level when the line says the work needs no lift or ladder. Read the need, not the price of meeting it or who provides it. A line that names no height, access equipment, escort or entry requirement is _absent.",
+      "value_desc": {
+        "lift": "A scissor lift, boom lift or other powered lift is needed to reach the work.",
+        "ladder": "A ladder is enough to reach the work.",
+        "ground_level": "The work is reachable from the floor; no lift or ladder.",
+        "escort": "Someone from the site must accompany the crew.",
+        "credential": "A badge, background check, clearance, safety training or sign-in is needed before entry.",
+        "restricted_area": "The work is in a secured, clean, hazardous or otherwise restricted area with its own rules."
+      }
+    },
+    {
+      "key": "access_need_note",
+      "label": "Why that access",
+      "values": "free text",
+      "desc": "The reasoning behind access_need on this line, in a sentence: which words give the need, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "job_detail",
+      "label": "A key detail of the job",
+      "values": "true/false",
+      "layer": "universal",
+      "desc": "Whether the line states one of the few facts that a price and a scope of work for this job must be built on: how many sites, devices, drops or visits; which equipment model; where the work is; when and in what hours it can happen; what access it needs; what the customer supplies; what is left out. true for such a line as the customer or partner gave it. false for a line that is about the job but changes nothing a quote or scope would say (a greeting, a status update, a reason, a repeat, a general remark), even when it is a real fact."
+    },
+    {
+      "key": "job_detail_note",
+      "label": "Why it is or is not a key detail",
+      "values": "free text",
+      "desc": "The reasoning behind job_detail on this line, in a sentence: which fact the price or scope rests on, or why none.",
+      "layer": "universal"
+    },
+    {
+      "key": "run_length",
+      "label": "How long the cable runs are",
+      "values": "a number",
+      "layer": "universal",
+      "desc": "The length of a cable run the line states, in feet (convert metres): \"each AP run will not exceed approximately 150 feet\" is 150; \"runs of 15 to 25 feet\" is 25, the longest. A total of all cable installed, a ceiling height, a distance between sites or a spool length is not a run length. A line that gives no run length is _absent."
+    },
+    {
+      "key": "run_length_note",
+      "label": "Why that run length",
+      "values": "free text",
+      "desc": "The reasoning behind run_length on this line, in a sentence: which words give the length, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "price_basis",
+      "label": "What kind of price",
+      "values": "rom_estimate | firm_price | not_to_exceed | rate_based | customer_budget",
+      "layer": "universal",
+      "desc": "The basis of a price or estimate the line states or asks for: whether it is a rough number, a price the provider stands behind, a cap, a set of rates the total will come from, or the customer's own budget. Read what the words commit to, not the amount. A line that states no price, estimate or budget is _absent.",
+      "value_desc": {
+        "rom_estimate": "A rough, budgetary or ballpark number that will change once the job is surveyed or defined.",
+        "firm_price": "A fixed price for the stated scope, whatever the hours turn out to be.",
+        "not_to_exceed": "A ceiling the total may not pass, billed up to it.",
+        "rate_based": "Rates per hour, day, unit or site, so the total follows the work actually done.",
+        "customer_budget": "What the customer has to spend or expects to pay, not the provider's price."
+      }
+    },
+    {
+      "key": "price_basis_note",
+      "label": "Why that price basis",
+      "values": "free text",
+      "desc": "The reasoning behind price_basis on this line, in a sentence: which words set the basis, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "party_role",
+      "label": "What part the person plays in the job",
+      "values": "requester | decision_maker | onsite_contact | project_manager | technical_contact | billing_contact | end_customer | reseller",
+      "layer": "universal",
+      "multi": true,
+      "desc": "The role in this job the line gives a person or company. A list: \"Jo, the store manager, will meet the tech and sign off\" is onsite_contact and decision_maker. Read the role the words give, never a title alone: a signature that names a title but no part in the job is _absent. A line that names no person or company with a part in the job is _absent.",
+      "value_desc": {
+        "requester": "Asks for the work or the quote.",
+        "decision_maker": "Approves the price, the scope or the sign-off.",
+        "onsite_contact": "Meets the crew, gives access or answers questions at the site.",
+        "project_manager": "Runs the schedule and coordination of the job.",
+        "technical_contact": "Answers technical questions: network, configuration, equipment.",
+        "billing_contact": "Receives invoices or handles purchase orders and payment.",
+        "end_customer": "The company the work is ultimately for, when another company buys it.",
+        "reseller": "The company that buys the work to resell it to the end customer."
+      }
+    },
+    {
+      "key": "party_role_note",
+      "label": "Why that role",
+      "values": "free text",
+      "desc": "The reasoning behind party_role on this line, in a sentence: which words give the person their part, or why there is none.",
+      "layer": "universal"
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
@@ -1711,12 +1954,12 @@
     {
       "key": "contradicts",
       "label": "Says the opposite",
-      "desc": "From a later line to an earlier one it disagrees with: a new count, date or site that replaces or conflicts with the old one."
+      "desc": "Two lines that cannot both hold for one fact. A replaced value points at the line that changed it and at the new value's line; two live opposing values, and changed cells across drafts, point at each other. A request the statement of work refuses points at the line that says no."
     },
     {
       "key": "same_as",
       "label": "The same fact, said twice",
-      "desc": "Two lines that state the same fact in different places or words; both stay, and the fact counts once."
+      "desc": "From a copy to the learned line it repeats: the same fact said again, word for word or reworded, in a quoted email, a forward, an older draft or a summary. It points one way, at the earliest original by its own date; an older statement-of-work draft points at the signed or latest draft instead. The copy is background, not an input. The same words under a different parent that changes who owes it, when, where or the price are not a copy. Unlike supports (adds evidence), context (helps read it) or near_miss (looks alike, answers differently)."
     },
     {
       "key": "context",
@@ -1736,7 +1979,7 @@
     {
       "key": "derived_from",
       "label": "Worked out from it",
-      "desc": "From a line whose value was worked out, not stated, to the line it was worked out from: a SOW total derived_from the quantity and rate lines, a SOW location list derived_from the site lines in the emails. Pairs with the derivation reading (inferred)."
+      "desc": "From a statement-of-work line to the one earliest line that first asked for or offered its fact (the request bullet, the customer's email), never to a copy of it; or from a value worked out to the lines it was worked out from. Every other restatement is context or supports."
     },
     {
       "key": "near_miss",

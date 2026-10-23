@@ -48,6 +48,33 @@ class LossWeights:
     near_miss_margin: float = 1.0
     literals: float = 0.4          # unique in-line spans of open value strings
     deal_numbers: float = 0.2      # deal-answer site count
+    # The meaning lock for table rows: the same row in another layout keeps
+    # its answers. A no-op unless the data carries layout_rewrites (run E).
+    layout_lock: float = 0.5
+    # The WHY carries the decision, teacher-free (why_carry.py). Each is a
+    # part of c3_loss; 0 turns it off. why_contrast supersedes why_align
+    # (identical WHYs are never negatives) and why_alone supersedes
+    # why_sufficiency (the free heads' h and the asked slots are blanked).
+    why_contrast: float = 0.5      # r_i toward its distinct WHY; near-miss WHYs as hard negatives
+    why_hard_negative: float = 4.0 # the near-miss partner's WHY counts this many times (not a part)
+    why_swap: float = 0.5          # r_i with j's WHY direction must answer like j (twins: hold)
+    why_swap_cap: float = 64       # flip pairs per part (not a part)
+    why_alone: float = 0.3         # the encoded WHY alone, surface paths blank, reaches the answer
+    keyword_dropout: float = 0.5   # surface cues masked: same answers, same reading, same WHY
+    keyword_dropout_p: float = 0.5 # share of labeled lines masked per step (not a part)
+    keyword_dropout_cap: float = 256  # masked lines per part (not a part)
+    # A link's note shapes the relation, teacher-free (link_why.py). On from
+    # the links stage (loop.gold_weights), like relations.
+    link_why_contrast: float = 0.3      # edge pair representation toward its distinct note
+    link_why_alone: float = 0.2         # the note alone names the relation, through the relation head
+    link_why_hard_negative: float = 4.0 # near-miss / other-relation edges' notes count this many times (not a part)
+    # Cross-line reasoning (graph.py / graph_losses.py). Each is 0 when its
+    # path is off (no lattice, no nodes), so older runs read as before.
+    citations: float = 0.1         # the asked slots' attention lands on the gold hint rows
+    derived_cards: float = 0.5     # roster / sheet verdicts derived from the gold line types
+    table_kind: float = 0.2        # a single-kind table's node names its row type
+    coherence: float = 0.2         # unlabeled rows of a single-kind table read the table's type
+    node_pointers: float = 0.2     # a line naming another file points at that file's node
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
     # Optional per-question weight in the heads average. The average is over
     # the weights, so line type at 20 is ~20 of ~90 shares, not 1 of ~70.
@@ -103,16 +130,25 @@ def has_answers(batch: Batch, key: str) -> bool:
 
 def pointer_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     """hint_refs name the lines a decision came from: the pointer head puts
-    its mass on the earlier ones (the heads see only the past)."""
+    its mass on the ones this pass let the line read (by default the earlier
+    ones; graph.py's view mask lets a later line count too)."""
     if out.pointers is None or not batch.hint_lines:
         return out.r.new_zeros(())
-    total, terms = out.r.new_zeros(()), 0
+    n = out.pointers.shape[0]
+    lses, oks = [], []
     for i, js in enumerate(batch.hint_lines):
-        js = [j for j in js if j < i]
-        if js:
-            total = total - torch.logsumexp(out.pointers[i, js], 0)
-            terms += 1
-    return total / max(terms, 1)
+        js = [j for j in js if j != i and j < n]
+        if js and i < n:
+            v = out.pointers[i, js]
+            fin = torch.isfinite(v)
+            # A row of -inf (no hint row visible) has a NaN logsumexp gradient:
+            # keep it finite and leave the row out.
+            lses.append(torch.logsumexp(torch.where(fin, v, torch.full_like(v, -1e4)), 0))
+            oks.append(fin.any())
+    if not lses:
+        return out.r.new_zeros(())
+    lse, ok = torch.stack(lses), torch.stack(oks)
+    return -(lse * ok).sum() / ok.sum().clamp(min=1)
 
 
 def entity_loss(out: C3Output, batch: Batch, tau: float = 0.1) -> torch.Tensor:
@@ -150,15 +186,18 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
         if opp.key not in out.logits:
             continue
         if has_answers(batch, opp.key):
-            share = w.head.get(opp.key, 1.0)
+            share = w.head.get(opp.key, 1.0) * batch.head_scale.get(opp.key, 1.0)
+            if not share:
+                continue
             ce = ce + share * w.space.get(opp.space, 1.0) * answer_loss(out.logits[opp.key], batch, opp.key, rw)
             terms += share
-        if opp.kind == NUMBER and opp.key in out.numbers:
+        scale = batch.head_scale.get(opp.key, 1.0)
+        if opp.kind == NUMBER and opp.key in out.numbers and scale:
             vals = batch.numbers_target.get(opp.key, [])
             mask = torch.tensor([v is not None for v in vals], device=dev)
             if mask.any():
                 t = torch.tensor([v or 0.0 for v in vals], device=dev)
-                num = num + F.smooth_l1_loss(out.numbers[opp.key][mask], torch.log1p(t[mask]))
+                num = num + scale * F.smooth_l1_loss(out.numbers[opp.key][mask], torch.log1p(t[mask]))
     return ce / max(terms, 1), num
 
 
@@ -180,6 +219,9 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
             continue
         if sizes is not None and o.size not in sizes:
             continue
+        view_scale = batch.head_scale.get(key, 1.0)
+        if not view_scale:
+            continue
         logits = model.judge(out, key, [j.lines for j in js], desc, queries=[j.query for j in js])
         y = torch.tensor([j.answer for j in js], device=logits.device)
         if o.multiple:
@@ -188,11 +230,33 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
                 if j.answers is None:
                     raise ValueError("Set-valued judgment needs its complete answer set")
                 truth[i, list(j.answers)] = 1
-            total = total + F.binary_cross_entropy_with_logits(logits, truth)
+            total = total + view_scale * F.binary_cross_entropy_with_logits(logits, truth)
         else:
-            total = total + F.cross_entropy(logits, y)
+            total = total + view_scale * F.cross_entropy(logits, y)
         terms += 1
+        cited = [j for j in js if j.cites and j.query]
+        if cited:
+            total = total + view_scale * CITE_WEIGHT * judgment_cite_loss(model, out, key, cited)
     return total / max(terms, 1)
+
+
+#: Share of a queried card's loss given to its link (judgment_cite_loss).
+CITE_WEIGHT = 0.5
+
+
+def judgment_cite_loss(model: C3Model, out: C3Output, key: str, js: list) -> torch.Tensor:
+    """A filled SOW slot links to the line that states its fact: the card's
+    pointer over its lines puts its mass on the cited lines (-log of their
+    summed probability), one card at a time."""
+    total = out.r.new_zeros(())
+    for j in js:
+        logits = model.judgment_pointer(out, key, j.lines, j.query).float()
+        pos = [k for k, i in enumerate(j.lines) if i in set(j.cites)]
+        if not pos:
+            continue
+        logp = logits.log_softmax(0)
+        total = total - torch.logsumexp(logp[pos], 0)
+    return total / max(len(js), 1)
 
 
 def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch, *,
@@ -305,7 +369,8 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
 
     Other lines in the row are the "not this one" choices. Abstain is the last
     class when the model has a no-link score. Unlabeled lines are left alone:
-    a missing card is not a lesson that nothing connects.
+    a missing card is not a lesson that nothing connects. A relation the deal
+    view masks (head_scale ``rel:<name>`` 0) teaches nothing there.
     """
     total, terms = out.r.new_zeros(()), 0
     labeled = {i for i, on in enumerate(batch.labeled) if on}
@@ -316,7 +381,7 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     rels = set(out.relations) | set(gold)
     for rel in rels:
         s = out.relations.get(rel)
-        if s is None:
+        if s is None or not batch.head_scale.get(f"rel:{rel}", 1.0):
             continue
         none = out.link_none.get(rel)
         by_src = gold.get(rel, {})
@@ -343,7 +408,7 @@ def relation_loss(out: C3Output, batch: Batch) -> torch.Tensor:
 
 def governs_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     pairs = batch.edges.get("governs", [])
-    if not pairs or out.governs is None:
+    if not pairs or out.governs is None or not batch.head_scale.get("rel:governs", 1.0):
         return out.r.new_zeros(())
     n = out.governs.shape[0]
     pos = torch.zeros(n, n, dtype=torch.bool, device=out.r.device)
@@ -412,7 +477,12 @@ def hindsight_loss(model: C3Model, out: C3Output, batch: Batch) -> tuple[torch.T
 def absence_targets(batch: Batch) -> torch.Tensor:
     """Free labels from the timeline: slot s is empty at line i (no earlier or
     current line fills it) and some later line fills it -> 1; empty now and
-    never filled -> 0; already filled -> ignored (-1)."""
+    never filled -> 0; already filled -> ignored (-1).
+
+    A deal view that masks heads (a quote-only or planning file, head_scale 0
+    on some key) is not fully labeled, so "never filled" is not known there:
+    a slot with a masked reading teaches nothing, and the others teach only
+    on labeled lines."""
     n = len(batch)
     keys = {s: [f"read:{r}" for r in reads] for s, reads in CLAIM_SLOTS.items()}
     filled = torch.zeros(n, len(keys), dtype=torch.bool)
@@ -427,6 +497,14 @@ def absence_targets(batch: Batch) -> torch.Tensor:
     later_strict = torch.cat([later[1:], torch.zeros_like(later[:1])])
     t = later_strict.float()
     t[seen] = -1.0
+    scale = batch.head_scale or {}
+    if any(not v for v in scale.values()):
+        for j, ks in enumerate(keys.values()):
+            if any(not scale.get(k, 1.0) for k in ks):
+                t[:, j] = -1.0
+        unlabeled = torch.tensor([not on for on in batch.labeled], dtype=torch.bool) \
+            if len(batch.labeled) == n else torch.ones(n, dtype=torch.bool)
+        t[unlabeled] = -1.0
     return t
 
 
@@ -490,6 +568,57 @@ def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: Explanati
     return F.relu(margin - kl)
 
 
+def layout_lock_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
+                     rng=None, desc: dict[str, Any] | None = None) -> torch.Tensor:
+    """The meaning lock without a teacher: one more forward with each table
+    row that has layout rewrites (header-tagged, bare, tabs, reversed cells)
+    replaced by one of them, picked at random each step. The rewritten line
+    must give its saved answers (the same head losses, weighted to those
+    lines only) and match its own reading in the real layout (KL to the
+    first pass, detached), so a head that keyed on the layout stops paying.
+
+    ``desc``: the step's encoded descriptions, reused. Without it the model
+    encodes every description again, with grad, through the trainable
+    encoder: a fourth graph on the step's memory."""
+    import random as _random
+
+    from .data import number_tokens  # noqa: PLC0415
+
+    zero = out.r.new_zeros(())
+    if not batch.layout_rewrites:
+        return zero
+    rng = rng or _random
+    by_line: dict[int, list[str]] = {}
+    for i, t in batch.layout_rewrites:
+        by_line.setdefault(i, []).append(t)
+    texts, numbers = list(batch.texts), list(batch.numbers)
+    for i, ts in by_line.items():
+        texts[i] = rng.choice(ts)
+        numbers[i] = number_tokens(texts[i])
+    lines = sorted(by_line)
+    keep = set(lines)
+    base = batch.weights if len(batch.weights) == len(batch) else [1.0] * len(batch)
+    b = replace(batch, texts=texts, numbers=numbers,
+                weights=[x if i in keep else 0.0 for i, x in enumerate(base)])
+    moved = model(b.inputs(), company=batch.company, desc=desc)
+    ce, _ = head_losses(model, moved, b, w, "universal")
+    co, _ = head_losses(model, moved, b, w, "company")
+    rows = torch.tensor(lines, device=out.r.device)
+    rw = row_weights(b, out.r.device)[rows]
+    kl, n = zero, 0
+    for key, logits in moved.logits.items():
+        ref = out.logits.get(key)
+        opp = model.schema.by_key().get(key)
+        if ref is None or opp is None or opp.multiple or logits.shape != ref.shape:
+            continue
+        per = F.kl_div(F.log_softmax(logits[rows].float(), -1),
+                       F.log_softmax(ref[rows].detach().float(), -1),
+                       reduction="none", log_target=True).sum(-1)
+        kl = kl + (per * rw).sum() / rw.sum().clamp(min=1e-6)
+        n += 1
+    return ce + w.conduct * co + (kl / n if n else zero)
+
+
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None,
@@ -520,7 +649,10 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
         keep["out"], keep["desc"] = out, desc
     parts: dict[str, torch.Tensor] = {}
     parts["heads"], parts["numbers"] = head_losses(model, out, batch, w, "universal")
-    parts["conduct"], _ = head_losses(model, out, batch, w, "company")
+    # Company number heads (read:co_hours_estimate's value) train with the
+    # universal ones, under the same numbers weight.
+    parts["conduct"], co_numbers = head_losses(model, out, batch, w, "company")
+    parts["numbers"] = parts["numbers"] + co_numbers
     parts["relations"] = relation_loss(out, batch)
     parts["governs"] = governs_loss(out, batch)
     parts["why_align"], parts["why_sufficiency"] = why_losses(model, out, batch, desc, w)
@@ -542,12 +674,25 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["deal_numbers"] = deal_number_loss(model, out, batch)
     parts["negatives"] = negative_loss(out, batch)
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
+    if w.layout_lock and batch.layout_rewrites:
+        parts["layout_lock"] = layout_lock_loss(model, out, batch, w, desc=desc)
+    from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
+
+    parts.update(why_carry_losses(model, out, batch, desc, w))
+    from .link_why import link_why_losses  # noqa: PLC0415 (cycle)
+
+    parts.update(link_why_losses(model, out, batch, desc, w))
+    from .graph_losses import graph_losses  # noqa: PLC0415 (cycle)
+
+    parts.update(graph_losses(model, out, batch, desc, w, judgment_sizes))
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
         y = torch.full((len(batch),), model.companies.index(batch.company), device=out.r.device)
         parts["adversary"] = F.cross_entropy(out.company_logits, y)
     parts["policy_l1"] = out.alpha.abs().sum() if out.alpha is not None else out.r.new_zeros(())
+    if keep is not None:
+        keep["parts"] = parts      # the unweighted terms, graphs attached (signal_audit.py)
     total = sum(getattr(w, k) * v for k, v in parts.items())
     return total, {k: float(v.detach()) if torch.is_tensor(v) else float(v) for k, v in parts.items()}
 

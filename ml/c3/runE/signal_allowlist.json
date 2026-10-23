@@ -1,0 +1,14 @@
+{
+  "_doc": "Signals ml/c3/signal_audit.py may find UNUSED or ZERO-GRAD without failing the runE.sh SIGNAL_AUDIT=1 smoke. Each needs a reason; a labeled signal that should teach the model never goes here. See ~/c3-local/runE/signal_audit.md.",
+  "note.parser": "The [parser] line is a remark about the parse, not the deal; the note grammar drops it from training (owner rule 2026-10-03, notes.split_note / drop_meta).",
+  "read.co_company": "meta.bookkeeping (app/core/label_heads.json): whose policy the row carries; never a task or an input.",
+  "read.deal_outcome": "meta.bookkeeping (app/core/label_heads.json): how the deal ended; never a task or an input.",
+  "read.universal_type": "meta.bookkeeping (app/core/label_heads.json): backfill scratch.",
+  "read.governs_count": "meta.bookkeeping (app/core/label_heads.json): backfill scratch; the governs links themselves train (link.governs).",
+  "read.derived_from_count": "meta.bookkeeping (app/core/label_heads.json): backfill scratch; the derived_from links themselves train.",
+  "label.supersedes": "Approval bookkeeping: an approved draft replaces the saved row it names at load (loop.accept_drafts); the draft's own fields are what train.",
+  "card_meta.supersedes": "Approval bookkeeping: an approved draft card replaces the saved card it names at load (loop.accept_drafts).",
+  "label.is_new_type": "Page bookkeeping: the type was added to the registry while labeling; label_type itself trains.",
+  "label.reads_kept": "Page bookkeeping: which parser readings the labeler kept; the kept readings are in reads_set and train there.",
+  "label.coarse": "Derived from label_type (app/core/label_heads.json content.type: 'coarse and facet are derived'); label_type trains."
+}

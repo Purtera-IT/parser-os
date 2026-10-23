@@ -156,7 +156,8 @@ def test_a_long_deal_stays_one_source_and_cannot_leak_into_holdout():
 def test_card_stages_teach_pairs_before_the_whole_deal():
     _, card_sizes = gold_weights("cards")
     _, deal_sizes = gold_weights("deal")
-    assert card_sizes == (PAIR, GROUP)
+    # Queried line judgments (the Questions head) train with the cards too.
+    assert card_sizes == (PAIR, GROUP, "line")
     assert deal_sizes is None
     line_w, _ = gold_weights("lines")
     assert line_w.relations == 0.0 and line_w.judgments == 0.0 and line_w.deal_numbers == 0.0
@@ -573,7 +574,8 @@ def test_a_lesson_step_runs_the_trunk_and_the_descriptions_once():
 
     model.describe, model.forward = counted_describe, counted_forward
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
-    loss = _student_step(model, opt, carded, LossWeights(), None, object(), view, "cpu")
+    # keyword_dropout (why_carry.py) is a second trunk pass by design; off here.
+    loss = _student_step(model, opt, carded, LossWeights(keyword_dropout=0.0), None, object(), view, "cpu")
     assert torch.isfinite(loss)
     assert calls == {"describe": 1, "forward": 1}
 

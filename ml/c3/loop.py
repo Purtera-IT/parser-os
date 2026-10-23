@@ -25,12 +25,15 @@ is not changed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
 from typing import Any
 import time
 import random
+import re
+import sys
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -40,14 +43,16 @@ import torch
 from .brain import Brain
 from .coverage import READY_FOR_TRAINING
 from .data import IGNORE, Batch, DealExample
-from .gates import save_checkpoint
+from .gates import load_checkpoint, save_checkpoint
 from .holdout import LABEL_HOLDOUT, refuse_fixed_holdout
 from .lm import TinyCausalLM
 from .losses import BrainWeights, LossWeights, brain_loss, c3_loss, teacher_chunks, teacher_context
 from .longdeal import plan_long_deal
+from .pick import PICK_HEADS, best_at, read_floors
 from .model import C3Config, C3Model
 from .readiness import digest
-from .schema import GROUP, NUMBER, PAIR, RELATION, Schema, load_schema
+from .graph import graph_parameters, parse_graph
+from .schema import GROUP, LINE, NUMBER, PAIR, RELATION, Schema, load_schema, shape_digest
 from .supercharge import TeachWeights, supercharge_loss, teacher_view, weighted
 
 SMALL = C3Config(d_text=64, d=64, n_layers=1, n_heads=4, d_r=32, d_q=16, d_head=32,
@@ -110,7 +115,8 @@ class BaseRun:
 def source_deal_id(deal_id: str) -> str:
     """Window ids are ``<deal>#c3part<n>``. The source deal is the part before that."""
     head, sep, _ = deal_id.partition("#c3part")
-    return head if sep else deal_id
+    # A view of a deal ("010003@pre_quote", "010003@planning") is that deal.
+    return (head if sep else deal_id).partition("@")[0]
 
 
 def lock_split(train: list[Batch], holdout: list[Batch],
@@ -224,26 +230,79 @@ def gold_weights(stage: str) -> tuple[LossWeights, tuple[str, ...] | None]:
     Card sizes: pair and group cards before whole-deal cards. None means
     every card size.
     """
+    full = LossWeights()
     weights = LossWeights(relations=0.0, governs=0.0, judgments=0.0, judgment_rationale=0.0,
-                          numbers=0.0, literals=0.0, deal_numbers=0.0)
+                          numbers=0.0, literals=0.0, deal_numbers=0.0,
+                          link_why_contrast=0.0, link_why_alone=0.0,
+                          derived_cards=0.0, table_kind=0.0, coherence=0.0, node_pointers=0.0)
     if stage == "lines":
         return weights, None
-    weights = replace(weights, relations=0.5, governs=0.5)
+    # The link notes train with the links (link_why.py), and so do the table
+    # nodes and their pointers (graph.py): the gate opens at this stage.
+    weights = replace(weights, relations=0.5, governs=0.5, link_why_contrast=full.link_why_contrast,
+                      link_why_alone=full.link_why_alone, table_kind=full.table_kind,
+                      coherence=full.coherence, node_pointers=full.node_pointers)
     if stage == "links":
         return weights, None
-    weights = replace(weights, judgments=1.0, judgment_rationale=0.2)
+    weights = replace(weights, judgments=1.0, judgment_rationale=0.2, derived_cards=full.derived_cards)
+    # Queried line judgments (the Questions head and its fields) train with
+    # the cards, not only in the tail.
     if stage == "cards":
-        return weights, (PAIR, GROUP)
+        return weights, (PAIR, GROUP, LINE)
     weights = replace(weights, numbers=0.2, literals=0.4)
     if stage == "numbers":
-        return weights, (PAIR, GROUP)
+        return weights, (PAIR, GROUP, LINE)
     weights = replace(weights, deal_numbers=0.2)
     return weights, None
 
 
 def _freeze_link_gate(model: C3Model, trainable: bool) -> None:
-    model.link_mix.weight.requires_grad_(trainable)
-    model.link_mix.bias.requires_grad_(trainable)
+    """The gate group (graph.graph_parameters): link_mix, the graph's
+    zero-init maps and deal_number. Shut through the lines stage."""
+    for p in _gate_params(model):
+        p.requires_grad_(trainable)
+
+
+def _gate_params(model: C3Model) -> list:
+    return graph_parameters(model) + list(model.deal_number.parameters())
+
+
+#: The stage the gate group opens at, and its warmup (passes) to a constant rate.
+GATE_STAGE = "links"
+GATE_WARMUP_PASSES = 1.0
+#: The main groups' rate floor (share of lr) through the deal stage: the deal
+#: heads train at a normal rate, not the cosine tail (fix 8).
+DEAL_RATE = 0.3
+
+
+def rate_lambdas(stage_steps: list[tuple[str, int]], parts: int, warm: int,
+                 gate_warm_passes: float = GATE_WARMUP_PASSES, deal_rate: float = DEAL_RATE):
+    """(main, gate) LambdaLR multipliers over the student's updates.
+
+    main: warmup then cosine to 0 over every student update, floored at
+    ``deal_rate`` through the deal stage. gate: 0 until ``GATE_STAGE``, then a
+    linear warmup over ``gate_warm_passes`` passes, then 1 (constant)."""
+    total = max(1, sum(n for _, n in stage_steps))
+    spans, at = {}, 0
+    for st, n in stage_steps:
+        spans[st] = (at, at + n)
+        at += n
+    gate_at = spans.get(GATE_STAGE, (total, total))[0]
+    deal = spans.get("deal", (0, 0))
+    gate_warm = max(1, int(gate_warm_passes * parts))
+
+    def main(s: int) -> float:
+        f = 0.5 * (1 + math.cos(math.pi * min(s, total) / total))
+        if deal[0] <= s < deal[1]:
+            f = max(f, deal_rate)
+        return (min(1.0, (s + 1) / warm) if warm > 0 else 1.0) * f
+
+    def gate(s: int) -> float:
+        if s < gate_at:
+            return 0.0
+        return min(1.0, (s - gate_at + 1) / gate_warm)
+
+    return main, gate
 
 
 # A 7B teacher in bf16 fits beside ModernBERT-large and the student on an H100.
@@ -270,7 +329,13 @@ VIEW_GROUND_ROWS = 128
 VIEW_PARTS = 6
 # Heads every check also reads on validation, beside line type (a lesson
 # stage cost run A's task tier; a gate can name ``valid_jdg_task_tier``).
+# head_fit holds each of these to its min_watch bar.
 WATCH_CHECK = ("jdg:task_tier",)
+# What a loop check stores: the watched heads, the pick's gated heads
+# (pick.PICK_HEADS: admission, supplier, about, line type, the SOW heads,
+# co_action, sites, task tier, hours) and the support links; each row also
+# stores ``valid_<key>_n`` and the step it was read at.
+CHECK_HEADS = tuple(dict.fromkeys(WATCH_CHECK + PICK_HEADS + ("rel:supports",)))
 # Parts per bind step.
 BIND_PARTS = 16
 PIECE_PROGRESS_EVERY = 8
@@ -493,13 +558,24 @@ def release_encoder_top(model: C3Model, layers: int) -> int:
 
 def _student_optimizer(model: C3Model, lr: float, adamw: bool,
                        encoder_lr: float | None) -> torch.optim.Optimizer:
-    """One group for the deal model and heads; a smaller rate for any released encoder blocks."""
+    """One group for the deal model and heads; a smaller rate for any released
+    encoder blocks; and the gate group (``_gate_params``) last, in the
+    optimizer from the start (shut by requires_grad and a 0 rate until the
+    links stage), so no group is ever added mid-run: torch >= 2.7's scheduler
+    refuses a group it was not built with."""
     text = {id(p) for p in model.text.parameters()}
+    gate = _gate_params(model)
+    gate_ids = {id(p) for p in gate}
     released = [p for p in model.parameters() if p.requires_grad and id(p) in text]
-    if not released or encoder_lr is None:
-        return _optimizer(model.parameters(), lr, adamw)
-    rest = [p for p in model.parameters() if p.requires_grad and id(p) not in text]
-    groups = [{"params": rest, "lr": lr}, {"params": released, "lr": encoder_lr}]
+    rest = [p for p in model.parameters() if p.requires_grad and id(p) not in text and id(p) not in gate_ids]
+    if not rest:
+        raise ValueError("No trainable parameters")
+    groups = [{"params": rest, "lr": lr}]
+    if released and encoder_lr is not None:
+        groups.append({"params": released, "lr": encoder_lr})
+    elif released:
+        groups[0]["params"] = rest + released
+    groups.append({"params": gate, "lr": lr, "weight_decay": 0.0, "gate": True})
     if adamw:
         return torch.optim.AdamW(groups, lr=lr, weight_decay=0.01)
     return torch.optim.Adam(groups, lr=lr)
@@ -823,12 +899,35 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              free_heads: tuple[str, ...] = (),
              fit_parts: int = 8,
              check_every: int = 0,
-             gates: list[tuple[str, str, str, float]] | None = None) -> tuple[C3Model, BaseRun]:
+             gates: list[tuple[str, str, str, float]] | None = None,
+             ramp: dict[str, float] | None = None,
+             resume: bool = False,
+             keep_checkpoints: int = 0,
+             pick_floors: str | None = None,
+             graph: dict[str, Any] | None = None,
+             max_atoms: int | None = None,
+             deal_rate: float = DEAL_RATE) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
     The H100 path passes a pretrained causal LM, bf16, and ``adamw``. This
     function does not certify a release and does not call ``gates.train``.
+
+    ``ramp``: loss term -> passes. Each named term's weight grows linearly
+    from 0 to its stage weight over that many passes, counted from the first
+    step it is on (a fresh encoder top does not meet every new term at once).
+
+    ``resume``: carry on from ``<checkpoint>.resume.pt`` (written at every
+    saved checkpoint: the model file, the optimizer, the schedule, the step,
+    the stage and pass, the checks and the random states).
+
+    ``graph``: graph.py's cross-line flags (``graph.parse_graph``), turned on
+    before the optimizer is built; saved with every checkpoint. ``max_atoms``
+    is recorded in each checkpoint (the training window).
+
+    ``keep_checkpoints``: keep at most this many saved checkpoints on disk
+    (0 keeps all), plus the best one by the pick (pick.best_at against
+    ``pick_floors``); ``<checkpoint>`` itself is then a link to the latest.
     """
     if READY_FOR_TRAINING:
         raise RuntimeError("This loop must not be the path that flips the release flag")
@@ -922,14 +1021,29 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                     model.add_free_head(o.key)
         else:
             model.add_free_head(key)
+    if graph is not None:
+        model.enable_graph(graph)
     model.to(device)
     _freeze_link_gate(model, False)
     gates = list(gates or [])
+    resume_path = f"{checkpoint}.resume.pt" if checkpoint else ""
+    state = None
+    if resume and resume_path and Path(resume_path).exists():
+        state = torch.load(resume_path, map_location="cpu", weights_only=False)
+        # The saved EMA hindsight copy loads only into a model that has one.
+        model.build_hindsight_teacher()
+        model.to(device)
+        load_checkpoint(state["model"], model,
+                        schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+        print(f"resume from {state['model']} at {state['stage']} pass {state['passed']} "
+              f"step {state['completed']}", flush=True)
+    elif resume:
+        print(f"resume: no {resume_path or '<checkpoint>.resume.pt'}; starting fresh", flush=True)
     # The fit check reads a fixed sample of training parts: a base that cannot
     # type the lines it trained on is under-fit, whatever validation says.
     fit_pool = (sorted(random.Random(seed + 1).sample(train, fit_parts), key=lambda b: b.deal_id)
                 if fit_parts and len(train) > fit_parts else (train if fit_parts else []))
-    checks: dict[str, dict[str, float]] = {}
+    checks: dict[str, dict[str, float]] = dict(state["checks"]) if state else {}
     stopped = ""
 
     def check(at: str) -> list[str]:
@@ -939,11 +1053,14 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 row.update({f"fit_{k}": v for k, v in type_check(model, fit_pool, device).items()})
             if validation:
                 row.update({f"valid_{k}": v for k, v in type_check(model, validation, device).items()})
-        if validation and WATCH_CHECK:
+        if validation and CHECK_HEADS:
             pooled = pool_scores([_score_oneshot(model, b, device) for b in validation])
-            for key in WATCH_CHECK:
+            for key in CHECK_HEADS:
                 if key in pooled:
                     row[f"valid_{key.replace(':', '_')}"] = pooled[key]["exact"]
+                    row[f"valid_{key.replace(':', '_')}_n"] = pooled[key]["n"]
+        if row:
+            row["at_step"] = float(completed)
         checks[at] = row
         if row:
             print(f"check {at} " + " ".join(f"{k}={v:.3f}" for k, v in row.items()
@@ -967,21 +1084,68 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             continue
         student_stages.append(stage)
     student_updates = sum(budget.steps(s) * len(train) for s in student_stages if s != "bind")
-    sched = (torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, student_updates))
-             if adamw else None)
     # A run that starts from trained heads ramps the rate up: a fresh Adam
     # moves every weight by the full rate on its first steps, which in run C's
-    # smoke undid the fitted line-type heads in four updates.
+    # smoke undid the fitted line-type heads in four updates. One multiplier
+    # per group: cosine for the deal model (floored through the deal stage),
+    # 0-then-constant for the gate group (fix 1).
     warm = int(warmup_passes * len(train))
-    if adamw and warm > 0:
-        total = max(1, student_updates)
-        sched = torch.optim.lr_scheduler.LambdaLR(
-            opt, lambda s: min(1.0, (s + 1) / warm) * 0.5 * (1 + math.cos(math.pi * min(s, total) / total)))
+    main_rate, gate_rate = rate_lambdas([(st, budget.steps(st) * len(train)) for st in student_stages
+                                         if st != "bind"], len(train), warm, deal_rate=deal_rate)
+    sched = (torch.optim.lr_scheduler.LambdaLR(
+        opt, [gate_rate if g.get("gate") else main_rate for g in opt.param_groups]) if adamw else None)
     seen = heads_seen(train)
-    validation_scores: dict[str, dict[str, dict[str, float]]] = {}
+    validation_scores: dict[str, dict[str, dict[str, float]]] = dict(state["validation_scores"]) if state else {}
     views = None
-    completed = 0
+    completed = int(state["completed"]) if state else 0
+    ramp = dict(ramp or {})
+    first_on: dict[str, int] = dict(state.get("first_on", {})) if state else {}
+    saved: list[str] = list(state.get("saved", [])) if state else []
+    floors = read_floors(pick_floors) if pick_floors else {}
+    if state:
+        stage_loss.update(state.get("stage_loss", {}))
+        rng.setstate(state["rng"])
+        if state.get("global_rng") is not None:
+            random.setstate(state["global_rng"])  # layout_lock's rewrite pick
+        torch.set_rng_state(state["torch_rng"])
+        if state.get("cuda_rng") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(state["cuda_rng"])
+    resume_at = (state["stage"], int(state["passed"])) if state else None
+    pending_opt = state
+
+    def keep(path: str, stage: str, passed: int) -> None:
+        """After a saved checkpoint: the resume file, then the rotation."""
+        if path not in saved:
+            saved.append(path)
+        if keep_checkpoints:
+            best = best_at(checks, floors, exists=lambda at: f"{checkpoint}.{at}" in saved)
+            best_path = f"{checkpoint}.{best}" if best else ""
+            for old in [p for p in saved[:-1] if p != best_path]:
+                if len([p for p in saved if p != best_path]) <= keep_checkpoints:
+                    break
+                if os.path.exists(old):
+                    os.remove(old)
+                saved.remove(old)
+                print(f"checkpoint dropped {old} (keeping {keep_checkpoints} + best "
+                      f"{best_path or 'none'})", flush=True)
+            link(path)
+        tmp = f"{resume_path}.tmp"
+        torch.save({"model": path, "stage": stage, "passed": passed, "completed": completed,
+                    "opt": opt.state_dict(), "sched": sched.state_dict() if sched is not None else None,
+                    "checks": checks, "rng": rng.getstate(), "global_rng": random.getstate(),
+                    "torch_rng": torch.get_rng_state(),
+                    "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                    "stage_loss": stage_loss, "validation_scores": validation_scores,
+                    "first_on": first_on, "saved": saved}, tmp)
+        os.replace(tmp, resume_path)
+
+    def link(path: str) -> None:
+        """With a rotation, ``<checkpoint>`` itself is a link to the latest file, not a copy."""
+        if os.path.lexists(checkpoint):
+            os.remove(checkpoint)
+        os.symlink(os.path.basename(path), checkpoint)
     schema_sha = digest([asdict(o) for o in schema.opportunities]) if checkpoint else ""
+    schema_shape = shape_digest(schema) if checkpoint else ""
     baseline = majority_baseline(train, validation) if validation else {}
     if baseline:
         print(f"validation baseline single_heads={len(baseline)} "
@@ -989,22 +1153,31 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     # Where the run starts, read the same way as every later check: a start
     # the checks already disagree with (a different part size, say) shows
     # here, before any step moves it.
-    if fit_pool or validation:
+    if (fit_pool or validation) and not state:
         check("start")
     teacher_ready = False
+    order_of = {s: i for i, s in enumerate(student_stages)}
     for stage in student_stages:
         fresh = False
+        start_pass = 0
+        if resume_at is not None:
+            if resume_at[0] not in order_of:
+                raise SystemExit(f"resume: stage {resume_at[0]} is not in this run's stages")
+            before = order_of[stage] < order_of[resume_at[0]]
+            done_here = stage == resume_at[0] and resume_at[1] >= budget.steps(stage)
+            if before or done_here:
+                # Already trained: only the setup a later stage relies on.
+                if stage == GATE_STAGE:
+                    _freeze_link_gate(model, True)
+                continue
+            if stage == resume_at[0]:
+                start_pass = resume_at[1]
         if not teacher_ready and (stage == "bind" or stage in lesson_stages):
             train_teacher()
             teacher_ready = True
-        if stage == "open_links":
+        if stage == GATE_STAGE:
+            # The gate group was in the optimizer from the start (fix 1).
             _freeze_link_gate(model, True)
-            opt.add_param_group({
-                "params": [model.link_mix.weight, model.link_mix.bias],
-                "lr": opt.param_groups[0]["lr"],
-                "initial_lr": opt.param_groups[0].get("initial_lr", lr),
-                "weight_decay": 0.0,
-            })
         if stage == "bind":
             _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng, scale,
                         chunk=teacher_rows_per_step, piece_tokens=teacher_piece_tokens,
@@ -1021,10 +1194,21 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         use_teacher = stage in lesson_stages
         lesson, allowed = _lesson(stage, seen) if use_teacher else (None, None)
         steps = budget.steps(stage)
+        if pending_opt is not None:
+            # The optimizer's groups match the saved run's: none is ever added.
+            opt.load_state_dict(pending_opt["opt"])
+            if sched is not None and pending_opt.get("sched") is not None:
+                sched.load_state_dict(pending_opt["sched"])
+            pending_opt = None
+        if steps:
+            print(f"stage {stage} weights " + " ".join(
+                f"{k}={getattr(weights, k):g}" for k in LossWeights.__dataclass_fields__
+                if k not in ("space", "head")) + (f" head={weights.head}" if weights.head else "")
+                + (" ramp " + " ".join(f"{k}:{v:g}" for k, v in ramp.items()) if ramp else ""), flush=True)
         stage_losses: list[float] = []
         shares: dict[str, list[float]] = {}
         started, done = time.time(), 0
-        for pass_i in range(steps):
+        for pass_i in range(start_pass, steps):
             # The teacher's view is read once per lesson stage (it follows the
             # student's deal graph from stage to stage, not step to step).
             if use_teacher and (views is None or (teacher.graph is not None and not fresh)):
@@ -1061,7 +1245,19 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             rng.shuffle(order)
             for batch in order:
                 taught = use_teacher and bool(views) and batch.deal_id in views
-                step_loss = _student_step(model, opt, batch, weights, sizes,
+                step_w = weights
+                if ramp:
+                    grow = {}
+                    for k, passes in ramp.items():
+                        if not getattr(weights, k):
+                            continue
+                        first_on.setdefault(k, completed)
+                        f = min(1.0, (completed - first_on[k] + 1) / max(1.0, passes * len(train)))
+                        if f < 1.0:
+                            grow[k] = getattr(weights, k) * f
+                    if grow:
+                        step_w = replace(weights, **grow)
+                step_loss = _student_step(model, opt, batch, step_w, sizes,
                                          teacher if taught else None,
                                          views.get(batch.deal_id) if taught else None,
                                          device, lesson if taught else None,
@@ -1077,8 +1273,12 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             if check_every and passed % check_every == 0 and passed < steps:
                 at = f"{stage}@{passed}"
                 if checkpoint:
-                    save_checkpoint(f"{checkpoint}.{at}", model, step=completed, schema_sha256=schema_sha)
-                if check(at):
+                    save_checkpoint(f"{checkpoint}.{at}", model, step=completed, schema_sha256=schema_sha,
+                                    shape_sha256=schema_shape, max_atoms=max_atoms)
+                bad = check(at)
+                if checkpoint:
+                    keep(f"{checkpoint}.{at}", stage, passed)
+                if bad:
                     stopped = at
                     break
         if stage_losses:
@@ -1087,6 +1287,16 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             means = {k: sum(v) / len(v) for k, v in shares.items() if v}
             top = sorted(((k, m) for k, m in means.items() if abs(m) > 1e-4), key=lambda kv: -abs(kv[1]))
             print(f"stage {stage} terms " + " ".join(f"{k}={m:.3f}" for k, m in top), flush=True)
+            # A term the stage weights on that never moved the total: no data for it here.
+            silent = sorted({k for k in shares if getattr(weights, k, 0) and abs(means.get(k, 0.0)) <= 1e-8}
+                            | {k for k in ("layout_lock", "why_contrast", "why_swap", "why_alone", "keyword_dropout",
+                                         "link_why_contrast", "link_why_alone")
+                               if getattr(weights, k, 0) and k not in shares})
+            if silent:
+                print(f"stage {stage} silent " + " ".join(silent), flush=True)
+            if torch.cuda.is_available():
+                print(f"stage {stage} peak_gpu_gib allocated={torch.cuda.max_memory_allocated() / 2**30:.1f} "
+                      f"reserved={torch.cuda.max_memory_reserved() / 2**30:.1f}", flush=True)
         if validation and steps:
             pooled = pool_scores([_score_oneshot(model, b, device) for b in validation])
             validation_scores[stage] = pooled
@@ -1108,11 +1318,15 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             stopped = stage
         # A stage that took no step would only copy the last file (3.4 GB on
         # the live model), so it saves nothing.
-        if checkpoint and completed and steps:
-            save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
+        if checkpoint and completed and steps and not (stopped and stopped != stage):
             # Every stage keeps its own copy, so a later stage that makes
             # validation worse costs a file pick, not a rerun.
-            save_checkpoint(f"{checkpoint}.{stage}", model, step=completed, schema_sha256=schema_sha)
+            if not keep_checkpoints:
+                save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha,
+                                shape_sha256=schema_shape, max_atoms=max_atoms)
+            save_checkpoint(f"{checkpoint}.{stage}", model, step=completed, schema_sha256=schema_sha,
+                            shape_sha256=schema_shape, max_atoms=max_atoms)
+            keep(f"{checkpoint}.{stage}", stage, steps)
             if validation_scores:
                 Path(f"{checkpoint}.validation.json").write_text(
                     json.dumps(validation_scores, indent=1, sort_keys=True), encoding="utf-8")
@@ -1124,7 +1338,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     if checkpoint and budget.teacher and teacher_ready:
         save_teacher(f"{checkpoint}.teacher", teacher, "end")
     if checkpoint and completed:
-        save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha)
+        if keep_checkpoints and saved:
+            link(saved[-1])
+        else:
+            save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha,
+                            shape_sha256=schema_shape, max_atoms=max_atoms)
     # The live runs leave the holdout to `ml.c3.predict --score`, once, on the
     # run the validation deals picked.
     scores = ({batch.deal_id: _score_oneshot(model, batch, device) for batch in holdout}
@@ -1154,11 +1372,58 @@ def training_batches(deal: DealExample, schema: Schema, *, max_atoms: int = 4096
     return [replace(part, deal_id=f"{deal.deal_id}#c3part{i}") for i, part in enumerate(parts)], notes
 
 
-def load_deal(path: str | Path) -> DealExample:
-    """A joined deal file, or a labeling export that still has ``labels`` and ``atoms``."""
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+#: Marks a draft row the owner approved through ``--accept-drafts``.
+APPROVED_DRAFT = "[owner-approved draft]"
+
+
+def read_draft_approvals(path: str | Path) -> dict[str, str]:
+    """The owner's approval manifest: ``{"files": [{"file": "<name>.json", "sha256": "<of its bytes>"}]}``.
+    Returns file name -> sha256. Only these files' draft rows train."""
+    m = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = m.get("files") if isinstance(m, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("A draft approval manifest needs a files list")
+    out = {}
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("file") or not r.get("sha256"):
+            raise ValueError("Each approved draft needs its file name and sha256")
+        out[Path(str(r["file"])).name] = str(r["sha256"]).lower()
+    return out
+
+
+def accept_drafts(payload: dict[str, Any]) -> int:
+    """Turn a file's assistant-drafted rows into rows the loader trains (the
+    file is on the owner's approval manifest). The row keeps who drafted it."""
+    from .data import NOT_A_PERSON, _is_a_person  # noqa: PLC0415
+
+    n = 0
+    for part in ("labels", "judgments", "deal_answers", "links", "missed_history"):
+        for row in payload.get(part) or []:
+            if not isinstance(row, dict) or not row.get("labeler") or _is_a_person(row.get("labeler")):
+                continue
+            who = str(row["labeler"])
+            for mark in NOT_A_PERSON:
+                who = re.sub(re.escape(mark), "", who, flags=re.I)
+            row["labeler"] = f"{who.strip()} {APPROVED_DRAFT}".strip()
+            n += 1
+    return n
+
+
+def load_deal(path: str | Path, accepted: dict[str, str] | None = None) -> DealExample:
+    """A joined deal file, or a labeling export that still has ``labels`` and ``atoms``.
+
+    ``accepted`` (``--accept-drafts``): file name -> sha256 the owner approved.
+    A listed file's draft rows train; a listed file whose bytes changed since
+    the approval is refused. Any other file's draft rows are skipped as always."""
+    raw = Path(path).read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("A training file must be one JSON object")
+    name = Path(path).name
+    if accepted and name in accepted:
+        if hashlib.sha256(raw).hexdigest() != accepted[name]:
+            raise ValueError(f"{name} changed since the owner approved its drafts")
+        accept_drafts(payload)
     from .export import is_page_export
 
     if is_page_export(payload):
@@ -1181,14 +1446,25 @@ def load_deal(path: str | Path) -> DealExample:
     return DealExample.from_dict(payload)
 
 
-def load_split(paths: list[str], schema: Schema, max_atoms: int = 4096) -> tuple[list[Batch], list[str]]:
+def load_split(paths: list[str], schema: Schema, max_atoms: int = 4096,
+               accepted: dict[str, str] | None = None) -> tuple[list[Batch], list[str]]:
     batches: list[Batch] = []
     notes: list[str] = []
     for path in paths:
-        parts, part_notes = training_batches(load_deal(path), schema, max_atoms=max_atoms)
+        parts, part_notes = training_batches(load_deal(path, accepted), schema, max_atoms=max_atoms)
         batches.extend(parts)
         notes.extend(part_notes)
     return batches, notes
+
+
+def without_heads(schema: Schema, keys: str) -> Schema:
+    """The schema without the opportunities ``keys`` (comma separated) names:
+    the shape a checkpoint saved before those heads were added has."""
+    drop = {k.strip() for k in str(keys or "").split(",") if k.strip()}
+    unknown = drop - {o.key for o in schema.opportunities}
+    if unknown:
+        raise SystemExit("--allow-new-heads: no such question " + ", ".join(sorted(unknown)))
+    return replace(schema, opportunities=[o for o in schema.opportunities if o.key not in drop]) if drop else schema
 
 
 def require_live_teacher(teacher: str, tiny: bool) -> None:
@@ -1266,6 +1542,20 @@ def main() -> None:
                              "validation on one part, teacher saved. For catching GPU-only errors")
     parser.add_argument("--init-from", default="",
                         help="Start the student from this checkpoint instead of from scratch")
+    parser.add_argument("--allow-text-change", action="store_true",
+                        help="With --init-from: accept a checkpoint whose schema digest differs when only "
+                             "description texts changed (same opportunity keys, order and answer values); "
+                             "refused otherwise. Re-run the start gate: step-0 scores move with the texts")
+    parser.add_argument("--init-schema-ref", default="",
+                        help="With --allow-text-change, for a checkpoint saved before shape digests: the git "
+                             "commit it was trained on; its schema digest must equal the checkpoint's")
+    parser.add_argument("--allow-new-heads", default="",
+                        help="With --allow-text-change: opportunity keys this schema adds over the checkpoint's "
+                             "(comma separated, e.g. jdg:hours:per,jdg:hours:qty). The rest must keep the "
+                             "checkpoint's shape; the added heads start from their descriptions")
+    parser.add_argument("--accept-drafts", default="",
+                        help="The owner's approval manifest of draft training files "
+                             '({"files": [{"file", "sha256"}]}): only those files\' assistant drafts train')
     parser.add_argument("--stage-steps", default="",
                         help="Per-stage step overrides, e.g. lines=30,links=0,teach=0; a stage "
                              "with 0 steps neither trains nor scores")
@@ -1283,6 +1573,26 @@ def main() -> None:
                         help="Also check line type (and save a copy) every N passes inside a stage")
     parser.add_argument("--fit-parts", type=int, default=8,
                         help="Training parts the fit check reads (0 skips it)")
+    parser.add_argument("--ramp", action="append", default=[],
+                        help="term=passes: grow that loss term's weight from 0 over this many passes from "
+                             "the first step it is on, e.g. why_contrast=2 (repeat). Off under --smoke")
+    parser.add_argument("--resume", action="store_true",
+                        help="Carry on from <checkpoint>.resume.pt (optimizer, schedule, step, stage, "
+                             "checks); a fresh start when there is none")
+    parser.add_argument("--keep-checkpoints", type=int, default=0,
+                        help="Keep at most N saved checkpoints on disk plus the best by the pick (0 keeps all)")
+    parser.add_argument("--pick-floors", default="",
+                        help="The live model's per-head scores (headscore scores.json shape): what the "
+                             "rotation's best-by-pick reads")
+    parser.add_argument("--graph", default="",
+                        help="Cross-line reasoning flags (ml/c3/graph.py): rune, or key=value,... over the "
+                             "defaults (mask=index|arrival|view, cut_dropout, hop_both, hop2, hop_to_h, "
+                             "pointer_edge, hop_near_miss, nodes, card_slots). Saved in every checkpoint")
+    parser.add_argument("--validation-max-atoms", type=int, default=0,
+                        help="Lines per validation window (default --max-atoms). Run E scores at serve's "
+                             "window (8192), so the checks and the pick read what serve will read")
+    parser.add_argument("--deal-rate", type=float, default=DEAL_RATE,
+                        help="The main groups' rate floor (share of --lr) through the deal stage")
     parser.add_argument("--gate", action="append", default=[],
                         help="Stop the run when a check misses its bar, e.g. lines@5.fit_exact>=0.5 "
                              "or lines.valid_exact>=0.45 (repeat)")
@@ -1304,8 +1614,24 @@ def main() -> None:
     if unknown:
         raise SystemExit("Unknown question: " + ", ".join(unknown))
     gates = parse_gates(args.gate)
+    ramp = {}
+    for spec in args.ramp:
+        key, _, n = spec.partition("=")
+        if key not in LossWeights.__dataclass_fields__ or key in ("space", "head"):
+            raise SystemExit(f"--ramp: no loss term {key!r}")
+        ramp[key] = float(n)
+    if args.smoke and ramp:
+        # The smoke measures the peak with every term at its full weight.
+        print("smoke: ramp off, every term at its full weight", flush=True)
+        ramp = {}
     checks = dict(head_weight=head_weight, loss_weight=loss_weight, free_heads=tuple(args.free_head),
-                  fit_parts=args.fit_parts, check_every=args.check_every, gates=gates)
+                  fit_parts=args.fit_parts, check_every=args.check_every, gates=gates, ramp=ramp,
+                  resume=args.resume, keep_checkpoints=args.keep_checkpoints,
+                  pick_floors=args.pick_floors or None,
+                  graph=parse_graph(args.graph) if args.graph else None,
+                  max_atoms=args.max_atoms, deal_rate=args.deal_rate)
+    if checks["graph"] is not None:
+        print("graph " + " ".join(f"{k}={v}" for k, v in checks["graph"].items()), flush=True)
     require_live_teacher("" if args.tiny else args.teacher, args.tiny)
     schema = load_schema()
     teacher_steps = args.steps if args.teacher_steps is None else args.teacher_steps
@@ -1316,18 +1642,34 @@ def main() -> None:
                     flips=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4),
                     spread=0 if args.tiny or not args.extra_lessons else max(1, args.steps // 4))
     budget = with_stage_steps(budget, args.stage_steps)
-    train, train_notes = load_split(args.train, schema, args.max_atoms)
+    accepted = read_draft_approvals(args.accept_drafts) if args.accept_drafts else None
+    if accepted:
+        print("accept_drafts", len(accepted), "approved files", flush=True)
+    train, train_notes = load_split(args.train, schema, args.max_atoms, accepted)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
-    validation, val_notes = load_split(args.validation, schema, args.max_atoms)
+    validation, val_notes = load_split(args.validation, schema, args.validation_max_atoms or args.max_atoms)
+    if args.validation_max_atoms:
+        print(f"validation window {args.validation_max_atoms} lines (training {args.max_atoms})", flush=True)
     caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, args.view_parts
     if args.smoke:
         mean = sum(len(b) for b in train) / len(train)
         near = sorted(train, key=lambda b: abs(len(b) - mean))
-        # C3_SMOKE_LARGEST=1: the largest part and one average part, to
-        # measure the memory peak the full run will reach.
-        train = ([max(train, key=len), near[0]] if os.environ.get("C3_SMOKE_LARGEST") == "1"
-                 else near[:2])
-        validation = sorted(validation, key=len)[:1]
+        # C3_SMOKE_LARGEST=1: the largest part that carries layout rewrites
+        # (every term fires there: the lock's forward is the third graph) and
+        # the largest part overall, to measure the peak the full run reaches.
+        if os.environ.get("C3_SMOKE_LARGEST") == "1":
+            locked = [b for b in train if b.layout_rewrites and any(b.why)]
+            pick_parts = ([max(locked, key=len)] if locked else []) + [max(train, key=len)]
+            pick_parts = list({id(b): b for b in pick_parts}.values())
+            if len(pick_parts) < 2:
+                pick_parts.append(next(b for b in near if b is not pick_parts[0]))
+            if not locked:
+                print("smoke: no part carries layout rewrites; layout_lock cannot fire", flush=True)
+            train = pick_parts
+        else:
+            train = near[:2]
+        # The validation part with the most labeled lines, so the smoke's checks score something.
+        validation = sorted(validation, key=lambda b: -sum(b.labeled))[:1]
         # Every stage the run itself trains, once; a stage the run turned
         # off (``--stage-steps teach=0``, ``--teacher-steps 0``) stays off.
         full = budget
@@ -1337,7 +1679,8 @@ def main() -> None:
         caps, ground, view_parts = (16, 8, 4), 4, 1
         global PROGRESS_EVERY, BIND_PARTS
         PROGRESS_EVERY, BIND_PARTS = 1, 1
-        print("smoke_parts", " ".join(f"{b.deal_id}:{len(b)}" for b in train), flush=True)
+        print("smoke_parts", " ".join(f"{b.deal_id}:{len(b)} rewrites={len(b.layout_rewrites)}"
+                                      for b in train), flush=True)
     if args.limit_parts:
         train = sorted(train, key=len, reverse=True)[:args.limit_parts]
         print("preflight_parts", " ".join(f"{b.deal_id}:{len(b)}" for b in train), flush=True)
@@ -1365,8 +1708,17 @@ def main() -> None:
         if args.init_from:
             from .gates import load_checkpoint
 
+            known = {}
+            if args.allow_text_change and args.init_schema_ref:
+                from .gates import schema_digests_at
+
+                full, shape = schema_digests_at(args.init_schema_ref)
+                known[full] = shape
             step = load_checkpoint(args.init_from, student,
-                                   schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+                                   schema_sha256=digest([asdict(o) for o in schema.opportunities]),
+                                   allow_text_change=args.allow_text_change,
+                                   shape_sha256=shape_digest(without_heads(schema, args.allow_new_heads)),
+                                   known_shapes=known)
             print("init_from", args.init_from, "step", step, flush=True)
         released = release_encoder_top(student, args.train_encoder_layers)
         print("encoder_blocks_training", released, flush=True)
@@ -1397,6 +1749,14 @@ def main() -> None:
             measured.append(key)
     silent = sorted(k for k in result.heads_seen if k not in measured)
     print("not_measured", " ".join(silent) if silent else "(none)")
+    if args.smoke:
+        if torch.cuda.is_available():
+            print(f"smoke peak_gpu_gib allocated={torch.cuda.max_memory_allocated() / 2**30:.1f} "
+                  f"reserved={torch.cuda.max_memory_reserved() / 2**30:.1f}", flush=True)
+        import resource  # noqa: PLC0415
+
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print(f"smoke peak_rss_gib {rss / (2**30 if sys.platform == 'darwin' else 2**20):.2f}", flush=True)
 
 
 if __name__ == "__main__":
