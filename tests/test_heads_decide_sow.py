@@ -87,3 +87,59 @@ def test_the_program_model_fixup_writes_only_from_lines_the_keep_head_kept():
     env["c3_brief"]["also_mentioned"] = [{"id": "o", "text": notes[0]["text"]}, {"id": "t", "text": notes[1]["text"]}]
     m._program_model(c, env)
     assert c["assumptions"]
+
+
+# ---- step 0 (regex_retirement S16, S23, S27, S68): the re-add paths add only
+# lines the keep head kept, whenever there is a keep reading.
+
+def _readd_env(heads_used=("read:co_action",), kept=()):
+    atoms = [_atom("typ", "Remove the old wall-mounted clocks and patch the anchor holes.", "assumption", 50,
+                   c3_label={"type": "scope_item", "p": 0.9}),
+             _atom("ans", "Can you also add a cellular backup router at the main office?", "open_question", 51,
+                   c3_label={"type": "answered_question", "p": 0.9})]
+    return {"atoms": atoms, "documents": [{"artifact_id": "mail", "filename": "mail.eml"}],
+            "c3_brief": {"sections": {}, "label_next": [], "kept_unsure": [],
+                         "also_mentioned": [{"id": i, "text": a["text"]} for a in atoms for i in kept if a["id"] == i],
+                         "decided_by": {"heads_used": list(heads_used)}}}
+
+
+def test_typed_only_adds_no_line_the_keep_head_left_out():
+    assert "typ" not in {f["id"] for f in m.facts(_readd_env())}
+    assert {f["id"]: f["section"] for f in m.facts(_readd_env(heads_used=()))}.get("typ") == "typed_only"
+
+
+def test_answered_question_readd_needs_the_keep_head():
+    assert "ans" not in {f["id"] for f in m.facts(_readd_env())}
+    assert {f["id"]: f["section"] for f in m.facts(_readd_env(heads_used=()))}.get("ans") == "answered_question"
+    assert "ans" in {f["id"] for f in m.facts(_readd_env(kept=("ans",)))}
+
+
+def test_list_siblings_add_only_kept_siblings():
+    atoms = [{"id": "s1", "artifact_id": "d", "text": "IDF to side door 154ft"},
+             {"id": "s2", "artifact_id": "d", "text": "IDF to back door 88ft"}]
+    fact = {"id": "s1", "section": "scope_of_work", "when": "", "under": "", "text": "IDF to side door 154ft"}
+    out = [dict(fact)]
+    m._list_siblings(out, atoms, {"s1"})
+    assert [f["id"] for f in out] == ["s1"]
+    out = [dict(fact)]
+    m._list_siblings(out, atoms, {"s1", "s2"})
+    assert [f["id"] for f in out] == ["s1", "s2"]
+    out = [dict(fact)]
+    m._list_siblings(out, atoms)  # no keep reading: the rule alone
+    assert [f["id"] for f in out] == ["s1", "s2"]
+
+
+def test_schedule_from_facts_reads_only_kept_dated_atoms():
+    dated = _atom("dl", "Work can start 11/3 and continue through 11/21 for all stores.", "scope_item", 60,
+                  c3_label={"type": "deadline", "p": 0.9})
+
+    def run(heads_used, kept=()):
+        env = {"atoms": [dated], "c3_brief": {"sections": {}, "kept_unsure": [],
+                                              "also_mentioned": [{"id": i, "text": dated["text"]} for i in kept],
+                                              "decided_by": {"heads_used": list(heads_used)}}}
+        c = {"schedule": []}
+        m._schedule_from_facts(c, [], env)
+        return [x["cites"] for x in c["schedule"]]
+    assert run(["read:co_action"]) == []
+    assert run(["read:co_action"], kept=("dl",)) == [["dl"]]
+    assert run([]) == [["dl"]]

@@ -292,7 +292,8 @@ _WANT = {
                "Identify any areas where drilling or mounting is prohibited.", "Trenching, demolition or hazardous material remediation."],
     "010085": ["Arrive onsite and check in", "Verify available rack space for the new switch", "Remove the existing switches as required."],
     "000123": ["Perform all device configurations and troubleshooting", "No materials are required to be provided by Provider."],
-    "010198": ["Provide an active primary internet connection."],
+    # 010198 is gone: its standard fired on an answered question the keep head
+    # left out (pass-T brief), which the SOW no longer re-adds (step 0, S23).
 }
 
 

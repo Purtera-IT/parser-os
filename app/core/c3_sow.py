@@ -668,13 +668,21 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # And a line the keep head chose to keep below the brief's bar (010171's
     # Logitech Sight request, keep 0.39): the head said keep; the SOW sees it.
     unsure += [{"id": x["id"], "text": x["text"]} for x in brief.get("kept_unsure") or []]
+    # The keep head's own keeps (sections, also mentioned, kept below the bar):
+    # with a keep reading, a regex (_DIRECTIVE, _PROGRAM) or a type head only
+    # marks which of these lines say the job; it never adds a line the head
+    # left out.
+    gate = _keep_gate(envelope)
+    keep_read, head_kept = gate is not None, gate or set()
     # A question the deal already answered is not an open question, so the
     # brief leaves it out; for a SOW it is often the request itself: 010198's
     # "I would also like to add a Ubiquiti router with cellular backup - is
     # that something you can help with?" (the type head: answered_question).
+    # With a keep reading, only one the keep head kept.
     answered = [{"id": a["id"], "text": a.get("text") or ""} for a in envelope.get("atoms") or []
                 if ((a.get("structured") or {}).get("c3_label") or {}).get("type") == "answered_question"
-                and a.get("id") not in seen and len(str(a.get("text") or "")) > 25]
+                and a.get("id") not in seen and len(str(a.get("text") or "")) > 25
+                and (not keep_read or str(a.get("id")) in head_kept)]
     # The type head's own scope reading, for a line the brief's keep head left
     # out: that head picks what a short brief says, not what a SOW must carry.
     # 010279's "We are pricing physical installation labor only"
@@ -683,11 +691,6 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # transcripts, where scope words are mostly talk.
     docs = {str(d.get("artifact_id") or d.get("id") or ""): str(d.get("filename") or "")
             for d in envelope.get("documents") or []}
-    # The keep head's own keeps (sections, also mentioned, kept below the bar):
-    # with a keep reading, a regex (_DIRECTIVE, _PROGRAM) only marks which of
-    # these lines say the job; it never adds a line the head left out.
-    gate = _keep_gate(envelope)
-    keep_read, head_kept = gate is not None, gate or set()
     typed = []
     for a in envelope.get("atoms") or []:
         lab = (a.get("structured") or {}).get("c3_label") or {}
@@ -700,7 +703,10 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
         # to have the Logitech Sight installed ..." reaches the writer as
         # kept_unsure: the keep head kept it, below the brief's bar.)
         abstained = False
+        # Nor does the type head's scope reading add a line the keep head
+        # left out (S16): with a keep reading, typed_only is only lines it kept.
         if (a.get("id") in seen or (lab.get("type") not in _SCOPE_TYPES and not abstained)
+                or (keep_read and str(a.get("id")) not in head_kept)
                 or float(lab.get("p") or 0) < (0.35 if abstained else TYPED_BAR)
                 or not 15 < len(txt) < 600 or _CHATTER.search(txt.strip()) or txt.count("|") >= 2
                 or re.search(r"(?i)unsubscribe|book time|my calendar|confidential|don.t often get email|"
@@ -803,7 +809,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             f["text"] = full[f["id"]]
         f["text"] = _withhold(f["text"])
     _lead_ins(out, envelope.get("atoms") or [])
-    _list_siblings(out, envelope.get("atoms") or [])
+    _list_siblings(out, envelope.get("atoms") or [], gate)
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
     seen_text: set[str] = set()
     uniq = []
@@ -876,12 +882,15 @@ def _fact_line(f: dict[str, Any]) -> str:
 _MEASURED = re.compile(r"(?i)^\s*(.{2,40}?)\s*[:\-–]?\s*(?:approx(?:imately)?\.?\s*)?(\d[\d,.]*)\s*(ft|feet|foot|'|m|meters?|units?|x)\b")
 
 
-def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> int:
+def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]],
+                   head_kept: set[str] | None = None) -> int:
     """A line of the same measured list as a kept line shares its fate. Of
     010043's "IDF to side door 154ft / IDF to back door 88ft / IDF to Front
     door 146ft", the keep head kept one and rejected two at a coin flip, so the
     SOW priced one cable run of three. Same document, same opening words, a
-    measurement: the sibling joins its kept line's section."""
+    measurement: the sibling joins its kept line's section. A sibling not yet
+    a fact is added only when the keep head kept it (``head_kept``, the
+    ``_keep_gate``; None when there was no keep reading)."""
     by_id = {a.get("id"): a for a in atoms}
     weak = ("unsure", "also_kept", "typed_only")
     # A BOM row ("1: QM75C Samsung 75IN ...", "2 | TS525TU | Chief ...") is a
@@ -908,7 +917,7 @@ def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> in
             n += 1
     have = {f["id"] for f in out}
     for a in atoms:
-        if a.get("id") in have:
+        if a.get("id") in have or (head_kept is not None and str(a.get("id")) not in head_kept):
             continue
         t = str(a.get("text") or "")
         if not shape(t):
@@ -9501,7 +9510,8 @@ _SCHED_TERM = re.compile(r"(?i)\bblackout\b|\bper time zone\b|\b(start|begin)\w*
 def _schedule_from_facts(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dict[str, Any]) -> None:
     """Schedule terms a fact states reach the schedule even when the writer
     left them out, from the facts and from atoms the type head dated
-    (milestone_phase, deadline) that no section kept. A term in a quoted
+    (milestone_phase, deadline) that no section kept but the keep head did
+    (any of them without a keep reading). A term in a quoted
     reply is still the customer's term (010209's answers were all quoted in
     the next email); only meeting and call slots stay out."""
     sch = content.setdefault("schedule", [])
@@ -9527,8 +9537,13 @@ def _schedule_from_facts(content: dict[str, Any], fs: list[dict[str, Any]], enve
             own.setdefault(re.sub(r"\W+", " ", str(a.get("text") or "").lower()).strip(), str(a.get("id")))
     cands = [(f["id"], f["text"]) for f in fs if not str(f["text"]).rstrip().endswith("?")]
     seen = {i for i, _ in cands}
+    # A dated atom no section kept is read only when the keep head kept it
+    # (S68): the type head's date never adds a line the keep head left out.
+    gate = _keep_gate(envelope)
     for a in envelope.get("atoms") or []:
         lab = (a.get("structured") or {}).get("c3_label") or {}
+        if gate is not None and str(a.get("id")) not in gate:
+            continue
         if a.get("id") not in seen and lab.get("type") in ("milestone_phase", "deadline") and float(lab.get("p") or 0) >= 0.5 \
                 and 10 < len(str(a.get("text") or "")) < 300:
             cands.append((str(a["id"]), str(a["text"])))
