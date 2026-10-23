@@ -650,6 +650,10 @@ class Batch:
     #: the note's universal part with verdict words masked, for the
     #: teacher-free link losses (link_why.py). Never an input.
     edge_notes: list[tuple[int, int, str, str]] = field(default_factory=list)
+    #: Training only: (line, key, note) for a line card whose reason code is
+    #: its only class target (``jdg:<head>:reason``): the card's note, verdict
+    #: words masked on a universal head, for why2.card_alone. Never an input.
+    reason_notes: list[tuple[int, str, str]] = field(default_factory=list)
     #: Training only: loss scale per opportunity key for this deal view
     #: (DealExample.head_scale); a key not listed counts 1.
     head_scale: dict[str, float] = field(default_factory=dict)
@@ -1268,7 +1272,8 @@ def _card_note(j: dict[str, Any], company: str, schema: Schema) -> tuple[str, st
 
 def _apply_reason(schema: Schema, surface: str, code: str, lines: tuple[int, ...], query: str,
                   targets: dict[str, list[int]], judged: list[Judged], note: str, policy: str,
-                  weight: float, subject: str) -> None:
+                  weight: float, subject: str,
+                  reason_notes: list[tuple[int, str, str]] | None = None) -> None:
     opp = schema.by_key().get(f"jdg:{surface}:reason")
     if opp is None:
         return
@@ -1281,6 +1286,8 @@ def _apply_reason(schema: Schema, surface: str, code: str, lines: tuple[int, ...
                              why_weight=weight, policy=policy, query=query, subject_key=subject))
         return
     _set_class(targets, opp.key, lines[0], ix)
+    if reason_notes is not None and note and weight > 0:
+        reason_notes.append((lines[0], opp.key, mask_verdict(note) if opp.universal else note))
 
 
 def _remember_literal(literals: list[LiteralTarget], line: str, i: int, key: str, text: str) -> None:
@@ -1654,6 +1661,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     by_key = by_key_all
     judged: list[Judged] = []
     notes: list[str] = []
+    reason_notes: list[tuple[int, str, str]] = []
     lines = _Lines(atoms)
     for j in deal.judgments:
         if not _is_a_person(j.get("labeler")) or excluded(j):
@@ -1741,7 +1749,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 placed = idx
         if placed is not None and reason:
             _apply_reason(schema, surface, reason, placed, query, targets, judged, note, pol,
-                          why_weight(j), subject)
+                          why_weight(j), subject, reason_notes)
     _consume_deal_answers(deal, schema, judged, deal_numbers, literals, n, company)
 
     # A line that points at a whole document points at every line of it.
@@ -1796,7 +1804,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         keys=[a.key for a in atoms], parser_targets=parser_targets, head_scale=dict(deal.head_scale),
         layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
                          for t in a.layout_rewrites if t.strip() != a.text.strip()],
-        edge_notes=edge_notes)
+        edge_notes=edge_notes, reason_notes=reason_notes)
 
 
 def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:

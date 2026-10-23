@@ -48,6 +48,19 @@ class LossWeights:
     near_miss_margin: float = 1.0
     literals: float = 0.4          # unique in-line spans of open value strings
     deal_numbers: float = 0.2      # deal-answer site count
+    # Run E why2 (why2.py, free_rows.py; arch_review §5-8): the text paths carry
+    # the decision. Each part is 0 to turn it off; "not a part" fields are knobs.
+    described_alone: float = 0.3   # head CE on the described logits alone (free rows left out)
+    described_alone_p: float = 0.5 # share of steps that score it (not a part)
+    card_alone: float = 0.2        # a line card's / field's own note alone reaches that head's answer
+    card_contrast: float = 0.2     # r_i toward its card note, per head, against the head's other notes
+    card_cap: float = 256          # card notes read per part per step (not a part)
+    co_why_contrast: float = 0.2   # the conduct line toward its distinct [company] line
+    co_why_alone: float = 0.2      # the [company] line alone, through the conduct head, reaches the company answers
+    number_why_alone: float = 0.1  # the WHY alone reaches the line's number heads (smooth L1)
+    judgment_why_alone: float = 0.2  # a pair / group / deal card's note alone reaches its verdict
+    free_h_out: float = 1.0        # r-only free rows: h_keep = 1 - this (not a part; ramped 0 -> 1 in runE.sh)
+    company_r_grad: float = 1.0    # the company layer's gradient into the trunk (not a part; runE.sh 0.1)
     # The meaning lock for table rows: the same row in another layout keeps
     # its answers. A no-op unless the data carries layout_rewrites (run E).
     layout_lock: float = 0.5
@@ -619,6 +632,9 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     the bank should hold other deals' explanations too, which is what the
     model will have at inference."""
     w = w or LossWeights()
+    from .why2 import before_forward  # noqa: PLC0415 (cycle)
+
+    before_forward(model, w)
     desc = model.describe()
     # v6: reading explanations is the brain's job (brain.py, brain_loss).
     # The v5 bank (reader votes, compiled operators, rule cards, clause
@@ -663,6 +679,9 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
 
     parts.update(why_carry_losses(model, out, batch, desc, w))
+    from .why2 import why2_losses  # noqa: PLC0415 (cycle)
+
+    parts.update(why2_losses(model, out, batch, desc, w, judgment_sizes))
     from .link_why import link_why_losses  # noqa: PLC0415 (cycle)
 
     parts.update(link_why_losses(model, out, batch, desc, w))

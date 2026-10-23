@@ -24,9 +24,9 @@ The terms here, each a named part of ``c3_loss`` (weight 0 turns it off):
                      replaced by line j's (r_i + |r_i| (e_j - e_i)) must give
                      j's answer when j answers differently (near misses
                      first, then other labeled pairs), and i's own answer when
-                     j is a twin. r, h and the asked slots are detached: only
-                     the heads learn, and what they learn is that the WHY
-                     direction outranks the surface paths.
+                     j is a twin. r is detached and h and the asked slots
+                     are blank: only the heads learn, and what they learn is
+                     that the WHY direction outranks the surface paths.
 ``why_alone``        ``why_sufficiency`` with the surface paths blanked: the
                      encoded WHY stands in for r and the free heads read a
                      zero ``h`` on those lines, so the WHY really is alone.
@@ -247,10 +247,12 @@ def why_swap_loss(model: C3Model, out: C3Output, batch: Batch, desc: dict[str, A
     src = [i for i, _, _, _ in pairs]
     r = out.r.detach()
     move = (e[[at[j] for _, j, _, _ in pairs]] - e[[at[i] for i in src]]) * r[src].float().norm(dim=-1, keepdim=True)
-    held = C3Output(h=out.h.detach(), z_c=out.z_c.detach(), q_mu=out.q_mu.detach(),
+    # h and the asked slots blank, as why_alone: a free row reading h could
+    # otherwise hold the answer whatever the swapped WHY says (arch_review §3).
+    held = C3Output(h=torch.zeros_like(out.h), z_c=out.z_c.detach(), q_mu=out.q_mu.detach(),
                     q_logvar=out.q_logvar.detach(), q_logit=out.q_logit.detach(), r=r,
                     residual=out.residual.detach(),
-                    slots=out.slots.detach() if out.slots is not None else None)
+                    slots=torch.zeros_like(out.slots) if out.slots is not None else None)
     sub = moved_heads(model, held, src, move.to(r.dtype), desc)
     total, terms = zero, 0
     for key in {k for _, _, k, _ in pairs}:
