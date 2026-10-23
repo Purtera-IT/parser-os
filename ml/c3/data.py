@@ -646,6 +646,10 @@ class Batch:
     #: Training only: (line, text) for a labeled line in another layout
     #: (Atom.layout_rewrites), for the meaning lock. Never an input.
     layout_rewrites: list[tuple[int, str]] = field(default_factory=list)
+    #: Training only: (src, dst, relation, note) for a saved link with a note,
+    #: the note's universal part with verdict words masked, for the
+    #: teacher-free link losses (link_why.py). Never an input.
+    edge_notes: list[tuple[int, int, str, str]] = field(default_factory=list)
     #: Training only: loss scale per opportunity key for this deal view
     #: (DealExample.head_scale); a key not listed counts 1.
     head_scale: dict[str, float] = field(default_factory=dict)
@@ -1710,6 +1714,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             hint_lines[i] = sorted(set(hint_lines[i]) | {j for j, a in enumerate(atoms)
                                                          if a.doc_id == doc and j != i})
 
+    edge_notes: list[tuple[int, int, str, str]] = []
     # Why a link was drawn: the teacher reads it as the WHY of that relation
     # on the line the link starts from (a [purtera] part goes to the company).
     for (src, dst, rel), note in deal.edge_notes.items():
@@ -1718,6 +1723,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             continue
         u, p = split_note(note, company)
         u, p = drop_meta(u), drop_meta(p)
+        if u and (i, index[dst]) in edges.get(rel, ()):
+            edge_notes.append((i, index[dst], rel, mask_verdict(u)))
         if u:
             prev = field_notes[i].get(k)
             field_notes[i][k] = f"{prev} {mask_verdict(u)}" if prev else mask_verdict(u)
@@ -1751,7 +1758,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
         keys=[a.key for a in atoms], parser_targets=parser_targets, head_scale=dict(deal.head_scale),
         layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
-                         for t in a.layout_rewrites if t.strip() != a.text.strip()])
+                         for t in a.layout_rewrites if t.strip() != a.text.strip()],
+        edge_notes=edge_notes)
 
 
 def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:

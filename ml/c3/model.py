@@ -256,6 +256,9 @@ class C3Output:
     relations: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N, N]
     link_none: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N] abstain logit
     governs: torch.Tensor | None = None                                # [N, N] log P(j ⊂ i)
+    #: [N, d_head] what the relation head scores pairs from (rel_in of the
+    #: pre-hop r), kept so a loss can read an edge's pair representation.
+    rel_x: torch.Tensor | None = None
     absence: torch.Tensor | None = None                                # [N, slots] logits
     company_logits: torch.Tensor | None = None                         # adversary
     alpha: torch.Tensor | None = None
@@ -475,6 +478,7 @@ class C3Model(nn.Module):
         rels = [o for o in self.schema.select(kind=RELATION) if o.field != "governs"]
         if rels:
             x = self.rel_in(r)
+            out.rel_x = x
             scores, nones = self.relation_head(x, torch.stack([desc[o.key][0] for o in rels]))
             # A causal link points back in arrival time. A document arrives
             # whole, so within one arrival a total may derive from the rows

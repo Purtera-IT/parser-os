@@ -11,8 +11,11 @@
 #
 # Every loss weight is set here (the loss table below; the reasoning and the
 # ablation plan are in runE/loss_plan.md). The new terms (why_contrast,
-# why_alone, keyword_dropout, layout_lock, and numbers when its stage opens)
-# grow from 0 over RAMP passes (2) from the first step each is on.
+# why_alone, keyword_dropout, layout_lock, link_why_contrast, link_why_alone,
+# and numbers when its stage opens) grow from 0 over RAMP passes (2) from the
+# first step each is on. The link_why terms (ml/c3/link_why.py) train the
+# links' notes into the relation head; like relations they open at links, add
+# no forward pass, and so leave the graph count (and ATOMS) as it is.
 #
 # The layout meaning lock is on: the run E files carry layout_rewrites on table
 # rows, and losses.layout_lock_loss (runE-data, 2eaa5ef) reads each part once
@@ -38,8 +41,8 @@
 #   INIT        start checkpoint (default $C3/runC.pt.open_links.slim, the live
 #               one; its md5 is checked unless INIT_MD5=skip)
 #   LAYOUT_LOCK KEYWORD_DROPOUT WHY_CONTRAST WHY_ALONE WHY_SWAP TYPE_WEIGHT RAMP
-#   WHY_ALIGN WHY_SUFFICIENCY  override the loss table (0.5 0.3 0.3 0.2 0 10 2
-#               0 0); 0 turns a term off. The ablation configs are in loss_plan.md
+#   WHY_ALIGN WHY_SUFFICIENCY LINK_WHY_CONTRAST LINK_WHY_ALONE  override the
+#               loss table (0.5 0.3 0.3 0.2 0 10 2 0 0 0.3 0.2); 0 turns a term off. The ablation configs are in loss_plan.md
 #   ATOMS       lines per part. Default from the card and the graphs a step
 #               holds (1 + layout_lock on + keyword_dropout on): 8192 / graphs at
 #               >=120 GB (H200), 4096 / graphs at >=70 GB, rounded down to 512.
@@ -200,6 +203,7 @@ LAYOUT_LOCK=${LAYOUT_LOCK:-0.5} KEYWORD_DROPOUT=${KEYWORD_DROPOUT:-0.3}
 WHY_CONTRAST=${WHY_CONTRAST:-0.3} WHY_ALONE=${WHY_ALONE:-0.2} WHY_SWAP=${WHY_SWAP:-0}
 TYPE_WEIGHT=${TYPE_WEIGHT:-10} RAMP=${RAMP:-2}
 WHY_ALIGN=${WHY_ALIGN:-0} WHY_SUFFICIENCY=${WHY_SUFFICIENCY:-0}   # E-base ablation: 0.1 / 0.5 (run C)
+LINK_WHY_CONTRAST=${LINK_WHY_CONTRAST:-0.3} LINK_WHY_ALONE=${LINK_WHY_ALONE:-0.2}   # link notes (link_why.py)
 weights=(
   heads=1 conduct=1 numbers=0.2 relations=0.5 governs=0.5
   judgments=1 judgment_rationale=0.2 literals=0.4 deal_numbers=0.2
@@ -209,6 +213,7 @@ weights=(
   why_swap="$WHY_SWAP" why_swap_cap=64
   keyword_dropout="$KEYWORD_DROPOUT" keyword_dropout_p=0.3 keyword_dropout_cap=256
   layout_lock="$LAYOUT_LOCK"
+  link_why_contrast="$LINK_WHY_CONTRAST" link_why_hard_negative=4 link_why_alone="$LINK_WHY_ALONE"
   pointers=0.1 entities=0.05 hindsight=0.1 near_misses=0.2 near_miss_margin=1   # run C
   residual=0.01 variance=0.1 absence=0.2 adversary=0.1 policy_l1=0.01
   explanation_only=0.5 changes=0.3 claims=0.3 rule_links=0.5 why_echo=0.2 negatives=0.3
@@ -218,7 +223,7 @@ loss_args=()
 for kv in "${weights[@]}"; do loss_args+=(--loss-weight "$kv"); done
 ramp_args=()
 if [[ "$RAMP" != 0 ]]; then
-  for t in why_contrast why_alone why_swap keyword_dropout layout_lock; do ramp_args+=(--ramp "$t=$RAMP"); done
+  for t in why_contrast why_alone why_swap keyword_dropout layout_lock link_why_contrast link_why_alone; do ramp_args+=(--ramp "$t=$RAMP"); done
   ramp_args+=(--ramp numbers=1)   # the numbers stage opens on the new hours heads
 fi
 
@@ -311,7 +316,7 @@ fi
 # The run, then the pick and a slim copy of it for the Mac, all detached.
 # RESUME=1 carries on from $CK.resume.pt (the loop writes it at every check).
 [[ "${RESUME:-0}" == 1 ]] && args+=(--resume)
-echo "restart after a failure: RESUME=1 with the same environment ($(env | grep -E '^(TRAIN_DIR|VALID_FILE|ATOMS|LINES|LINKS|CARDS|NUMBERS|OPEN_LINKS|TEACH|LAYOUT_LOCK|KEYWORD_DROPOUT|WHY_[A-Z]+|TYPE_WEIGHT|RAMP|KEEP|CK|INIT|ACCEPT_DRAFTS)=' | tr '\n' ' '))bash $0"
+echo "restart after a failure: RESUME=1 with the same environment ($(env | grep -E '^(TRAIN_DIR|VALID_FILE|ATOMS|LINES|LINKS|CARDS|NUMBERS|OPEN_LINKS|TEACH|LAYOUT_LOCK|KEYWORD_DROPOUT|WHY_[A-Z]+|LINK_WHY_[A-Z]+|TYPE_WEIGHT|RAMP|KEEP|CK|INIT|ACCEPT_DRAFTS)=' | tr '\n' ' '))bash $0"
 run() {
   set +e
   python -m ml.c3.loop "${args[@]}" --steps 1 --check-every "${CHECK_EVERY:-2}" ${gates[@]+"${gates[@]}"} \

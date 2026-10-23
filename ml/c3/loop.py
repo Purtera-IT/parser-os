@@ -229,11 +229,15 @@ def gold_weights(stage: str) -> tuple[LossWeights, tuple[str, ...] | None]:
     Card sizes: pair and group cards before whole-deal cards. None means
     every card size.
     """
+    full = LossWeights()
     weights = LossWeights(relations=0.0, governs=0.0, judgments=0.0, judgment_rationale=0.0,
-                          numbers=0.0, literals=0.0, deal_numbers=0.0)
+                          numbers=0.0, literals=0.0, deal_numbers=0.0,
+                          link_why_contrast=0.0, link_why_alone=0.0)
     if stage == "lines":
         return weights, None
-    weights = replace(weights, relations=0.5, governs=0.5)
+    # The link notes train with the links (link_why.py).
+    weights = replace(weights, relations=0.5, governs=0.5, link_why_contrast=full.link_why_contrast,
+                      link_why_alone=full.link_why_alone)
     if stage == "links":
         return weights, None
     weights = replace(weights, judgments=1.0, judgment_rationale=0.2)
@@ -1226,7 +1230,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             print(f"stage {stage} terms " + " ".join(f"{k}={m:.3f}" for k, m in top), flush=True)
             # A term the stage weights on that never moved the total: no data for it here.
             silent = sorted({k for k in shares if getattr(weights, k, 0) and abs(means.get(k, 0.0)) <= 1e-8}
-                            | {k for k in ("layout_lock", "why_contrast", "why_swap", "why_alone", "keyword_dropout")
+                            | {k for k in ("layout_lock", "why_contrast", "why_swap", "why_alone", "keyword_dropout",
+                                         "link_why_contrast", "link_why_alone")
                                if getattr(weights, k, 0) and k not in shares})
             if silent:
                 print(f"stage {stage} silent " + " ".join(silent), flush=True)

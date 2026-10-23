@@ -63,6 +63,11 @@ class LossWeights:
     keyword_dropout: float = 0.5   # surface cues masked: same answers, same reading, same WHY
     keyword_dropout_p: float = 0.5 # share of labeled lines masked per step (not a part)
     keyword_dropout_cap: float = 256  # masked lines per part (not a part)
+    # A link's note shapes the relation, teacher-free (link_why.py). On from
+    # the links stage (loop.gold_weights), like relations.
+    link_why_contrast: float = 0.3      # edge pair representation toward its distinct note
+    link_why_alone: float = 0.2         # the note alone names the relation, through the relation head
+    link_why_hard_negative: float = 4.0 # near-miss / other-relation edges' notes count this many times (not a part)
     space: dict[str, float] = field(default_factory=dict)  # optional per-space scale
     # Optional per-question weight in the heads average. The average is over
     # the weights, so line type at 20 is ~20 of ~90 shares, not 1 of ~70.
@@ -636,6 +641,9 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
 
     parts.update(why_carry_losses(model, out, batch, desc, w))
+    from .link_why import link_why_losses  # noqa: PLC0415 (cycle)
+
+    parts.update(link_why_losses(model, out, batch, desc, w))
     if w.clause_use and bank is not None:
         parts["clause_use"] = clause_use_loss(model, out, batch, bank, desc)
     if len(model.companies) > 1 and batch.company in model.companies:
