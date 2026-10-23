@@ -134,3 +134,24 @@ def test_a_checkpoint_from_before_the_head_loads_with_allow_new_heads(schema, tm
     step = load_checkpoint(ck, C3Model(schema, small), schema_sha256=digest([asdict(o) for o in schema.opportunities]),
                            allow_text_change=True, shape_sha256=shape_digest(without_heads(schema, later)))
     assert step == 3
+
+
+def test_the_serve_returns_a_set_valued_read(schema):
+    """/v1/read carries a multi-label head as [answers, {answer: p}] (serving parity for routing)."""
+    from ml.c3 import serve
+
+    o = schema.by_key()["read:feeds_decision"]
+    p = [0.01] * len(o.answers)
+    p[o.index("sites")], p[o.index("visits")] = 0.9, 0.7
+
+    def read(model, deal, s, **kw):
+        return {"lines": {a.key: {"reads": {serve.TYPE_KEY: {"answer": "physical_site", "p": 0.8},
+                                            "read:feeds_decision": {"answers": ["sites", "visits"], "p": p}}}
+                          for a in deal.atoms}}
+    base = serve.Base(load=lambda: ("m", schema, "cpu"), read=read)
+    base.model = ("m", schema, "cpu")
+    base._loaded.set()
+    payload = {"deal_id": "d", "atoms": [{"key": "k1", "text": "Store 12, 4 Elm St: 2 visits.", "doc_id": "e1"}]}
+    out = base.read(payload, 5.0, line_heads=("read:feeds_decision",))
+    answers, probs = out["reads"]["k1"]["read:feeds_decision"]
+    assert answers == ["sites", "visits"] and probs["sites"] == 0.9 and probs["_absent"] == 0.01

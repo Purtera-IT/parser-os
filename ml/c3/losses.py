@@ -691,6 +691,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
         y = torch.full((len(batch),), model.companies.index(batch.company), device=out.r.device)
         parts["adversary"] = F.cross_entropy(out.company_logits, y)
     parts["policy_l1"] = out.alpha.abs().sum() if out.alpha is not None else out.r.new_zeros(())
+    if keep is not None:
+        keep["parts"] = parts      # the unweighted terms, graphs attached (signal_audit.py)
     total = sum(getattr(w, k) * v for k, v in parts.items())
     return total, {k: float(v.detach()) if torch.is_tensor(v) else float(v) for k, v in parts.items()}
 

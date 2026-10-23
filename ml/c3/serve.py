@@ -170,6 +170,12 @@ class Base:
                 r = got_all.get(head)
                 if r and r.get("answer") is not None:
                     reads.setdefault(key, {})[head] = [str(r["answer"]), round(float(r.get("p") or 0.0), 4)]
+                elif r and isinstance(r.get("answers"), list):
+                    # A set-valued head (read:feeds_decision): the answers over 0.5 and every answer's p.
+                    opp = schema.by_key().get(head)
+                    names = [a.value for a in opp.answers] if opp is not None else []
+                    reads.setdefault(key, {})[head] = [[str(a) for a in r["answers"]],
+                                                       {n: round(float(p), 4) for n, p in zip(names, r.get("p") or [])}]
         out: dict[str, Any] = {"types": types, "read_ms": read_ms, "lines": len(deal.atoms)}
         if line_heads:
             out["reads"] = reads

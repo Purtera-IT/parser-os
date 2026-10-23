@@ -301,6 +301,16 @@ def _add_extract_and_reason_opportunities(opps: list[Opportunity], homes: dict[s
                      "the customer's industry or a side task."),
         answers=_answers(CLASS, service_docs, "primary service", service_docs), **deal))
 
+    # How many sites the job has, as the customer or partner states it (the
+    # deal answers' declared_site_count). Presence trains as a whole-deal
+    # card; the count trains the deal-number regressor (losses.deal_number_loss).
+    opps.append(Opportunity(
+        key="deal:site_count", field="declared_site_count", source="judgment", kind=NUMBER, size=DEAL,
+        description=("The deal as a whole. How many sites does the job have, as the customer or partner states it before "
+                     "the quote: \"145 locations\", a list of 101 sites, \"about 160 stores\". Count places the crew goes, "
+                     "not devices, visits or floors; a count the provider worked out itself is not a stated count."),
+        answers=_answers(NUMBER, [], "site count", {}), **deal))
+
     term = home("term")
     kind_docs = {k: _TERM_KIND_DESC.get(k, "") for k in TERM_KINDS}
     opps.append(Opportunity(
@@ -487,6 +497,7 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
             subject = scrub(j.get("subject", ""), universal) or _spell(name)
             opps.append(Opportunity(
                 key=f"jdg:{name}", field=name, source="judgment", kind=CLASS, size=j["size"],
+                multiple=bool(j.get("multi")),
                 description=" ".join(x for x in (
                     lead(h, universal), scrub(j.get("question", ""), universal)) if x),
                 answers=_answers(CLASS, docs, subject, docs), **base))

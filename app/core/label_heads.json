@@ -94,7 +94,9 @@
       ],
       "reads": [
         "introduces_party",
-        "situational"
+        "situational",
+        "party_role",
+        "party_role_note"
       ],
       "relations": [],
       "judgments": [
@@ -136,7 +138,15 @@
         "visit_count",
         "visit_count_note",
         "work_action",
-        "work_action_note"
+        "work_action_note",
+        "work_window",
+        "work_window_note",
+        "access_need",
+        "access_need_note",
+        "run_length",
+        "run_length_note",
+        "price_basis",
+        "price_basis_note"
       ],
       "relations": [],
       "judgments": [
@@ -188,7 +198,11 @@
         "materials_scope",
         "expenses_scope",
         "travel_scope",
-        "router"
+        "router",
+        "services",
+        "end_customer",
+        "delivery_model",
+        "exclusion_set"
       ],
       "tasks": [
         "service_routing",
@@ -324,7 +338,9 @@
         "sow_transform",
         "sow_transform_note",
         "feeds_decision",
-        "feeds_decision_note"
+        "feeds_decision_note",
+        "job_detail",
+        "job_detail_note"
       ],
       "relations": [],
       "judgments": [],

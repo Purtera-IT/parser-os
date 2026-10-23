@@ -28,7 +28,7 @@ from ml.c3.schema import CLASS, DEAL, NUMBER, POLICY_WORDS, load_schema, shape_d
 
 SMALL = C3Config(d_text=32, d=32, n_layers=1, n_heads=2, d_r=16, d_q=8, d_head=16,
                  residual_dim=4, box_dim=4, n_policy_atoms=2, policy_rank=2)
-NEW = "read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot"
+NEW = "read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot,read:feeds_decision"
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -189,23 +189,32 @@ def test_card_and_link_losses_train(schema, batch):
     assert a.shape == (len(cards[0].lines),) and not torch.allclose(a, b)
 
 
-def _schema_at_head(tmp_path):
+def _schema_before_the_heads(tmp_path):
+    """The registries as they were in the commit before visit_count was added."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True).stdout
+    try:
+        added = git("log", "--format=%H", "-S", '"key": "visit_count"', "--", "app/core/atom_types.json").split()
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("no git history")
+    ref = f"{added[-1]}^" if added else "HEAD"
     files = {"app/core/atom_types.json": "types", "app/core/label_heads.json": "heads",
              "ml/c3/judgment_heads.json": "judgments"}
     paths = {}
     for rel, name in files.items():
-        text = subprocess.run(["git", "-C", str(REPO), "show", f"HEAD:{rel}"], capture_output=True,
-                              text=True, check=True).stdout
+        text = git("show", f"{ref}:{rel}")
         paths[name] = tmp_path / f"{name}.json"
         paths[name].write_text(text, encoding="utf-8")
     return load_schema(paths["heads"], paths["types"], judgments_path=paths["judgments"])
 
 
 def test_a_checkpoint_from_before_the_heads_loads_with_allow_new_heads(schema, tmp_path):
-    old = _schema_at_head(tmp_path)
-    if "read:visit_count" in old.by_key():
-        pytest.skip("HEAD already has the heads; the shape test runs against the commit before them")
-    assert shape_digest(without_heads(schema, NEW)) == shape_digest(old)
+    old = _schema_before_the_heads(tmp_path)
+    assert "read:visit_count" not in old.by_key()
+    added = [o.key for o in schema.opportunities if o.key not in old.by_key()]
+    assert set(NEW.split(",")) <= set(added)
+    new = ",".join(added)          # these heads and any added since (runE.sh NEW_HEADS lists them)
+    assert shape_digest(without_heads(schema, new)) == shape_digest(old)
     torch.manual_seed(0)
     before = C3Model(old, SMALL)
     ck = tmp_path / "old.pt"
@@ -213,7 +222,7 @@ def test_a_checkpoint_from_before_the_heads_loads_with_allow_new_heads(schema, t
                     shape_sha256=shape_digest(old))
     after = C3Model(schema, SMALL)
     step = load_checkpoint(ck, after, schema_sha256=digest([asdict(o) for o in schema.opportunities]),
-                           allow_text_change=True, shape_sha256=shape_digest(without_heads(schema, NEW)))
+                           allow_text_change=True, shape_sha256=shape_digest(without_heads(schema, new)))
     assert step == 7
     with pytest.raises(ValueError):
         load_checkpoint(ck, C3Model(schema, SMALL), schema_sha256=digest([asdict(o) for o in schema.opportunities]),
@@ -222,6 +231,6 @@ def test_a_checkpoint_from_before_the_heads_loads_with_allow_new_heads(schema, t
 
 def test_run_e_script_allows_the_heads():
     text = (REPO / "ml/c3/pod/runE.sh").read_text(encoding="utf-8")
-    m = re.search(r'--allow-new-heads "\$\{NEW_HEADS:-([^}]*)\}"', text)
+    m = re.search(r'NEW_HEADS:-([^}"\s]*)\}', text)
     assert m and set(NEW.split(",")) <= set(m.group(1).split(","))
     assert json.loads((REPO / "ml/c3/judgment_heads.json").read_text())["heads"]["sow_slot"]["size"] == "deal"
