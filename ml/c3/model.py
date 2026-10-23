@@ -43,6 +43,7 @@ from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
 from .explain import ExplanationBank, ExplanationReader
+from . import free_rows
 from .folds import DescribedHead, DescribedRelation
 from .lattice import AskedLattice, company_description, space_descriptions
 from .operators import ReasonCompiler, apply_reasons
@@ -252,6 +253,9 @@ class C3Output:
     r: torch.Tensor
     residual: torch.Tensor
     logits: dict[str, torch.Tensor] = field(default_factory=dict)      # opportunity -> [N, A]
+    #: The free rows' share of ``logits`` (free_rows.py): logits - free is the
+    #: described reading alone (losses described_alone).
+    free_logits: dict[str, torch.Tensor] = field(default_factory=dict)
     numbers: dict[str, torch.Tensor] = field(default_factory=dict)     # opportunity -> [N]
     relations: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N, N]
     link_none: dict[str, torch.Tensor] = field(default_factory=dict)   # relation -> [N] abstain logit
@@ -339,6 +343,12 @@ class C3Model(nn.Module):
         self.conduct_base = nn.Linear(d_in, c.d_head)
         self.conduct_head = DescribedHead(c.d_text, c.d_head, c.n_folds)
         self.alpha_from_text = nn.Linear(c.d_text, m)
+        # A [company] line into the conduct layer's width (why2.py co_why_*):
+        # only the company losses read it, so company text never reaches the
+        # base. Its init leaves the seeded stream as it was (every later weight
+        # draws what it drew before); a checkpoint without it loads it at init.
+        with torch.random.fork_rng(devices=[]):
+            self.company_why_proj = nn.Linear(c.d_text, c.d_head)
         # Readers of written explanations (explain.py): one per layer, so a
         # company's rules can never reach a universal head.
         self.reader_universal = ExplanationReader(c.d_text, c.d_head)
@@ -553,7 +563,7 @@ class C3Model(nn.Module):
             if not opps:
                 continue
             x = r if space != "consequence" else torch.cat([r, q_mean], -1)
-            x = self.space_in[space](x)
+            x = x_r = self.space_in[space](x)
             if out.slots is not None and self.slot_in is not None:
                 x = x + self.slot_in[space](out.slots[:, self.lattice.spaces.index(space)])
             logits, nums = head(x, torch.stack([desc[o.key][0] for o in opps]),
@@ -566,8 +576,9 @@ class C3Model(nn.Module):
                        self.reader_universal, self.compiler_universal, head)
             for o in opps:
                 if o.key in self.free_heads:
-                    free = self.free_heads[o.key](torch.cat([x, out.h.to(x.dtype)], -1))
-                    out.logits[o.key] = out.logits[o.key] + free.to(out.logits[o.key].dtype)
+                    free = free_rows.universal_free(self.free_heads[o.key], x_r, x, out.h)
+                    out.free_logits[o.key] = free.to(out.logits[o.key].dtype)
+                    out.logits[o.key] = out.logits[o.key] + out.free_logits[o.key]
 
     def add_free_head(self, key: str) -> nn.Linear:
         """One free weight row per answer of a universal opportunity, added to
@@ -578,12 +589,17 @@ class C3Model(nn.Module):
         It reads the head's input and the line's deal-graph state ``h``, which
         carries the line's own text features straight through the residual
         stream: a plain linear read of those features already types lines."""
+        if key.startswith(free_rows.R_ONLY):
+            # "r:<key>": the row reads the head's r input only; h ramps out (free_rows.py).
+            return free_rows.make_r_only(self, key[len(free_rows.R_ONLY):])
         if key in self.free_heads:
             return self.free_heads[key]
         opp = self.schema.by_key()[key]
-        if not opp.universal or opp.kind == RELATION:
-            raise ValueError(f"{key} is not a universal class head")
-        lin = nn.Linear(self.cfg.d_head + self.cfg.d, len(opp.answers))
+        if opp.kind == RELATION:
+            raise ValueError(f"{key} is not a class head")
+        # A company row reads the conduct layer's line (y) only, as serve's did:
+        # head_fit / company_refit refit the company layer alone on a fixed base.
+        lin = nn.Linear(self.cfg.d_head + (self.cfg.d if opp.universal else 0), len(opp.answers))
         nn.init.zeros_(lin.weight)
         nn.init.zeros_(lin.bias)
         ref = next(self.heads.parameters())
@@ -622,14 +638,16 @@ class C3Model(nn.Module):
                 bank_emb: torch.Tensor | None = None) -> None:
         k = self.companies.index(company) if company in self.companies else self.add_company(company)
         alpha = self.alpha[k]
-        x = torch.cat([out.r, q_mean], -1)
+        # free_rows.company_grad: the company layer's gradient into the shared
+        # trunk is scaled (1.0 = unchanged), so Purtera's policy shapes the base less.
+        x = torch.cat([free_rows.company_grad(self, out.r), free_rows.company_grad(self, q_mean)], -1)
         # A_m(x) = gate_m(x) · (x U_m) V_m ; gate_m = sigmoid(<g_m, x> - θ_m)
         gate = torch.sigmoid(x @ self.atom_gate.T - self.atom_theta)            # [N, M]
         low = torch.einsum("nd,mdk->nmk", x, self.atom_u)
         shift = torch.einsum("nmk,mkh->nmh", low, self.atom_v)                 # [N, M, H]
         y = self.conduct_base(x) + (alpha.view(1, -1, 1) * gate.unsqueeze(-1) * shift).sum(1)
         if out.company_slot is not None:
-            y = y + self.company_slot_in(out.company_slot[:, 0])
+            y = y + self.company_slot_in(free_rows.company_grad(self, out.company_slot[:, 0]))
         opps = self.schema.select(layer="company")
         opps = [o for o in opps if o.kind != RELATION]
         logits, nums = self.conduct_head(y, torch.stack([desc[o.key][0] for o in opps]),
@@ -638,6 +656,9 @@ class C3Model(nn.Module):
             out.logits[o.key] = lg
             if o.kind == NUMBER:
                 out.numbers[o.key] = nums[:, j]
+            if o.key in self.free_heads:
+                out.free_logits[o.key] = self.free_heads[o.key](y).to(lg.dtype)
+                out.logits[o.key] = lg + out.free_logits[o.key]
         self._read(out, y, opps, desc, bank, bank_emb, "company", company,
                    self.reader_company, self.compiler_company, self.conduct_head)
         out.alpha = alpha

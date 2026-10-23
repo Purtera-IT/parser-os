@@ -1541,7 +1541,7 @@ def main() -> None:
         if key not in LossWeights.__dataclass_fields__ or key in ("space", "head"):
             raise SystemExit(f"--loss-weight: no loss term {key!r}")
         loss_weight[key] = float(w)
-    unknown = [k for k in list(head_weight) + args.free_head
+    unknown = [k for k in list(head_weight) + [f.removeprefix("r:") for f in args.free_head]
                if k != "all" and k not in load_schema().by_key()]
     if unknown:
         raise SystemExit("Unknown question: " + ", ".join(unknown))

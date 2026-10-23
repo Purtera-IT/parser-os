@@ -220,11 +220,16 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
             state = {k: v for k, v in state.items() if not k.startswith(name + ".")}
     # A free head in the checkpoint is built before it loads; one the model
     # has and the checkpoint lacks starts at zero (reads as the described head).
+    # An r-only row (free_rows.py) is built as one first.
+    from .free_rows import build_from_state  # noqa: PLC0415
+
+    build_from_state(model, state)
     for k in state:
         if k.startswith("free_heads.") and k.endswith(".weight"):
             model.add_free_head(k[len("free_heads."):-len(".weight")])
     missing, unexpected = model.load_state_dict(state, strict=False)
-    missing = [k for k in missing if not k.startswith("free_heads.")]
+    # company_why_proj (model.py) trains only; an older checkpoint leaves it at init.
+    missing = [k for k in missing if not k.startswith(("free_heads.", "company_why_proj."))]
     # A slim checkpoint left the pretrained body out: the model's own download
     # stands in, and it must be byte for byte the body the run trained on.
     body = payload.get("pretrained_body")
@@ -239,6 +244,10 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
     if missing or unexpected:
         raise RuntimeError(f"Checkpoint does not match the model: missing {missing[:5]} "
                            f"unexpected {unexpected[:5]}")
+    # The WHY-retrieval bank: off unless C3_WHY_BANK asks and its gate passed (why_bank.py).
+    from .why_bank import maybe_attach  # noqa: PLC0415
+
+    maybe_attach(model, path)
     return int(payload["step"])
 
 
