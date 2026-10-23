@@ -24,6 +24,18 @@ def test_compile_empty_directory_returns_valid_result(tmp_path: Path) -> None:
     assert result.candidate_summary is not None
 
 
+def test_compile_has_no_candidate_adjudication_lane(tmp_path: Path) -> None:
+    """Step 0 (regex_retirement row 57): no parser proposes candidates, so the
+    compile's adjudication lane is gone; the summary still says 0 / 0 / 0."""
+    from app.core import compiler
+
+    assert not hasattr(compiler, "adjudicate_candidates")
+    project_dir = tmp_path / "empty_project"
+    project_dir.mkdir()
+    s = compile_project(project_dir=project_dir).candidate_summary
+    assert (s.candidate_count, s.accepted_count, s.rejected_count) == (0, 0, 0)
+
+
 def test_compiler_e2e_golden_regression(demo_project: Path, tmp_path: Path) -> None:
     result = compile_project(project_dir=demo_project, project_id="demo_project")
     expected_path = Path(__file__).parent / "fixtures" / "expected" / "demo_summary.json"
