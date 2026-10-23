@@ -226,3 +226,14 @@ def test_a_deal_with_no_time_anywhere_reads_every_line():
     c3.set_deal([], {}, as_of="2026-03-20T00:00:00Z")
     _, rows, _ = c3._rows(atoms, {}, documents=[])
     assert len(rows) == len(atoms) and c3._STATUS["view"]["undated"]
+
+
+def test_the_brief_carries_the_reads_table_verdicts_with_their_rows(monkeypatch):
+    from app.core import c3_brief
+
+    atoms = [_make(1, "Site 1 | Plant | Yes", "roster", ArtifactType.xlsx, {"sheet": "Sites"}),
+             _make(2, "Site 2 | Depot | No", "roster", ArtifactType.xlsx, {"sheet": "Sites"}),
+             _make(3, "Hello", "mail", ArtifactType.email)]
+    key = f"roster||{c3._section(atoms[0])}"
+    got = c3_brief._tables_with_atoms({key: {"jdg:roster": ["site_roster", 0.97], "lines": 2}}, atoms)
+    assert got[key]["atom_ids"] == ["atm1", "atm2"] and got[key]["jdg:roster"] == ["site_roster", 0.97]

@@ -1146,6 +1146,22 @@ def _crm_deal(project_dir: Any) -> dict[str, str]:
     return {k: str(crm[k]) for k in ("deal_name", "account_name") if crm.get(k)}
 
 
+def _tables_with_atoms(tables: dict[str, Any], atoms: list[Any]) -> dict[str, Any]:
+    """The read's table verdicts (``doc_id||section`` -> jdg:roster / jdg:sheet / the node's kind / lines),
+    each with the atom ids of its rows, so a reader that has the atoms (the Deal Kit's site list) needs no
+    section rule of its own."""
+    from app.core import c3_type_base
+
+    if not tables:
+        return {}
+    ids: dict[str, list[str]] = {}
+    for a in atoms:
+        key = f"{c3_type_base._doc_id(a)}||{c3_type_base._section(a)}"
+        if key in tables:
+            ids.setdefault(key, []).append(str(getattr(a, "id", "") or ""))
+    return {t: dict(v, atom_ids=ids.get(t, [])) for t, v in tables.items() if isinstance(v, dict)}
+
+
 def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None,
         project_dir: Any = None) -> dict[str, Any]:
     """Build (and, when switched on, write) the brief from this compile's read."""
@@ -1160,7 +1176,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     # table): the envelope carries them, and the Deal Kit reads a site_roster table as one site list.
     _read = c3_type_base.full_read()
     brief["view"] = _read.get("view") or ""
-    brief["tables"] = dict(_read.get("tables") or {})
+    brief["tables"] = _tables_with_atoms(_read.get("tables") or {}, atoms)
     # Who furnishes each kept line, as the supplier head reads it: the SOW's
     # supply lists follow it (c3_sow) instead of guessing from wording.
     for v in list((brief.get("sections") or {}).values()) + [brief.get("also_mentioned") or []]:
