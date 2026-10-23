@@ -527,7 +527,10 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     _STATUS["rows"] = {"documents": len(docs), "documents_from_atoms": len(extra),
                        "times": len({r["entered_at"] for r in rows})}
     if view_name():
-        rows = _view_rows(rows, docs + list(extra.values()), messages, said_to)
+        deal_id0 = next((str(getattr(a, "project_id", "") or "") for a in atoms if getattr(a, "project_id", None)),
+                        "") or "live"
+        kinds = doc_kind_reads(deal_id0, rows)
+        rows = _view_rows(rows, docs + list(extra.values()), messages, said_to, kinds)
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
                     if getattr(a, "project_id", None)), "") or "live"
     return deal_id, rows, keys
@@ -607,8 +610,66 @@ def _message_of(atom: Any) -> tuple | None:
     return (str(author or ""), parse_when(sent), bool(quoted), index, zoned(sent))
 
 
+DOC_KIND_KEY = "jdg:doc_kind"
+
+
+def doc_kind_enabled() -> bool:
+    """``SOWSMITH_C3_DOC_KIND`` (default on): the view's provenance takes each document's kind from the base's
+    document-kind head (``jdg:doc_kind``) when the base serves it; else the compile's own kind, as before."""
+    return os.environ.get("SOWSMITH_C3_DOC_KIND", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def doc_kind_reads(deal_id: str, rows: list[dict[str, Any]]) -> dict[str, str]:
+    """``{doc_id: kind}`` from the base's ``jdg:doc_kind`` reading of the whole deal (before any view cut:
+    the kind decides the cut), each at or above ``SOWSMITH_C3_DOC_KIND_BAR`` (default 0.8) and one of the
+    head's kinds. Empty -- the compile's own kinds stand -- when it is off, no base is reachable, or the base
+    does not serve the head. Read once per deal record; ``_DEAL["doc_kinds"]`` set beforehand (an audit's
+    stand-in) is used as given."""
+    from c3_record.provenance import head_kind
+
+    if "doc_kinds" in _DEAL and _DEAL.get("doc_kinds_key") in (None, read_key(rows, DOC_KIND_KEY)):
+        return dict(_DEAL.get("doc_kinds") or {})
+    out: dict[str, str] = {}
+    if doc_kind_enabled():
+        raw: dict[str, Any] = {}
+        budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
+        try:
+            if _url():
+                health = _request("/health", None, timeout=_env_float("SOWSMITH_C3_CONNECT_S", 5.0))
+                if health.get("ready"):
+                    got = _request("/read", {"deal": {"deal_id": deal_id, "company": "purtera", "atoms": rows},
+                                             "budget_s": budget, "document_heads": [DOC_KIND_KEY]},
+                                   timeout=budget + 10.0)
+                    raw = got.get("documents") or {}
+            else:
+                loaded = get_model() if enabled() or document_job_enabled() else None
+                if loaded is not None and DOC_KIND_KEY in loaded[1].by_key():
+                    from ml.c3.data import DealExample
+                    from ml.c3.predict import read_deal
+
+                    model, schema, device = loaded
+                    doc = read_deal(model, DealExample.from_dict({"deal_id": deal_id, "company": "purtera",
+                                                                  "atoms": rows}), schema,
+                                    max_atoms=MAX_ATOMS, device=device, lines_only=True,
+                                    deadline=time.monotonic() + budget, heads=("col:label_type",),
+                                    document_heads=(DOC_KIND_KEY,))
+                    raw = {d: {k: [v["answer"], v.get("p")] for k, v in h.items()}
+                           for d, h in (doc.get("documents") or {}).items()}
+        except Exception as exc:  # noqa: BLE001 - no kind read is the compile's own kinds, never a failed read
+            log.warning("C3 document-kind read failed (%s); the compile's own kinds stand", type(exc).__name__)
+            raw = {}
+        bar = _env_float("SOWSMITH_C3_DOC_KIND_BAR", 0.8)
+        for d, heads in raw.items():
+            v = (heads or {}).get(DOC_KIND_KEY)
+            if v and v[0] is not None and float(v[1] or 0.0) >= bar and head_kind(v[0]):
+                out[str(d)] = head_kind(v[0])
+    _DEAL["doc_kinds"], _DEAL["doc_kinds_key"] = dict(out), read_key(rows, DOC_KIND_KEY)
+    _STATUS["doc_kinds"] = {"read": len(out)}
+    return out
+
+
 def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages: dict[str, tuple],
-               said_to: dict[str, Any]) -> list[dict[str, Any]]:
+               said_to: dict[str, Any], kinds: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """The rows of this compile's view (c3_record.provenance / c3_record.view, the rules training's
     views use): a quoting read holds the customer's and partner's lines before our first pricing (cut
     earlier by the run's as_of), never our own paper or a Deal Kit line; a planning read every line before
@@ -648,7 +709,7 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
                 if x["atom_id"] in messages}
     other = dict(_DEAL.get("other_job") or {})
     P = prov.decide(lines, docinfo, {k: m[:4] for k, m in messages.items()}, texts_of=texts_of, to_of=said_to, other_job=other,
-                    source="compile")
+                    source="compile", kinds=kinds)
     dk = prov.pricing_workbook_keys(P, lines)
     marks = crm_marks(_DEAL.get("stage_timeline"))
     end = None

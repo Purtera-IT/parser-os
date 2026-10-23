@@ -81,6 +81,32 @@ MESSAGE_NAME = re.compile(r"-hs-(note|email|meeting|call|task)-|fireflies|\.eml$
 _CONTAINER_NAME = re.compile(r"-hs-(note|email|meeting|call|task)-|fireflies|\.eml$", re.I)
 OURS_DIRECTIONS = ("internal", "outbound", "purtera_outbound")
 SUPPLIER_READS = {"third_party", "vendor"}
+#: The paper kinds the document-kind head answers (ml/c3/judgment_heads.json ``doc_kind``, card
+#: ``jdg:doc_kind``). A document's kind comes from that head's reading when a base serves it, and in training
+#: from a label kind only when it is one of these (the head's own gold); anything else is no kind read.
+DOC_KINDS = ("email", "call_transcript", "meeting_recap", "crm_note", "request_form", "rfp", "site_list",
+             "site_survey_report", "site_checklist", "equipment_list", "vendor_quote_bom", "vendor_datasheet",
+             "drawing", "customer_layout_deck", "install_guide", "process_document", "purchase_order", "invoice",
+             "tax_form_w9", "credit_application", "nda", "partner_sow", "sow_template", "sow_draft", "sow_signed",
+             "change_request", "quote", "deal_kit", "estimating_calc", "pricing_workbook", "photo", "other")
+DOC_KIND_HEAD = "jdg:doc_kind"
+
+
+#: The labels' older names for a head kind (jdg:doc_kind's answers fold them: "synonyms folded").
+DOC_KIND_SYNONYMS = {"signed_sow": "sow_signed", "meeting_record": "meeting_recap", "crm_meeting_recap": "meeting_recap",
+                     "crm_meeting_record": "meeting_recap", "transcript": "call_transcript",
+                     "intake_record": "request_form", "intake_request": "request_form",
+                     "intake_request_screenshot": "request_form", "site_photo": "photo", "image": "photo",
+                     "email_image": "photo", "planning_brief_answer": "other", "document_comment": "other",
+                     "case_manifest": "other"}
+
+
+def head_kind(value: Any) -> str:
+    """The document-kind head's answer for a kind (a label's older name folded to it); '' when the head has
+    no such answer."""
+    v = str(value or "").strip().lower()
+    v = DOC_KIND_SYNONYMS.get(v, v)
+    return v if v in DOC_KINDS else ""
 
 # Owner rulings on single documents, by artifact id: "ours" (answer key, never an input) or "theirs" (an
 # input). Flip one here when the owner rules; both sides read it.
@@ -204,14 +230,20 @@ def supplier_domains(atoms: Iterable[dict[str, Any]], supplier_of: dict[str, str
 def decide(atoms: list[dict[str, Any]], docinfo: dict[str, dict[str, Any]], lines: dict[str, tuple],
            *, texts_of: dict[str, tuple[str, bool]] | None = None, to_of: dict[str, Any] | None = None,
            links: Iterable[dict[str, Any]] = (), suppliers: Iterable[str] = (),
-           other_job: dict[str, str] | None = None, source: str = "") -> Prov:
-    """Provenance of every document and line of one deal (see the module doc for the shapes)."""
+           other_job: dict[str, str] | None = None, source: str = "",
+           kinds: dict[str, str] | None = None) -> Prov:
+    """Provenance of every document and line of one deal (see the module doc for the shapes). ``kinds``:
+    doc_id -> the document-kind head's answer (``jdg:doc_kind``); where given it is the document's kind,
+    over whatever the side gathered."""
     P = Prov()
     P.source = source
     P.other_job = dict(other_job or {})
     by_doc: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for a in atoms:
         by_doc[a.get("doc_id")].append(a)
+    for d, k in (kinds or {}).items():
+        if head_kind(k) and d in by_doc:
+            docinfo.setdefault(d, {})["kind"] = head_kind(k)
     for d in by_doc:
         docinfo.setdefault(d, {})
         for k, v in (("direction", ""), ("sender", ""), ("role", ""), ("kind", ""), ("carrier", None),
@@ -491,6 +523,6 @@ def estimator_sources(atoms: list[dict[str, Any]], artifacts: dict[str, dict[str
     return cut, why, ours
 
 
-__all__ = ["PAPER", "SOW_LIKE", "INBOUND", "DK_KINDS", "PRICE", "RULINGS", "Prov", "decide", "is_input",
+__all__ = ["DOC_KINDS", "DOC_KIND_HEAD", "DOC_KIND_SYNONYMS", "head_kind", "PAPER", "SOW_LIKE", "INBOUND", "DK_KINDS", "PRICE", "RULINGS", "Prov", "decide", "is_input",
            "theirs_line", "quoting_inputs", "pricing_workbook_docs", "pricing_workbook_keys", "supplier_domains",
            "estimate_lines", "estimator_sources", "parse_when", "zoned", "zone_fix", "is_ours_addr", "t"]

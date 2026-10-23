@@ -237,3 +237,47 @@ def test_the_brief_carries_the_reads_table_verdicts_with_their_rows(monkeypatch)
     key = f"roster||{c3._section(atoms[0])}"
     got = c3_brief._tables_with_atoms({key: {"jdg:roster": ["site_roster", 0.97], "lines": 2}}, atoms)
     assert got[key]["atom_ids"] == ["atm1", "atm2"] and got[key]["jdg:roster"] == ["site_roster", 0.97]
+
+
+def test_the_document_kind_head_decides_whose_paper_it_is(monkeypatch):
+    """jdg:doc_kind, read of the whole deal before the cut: a file the compile calls a SOW draft that the head
+    reads as the customer's request form is the customer's, so it does not cut the read."""
+    atoms, docs = _deal()
+    calls = _service(monkeypatch, lambda n, b: {"documents": {"sow": {"jdg:doc_kind": ["request_form", 0.97]},
+                                                              "kit": {"jdg:doc_kind": ["request_form", 0.4]}}}
+                     if b.get("document_heads") == ["jdg:doc_kind"] else {"types": _types(b)})
+    c3.set_deal(docs, {}, as_of="2026-03-20T00:00:00Z")
+    _, rows, _ = c3._rows(atoms, {}, documents=docs)
+    assert c3._DEAL["doc_kinds"] == {"sow": "request_form"}          # under the bar: the compile's kind stands
+    assert len([b for b in calls if b.get("document_heads") == ["jdg:doc_kind"]]) == 1
+    assert c3._STATUS["view"]["cut_why"].startswith("our deal_kit")  # the kit still cuts
+    c3._rows(atoms, {}, documents=docs)
+    assert len([b for b in calls if b.get("document_heads") == ["jdg:doc_kind"]]) == 1   # read once
+
+
+def test_without_the_head_the_compiles_kinds_stand(monkeypatch):
+    atoms, docs = _deal()
+    _service(monkeypatch, lambda n, b: {"documents": {}, "types": _types(b)})
+    c3.set_deal(docs, {}, as_of="2026-03-20T00:00:00Z")
+    _, rows, _ = c3._rows(atoms, {}, documents=docs)
+    assert c3._DEAL["doc_kinds"] == {} and [r["atom_id"] for r in rows] == ["atm1"]
+    monkeypatch.setenv("SOWSMITH_C3_DOC_KIND", "0")
+    c3.set_deal(docs, {}, as_of="2026-03-20T00:00:00Z")
+    _, rows2, _ = c3._rows(atoms, {}, documents=docs)
+    assert rows2 == rows
+
+
+def test_a_head_kind_makes_a_doc_theirs_in_the_shared_provenance():
+    from c3_record import provenance as prov
+
+    atoms = [{"label_key": "f1", "atom_id": "f1", "doc_id": "form", "text": "Site: 4 Elm St | $100 per site | $90",
+              "entered_at": 10.0, "doc_kind": "file", "speaker_side": "", "section": ""},
+             {"label_key": "c1", "atom_id": "c1", "doc_id": "mail", "text": "Please quote this.", "entered_at": 20.0,
+              "doc_kind": "email", "speaker_side": "", "section": ""}]
+    info = lambda: {"form": {"direction": "internal", "kind": "sow_draft"},  # noqa: E731
+                    "mail": {"direction": "inbound", "kind": "email", "message": True}}
+    assert prov.decide(atoms, info(), {}).cut == 10.0
+    P = prov.decide(atoms, info(), {}, kinds={"form": "request_form"})
+    assert P.cut == float("inf") and prov.is_input(P, atoms[0])
+    assert prov.head_kind("signed_sow") == "sow_signed" and prov.head_kind("meeting_record") == "meeting_recap"
+    assert prov.head_kind("not_a_kind") == ""
