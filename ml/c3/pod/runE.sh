@@ -42,7 +42,7 @@
 #               one; its md5 is checked unless INIT_MD5=skip)
 #   LAYOUT_LOCK KEYWORD_DROPOUT WHY_CONTRAST WHY_ALONE WHY_SWAP TYPE_WEIGHT RAMP
 #   WHY_ALIGN WHY_SUFFICIENCY LINK_WHY_CONTRAST LINK_WHY_ALONE  override the
-#               loss table (0.5 0.3 0.3 0.2 0 10 2 0 0 0.3 0.2); 0 turns a term off. The ablation configs are in loss_plan.md
+#               loss table (0.5 0.3 0.3 0.2 0.1 5 2 0 0 0.3 0.2); 0 turns a term off. The ablation configs are in loss_plan.md
 #   ATOMS       lines per part. Default from the card and the graphs a step
 #               holds (1 + layout_lock on + keyword_dropout on): 8192 / graphs at
 #               >=120 GB (H200), 4096 / graphs at >=70 GB, rounded down to 512.
@@ -80,6 +80,13 @@
 #   SMOKE=1     every stage the run trains, once on two parts, every term at its
 #               full weight (no ramp), no gates, peak memory printed (torch and
 #               nvidia-smi); with C3_SMOKE_LARGEST=1 the largest part
+#   DESCRIBED_ALONE CARD_ALONE CARD_CONTRAST CO_WHY_CONTRAST CO_WHY_ALONE NUMBER_WHY_ALONE
+#   JUDGMENT_WHY_ALONE COMPANY_R_GRAD  the why2 terms (0.3 0.2 0.2 0.2 0.2 0.1 0.2; company
+#               gradient into the trunk 0.1); FREE_R_ONLY=0 keeps the critical heads' free
+#               rows reading h (ml/c3/why2.py, free_rows.py)
+#   COMPANY_REFIT=1 (default) the pick also runs the pretend-new-company check
+#               ($CK.company_refit.json): the base must stay bit-identical
+#   C3_WHY_BANK the serve-time WHY bank (ml/c3/why_bank.py): unset = off (default)
 #   PICK_ONLY=1 only the pick step, on an existing $C3/out/runE.pt.checks.json
 source "$(dirname "$0")/common.sh"
 cd "$REPO"
@@ -98,7 +105,16 @@ PICK_Z=${PICK_Z:-2} PICK_GAP=${PICK_GAP:-0.05}
 # the live model's own score (less noise); the start (the live model) is the
 # fallback. Writes <ck>.pick.json and links <ck>.best.
 pick() {
-  python -m ml.c3.pick --checkpoint "$1" --init "$INIT" --floors "$FLOORS" --z "$PICK_Z" --gap "$PICK_GAP"
+  python -m ml.c3.pick --checkpoint "$1" --init "$INIT" --floors "$FLOORS" --z "$PICK_Z" --gap "$PICK_GAP" || return
+  # Pretend a new company (ml/c3/company_refit.py): refit only the company layer
+  # on the training deals but 3, base frozen; the base's outputs on the validation
+  # deal must stay bit-identical. COMPANY_REFIT=0 skips it.
+  # The picked file; a tiny run's fallback (an INIT that is not there) reads the last one.
+  local refit_ck; refit_ck=$(readlink "$1.best"); [[ -f "$refit_ck" ]] || refit_ck=$(readlink -f "$1")
+  if [[ "${COMPANY_REFIT:-1}" == 1 && ${#train_files[@]} -gt 0 && -f "$refit_ck" ]]; then
+    python -m ml.c3.company_refit --checkpoint "$refit_ck" --train "${train_files[@]}" \
+      --probe "${valid_files[@]}" --max-atoms "$ATOMS" --out "$1.company_refit.json"
+  fi
 }
 if [[ "${PICK_ONLY:-0}" == 1 ]]; then pick "$CK"; exit; fi
 
@@ -204,8 +220,8 @@ fi
 # only the terms its gold_weights turns on (relations from links, judgments from
 # cards, numbers/literals from numbers, deal_numbers from deal/open_links).
 LAYOUT_LOCK=${LAYOUT_LOCK:-0.5} KEYWORD_DROPOUT=${KEYWORD_DROPOUT:-0.3}
-WHY_CONTRAST=${WHY_CONTRAST:-0.3} WHY_ALONE=${WHY_ALONE:-0.2} WHY_SWAP=${WHY_SWAP:-0}
-TYPE_WEIGHT=${TYPE_WEIGHT:-10} RAMP=${RAMP:-2}
+WHY_CONTRAST=${WHY_CONTRAST:-0.3} WHY_ALONE=${WHY_ALONE:-0.2} WHY_SWAP=${WHY_SWAP:-0.1}
+TYPE_WEIGHT=${TYPE_WEIGHT:-5} RAMP=${RAMP:-2}   # 5: type was ~43% of head CE at 10
 WHY_ALIGN=${WHY_ALIGN:-0} WHY_SUFFICIENCY=${WHY_SUFFICIENCY:-0}   # E-base ablation: 0.1 / 0.5 (run C)
 LINK_WHY_CONTRAST=${LINK_WHY_CONTRAST:-0.3} LINK_WHY_ALONE=${LINK_WHY_ALONE:-0.2}   # link notes (link_why.py)
 weights=(
@@ -219,7 +235,7 @@ weights=(
   layout_lock="$LAYOUT_LOCK"
   link_why_contrast="$LINK_WHY_CONTRAST" link_why_hard_negative=4 link_why_alone="$LINK_WHY_ALONE"
   pointers=0.1 entities=0.05 hindsight=0.1 near_misses=0.2 near_miss_margin=1   # run C
-  residual=0.01 variance=0.1 absence=0.2 adversary=0.1 policy_l1=0.01
+  residual=0.01 variance=0.1 absence=0.2 adversary=0.1 policy_l1=0   # 0 while there is one company: L1 only collapsed alpha
   explanation_only=0.5 changes=0.3 claims=0.3 rule_links=0.5 why_echo=0.2 negatives=0.3
   clause_use=0
 )
@@ -230,6 +246,39 @@ if [[ "$RAMP" != 0 ]]; then
   for t in why_contrast why_alone why_swap keyword_dropout layout_lock link_why_contrast link_why_alone; do ramp_args+=(--ramp "$t=$RAMP"); done
   ramp_args+=(--ramp numbers=1)   # the numbers stage opens on the new hours heads
 fi
+
+# why2 (ml/c3/why2.py, free_rows.py; arch_review §5-8). The critical heads' free
+# rows read r only (FREE_R_ONLY; their h share ramps 1 -> 0 over RAMP passes via
+# free_h_out), the described path, the card notes and the [purtera] lines train
+# on their own, the company gradient into the trunk is scaled (COMPANY_R_GRAD).
+# Every term ramps from 0 over RAMP passes; why_swap over 2 x RAMP, after
+# why_contrast has placed r near the WHYs. Card heads' terms open with the cards.
+DESCRIBED_ALONE=${DESCRIBED_ALONE:-0.3} CARD_ALONE=${CARD_ALONE:-0.2} CARD_CONTRAST=${CARD_CONTRAST:-0.2}
+CO_WHY_CONTRAST=${CO_WHY_CONTRAST:-0.2} CO_WHY_ALONE=${CO_WHY_ALONE:-0.2}
+NUMBER_WHY_ALONE=${NUMBER_WHY_ALONE:-0.1} JUDGMENT_WHY_ALONE=${JUDGMENT_WHY_ALONE:-0.2}
+COMPANY_R_GRAD=${COMPANY_R_GRAD:-0.1} FREE_R_ONLY=${FREE_R_ONLY:-1}
+why2=(
+  described_alone="$DESCRIBED_ALONE" described_alone_p=0.5
+  card_alone="$CARD_ALONE" card_contrast="$CARD_CONTRAST" card_cap=256
+  co_why_contrast="$CO_WHY_CONTRAST" co_why_alone="$CO_WHY_ALONE"
+  number_why_alone="$NUMBER_WHY_ALONE" judgment_why_alone="$JUDGMENT_WHY_ALONE"
+  free_h_out=1 company_r_grad="$COMPANY_R_GRAD"
+)
+for kv in "${why2[@]}"; do loss_args+=(--loss-weight "$kv"); done
+if [[ "$RAMP" != 0 ]]; then
+  for t in described_alone card_alone card_contrast co_why_contrast co_why_alone number_why_alone \
+           judgment_why_alone free_h_out; do ramp_args+=(--ramp "$t=$RAMP"); done
+  ramp_args+=(--ramp "why_swap=$((2 * RAMP))")
+fi
+# Free rows: r only on the critical heads (free_rows.R_ONLY_KEYS); company rows
+# on co_action / co_reason, so the company layer can be refit alone.
+why2_free=()
+if [[ "$FREE_R_ONLY" == 1 ]]; then
+  for k in col:label_type col:admission col:supplier col:about read:site jdg:site_role jdg:site_role:reason; do
+    why2_free+=(--free-head "r:$k")
+  done
+fi
+why2_free+=(--free-head read:co_action --free-head read:co_reason)
 
 # Lines per part from the card's memory and the graphs each step holds.
 graphs=1
@@ -263,6 +312,7 @@ fi
 stages="lines=${LINES:-12},links=${LINKS:-6},cards=${CARDS:-6},numbers=${NUMBERS:-2},deal=0,open_links=${OPEN_LINKS:-4}"
 TIER_GATE=${TIER_GATE:-0.98}
 gates=()
+args+=("${why2_free[@]}")   # after --free-head all: the r: rows convert the plain ones
 [[ "${LINES_GATE:-0.50}" != 0 ]] && gates+=(--gate "lines@2.valid_exact>=${LINES_GATE:-0.50}")
 # A start that does not reproduce run C's check means the files or the part
 # size moved; only comparable at run C's 8192 lines per part.
