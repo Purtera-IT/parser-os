@@ -51,7 +51,8 @@ from .longdeal import plan_long_deal
 from .pick import PICK_HEADS, best_at, read_floors
 from .model import C3Config, C3Model
 from .readiness import digest
-from .schema import GROUP, NUMBER, PAIR, RELATION, Schema, load_schema, shape_digest
+from .graph import graph_parameters, parse_graph
+from .schema import GROUP, LINE, NUMBER, PAIR, RELATION, Schema, load_schema, shape_digest
 from .supercharge import TeachWeights, supercharge_loss, teacher_view, weighted
 
 SMALL = C3Config(d_text=64, d=64, n_layers=1, n_heads=4, d_r=32, d_q=16, d_head=32,
@@ -232,27 +233,76 @@ def gold_weights(stage: str) -> tuple[LossWeights, tuple[str, ...] | None]:
     full = LossWeights()
     weights = LossWeights(relations=0.0, governs=0.0, judgments=0.0, judgment_rationale=0.0,
                           numbers=0.0, literals=0.0, deal_numbers=0.0,
-                          link_why_contrast=0.0, link_why_alone=0.0)
+                          link_why_contrast=0.0, link_why_alone=0.0,
+                          derived_cards=0.0, table_kind=0.0, coherence=0.0, node_pointers=0.0)
     if stage == "lines":
         return weights, None
-    # The link notes train with the links (link_why.py).
+    # The link notes train with the links (link_why.py), and so do the table
+    # nodes and their pointers (graph.py): the gate opens at this stage.
     weights = replace(weights, relations=0.5, governs=0.5, link_why_contrast=full.link_why_contrast,
-                      link_why_alone=full.link_why_alone)
+                      link_why_alone=full.link_why_alone, table_kind=full.table_kind,
+                      coherence=full.coherence, node_pointers=full.node_pointers)
     if stage == "links":
         return weights, None
-    weights = replace(weights, judgments=1.0, judgment_rationale=0.2)
+    weights = replace(weights, judgments=1.0, judgment_rationale=0.2, derived_cards=full.derived_cards)
+    # Queried line judgments (the Questions head and its fields) train with
+    # the cards, not only in the tail.
     if stage == "cards":
-        return weights, (PAIR, GROUP)
+        return weights, (PAIR, GROUP, LINE)
     weights = replace(weights, numbers=0.2, literals=0.4)
     if stage == "numbers":
-        return weights, (PAIR, GROUP)
+        return weights, (PAIR, GROUP, LINE)
     weights = replace(weights, deal_numbers=0.2)
     return weights, None
 
 
 def _freeze_link_gate(model: C3Model, trainable: bool) -> None:
-    model.link_mix.weight.requires_grad_(trainable)
-    model.link_mix.bias.requires_grad_(trainable)
+    """The gate group (graph.graph_parameters): link_mix, the graph's
+    zero-init maps and deal_number. Shut through the lines stage."""
+    for p in _gate_params(model):
+        p.requires_grad_(trainable)
+
+
+def _gate_params(model: C3Model) -> list:
+    return graph_parameters(model) + list(model.deal_number.parameters())
+
+
+#: The stage the gate group opens at, and its warmup (passes) to a constant rate.
+GATE_STAGE = "links"
+GATE_WARMUP_PASSES = 1.0
+#: The main groups' rate floor (share of lr) through the deal stage: the deal
+#: heads train at a normal rate, not the cosine tail (fix 8).
+DEAL_RATE = 0.3
+
+
+def rate_lambdas(stage_steps: list[tuple[str, int]], parts: int, warm: int,
+                 gate_warm_passes: float = GATE_WARMUP_PASSES, deal_rate: float = DEAL_RATE):
+    """(main, gate) LambdaLR multipliers over the student's updates.
+
+    main: warmup then cosine to 0 over every student update, floored at
+    ``deal_rate`` through the deal stage. gate: 0 until ``GATE_STAGE``, then a
+    linear warmup over ``gate_warm_passes`` passes, then 1 (constant)."""
+    total = max(1, sum(n for _, n in stage_steps))
+    spans, at = {}, 0
+    for st, n in stage_steps:
+        spans[st] = (at, at + n)
+        at += n
+    gate_at = spans.get(GATE_STAGE, (total, total))[0]
+    deal = spans.get("deal", (0, 0))
+    gate_warm = max(1, int(gate_warm_passes * parts))
+
+    def main(s: int) -> float:
+        f = 0.5 * (1 + math.cos(math.pi * min(s, total) / total))
+        if deal[0] <= s < deal[1]:
+            f = max(f, deal_rate)
+        return (min(1.0, (s + 1) / warm) if warm > 0 else 1.0) * f
+
+    def gate(s: int) -> float:
+        if s < gate_at:
+            return 0.0
+        return min(1.0, (s - gate_at + 1) / gate_warm)
+
+    return main, gate
 
 
 # A 7B teacher in bf16 fits beside ModernBERT-large and the student on an H100.
@@ -508,13 +558,24 @@ def release_encoder_top(model: C3Model, layers: int) -> int:
 
 def _student_optimizer(model: C3Model, lr: float, adamw: bool,
                        encoder_lr: float | None) -> torch.optim.Optimizer:
-    """One group for the deal model and heads; a smaller rate for any released encoder blocks."""
+    """One group for the deal model and heads; a smaller rate for any released
+    encoder blocks; and the gate group (``_gate_params``) last, in the
+    optimizer from the start (shut by requires_grad and a 0 rate until the
+    links stage), so no group is ever added mid-run: torch >= 2.7's scheduler
+    refuses a group it was not built with."""
     text = {id(p) for p in model.text.parameters()}
+    gate = _gate_params(model)
+    gate_ids = {id(p) for p in gate}
     released = [p for p in model.parameters() if p.requires_grad and id(p) in text]
-    if not released or encoder_lr is None:
-        return _optimizer(model.parameters(), lr, adamw)
-    rest = [p for p in model.parameters() if p.requires_grad and id(p) not in text]
-    groups = [{"params": rest, "lr": lr}, {"params": released, "lr": encoder_lr}]
+    rest = [p for p in model.parameters() if p.requires_grad and id(p) not in text and id(p) not in gate_ids]
+    if not rest:
+        raise ValueError("No trainable parameters")
+    groups = [{"params": rest, "lr": lr}]
+    if released and encoder_lr is not None:
+        groups.append({"params": released, "lr": encoder_lr})
+    elif released:
+        groups[0]["params"] = rest + released
+    groups.append({"params": gate, "lr": lr, "weight_decay": 0.0, "gate": True})
     if adamw:
         return torch.optim.AdamW(groups, lr=lr, weight_decay=0.01)
     return torch.optim.Adam(groups, lr=lr)
@@ -842,7 +903,10 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              ramp: dict[str, float] | None = None,
              resume: bool = False,
              keep_checkpoints: int = 0,
-             pick_floors: str | None = None) -> tuple[C3Model, BaseRun]:
+             pick_floors: str | None = None,
+             graph: dict[str, Any] | None = None,
+             max_atoms: int | None = None,
+             deal_rate: float = DEAL_RATE) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
@@ -856,6 +920,10 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     ``resume``: carry on from ``<checkpoint>.resume.pt`` (written at every
     saved checkpoint: the model file, the optimizer, the schedule, the step,
     the stage and pass, the checks and the random states).
+
+    ``graph``: graph.py's cross-line flags (``graph.parse_graph``), turned on
+    before the optimizer is built; saved with every checkpoint. ``max_atoms``
+    is recorded in each checkpoint (the training window).
 
     ``keep_checkpoints``: keep at most this many saved checkpoints on disk
     (0 keeps all), plus the best one by the pick (pick.best_at against
@@ -953,6 +1021,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                     model.add_free_head(o.key)
         else:
             model.add_free_head(key)
+    if graph is not None:
+        model.enable_graph(graph)
     model.to(device)
     _freeze_link_gate(model, False)
     gates = list(gates or [])
@@ -1014,16 +1084,16 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             continue
         student_stages.append(stage)
     student_updates = sum(budget.steps(s) * len(train) for s in student_stages if s != "bind")
-    sched = (torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, student_updates))
-             if adamw else None)
     # A run that starts from trained heads ramps the rate up: a fresh Adam
     # moves every weight by the full rate on its first steps, which in run C's
-    # smoke undid the fitted line-type heads in four updates.
+    # smoke undid the fitted line-type heads in four updates. One multiplier
+    # per group: cosine for the deal model (floored through the deal stage),
+    # 0-then-constant for the gate group (fix 1).
     warm = int(warmup_passes * len(train))
-    if adamw and warm > 0:
-        total = max(1, student_updates)
-        sched = torch.optim.lr_scheduler.LambdaLR(
-            opt, lambda s: min(1.0, (s + 1) / warm) * 0.5 * (1 + math.cos(math.pi * min(s, total) / total)))
+    main_rate, gate_rate = rate_lambdas([(st, budget.steps(st) * len(train)) for st in student_stages
+                                         if st != "bind"], len(train), warm, deal_rate=deal_rate)
+    sched = (torch.optim.lr_scheduler.LambdaLR(
+        opt, [gate_rate if g.get("gate") else main_rate for g in opt.param_groups]) if adamw else None)
     seen = heads_seen(train)
     validation_scores: dict[str, dict[str, dict[str, float]]] = dict(state["validation_scores"]) if state else {}
     views = None
@@ -1097,28 +1167,17 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             done_here = stage == resume_at[0] and resume_at[1] >= budget.steps(stage)
             if before or done_here:
                 # Already trained: only the setup a later stage relies on.
-                if stage == "open_links":
+                if stage == GATE_STAGE:
                     _freeze_link_gate(model, True)
-                    opt.add_param_group({
-                        "params": [model.link_mix.weight, model.link_mix.bias],
-                        "lr": opt.param_groups[0]["lr"],
-                        "initial_lr": opt.param_groups[0].get("initial_lr", lr),
-                        "weight_decay": 0.0,
-                    })
                 continue
             if stage == resume_at[0]:
                 start_pass = resume_at[1]
         if not teacher_ready and (stage == "bind" or stage in lesson_stages):
             train_teacher()
             teacher_ready = True
-        if stage == "open_links":
+        if stage == GATE_STAGE:
+            # The gate group was in the optimizer from the start (fix 1).
             _freeze_link_gate(model, True)
-            opt.add_param_group({
-                "params": [model.link_mix.weight, model.link_mix.bias],
-                "lr": opt.param_groups[0]["lr"],
-                "initial_lr": opt.param_groups[0].get("initial_lr", lr),
-                "weight_decay": 0.0,
-            })
         if stage == "bind":
             _bind_graph(teacher, model, train, budget.bind, device, lr, adamw, rng, scale,
                         chunk=teacher_rows_per_step, piece_tokens=teacher_piece_tokens,
@@ -1136,7 +1195,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         lesson, allowed = _lesson(stage, seen) if use_teacher else (None, None)
         steps = budget.steps(stage)
         if pending_opt is not None:
-            # The optimizer's groups now match the saved run's (open_links adds one).
+            # The optimizer's groups match the saved run's: none is ever added.
             opt.load_state_dict(pending_opt["opt"])
             if sched is not None and pending_opt.get("sched") is not None:
                 sched.load_state_dict(pending_opt["sched"])
@@ -1215,7 +1274,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                 at = f"{stage}@{passed}"
                 if checkpoint:
                     save_checkpoint(f"{checkpoint}.{at}", model, step=completed, schema_sha256=schema_sha,
-                                    shape_sha256=schema_shape)
+                                    shape_sha256=schema_shape, max_atoms=max_atoms)
                 bad = check(at)
                 if checkpoint:
                     keep(f"{checkpoint}.{at}", stage, passed)
@@ -1264,9 +1323,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             # validation worse costs a file pick, not a rerun.
             if not keep_checkpoints:
                 save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha,
-                                shape_sha256=schema_shape)
+                                shape_sha256=schema_shape, max_atoms=max_atoms)
             save_checkpoint(f"{checkpoint}.{stage}", model, step=completed, schema_sha256=schema_sha,
-                            shape_sha256=schema_shape)
+                            shape_sha256=schema_shape, max_atoms=max_atoms)
             keep(f"{checkpoint}.{stage}", stage, steps)
             if validation_scores:
                 Path(f"{checkpoint}.validation.json").write_text(
@@ -1283,7 +1342,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             link(saved[-1])
         else:
             save_checkpoint(checkpoint, model, step=completed, schema_sha256=schema_sha,
-                            shape_sha256=schema_shape)
+                            shape_sha256=schema_shape, max_atoms=max_atoms)
     # The live runs leave the holdout to `ml.c3.predict --score`, once, on the
     # run the validation deals picked.
     scores = ({batch.deal_id: _score_oneshot(model, batch, device) for batch in holdout}
@@ -1525,6 +1584,15 @@ def main() -> None:
     parser.add_argument("--pick-floors", default="",
                         help="The live model's per-head scores (headscore scores.json shape): what the "
                              "rotation's best-by-pick reads")
+    parser.add_argument("--graph", default="",
+                        help="Cross-line reasoning flags (ml/c3/graph.py): rune, or key=value,... over the "
+                             "defaults (mask=index|arrival|view, cut_dropout, hop_both, hop2, hop_to_h, "
+                             "pointer_edge, hop_near_miss, nodes, card_slots). Saved in every checkpoint")
+    parser.add_argument("--validation-max-atoms", type=int, default=0,
+                        help="Lines per validation window (default --max-atoms). Run E scores at serve's "
+                             "window (8192), so the checks and the pick read what serve will read")
+    parser.add_argument("--deal-rate", type=float, default=DEAL_RATE,
+                        help="The main groups' rate floor (share of --lr) through the deal stage")
     parser.add_argument("--gate", action="append", default=[],
                         help="Stop the run when a check misses its bar, e.g. lines@5.fit_exact>=0.5 "
                              "or lines.valid_exact>=0.45 (repeat)")
@@ -1559,7 +1627,11 @@ def main() -> None:
     checks = dict(head_weight=head_weight, loss_weight=loss_weight, free_heads=tuple(args.free_head),
                   fit_parts=args.fit_parts, check_every=args.check_every, gates=gates, ramp=ramp,
                   resume=args.resume, keep_checkpoints=args.keep_checkpoints,
-                  pick_floors=args.pick_floors or None)
+                  pick_floors=args.pick_floors or None,
+                  graph=parse_graph(args.graph) if args.graph else None,
+                  max_atoms=args.max_atoms, deal_rate=args.deal_rate)
+    if checks["graph"] is not None:
+        print("graph " + " ".join(f"{k}={v}" for k, v in checks["graph"].items()), flush=True)
     require_live_teacher("" if args.tiny else args.teacher, args.tiny)
     schema = load_schema()
     teacher_steps = args.steps if args.teacher_steps is None else args.teacher_steps
@@ -1575,7 +1647,9 @@ def main() -> None:
         print("accept_drafts", len(accepted), "approved files", flush=True)
     train, train_notes = load_split(args.train, schema, args.max_atoms, accepted)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
-    validation, val_notes = load_split(args.validation, schema, args.max_atoms)
+    validation, val_notes = load_split(args.validation, schema, args.validation_max_atoms or args.max_atoms)
+    if args.validation_max_atoms:
+        print(f"validation window {args.validation_max_atoms} lines (training {args.max_atoms})", flush=True)
     caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, args.view_parts
     if args.smoke:
         mean = sum(len(b) for b in train) / len(train)

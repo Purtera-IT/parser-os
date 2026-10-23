@@ -206,7 +206,9 @@ def test_window_size_is_a_setting_and_released_encoder_blocks_learn_slower(tmp_p
     model = C3Model(schema, SMALL)
     assert release_encoder_top(model, 2) == 0            # a hashed encoder has no blocks to release
     opt = _student_optimizer(model, 1e-3, True, 1e-5)
-    assert sorted(g["lr"] for g in opt.param_groups) == [1e-5, 1e-3]
+    # The gate group (link_mix and the graph's zero-init maps) is its own group, at the base rate.
+    assert sorted(g["lr"] for g in opt.param_groups if not g.get("gate")) == [1e-5, 1e-3]
+    assert [g["lr"] for g in opt.param_groups if g.get("gate")] == [1e-3]
 
 
 def test_a_link_from_a_rule_card_finds_its_line_through_the_card():
