@@ -180,7 +180,8 @@
       ],
       "relations": [],
       "judgments": [
-        "sow_slot"
+        "sow_slot",
+        "doc_kind"
       ],
       "tasks": []
     },

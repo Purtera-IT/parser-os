@@ -33,7 +33,7 @@ LABELED_COLUMNS = {"label_type", "about", "wants", "supplier", "entity_keys", "h
 #: its content) and the deal cards that retire c3_sow rules (services, end_customer,
 #: delivery_model, exclusion_set) are C3 training cards the PM correction loop does not take.
 PAGE_ONLY_JUDGMENTS = {"rule", "suppression", "sow_slot", "services", "end_customer", "delivery_model",
-                       "exclusion_set"}
+                       "exclusion_set", "doc_kind"}
 
 
 def _all(field: str) -> list[str]:

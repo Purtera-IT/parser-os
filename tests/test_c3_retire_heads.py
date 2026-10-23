@@ -132,3 +132,24 @@ def test_a_stated_absence_of_a_site_count(schema):
     j = {x.key: x for x in b.judged}
     assert j["deal:site_count"].answer == schema.by_key()["deal:site_count"].index("_absent")
     assert "declared_site_count" not in b.deal_numbers
+
+
+def test_doc_kind_card_reads_its_document(schema):
+    o = schema.by_key()["jdg:doc_kind"]
+    assert o.size == "group" and o.universal
+    assert {"request_form", "rfp", "sow_draft", "sow_signed", "deal_kit", "estimating_calc", "quote", "purchase_order",
+            "site_list", "email", "install_guide"} <= {a.value for a in o.answers}
+    for a in o.answers[1:]:
+        assert len(a.description.split(". ", 1)[-1]) > 25, a.value      # says what the kind is for
+    atoms = [*ATOMS, {**ATOMS[0], "label_key": "f1", "atom_id": "at-f1", "doc_id": "form-1", "doc_kind": "file",
+                      "text": "Site address: 4 Elm St | Install date: June 3"}]
+    blob = {"labels": [], "judgments": [
+        {"head": "doc_kind", "verdict": "request_form", "labeler": PERSON, "target_key": "doc:form-1",
+         "target": {"document": {"artifactId": "form-1"}}, "note": "The customer's intake form asking for the job."},
+        {"head": "doc_kind", "verdict": "email", "labeler": PERSON, "target_key": "doc:email-1",
+         "target": {"document": {"artifactId": "email-1"}}}]}
+    b = featurize(DealExample.from_training_blob(blob, atoms, deal_id="synthetic-doc-kind"), schema)
+    j = {x.answer: x for x in b.judged if x.key == "jdg:doc_kind"}
+    form = j[o.index("request_form")]
+    assert [b.texts[i] for i in form.lines] == ["Site address: 4 Elm St | Install date: June 3"]
+    assert len(j[o.index("email")].lines) == len(ATOMS)
