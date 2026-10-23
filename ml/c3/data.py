@@ -129,6 +129,9 @@ class Atom:
     speaker_org: str = ""
     doc_direction: str = ""
     stage_at: str = ""
+    #: Which read of the deal the line is in (c3_record.view: quoting | planning), '' for none. An input
+    #: tag like stage_at; the model hashes it only when its config says so (C3Config.view_tag).
+    view: str = ""
     label: dict[str, Any] | None = None
     atom_id: str = ""
     pixels: tuple[float, ...] = ()
@@ -192,7 +195,8 @@ class DealExample:
                       speaker_side=str(a.get("speaker_side", "")),
                       speaker_org=str(a.get("speaker_org") or ""),
                       doc_direction=str(a.get("doc_direction") or ""),
-                      stage_at=str(a.get("stage_at") or ""), label=a.get("label"),
+                      stage_at=str(a.get("stage_at") or ""), view=str(a.get("view") or ""),
+                      label=a.get("label"),
                       atom_id=str(a.get("atom_id") or a.get("id") or ""),
                       pixels=tuple(_pixels(a.get("image_pixels"))),
                       geometry=tuple(_geometry(a)),
@@ -278,7 +282,7 @@ class DealExample:
                          "section": lb.get("section", ""), "order": lb.get("order", len(rows)),
                          "speaker_role": lb.get("speaker_role", ""),
                          "speaker_side": lb.get("speaker_side", ""),
-                         **{k: lb.get(k, "") for k in ("speaker_org", "doc_direction", "stage_at")}})
+                         **{k: lb.get(k, "") for k in ("speaker_org", "doc_direction", "stage_at", "view")}})
             for link in lb.get("links", []) or []:
                 edges.append({"src": lb["label_key"], "dst": link["to"], "relation": link["relation"]})
         for n, lb in enumerate(() if serve_lines_only else blob.get("missed_history") or []):
@@ -372,7 +376,7 @@ def dropped_copy_rows(judgments: Iterable[Any], rows: list[dict[str, Any]]) -> l
                     "order": float(survivor.get("order", place[str(survivor.get("key"))])) + 0.5,
                     "speaker_role": survivor.get("speaker_role", ""),
                     "speaker_side": survivor.get("speaker_side", ""),
-                    **{k: survivor.get(k, "") for k in ("speaker_org", "doc_direction", "stage_at")},
+                    **{k: survivor.get(k, "") for k in ("speaker_org", "doc_direction", "stage_at", "view")},
                     "dropped_copy": True, "row_weight": DROPPED_COPY_WEIGHT.get(verdict, 1.0)})
     return out
 
@@ -668,11 +672,13 @@ class Batch:
     org: list[str] = field(default_factory=list)
     direction: list[str] = field(default_factory=list)
     stage: list[str] = field(default_factory=list)
+    #: Input: the read each line is in (c3_record.view), per line.
+    view: list[str] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
                 "role": self.role, "side": self.side, "times": self.times,
-                "org": self.org, "direction": self.direction, "stage": self.stage,
+                "org": self.org, "direction": self.direction, "stage": self.stage, "view": self.view,
                 "same_doc": self.same_doc, "same_section": self.same_section,
                 "context": self.context, "pixels": self.pixels, "geometry": self.geometry}
 
@@ -1877,7 +1883,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         doc_kind=[a.doc_kind for a in atoms], role=[a.speaker_role for a in atoms],
         side=[a.speaker_side for a in atoms], times=[a.entered_at for a in atoms],
         org=[a.speaker_org for a in atoms], direction=[a.doc_direction for a in atoms],
-        stage=[a.stage_at for a in atoms],
+        stage=[a.stage_at for a in atoms], view=[a.view for a in atoms],
         same_doc=_pair_mask([a.doc_id or None for a in atoms]),
         same_section=_pair_mask([(a.doc_id, a.section) if a.section else None for a in atoms]),
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,

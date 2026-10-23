@@ -187,6 +187,9 @@ def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha25
         # The cross-line flags (graph.py): load_checkpoint builds the same
         # graph, so serve reads with the mask and hops the run trained with.
         payload["graph"] = dict(graph)
+    if getattr(getattr(model, "cfg", None), "view_tag", False):
+        # The view:<quoting|planning> input tag (c3_record.view): serve hashes it only for a base trained on it.
+        payload["view_tag"] = True
     if max_atoms:
         # The training window, for the record (the pick scores at serve's window).
         payload["max_atoms"] = int(max_atoms)
@@ -223,6 +226,8 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
             raise ValueError("Checkpoint schema differs in more than text: the opportunity keys, their order "
                              "or an answer-value list changed")
     state = payload["state"]
+    if hasattr(model, "cfg"):
+        model.cfg.view_tag = bool(payload.get("view_tag"))
     if payload.get("graph") and hasattr(model, "enable_graph"):
         # Built before the weights load, as the free heads are below.
         model.enable_graph(payload["graph"])
