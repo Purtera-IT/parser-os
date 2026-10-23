@@ -134,19 +134,28 @@ def document_arrivals(documents: Iterable[dict[str, Any]], event_kinds: Sequence
                       ) -> dict[str, Any]:
     """Arrival per document: its ``sent_at``; else, for an event, its
     ``authored_at``; else the arrival of the document before it in reading
-    order (``document_rank``); else the first known arrival in that order.
-    Times are returned as given."""
+    order (``document_rank``); else (nothing before it: no evidence of when it
+    arrived) the LATEST time in the deal, any arrival or authored time, so an
+    undated, uncarried document never enters a quoting read early (leak-safe;
+    the Platform as_of cut's ``documentArrivals`` is the same rule). Times are
+    returned as given."""
     docs = [d for d in documents if isinstance(d, dict)]
     rank = document_rank(docs)
     docs.sort(key=lambda d: rank.get(str(d.get("doc_id") or ""), len(rank)))
     known = [d.get("sent_at") or (d.get("authored_at") if str(d.get("kind") or "") in event_kinds else None)
              for d in docs]
-    prev = next((t for t in known if t), None)
+    latest, latest_t = None, None
+    for t in known + [d.get("authored_at") for d in docs]:
+        e = _epoch(t) if t else None
+        if e is not None and (latest_t is None or e > latest_t):
+            latest, latest_t = t, e
+    prev = None
     out: dict[str, Any] = {}
     for d, t in zip(docs, known):
         prev = t or prev
-        if d.get("doc_id") and prev:
-            out[str(d["doc_id"])] = prev
+        at = prev or latest
+        if d.get("doc_id") and at:
+            out[str(d["doc_id"])] = at
     return out
 
 

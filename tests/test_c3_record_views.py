@@ -149,3 +149,22 @@ def test_the_view_tag_is_an_input_only_for_a_base_trained_on_it(tmp_path):
     fresh = C3Model(schema, replace(SMALL, tag_dropout=0.0))
     load_checkpoint(path, fresh, schema_sha256="s")
     assert fresh.cfg.view_tag is True
+
+
+def test_a_leading_undated_document_arrives_at_the_deals_latest_time():
+    from c3_record import document_times
+
+    docs = [{"doc_id": "old", "kind": "file", "authored_at": "2020-01-01T00:00:00Z", "pos": 0},
+            {"doc_id": "m1", "kind": "email", "sent_at": "2026-05-01T00:00:00Z", "authored_at": "2026-05-01T00:00:00Z",
+             "pos": 1},
+            {"doc_id": "f", "kind": "file", "authored_at": "2026-05-02T00:00:00Z", "pos": 2},
+            {"doc_id": "m2", "kind": "email", "sent_at": "2026-06-01T00:00:00Z", "authored_at": "2026-06-01T00:00:00Z",
+             "pos": 3}]
+    got = document_times(docs)
+    assert got["old"] == "2026-06-01T00:00:00Z"      # no evidence: the latest time, never the first
+    assert got["f"] == "2026-05-01T00:00:00Z"        # after m1 in reading order: m1's arrival
+    assert got["m2"] == "2026-06-01T00:00:00Z"
+    files = [{"doc_id": "a", "kind": "file", "authored_at": "2026-01-01T00:00:00Z"},
+             {"doc_id": "b", "kind": "file", "authored_at": "2026-03-01T00:00:00Z"}]
+    assert set(document_times(files).values()) == {"2026-03-01T00:00:00Z"}
+    assert document_times([{"doc_id": "x", "kind": "file"}]) == {}
