@@ -102,6 +102,9 @@ class C3Config:
     #: side, party, org, direction, stage) are blanked together, so the
     #: model never rests a reading on the tags alone. Off in eval / serving.
     tag_dropout: float = 0.15
+    #: Hash the line's ``view:<quoting|planning>`` tag (c3_record.view) with the other tags. Off for a
+    #: checkpoint trained without it, so an older base reads as it was trained.
+    view_tag: bool = False
     ema: float = 0.996
     #: v5 explanation bank on by default in c3_loss (reader votes, compiled
     #: operators, clause slots). Off: v6 reads explanations with the
@@ -189,7 +192,8 @@ class DealEncoder(nn.Module):
         # Sender and stage (c3_record.sender), the same hashed bag. Only a
         # known value adds a tag, so a deal without them embeds as before.
         n_tags = len(tags)
-        for name, slot in (("org", "org"), ("dir", "direction"), ("stage", "stage")):
+        slots = (("org", "org"), ("dir", "direction"), ("stage", "stage"))
+        for name, slot in slots + ((("view", "view"),) if getattr(self.cfg, "view_tag", False) else ()):
             for i, v in enumerate((inp.get(slot) or [])[:n_tags]):
                 if v:
                     tags[i].append(f"{name}:{v}")
