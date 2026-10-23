@@ -1303,8 +1303,8 @@ def compile_project(
     # A heading that leads child lines ("SCOPE OF WORK", "A. IT Infrastructure
     # Support") is kept as a structure atom so a label can govern its group.
     # It is held out the same way -- no dedup folds it onto a child line or
-    # onto the next draft's copy of itself, no gate or head reads it -- and
-    # comes back with the held chatter.
+    # onto the next draft's copy of itself, no gate reads it -- and comes back
+    # with the held chatter. The heads read it with the deal (also_read).
     held_headings = [a for a in atoms if _is_heading_atom(a)]
     if held_headings:
         _hh_ids = {id(a) for a in held_headings}
@@ -2120,8 +2120,9 @@ def compile_project(
 
             # And the lines an admission regex held aside (greetings, sign-offs,
             # signature blocks): the regex is a hint on the line, the heads
-            # read it with its message and decide its type and keep.
-            _c3_deal.also_read(_fold_losers(suppressed_atoms) + list(held_chatter))
+            # read it with its message and decide its type and keep. The held
+            # headings too: read:list_header / read:opens_block read them.
+            _c3_deal.also_read(_fold_losers(suppressed_atoms) + list(held_chatter) + list(held_headings))
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
