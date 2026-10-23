@@ -256,7 +256,7 @@ args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_fil
 if [[ "$TINY" == 1 ]]; then
   args+=(--tiny)
 else
-  args+=(--init-from "$INIT" --allow-text-change --allow-new-heads "${NEW_HEADS:-jdg:hours:per,jdg:hours:qty,read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot}"
+  args+=(--init-from "$INIT" --allow-text-change --allow-new-heads "${NEW_HEADS:-jdg:hours:per,jdg:hours:qty,read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot,read:work_window,read:access_need,read:job_detail,read:run_length,read:price_basis,read:party_role,deal:site_count,jdg:services,jdg:end_customer,jdg:delivery_model,jdg:exclusion_set}"
          ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"}
          --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}")
 fi
