@@ -469,6 +469,34 @@ _ABSENCE_LINE = re.compile(r"(?i)^\s*(no\b.{3,80}\b(were|was|are|is|have been|ha
 _CHATTER_TYPES = ("small_talk", "signature")
 
 
+def _head_type(a: dict[str, Any]) -> str:
+    """The type head's label of an envelope atom (``c3_label``), or ''. Never
+    the parser's ``atom_type``: a parser type does not veto or decide."""
+    return str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or "")
+
+
+#: Types whose lines the standards' gates do not read (addresses, contacts,
+#: chatter, questions), by the type head's label only.
+_NO_GATE_TYPES = ("physical_site", "contact", "person", "signature", "small_talk", "email_header", "deal_metadata",
+                  "open_question", "action_item", "answered_question")
+
+
+def _gate_atoms(envelope: dict[str, Any], rejected: set[str], fact_docs: set[str]) -> list[str]:
+    """The deal lines the standards' gates read beside the facts: unquoted,
+    not rejected, in a fact's document, not a question, and not a type in
+    ``_NO_GATE_TYPES`` by the type head (the parser's type is not consulted)."""
+    return [str(a.get("text") or "") for a in envelope.get("atoms") or []
+            if not (a.get("structured") or {}).get("quoted") and str(a.get("id")) not in rejected
+            and str(a.get("artifact_id")) in fact_docs and "?" not in str(a.get("text") or "")
+            and _head_type(a) not in _NO_GATE_TYPES]
+
+
+def _chatter_ids(envelope: dict[str, Any]) -> set[str]:
+    """Lines the type head labeled small talk or signature (the parser's
+    type alone never makes a line chatter)."""
+    return {str(a.get("id")) for a in envelope.get("atoms") or [] if _head_type(a) in _CHATTER_TYPES}
+
+
 def _type_read(a: dict[str, Any]) -> tuple[str, float] | None:
     """The type head's reading of an envelope atom: ``c3_read`` (stamped on
     every line it read), else the ``c3_label`` it acted with."""
@@ -585,7 +613,7 @@ def _program_atoms(envelope: dict[str, Any], per_kind: int = 3) -> list[dict[str
         name = docs.get(str(a.get("artifact_id") or ""), "")
         own = st.get("source") == "hubspot_note" or bool(re.search(r"-hs-note-|-hs-meeting-|fireflies", name))
         t = re.sub(r"\s+", " ", str(a.get("text") or "")).strip()
-        lab = str((st.get("c3_label") or {}).get("type") or a.get("atom_type") or "")
+        lab = _head_type(a)
         # A quoted copy counts (the forwarded agenda's "Leverage
         # self-installation where feasible ..."); the text is read once.
         if not own or lab in _CHATTER_TYPES or not 25 <= len(t) <= 400 or t.endswith("?") \
@@ -1726,12 +1754,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     rejected = _rejected_atoms(envelope) | set(content.get("_noise_atoms") or [])
     fact_ids = {f["id"] for f in fs}
     fact_docs = {str(a.get("artifact_id")) for a in envelope.get("atoms") or [] if str(a.get("id")) in fact_ids}
-    no_gate = ("physical_site", "contact", "person", "signature", "small_talk", "email_header", "deal_metadata",
-               "open_question", "action_item", "answered_question")
-    gate_atoms = [str(a.get("text") or "") for a in envelope.get("atoms") or []
-                  if not (a.get("structured") or {}).get("quoted") and str(a.get("id")) not in rejected
-                  and str(a.get("artifact_id")) in fact_docs and "?" not in str(a.get("text") or "")
-                  and str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") not in no_gate]
+    gate_atoms = _gate_atoms(envelope, rejected, fact_docs)
     _traced(content, "standards", _apply_standards, content, family, [f["text"] for f in fs if not f.get("pictured")],
             [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")],
             gate_atoms)
@@ -1759,8 +1782,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                 and _HEDGE.search(str(a.get("text") or ""))]
     # A line the type head called small talk is never cited (010082: "This
     # work is for a new unit opening" from a signature's menu entry).
-    chatter = {str(a.get("id")) for a in envelope.get("atoms") or []
-               if str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") in ("small_talk", "signature")}
+    chatter = _chatter_ids(envelope)
     if chatter:
         for k in LISTS:
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and all(c in chatter for c in x["cites"]))]
@@ -3423,7 +3445,7 @@ def _noise(envelope: dict[str, Any], fs: list[dict[str, Any]]) -> tuple[list[str
     ids |= _inventory_rows(envelope)[0]
     ids |= {str(a.get("id")) for a in envelope.get("atoms") or []
             if str(a.get("artifact_id")) in bro_ids
-            or str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") in ("small_talk", "signature")}
+            or _head_type(a) in _CHATTER_TYPES}
     return sorted(ids), logi
 
 
@@ -7700,7 +7722,7 @@ def _recite_exclusions(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
         hits = []
         for a in atoms:
             t = str(a.get("text") or "") if isinstance(a, dict) else ""
-            lab = str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "")
+            lab = _head_type(a)
             if not t or len(t) > 400 or t.rstrip().endswith("?") or lab in _CHATTER_TYPES or lab in ("open_question", "answered_question"):
                 continue
             sh = k & _object_toks(t)

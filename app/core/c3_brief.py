@@ -197,7 +197,9 @@ def _not_brief(atom: Any) -> str:
     bt, pb = _base_type(str(atom.id))
     if bt in NOT_BRIEF_TYPES and pb >= BASE_TYPE_BAR:
         return bt
-    return _type(atom) if _type(atom) in NOT_BRIEF_TYPES else ""
+    # The base's reading only: a parser type never keeps a line out (heads
+    # decide; with no base reading the keep head alone does).
+    return ""
 
 
 def _attach_evidence(questions: list[dict[str, Any]], atoms: list[Any]) -> None:
@@ -313,7 +315,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # line it stays (in the body at KEEP_BAR, else "also mentioned").
         # 010426's only date, "the three weeks after Thanksgiving", read
         # small_talk 0.80 / keep 0.64 and was dropped outright.
-        if status == "rejected" or (t in NEVER and not (t == "small_talk" and act == "keep" and p >= MAYBE_BAR)):
+        # The parser's small_talk is no veto at all (the type head's own
+        # small_talk drops above): only the structural kinds stay out by type.
+        if status == "rejected" or (t in NEVER and t != "small_talk"):
             left_out.append({"id": aid, "reason": "rejected" if status == "rejected" else f"type {t}",
                              "by": "rule:type"})
             why["rule:never"] += 1
@@ -353,12 +357,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             if 0.3 <= p < 0.9 and act == "keep" or 0.3 <= p < 0.6:
                 label_tasks.append({"id": aid, "head": "read:co_action", "base_says": act, "p": round(p, 3),
                                     "text": a.raw_text[:200]})
-        elif t in SECTION_BY_TYPE:
-            kept.append((a, None, "rule:type"))
-            why["rule:keep"] += 1
         else:
-            left_out.append({"id": aid, "reason": f"type {t}", "by": "rule:type"})
-            why["rule:drop"] += 1
+            # No keep reading: a parser type neither keeps nor drops the line
+            # on its own; it is left out as unread, never kept by type.
+            left_out.append({"id": aid, "reason": "no keep reading", "by": "head:absent"})
+            why["head:absent"] += 1
 
     # ---- sections
     # jdg:sow_section (app/core/sow_rubric_judge.py): the placement rubric

@@ -22,7 +22,9 @@ def test_no_read_falls_back_to_rules():
     atoms = [_atom(1, "scope_item", "Install 4 cameras"), _atom(2, "small_talk", "thanks!"),
              _atom(3, "open_question", "Who owns the lift?")]
     b = c3_brief.build(atoms, service_fallback="security_camera")
-    assert [x["id"] for x in b["sections"]["scope_of_work"]] == ["a1"]
+    # No keep reading: a parser type keeps nothing (step 0, c3_brief :356).
+    assert "scope_of_work" not in b["sections"]
+    assert b["left_out"]["by_reason"] == {"no keep reading": 3}
     assert b["service"] == {"value": "security_camera", "by": "rule:domain_pack", "base_says": None,
                             "decided_by_layer": "rule"}
     assert [q["id"] for q in b["questions"]] == ["a3"]
@@ -417,3 +419,47 @@ def test_the_rubric_judge_is_off_by_default(monkeypatch):
     reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.6]}}
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
     assert "judge" not in b["sections"]["scope_of_work"][0]
+
+
+def _no_base_types(monkeypatch):
+    from app.core import c3_type_base
+
+    monkeypatch.setattr(c3_type_base, "_DEAL", {})
+
+
+def test_parser_type_never_keeps_a_line_out_of_the_brief(monkeypatch):
+    """c3_brief :200: with no base type reading, the parser's answered_question
+    is not a NOT_BRIEF type; the keep head alone decides."""
+    _no_base_types(monkeypatch)
+    atoms = [_atom(1, "answered_question", "Do you need the cameras mounted?")]
+    b = c3_brief.build(atoms, readings={"reads": {"a1": {"read:co_action": ["keep", 0.95]}}, "links": [], "deal": {}})
+    assert c3_brief._not_brief(atoms[0]) == ""
+    items = [x for xs in b["sections"].values() for x in xs]
+    assert [x["id"] for x in items] == ["a1"] and "base_type" not in items[0]
+    b = c3_brief.build(atoms, readings={"reads": {"a1": {"read:co_action": ["keep", 0.3]}}, "links": [], "deal": {}})
+    assert "base type answered_question" not in b["left_out"]["by_reason"]
+    assert [x["id"] for x in b["kept_unsure"]] == ["a1"]
+
+
+def test_parser_small_talk_is_no_veto(monkeypatch):
+    """c3_brief :316: the parser's small_talk never drops a line the keep head
+    reads; the structural NEVER kinds still stay out."""
+    _no_base_types(monkeypatch)
+    atoms = [_atom(1, "small_talk", "The three weeks after Thanksgiving work for us"),
+             _atom(2, "raw_table_row", "| a | b |")]
+    reads = {"a1": {"read:co_action": ["keep", 0.3]}, "a2": {"read:co_action": ["keep", 0.99]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert "type small_talk" not in b["left_out"]["by_reason"]
+    assert [x["id"] for x in b["kept_unsure"]] == ["a1"]
+    assert b["left_out"]["by_reason"].get("type raw_table_row") == 1
+
+
+def test_absent_keep_reading_is_not_decided_by_parser_type(monkeypatch):
+    """c3_brief :356: a line co_action did not read is not kept by its
+    parser type (scope_item), even when other lines were read."""
+    _no_base_types(monkeypatch)
+    atoms = [_atom(1, "scope_item", "Install 4 cameras"), _atom(2, "scope_item", "Run cable to the IDF")]
+    b = c3_brief.build(atoms, readings={"reads": {"a1": {"read:co_action": ["keep", 0.95]}}, "links": [], "deal": {}})
+    ids = [x["id"] for xs in b["sections"].values() for x in xs]
+    assert ids == ["a1"]
+    assert b["left_out"]["by_reason"] == {"no keep reading": 1}
