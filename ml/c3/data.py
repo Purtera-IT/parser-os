@@ -654,6 +654,12 @@ class Batch:
     #: its only class target (``jdg:<head>:reason``): the card's note, verdict
     #: words masked on a universal head, for why2.card_alone. Never an input.
     reason_notes: list[tuple[int, str, str]] = field(default_factory=list)
+    #: Training only: (key, answer, note) for a line card whose line is not a
+    #: model input in this file (a Dropped card on a line the compile set
+    #: aside: train/serve parity keeps it out of the deal's lines). The note
+    #: alone, in no line's context, reaches the verdict (why2.card_alone).
+    #: Never an input.
+    unplaced_notes: list[tuple[str, int, str]] = field(default_factory=list)
     #: Training only: loss scale per opportunity key for this deal view
     #: (DealExample.head_scale); a key not listed counts 1.
     head_scale: dict[str, float] = field(default_factory=dict)
@@ -1725,6 +1731,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     judged: list[Judged] = []
     notes: list[str] = []
     reason_notes: list[tuple[int, str, str]] = []
+    unplaced_notes: list[tuple[str, int, str]] = []
     lines = _Lines(atoms)
     for j in deal.judgments:
         if not _is_a_person(j.get("labeler")) or excluded(j):
@@ -1761,6 +1768,9 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                 idx = tuple(i for i in idx if not excluded(deal.atoms[i].label)) or None
             kept = ix is not None and idx is not None and not (
                 opp.size == PAIR and any(excluded(deal.atoms[i].label) for i in idx))
+            if (ix is not None and idx is None and opp.size == LINE and not query and multi_ix is None
+                    and note and why_weight(j) > 0):
+                unplaced_notes.append((key, ix, mask_verdict(note) if opp.universal else note))
             if kept and query and any(excluded(deal.atoms[i].label) for i in idx):
                 kept = False
             if kept:
@@ -1884,7 +1894,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         keys=[a.key for a in atoms], parser_targets=parser_targets, head_scale=dict(deal.head_scale),
         layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
                          for t in a.layout_rewrites if t.strip() != a.text.strip()],
-        edge_notes=edge_notes, reason_notes=reason_notes)
+        edge_notes=edge_notes, reason_notes=reason_notes, unplaced_notes=unplaced_notes)
 
 
 def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:

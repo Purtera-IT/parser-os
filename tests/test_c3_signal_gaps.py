@@ -46,15 +46,15 @@ def _payload():
              _atom("k4", "Labor- Per Hour | $127.50 | Per Hour | 2", 4),
              _atom("k5", "Internal: margin looks thin.", 5)]
     labels = [
-        {"label_key": "k1", "label_type": "schedule", "labeler": PM, "note": "The visit day.",
+        {"label_key": "k1", "label_type": "site_access_window", "labeler": PM, "note": "The visit day.",
          "said_by": {"name": "A", "role": "provider", "side": "ours"},
          "said_to": [{"role": "customer", "side": "theirs"}, {"role": "unknown", "side": "ours"}],
          "internal_only": False},
-        {"label_key": "k2", "label_type": "access", "labeler": PM, "note": "A badge list is needed.",
+        {"label_key": "k2", "label_type": "requirement", "labeler": PM, "note": "A badge list is needed.",
          "said_by": {"role": "unknown", "side": "theirs"}, "said_to": [], "internal_only": False},
         {"label_key": "k3", "label_type": "_keep", "labeler": PM, "note": "A heading."},
-        {"label_key": "k4", "label_type": "labor", "labeler": PM, "note": "Two hours of labor."},
-        {"label_key": "k5", "label_type": "pricing", "labeler": PM, "note": "Our own margin talk.",
+        {"label_key": "k4", "label_type": "rate_card", "labeler": PM, "note": "Two hours of labor."},
+        {"label_key": "k5", "label_type": "pricing_assumption", "labeler": PM, "note": "Our own margin talk.",
          "said_by": {"role": "internal", "side": "ours"}, "internal_only": True},
     ]
     judgments = [
@@ -205,3 +205,62 @@ def test_run_script_passes_the_free_rows_to_the_gates():
         o = by[k]
         if o.size == "line" and o.kind != "number":
             assert k in R_ONLY_KEYS, k
+
+
+def _dropped(payload):
+    p = copy.deepcopy(payload)
+    p["judgments"].append(
+        {"head": "suppression", "target_key": "sup:lbl_gone", "labeler": PM, "text": "Thanks so much!!",
+         "target": {"head": "suppression", "text": "Thanks so much!!", "stage": "chatter", "survivor": None},
+         "verdict": "correctly_dropped", "reason": "kept", "note": "A pleasantry: no fact of the job."})
+    return p
+
+
+def test_a_note_whose_line_is_not_an_input_trains_alone(schema):
+    from ml.c3.losses import LossWeights
+    from ml.c3.why2 import why2_losses
+
+    b = _batch(_dropped(_payload()), schema)
+    adm = schema.by_key()["col:admission"]
+    assert b.unplaced_notes == [("col:admission", adm.index("drop"), "A pleasantry: no fact of the job.")]
+    assert "Thanks so much!!" not in b.texts                  # never a line of the input
+    assert _batch(_payload(), schema).unplaced_notes == []
+    torch.manual_seed(0)
+    model = C3Model(schema, SMALL)
+    w = LossWeights(card_contrast=0, described_alone=0, co_why_contrast=0, co_why_alone=0,
+                    number_why_alone=0, judgment_why_alone=0)
+    out = model(b.inputs(), company=b.company or None, desc=model.describe())
+    loss = why2_losses(model, out, b, model.describe(), w)["card_alone"]
+    loss.backward()
+    assert float(loss) > 0 and model.why_proj.weight.grad is not None
+    bare = copy.copy(b)
+    bare.unplaced_notes = []
+    with torch.no_grad():
+        out = model(b.inputs(), company=b.company or None, desc=model.describe())
+        assert float(why2_losses(model, out, bare, model.describe(), w)["card_alone"]) != pytest.approx(float(loss))
+
+
+def test_a_long_deal_carries_each_unplaced_card_once(schema):
+    p = _dropped(_payload())
+    p["atoms"] += [_atom(f"x{n}", f"Filler line number {n} about the cabling.", 6 + n % 50) for n in range(40)]
+    deal = DealExample.from_training_blob(p, p["atoms"], deal_id=p["deal_id"])
+    parts = training_batches(deal, schema, max_atoms=16)[0]
+    assert len(parts) > 2
+    assert sum(len(b.unplaced_notes) for b in parts) == 1
+
+
+def test_a_field_note_on_a_blank_field_explains_the_line_type(schema):
+    from ml.c3.why2 import card_rows
+
+    p = _payload()
+    p["labels"][3]["reads_set"] = {"rate_note": "A subcontractor cost rate."}
+    b = _batch(p, schema)
+    i4 = _row(b, "k4")
+    assert b.targets["read:rate"][i4] == IGNORE
+    assert b.field_notes[i4]["read:rate"] == "A subcontractor cost rate."     # the teacher's field note as before
+    model = C3Model(schema, SMALL)
+    uni, _ = card_rows(model, b)
+    assert (i4, "col:label_type", "A subcontractor cost rate.") in uni
+    p["labels"][3]["reads_set"]["rate"] = "$127.50/hr"
+    uni, _ = card_rows(model, _batch(p, schema))
+    assert (i4, "read:rate", "A subcontractor cost rate.") in uni

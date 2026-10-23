@@ -117,6 +117,7 @@ def plan_long_deal(deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
     loose: list[tuple[tuple[int, ...], dict]] = []
     whole: list[dict] = []
     uncovered = 0
+    spread = 0
     for judgment in deal.judgments:
         if not isinstance(judgment, dict) or excluded(judgment) or not _is_a_person(judgment.get("labeler")):
             continue                              # featurize trains neither
@@ -127,6 +128,13 @@ def plan_long_deal(deal: DealExample, schema: Schema, *, max_atoms: int = 4096,
             whole.append(judgment)
             continue
         idx = judgment_subject(judgment, size, lines)
+        if idx is None and size == "line" and str(judgment.get("note") or "").strip():
+            # A line card whose line is not in this file's input (a Dropped
+            # card on a line the compile set aside): one window, in turn,
+            # carries it, and its note alone trains (data.unplaced_notes).
+            owned[spread % len(spans)].append(judgment)
+            spread += 1
+            continue
         if not idx:
             uncovered += 1
             continue

@@ -173,6 +173,14 @@ def card_rows(model: C3Model, batch: Batch) -> tuple[list[tuple[int, str, str]],
         t = _norm(note)
         if o is None or o.kind == RELATION or not t or (i, key) in seen:
             continue
+        if key.startswith("read:") and not _has_target(batch, key, i, o.kind):
+            # A field note on a line whose field has no answer (a rate_note on a
+            # rate card row that leaves the rate reading blank) still explains
+            # the line: a WHY of its type.
+            alt = by.get("col:label_type")
+            if alt is not None and alt.layer == o.layer and (i, alt.key) not in seen \
+                    and _has_target(batch, alt.key, i, alt.kind):
+                key, o = alt.key, alt
         if not batch.head_scale.get(key, 1.0) or not _has_target(batch, key, i, o.kind):
             continue
         seen.add((i, key))
@@ -239,17 +247,74 @@ def _stand_in(model: C3Model, out: C3Output, lines: list[int], r: torch.Tensor,
     return sub
 
 
-def card_alone_loss(model: C3Model, out: C3Output, batch: Batch, desc: dict[str, Any],
-                    rows: list[tuple[int, str, str]], e: torch.Tensor, col: list[int]) -> torch.Tensor:
-    zero = out.r.new_zeros(())
+def _bare_stand_in(model: C3Model, out: C3Output, r: torch.Tensor, desc: dict[str, Any]) -> C3Output:
+    """The universal heads with ``r`` and nothing else: no line's h, q, z or
+    asked slots (a note whose line is not in the deal's input)."""
+    k = r.shape[0]
+    h = out.h.new_zeros(k, out.h.shape[-1])
+    slots = out.slots.new_zeros((k,) + tuple(out.slots.shape[1:])) if out.slots is not None else None
+    r = r.to(out.r.dtype)
+    sub = C3Output(h=h, z_c=out.z_c.new_zeros(k, *out.z_c.shape[1:]),
+                   q_mu=out.q_mu.new_zeros(k, *out.q_mu.shape[1:]),
+                   q_logvar=out.q_logvar.new_zeros(k, *out.q_logvar.shape[1:]),
+                   q_logit=out.q_logit.new_zeros(k, *out.q_logit.shape[1:]),
+                   r=r, residual=out.residual.new_zeros(k, *out.residual.shape[1:]), slots=slots)
+    model.universal_heads(sub, r, out.q_mean.new_zeros(k, *out.q_mean.shape[1:]), desc)
+    return sub
+
+
+def unplaced_alone_loss(model: C3Model, out: C3Output, batch: Batch, desc: dict[str, Any],
+                        rows: list[tuple[str, int, str]]) -> tuple[torch.Tensor | None, int]:
+    """(Sum over heads of each head's mean CE, heads): a card's note whose line
+    is not a model input (``Batch.unplaced_notes``), alone in r's place with no
+    line context, reaches the card's verdict."""
+    by = model.schema.by_key()
+    rows = [(k, a, t) for k, a, t in rows if k in by and by[k].universal and by[k].kind != NUMBER
+            and batch.head_scale.get(k, 1.0) and _norm(t)]
     if not rows:
-        return zero
-    sub = _stand_in(model, out, [i for i, _, _ in rows], e[torch.tensor(col, device=e.device)], desc)
+        return None, 0
+    texts, col = _columns([_norm(t) for _, _, t in rows])
+    e = _encode_why(model, texts)
+    sub = _bare_stand_in(model, out, e[torch.tensor(col, device=e.device)], desc)
     groups: dict[str, list[tuple[int, int]]] = {}
-    for m, (i, key, _) in enumerate(rows):
-        groups.setdefault(key, []).append((m, i))
-    loss = _row_loss(model, sub.logits, sub.numbers, batch, groups)
-    return zero if loss is None else loss
+    for m, (key, ans, _) in enumerate(rows):
+        groups.setdefault(key, []).append((m, ans))
+    total, terms = None, 0
+    for key, pairs in groups.items():
+        lg = sub.logits.get(key)
+        if lg is None:
+            continue
+        lg = lg[[m for m, _ in pairs]].float()
+        loss = F.cross_entropy(lg, torch.tensor([a for _, a in pairs], device=lg.device))
+        loss = batch.head_scale.get(key, 1.0) * loss
+        total = loss if total is None else total + loss
+        terms += 1
+    return total, terms
+
+
+def card_alone_loss(model: C3Model, out: C3Output, batch: Batch, desc: dict[str, Any],
+                    rows: list[tuple[int, str, str]], e: torch.Tensor, col: list[int],
+                    unplaced: list[tuple[str, int, str]] | None = None) -> torch.Tensor:
+    """Each line card's note alone reaches its head's answer; with ``unplaced``,
+    so does each card note whose line is not in the input (no line context).
+    The mean over heads of both."""
+    zero = out.r.new_zeros(())
+    loss, heads = None, 0
+    if rows:
+        sub = _stand_in(model, out, [i for i, _, _ in rows], e[torch.tensor(col, device=e.device)], desc)
+        groups: dict[str, list[tuple[int, int]]] = {}
+        for m, (i, key, _) in enumerate(rows):
+            groups.setdefault(key, []).append((m, i))
+        placed = _row_loss(model, sub.logits, sub.numbers, batch, groups)
+        if placed is not None:
+            heads = len(groups)
+            loss = placed * heads
+    if unplaced:
+        more, n = unplaced_alone_loss(model, out, batch, desc, unplaced)
+        if more is not None:
+            loss = more if loss is None else loss + more
+            heads += n
+    return zero if loss is None else loss / max(heads, 1)
 
 
 def card_contrast_loss(out: C3Output, rows: list[tuple[int, str, str]], e: torch.Tensor,
@@ -390,17 +455,14 @@ def why2_losses(model: C3Model, out: C3Output, batch: Batch, desc: dict[str, Any
                                                 or on["co_why_contrast"] or on["co_why_alone"]) else ([], [])
     if on["card_alone"] or on["card_contrast"]:
         rows = _sample(uni, int(getattr(w, "card_cap", 256)))
-        if rows:
-            texts, col = _columns([t for _, _, t in rows])
-            e = _encode_why(model, texts)
-            if on["card_alone"]:
-                parts["card_alone"] = card_alone_loss(model, out, batch, desc, rows, e, col)
-            if on["card_contrast"]:
-                parts["card_contrast"] = card_contrast_loss(out, rows, e, col)
-        else:
-            for k in ("card_alone", "card_contrast"):
-                if on[k]:
-                    parts[k] = zero
+        unplaced = _sample(list(getattr(batch, "unplaced_notes", []) or []), int(getattr(w, "card_cap", 256)))
+        texts, col = _columns([t for _, _, t in rows]) if rows else ([], [])
+        e = _encode_why(model, texts) if rows else None
+        if on["card_alone"]:
+            parts["card_alone"] = (card_alone_loss(model, out, batch, desc, rows, e, col, unplaced)
+                                   if rows or unplaced else zero)
+        if on["card_contrast"]:
+            parts["card_contrast"] = card_contrast_loss(out, rows, e, col) if rows else zero
     if on["co_why_contrast"] or on["co_why_alone"]:
         rows = _sample(company_rows(model, batch, co_cards), int(getattr(w, "card_cap", 256)))
         if rows and out.conduct_x is not None:
