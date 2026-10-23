@@ -472,3 +472,16 @@ def test_masked_rows_keep_gradients_finite(schema):
     assert torch.isfinite(loss) and all(torch.isfinite(p.grad).all() for p in m.parameters() if p.grad is not None)
     out = m(b.inputs())
     assert float(pointer_loss(out, b)) == 0.0
+
+
+def test_no_later_line_leaks_back_under_the_index_mask(schema):
+    """Every path (the hop both ways, the nodes and their pointers) keeps the
+    mask: under ``index`` the earliest rows' readings ignore a later email."""
+    a = featurize(DealExample.from_dict(_deal_with_later_email("The attached list is our 145 stores.")), schema)
+    b = featurize(DealExample.from_dict(_deal_with_later_email("The attached sheet is the task list.")), schema)
+    m = _model(schema, {**RUNE_GRAPH, "mask": "index"})
+    _open(m)
+    with torch.no_grad():
+        m.free_heads["col:label_type"].weight.normal_(0, 0.1)
+        assert torch.allclose(m(a.oneshot()).logits["col:label_type"][:4],
+                              m(b.oneshot()).logits["col:label_type"][:4], atol=1e-6)

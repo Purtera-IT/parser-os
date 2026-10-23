@@ -270,10 +270,12 @@ def node_pass(model, out, r: torch.Tensor, inp: dict[str, Any], allowed: torch.T
     logp = torch.cat([sc, sc.new_zeros(n, 1)], -1).log_softmax(-1)  # last column: points at nothing
     w = logp[:, :n].exp()
     # The node reads what points at it; every member then reads its node.
+    # A member reads the pointers at its node that it may itself read (the
+    # mask holds here too: under index / arrival no later line leaks back).
     val = model.node_val(r).float()
-    told = (w.transpose(0, 1) @ val) / (w.sum(0) + 1.0).unsqueeze(1)          # per representative
     member = group & rep.view(1, -1)                                          # [line, its rep]
-    told = member.float() @ told
+    c = (member.float() @ w.transpose(0, 1)) * allowed.float()                # [member, pointing line]
+    told = (c @ val) / (c.sum(1) + 1.0).unsqueeze(1)
     r = (r + model.node_table(ft) + model.node_doc(fd) + model.node_read((w @ node.float()).to(r.dtype))
          + model.node_back(told.to(r.dtype)))
     out.nodes = {"table": ft, "doc": fd, "has_table": has_table, "rep": rep, "pointer": logp,
