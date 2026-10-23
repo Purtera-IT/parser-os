@@ -117,14 +117,9 @@ def is_drawing(filenames: list[str]) -> bool:
     is still judged and still reported in the trace -- it just is not deleted
     on the strength of a name.
     """
-    names = [str(f or "") for f in filenames if f]
-    if not names:
-        return False
-    return all(
-        n.lower().endswith(_DRAWING_SUFFIXES)
-        or (n.lower().endswith(".pdf") and bool(_SHEET_NUMBER_RE.search(Path(n).stem.upper())))
-        for n in names
-    )
+    from c3_record.document_job import is_drawing as _is_drawing
+
+    return _is_drawing(filenames)
 
 
 #: A request, ticket or programme number: "010329", "OX-0036", "#70598001".
@@ -143,14 +138,15 @@ def strip_refs(text: Any) -> str:
     set aside all 284 of their atoms as another job, on a number. The work is
     named by the words; a number in front of them is filing, not scope.
     """
-    s = _REF_TOKEN_RE.sub(" ", str(text or ""))
-    s = _REF_SEPARATORS_RE.sub(" - ", s)
-    s = " ".join(s.split()).strip(" -_#:|")
-    return s or " ".join(str(text or "").split())
+    from c3_record.document_job import strip_refs as _strip_refs
+
+    return _strip_refs(text)
 
 
 def _words(text: Any) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
+    from c3_record.document_job import words
+
+    return words(text)
 
 
 #: CRM fields that name where the job is, when the manifest carries them.
@@ -161,24 +157,17 @@ def deal_anchors(deal_name: str, crm: dict[str, Any] | None = None) -> list[str]
     """Phrases that, written in a document's own text, tie it to this deal: the
     deal name without its numbers (the project name) and any site address the
     CRM gives. Too short to identify anything (one short word) is no anchor."""
-    out: list[str] = []
-    for raw in [strip_refs(deal_name)] + [str((crm or {}).get(k) or "") for k in _CRM_SITE_KEYS]:
-        w = _words(raw)
-        if w and (len(w.split()) >= 2 or len(w) >= 8) and w not in out:
-            out.append(w)
-    return out
+    from c3_record.document_job import deal_anchors as _deal_anchors
+
+    return _deal_anchors(deal_name, crm)
 
 
 def content_match(docs: list[list[Any]], anchors: list[str]) -> str:
     """The anchor a conversation's own text names, or ''. Read from the atoms'
     text, never the filename -- a filename is what misled the judge."""
-    if not anchors:
-        return ""
-    body = " " + " ".join(_words(getattr(a, "raw_text", "") or "") for d in docs for a in d) + " "
-    for anchor in anchors:
-        if f" {anchor} " in body:
-            return anchor
-    return ""
+    from c3_record.document_job import names_deal
+
+    return names_deal((getattr(a, "raw_text", "") or "" for d in docs for a in d), anchors)
 
 
 def crm_from_manifest(project_dir: Path | str | None) -> dict[str, Any]:
@@ -734,22 +723,21 @@ def judge_documents(
         verdict = getattr(d, "verdict", None) or "this_deal"
         conf = float(getattr(d, "confidence", 0.0) or 0.0)
         source = getattr(d, "source", "fallback")
-        other = verdict == "other_job" and (source == "store" or conf >= floor)
-        # A drawing is never removed on the model's word alone (see is_drawing).
-        # A PM's taught verdict still removes it -- a person looking at the
-        # sheet knows which job it is, and the model looking at its title
-        # block does not.
-        drawing_spared = bool(other and source != "store" and is_drawing(filenames))
-        if drawing_spared:
-            other = False
-        # A conversation whose own text names this deal -- its project name or
-        # site address -- is this deal's, whatever the model or a lesson taught
-        # on a look-alike title says (010353: both files say "VC Links, 15733
-        # US-224 Findlay").
-        matched = content_match(docs, anchors) if other else ""
+        # The one set-aside rule, shared with training's views (c3_record.document_job.set_aside): a
+        # sure other_job only (a PM's taught verdict always is); a drawing is never removed on the
+        # model's word alone (see is_drawing) -- a person looking at the sheet knows which job it is,
+        # the model looking at its title block does not; and a conversation whose own text names this
+        # deal -- its project name or site address -- is this deal's, whatever the model or a lesson
+        # taught on a look-alike title says (010353: both files say "VC Links, 15733 US-224 Findlay").
+        from c3_record.document_job import set_aside as _set_aside
+
+        taught = source == "store"
+        sure = verdict == "other_job" and (taught or conf >= floor)
+        drawing_spared = bool(sure and not taught and is_drawing(filenames))
+        matched = content_match(docs, anchors) if sure and not drawing_spared else ""
         content_spared = bool(matched)
-        if content_spared:
-            other = False
+        other = _set_aside(verdict, taught=taught, confidence=conf, floor=floor,
+                           drawing=is_drawing(filenames), named=matched)
         n_atoms = sum(len(d_) for d_ in docs)
         reason = ""
         if other:

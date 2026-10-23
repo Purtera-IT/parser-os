@@ -20,6 +20,8 @@ Document (one per source file, email, note or meeting), in arrival order:
     pos          its place in the compile manifest (the page export: its
                  place in the page's document list), if known
     role         the lifecycle's role sentence (the page's ``docRole``), if known
+    filename     the source file's name, if known (``sender.document_authors``: a revision of one
+                 draft, a file another party's message names)
 
 Line (one per atom), in the order it appears in its source:
     key, text, doc_id, section, speaker_role, speaker_side, atom_id, and when
@@ -160,7 +162,8 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         rows.append(row)
     annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
                      "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin"),
-                     "role": d.get("role")} for d in docs])
+                     "role": d.get("role"), "filename": d.get("filename"), "sent_at": d.get("sent_at")}
+                    for d in docs])
     return rows
 
 
