@@ -96,7 +96,8 @@ def schema():
 
 @pytest.fixture(scope="module")
 def batch(schema):
-    deal = DealExample.from_training_blob({"labels": LABELS, "links": LINKS}, ATOMS, deal_id="synthetic-links")
+    deal = DealExample.from_training_blob({"labels": LABELS, "links": LINKS}, ATOMS, deal_id="synthetic-links",
+                                          serve_lines_only=False)
     return featurize(deal, schema)
 
 

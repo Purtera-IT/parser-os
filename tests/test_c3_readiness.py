@@ -44,7 +44,8 @@ def test_repeated_text_requires_occurrence_and_document_evidence():
     blob = {"judgments": [{"head": "suppression", "target_key": "sup:b@1",
                            "labeler": "reviewer@example.com", "text": "Example work item.",
                            "verdict": "correctly_dropped"}]}
-    deal = DealExample.from_training_blob(blob, [atom("a"), atom("b")], deal_id="synthetic")
+    deal = DealExample.from_training_blob(blob, [atom("a"), atom("b")], deal_id="synthetic",
+                                          serve_lines_only=False)
     batch = featurize(deal, load_schema())
     # The card names a copy at another position: it gets its own line, and
     # the kept line b keeps its own (empty) admission.

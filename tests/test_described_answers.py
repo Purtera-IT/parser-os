@@ -62,4 +62,4 @@ def test_sow_fill_answers_include_template_applies():
     by_key = load_schema().by_key()
     answers = {a.value: a.description for a in by_key["read:sow_fill"].answers}
     assert [v for v in answers if v != "_absent"] == ["filled", "template", "template_applies"]
-    assert "real term for this deal" in answers["template_applies"]
+    assert "still sets a term this job follows" in answers["template_applies"]
