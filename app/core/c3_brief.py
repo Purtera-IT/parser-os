@@ -61,7 +61,8 @@ BASE_TYPE_BAR = 0.5
 #: The supplier head (col:supplier) at or above this says who furnishes a
 #: priced line. A document whose priced lines the customer furnishes is the
 #: customer's own order (010043: the CDW order confirmation for the cameras the
-#: customer bought), not this job's fees.
+#: customer bought), not this job's fees. The one bar for the supplier head:
+#: c3_sow imports it.
 SUPPLIER_BAR = 0.6
 MAX_FACTS_PER_SECTION = 25
 MAX_LABEL_TASKS = 40

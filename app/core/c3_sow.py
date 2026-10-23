@@ -23,7 +23,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.core.c3_brief import _complete, _dated, _json_of, strip_cites
+from app.core.c3_brief import SUPPLIER_BAR, _complete, _dated, _json_of, strip_cites
 
 #: Head sections that are facts of the job. Terms, acceptance and change
 #: control are the template's own boilerplate and stay out of the writer.
@@ -39,10 +39,10 @@ SECTION_ORDER = ("scope_of_work", "customer_responsibilities", "customer_furnish
                  "timeline", "schedule", "deliverables", "provider_responsibilities", "fees", "overview",
                  "job_details", "site", "acceptance", "terms", "change_control", "answered_question", "figure", "also_kept",
                  "unsure")
-#: The supplier head's answers as the writer reads them, and how sure it must
-#: be for its answer to decide a supply line.
+#: The supplier head's answers as the writer reads them. How sure it must be
+#: for its answer to decide a supply line is c3_brief.SUPPLIER_BAR: one bar
+#: for the brief and the writer (it was .85 here, .6 in the brief).
 _SUPPLIER = {"us": "Provider", "customer": "Customer", "partner": "reseller"}
-SUPPLIER_BAR = float(os.environ.get("SOWSMITH_C3_SOW_SUPPLIER_BAR", "0.85"))
 UNSURE_BAR = float(os.environ.get("SOWSMITH_C3_SOW_UNSURE_BAR", "0.6"))
 #: A fact line's length in the prompt. 010083's answers ride inline after
 #: each question ("...? [Betty] We will have a Webex bridge open...") and ran

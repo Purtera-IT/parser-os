@@ -118,3 +118,11 @@ def test_recited_exclusion_may_cite_a_parser_small_talk_line():
         return [x["cites"] for x in c["out_of_scope"]]
     assert run(None) == [["a1"]]
     assert run("small_talk") == []
+
+
+def test_one_supplier_bar_for_brief_and_writer():
+    # regex_retirement S3: c3_sow used .85, c3_brief .6; c3_brief's value is the one bar.
+    from app.core import c3_brief
+
+    assert m.SUPPLIER_BAR is c3_brief.SUPPLIER_BAR
+    assert c3_brief.SUPPLIER_BAR == 0.6
