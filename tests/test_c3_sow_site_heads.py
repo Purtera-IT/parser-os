@@ -211,7 +211,10 @@ def _schema_before_the_heads(tmp_path):
 def test_a_checkpoint_from_before_the_heads_loads_with_allow_new_heads(schema, tmp_path):
     old = _schema_before_the_heads(tmp_path)
     assert "read:visit_count" not in old.by_key()
-    assert shape_digest(without_heads(schema, NEW)) == shape_digest(old)
+    added = [o.key for o in schema.opportunities if o.key not in old.by_key()]
+    assert set(NEW.split(",")) <= set(added)
+    new = ",".join(added)          # these heads and any added since (runE.sh NEW_HEADS lists them)
+    assert shape_digest(without_heads(schema, new)) == shape_digest(old)
     torch.manual_seed(0)
     before = C3Model(old, SMALL)
     ck = tmp_path / "old.pt"
@@ -219,7 +222,7 @@ def test_a_checkpoint_from_before_the_heads_loads_with_allow_new_heads(schema, t
                     shape_sha256=shape_digest(old))
     after = C3Model(schema, SMALL)
     step = load_checkpoint(ck, after, schema_sha256=digest([asdict(o) for o in schema.opportunities]),
-                           allow_text_change=True, shape_sha256=shape_digest(without_heads(schema, NEW)))
+                           allow_text_change=True, shape_sha256=shape_digest(without_heads(schema, new)))
     assert step == 7
     with pytest.raises(ValueError):
         load_checkpoint(ck, C3Model(schema, SMALL), schema_sha256=digest([asdict(o) for o in schema.opportunities]),

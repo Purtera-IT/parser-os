@@ -1139,7 +1139,9 @@ def _judged_lines(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...
 
 #: Cards whose subject is named by a query text: Questions (the question) and
 #: SOW slots (the section and the kind of fact the slot holds).
-QUERY_HEADS = ("gap", "question_answered", "sow_slot")
+QUERY_HEADS = ("gap", "question_answered", "sow_slot", "end_customer", "exclusion_set")
+#: Cards that link to the lines that decide them (target.source): the pointer loss.
+CITE_HEADS = ("sow_slot", "end_customer")
 
 
 def judgment_query(j: dict[str, Any]) -> str:
@@ -1150,7 +1152,7 @@ def judgment_query(j: dict[str, Any]) -> str:
     if head not in QUERY_HEADS:
         return ""
     t = j.get("target") if isinstance(j.get("target"), dict) else {}
-    if head == "sow_slot":
+    if head in ("sow_slot", "end_customer", "exclusion_set"):
         return str(t.get("query") or "").strip()
     return str(t.get("text") or j.get("text") or "").strip()
 
@@ -1159,7 +1161,7 @@ def judgment_cites(j: dict[str, Any], lines: "_Lines") -> tuple[int, ...]:
     """The lines a card links to as its evidence: a filled SOW slot's
     ``target.source`` (the earlier line that states the slot's fact). Lines
     set aside, or not in this part of the deal, are not cited."""
-    if j.get("head") != "sow_slot":
+    if j.get("head") not in CITE_HEADS:
         return ()
     t = j.get("target") if isinstance(j.get("target"), dict) else {}
     refs = t.get("source")
@@ -1367,6 +1369,8 @@ def _consume_deal_answers(deal: DealExample, schema: Schema, judged: list[Judged
     if n == 0:
         return
     service = schema.by_key()["deal:primary_service"]
+    counted = schema.by_key().get("deal:site_count")
+    absent_count = False
     chosen: int | None = None
     notes: list[str] = []
     for ans in (deal.source_supervision.get("deal_answers") or []):
@@ -1389,7 +1393,12 @@ def _consume_deal_answers(deal: DealExample, schema: Schema, judged: list[Judged
             if chosen not in (None, ix):
                 raise ValueError("Conflicting deal primary_service")
             chosen = ix
-        if "declared_site_count" in ans and ans.get("declared_site_count") not in (None, ""):
+        if str(ans.get("declared_site_count") or "").strip() == ABSENT:
+            # The deal states no site count (a confirmed absence, not a blank).
+            if numbers.get("declared_site_count") is not None:
+                raise ValueError("Conflicting declared_site_count")
+            absent_count = True
+        elif "declared_site_count" in ans and ans.get("declared_site_count") not in (None, ""):
             count = site_count(ans.get("declared_site_count"))
             if count is None:
                 raise ValueError("Invalid declared_site_count")
@@ -1404,6 +1413,12 @@ def _consume_deal_answers(deal: DealExample, schema: Schema, judged: list[Judged
     if chosen is not None:
         judged.append(Judged(key="deal:primary_service", size=DEAL, lines=tuple(range(n)),
                              answer=chosen, note="\n".join(notes), subject_key="deal:primary_service"))
+    if counted is not None and (absent_count or "declared_site_count" in numbers):
+        if absent_count and "declared_site_count" in numbers:
+            raise ValueError("Conflicting declared_site_count")
+        judged.append(Judged(key="deal:site_count", size=DEAL, lines=tuple(range(n)),
+                             answer=counted.index(ABSENT if absent_count else "present"),
+                             note="\n".join(notes), subject_key="deal:site_count"))
 
 
 def _history_atom(atom: Atom) -> Atom:
@@ -1671,6 +1686,16 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         subject = str(j.get("target_key") or j.get("id") or query or key)
         placed: tuple[int, ...] | None = None
         extract = head in ("hours", "term", "commercial") or head in LITERAL_HEADS
+        multi_ix: tuple[int, ...] | None = None
+        if opp is not None and opp.multiple and not extract:
+            raw = j.get("verdict")
+            vals = raw if isinstance(raw, list) else [v for v in str(raw or "").split("|") if v.strip()]
+            ixs = [opp.index(str(v).strip()) for v in vals]
+            if vals and all(i is not None for i in ixs):
+                multi_ix = tuple(sorted(set(ixs)))
+                verdict = str(vals[0]).strip()
+            else:
+                verdict = ""
         if opp is not None and verdict and not extract:
             ix = opp.index(verdict)
             idx = judgment_subject(j, opp.size, lines)
@@ -1685,7 +1710,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
             if kept:
                 placed = idx
                 if query:
-                    judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
+                    judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix, answers=multi_ix,
                                          note=mask_verdict(note) if opp.universal else note,
                                          why_weight=why_weight(j), policy=pol, query=query,
                                          subject_key=subject,
@@ -1715,7 +1740,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                     if pol and opp.size == PAIR:
                         for i in idx:
                             policy[i] = " ".join(x for x in (policy[i], pol) if x)
-                    judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
+                    judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix, answers=multi_ix,
                                          note=mask_verdict(note) if opp.universal else note,
                                          why_weight=why_weight(j), policy=pol))
                     if head == "conflict" and verdict in ("contradicts", "supports") and verdict in edges_ok:

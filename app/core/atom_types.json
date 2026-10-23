@@ -1812,6 +1812,126 @@
       "values": "free text",
       "desc": "The reasoning behind feeds_decision on this line, in a sentence: which of its words settle which decision, and what the line would have to say to feed a different one or none.",
       "layer": "universal"
+    },
+    {
+      "key": "work_window",
+      "label": "When the crew may work",
+      "values": "business_hours | after_hours | overnight | weekend | holiday | blackout",
+      "layer": "universal",
+      "multi": true,
+      "desc": "The time the line says the field work may or must happen, or must avoid. A list: \"nights and weekends\" is overnight and weekend. Read what the words require of the crew's hours, not who sets them or what they cost: \"normal business hours\" is business_hours, \"after 6 pm\" is after_hours, \"between 10 pm and 6 am\" is overnight, \"do not take the system down between 6 and 8 am\" is blackout. A line that only states a rate, a deadline date or a duration, with no time of day or day of week for the work, is _absent.",
+      "value_desc": {
+        "business_hours": "During ordinary working hours on working days.",
+        "after_hours": "Outside ordinary working hours, in the evening or before opening, on a working day.",
+        "overnight": "Through the night, typically after closing and before opening.",
+        "weekend": "On Saturday or Sunday.",
+        "holiday": "On a public holiday.",
+        "blackout": "A time when the work must not happen or the system must not be down."
+      }
+    },
+    {
+      "key": "work_window_note",
+      "label": "Why that window",
+      "values": "free text",
+      "desc": "The reasoning behind work_window on this line, in a sentence: which words give the time, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "access_need",
+      "label": "What it takes to reach the work",
+      "values": "lift | ladder | ground_level | escort | credential | restricted_area",
+      "layer": "universal",
+      "multi": true,
+      "desc": "What the crew needs to physically reach the work or get into the place, as the line states it. A list: a ceiling at 35 ft that needs a lift and a badge to enter is lift and credential. ground_level when the line says the work needs no lift or ladder. Read the need, not the price of meeting it or who provides it. A line that names no height, access equipment, escort or entry requirement is _absent.",
+      "value_desc": {
+        "lift": "A scissor lift, boom lift or other powered lift is needed to reach the work.",
+        "ladder": "A ladder is enough to reach the work.",
+        "ground_level": "The work is reachable from the floor; no lift or ladder.",
+        "escort": "Someone from the site must accompany the crew.",
+        "credential": "A badge, background check, clearance, safety training or sign-in is needed before entry.",
+        "restricted_area": "The work is in a secured, clean, hazardous or otherwise restricted area with its own rules."
+      }
+    },
+    {
+      "key": "access_need_note",
+      "label": "Why that access",
+      "values": "free text",
+      "desc": "The reasoning behind access_need on this line, in a sentence: which words give the need, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "job_detail",
+      "label": "A key detail of the job",
+      "values": "true/false",
+      "layer": "universal",
+      "desc": "Whether the line states one of the few facts that a price and a scope of work for this job must be built on: how many sites, devices, drops or visits; which equipment model; where the work is; when and in what hours it can happen; what access it needs; what the customer supplies; what is left out. true for such a line as the customer or partner gave it. false for a line that is about the job but changes nothing a quote or scope would say (a greeting, a status update, a reason, a repeat, a general remark), even when it is a real fact."
+    },
+    {
+      "key": "job_detail_note",
+      "label": "Why it is or is not a key detail",
+      "values": "free text",
+      "desc": "The reasoning behind job_detail on this line, in a sentence: which fact the price or scope rests on, or why none.",
+      "layer": "universal"
+    },
+    {
+      "key": "run_length",
+      "label": "How long the cable runs are",
+      "values": "a number",
+      "layer": "universal",
+      "desc": "The length of a cable run the line states, in feet (convert metres): \"each AP run will not exceed approximately 150 feet\" is 150; \"runs of 15 to 25 feet\" is 25, the longest. A total of all cable installed, a ceiling height, a distance between sites or a spool length is not a run length. A line that gives no run length is _absent."
+    },
+    {
+      "key": "run_length_note",
+      "label": "Why that run length",
+      "values": "free text",
+      "desc": "The reasoning behind run_length on this line, in a sentence: which words give the length, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "price_basis",
+      "label": "What kind of price",
+      "values": "rom_estimate | firm_price | not_to_exceed | rate_based | customer_budget",
+      "layer": "universal",
+      "desc": "The basis of a price or estimate the line states or asks for: whether it is a rough number, a price the provider stands behind, a cap, a set of rates the total will come from, or the customer's own budget. Read what the words commit to, not the amount. A line that states no price, estimate or budget is _absent.",
+      "value_desc": {
+        "rom_estimate": "A rough, budgetary or ballpark number that will change once the job is surveyed or defined.",
+        "firm_price": "A fixed price for the stated scope, whatever the hours turn out to be.",
+        "not_to_exceed": "A ceiling the total may not pass, billed up to it.",
+        "rate_based": "Rates per hour, day, unit or site, so the total follows the work actually done.",
+        "customer_budget": "What the customer has to spend or expects to pay, not the provider's price."
+      }
+    },
+    {
+      "key": "price_basis_note",
+      "label": "Why that price basis",
+      "values": "free text",
+      "desc": "The reasoning behind price_basis on this line, in a sentence: which words set the basis, or why there is none.",
+      "layer": "universal"
+    },
+    {
+      "key": "party_role",
+      "label": "What part the person plays in the job",
+      "values": "requester | decision_maker | onsite_contact | project_manager | technical_contact | billing_contact | end_customer | reseller",
+      "layer": "universal",
+      "multi": true,
+      "desc": "The role in this job the line gives a person or company. A list: \"Jo, the store manager, will meet the tech and sign off\" is onsite_contact and decision_maker. Read the role the words give, never a title alone: a signature that names a title but no part in the job is _absent. A line that names no person or company with a part in the job is _absent.",
+      "value_desc": {
+        "requester": "Asks for the work or the quote.",
+        "decision_maker": "Approves the price, the scope or the sign-off.",
+        "onsite_contact": "Meets the crew, gives access or answers questions at the site.",
+        "project_manager": "Runs the schedule and coordination of the job.",
+        "technical_contact": "Answers technical questions: network, configuration, equipment.",
+        "billing_contact": "Receives invoices or handles purchase orders and payment.",
+        "end_customer": "The company the work is ultimately for, when another company buys it.",
+        "reseller": "The company that buys the work to resell it to the end customer."
+      }
+    },
+    {
+      "key": "party_role_note",
+      "label": "Why that role",
+      "values": "free text",
+      "desc": "The reasoning behind party_role on this line, in a sentence: which words give the person their part, or why there is none.",
+      "layer": "universal"
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",
