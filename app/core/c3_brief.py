@@ -1152,6 +1152,11 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     # (contact_from_crm); the writer is told what the CRM calls the deal and
     # who the account is, or the brief names neither (5 of 6 graded deals).
     brief["deal"] = _crm_deal(project_dir)
+    # The read this brief came from (c3_record.view) and its table verdicts (jdg:roster / jdg:sheet per
+    # table): the envelope carries them, and the Deal Kit reads a site_roster table as one site list.
+    _read = c3_type_base.full_read()
+    brief["view"] = _read.get("view") or ""
+    brief["tables"] = dict(_read.get("tables") or {})
     # Who furnishes each kept line, as the supplier head reads it: the SOW's
     # supply lists follow it (c3_sow) instead of guessing from wording.
     for v in list((brief.get("sections") or {}).values()) + [brief.get("also_mentioned") or []]:

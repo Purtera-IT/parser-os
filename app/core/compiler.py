@@ -2140,9 +2140,12 @@ def compile_project(
             # context.crm, cut to the run's as_of): stage_at reads it as training does.
             from app.core.orbitbrief_envelope import _load_manifest_crm as _c3_crm
 
+            # The run's as_of makes this a quoting read, its absence a planning read (c3_record.view):
+            # the base reads only that view's lines and asks only that view's heads, as training did.
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
                               {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")},
-                              stage_timeline=(_c3_crm(project_dir) or {}).get("stage_timeline"))
+                              stage_timeline=(_c3_crm(project_dir) or {}).get("stage_timeline"),
+                              as_of=_run_as_of(project_dir))
             # The copies a dedup folded before this point are read with the
             # deal: which copy survives is the keep head's call (head_fold).
             from app.core.head_fold import fold_losers as _fold_losers
@@ -2202,6 +2205,25 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
+
+    # Another job's documents are in neither training view (S5). With document_job_scope on, its
+    # set-asides already left the deal; with it off (dev), the view's read leaves out what the base's
+    # document head sets aside, by the same c3_record.document_job.set_aside rule.
+    try:
+        from app.core import c3_type_base as _c3_view
+        from app.core import document_job_scope as _djs_v
+
+        if _c3_view.view_name() and not _djs_v.enabled() and _c3_view.view_drops_other_job() \
+                and (_c3_view.enabled() or _c3_view.document_job_enabled()):
+            from app.core.orbitbrief_envelope import _load_manifest_crm as _c3_crm_v
+
+            _other = _c3_view.other_job_by_head(atoms, deal_name=_djs_v.deal_name_from_manifest(project_dir) or "",
+                                                crm=_c3_crm_v(project_dir) or {})
+            if _other:
+                _c3_view.set_other_job(_other)
+                warnings.append(f"INFO: C3 {_c3_view.view_name()} read leaves out {len(_other)} other-job document(s)")
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 view other-job set-aside failed: {type(exc).__name__}: {exc}")
 
     # v47 typed-atom classification — promotes scope_item / entity
     # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
@@ -3763,7 +3785,11 @@ def compile_project(
         try:
             from app.core import c3_type_base as _c3q
 
-            if _c3q.quote_enabled():
+            # Quote heads only on a quoting read (c3_record.view.runs_quote): a planning read's quote
+            # heads trained at weight 0, and it reads our own signed SOW.
+            from c3_record.view import runs_quote as _runs_quote
+
+            if _c3q.quote_enabled() and _runs_quote(_c3q.view_name()):
                 with telemetry.stage("c3_quote", input_count=len(atoms)):
                     _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
                 if _q:

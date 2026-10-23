@@ -1691,7 +1691,11 @@ def build_orbitbrief_envelope(
     try:
         from app.core import c3_sow
 
-        if c3_sow.enabled() and envelope.get("c3_brief"):
+        from c3_record.view import runs_quote as _runs_quote
+
+        # The SOW writer runs on a quoting read only (c3_record.view): a planning read's SOW and quote heads
+        # trained at weight 0, and it reads our own signed SOW as input.
+        if c3_sow.enabled() and envelope.get("c3_brief") and _runs_quote((envelope["c3_brief"] or {}).get("view")):
             envelope["c3_sow"] = c3_sow.for_envelope(envelope)
             from app.core import c3_sow_trace
 

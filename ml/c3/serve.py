@@ -143,14 +143,28 @@ class Base:
     def read(self, payload: dict[str, Any], budget_s: float, *,
              line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = (),
              full: bool = False, questions: tuple[str, ...] = (),
-             table_heads: tuple[str, ...] = ()) -> dict[str, Any]:
+             table_heads: tuple[str, ...] = (), view: str = "") -> dict[str, Any]:
         """Line types always; with ``line_heads``, those readings of every
         line under ``reads``; with ``document_heads``, each document's group
         judgments under ``documents``. One pass of the model answers all of
-        them, so asking for more costs the read almost nothing."""
+        them, so asking for more costs the read almost nothing.
+
+        ``view`` (``quoting`` | ``planning``, c3_record.view): the read the
+        compile is serving. Only that view's heads are answered (a quoting read
+        no PM head, a planning read no quote or SOW head, deal answers
+        included), and a line sent without its own ``view`` takes it."""
+        from c3_record import view as cview
+
         from .data import DealExample
 
         model, schema, device = self.model  # type: ignore[misc]
+        v = cview.name(view)
+        if v:
+            line_heads = tuple(cview.heads(v, line_heads))
+            document_heads = tuple(cview.heads(v, document_heads))
+            table_heads = tuple(cview.heads(v, table_heads))
+            payload = dict(payload, atoms=[a if not isinstance(a, dict) or a.get("view") else dict(a, view=v)
+                                           for a in payload.get("atoms") or []])
         deal = DealExample.from_dict(payload)
         read = self._read_fn
         if read is None:
@@ -197,8 +211,10 @@ class Base:
         if full:
             out["links"] = [{"src": l["src"], "dst": l["dst"], "relation": l["relation"],
                              "p": round(float(l.get("p") or 0.0), 4)} for l in (doc.get("links") or [])]
-            out["deal"] = {k: ([str(v["answer"]), round(float(v.get("p") or 0.0), 4)] if "answer" in v
-                               else [v.get("value"), None]) for k, v in (doc.get("deal") or {}).items()}
+            answered = doc.get("deal") or {}
+            asked = set(cview.heads(v, list(answered))) if v else set(answered)
+            out["deal"] = {k: ([str(a["answer"]), round(float(a.get("p") or 0.0), 4)] if "answer" in a
+                               else [a.get("value"), None]) for k, a in answered.items() if k in asked}
         if document_heads:
             out["documents"] = {
                 d: {k: [str(v["answer"]), round(float(v.get("p") or 0.0), 4)] for k, v in heads.items()}
@@ -275,6 +291,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
                 table_heads = _asked(body.get("table_heads"))
                 full = bool(body.get("full"))
                 questions = tuple(str(q)[:500] for q in (body.get("questions") or [])[:400])
+                view = str(body.get("view") or "")[:16]
             except (ValueError, KeyError, TypeError):
                 return self._send(400, {"error": "bad body"})
             started = time.monotonic()
@@ -285,7 +302,7 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
             try:
                 out = base.read(deal, max(1.0, budget - (time.monotonic() - started)),
                                 line_heads=line_heads, document_heads=document_heads, full=full,
-                                questions=questions, table_heads=table_heads)
+                                questions=questions, table_heads=table_heads, view=view)
             except TimeoutError as exc:
                 log.warning("read over budget: %s", exc)
                 return self._send(504, {"error": "over budget"})

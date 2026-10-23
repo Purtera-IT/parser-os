@@ -481,6 +481,8 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     lines, keys, seen = [], [], set()
     extra: dict[str, dict[str, Any]] = {}
     seen_ids: set[str] = set()
+    messages: dict[str, tuple] = {}
+    said_to: dict[str, Any] = {}
     for i, a in enumerate(atoms):
         key = _key(a, i)
         if key in seen:
@@ -504,6 +506,12 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
                 e["authored_at"] = t
                 e["sent_at"] = t
         role, side = _speaker(a)
+        msg = _message_of(a)
+        if msg is not None:
+            messages[aid] = msg
+        to = _value(a).get("said_to")
+        if isinstance(to, list) and to:
+            said_to[aid] = to
         lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
                       "section": _section(a), "order": float(i), "speaker_role": role,
                       "speaker_side": side, "atom_id": aid, **_sender_inputs(a), **_geometry(a)})
@@ -518,9 +526,146 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     rows = build_rows(lines, docs + list(extra.values()), latest_fallback=0.0, timeline=_DEAL.get("stage_timeline"))
     _STATUS["rows"] = {"documents": len(docs), "documents_from_atoms": len(extra),
                        "times": len({r["entered_at"] for r in rows})}
+    if view_name():
+        rows = _view_rows(rows, docs + list(extra.values()), messages, said_to)
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
                     if getattr(a, "project_id", None)), "") or "live"
     return deal_id, rows, keys
+
+
+def view_name() -> str:
+    """This compile's read of the deal (``c3_record.view``): ``quoting`` when the run has an as_of,
+    ``planning`` otherwise; '' when ``SOWSMITH_C3_VIEW`` is off (every line read, every head asked)."""
+    return str(_DEAL.get("view") or "")
+
+
+def views_enabled() -> bool:
+    """``SOWSMITH_C3_VIEW`` (default on): the read is the training view the run is in."""
+    return os.environ.get("SOWSMITH_C3_VIEW", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def set_other_job(doc_ids: Any) -> None:
+    """Documents set aside as another job (``c3_record.document_job.set_aside``): never in either view's
+    read, as training drops them (S5). The compile's own lines are unchanged."""
+    _DEAL["other_job"] = {str(d): "document_job other_job" for d in (doc_ids or ()) if d}
+
+
+def view_drops_other_job() -> bool:
+    """``SOWSMITH_C3_VIEW_OTHER_JOB`` (default on, dev included): with document_job_scope off, the view's
+    read still leaves out the documents the base's document head sets aside as another job, by the one
+    rule training's views drop them by (``c3_record.document_job.set_aside``)."""
+    return os.environ.get("SOWSMITH_C3_VIEW_OTHER_JOB", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def other_job_by_head(atoms: list[Any], *, deal_name: str = "", crm: dict[str, Any] | None = None,
+                      floor: float | None = None) -> set[str]:
+    """Documents the base's ``jdg:document_job`` reading sets aside (``c3_record.document_job.set_aside``:
+    a sure other_job, never a drawing on the model's word, never a document whose own lines name the
+    deal). Empty when the base did not read the deal."""
+    from c3_record.document_job import deal_anchors, is_drawing, names_deal, set_aside
+
+    got = documents(atoms)
+    if not got:
+        return set()
+    if floor is None:
+        from app.core.document_job_scope import c3_aside
+
+        floor = c3_aside()
+    bar = floor
+    anchors = deal_anchors(deal_name, crm or {})
+    texts: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+    for a in atoms:
+        d = _doc_id(a)
+        texts.setdefault(d, []).append(str(getattr(a, "raw_text", "") or ""))
+        names.setdefault(d, _ref(a, "filename"))
+    out = set()
+    for d, heads in got.items():
+        v = heads.get(DOCUMENT_JOB_KEY)
+        if not v:
+            continue
+        if set_aside(v[0], taught=False, confidence=float(v[1] or 0.0), floor=bar,
+                     drawing=is_drawing([names.get(d, "")]), named=names_deal(texts.get(d, ()), anchors)):
+            out.add(d)
+    return out
+
+
+def _message_of(atom: Any) -> tuple | None:
+    """The message a mail line was written in, as training's provenance reads it off the page's line
+    (``message``: author, sentAt, quoted, index) or the envelope's locator: (author, at, quoted, index)."""
+    from c3_record.provenance import parse_when, zoned
+
+    v, loc = _value(atom), _locator(atom)
+    et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+    msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+    index = msg.get("index") if msg.get("index") is not None else loc.get("message_index")
+    if index in (None, "") and "message_index" not in loc:
+        return None
+    author = msg.get("author") or loc.get("sender") or ""
+    sent = msg.get("sentAt") or msg.get("sent_at") or loc.get("sent_at")
+    quoted = msg.get("quoted") if msg.get("quoted") is not None else loc.get("quoted")
+    return (str(author or ""), parse_when(sent), bool(quoted), index, zoned(sent))
+
+
+def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages: dict[str, tuple],
+               said_to: dict[str, Any]) -> list[dict[str, Any]]:
+    """The rows of this compile's view (c3_record.provenance / c3_record.view, the rules training's
+    views use): a quoting read holds the customer's and partner's lines before our first pricing (cut
+    earlier by the run's as_of), never our own paper or a Deal Kit line; a planning read every line before
+    our kickoff once the deal is won. Neither holds another job's documents. Each kept row gets the view's
+    stage clamp and its ``view``. The compile's atoms are unchanged: a line outside the view has no reading."""
+    from c3_record import crm_marks
+    from c3_record import provenance as prov
+    from c3_record import view as cview
+    from c3_record.provenance import parse_when
+
+    v = view_name()
+    from c3_record.sender import epoch
+
+    if not any((epoch(r.get("entered_at")) or 0.0) > 0 for r in rows):
+        # A deal with no time anywhere (training refuses one): no cut can be placed, so the read is every
+        # line, as before views.
+        _STATUS["view"] = {"view": v, "undated": True, "inputs": len(rows), "out": 0}
+        for r in rows:
+            r["view"] = v
+        return rows
+    docinfo: dict[str, dict[str, Any]] = {}
+    for d in docs:
+        o = d.get("origin") if isinstance(d.get("origin"), dict) else {}
+        direction = str(o.get("direction") or "")
+        sender = str(o.get("sender_email") or o.get("sender_name") or "")
+        kind = str(d.get("kind") or "").strip().lower()
+        docinfo[str(d.get("doc_id") or "")] = {
+            "direction": direction, "sender": sender, "role": str(d.get("role") or ""),
+            "kind": "" if kind == "file" else kind,
+            "carrier": ("email", direction, sender) if o.get("via") == "email" else None,
+            "carrier_at": parse_when(o.get("sent_at")) if o.get("via") == "email" else 0.0,
+            "message": kind in ("email", "note"), "filename": str(d.get("filename") or "")}
+    lines = [{"label_key": r["key"], "atom_id": r.get("atom_id") or r["key"], "doc_id": r.get("doc_id"),
+              "text": r.get("text"), "entered_at": r.get("entered_at"), "doc_kind": r.get("doc_kind"),
+              "speaker_side": r.get("speaker_side"), "section": r.get("section")} for r in rows]
+    texts_of = {x["atom_id"]: (str(x["text"] or ""), messages[x["atom_id"]][4]) for x in lines
+                if x["atom_id"] in messages}
+    other = dict(_DEAL.get("other_job") or {})
+    P = prov.decide(lines, docinfo, {k: m[:4] for k, m in messages.items()}, texts_of=texts_of, to_of=said_to, other_job=other,
+                    source="compile")
+    dk = prov.pricing_workbook_keys(P, lines)
+    marks = crm_marks(_DEAL.get("stage_timeline"))
+    end = None
+    if v == cview.QUOTING:
+        keep = prov.quoting_inputs(P, lines, exclude=dk, as_of=_DEAL.get("as_of"))
+    else:
+        won = min((x["arrival"] for x in P.doc.values() if x["ours"] and x["kind"] in ("sow_signed", "signed_sow",
+                                                                                     "purchase_order")), default=None)
+        end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
+        keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
+    kept = [rows[i] for i in keep]
+    cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
+    _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
+                       "plan_end": None if end in (None, float("inf")) else end, "inputs": len(kept),
+                       "out": len(rows) - len(kept), "ours": len(P.ours_atoms), "deal_kit": len(dk),
+                       "other_job_docs": len(other)}
+    return kept
 
 
 def _geometry(atom: Any) -> dict[str, int]:
@@ -675,9 +820,24 @@ def brief_questions() -> list[str]:
         return []
 
 
+#: Table verdicts the read asks (predict._judge_tables): whether a table is the deal's site roster or a
+#: sheet, per table (doc_id||section). The Deal Kit reads a site_roster table as one site list.
+TABLE_HEADS = ("jdg:roster", "jdg:sheet")
+
+
+def brief_line_heads() -> list[str]:
+    """``BRIEF_LINE_HEADS`` this compile's view asks (``c3_record.view.heads``): a quoting read asks no PM
+    head, a planning read no quote or SOW head."""
+    from c3_record.view import heads
+
+    return heads(view_name(), BRIEF_LINE_HEADS)
+
+
 def _brief_body(body: dict[str, Any]) -> dict[str, Any]:
+    if view_name():
+        body["view"] = view_name()
     if brief_enabled():
-        body.update(line_heads=list(BRIEF_LINE_HEADS), full=True)
+        body.update(line_heads=brief_line_heads(), full=True, table_heads=list(TABLE_HEADS))
         qs = brief_questions()
         if qs:
             body["questions"] = qs
@@ -685,30 +845,39 @@ def _brief_body(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _keep_full(got: dict[str, Any]) -> None:
-    """Hold the read's line readings, links, deal answers and question
-    answers for the brief."""
+    """Hold the read's line readings, links, deal answers, question answers
+    and table verdicts for the brief. A later read of the deal replaces the
+    links, questions and tables of an earlier one: a later line can change an
+    earlier reading, so the two never mix."""
     if "reads" in _DEAL:
         _DEAL["reads"].update(got.get("reads") or {})
-        _DEAL["questions"].extend(got.get("questions") or [])
+        _DEAL["questions"] = list(got.get("questions") or [])
         if got.get("question_bar") is not None:
             _DEAL["question_bar"] = float(got["question_bar"])
-        _DEAL["links"].extend(got.get("links") or [])
+        _DEAL["links"] = list(got.get("links") or [])
         _DEAL["deal"].update(got.get("deal") or {})
+        _DEAL["tables"] = dict(got.get("tables") or {})
 
 
 def full_read() -> dict[str, Any]:
     """This compile's readings beyond types: ``{"reads", "links", "deal"}``."""
-    return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions", "question_bar")}
+    return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions", "question_bar", "tables", "view")}
 
 
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None,
-             stage_timeline: dict[str, Any] | None = None) -> None:
+             stage_timeline: dict[str, Any] | None = None, as_of: Any = None) -> None:
     """``stage_timeline``: the deal's ``crm.stage_timeline`` from the parser manifest (the envelope's,
-    cut to the run's as_of date), which ``c3_record.build_rows`` reads for ``stage_at``."""
+    cut to the run's as_of date), which ``c3_record.build_rows`` reads for ``stage_at``. ``as_of``: the
+    run's cutoff (manifest ``context.as_of``): a run with one is a quoting read, one without a planning
+    read (``view_name``; ``SOWSMITH_C3_VIEW=0`` reads every line as before)."""
     _DEAL.clear()
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
-                 reads={}, links=[], deal={}, questions=[], also=[],
+                 reads={}, links=[], deal={}, questions=[], also=[], tables={},
                  stage_timeline=stage_timeline if isinstance(stage_timeline, dict) else None)
+    if views_enabled() and documents is not None:
+        from c3_record.view import of_run
+
+        _DEAL.update(view=of_run(as_of), as_of=as_of or None)
 
 
 def _delivered_at(sha256: str) -> Any:
@@ -1011,6 +1180,8 @@ def deal_payload(deal: Any) -> dict[str, Any]:
          # Sender and stage (c3_record.sender), as the training export writes them.
          "speaker_org": getattr(a, "speaker_org", ""), "doc_direction": getattr(a, "doc_direction", ""),
          "stage_at": getattr(a, "stage_at", ""),
+         # The read the line is in (c3_record.view), as training's views write it.
+         **({"view": a.view} if getattr(a, "view", "") else {}),
          # Geometry: training writes table_row only (c3_record.table_geometry).
          **_table_row(a)}
         for a in deal.atoms]}
@@ -1033,6 +1204,21 @@ def _aliased(types: dict[str, Any] | None) -> dict[str, Any]:
     return {k: ([BASE_ALIAS.get(str(v[0]), v[0]), *list(v[1:])] if v else v) for k, v in (types or {}).items()}
 
 
+def read_key(rows: list[dict[str, Any]], *extra: Any) -> str:
+    """What one read of the deal saw: every row the base reads (its key, text, document, arrival, order,
+    sender, stage and view) and what was asked. A reading is reused only for the same key: a later line
+    can change an earlier line's reading, so a subset of the atoms is not the same read."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for r in rows:
+        h.update(json.dumps([r.get(k) for k in ("key", "text", "doc_id", "entered_at", "order", "speaker_side",
+                                               "speaker_org", "doc_direction", "stage_at", "view", "doc_kind",
+                                               "section")], default=str).encode())
+    h.update(json.dumps([str(x) for x in extra]).encode())
+    return h.hexdigest()
+
+
 def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list[int]
             ) -> dict[int, tuple[str, float]]:
     import urllib.error
@@ -1040,9 +1226,10 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     started = time.monotonic()
     shared = _DEAL.get("types") or {}
-    if keys and all(k in shared for k in keys):
-        # This compile already read the deal (document_job_scope, on the same
-        # record): its lines only dropped since, so the readings stand.
+    if keys and shared and _DEAL.get("read_key") == read_key(rows):
+        # This compile already read exactly this deal (document_job_scope, on
+        # the same record): the readings stand. Any change -- a line added,
+        # dropped or rewritten -- reads again.
         _STATUS.update(state="read", reason="shared", remote=True, lines=len(rows), read_ms=0.0)
         return {i: (str(shared[k][0]), float(shared[k][1] or 0.0)) for i, k in zip(ids, keys)
                 if shared[k] and shared[k][0] is not None}
@@ -1086,7 +1273,8 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
                    service_read_ms=got.get("read_ms"))
     types = _aliased(got.get("types"))
     if "types" in _DEAL:
-        _DEAL["types"].update(types)
+        _DEAL["types"] = dict(types)
+        _DEAL["read_key"] = read_key(rows)
     out: dict[int, tuple[str, float]] = {}
     for i, key in zip(ids, keys):
         t = types.get(key)
@@ -1384,38 +1572,27 @@ def base_decided(atom: Any) -> bool:
 
 
 def reread_if_new(atoms: list[Any]) -> int:
-    """Read the deal again when lines were created after the base's read
-    (signature splits, site backfills, geo mentions): 97 of 010038's labeled
-    lines had no reading at all, so no head ever judged them. The read is of
-    the whole deal (a line is read in its document's context) and replaces the
-    first one. Returns the lines that were new."""
+    """Read the deal again when its lines changed after the base's read
+    (signature splits, site backfills, geo mentions, a line dropped or
+    rewritten): a line is read in its document's context, and a later line
+    can change an earlier one's reading, so any change reads the whole deal
+    again and its answers REPLACE the first read's. A re-read that fails
+    leaves no readings rather than the stale ones. Returns the lines whose
+    reading changed hands (new, rewritten or gone), 0 when nothing changed."""
     if not authority_enabled() or "types" not in _DEAL:
         return 0
-    seen = _DEAL.get("types") or {}
-    sha = _DEAL.get("sha")
-    new = 0
-    for a in atoms:
-        if str(getattr(a, "id", "") or "") in seen:
-            continue
-        try:
-            if skipped(a, sha):
-                continue
-        except Exception:
-            pass
-        new += 1
-    if not new:
+    if not _DEAL.get("read_key"):
         return 0
-    # A failed re-read must not cost the first read: keep it, and take the
-    # new one only when it came back (010038 lost every base reading when a
-    # re-read timed out, 2026-10-17).
-    kept = {k: _DEAL.get(k) for k in ("docs", "reads", "links", "deal", "questions", "question_bar", "types")}
-    _DEAL.update(docs={}, reads={}, links=[], deal={}, questions=[])
-    _DEAL["types"] = dict(kept["types"] or {})
+    _deal_id, rows, _keys = _rows(atoms, _DEAL.get("sha"))
+    if read_key(rows) == _DEAL.get("read_key"):
+        return 0
+    seen = set(_DEAL.get("types") or {})
+    now = {r["key"] for r in rows}
+    changed = len(now ^ seen) or len(rows)
+    _DEAL.update(docs={}, docs_key=None, reads={}, links=[], deal={}, questions=[], question_bar=None, tables={},
+                 types={}, read_key=None)
     documents(atoms)
-    if not _DEAL.get("reads"):
-        _DEAL.update({k: v for k, v in kept.items() if v is not None})
-        return 0
-    return new
+    return changed
 
 
 def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
@@ -1648,13 +1825,14 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
     the caller then asks its own judge, exactly as without the base."""
     if not atoms:
         return {}
-    if _DEAL.get("docs"):
-        return dict(_DEAL["docs"])
     import urllib.error
 
     started = time.monotonic()
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     deal_id, rows, _keys = _rows(atoms, artifact_sha256)
+    cache = read_key(rows, *keys)
+    if _DEAL.get("docs") and _DEAL.get("docs_key") == cache:
+        return dict(_DEAL["docs"])
     try:
         if _url():
             try:
@@ -1671,7 +1849,8 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _request("/read", body, timeout=budget + 10.0)
             raw = got.get("documents") or {}
             if "types" in _DEAL:
-                _DEAL["types"].update(_aliased(got.get("types")))
+                _DEAL["types"] = dict(_aliased(got.get("types")))
+                _DEAL["read_key"] = read_key(rows)
             _keep_full(got)
         else:
             from ml.c3.predict import read_deal
@@ -1700,6 +1879,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
                 out.setdefault(str(d), {})[k] = (str(v[0]), float(v[1] or 0.0))
     if "docs" in _DEAL:
         _DEAL["docs"] = dict(out)
+        _DEAL["docs_key"] = cache
     _DOC_STATUS.update(state="read", reason="", documents=len(out),
                        read_ms=round((time.monotonic() - started) * 1000, 1))
     return out
