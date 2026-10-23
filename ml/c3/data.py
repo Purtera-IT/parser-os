@@ -689,13 +689,14 @@ class Judged:
     query: str = ""              # source question, never its verdict or expert WHY
     subject_key: str = ""        # distinct card identity even on the same source line
     answers: tuple[int, ...] | None = None # set-valued card fields
+    cites: tuple[int, ...] = ()  # lines the card links to (a filled SOW slot's source line)
 
 
 def judgment_identity(batch: Batch, judgment: Judged) -> tuple:
     """Bind teacher targets to source, question and privileged annotation."""
     return (judgment.subject_key, judgment.key, judgment.lines, judgment.query,
             judgment.answer, judgment.answers, judgment.note, judgment.policy,
-            judgment.why_weight, tuple(batch.texts[i] for i in judgment.lines),
+            judgment.why_weight, judgment.cites, tuple(batch.texts[i] for i in judgment.lines),
             batch.company, batch.company_policy)
 
 
@@ -1136,12 +1137,39 @@ def _judged_lines(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...
     return (i,) if i is not None else None
 
 
+#: Cards whose subject is named by a query text: Questions (the question) and
+#: SOW slots (the section and the kind of fact the slot holds).
+QUERY_HEADS = ("gap", "question_answered", "sow_slot")
+
+
 def judgment_query(j: dict[str, Any]) -> str:
-    """Only Questions have a separate source query; no target fields enter it."""
-    if j.get("head") not in ("gap", "question_answered"):
+    """Only Questions and SOW slots have a separate source query; no verdict
+    or note enters it. A SOW slot's query is its ``target.query`` ("SOW
+    section: timeline. Slot: start date.")."""
+    head = j.get("head")
+    if head not in QUERY_HEADS:
         return ""
     t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    if head == "sow_slot":
+        return str(t.get("query") or "").strip()
     return str(t.get("text") or j.get("text") or "").strip()
+
+
+def judgment_cites(j: dict[str, Any], lines: "_Lines") -> tuple[int, ...]:
+    """The lines a card links to as its evidence: a filled SOW slot's
+    ``target.source`` (the earlier line that states the slot's fact). Lines
+    set aside, or not in this part of the deal, are not cited."""
+    if j.get("head") != "sow_slot":
+        return ()
+    t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    refs = t.get("source")
+    refs = refs if isinstance(refs, list) else [refs] if isinstance(refs, dict) else []
+    out = []
+    for ref in refs:
+        i = lines.find(ref)
+        if i is not None and not excluded(lines.atoms[i].label) and i not in out:
+            out.append(i)
+    return tuple(out)
 
 
 def question_field_targets(j: dict[str, Any], schema: Schema) -> list[tuple[str, tuple[int, ...]]]:
@@ -1173,6 +1201,10 @@ def question_field_targets(j: dict[str, Any], schema: Schema) -> list[tuple[str,
 
 
 def judgment_subject(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...] | None:
+    if size == DEAL and judgment_query(j):
+        # A queried whole-deal card (a SOW slot) reads the deal's lines that
+        # are not set aside, like an unanchored question.
+        return tuple(i for i, a in enumerate(lines.atoms) if not excluded(a.label)) or None
     idx = _judged_lines(j, size, lines)
     if idx is not None or not judgment_query(j):
         return idx
@@ -1642,6 +1674,10 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         if opp is not None and verdict and not extract:
             ix = opp.index(verdict)
             idx = judgment_subject(j, opp.size, lines)
+            if idx is not None and opp.size == DEAL and query:
+                # featurize's lines carry no label where one is set aside:
+                # the deal's own labels say which lines a whole-deal card skips.
+                idx = tuple(i for i in idx if not excluded(deal.atoms[i].label)) or None
             kept = ix is not None and idx is not None and not (
                 opp.size == PAIR and any(excluded(deal.atoms[i].label) for i in idx))
             if kept and query and any(excluded(deal.atoms[i].label) for i in idx):
@@ -1652,7 +1688,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                     judged.append(Judged(key=key, size=opp.size, lines=idx, answer=ix,
                                          note=mask_verdict(note) if opp.universal else note,
                                          why_weight=why_weight(j), policy=pol, query=query,
-                                         subject_key=subject))
+                                         subject_key=subject,
+                                         cites=tuple(i for i in judgment_cites(j, lines) if i in idx)))
                     for field_key, answers in question_field_targets(j, schema):
                         field_opp = by_key[field_key]
                         judged.append(Judged(

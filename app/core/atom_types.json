@@ -1689,6 +1689,95 @@
       "values": "person | edited_draft | accepted_draft | machine_draft",
       "desc": "Who wrote the WHY in this row's note. person: the labeler wrote it. edited_draft: a model's draft the labeler changed. accepted_draft: a model's draft a person saved as is (one card, or accept-all). machine_draft: a model or deal thread wrote it and no person has saved it since. Set by the page and the accept route on save, and by deal threads on the rows they write.",
       "layer": "meta"
+    },
+    {
+      "key": "visit_count",
+      "label": "How many visits a site gets",
+      "values": "a number",
+      "desc": "How many separate trips technicians make to one site for this job, as the line states it or as its own words plainly entail: \"two visits, install then removal\" is 2; a site the line sends technicians back to after the first trip is 2; \"3 WLAN visits\" at one location is 3. Count trips to the place, not technicians, hours, days on site, devices or sites: \"2 techs for 3 days\" says nothing about visits unless it says they leave and come back. A line that names a site but never says how often anyone goes there is _absent, and so is a line that is not about visits to a site at all.",
+      "layer": "universal"
+    },
+    {
+      "key": "visit_count_note",
+      "label": "Why that many visits",
+      "values": "free text",
+      "desc": "The reasoning behind visit_count on this line, in a sentence: which words give the number, or why the line gives none.",
+      "layer": "universal"
+    },
+    {
+      "key": "work_action",
+      "label": "What work is done at the site",
+      "values": "install | decommission | replace | relocate | cabling | survey | test | configure | troubleshoot | return_visit",
+      "desc": "The kind of field work the line says is done at a site, named by the job family it belongs to. A list: a site that gets new equipment and loses the old is install and decommission; a swap of one unit for another in the same place is replace. Read the work the words name, not the equipment brand, the customer's industry or who pays for it. A line that names no work at a site (a contact, a price, a date, an address alone) is _absent.",
+      "layer": "universal",
+      "multi": true,
+      "value_desc": {
+        "install": "New equipment is mounted, connected and brought up where there was none.",
+        "decommission": "Existing equipment is taken out of service and removed, boxed or left for pickup.",
+        "replace": "One unit is swapped for another in the same place: the old one out and the new one in as one piece of work.",
+        "relocate": "Equipment already in place is moved to another spot or another site.",
+        "cabling": "Cable is pulled, terminated, labeled or certified: new runs, drops or patching.",
+        "survey": "The site is walked and documented before any work: measurements, RF readings, photos, an inventory of what is there.",
+        "test": "Something already installed is tested or certified: a circuit, a link, a device's function.",
+        "configure": "Equipment is programmed or set up in software on site, without new hardware work.",
+        "troubleshoot": "A technician is sent to find and fix a fault or to be hands on site for someone remote.",
+        "return_visit": "Technicians go back to the site a second time to finish, remove or check work from the first trip."
+      }
+    },
+    {
+      "key": "work_action_note",
+      "label": "Why that work",
+      "values": "free text",
+      "desc": "The reasoning behind work_action on this line, in a sentence: which words name the work.",
+      "layer": "universal"
+    },
+    {
+      "key": "sow_element",
+      "label": "What it becomes in the SOW",
+      "values": "task | customer_responsibility | assumption | exclusion | deliverable | acceptance | fee | site | schedule | overview",
+      "desc": "What a line written before the statement of work turns into once the provider writes that SOW, judged by what the SOW does with the fact, not by the line's own type or the heading it later sits under. A list: one ask can become a task and an assumption, or an exclusion and a customer responsibility. A customer's standard for how work is done becomes an assumption the price rests on; one entry in a list of drops or devices becomes part of the task that installs them; a request the provider will not take on becomes an exclusion or the customer's own duty. A line the SOW never carries is _absent.",
+      "layer": "universal",
+      "multi": true,
+      "value_desc": {
+        "task": "Work the provider's crew does: a step of the scope or a provider duty.",
+        "customer_responsibility": "Something the customer or its partner must do, supply or decide for the work to go ahead.",
+        "assumption": "A condition the price and plan rest on: access, hours, existing equipment, a standard the work must meet.",
+        "exclusion": "Work or cost the SOW says the job does not include.",
+        "deliverable": "Something handed over at the end: documents, drawings, test results, equipment in place.",
+        "acceptance": "How the work is judged complete: criteria, tests or sign-off.",
+        "fee": "A price, a priced quantity or a billing term in the fees.",
+        "site": "A place where the work happens, listed as a site of the job.",
+        "schedule": "A date, window, duration or order of the work in the timeline.",
+        "overview": "Who the parties are and what the project is, in the introduction."
+      }
+    },
+    {
+      "key": "sow_element_note",
+      "label": "Why it becomes that",
+      "values": "free text",
+      "desc": "The reasoning behind sow_element on this line, in a sentence: what the SOW does with the fact and why.",
+      "layer": "universal"
+    },
+    {
+      "key": "sow_transform",
+      "label": "How its words change in the SOW",
+      "values": "verbatim | restated | generalized | inverted | merged",
+      "desc": "How the line's fact changes on its way into the statement of work, read against the SOW line it becomes. Set it only where the SOW carries the fact; a line the SOW never carries, or carries with a different number, date or party, is _absent here.",
+      "layer": "universal",
+      "value_desc": {
+        "verbatim": "The SOW carries the line's words as they are, or with only spelling, case or punctuation changed.",
+        "restated": "The SOW says the same single fact in its own words.",
+        "generalized": "A specific entry (one drop, one device, one site's detail) is folded into a broader SOW statement that covers it and others like it.",
+        "inverted": "The SOW turns the ask around: what the customer asked the provider to do becomes an exclusion or the customer's own responsibility.",
+        "merged": "The SOW combines this fact with separate facts from other lines into one statement."
+      }
+    },
+    {
+      "key": "sow_transform_note",
+      "label": "Why it changes that way",
+      "values": "free text",
+      "desc": "The reasoning behind sow_transform on this line, in a sentence: how the SOW line's words relate to this line's.",
+      "layer": "universal"
     }
   ],
   "relations_doc": "How one atom stands to another. lead_in already ties a list item to its header; these are the links a person draws.",

@@ -153,6 +153,16 @@
       "question": "Which of the company's project tiers is this job?",
       "answers": {"1": "Tier 1.", "2": "Tier 2.", "3": "Tier 3."}
     },
+    "sow_slot": {
+      "size": "deal", "subject": "Where the SOW slot's content comes from",
+      "question": "One slot of one section of the statement of work this job will need; the card's query names the section and the kind of fact the slot holds (a start date, a site contact, the site list, a price, the work steps). Before the SOW is written, where will that slot's content come from? Judge from what the customer and partner have said so far, not from how any document is laid out.",
+      "answers": {
+        "template": "The section's standard wording covers it; no fact of this job is needed.",
+        "filled": "A line the customer or partner wrote before the SOW states the fact the slot needs; the card links to that line.",
+        "house_default": "The provider fills it from its own standing values (its own contact, document version, standard rates, uplifts or payment terms), not from anything the customer said.",
+        "missing_chase": "The slot needs a fact of this job that no earlier line states, so someone has to ask for it before the SOW can be finished."
+      }
+    },
     "suppression": {
       "alias": {"target": "col:admission", "map": {"should_have_been_kept": "keep", "correctly_dropped": "drop"}}
     },

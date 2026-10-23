@@ -218,7 +218,29 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
         else:
             total = total + view_scale * F.cross_entropy(logits, y)
         terms += 1
+        cited = [j for j in js if j.cites and j.query]
+        if cited:
+            total = total + view_scale * CITE_WEIGHT * judgment_cite_loss(model, out, key, cited)
     return total / max(terms, 1)
+
+
+#: Share of a queried card's loss given to its link (judgment_cite_loss).
+CITE_WEIGHT = 0.5
+
+
+def judgment_cite_loss(model: C3Model, out: C3Output, key: str, js: list) -> torch.Tensor:
+    """A filled SOW slot links to the line that states its fact: the card's
+    pointer over its lines puts its mass on the cited lines (-log of their
+    summed probability), one card at a time."""
+    total = out.r.new_zeros(())
+    for j in js:
+        logits = model.judgment_pointer(out, key, j.lines, j.query).float()
+        pos = [k for k, i in enumerate(j.lines) if i in set(j.cites)]
+        if not pos:
+            continue
+        logp = logits.log_softmax(0)
+        total = total - torch.logsumexp(logp[pos], 0)
+    return total / max(len(js), 1)
 
 
 def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch, *,

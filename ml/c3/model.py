@@ -675,6 +675,24 @@ class C3Model(nn.Module):
             features = features + mask * self.judgment_query(self.aux_text(queries))
         return features
 
+    def judgment_pointer(self, out: C3Output, key: str, subject: tuple[int, ...],
+                         query: str) -> torch.Tensor:
+        """Logits [len(subject)] over a queried card's lines: which of them the
+        card links to (a filled SOW slot's source line). The lines' pooled
+        projections are scored against the query, so the pointer moves with
+        the slot asked; no weights beyond the card pooling and query layers."""
+        o = self.schema.by_key()[key]
+        if o.universal:
+            x, proj = out.r, self.pool_in
+        else:
+            if out.conduct_x is None:
+                raise ValueError(f"{key} is a company question: run the model with company=")
+            x, proj = out.conduct_x, self.pool_in_company
+        idx = torch.tensor(subject, device=x.device, dtype=torch.long)
+        keys = proj(x[idx])
+        q = self.judgment_query(self.aux_text([query]))[0].to(keys.dtype)
+        return keys @ q / keys.shape[-1] ** 0.5
+
     def judge(self, out: C3Output, key: str, subjects: list[tuple[int, ...]],
               desc: dict[str, Any] | None = None, *, queries: list[str] | None = None
               ) -> torch.Tensor:

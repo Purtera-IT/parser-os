@@ -62,7 +62,11 @@
 #               only when listed here; otherwise it is left out
 #   INIT_SCHEMA_REF  the commit INIT was trained on, when INIT predates shape
 #               digests (loop.py --init-schema-ref). The init allows text changes
-#               and the two added heads jdg:hours:per / jdg:hours:qty
+#               and the heads added since run C (NEW_HEADS)
+#   NEW_HEADS   heads INIT does not have, comma separated (loop.py --allow-new-heads).
+#               Default: jdg:hours:per,jdg:hours:qty and the SOW / site heads
+#               read:visit_count, read:work_action, read:sow_element,
+#               read:sow_transform, jdg:sow_slot
 #   TEACH=0     (default) no bind/teach and the 7B is never loaded; TEACH=1 turns
 #               the gated teach stage back on
 #   TEACHER     saved teacher (default $C3/runA.pt.teacher)
@@ -252,7 +256,7 @@ args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_fil
 if [[ "$TINY" == 1 ]]; then
   args+=(--tiny)
 else
-  args+=(--init-from "$INIT" --allow-text-change --allow-new-heads jdg:hours:per,jdg:hours:qty
+  args+=(--init-from "$INIT" --allow-text-change --allow-new-heads "${NEW_HEADS:-jdg:hours:per,jdg:hours:qty,read:visit_count,read:work_action,read:sow_element,read:sow_transform,jdg:sow_slot}"
          ${INIT_SCHEMA_REF:+--init-schema-ref "$INIT_SCHEMA_REF"}
          --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}")
 fi
