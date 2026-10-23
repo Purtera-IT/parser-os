@@ -1328,8 +1328,21 @@ def read_draft_approvals(path: str | Path) -> dict[str, str]:
     for r in rows:
         if not isinstance(r, dict) or not r.get("file") or not r.get("sha256"):
             raise ValueError("Each approved draft needs its file name and sha256")
-        out[Path(str(r["file"])).name] = str(r["sha256"]).lower()
+        # Keyed by the file's path relative to the manifest's folder (runE/approval_views.json:
+        # "train_presow_approved/010050@pre_quote.json"), never the bare name: two views share a deal code.
+        out[Path(str(r["file"])).as_posix().lstrip("./")] = str(r["sha256"]).lower()
     return out
+
+
+def approved_sha(accepted: dict[str, str] | None, path: str | Path) -> str | None:
+    """The approved sha256 for ``path``: the manifest key that is ``path`` or its trailing part."""
+    if not accepted:
+        return None
+    p = Path(path).resolve().as_posix()
+    hits = [k for k in accepted if p == k or p.endswith("/" + k)]
+    if len(hits) > 1:
+        raise ValueError(f"{path} matches more than one approval entry: {hits}")
+    return accepted[hits[0]] if hits else None
 
 
 def accept_drafts(payload: dict[str, Any]) -> int:
@@ -1347,6 +1360,13 @@ def accept_drafts(payload: dict[str, Any]) -> int:
                 who = re.sub(re.escape(mark), "", who, flags=re.I)
             row["labeler"] = f"{who.strip()} {APPROVED_DRAFT}".strip()
             n += 1
+        # A draft that edits a saved row carries "supersedes": the saved row's id
+        # (runE merge/protect_saved.py). Approved, the draft replaces it.
+        gone = {str(r["supersedes"]) for r in payload.get(part) or []
+                if isinstance(r, dict) and r.get("supersedes")}
+        if gone and isinstance(payload.get(part), list):
+            payload[part] = [r for r in payload[part] if not (isinstance(r, dict) and str(r.get("id")) in gone
+                                                              and not r.get("supersedes"))]
     return n
 
 
@@ -1361,8 +1381,9 @@ def load_deal(path: str | Path, accepted: dict[str, str] | None = None) -> DealE
     if not isinstance(payload, dict):
         raise ValueError("A training file must be one JSON object")
     name = Path(path).name
-    if accepted and name in accepted:
-        if hashlib.sha256(raw).hexdigest() != accepted[name]:
+    want = approved_sha(accepted, path)
+    if want is not None:
+        if hashlib.sha256(raw).hexdigest() != want:
             raise ValueError(f"{name} changed since the owner approved its drafts")
         accept_drafts(payload)
     from .export import is_page_export

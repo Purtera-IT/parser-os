@@ -17,7 +17,25 @@ from typing import Iterable
 
 LABEL_HOLDOUT = ("010038", "010387")
 KIT_HOLDOUT = ("000051", "010095", "010164", "010253", "010287")
-FIXED_HOLDOUT = frozenset(LABEL_HOLDOUT) | frozenset(KIT_HOLDOUT)
+#: Holdout B (runE/holdout2.json, 2026-10-22): four of the ten new Run E deals
+#: that never train. The file is the source of truth (the owner may swap in
+#: 010358 / 010447); these are refused even when the file is not on the box.
+HOLDOUT_B = ("010215", "010269", "000026", "010155")
+
+
+def _holdout_b_file() -> frozenset[str]:
+    import json
+    import os
+
+    p = os.environ.get("C3_HOLDOUT2") or os.path.expanduser("~/c3-local/runE/holdout2.json")
+    try:
+        with open(p, encoding="utf-8") as fh:
+            return frozenset(str(d) for d in json.load(fh).get("deals") or [])
+    except (OSError, ValueError, AttributeError):
+        return frozenset()
+
+
+FIXED_HOLDOUT = frozenset(LABEL_HOLDOUT) | frozenset(KIT_HOLDOUT) | frozenset(HOLDOUT_B) | _holdout_b_file()
 
 
 def deal_number(deal_id: str) -> str:
