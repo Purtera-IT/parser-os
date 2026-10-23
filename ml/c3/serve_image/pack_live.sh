@@ -13,6 +13,13 @@ for f in checkpoint.pt MANIFEST.json question_refit.pt quote_heads_bundle.json; 
   [[ -f "$SRC/c3_base/$f" ]] && cp "$SRC/c3_base/$f" "$WORK/c3_base/"
 done
 cp -R "$SRC/c3_base/encoder" "$WORK/c3_base/encoder"
+# A Questions refit fitted on another checkpoint is never packed (serve would refuse it anyway).
+if [[ -f "$WORK/c3_base/question_refit.pt" ]] && ! (cd "$SRC/code" && python3 -c \
+    "import sys; from ml.c3.question_fit import stale_refit; sys.exit(1 if stale_refit(sys.argv[1], sys.argv[2]) else 0)" \
+    "$WORK/c3_base/question_refit.pt" "$WORK/c3_base/checkpoint.pt"); then
+  echo "question_refit.pt was not fitted on this checkpoint: not packed" >&2
+  rm -f "$WORK/c3_base/question_refit.pt"
+fi
 (cd "$SRC/code" && { find ml c3_record -name '*.py' -o -name '*.json'; ls app/core/*.json; } | grep -v __pycache__ | tar -cf - -T -) | tar -xf - -C "$WORK/c3_base/code"
 python3 - "$WORK/c3_base" <<'PY'
 import hashlib,json,os,sys,subprocess

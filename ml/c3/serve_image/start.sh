@@ -28,7 +28,13 @@ ollama list | grep -q "^${C3_EMBED_MODEL%%:*}" || ollama pull "$C3_EMBED_MODEL"
 if [[ "${SOWSMITH_C3_QUOTE_WORDING:-off}" != "off" ]]; then ollama pull "$SOWSMITH_C3_QUOTE_WORDING" || true; fi
 export SOWSMITH_C3_CHECKPOINT="$DST/c3_base/checkpoint.pt"
 export SOWSMITH_C3_ENCODER="$DST/c3_base/encoder"
-[[ -f "$DST/c3_base/question_refit.pt" ]] && export SOWSMITH_C3_QUESTION_REFIT="$DST/c3_base/question_refit.pt"
+# The Questions refit only when it was fitted on this checkpoint (question_fit.stale_refit); else unset.
+unset SOWSMITH_C3_QUESTION_REFIT
+if [[ -f "$DST/c3_base/question_refit.pt" ]] && PYTHONPATH="$DST/c3_base/code" python -c \
+    "import sys; from ml.c3.question_fit import stale_refit; sys.exit(1 if stale_refit(sys.argv[1], sys.argv[2]) else 0)" \
+    "$DST/c3_base/question_refit.pt" "$SOWSMITH_C3_CHECKPOINT"; then
+  export SOWSMITH_C3_QUESTION_REFIT="$DST/c3_base/question_refit.pt"
+fi
 [[ -f "$DST/c3_base/quote_heads_bundle.json" ]] && export SOWSMITH_C3_QUOTE_HEADS="$DST/c3_base/quote_heads_bundle.json"
 export PYTHONPATH="$DST/c3_base/code:${PYTHONPATH:-}"
 cd "$DST/c3_base/code"
