@@ -446,3 +446,29 @@ def test_serve_returns_table_verdicts(schema):
     got = read_deal(m, deal, schema, max_atoms=8192, lines_only=True, table_heads=("jdg:roster", "jdg:sheet"))
     t = got["tables"]["sites-xlsx||Stores"]
     assert t["lines"] == 6 and {"jdg:roster", "jdg:sheet", "kind"} <= set(t)
+
+
+def test_masked_rows_keep_gradients_finite(schema):
+    """A row with nothing to read (a line in no table, a hint row it cannot
+    see) must not turn the backward pass to NaN: the tiny smoke's deal stage
+    lost every weight that way."""
+    from ml.c3.graph import masked_softmax
+    from ml.c3.losses import pointer_loss
+
+    x = torch.randn(3, 4, requires_grad=True)
+    mask = torch.tensor([[True, False, True, False], [False] * 4, [True] * 4])
+    w = masked_softmax(x, mask)
+    assert float(w[1].abs().sum()) == 0.0
+    w.sum().backward()
+    assert torch.isfinite(x.grad).all()
+    blob = _site_table()
+    blob["atoms"].append({"key": "loose", "text": "A loose note.", "entered_at": "2026-04-03T10:00:00Z",
+                          "label": {"label_type": "_keep"}})
+    b = featurize(DealExample.from_dict(blob), schema)
+    b.hint_lines = [[len(b) - 1] if i == 0 else [] for i in range(len(b))]
+    m = _model(schema, {**RUNE_GRAPH, "mask": "index"}).train()   # line 0 cannot see its hint row
+    loss, parts = c3_loss(m, b)
+    loss.backward()
+    assert torch.isfinite(loss) and all(torch.isfinite(p.grad).all() for p in m.parameters() if p.grad is not None)
+    out = m(b.inputs())
+    assert float(pointer_loss(out, b)) == 0.0

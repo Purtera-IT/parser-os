@@ -135,16 +135,20 @@ def pointer_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     if out.pointers is None or not batch.hint_lines:
         return out.r.new_zeros(())
     n = out.pointers.shape[0]
-    lses = []
+    lses, oks = [], []
     for i, js in enumerate(batch.hint_lines):
         js = [j for j in js if j != i and j < n]
         if js and i < n:
-            lses.append(torch.logsumexp(out.pointers[i, js], 0))
+            v = out.pointers[i, js]
+            fin = torch.isfinite(v)
+            # A row of -inf (no hint row visible) has a NaN logsumexp gradient:
+            # keep it finite and leave the row out.
+            lses.append(torch.logsumexp(torch.where(fin, v, torch.full_like(v, -1e4)), 0))
+            oks.append(fin.any())
     if not lses:
         return out.r.new_zeros(())
-    lse = torch.stack(lses)
-    ok = torch.isfinite(lse)
-    return -(torch.where(ok, lse, torch.zeros_like(lse))).sum() / ok.sum().clamp(min=1)
+    lse, ok = torch.stack(lses), torch.stack(oks)
+    return -(lse * ok).sum() / ok.sum().clamp(min=1)
 
 
 def entity_loss(out: C3Output, batch: Batch, tau: float = 0.1) -> torch.Tensor:

@@ -183,6 +183,16 @@ def training_cut(times, p: float) -> float | None:
 
 
 # ---------------------------------------------------------------- link hop
+def masked_softmax(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Softmax over the allowed entries; a row with none allowed is all zero.
+    Finite in backward too: a softmax over a row of -inf returns NaN gradients
+    even under nan_to_num, which poisoned every weight in the smoke."""
+    any_ = mask.any(-1, keepdim=True)
+    x = x.masked_fill(~mask, float("-inf"))
+    x = torch.where(any_, x, torch.zeros_like(x))
+    return x.softmax(-1) * any_
+
+
 def link_weights(proposed: dict[str, torch.Tensor], nones: dict[str, torch.Tensor],
                  off: torch.Tensor) -> dict[str, torch.Tensor]:
     """Row i's distribution over the lines j it links to, with its abstain
@@ -190,13 +200,16 @@ def link_weights(proposed: dict[str, torch.Tensor], nones: dict[str, torch.Tenso
     n = off.shape[0]
     out = {}
     for name, scores in proposed.items():
-        logits = scores.masked_fill(~(torch.isfinite(scores) & off), float("-inf"))
+        ok = torch.isfinite(scores) & off
+        logits = scores.float()
         none = nones.get(name)
         if none is None and name == "governs":
             none = logits.new_full((n,), GOVERNS_NONE)
         if none is not None:
-            logits = torch.cat([logits, none.to(logits.dtype).view(-1, 1)], -1)
-        out[name] = torch.nan_to_num(logits.float().softmax(-1), nan=0.0)[:, :n]
+            none = none.float().view(-1, 1)
+            logits = torch.cat([logits, none], -1)
+            ok = torch.cat([ok, torch.isfinite(none)], -1)
+        out[name] = masked_softmax(logits, ok)[:, :n]
     return out
 
 
@@ -222,8 +235,8 @@ def hop(model, r: torch.Tensor, weights: dict[str, torch.Tensor], off: torch.Ten
 
 # ---------------------------------------------------------------- nodes
 def _pool(score: torch.Tensor, member: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    w = score.view(1, -1).float().masked_fill(~member, float("-inf")).softmax(-1)
-    return torch.nan_to_num(w, nan=0.0) @ x.float()
+    w = masked_softmax(score.view(1, -1).float().expand(member.shape[0], -1), member)
+    return w @ x.float()
 
 
 def node_pass(model, out, r: torch.Tensor, inp: dict[str, Any], allowed: torch.Tensor) -> torch.Tensor:

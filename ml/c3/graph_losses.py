@@ -204,12 +204,17 @@ def node_pointer_loss(out: C3Output, batch: Batch) -> torch.Tensor:
     if out.nodes is None:
         return out.r.new_zeros(())
     logp = out.nodes["pointer"]
-    lses = [torch.logsumexp(logp[i, js], 0) for i, js in node_pointer_targets(batch) if js]
+    lses, oks = [], []
+    for i, js in node_pointer_targets(batch):
+        if js:
+            v = logp[i, js]
+            fin = torch.isfinite(v)
+            lses.append(torch.logsumexp(torch.where(fin, v, torch.full_like(v, -1e4)), 0))
+            oks.append(fin.any())
     if not lses:
         return out.r.new_zeros(())
-    lse = torch.stack(lses)
-    ok = torch.isfinite(lse)
-    return -(torch.where(ok, lse, torch.zeros_like(lse))).sum() / ok.sum().clamp(min=1)
+    lse, ok = torch.stack(lses), torch.stack(oks)
+    return -(lse * ok).sum() / ok.sum().clamp(min=1)
 
 
 def graph_losses(model, out: C3Output, batch: Batch, desc, w, sizes) -> dict[str, torch.Tensor]:
