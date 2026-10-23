@@ -32,13 +32,9 @@ left for `enrich_entities` to populate.
 
 ### `candidate_adjudication`
 
-**File:** `app/core/candidate_adjudicator.py`
-**Input:** `EvidenceAtom[]`
-**Output:** `EvidenceAtom[]` (filtered)
-
-Drops near-duplicate atoms (same `normalized_text` + same artifact + same
-locator) and atoms below a minimum-confidence floor. Keeps the highest-
-confidence representative.
+Removed from the compile (no parser proposes candidates, so it adjudicated
+an empty set). `app/core/candidate_adjudicator.py` remains for the
+extraction sandbox (`app/experiments/sandbox.py`).
 
 ### `source_replay`
 

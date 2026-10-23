@@ -65,3 +65,64 @@ def test_rule_regexes_from_the_regression_map():
     doc = re.compile(r"(?i)\bstandards?\b(?!\s+(?:[\w-]+\s+){0,2}(?:power|cords?|cables?|mounts?|cat\s?\d\w*|rj-?45|patch))")
     assert not doc.search("Provide Standard Cat6 cable, not plenum-rated cable.")
     assert doc.search("Provide the cabling standards for the naming convention.")
+
+
+# ---- step 0: a parser atom_type never vetoes or decides; the type head does.
+
+def _typed(i, text, parser_type, head_type=None, **extra):
+    st = dict(extra.pop("structured", {}))
+    if head_type:
+        st["c3_label"] = {"type": head_type, "p": 0.9}
+    return {"id": i, "text": text, "atom_type": parser_type, "structured": st, **extra}
+
+
+def test_program_atoms_ignore_the_parser_chatter_type():
+    # c3_sow :588 -- the parser's small_talk no longer hides a program line.
+    note = {"source": "hubspot_note"}
+    env = {"atoms": [_typed("a1", "Leverage self-installation where feasible for the remote sites", "small_talk",
+                            structured=note),
+                     _typed("a2", "Self-install kits ship to each site before the go-live week", "scope_item",
+                            "small_talk", structured=note)]}
+    assert [x["id"] for x in m._program_atoms(env)] == ["a1"]
+
+
+def test_standards_gate_reads_head_type_only():
+    # c3_sow :1734 -- a parser physical_site/small_talk line still feeds the gates.
+    env = {"atoms": [_typed("a1", "Mount the gateway in the IDF closet", "physical_site", artifact_id="d1"),
+                     _typed("a2", "Gateway Road, Springfield", "scope_item", "physical_site", artifact_id="d1")]}
+    assert m._gate_atoms(env, set(), {"d1"}) == ["Mount the gateway in the IDF closet"]
+
+
+def test_chatter_cites_are_the_head_labels_only():
+    # c3_sow :1762 -- the parser's signature type does not make a cite chatter.
+    env = {"atoms": [_typed("a1", "This work is for a new unit opening", "signature"),
+                     _typed("a2", "Thanks so much!", "scope_item", "small_talk")]}
+    assert m._chatter_ids(env) == {"a2"}
+
+
+def test_noise_ignores_the_parser_chatter_type():
+    # c3_sow :3426
+    env = {"atoms": [_typed("a1", "Install four cameras in the lobby", "small_talk"),
+                     _typed("a2", "Have a great weekend everyone", "scope_item", "small_talk")]}
+    ids, _ = m._noise(env, [])
+    assert ids == ["a2"]
+
+
+def test_recited_exclusion_may_cite_a_parser_small_talk_line():
+    # c3_sow :7703 -- the boundary line typed small_talk by the parser only is cited.
+    def run(head):
+        c = {"out_of_scope": [], "dropped": [{"list": "out_of_scope", "reason": "check: cites",
+                                              "text": "Extensive raceway installation and long cable routing."}]}
+        atoms = [_typed("a1", "Work wire mold / basic cable cleanup into the install pricing", "small_talk", head)]
+        m._recite_exclusions(c, atoms)
+        return [x["cites"] for x in c["out_of_scope"]]
+    assert run(None) == [["a1"]]
+    assert run("small_talk") == []
+
+
+def test_one_supplier_bar_for_brief_and_writer():
+    # regex_retirement S3: c3_sow used .85, c3_brief .6; c3_brief's value is the one bar.
+    from app.core import c3_brief
+
+    assert m.SUPPLIER_BAR is c3_brief.SUPPLIER_BAR
+    assert c3_brief.SUPPLIER_BAR == 0.6

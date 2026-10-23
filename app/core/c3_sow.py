@@ -23,7 +23,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.core.c3_brief import _complete, _dated, _json_of, strip_cites
+from app.core.c3_brief import SUPPLIER_BAR, _complete, _dated, _json_of, strip_cites
 
 #: Head sections that are facts of the job. Terms, acceptance and change
 #: control are the template's own boilerplate and stay out of the writer.
@@ -39,10 +39,10 @@ SECTION_ORDER = ("scope_of_work", "customer_responsibilities", "customer_furnish
                  "timeline", "schedule", "deliverables", "provider_responsibilities", "fees", "overview",
                  "job_details", "site", "acceptance", "terms", "change_control", "answered_question", "figure", "also_kept",
                  "unsure")
-#: The supplier head's answers as the writer reads them, and how sure it must
-#: be for its answer to decide a supply line.
+#: The supplier head's answers as the writer reads them. How sure it must be
+#: for its answer to decide a supply line is c3_brief.SUPPLIER_BAR: one bar
+#: for the brief and the writer (it was .85 here, .6 in the brief).
 _SUPPLIER = {"us": "Provider", "customer": "Customer", "partner": "reseller"}
-SUPPLIER_BAR = float(os.environ.get("SOWSMITH_C3_SOW_SUPPLIER_BAR", "0.85"))
 UNSURE_BAR = float(os.environ.get("SOWSMITH_C3_SOW_UNSURE_BAR", "0.6"))
 #: A fact line's length in the prompt. 010083's answers ride inline after
 #: each question ("...? [Betty] We will have a Webex bridge open...") and ran
@@ -469,6 +469,34 @@ _ABSENCE_LINE = re.compile(r"(?i)^\s*(no\b.{3,80}\b(were|was|are|is|have been|ha
 _CHATTER_TYPES = ("small_talk", "signature")
 
 
+def _head_type(a: dict[str, Any]) -> str:
+    """The type head's label of an envelope atom (``c3_label``), or ''. Never
+    the parser's ``atom_type``: a parser type does not veto or decide."""
+    return str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or "")
+
+
+#: Types whose lines the standards' gates do not read (addresses, contacts,
+#: chatter, questions), by the type head's label only.
+_NO_GATE_TYPES = ("physical_site", "contact", "person", "signature", "small_talk", "email_header", "deal_metadata",
+                  "open_question", "action_item", "answered_question")
+
+
+def _gate_atoms(envelope: dict[str, Any], rejected: set[str], fact_docs: set[str]) -> list[str]:
+    """The deal lines the standards' gates read beside the facts: unquoted,
+    not rejected, in a fact's document, not a question, and not a type in
+    ``_NO_GATE_TYPES`` by the type head (the parser's type is not consulted)."""
+    return [str(a.get("text") or "") for a in envelope.get("atoms") or []
+            if not (a.get("structured") or {}).get("quoted") and str(a.get("id")) not in rejected
+            and str(a.get("artifact_id")) in fact_docs and "?" not in str(a.get("text") or "")
+            and _head_type(a) not in _NO_GATE_TYPES]
+
+
+def _chatter_ids(envelope: dict[str, Any]) -> set[str]:
+    """Lines the type head labeled small talk or signature (the parser's
+    type alone never makes a line chatter)."""
+    return {str(a.get("id")) for a in envelope.get("atoms") or [] if _head_type(a) in _CHATTER_TYPES}
+
+
 def _type_read(a: dict[str, Any]) -> tuple[str, float] | None:
     """The type head's reading of an envelope atom: ``c3_read`` (stamped on
     every line it read), else the ``c3_label`` it acted with."""
@@ -585,7 +613,7 @@ def _program_atoms(envelope: dict[str, Any], per_kind: int = 3) -> list[dict[str
         name = docs.get(str(a.get("artifact_id") or ""), "")
         own = st.get("source") == "hubspot_note" or bool(re.search(r"-hs-note-|-hs-meeting-|fireflies", name))
         t = re.sub(r"\s+", " ", str(a.get("text") or "")).strip()
-        lab = str((st.get("c3_label") or {}).get("type") or a.get("atom_type") or "")
+        lab = _head_type(a)
         # A quoted copy counts (the forwarded agenda's "Leverage
         # self-installation where feasible ..."); the text is read once.
         if not own or lab in _CHATTER_TYPES or not 25 <= len(t) <= 400 or t.endswith("?") \
@@ -640,13 +668,21 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # And a line the keep head chose to keep below the brief's bar (010171's
     # Logitech Sight request, keep 0.39): the head said keep; the SOW sees it.
     unsure += [{"id": x["id"], "text": x["text"]} for x in brief.get("kept_unsure") or []]
+    # The keep head's own keeps (sections, also mentioned, kept below the bar):
+    # with a keep reading, a regex (_DIRECTIVE, _PROGRAM) or a type head only
+    # marks which of these lines say the job; it never adds a line the head
+    # left out.
+    gate = _keep_gate(envelope)
+    keep_read, head_kept = gate is not None, gate or set()
     # A question the deal already answered is not an open question, so the
     # brief leaves it out; for a SOW it is often the request itself: 010198's
     # "I would also like to add a Ubiquiti router with cellular backup - is
     # that something you can help with?" (the type head: answered_question).
+    # With a keep reading, only one the keep head kept.
     answered = [{"id": a["id"], "text": a.get("text") or ""} for a in envelope.get("atoms") or []
                 if ((a.get("structured") or {}).get("c3_label") or {}).get("type") == "answered_question"
-                and a.get("id") not in seen and len(str(a.get("text") or "")) > 25]
+                and a.get("id") not in seen and len(str(a.get("text") or "")) > 25
+                and (not keep_read or str(a.get("id")) in head_kept)]
     # The type head's own scope reading, for a line the brief's keep head left
     # out: that head picks what a short brief says, not what a SOW must carry.
     # 010279's "We are pricing physical installation labor only"
@@ -655,11 +691,6 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # transcripts, where scope words are mostly talk.
     docs = {str(d.get("artifact_id") or d.get("id") or ""): str(d.get("filename") or "")
             for d in envelope.get("documents") or []}
-    # The keep head's own keeps (sections, also mentioned, kept below the bar):
-    # with a keep reading, a regex (_DIRECTIVE, _PROGRAM) only marks which of
-    # these lines say the job; it never adds a line the head left out.
-    gate = _keep_gate(envelope)
-    keep_read, head_kept = gate is not None, gate or set()
     typed = []
     for a in envelope.get("atoms") or []:
         lab = (a.get("structured") or {}).get("c3_label") or {}
@@ -672,7 +703,10 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
         # to have the Logitech Sight installed ..." reaches the writer as
         # kept_unsure: the keep head kept it, below the brief's bar.)
         abstained = False
+        # Nor does the type head's scope reading add a line the keep head
+        # left out (S16): with a keep reading, typed_only is only lines it kept.
         if (a.get("id") in seen or (lab.get("type") not in _SCOPE_TYPES and not abstained)
+                or (keep_read and str(a.get("id")) not in head_kept)
                 or float(lab.get("p") or 0) < (0.35 if abstained else TYPED_BAR)
                 or not 15 < len(txt) < 600 or _CHATTER.search(txt.strip()) or txt.count("|") >= 2
                 or re.search(r"(?i)unsubscribe|book time|my calendar|confidential|don.t often get email|"
@@ -775,7 +809,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             f["text"] = full[f["id"]]
         f["text"] = _withhold(f["text"])
     _lead_ins(out, envelope.get("atoms") or [])
-    _list_siblings(out, envelope.get("atoms") or [])
+    _list_siblings(out, envelope.get("atoms") or [], gate)
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
     seen_text: set[str] = set()
     uniq = []
@@ -848,12 +882,15 @@ def _fact_line(f: dict[str, Any]) -> str:
 _MEASURED = re.compile(r"(?i)^\s*(.{2,40}?)\s*[:\-–]?\s*(?:approx(?:imately)?\.?\s*)?(\d[\d,.]*)\s*(ft|feet|foot|'|m|meters?|units?|x)\b")
 
 
-def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> int:
+def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]],
+                   head_kept: set[str] | None = None) -> int:
     """A line of the same measured list as a kept line shares its fate. Of
     010043's "IDF to side door 154ft / IDF to back door 88ft / IDF to Front
     door 146ft", the keep head kept one and rejected two at a coin flip, so the
     SOW priced one cable run of three. Same document, same opening words, a
-    measurement: the sibling joins its kept line's section."""
+    measurement: the sibling joins its kept line's section. A sibling not yet
+    a fact is added only when the keep head kept it (``head_kept``, the
+    ``_keep_gate``; None when there was no keep reading)."""
     by_id = {a.get("id"): a for a in atoms}
     weak = ("unsure", "also_kept", "typed_only")
     # A BOM row ("1: QM75C Samsung 75IN ...", "2 | TS525TU | Chief ...") is a
@@ -880,7 +917,7 @@ def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> in
             n += 1
     have = {f["id"] for f in out}
     for a in atoms:
-        if a.get("id") in have:
+        if a.get("id") in have or (head_kept is not None and str(a.get("id")) not in head_kept):
             continue
         t = str(a.get("text") or "")
         if not shape(t):
@@ -1726,12 +1763,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     rejected = _rejected_atoms(envelope) | set(content.get("_noise_atoms") or [])
     fact_ids = {f["id"] for f in fs}
     fact_docs = {str(a.get("artifact_id")) for a in envelope.get("atoms") or [] if str(a.get("id")) in fact_ids}
-    no_gate = ("physical_site", "contact", "person", "signature", "small_talk", "email_header", "deal_metadata",
-               "open_question", "action_item", "answered_question")
-    gate_atoms = [str(a.get("text") or "") for a in envelope.get("atoms") or []
-                  if not (a.get("structured") or {}).get("quoted") and str(a.get("id")) not in rejected
-                  and str(a.get("artifact_id")) in fact_docs and "?" not in str(a.get("text") or "")
-                  and str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") not in no_gate]
+    gate_atoms = _gate_atoms(envelope, rejected, fact_docs)
     _traced(content, "standards", _apply_standards, content, family, [f["text"] for f in fs if not f.get("pictured")],
             [str(a.get("text") or "") for a in envelope.get("atoms") or [] if not (a.get("structured") or {}).get("quoted")],
             gate_atoms)
@@ -1759,8 +1791,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
                                 and _HEDGE.search(str(a.get("text") or ""))]
     # A line the type head called small talk is never cited (010082: "This
     # work is for a new unit opening" from a signature's menu entry).
-    chatter = {str(a.get("id")) for a in envelope.get("atoms") or []
-               if str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") in ("small_talk", "signature")}
+    chatter = _chatter_ids(envelope)
     if chatter:
         for k in LISTS:
             content[k] = [x for x in content.get(k) or [] if not (isinstance(x, dict) and x.get("cites") and all(c in chatter for c in x["cites"]))]
@@ -3423,7 +3454,7 @@ def _noise(envelope: dict[str, Any], fs: list[dict[str, Any]]) -> tuple[list[str
     ids |= _inventory_rows(envelope)[0]
     ids |= {str(a.get("id")) for a in envelope.get("atoms") or []
             if str(a.get("artifact_id")) in bro_ids
-            or str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "") in ("small_talk", "signature")}
+            or _head_type(a) in _CHATTER_TYPES}
     return sorted(ids), logi
 
 
@@ -7700,7 +7731,7 @@ def _recite_exclusions(c: dict[str, Any], atoms: list[dict[str, Any]]) -> None:
         hits = []
         for a in atoms:
             t = str(a.get("text") or "") if isinstance(a, dict) else ""
-            lab = str(((a.get("structured") or {}).get("c3_label") or {}).get("type") or a.get("atom_type") or "")
+            lab = _head_type(a)
             if not t or len(t) > 400 or t.rstrip().endswith("?") or lab in _CHATTER_TYPES or lab in ("open_question", "answered_question"):
                 continue
             sh = k & _object_toks(t)
@@ -9479,7 +9510,8 @@ _SCHED_TERM = re.compile(r"(?i)\bblackout\b|\bper time zone\b|\b(start|begin)\w*
 def _schedule_from_facts(content: dict[str, Any], fs: list[dict[str, Any]], envelope: dict[str, Any]) -> None:
     """Schedule terms a fact states reach the schedule even when the writer
     left them out, from the facts and from atoms the type head dated
-    (milestone_phase, deadline) that no section kept. A term in a quoted
+    (milestone_phase, deadline) that no section kept but the keep head did
+    (any of them without a keep reading). A term in a quoted
     reply is still the customer's term (010209's answers were all quoted in
     the next email); only meeting and call slots stay out."""
     sch = content.setdefault("schedule", [])
@@ -9505,8 +9537,13 @@ def _schedule_from_facts(content: dict[str, Any], fs: list[dict[str, Any]], enve
             own.setdefault(re.sub(r"\W+", " ", str(a.get("text") or "").lower()).strip(), str(a.get("id")))
     cands = [(f["id"], f["text"]) for f in fs if not str(f["text"]).rstrip().endswith("?")]
     seen = {i for i, _ in cands}
+    # A dated atom no section kept is read only when the keep head kept it
+    # (S68): the type head's date never adds a line the keep head left out.
+    gate = _keep_gate(envelope)
     for a in envelope.get("atoms") or []:
         lab = (a.get("structured") or {}).get("c3_label") or {}
+        if gate is not None and str(a.get("id")) not in gate:
+            continue
         if a.get("id") not in seen and lab.get("type") in ("milestone_phase", "deadline") and float(lab.get("p") or 0) >= 0.5 \
                 and 10 < len(str(a.get("text") or "")) < 300:
             cands.append((str(a["id"]), str(a["text"])))

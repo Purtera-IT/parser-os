@@ -53,10 +53,6 @@ _SKILL_CANDIDATES = [
     "Field technician L2",
 ]
 
-_CONFIG_MICRO_RE = re.compile(
-    r"\b(configur(?:ation|e)|/ setup|enterprise setup|install support)\b",
-    re.I,
-)
 _CONFIG_INSTALL_LINE_RE = re.compile(
     r"\b("
     r"camera|nvr|surveillance|cctv|"
@@ -68,7 +64,6 @@ _CONFIG_INSTALL_LINE_RE = re.compile(
     r")\b",
     re.I,
 )
-_UID_ENTERPRISE_RE = re.compile(r"\buid\s+enterprise\b", re.I)
 _PMO_ADMIN_RE = re.compile(
     r"^(complete billing|weekly:|attend debriefing|coordinate work in a manner|develop schedule based on stakeholder)",
     re.I,
@@ -144,36 +139,14 @@ def _coalesce_config_install_decision(decision: QuoteLineDecision, *, config_ins
     return decision
 
 
-def _rule_quote_line(text: str, *, config_install: bool) -> QuoteLineDecision:
-    low = text.lower()
+def _rule_quote_line(text: str) -> QuoteLineDecision:
+    """No trained head: a PMO/admin task is off the quote, any other line
+    keeps its own words. (The fixed menu that stood here -- "Wireless site
+    survey", "Ubiquiti configuration / install support", ... -- was inert:
+    consolidate_quote_line_tasks discarded its labels.)"""
     if _PMO_ADMIN_RE.match(text.strip()):
         return QuoteLineDecision("", "", "pmo_filtered", 1.0)
-
-    if re.search(r"\b(knowledge transfer|white glove|walk(?:ing)?\b)", low):
-        # Keep source wording ("walking him through the setup") — never invent
-        # "guided handoff" when the email already named the work unit.
-        label = text.strip()[:120] if text.strip() else KNOWLEDGE_HANDOFF
-        return QuoteLineDecision(label, "Senior engineer", "deterministic_fallback", 0.76, route_trainable=True)
-    if re.search(r"\b(site survey|heatmap|passive survey|gap analysis)\b", low):
-        return QuoteLineDecision(SURVEY_UMBRELLA, "Wireless survey tech", "deterministic_fallback", 0.72, route_trainable=True)
-    if config_install and _CONFIG_INSTALL_LINE_RE.search(low):
-        return QuoteLineDecision(CONFIG_UMBRELLA, "Network / Wireless L2", "deterministic_fallback", 0.82, route_trainable=True)
-    if re.search(r"\b(camera|nvr|surveillance|cctv)\b", low) and re.search(r"\bconfigur", low):
-        return QuoteLineDecision("Security camera configuration", "Security / AV L2", "deterministic_fallback", 0.72, route_trainable=True)
-    if _UID_ENTERPRISE_RE.search(low):
-        return QuoteLineDecision("UID Enterprise setup", "Security / Access L2", "deterministic_fallback", 0.74, route_trainable=True)
-    if re.search(r"\b(okta|otka|sso|idp)\b", low):
-        return QuoteLineDecision("Identity integration (Okta)", "Integration / IAM L2", "deterministic_fallback", 0.72, route_trainable=True)
-    if re.search(r"\b(badge|access control|reader)\b", low) and not _UID_ENTERPRISE_RE.search(low):
-        return QuoteLineDecision("Badge and access control setup", "Security / Access L2", "deterministic_fallback", 0.72, route_trainable=True)
-    if re.search(r"\b(ubiquiti|unifi|udm|vlan|firewall|wifi)\b", low):
-        return QuoteLineDecision(CONFIG_UMBRELLA, "Network / Wireless L2", "deterministic_fallback", 0.74, route_trainable=True)
-    if config_install and _CONFIG_MICRO_RE.search(low):
-        return QuoteLineDecision(CONFIG_UMBRELLA, "Network / Wireless L2", "deterministic_fallback", 0.8, route_trainable=True)
-    if re.search(r"\binstall(?:ation)?\b", low) and not re.search(r"\bconfigur", low):
-        return QuoteLineDecision(text[:120], "Field technician L2", "deterministic_fallback", 0.62, route_trainable=True)
-
-    return QuoteLineDecision(text[:120], "Field technician L2", "deterministic_fallback", 0.5, route_trainable=True)
+    return QuoteLineDecision(text[:120], "", "deterministic_fallback", 0.0)
 
 
 def _head_classify(relation: str, text: str, candidates: list[str]) -> tuple[str | None, float, str]:
@@ -209,12 +182,9 @@ def decide_quote_line(text: str, *, config_install: bool) -> QuoteLineDecision:
         if _is_knowledge_handoff_line(quote) and _is_knowledge_handoff_line(source_text):
             quote = source_text[:120]
         skill, skill_conf, skill_source = _head_classify(TASK_TECHNICIAN_SKILL_RELATION, text, _SKILL_CANDIDATES)
-        if not skill:
-            fallback = _rule_quote_line(text, config_install=config_install)
-            skill = fallback.technician_skill
         decision = QuoteLineDecision(quote, skill or "Field technician L2", source, conf)
     else:
-        decision = _rule_quote_line(text, config_install=config_install)
+        decision = _rule_quote_line(text)
     return _coalesce_config_install_decision(decision, config_install=config_install)
 
 
@@ -290,13 +260,11 @@ def consolidate_quote_line_tasks(atoms: list[Any], *, project_id: str = "") -> t
             changed += 1
             continue
 
-        # Only a TRAINED head may rename or merge a quote line. The rule
-        # fallback picks from a fixed menu ("Wireless site survey", "Ubiquiti
-        # configuration / install support", ...): on 000061 MBrany it renamed
-        # twenty different recap sentences to "Wireless site survey", and those
-        # canned names were also logged as judgments, so the head was being
-        # taught the menu. Without a head the work keeps the words its source
-        # used, one line each, and nothing is logged as a label.
+        # Only a TRAINED head may rename or merge a quote line (a fixed menu
+        # once renamed twenty different recap sentences on 000061 to "Wireless
+        # site survey" and taught the head its own names). Without a head the
+        # work keeps the words its source used, one line each, and nothing is
+        # logged as a label.
         if decision.source == "deterministic_fallback":
             val = dict(_atom_value(atom))
             val["quote_line"] = {

@@ -94,6 +94,29 @@ def test_quote_lines_keep_their_own_words_without_a_trained_head() -> None:
     assert all(not a.value["quote_line"]["technician_skill"] for a in out)
 
 
+def test_no_fallback_menu_without_a_head() -> None:
+    """Step 0 (regex_retirement row 181): the rule menu is gone. Without a head
+    a line keeps its own words and gets no menu skill; PMO/admin is still off."""
+    from app.core import quote_line_head as qlh
+
+    d = qlh._rule_quote_line("Perform a passive site survey and heatmap of floor 2")
+    assert (d.quote_line, d.technician_skill, d.source) == (
+        "Perform a passive site survey and heatmap of floor 2", "", "deterministic_fallback")
+    assert qlh._rule_quote_line("Complete billing tasks").source == "pmo_filtered"
+    assert not hasattr(qlh, "_UID_ENTERPRISE_RE") and not hasattr(qlh, "_CONFIG_MICRO_RE")
+
+
+def test_label_head_without_a_skill_head_takes_no_menu_skill(monkeypatch) -> None:
+    from app.core import quote_line_head as qlh
+
+    monkeypatch.setattr(qlh, "_head_classify", lambda relation, text, c: (
+        (None, 0.0, "head_miss") if relation == qlh.TASK_TECHNICIAN_SKILL_RELATION
+        else (qlh.SURVEY_UMBRELLA, 0.9, "neural_head")))
+    d = qlh.decide_quote_line("Perform a passive site survey and heatmap", config_install=False)
+    assert d.quote_line == qlh.SURVEY_UMBRELLA
+    assert d.technician_skill == "Field technician L2"  # was the menu's "Wireless survey tech"
+
+
 def test_quote_line_head_merges_config_install_lines_when_a_head_decides(monkeypatch) -> None:
     from app.core import quote_line_head as qlh
 
