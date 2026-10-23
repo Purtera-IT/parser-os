@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,7 @@ def test_checkpoint_must_be_the_shape(tmp_path):
 
 def test_run_script_derives_the_list():
     text = (REPO / "ml/c3/pod/runE.sh").read_text(encoding="utf-8")
-    assert "NEW_HEADS:-" not in text                     # no hand-kept default to drift
+    assert not re.search(r"NEW_HEADS:-[a-z]", text)       # no hand-kept default to drift
     assert 'python -m ml.c3.new_heads "${shape_src[@]}" --checkpoint "$INIT"' in text
     assert '--allow-new-heads "$new_heads"' in text
     assert text.count('--init-schema-ref "${INIT_SCHEMA_REF:-$INIT_SHAPE}"') == 2

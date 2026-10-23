@@ -288,7 +288,8 @@ fi
 # on co_action / co_reason, so the company layer can be refit alone.
 why2_free=()
 if [[ "$FREE_R_ONLY" == 1 ]]; then
-  for k in col:label_type col:admission col:supplier col:about read:site jdg:site_role jdg:site_role:reason; do
+  for k in col:label_type col:admission col:supplier col:about read:site jdg:site_role jdg:site_role:reason \
+           read:sow_section read:sow_element read:task_owner_role; do
     why2_free+=(--free-head "r:$k")
   done
 fi
@@ -391,7 +392,8 @@ if [[ "${SMOKE:-0}" == 1 ]]; then
            --head-weight col:label_type="$TYPE_WEIGHT" --stage-steps "$stages"
            --min-count "${SIGNAL_MIN:-50}" --allowlist "${SIGNAL_ALLOWLIST:-$REPO/ml/c3/runE/signal_allowlist.json}"
            --min-kind-words "${SIGNAL_KIND_WORDS:-10000}" --min-coverage "${SIGNAL_COVERAGE:-0.95}"
-           --out "$C3/out/signal_audit.md" --json "$C3/out/signal_audit.json" "${model_args[@]}")
+           --out "$C3/out/signal_audit.md" --json "$C3/out/signal_audit.json" "${model_args[@]}"
+           "${why2_free[@]}")
     [[ -n "${ACCEPT_DRAFTS:-}" ]] && audit+=(--accept-drafts "$ACCEPT_DRAFTS")
     [[ "$TINY" != 1 ]] && audit+=(--init-from "$INIT")
     set +e
@@ -425,7 +427,8 @@ PY
     # Critical heads decide from r, not the raw h path; a company refit step
     # leaves the base outputs bit-identical (ml/c3/smoke_checks.py).
     python -m ml.c3.smoke_checks --checkpoint "$C3/out/smokeE.pt" --train "${train_files[@]}" \
-      --max-atoms "$ATOMS" --max-h-share "${MAX_H_SHARE:-0.10}" "${model_args[@]}" \
+      --max-atoms "$ATOMS" --max-h-share "${MAX_H_SHARE:-0.10}" "${model_args[@]}" "${why2_free[@]}" \
+      --free-h-out 1 \
       --signal-json "$C3/out/signal_audit.json" --out "$C3/out/smoke_gate.md" --json "$C3/out/smoke_gate.json" \
       2>&1 | tee "$C3/out/smoke_gate.log"
     status=${PIPESTATUS[0]}

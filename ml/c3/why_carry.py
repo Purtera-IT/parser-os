@@ -182,8 +182,10 @@ def why_contrast_loss(model: C3Model, out: C3Output, batch: Batch, *, tau: float
     why_to_line = -(torch.logsumexp(st.masked_fill(~member, float("-inf")), -1)
                     - torch.logsumexp(st, -1))
     cw = torch.zeros(len(texts), device=sim.device).index_add_(0, target, ww)
-    return 0.5 * ((line_to_why * ww).sum() / ww.sum().clamp(min=1e-6)
-                  + (why_to_line * cw).sum() / cw.sum().clamp(min=1e-6))
+    # Absolute scale (losses.why_mean): a draft WHY counts DRAFT_WHY_WEIGHT of a
+    # saved one even on a part of drafts only; each direction over the lines it holds.
+    n = (ww > 0).sum().clamp(min=1)
+    return 0.5 * ((line_to_why * ww).sum() / n + (why_to_line * cw).sum() / n)
 
 
 def swap_pairs(batch: Batch, cap: int = 64, rng: random.Random | None = None
@@ -296,7 +298,7 @@ def why_alone_loss(model: C3Model, out: C3Output, batch: Batch, desc: dict[str, 
     total, terms = zero, 0
     for key, lg in sub.logits.items():
         if has_answers(batch, key):
-            total = total + answer_loss(lg, batch, key, rw, keep)
+            total = total + answer_loss(lg, batch, key, rw, keep, absolute=True)
             terms += 1
     return total / max(terms, 1)
 

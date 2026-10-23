@@ -160,7 +160,7 @@ def test_coverage_table_does_not_mark_release_gates_consumed():
     assert rows["jdg:gap:reason"]["status"] == "consumed"
     assert rows["deal:declared_site_count"]["status"] == "consumed"
     assert rows["jdg:norm"]["status"] == "consumed_without_student_decoder"
-    assert rows["jdg:rule"]["status"] == "external_pending"
+    assert rows["jdg:rule"]["status"] == "consumed" and rows["jdg:rule"]["loss"] == "judgment_loss"
     assert rows["frozen_corpus_not_audited"]["status"] == "blocked"
     assert {opp.key for opp in load_schema().opportunities} <= set(rows)
     assert rows["jdg:router"]["status"] == "deferred"

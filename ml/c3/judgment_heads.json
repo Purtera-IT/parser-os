@@ -97,6 +97,30 @@
         "other_job": "About another job; it should not shape this one."
       }
     },
+    "rule": {
+      "size": "line", "subject": "Parser rule call",
+      "question": "A line the parser ran one of its meaning rules on; the rule is named with the line. Should that rule fire on this line? Decide by what the line means and does in its document (a heading, a label, a lead-in, an answer, an item of a list), not by its wording, its capitals or its length.",
+      "answers": {
+        "should_fire": "The line is what the rule looks for, so the rule should fire on it.",
+        "should_not_fire": "The line is not what the rule looks for, so the rule should stay quiet on it."
+      },
+      "rules": {
+        "image_field_label": "Is the line a short field label whose value is the picture right below it (Signature, Floor Plan, Rack Elevation, Wiring Diagram, Before and After), so the picture is captioned by it rather than by a photo request further up the page? A name, a yes or no answer, a question or a numbered section is not one.",
+        "docx_subsection_blocks_lift": "Is the line a sub-heading that goes against a preamble saying what the provider will do, such as Out of Scope, Exclusions, Customer Responsibilities or Items provided by others, so the preamble must not carry onto the bullets under it? A heading of the provider's own work or a list of the customer's places is not one.",
+        "list_lead_in": "Does the line announce a list that follows it (the vendor will perform the following services, Deliverables:, the following are out of scope:), whatever the list is about? A sentence that states its own fact with nothing listed under it is not one.",
+        "document_title_line": "Does the line read as the title of a document or a section (a project name, Statement of Work, Project Overview), rather than something that belongs with the document's details: a date, page furniture, an id, a clock time or a bare value?",
+        "qa_answer_block": "Is the line the answer to the question just above it in a numbered question-and-answer or RFI list, so the two fold into one fact? A line of a scope of work, a bullet of a list or a new question is not one.",
+        "meeting_section_header": "Is the line a section header of meeting notes (Action Items, Key Decisions, Attendees, Next Steps, Agenda) that heads the lines under it? A sentence that mentions those words, a speaker's line or a fact from the meeting is not one.",
+        "list_item_under_label": "Is the line one of the items listed under the label above it, a fact the list enumerates, rather than prose that has moved on and ends the list (a closing remark, a pleasantry, a question back)? Length does not decide it.",
+        "hours_effort_metric_label": "Does the column header name a labor effort or hours measure (Lead Tech Hrs, PM Hrs, Man-Days, Crew Hours, Engineering Effort) that an hours estimate is checked against? A money, count or date column is not one.",
+        "form_field_report_page": "Does the page read as a form or field report (questions, labelled fields, photo requests, signatures) rather than flowing prose, a contract clause or a rate card or bill of materials, so its lines are worth regrouping as form fields?",
+        "photo_request_instruction": "Is the line an instruction to take or upload a photo (Upload 4 photos of the unit installed, Take a photo of the rack), the request a picture below it answers? A line that only mentions a photo is not one.",
+        "section_title": "Is the heading a generic section of a document (Introduction, General Conditions, Scope of Work) rather than the real title of the document or the deal, such as a company or project name?",
+        "xlsx_money_header": "Does the spreadsheet column header name an amount of money (Unit Price, Sell Price, Extended Price, Burdened Rate, MSRP)? A quantity, hours, a part number or a description column is not one.",
+        "pl_margin_pct_label": "Is the line the label of a margin percentage in a profit and loss sheet (Margin % on Total Deal, Margin % on Labor)? A money amount, a cost line or a markup that is not a margin percentage is not one.",
+        "scope_work_item_heading": "Does the short heading name a work activity of the scope (Unit Wiring, Media Panel Installation, Common Area buildout), rather than a stray capitalized line such as a place name, a person or a date label?"
+      }
+    },
     "roster": {
       "size": "group", "subject": "Site list",
       "question": "A table in the deal. Is it a list of the job's sites?",
@@ -207,7 +231,6 @@
   },
   "not_trained": {
     "type": "The atom card's type picker already teaches it.",
-    "rule": "The rule runs before atoms exist, so this model never sees its input; it stays in the parser.",
     "router": "No fixed vocabulary yet.",
     "norm": "The answer is free text; a later PR can give it to the teacher.",
     "commercial": "Purtera's Deal Kit shape (billing, PM/PC hours, travel days): company layer (conduct.constants), never the base. The answer is free text.",

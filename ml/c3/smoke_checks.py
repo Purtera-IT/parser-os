@@ -11,6 +11,13 @@ over the part's lines (a row's mean is removed: a shift every answer shares
 decides nothing). It fails when a head's share is above ``--max-h-share``
 (0.10). A head with no free head, or whose free head reads no h, scores 0.
 
+It reads the run's configuration after the h ramp: the run's free rows
+(``--free-head``, as runE.sh passes them: ``r:<key>`` rows for the critical
+heads) and their share of h at ``1 - --free-h-out`` (runE.sh ramps
+``free_h_out`` 0 -> 1, so 0 after the ramp). The smoke itself trains with the
+ramp off; whatever ``h_keep`` its checkpoint holds, the check sets the
+post-ramp one, the configuration every later read uses.
+
 ``portability``: one company-layer refit step (only the company parameters
 train: the policy codes and atoms, the conduct heads, every ``*_company``
 module) must leave every base output (each universal logit and number)
@@ -157,6 +164,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--max-atoms", type=int, default=512)
     p.add_argument("--max-h-share", type=float, default=0.10)
+    p.add_argument("--free-head", action="append", default=[],
+                   help="the run's free rows after --free-head all (runE.sh why2_free: r:<key>, company rows)")
+    p.add_argument("--free-h-out", type=float, default=1.0,
+                   help="free_h_out after the ramp (runE.sh: 1, so r-only rows read no h)")
     p.add_argument("--heads", default=",".join(CRITICAL))
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--signal-json", default="", help="signal_audit --json, summarized in the report")
@@ -173,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:
     schema = load_schema()
     args.init_from = args.checkpoint
     model = build_model(schema, args)
+    from .free_rows import r_only_keys, set_h_keep  # noqa: PLC0415
+
+    set_h_keep(model, 1.0 - args.free_h_out)
+    r_only = r_only_keys(model)
     batch = pick_part(args.train, args.approve, schema, args.max_atoms)
     shares = h_path_shares(model, batch, tuple(k for k in args.heads.split(",") if k), args.device)
     port = portability(model, batch, args.device)
@@ -190,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
     lines = [f"# Smoke checks ({'tiny' if args.tiny else 'live'}; checkpoint {args.checkpoint or 'fresh'}; "
              f"part {batch.deal_id}, {len(batch)} lines)", "",
              f"## Bypass: h-path share of each critical head (fail above {args.max_h_share:.0%})", "",
+             f"Post-ramp configuration: r-only free rows on {', '.join(r_only) or 'none'}, "
+             f"their h share {1.0 - args.free_h_out:g} (free_h_out {args.free_h_out:g}).", "",
              "| head | h-path share | |", "|---|---:|---|"]
     for k, v in shares.items():
         lines.append(f"| {k} | {'-' if v is None else f'{100 * v:.2f}%'} | "

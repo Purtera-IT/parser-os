@@ -100,21 +100,38 @@ def why_row_weights(batch: Batch, device) -> torch.Tensor:
     return torch.tensor(w, device=device, dtype=torch.float32)
 
 
-def weighted_ce(logits: torch.Tensor, y: torch.Tensor, rw: torch.Tensor) -> torch.Tensor:
-    """Cross-entropy averaged with row weights over the lines with a label."""
+def why_mean(per: torch.Tensor, w: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    """A WHY-weighted mean on an absolute scale: the sum of ``per * w`` over the
+    rows with a weight (and ``mask``), divided by how many there are, not by the
+    weights' sum. 1.0 is a saved WHY; a draft's ``DRAFT_WHY_WEIGHT`` (0.5) then
+    halves its rows even on a part whose WHYs are all drafts, where a mean
+    normalized by the weights would cancel it (signal audit: read.why_author)."""
+    on = w > 0
+    if mask is not None:
+        on = on & mask.bool()
+        w = w * mask
+    return (per * w).sum() / on.sum().clamp(min=1)
+
+
+def weighted_ce(logits: torch.Tensor, y: torch.Tensor, rw: torch.Tensor, absolute: bool = False) -> torch.Tensor:
+    """Cross-entropy averaged with row weights over the lines with a label
+    (``absolute``: WHY weights, ``why_mean``)."""
     m = y != IGNORE
     ce = F.cross_entropy(logits, y.clamp(min=0), reduction="none")
+    if absolute:
+        return why_mean(ce, rw, m)
     return (ce * rw * m).sum() / (rw * m).sum().clamp(min=1e-6)
 
 
 def answer_loss(logits: torch.Tensor, batch: Batch, key: str, rw: torch.Tensor,
-                keep: torch.Tensor | None = None) -> torch.Tensor:
-    """Saved sets use independent sigmoid answers; unknown rows teach nothing."""
+                keep: torch.Tensor | None = None, absolute: bool = False) -> torch.Tensor:
+    """Saved sets use independent sigmoid answers; unknown rows teach nothing.
+    ``absolute``: ``rw`` are WHY weights, averaged on their absolute scale (why_mean)."""
     if key not in batch.multi_targets:
         y = torch.tensor(batch.targets[key], device=logits.device)
         if keep is not None:
             y = y.masked_fill(~keep, IGNORE)
-        return weighted_ce(logits, y, rw)
+        return weighted_ce(logits, y, rw, absolute)
     values = batch.multi_targets[key]
     mask = torch.tensor([v is not None for v in values], device=logits.device)
     if keep is not None:
@@ -126,6 +143,8 @@ def answer_loss(logits: torch.Tensor, batch: Batch, key: str, rw: torch.Tensor,
         if ids:
             target[i, list(ids)] = 1
     per = F.binary_cross_entropy_with_logits(logits, target, reduction="none").mean(-1)
+    if absolute:
+        return why_mean(per, rw, mask)
     return (per * rw * mask).sum() / (rw * mask).sum().clamp(min=1e-6)
 
 
@@ -279,7 +298,7 @@ def judgment_rationale_loss(model: C3Model, out: C3Output, batch: Batch, *,
         notes = model.judgment_note(model.aux_text([j.note for j in js]).detach())
         loss = 1 - F.cosine_similarity(features, notes, dim=-1)
         weights = loss.new_tensor([j.why_weight for j in js])
-        total = total + (loss * weights).sum() / weights.sum().clamp(min=1e-6)
+        total = total + why_mean(loss, weights)
         terms += 1
     return total / max(terms, 1)
 
@@ -442,8 +461,8 @@ def why_losses(model: C3Model, out: C3Output, batch: Batch, desc, w: LossWeights
     sim = r @ F.normalize(why, dim=-1).T / tau
     target = torch.arange(len(idx), device=sim.device)
     ww = why_row_weights(batch, sim.device)[idx]
-    align = 0.5 * ((F.cross_entropy(sim, target, reduction="none") * ww).sum()
-                   + (F.cross_entropy(sim.T, target, reduction="none") * ww).sum()) / ww.sum()
+    align = 0.5 * (why_mean(F.cross_entropy(sim, target, reduction="none"), ww)
+                   + why_mean(F.cross_entropy(sim.T, target, reduction="none"), ww))
 
     stand_in = out.r.clone()
     stand_in[idx] = why + model.res_up(out.residual[idx])
@@ -456,7 +475,7 @@ def why_losses(model: C3Model, out: C3Output, batch: Batch, desc, w: LossWeights
     suff, terms = out.r.new_zeros(()), 0
     for key, lg in sub.logits.items():
         if has_answers(batch, key):
-            suff = suff + answer_loss(lg, batch, key, rw, keep)
+            suff = suff + answer_loss(lg, batch, key, rw, keep, absolute=True)
             terms += 1
     return align, suff / max(terms, 1)
 
@@ -532,7 +551,7 @@ def why_echo_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
         return out.r.new_zeros(())
     target = model.aux_text([batch.why[i] for i in idx]).detach()
     ww = why_row_weights(batch, out.r.device)[idx]
-    return ((1 - F.cosine_similarity(model.r_to_text(out.r[idx]), target, -1)) * ww).sum() / ww.sum()
+    return why_mean(1 - F.cosine_similarity(model.r_to_text(out.r[idx]), target, -1), ww)
 
 
 def clause_use_loss(model: C3Model, out: C3Output, batch: Batch, bank: ExplanationBank,

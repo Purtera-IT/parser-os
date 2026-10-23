@@ -814,8 +814,23 @@ def find_near_misses(texts: list[str], targets: dict[str, list[int]], labeled: l
     return look_alikes(texts, targets, labeled, schema, **kw)[0]
 
 
+#: A party value the page stores when nobody knows it: no target.
+_UNKNOWN_PARTY = frozenset({"", "unknown"})
+
+
 def _field_value(label: dict[str, Any], source: str, name: str) -> Any:
     if source == "column":
+        if "." in name:
+            # A party column (said_by.role, said_to.side): one party, or the
+            # set of the parties a line was said to. "unknown" teaches nothing.
+            field_name, _, part = name.partition(".")
+            raw = label.get(field_name)
+            parties = raw if isinstance(raw, list) else [raw]
+            values = [str(p.get(part) or "").strip().lower() for p in parties if isinstance(p, dict)]
+            values = sorted({v for v in values if v not in _UNKNOWN_PARTY})
+            if isinstance(raw, list):
+                return values or None
+            return values[0] if values else None
         return label.get(name)
     return (label.get("reads_set") or {}).get(name)
 
@@ -1150,19 +1165,45 @@ def _judged_lines(j: dict[str, Any], size: str, lines: _Lines) -> tuple[int, ...
 
 #: Cards whose subject is named by a query text: Questions (the question) and
 #: SOW slots (the section and the kind of fact the slot holds).
-QUERY_HEADS = ("gap", "question_answered", "sow_slot", "end_customer", "exclusion_set")
+QUERY_HEADS = ("gap", "question_answered", "sow_slot", "end_customer", "exclusion_set", "rule")
 #: Cards that link to the lines that decide them (target.source): the pointer loss.
 CITE_HEADS = ("sow_slot", "end_customer")
 
 
+_RULE_QUESTIONS: dict[str, str] | None = None
+
+
+def rule_question(name: str) -> str:
+    """The question a parser meaning rule asks of a line (judgment_heads.json
+    ``heads.rule.rules``), or a bare name for a rule the registry does not describe."""
+    global _RULE_QUESTIONS
+    if _RULE_QUESTIONS is None:
+        from .schema import JUDGMENTS_PATH  # noqa: PLC0415
+
+        heads = json.loads(Path(JUDGMENTS_PATH).read_text(encoding="utf-8"))["heads"]
+        _RULE_QUESTIONS = dict((heads.get("rule") or {}).get("rules") or {})
+    name = str(name or "").strip()
+    spelled = name.replace("_", " ").strip()
+    if name in _RULE_QUESTIONS:
+        return f"Parser rule {spelled}. {_RULE_QUESTIONS[name]}"
+    return f"Parser rule {spelled}." if spelled else "A parser rule."
+
+
 def judgment_query(j: dict[str, Any]) -> str:
-    """Only Questions and SOW slots have a separate source query; no verdict
-    or note enters it. A SOW slot's query is its ``target.query`` ("SOW
-    section: timeline. Slot: start date.")."""
+    """Only Questions, SOW slots and rule cards have a separate source query;
+    no verdict or note enters it. A SOW slot's query is its ``target.query``
+    ("SOW section: timeline. Slot: start date."); a rule card's is the rule's
+    question (``rule_question``) and whether the parser's rule fired: the call
+    a person keeps or overturns, which the parser knows before any label."""
     head = j.get("head")
     if head not in QUERY_HEADS:
         return ""
     t = j.get("target") if isinstance(j.get("target"), dict) else {}
+    if head == "rule":
+        fired = t.get("fired")
+        call = ("" if fired is None else
+                " The parser's rule fired on this line." if fired else " The parser's rule did not fire on this line.")
+        return (rule_question(str(t.get("rule") or "")) + call).strip()
     if head in ("sow_slot", "end_customer", "exclusion_set"):
         return str(t.get("query") or "").strip()
     return str(t.get("text") or j.get("text") or "").strip()
@@ -1774,6 +1815,13 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                                         literals, by_key):
                     raise ValueError(f"Unparsed {head} verdict")
                 placed = idx
+                # A literal card's note (norm, terminology) is the WHY of its
+                # reason code on that line: a field note, so card_alone and
+                # card_contrast read it with the other line cards' notes.
+                rkey = f"jdg:{head}:reason"
+                if head in LITERAL_HEADS and note and reason and rkey in by_key and why_weight(j) > 0:
+                    r_opp = by_key[rkey]
+                    field_notes[idx[0]].setdefault(rkey, mask_verdict(note) if r_opp.universal else note)
         if placed is None and reason:
             size = opp.size if opp is not None else LINE
             idx = judgment_subject(j, size, lines)

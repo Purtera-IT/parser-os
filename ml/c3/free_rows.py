@@ -35,9 +35,12 @@ from torch.nn import functional as F
 
 #: ``add_free_head("r:<key>")`` makes ``<key>``'s row an RFreeRow.
 R_ONLY = "r:"
-#: The heads whose free rows read r only (runE.sh passes ``--free-head r:<key>``).
+#: The heads whose free rows read r only (runE.sh passes ``--free-head r:<key>``):
+#: every generalization-critical line head with a free row (smoke_checks.CRITICAL;
+#: read:visit_count is a number and jdg:site a pair card, so neither has one).
 R_ONLY_KEYS = ("col:label_type", "col:admission", "col:supplier", "col:about",
-               "read:site", "jdg:site_role", "jdg:site_role:reason")
+               "read:site", "jdg:site_role", "jdg:site_role:reason",
+               "read:sow_section", "read:sow_element", "read:task_owner_role")
 
 
 class RFreeRow(nn.Module):

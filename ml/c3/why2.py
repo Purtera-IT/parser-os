@@ -57,6 +57,7 @@ from torch.nn import functional as F
 
 from . import free_rows
 from .data import IGNORE, Batch
+from .losses import why_mean
 from .model import C3Model, C3Output
 from .schema import NUMBER, RELATION
 
@@ -370,7 +371,7 @@ def judgment_why_alone_loss(model: C3Model, out: C3Output, batch: Batch, desc: d
         else:
             per = F.cross_entropy(logits, torch.tensor([j.answer for j in js], device=logits.device),
                                   reduction="none")
-        total = total + batch.head_scale.get(key, 1.0) * (per * wts).sum() / wts.sum().clamp(min=1e-6)
+        total = total + batch.head_scale.get(key, 1.0) * why_mean(per, wts)
         terms += 1
     return total / max(terms, 1)
 

@@ -568,6 +568,8 @@ def build_model(schema, args):
     for o in schema.opportunities:      # --free-head all, as runE.sh
         if o.universal and o.kind not in (RELATION, NUMBER) and len(o.answers) > 1:
             model.add_free_head(o.key)
+    for key in getattr(args, "free_head", None) or ():   # then the run's own rows (r:<key>, company rows)
+        model.add_free_head(key)
     return model.to(args.device)
 
 
@@ -749,10 +751,9 @@ def audit(args, union: LossWeights):
     """Counts and findings for every set (the parent folder of each file)."""
     from .schema import load_schema  # noqa: PLC0415
 
-    accepted = set()
-    if args.accept_drafts:
-        from .loop import read_draft_approvals  # noqa: PLC0415
-        accepted = set(read_draft_approvals(args.accept_drafts))
+    from .loop import approved_sha, read_draft_approvals  # noqa: PLC0415
+
+    accepted = read_draft_approvals(args.accept_drafts) if args.accept_drafts else {}
     prefixes = [str(Path(x).expanduser().resolve()) for x in args.approve]
     files: dict[str, list[tuple[str, bool]]] = defaultdict(list)
     for f in args.train:
@@ -760,7 +761,7 @@ def audit(args, union: LossWeights):
         if not re.fullmatch(r"\d{6}(@[a-z_]+)?\.json", name):
             continue
         full = str(Path(f).resolve())
-        ok = name in accepted or any(full.startswith(x) for x in prefixes)
+        ok = approved_sha(accepted, full) is not None or any(full.startswith(x) for x in prefixes)
         files[Path(f).resolve().parent.name].append((full, ok))
     sets = list(files)
     only = re.compile(args.only) if args.only else None
@@ -935,6 +936,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--train-encoder-layers", type=int, default=2)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--max-atoms", type=int, default=512)
+    p.add_argument("--free-head", action="append", default=[],
+                   help="the run's free rows after --free-head all (runE.sh: r:<key>, company rows)")
     p.add_argument("--loss-weight", action="append", default=[])
     p.add_argument("--head-weight", action="append", default=[])
     p.add_argument("--stage-steps", default="")

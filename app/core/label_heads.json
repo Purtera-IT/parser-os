@@ -86,11 +86,14 @@
       "status": "label",
       "label": "Whose fact, and what it wants",
       "question": "Whose fact is it, what does it ask of us, who supplies it, and does it bring someone in?",
-      "output": "about, wants and supplier classes; presence of each reading",
+      "output": "about, wants and supplier classes; who said it and to whom (role and side), internal only; presence of each reading",
       "columns": [
         "about",
         "wants",
-        "supplier"
+        "supplier",
+        "said_by",
+        "said_to",
+        "internal_only"
       ],
       "reads": [
         "introduces_party",

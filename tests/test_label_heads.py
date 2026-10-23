@@ -25,7 +25,7 @@ REG = load_registry()
 H = load_heads()
 SPACES = [s["key"] for s in H["spaces"]]
 LABELED_COLUMNS = {"label_type", "about", "wants", "supplier", "entity_keys", "hints", "hint_refs",
-                   "note", "rejected", "weight_tier"}
+                   "note", "rejected", "weight_tier", "said_by", "said_to", "internal_only"}
 
 #: Judgment surfaces the page has that parser-os HEAD_REGISTRY does not: the
 #: suppression card is aliased onto `admission`, the rule card feeds the

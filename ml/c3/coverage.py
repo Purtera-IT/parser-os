@@ -37,8 +37,10 @@ def _row(surface: str, target: str, loss: str, evaluation: str, status: str) -> 
 
 def lesson_for(opp) -> str:
     """How this tab is taught, and which other tabs it is allowed to use."""
-    if opp.field in ("rule", "router") or opp.key in ("jdg:rule", "jdg:router"):
+    if opp.field == "router" or opp.key == "jdg:router":
         return "not this model"
+    if opp.key == "jdg:rule":
+        return "the person's call on that line for the rule the card names; the parser's call is only an input"
     if opp.kind == RELATION:
         return "drawn link or no link; every other head reads only a link the model draws"
     if opp.size == "pair":
@@ -55,9 +57,6 @@ def lesson_for(opp) -> str:
 
 
 def _opportunity_row(opp) -> dict[str, str]:
-    if opp.field == "rule" or opp.key == "jdg:rule":
-        return _row(opp.key, "separate Rules export", "not c3_loss",
-                    "separate Rules holdout", "external_pending")
     if opp.field == "router" or opp.key == "jdg:router":
         return _row(opp.key, "none", "none", "preflight blocker", "deferred")
     if opp.key in {f"jdg:{head}" for head in LITERAL_HEADS}:
@@ -69,7 +68,8 @@ def _opportunity_row(opp) -> dict[str, str]:
         loss, evaluation = "relation_loss", "labeled-edge exact match"
     elif opp.kind == NUMBER:
         loss, evaluation = "smooth-l1 on log1p", "labeled-number error; teacher match on a WHY"
-    elif opp.size != "line":
+    elif opp.size != "line" or opp.key in ("jdg:rule", "jdg:rule:reason"):
+        # A rule card is a line card asked with its rule's question (data.judgment_query).
         loss, evaluation = "judgment_loss", "per-head exact match on labeled subjects"
     elif opp.multiple:
         loss, evaluation = "sigmoid BCE", "exact set match on labeled rows"

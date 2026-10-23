@@ -63,6 +63,33 @@ SIZES = (LINE, PAIR, GROUP, DEAL)
 #: Registry key of a column's question text where it is not "<col>_doc".
 _DOC_KEYS = {"supplier": "suppliers_doc"}
 
+#: Who said a line and to whom (the label's ``said_by`` / ``said_to``): the
+#: party's role and side, as column heads. "unknown" is the page's blank and
+#: teaches nothing. The line's sender *inputs* (speaker_role / side / org) are
+#: the parser's read of the same people (c3_record.sender), in a coarser
+#: vocabulary; these heads are the person's answer.
+SAID_ROLES = {
+    "customer": "The end customer the work is for, or someone on its staff.",
+    "provider": "The company doing the field work, writing as the provider of the job.",
+    "seller": "The provider's sales side: the account manager or seller who quotes the job.",
+    "internal": "Someone on the provider's own side talking among the provider's own people.",
+    "reseller": "A company that buys the work to resell it to the end customer.",
+    "partner": "Another company working with the provider or the customer on this job: a partner, subcontractor or distributor.",
+    "system": "A system, not a person: a ticketing tool, a form or a scheduler on the provider's side.",
+    "automated": "An automated message from outside: a notification, an auto-reply or a mailing system.",
+}
+SAID_SIDES = {
+    "ours": "The provider's own side: the company doing the work.",
+    "theirs": "The other side: the customer, a reseller, a partner or anyone outside the provider.",
+}
+#: Column heads on a dotted label field: (column, key, field, question, vocabulary, several answers).
+SAID_COLUMNS = {
+    "said_by": (("col:said_by_role", "said_by.role", "Who said this line: the role of the person or system that wrote or spoke it.", SAID_ROLES, False),
+                ("col:said_by_side", "said_by.side", "Which side said this line: the provider's own side or the other side.", SAID_SIDES, False)),
+    "said_to": (("col:said_to_role", "said_to.role", "Who this line was said to: the role of each person it was addressed to.", SAID_ROLES, True),
+                ("col:said_to_side", "said_to.side", "Which sides this line was said to: the provider's own side, the other side, or both.", SAID_SIDES, True)),
+}
+
 #: Absent is always a class: a reading the line does not have.
 ABSENT = "_absent"
 
@@ -358,7 +385,7 @@ def _add_extract_and_reason_opportunities(opps: list[Opportunity], homes: dict[s
 
     by_key = {o.key: o for o in opps}
     for name, items in reason_heads.items():
-        if name == "rule" or not items:
+        if not items:
             continue
         parent = by_key.get(f"jdg:{name}")
         if parent is None and name in aliases:
@@ -417,6 +444,19 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                     # plural key ("suppliers", "suppliers_doc").
                     description=f"{lead(h, universal)} {scrub(types.get(_DOC_KEYS.get(col, col + '_doc'), ''), universal)}".strip(),
                     answers=_answers(CLASS, docs, col, docs, names), **base))
+            elif col in SAID_COLUMNS:
+                for key, fld, question, vocab, several in SAID_COLUMNS[col]:
+                    docs = {v: scrub(d, universal) for v, d in vocab.items()}
+                    opps.append(Opportunity(
+                        key=key, field=fld, source="column", kind=CLASS, multiple=several,
+                        description=f"{lead(h, universal)} {scrub(question, universal)}",
+                        answers=_answers(CLASS, docs, key.split(":", 1)[1].replace("_", " "), docs), **base))
+            elif col == "internal_only":
+                opps.append(Opportunity(
+                    key="col:internal_only", field="internal_only", source="column", kind=BINARY,
+                    description=f"{lead(h, universal)} Was this line said only among the provider's own people, "
+                                "with nobody from the customer or another company in the conversation?",
+                    answers=_answers(BINARY, [], "internal only"), **base))
             elif col == "hints":
                 # "What told you?": which part of the context decided the label
                 # The context-hint chips permit several simultaneous answers.
