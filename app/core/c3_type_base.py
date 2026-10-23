@@ -659,6 +659,7 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
                                                                                      "purchase_order")), default=None)
         end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
         keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
+    _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
     kept = [rows[i] for i in keep]
     cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
     _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
