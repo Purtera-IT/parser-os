@@ -414,7 +414,7 @@ echo "trunk lr x$TRUNK_LR_SCALE, pull $TRUNK_PULL/step to INIT, KL $ANCHOR_KL on
 if [[ "$TINY" != 1 && "${DESC_GATE:-1}" == 1 ]]; then
   # DESC_OLD_CK: when INIT is a head_fit refit on the new texts, the checkpoint it was refit from.
   gate_args=(--checkpoint "$INIT" ${DESC_OLD_CK:+--old-checkpoint "$DESC_OLD_CK"} --deal "${valid_files[@]}" ${DESC_GATE_DEALS:-}
-             --max-drop "${DESC_MAX_DROP:-0.02}" --device cuda --json "$C3/out/desc_gate.json")
+             --max-drop "${DESC_MAX_DROP:-0.02}" --device "${C3_DEVICE:-cuda}" ${ENCODER:+--encoder "$ENCODER"} --json "$C3/out/desc_gate.json")
   [[ -n "${DESC_GATE_DRAFTS:-}" ]] && gate_args+=(--drafts-gold $DESC_GATE_DRAFTS)
   [[ "$GRAPH" != off ]] && gate_args+=(--graph-set "$GRAPH")
   set +e
@@ -428,7 +428,8 @@ if [[ "$TINY" == 1 ]]; then
 else
   args+=(--init-from "$INIT" --allow-text-change --allow-new-heads "$new_heads"
          --init-schema-ref "${INIT_SCHEMA_REF:-$INIT_SHAPE}"
-         --train-encoder-layers 2 --encoder-lr "${ENCODER_LR:-2e-5}")
+         --train-encoder-layers "${ENC_LAYERS:-2}" --encoder-lr "${ENCODER_LR:-2e-5}"
+         ${ENCODER:+--encoder "$ENCODER"})
 fi
 stages="lines=${LINES:-12},links=${LINKS:-6},cards=${CARDS:-6},numbers=${NUMBERS:-2},deal=${DEAL:-2},open_links=${OPEN_LINKS:-4}"
 TIER_GATE=${TIER_GATE:-0.98}

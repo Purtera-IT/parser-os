@@ -1823,11 +1823,17 @@ def main() -> None:
     else:
         from .lm import HFCausalLM
 
+        # Pilot (Mac): C3_DEVICE=mps runs the full student on Apple silicon with
+        # the encoder frozen (--train-encoder-layers 0); the teacher stays off.
+        dev = "cuda"
         if not torch.cuda.is_available():
-            raise SystemExit("This base run is for the H100. CUDA is not available. --tiny is the CPU check.")
+            if os.environ.get("C3_DEVICE") == "mps" and torch.backends.mps.is_available():
+                dev = "mps"
+            else:
+                raise SystemExit("This base run is for the H100. CUDA is not available. --tiny is the CPU check.")
         torch.set_float32_matmul_precision("high")
-        print("model", "h100", args.encoder, args.teacher)
-        student = live_student(schema, args.encoder).to("cuda")
+        print("model", "h100" if dev == "cuda" else dev, args.encoder, args.teacher)
+        student = live_student(schema, args.encoder).to(dev)
         if args.init_from:
             from .gates import load_checkpoint
 
@@ -1850,7 +1856,7 @@ def main() -> None:
             make_lm=lambda: HFCausalLM(
                 args.teacher, targets=("q_proj", "k_proj", "v_proj", "o_proj"),
                 max_len=TEACHER_MAX_LEN, trainable_rank=32, dtype=torch.bfloat16),
-            checkpoint=args.checkpoint or None, model=student, device="cuda",
+            checkpoint=args.checkpoint or None, model=student, device=dev,
             lr=args.lr, warmup_passes=args.warmup_passes, teacher_lr=1e-4, context_lines=6,
             adamw=True, freeze_teacher=True, page_batch=8, read_chunk=16,
             call_tokens=TEACHER_CALL_TOKENS, teacher_rows_per_step=32,
