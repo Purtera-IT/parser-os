@@ -195,6 +195,10 @@ def validate_deal(deal):
     for atom in deal.atoms:
         if atom_input_digest(atom) != deal.task_atom_digests.get(atom.key):
             raise ValueError("task source context changed before featurization")
+        # Windows may remove a label to make an overlap context-only, but
+        # cannot rewrite or restore supervision from a different source row.
+        if atom.label is not None and digest(atom.label) != deal.task_label_digests.get(atom.key):
+            raise ValueError("task source supervision changed before featurization")
 
 
 def constrain_batch(batch, profile, schema):

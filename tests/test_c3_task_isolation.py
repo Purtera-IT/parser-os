@@ -521,3 +521,16 @@ def test_source_conflicting_saved_labels_are_not_hidden_by_note_sanitization():
     other=copy.deepcopy(b['labels'][0]); other['id']='conflict'; other['note']='conflicting owner reasoning'
     b['labels'].append(other)
     with pytest.raises(ValueError,match='Conflicting saved'): load(b)
+
+
+def test_source_target_cannot_change_between_materializing_loader_and_features():
+    d,_=load()
+    d.atoms[0].label['reads_set']['labor_hours']='999'
+    with pytest.raises(ValueError,match='source supervision changed'): featurize(d,load_schema())
+
+
+@pytest.mark.parametrize('tier,weight',[('load_bearing',3.),('slight',.3)])
+def test_source_row_weight_is_not_flattened_by_projection(tier,weight):
+    b=payload(); b['labels'][0]['weight_tier']=tier
+    _,part=load(b)
+    assert part.weights==[weight]

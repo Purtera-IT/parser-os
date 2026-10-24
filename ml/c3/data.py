@@ -205,6 +205,7 @@ class DealExample:
     task_profile: dict[str, Any] | None = None
     task_profile_digest: str = ""
     task_atom_digests: dict[str, str] = field(default_factory=dict)
+    task_label_digests: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -362,6 +363,7 @@ class DealExample:
             deal.deal_id = f"{deal_id}@aux:{digest(task_profile)}"
             deal.task_profile_digest = digest(task_profile)
             deal.task_atom_digests = {a.key: atom_input_digest(a) for a in deal.atoms}
+            deal.task_label_digests = {a.key: digest(a.label) for a in deal.atoms}
         # Keep deferred fields and tab targets inspectable instead of claiming
         # that storing a row means the model has a loss for it.
         import copy
