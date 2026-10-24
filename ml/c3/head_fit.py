@@ -18,37 +18,67 @@ is never read. Counts and rates only, never line text.
 from __future__ import annotations
 
 import argparse
+import gc
+import hashlib
+import json
+from importlib.metadata import version
 import random
 import time
 from dataclasses import asdict
+from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 import torch.nn.functional as F
 
 from .data import IGNORE
+from . import free_rows
 from .loop import CHECK_SKIP_DOC_KINDS, TYPE_KEY, WATCH_CHECK, _autocast, live_student, load_split
+from .loop import lock_split, lock_validation
 from .readiness import digest
 from .schema import NUMBER, RELATION, load_schema
 
 
-def _cache(model, parts, keys, device):
+def _atomic_save(value, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(value, tmp)
+    tmp.replace(path)
+
+
+def _cache(model, parts, keys, device, cache_dir=None):
     """Per key: head input x, line state h, described logits, targets, row
     weights, parser picks and a scored mask, for the labeled rows only."""
     grabbed: dict[str, torch.Tensor] = {}
+    rationale: dict[str, torch.Tensor] = {}
     hooks = [head.register_forward_hook(lambda m, a, o, s=space: grabbed.__setitem__(s, a[0].detach()))
              for space, head in model.heads.items()]
+    hooks += [head.register_forward_hook(lambda m, a, o, s=space: rationale.__setitem__(s, o.detach()))
+              for space, head in model.space_in.items()]
     space_of = {k: model.schema.by_key()[k].space for k in keys}
-    rows: dict[str, dict[str, list]] = {k: {n: [] for n in ("x", "h", "base", "y", "w", "parser", "scored")}
+    rows: dict[str, dict[str, list]] = {k: {n: [] for n in ("x", "xr", "h", "base", "y", "w", "parser", "scored")}
                                          for k in keys}
     started = time.time()
     try:
         for i, b in enumerate(parts, 1):
+            path = Path(cache_dir) / f"part-{i:04d}.pt" if cache_dir else None
+            if path is not None and path.exists():
+                chunk = torch.load(path, map_location="cpu", weights_only=True)
+                for k, r in chunk.items():
+                    for n, t in r.items():
+                        rows[k][n].append(t)
+                print(f"reuse {i}/{len(parts)} parts {time.time() - started:.0f}s", flush=True)
+                continue
             grabbed.clear()
+            rationale.clear()
+            print(f"reading {i}/{len(parts)} lines={len(b)}", flush=True)
             with torch.no_grad(), _autocast(device):
                 out = model(b.oneshot(), company=b.company or None)
             h = out.h.float().cpu()
             w = torch.tensor(b.weights if len(b.weights) == len(b) else [1.0] * len(b))
             scored = torch.tensor([str(k or "").lower() not in CHECK_SKIP_DOC_KINDS for k in b.doc_kind])
+            chunk = {}
             for k in keys:
                 if k not in out.logits:
                     continue
@@ -67,13 +97,30 @@ def _cache(model, parts, keys, device):
                     y = torch.tensor([b.targets[k][j] for j in sel])
                 ix = torch.tensor(sel)
                 parser = b.parser_targets.get(k) or [IGNORE] * len(b)
-                rows[k]["x"].append(grabbed[space_of[k]].float().cpu()[ix].half())
-                rows[k]["h"].append(h[ix].half())
-                rows[k]["base"].append(out.logits[k].float().cpu()[ix])
-                rows[k]["y"].append(y)
-                rows[k]["w"].append(w[ix])
-                rows[k]["parser"].append(torch.tensor([parser[j] for j in sel]))
-                rows[k]["scored"].append(scored[ix])
+                # Total inference logits already include the existing free row.
+                base = out.logits[k].float().cpu()[ix]
+                if k in out.free_logits:
+                    base = base - out.free_logits[k].float().cpu()[ix]
+                c = dict(x=grabbed[space_of[k]].float().cpu()[ix],
+                         xr=rationale[space_of[k]].float().cpu()[ix], h=h[ix], base=base,
+                         y=y, w=w[ix], parser=torch.tensor([parser[j] for j in sel]), scored=scored[ix])
+                if k in model.free_heads:
+                    # Fail before saving incompatible features or training a row.
+                    with torch.no_grad():
+                        dev = next(model.free_heads[k].parameters()).device
+                        got = _logits(model, k, {n: t.to(dev) for n, t in c.items()}).cpu()
+                    torch.testing.assert_close(got, out.logits[k].float().cpu()[ix], rtol=1e-5, atol=1e-5)
+                chunk[k] = c
+                for n, t in c.items():
+                    rows[k][n].append(t)
+            if path is not None:
+                _atomic_save(chunk, path)
+            if hasattr(model, "save_text_cache"):
+                model.save_text_cache()
+            # Do not keep the previous part's dense graph alive during the next forward.
+            del out, h
+            grabbed.clear()
+            rationale.clear()
             print(f"read {i}/{len(parts)} parts {time.time() - started:.0f}s", flush=True)
     finally:
         for hk in hooks:
@@ -81,10 +128,66 @@ def _cache(model, parts, keys, device):
     return {k: {n: torch.cat(v) for n, v in r.items()} for k, r in rows.items() if r["y"]}
 
 
+def _file_sha(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _cache_run(args):
+    """Invalidate feature and optimizer caches on any input/code/config change."""
+    if not args.cache_dir:
+        return None
+    files = [Path(args.checkpoint), Path(args.init_shape)] if args.init_shape else [Path(args.checkpoint)]
+    files += list(Path(__file__).parent.glob("*.py"))
+    encoder = Path(args.encoder)
+    if not encoder.is_dir():
+        raise ValueError("--cache-dir requires a local encoder for a reproducible cache identity")
+    files += [p for p in encoder.rglob("*") if p.is_file()]
+    files += [Path(p) for p in args.train + args.validation]
+    config = vars(args).copy()
+    for key in ("cache_dir", "out", "text_cache"):
+        config.pop(key)
+    manifest = {"version": 1, "config": config,
+                "runtime": {"torch": str(torch.__version__), "transformers": version("transformers")},
+                "files": {str(p.resolve()): _file_sha(p) for p in sorted(set(files))}}
+    root = Path(args.cache_dir) / digest(manifest)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(f"cache run {root}", flush=True)
+    return root
+
+
+def _cached_split(model, paths, schema, max_atoms, keys, device, cache_dir):
+    """Load one deal's dense masks at a time; keep only compact labeled features."""
+    chunks = []
+    for i, path in enumerate(paths):
+        parts, _ = load_split([path], schema, max_atoms)
+        part_dir = Path(cache_dir) / f"deal-{i:04d}" if cache_dir else None
+        print(f"deal {i + 1}/{len(paths)} parts={len(parts)}", flush=True)
+        chunks.append(_cache(model, parts, keys, device, part_dir))
+        del parts
+        gc.collect()
+    present = {k for chunk in chunks for k in chunk}
+    return {k: {n: torch.cat([chunk[k][n] for chunk in chunks if k in chunk])
+                for n in next(chunk[k] for chunk in chunks if k in chunk)} for k in present}
+
+
+def _split_ids(paths, schema, max_atoms):
+    ids = []
+    for path in paths:
+        parts, _ = load_split([path], schema, max_atoms)
+        ids.extend(SimpleNamespace(deal_id=b.deal_id) for b in parts)
+        del parts
+    return ids
+
+
 def _logits(model, key, c, idx=None):
     sel = (lambda t: t) if idx is None else (lambda t: t[idx])
-    z = torch.cat([sel(c["x"]).float(), sel(c["h"]).float()], -1)
-    return sel(c["base"]) + model.free_heads[key](z)
+    return sel(c["base"]) + free_rows.universal_free(
+        model.free_heads[key], sel(c["xr"]).float(), sel(c["x"]).float(), sel(c["h"]).float())
 
 
 def type_scores(model, c, focus: int, keep: int, sure: float = 0.5) -> dict[str, float]:
@@ -133,7 +236,7 @@ def _guard(heads: dict[str, float], start_macro: float | None, min_watch: float)
 
 def fit_heads(model, tr, va, keys, *, epochs: int = 60, check_every: int = 5, lr: float = 1e-3,
               weight_decay: float = 1e-2, type_weight: float = 5.0, batch: int = 4096,
-              min_watch: float = 0.9):
+              min_watch: float = 0.9, progress_path=None):
     """Train the free heads on the cached rows. Returns the best validation
     line-type exact among the epochs that pass the head guard, and the free
     heads' state at that epoch (None when no guarded epoch beat where it
@@ -154,7 +257,17 @@ def fit_heads(model, tr, va, keys, *, epochs: int = 60, check_every: int = 5, lr
           + ("" if ok0 else f" guard_failed {why0}"), flush=True)
     # A start that fails the guard is no bar to beat: any guarded epoch wins.
     best, best_state = (before["exact"] if ok0 else -1.0), None
-    for epoch in range(1, epochs + 1):
+    first_epoch = 1
+    if progress_path is not None and Path(progress_path).exists():
+        saved = torch.load(progress_path, map_location="cpu", weights_only=True)
+        for k, st in saved["current"].items():
+            model.free_heads[k].load_state_dict(st)
+        opt.load_state_dict(saved["optimizer"])
+        torch.set_rng_state(saved["rng"])
+        best, best_state = saved["best"], saved["best_state"]
+        first_epoch = saved["epoch"] + 1
+        print(f"resume heads epoch {first_epoch}", flush=True)
+    for epoch in range(first_epoch, epochs + 1):
         orders = {k: torch.randperm(len(tr[k]["y"])) for k in keys}
         steps = max((len(o) + batch - 1) // batch for o in orders.values())
         total = 0.0
@@ -190,6 +303,10 @@ def fit_heads(model, tr, va, keys, *, epochs: int = 60, check_every: int = 5, lr
                 best_state = {k: {n: t.detach().clone() for n, t in model.free_heads[k].state_dict().items()}
                               for k in keys}
                 print(f"best epoch {epoch} valid_exact={best:.3f}", flush=True)
+        if progress_path is not None:
+            _atomic_save(dict(epoch=epoch, current={k: model.free_heads[k].state_dict() for k in keys},
+                              optimizer=opt.state_dict(), rng=torch.get_rng_state(), best=best,
+                              best_state=best_state), progress_path)
     return best, best_state
 
 
@@ -216,11 +333,15 @@ def main() -> None:
                         "this code's texts")
     p.add_argument("--keys", default="", help="comma-separated heads to refit (default every universal class head)")
     p.add_argument("--text-cache", default="", help="line vectors by sha1 of the text (desc_gate._text_cache)")
+    p.add_argument("--cache-dir", default="", help="fingerprinted per-part features and resumable head optimizer")
     p.add_argument("--threads", type=int, default=0)
     p.add_argument("--graph-set", default="",
                    help="graph flags over the checkpoint's (graph.parse_graph keys): fit under the run's graph, "
                         "e.g. rune,lattice_doc=1")
     args = p.parse_args()
+    cache_run = _cache_run(args)
+    if cache_run is not None and not args.text_cache:
+        args.text_cache = str(cache_run / "encoder-text.pt")
     if args.threads:
         torch.set_num_threads(args.threads)
     from .gates import load_checkpoint, save_checkpoint
@@ -257,11 +378,19 @@ def main() -> None:
         missing = sorted(set(want) - set(keys))
         if missing:
             raise SystemExit("--keys: not a universal class head: " + ", ".join(missing))
-    train, _ = load_split(args.train, schema, args.max_atoms)
-    val, _ = load_split(args.validation, schema, args.max_atoms)
+    train = _split_ids(args.train, schema, args.max_atoms)
+    val = _split_ids(args.validation, schema, args.max_atoms)
+    lock_split(train, [], need_holdout=False)
+    lock_validation(train, [], val)
     print(f"parts train={len(train)} validation={len(val)}", flush=True)
-    tr = _cache(model, train, keys, dev)
-    va = _cache(model, val, keys, dev)
+    del train, val
+    gc.collect()
+    tr = _cached_split(model, args.train, schema, args.max_atoms, keys, dev,
+                       cache_run / "train" if cache_run else None)
+    # Guard watched heads even when --keys only selects other rows for training.
+    validation_keys = list(dict.fromkeys(keys + list(WATCH_CHECK)))
+    va = _cached_split(model, args.validation, schema, args.max_atoms, validation_keys, dev,
+                       cache_run / "validation" if cache_run else None)
     if hasattr(model, "save_text_cache"):
         model.save_text_cache()
     keys = [k for k in keys if k in tr]
@@ -272,7 +401,8 @@ def main() -> None:
     print("heads " + " ".join(f"{k}:{len(tr[k]['y'])}" for k in keys), flush=True)
     best, best_state = fit_heads(model, tr, va, keys, epochs=args.epochs, check_every=args.check_every,
                                  lr=args.lr, weight_decay=args.weight_decay,
-                                 type_weight=args.type_weight, batch=args.batch, min_watch=args.min_watch)
+                                 type_weight=args.type_weight, batch=args.batch, min_watch=args.min_watch,
+                                 progress_path=cache_run / "heads-progress.pt" if cache_run else None)
     if best_state is None:
         print("no epoch passed the head guard and beat the checkpoint on validation; nothing saved",
               flush=True)
