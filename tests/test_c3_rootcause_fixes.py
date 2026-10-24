@@ -301,3 +301,25 @@ def test_runE_runs_the_description_gate_before_the_loop():
     sh = RUNE_SH.read_text()
     assert "ml.c3.desc_gate" in sh and "C3_EMBED_CONTRAST" in sh
     assert sh.index("ml.c3.desc_gate") < sh.index("python -m ml.c3.loop")
+
+
+def test_run_base_trains_with_the_anchor_and_resumes_toward_init(schema, tmp_path, capsys):
+    """The loop end to end with all three knobs and lattice_doc: the anchor file is written once, and a
+    resume reads INIT from it rather than anchoring to where the run stopped."""
+    from ml.c3.loop import Budget, run_base
+
+    b = _labeled_fixture(schema)
+    hold = featurize(replace(DealExample.load(ROOT / "ml" / "c3" / "fixtures" / "synthetic_deal.json"),
+                             deal_id="synthetic-holdout"), schema)
+    ck = str(tmp_path / "run.pt")
+    budget = Budget(teacher=0, lines=2, links=0, cards=0, numbers=0, deal=0, open_links=0, teach=0)
+    kw = dict(cfg=CFG, adamw=True, graph=parse_graph("rune,lattice_doc=1"), score_holdout=False,
+              checkpoint=ck, check_every=1, trunk_lr_scale=0.1, trunk_pull=0.05, anchor_kl=0.5,
+              anchor_heads=("col:label_type",))
+    model, run = run_base([b], [hold], schema, budget, **kw)
+    out = capsys.readouterr().out
+    assert "anchor: trunk lr x0.1, pull 0.05/step" in out and "trunk_drift" in out
+    assert Path(ck + ".anchor.pt").exists() and model.graph["lattice_doc"] is True
+    run_base([b], [hold], schema, Budget(teacher=0, lines=3, links=0, cards=0, numbers=0, deal=0,
+                                         open_links=0, teach=0), resume=True, **kw)
+    assert "anchor: INIT trunk and predictions from" in capsys.readouterr().out
