@@ -805,8 +805,9 @@ def _score_oneshot_inner(model: C3Model, batch: Batch) -> dict[str, dict[str, fl
         hit = total = 0
         n = int(scores_row.shape[0])
         away = set(batch.link_elsewhere.get(rel, ()))
+        ignored = set(batch.link_ignored.get(rel, ()))
         for src in labeled:
-            if src >= n or (src in away and src not in gold):
+            if src >= n or src in ignored or (src in away and src not in gold):
                 continue
             row = scores_row[src]
             if none is not None:

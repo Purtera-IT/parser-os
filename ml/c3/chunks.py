@@ -54,7 +54,7 @@ def split_deal(deal: DealExample, max_atoms: int, schema=None) -> list[DealChunk
                 company_policy=deal.company_policy, edges=inside,
                 outcome=dict(deal.outcome), judgments=judgments,
                 edge_notes={k: v for k, v in deal.edge_notes.items() if k in inside},
-                source_supervision={}),
+                source_supervision={}, held_relations=list(deal.held_relations)),
             cross_edges=tuple(outside),
             uncovered_judgments=0))
     saved = [j for j in deal.judgments if isinstance(j, dict)]

@@ -198,8 +198,13 @@ class DealExample:
     balance_version: int | None = None
     balance_config: dict[str, Any] | None = None
 
+    #: Training-only source/relation IGNORE, including the no-link class.
+    held_relations: list[tuple[str, str]] = field(default_factory=list)
+
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
+        if d.get("supervision_holds") is not None:
+            raise ValueError("supervision_holds requires the labeling-blob loader with labels and atoms")
         atoms = [Atom(key=str(a["key"]), text=str(a.get("text", "")),
                       entered_at=_time(a.get("entered_at")),
                       doc_id=str(a.get("doc_id") or a.get("artifact_id") or ""),
@@ -270,6 +275,8 @@ class DealExample:
         targets stay in ``source_supervision``; they train nothing until the
         compile sends such lines. False adds them as lines, as before.
         """
+        from .holds import mask_training_blob
+        blob, held_relations = mask_training_blob(blob, atoms)
         labels = select_labels(blob.get("labels", []))
         rows, edges = [], []
         for a in atoms:
@@ -334,6 +341,7 @@ class DealExample:
                                       "balance_version": blob.get("balance_version"),
                                       "balance_config": blob.get("balance_config")})
         deal.link_stats = link_stats
+        deal.held_relations = held_relations
         # Keep deferred fields and tab targets inspectable instead of claiming
         # that storing a row means the model has a loss for it.
         import copy
@@ -657,6 +665,8 @@ class Batch:
     #: at a line outside the window (taught in another part): the window must
     #: not teach them "no link".
     link_elsewhere: dict[str, list[int]] = field(default_factory=dict)
+    #: Explicit held targets; stronger than an edge that merely leaves a window.
+    link_ignored: dict[str, list[int]] = field(default_factory=dict)
     #: Saved answers that disagree and were not taught, for the labeler.
     notes: list[str] = field(default_factory=list)
     #: Each row's line key (label_key, or a Dropped card's own key), so a
@@ -1627,7 +1637,10 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     edges_ok = {o.field for o in schema.select(kind=RELATION)}
     # A link touching a row set aside trains nothing (as in app.learning.human_labels).
     aside = {a.key for a in deal.atoms if excluded(a.label)}
+    held_relations = set(deal.held_relations)
     for src, dst, rel in deal.edges:
+        if (src, rel) in held_relations:
+            continue
         if src in index and dst in index and not {src, dst} & aside:
             pair = (index[src], index[dst])
             if pair not in edges.setdefault(rel, []):
@@ -1885,6 +1898,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     # Why a link was drawn: the teacher reads it as the WHY of that relation
     # on the line the link starts from (a [purtera] part goes to the company).
     for (src, dst, rel), note in deal.edge_notes.items():
+        if (src, rel) in held_relations:
+            continue
         i, k = index.get(src), f"rel:{rel}"
         if i is None or dst not in index or k not in by_key or {src, dst} & aside:
             continue
@@ -1922,7 +1937,8 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         multi_targets=multi_targets, literals=literals, deal_numbers=deal_numbers,
         pixels=[a.pixels or _pixels(None) for a in atoms],
         geometry=[a.geometry or _geometry({}) for a in atoms],
-        link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
+        link_elsewhere=_elsewhere_rows([*elsewhere, *held_relations], index),
+        link_ignored=_elsewhere_rows(held_relations, index), notes=value_notes + notes,
         keys=[a.key for a in atoms], parser_targets=parser_targets, head_scale=dict(deal.head_scale),
         deal_loss_scale=deal.deal_loss_scale,
         balance_version=deal.balance_version, balance_config=deal.balance_config,

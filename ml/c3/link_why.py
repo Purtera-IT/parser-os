@@ -53,7 +53,8 @@ def link_note_rows(model: C3Model, batch: Batch) -> list[tuple[int, int, str, st
     deal view does not mask (head_scale ``rel:<name>`` 0)."""
     known = {o.field for o in model.schema.select(kind=RELATION)}
     return [(i, j, rel, _norm(t)) for i, j, rel, t in batch.edge_notes
-            if rel in known and _norm(t) and batch.head_scale.get(f"rel:{rel}", 1.0)]
+            if rel in known and _norm(t) and batch.head_scale.get(f"rel:{rel}", 1.0)
+            and i not in batch.link_ignored.get(rel, ())]
 
 
 def note_columns(rows: list[tuple[int, int, str, str]]) -> tuple[list[str], list[int]]:
