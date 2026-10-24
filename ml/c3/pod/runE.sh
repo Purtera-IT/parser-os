@@ -39,7 +39,8 @@
 #               field in the TRAIN_DIRs and $C3/runE/train_presow / train_plan;
 #               both are required. Never trained, in any view
 #   INIT        start checkpoint (default $C3/runC.pt.open_links.slim, the live
-#               one; its md5 is checked unless INIT_MD5=skip)
+#               one; its md5 is checked unless INIT_SHA256 pins a refitted checkpoint)
+#   INIT_SHA256 exact SHA256 for a refitted INIT; checked before any training.
 #   LAYOUT_LOCK KEYWORD_DROPOUT WHY_CONTRAST WHY_ALONE WHY_SWAP TYPE_WEIGHT RAMP
 #   WHY_ALIGN WHY_SUFFICIENCY LINK_WHY_CONTRAST LINK_WHY_ALONE  override the
 #               loss table (0.5 0.3 0.3 0.2 0.1 5 2 0 0 0.3 0.2); 0 turns a term off. The ablation configs are in loss_plan.md
@@ -139,7 +140,8 @@
 #               separated, labeled; DESC_GATE_DRAFTS read drafts as gold): NO-GO when the
 #               text change alone costs a head with >= 20 rows more than 2 points. Refit
 #               the affected heads (ml/c3/head_fit.py --init-shape ... --keys ...) before launching,
-#               never past it; then INIT=<refit> INIT_MD5=skip DESC_OLD_CK=<the live checkpoint>
+#               never past it; then INIT=<refit> INIT_SHA256=<verified hash>
+#               DESC_OLD_CK=<the live checkpoint>
 source "$(dirname "$0")/common.sh"
 # Pilot A M2: the embedded type texts, the same in every python below and in serve (the
 # schema digest records it, so a checkpoint never loads under the other texts).
@@ -265,7 +267,18 @@ echo "validation ${valid_files[*]}"
 # The start checkpoint is the live one.
 if [[ "$TINY" != 1 ]]; then
   [[ -f "$INIT" ]] || { echo "no INIT $INIT" >&2; exit 1; }
-  if [[ "${INIT_MD5:-}" != skip ]]; then
+  if [[ -n "${INIT_SHA256:-}" ]]; then
+    got=$(python - "$INIT" <<'PY'
+import hashlib, sys
+h = hashlib.sha256()
+with open(sys.argv[1], "rb") as f:
+    for block in iter(lambda: f.read(8 * 1024 * 1024), b""):
+        h.update(block)
+print(h.hexdigest())
+PY
+    )
+    [[ "$got" == "$INIT_SHA256" ]] || { echo "INIT sha256 mismatch" >&2; exit 1; }
+  elif [[ "${INIT_MD5:-}" != skip ]]; then
     if command -v md5sum >/dev/null; then got=$(md5sum "$INIT" | cut -d' ' -f1); else got=$(md5 -q "$INIT"); fi
     [[ "$got" == "$LIVE_MD5" ]] || { echo "INIT md5 $got is not the live checkpoint ($LIVE_MD5); INIT_MD5=skip to start elsewhere" >&2; exit 1; }
   fi
