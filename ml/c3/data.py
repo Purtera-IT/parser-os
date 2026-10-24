@@ -200,6 +200,8 @@ class DealExample:
 
     #: Training-only source/relation IGNORE, including the no-link class.
     held_relations: list[tuple[str, str]] = field(default_factory=list)
+    #: Training-only (source label key, read field) unknown targets and notes.
+    held_reads: list[tuple[str, str]] = field(default_factory=list)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -342,6 +344,7 @@ class DealExample:
                                       "balance_config": blob.get("balance_config")})
         deal.link_stats = link_stats
         deal.held_relations = held_relations
+        deal.held_reads = list(blob.get("held_reads") or [])
         # Keep deferred fields and tab targets inspectable instead of claiming
         # that storing a row means the model has a loss for it.
         import copy
@@ -1915,6 +1918,24 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
 
     context = {slot: [_context_value(((a.label or {}).get("reads_set") or {}).get(slot)) for a in atoms]
                for slot in CONTEXT_SLOTS}
+    # Apply after all derivations/aliases: absence defaults and query cards
+    # must not reinstate a held answer or retarget its field note to the type.
+    read_ignored = {(index[key], f"read:{name}") for key, name in deal.held_reads if key in index}
+    for i, key in read_ignored:
+        if key in targets:
+            targets[key][i] = IGNORE
+        if key in numbers_target:
+            numbers_target[key][i] = None
+        if key in multi_targets:
+            multi_targets[key][i] = None
+        if key in parser_targets:
+            parser_targets[key][i] = IGNORE
+        if key in negatives:
+            negatives[key][i] = []
+        field_notes[i].pop(key, None)
+    literals = [t for t in literals if (t.line, t.key) not in read_ignored]
+    reason_notes = [(i, key, note) for i, key, note in reason_notes if (i, key) not in read_ignored]
+    judged = [j for j in judged if not any((i, j.key) in read_ignored for i in j.lines)]
     alike = look_alikes([a.text for a in atoms], targets,
                         [a.label is not None and not excluded(a.label) for a in atoms], schema,
                         linked=edges.get("near_miss", []))

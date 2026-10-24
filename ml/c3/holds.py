@@ -1,8 +1,16 @@
-"""Explicit training-only holds. A held source/relation is unknown, never no-link.
+"""Explicit training-only holds. A held target is unknown, never absent/no-link.
 
 Rows on disk remain intact. Loader copies remove held positive edges, their
 notes and explicitly dependent cards; featurize also masks the no-link lesson.
 No model input or unrelated line/site target is removed.
+
+``supervision_holds = {"version": 1, "groups": [...]}`` also accepts a group
+``{"group": "review-id", "source_keys": ["label-key"], "read_fields": ["trigger_event"]}``.
+Fields use registry names without ``read:``. This variant has no ``relation``:
+relation-only loaders fail closed. Missing source rows in a cut/window resolve
+to no target; the hold never moves to another occurrence. Only a loader copy
+loses the specified read, its shown/rejected negative, and its field note.
+Featurize applies the IGNORE again after derived aliases and absence defaults.
 """
 from __future__ import annotations
 
@@ -10,6 +18,7 @@ import copy
 from typing import Any
 
 VERSION = 1
+READ_FIELDS_VERSION = 1
 
 
 def mask_training_blob(blob: dict[str, Any], atoms: list[dict[str, Any]]
@@ -28,6 +37,7 @@ def mask_training_blob(blob: dict[str, Any], atoms: list[dict[str, Any]]
     rows = [dict(a, key=a.get("key") or a.get("label_key")) for a in atoms]
     atom_keys = {a["key"] for a in rows}
     held: set[tuple[str, str]] = set()
+    held_reads: set[tuple[str, str]] = set()
     source_relations: set[tuple[str, str]] = set()
     link_ids: set[str] = set()
     card_keys: set[str] = set()
@@ -37,6 +47,22 @@ def mask_training_blob(blob: dict[str, Any], atoms: list[dict[str, Any]]
     for j in cards:
         j["labeler"] = "hold-resolution"
     for group in groups:
+        if isinstance(group, dict) and "read_fields" in group:
+            # Deliberately no relation: older loaders reject this group rather
+            # than silently treating unknown supervision as a negative.
+            from .schema import load_schema
+
+            fields = group["read_fields"]
+            sources = group.get("source_keys")
+            known = {o.field for o in load_schema().opportunities if o.source == "read"}
+            if (not group.get("group") or "relation" in group
+                    or not isinstance(sources, list) or not sources
+                    or not all(isinstance(k, str) and k for k in sources)
+                    or not isinstance(fields, list) or not fields
+                    or not all(isinstance(f, str) and f in known for f in fields)):
+                raise ValueError("Incomplete or unknown read-field supervision hold")
+            held_reads.update((key, name) for key in sources for name in fields)
+            continue
         if (not isinstance(group, dict) or not group.get("group")
                 or not isinstance(group.get("source_keys"), list)
                 or not group["source_keys"] or not isinstance(group.get("relation"), str)
@@ -76,10 +102,22 @@ def mask_training_blob(blob: dict[str, Any], atoms: list[dict[str, Any]]
                             if j.get("target_key") not in card_keys]
     for lb in result.get("labels") or []:
         key = lb.get("label_key")
+        for source, name in held_reads:
+            if key != source:
+                continue
+            reads = lb.get("reads_set")
+            if isinstance(reads, dict):
+                reads.pop(name, None)
+                reads.pop(f"{name}_note", None)
+            if isinstance(lb.get("rejected_reads"), dict):
+                lb["rejected_reads"].pop(name, None)
+            if isinstance(lb.get("reads_shown"), list):
+                lb["reads_shown"] = [f for f in lb["reads_shown"] if f != name]
         lb["links"] = [k for k in lb.get("links") or []
                        if (key, k.get("relation")) not in held]
         if key in note_keys:
             lb.pop("note", None)
             lb["why_weight"] = 0.0
     result["held_relations"] = sorted(held)
+    result["held_reads"] = sorted(held_reads)
     return result, sorted(held)
