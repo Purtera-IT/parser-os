@@ -202,10 +202,13 @@ class DealExample:
     held_relations: list[tuple[str, str]] = field(default_factory=list)
     #: Training-only (source label key, read field) unknown targets and notes.
     held_reads: list[tuple[str, str]] = field(default_factory=list)
+    task_profile: dict[str, Any] | None = None
+    task_profile_digest: str = ""
+    task_atom_digests: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
-        if d.get("supervision_holds") is not None:
+        if any(k in d for k in ("supervision_holds", "task_profile", "task_profiles")):
             raise ValueError("supervision_holds requires the labeling-blob loader with labels and atoms")
         atoms = [Atom(key=str(a["key"]), text=str(a.get("text", "")),
                       entered_at=_time(a.get("entered_at")),
@@ -277,6 +280,14 @@ class DealExample:
         targets stay in ``source_supervision``; they train nothing until the
         compile sends such lines. False adds them as lines, as before.
         """
+        task_profile = None
+        if any(k in blob for k in ("task_profile", "task_profiles")):
+            raise ValueError("task profiles require supervision_holds.version=2 with one task_profile")
+        if blob.get("supervision_holds") is not None and not isinstance(blob["supervision_holds"], dict):
+            raise ValueError("supervision_holds must be a versioned mapping")
+        if (blob.get("supervision_holds") or {}).get("version") == 2:
+            from .tasks import project_blob
+            blob, atoms, task_profile = project_blob(blob, atoms)
         from .holds import mask_training_blob
         blob, held_relations = mask_training_blob(blob, atoms)
         labels = select_labels(blob.get("labels", []))
@@ -345,6 +356,12 @@ class DealExample:
         deal.link_stats = link_stats
         deal.held_relations = held_relations
         deal.held_reads = list(blob.get("held_reads") or [])
+        deal.task_profile = task_profile
+        if task_profile is not None:
+            from .tasks import atom_input_digest, digest
+            deal.deal_id = f"{deal_id}@aux:{digest(task_profile)}"
+            deal.task_profile_digest = digest(task_profile)
+            deal.task_atom_digests = {a.key: atom_input_digest(a) for a in deal.atoms}
         # Keep deferred fields and tab targets inspectable instead of claiming
         # that storing a row means the model has a loss for it.
         import copy
@@ -353,6 +370,8 @@ class DealExample:
             "links": blob.get("links") or [], "deal_answers": blob.get("deal_answers") or [],
             "missed_history": blob.get("missed_history") or [],
         })
+        if task_profile is not None:
+            deal.source_supervision = {}
         return deal
 
 
@@ -706,6 +725,8 @@ class Batch:
     balance_config: dict[str, Any] | None = None
     #: Runtime-only per-head balance multiplier, outside the heads-average divisor.
     head_loss_scale: dict[str, float] = field(default_factory=dict)
+    task_profile: dict[str, Any] | None = None
+    task_input_digest: str = ""
     #: Inputs: the sender's organisation kind, the document's direction and
     #: the deal's stage when the line arrived (c3_record.sender), per line.
     org: list[str] = field(default_factory=list)
@@ -1555,6 +1576,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     """
     import dataclasses
 
+    if deal.task_profile is not None:
+        from .tasks import validate_deal
+        validate_deal(deal)
+    elif deal.task_profile_digest or deal.task_atom_digests:
+        raise ValueError("materialized task profile cannot be removed")
     if max_atoms is not None and len(deal.atoms) > max_atoms:
         raise ValueError("Deal exceeds dense attention budget; relation-preserving chunking "
                          "is required before training (do not truncate the source)")
@@ -1939,7 +1965,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     alike = look_alikes([a.text for a in atoms], targets,
                         [a.label is not None and not excluded(a.label) for a in atoms], schema,
                         linked=edges.get("near_miss", []))
-    return Batch(
+    batch = Batch(
         deal_id=deal.deal_id, company=company, company_policy=deal.company_policy,
         texts=[a.text for a in atoms], numbers=[number_tokens(a.text) for a in atoms],
         doc_kind=[a.doc_kind for a in atoms], role=[a.speaker_role for a in atoms],
@@ -1966,6 +1992,10 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
                          for t in a.layout_rewrites if t.strip() != a.text.strip()],
         edge_notes=edge_notes, reason_notes=reason_notes, unplaced_notes=unplaced_notes)
+    if deal.task_profile is not None:
+        from .tasks import constrain_batch
+        return constrain_batch(batch, deal.task_profile, schema)
+    return batch
 
 
 def _elsewhere_rows(pairs: Iterable[tuple[str, str]], index: dict[str, int]) -> dict[str, list[int]]:

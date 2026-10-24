@@ -139,6 +139,8 @@ class TeacherView:
 def teacher_view(teacher, batch: Batch, company: str | None = None,
                  grounding: bool = True, rewrites: list[Rewrite] | None = None,
                  graph=None, ground_rows: list[int] | None = None) -> TeacherView:
+    from .tasks import reject_teacher
+    reject_teacher(batch)
     from .brain import company_field_notes, notes_from_deal, teacher_cards, told_why  # noqa: PLC0415
 
     was = teacher.training
@@ -312,6 +314,9 @@ def supercharge_loss(model: C3Model, out: C3Output, view: TeacherView,
     """The teaching terms for one deal. ``out`` is the heads' own forward pass
     (no teacher inside it); ``view`` is detached. ``batch`` (with its flips)
     turns on ``teach_flip``."""
+    if batch is not None:
+        from .tasks import reject_teacher
+        reject_teacher(batch)
     w = w or TeachWeights()
     # One encoding of the descriptions for every term: with a trainable
     # encoder each describe() is a full pass kept for backward.

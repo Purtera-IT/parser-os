@@ -167,6 +167,8 @@ def _deal_answers(model: C3Model, out, batch: Batch, schema: Schema) -> dict[str
 def read_deal(model: C3Model, deal: DealExample, schema: Schema, **kwargs) -> dict[str, Any]:
     """``_read_deal`` with every read, including the cards and links taken
     from the pass's outputs, under one no-grad autocast."""
+    if deal.task_profile is not None or deal.task_profile_digest:
+        raise ValueError("isolated auxiliary task profiles are training-only; serving/forecast execution unsupported")
     with torch.no_grad(), _read_autocast(kwargs.get("device", "cpu")):
         return _read_deal(model, deal, schema, **kwargs)
 

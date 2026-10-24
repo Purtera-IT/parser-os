@@ -55,7 +55,10 @@ def split_deal(deal: DealExample, max_atoms: int, schema=None) -> list[DealChunk
                 outcome=dict(deal.outcome), judgments=judgments,
                 edge_notes={k: v for k, v in deal.edge_notes.items() if k in inside},
                 source_supervision={}, held_relations=list(deal.held_relations),
-                held_reads=list(deal.held_reads)),
+                view=deal.view, head_scale=dict(deal.head_scale), deal_loss_scale=deal.deal_loss_scale,
+                balance_version=deal.balance_version, balance_config=deal.balance_config,
+                held_reads=list(deal.held_reads), task_profile=deal.task_profile,
+                task_profile_digest=deal.task_profile_digest, task_atom_digests=deal.task_atom_digests),
             cross_edges=tuple(outside),
             uncovered_judgments=0))
     saved = [j for j in deal.judgments if isinstance(j, dict)]

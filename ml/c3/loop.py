@@ -704,6 +704,8 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
                   unlabeled_keys: set[str] | None = None,
                   scale: float = 1.0, shares: dict[str, list[float]] | None = None,
                   anchor=None) -> torch.Tensor:
+    if getattr(batch, "task_profile", None) is not None and (teacher is not None or view is not None):
+        raise ValueError("teacher/lesson execution is unsupported for isolated auxiliary tasks")
     model.train()
     with _autocast(device):
         kept: dict = {}
@@ -712,7 +714,7 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
             # Each term as it enters the total, so a stage shows what it trained on.
             for k, v in parts.items():
                 shares.setdefault(k, []).append(getattr(weights, k) * v)
-        if anchor is not None:
+        if anchor is not None and getattr(batch, "task_profile", None) is None:
             # anchor.py: KL to INIT's predictions on this part's unlabeled rows.
             kl = anchor.loss(kept["out"], batch)
             if kl is not None:
@@ -937,8 +939,12 @@ def configure_training_view_tag(model: C3Model, parts: list[Batch], enabled: boo
         raise ValueError("view_tag differs from the resumed checkpoint; start a new run")
     active = saved if enabled is None else enabled
     if active:
-        bad = [b.deal_id for b in parts if len(b.view) != len(b)
-               or any(v not in ("quoting", "planning") for v in b.view)]
+        from .tasks import validate_batch
+        for b in parts:
+            if getattr(b, "task_profile", None) is not None:
+                validate_batch(b)
+        bad = [b.deal_id for b in parts if getattr(b, "task_profile", None) is None and (len(b.view) != len(b)
+               or any(v not in ("quoting", "planning") for v in b.view))]
         if bad:
             raise ValueError("view_tag training requires rebuilt per-line view tags: " + ", ".join(bad))
     # SMALL is a shared default; this training choice must not alter another model.
@@ -1036,6 +1042,15 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         print(f"balance: deal_cap={deal_cap} head_caps={head_cap or {}} "
               "on actual training parts; coefficient mass, not gradient norms", flush=True)
     budget = budget or Budget()
+    from .tasks import validate_batch
+    for batch in train + holdout + validation:
+        if getattr(batch, "task_profile", None) is not None:
+            validate_batch(batch)
+        elif getattr(batch, "task_input_digest", ""):
+            raise ValueError("materialized task profile cannot be removed")
+    if any(getattr(b, "task_profile", None) is not None for b in train):
+        if teacher_from or any(getattr(budget, k) > 0 for k in ("teacher", "bind", "teach", "flips", "spread")):
+            raise ValueError("isolated auxiliary tasks require teacher/bind/lesson stages disabled")
     torch.manual_seed(seed)
     rng = random.Random(seed)
     # A run where no stage reads the teacher (no teacher passes, bind or

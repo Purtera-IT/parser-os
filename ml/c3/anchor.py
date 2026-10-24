@@ -90,6 +90,8 @@ class TrunkAnchor:
         kept = 0
         try:
             for b in parts:
+                if getattr(b, "task_profile", None) is not None:
+                    continue
                 rows_by = {}
                 for key in self.heads:
                     gold = b.targets.get(key)
@@ -120,7 +122,7 @@ class TrunkAnchor:
 
     def loss(self, out, batch) -> torch.Tensor | None:
         """Mean over anchor heads of KL(INIT || model) on the part's cached rows."""
-        if self.kl <= 0:
+        if getattr(batch, "task_profile", None) is not None or self.kl <= 0:
             return None
         got = self.targets.get(_part_key(batch))
         if not got:

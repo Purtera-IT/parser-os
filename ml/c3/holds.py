@@ -28,6 +28,8 @@ def mask_training_blob(blob: dict[str, Any], atoms: list[dict[str, Any]]
         return blob, []
     if not isinstance(contract, dict) or contract.get("version") != VERSION:
         raise ValueError("Unsupported supervision_holds version")
+    if "task_profile" in contract or "task_profiles" in contract:
+        raise ValueError("task profiles require supervision_holds version 2")
     groups = contract.get("groups")
     if not isinstance(groups, list):
         raise ValueError("supervision_holds groups must be a list")

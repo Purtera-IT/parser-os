@@ -328,32 +328,33 @@ def literal_span_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tens
     A value that is not a unique span of its line is not assigned a guessed
     location; the teacher token loss still sees the exact string.
     """
-    grouped: dict[int, set[int]] = {}
+    grouped: dict[tuple[int, float], set[int]] = {}
     for item in batch.literals:
-        if item.words:
-            grouped.setdefault(item.line, set()).update(item.words)
+        if item.words and batch.head_scale.get(item.key, 1.0):
+            grouped.setdefault((item.line, batch.head_scale.get(item.key, 1.0)), set()).update(item.words)
     if not grouped:
         return out.r.new_zeros(())
-    weights = model.word_weights(out, batch.texts, rows=set(grouped))
+    weights = model.word_weights(out, batch.texts, rows={i for i, scale in grouped})
     total, terms = out.r.new_zeros(()), 0
-    for i, gold in grouped.items():
+    for (i, scale), gold in grouped.items():
         logp = weights[i]
         if logp is None:
             continue
         idx = [w for w in gold if w < logp.shape[0]]
         if not idx:
             continue
-        total = total - torch.logsumexp(logp[idx], 0)
+        total = total - scale * torch.logsumexp(logp[idx], 0)
         terms += 1
     return total / max(terms, 1)
 
 
 def deal_number_loss(model: C3Model, out: C3Output, batch: Batch) -> torch.Tensor:
     count = batch.deal_numbers.get("declared_site_count")
-    if count is None:
+    if count is None or not batch.head_scale.get("deal:site_count", 1.0):
         return out.r.new_zeros(())
     pred = model.deal_number(out.r.mean(0)).squeeze(-1)
-    return F.smooth_l1_loss(pred, torch.log1p(pred.new_tensor(float(count))))
+    return batch.head_scale.get("deal:site_count", 1.0) * F.smooth_l1_loss(
+        pred, torch.log1p(pred.new_tensor(float(count))))
 
 
 def negative_loss(out: C3Output, batch: Batch) -> torch.Tensor:
@@ -505,6 +506,8 @@ def why_losses(model: C3Model, out: C3Output, batch: Batch, desc, w: LossWeights
 def hindsight_loss(model: C3Model, out: C3Output, batch: Batch) -> tuple[torch.Tensor, torch.Tensor]:
     """Hindsight-JEPA: q_i (past only) must put mass on the latent the EMA
     teacher computes for line i from the whole finished deal."""
+    if getattr(batch, "task_profile", None) is not None:
+        return out.r.new_zeros(()), out.r.new_zeros(())
     target = model.hindsight_targets(batch.inputs())
     nll = -log_gauss_mixture(target, out.q_mu, out.q_logvar, out.q_logit).mean() / target.shape[-1]
     q = out.q_mean
@@ -522,6 +525,8 @@ def absence_targets(batch: Batch) -> torch.Tensor:
     a slot with a masked reading teaches nothing, and the others teach only
     on labeled lines."""
     n = len(batch)
+    if getattr(batch, "task_profile", None) is not None:
+        return torch.full((n, len(CLAIM_SLOTS)), -1, dtype=torch.long)
     keys = {s: [f"read:{r}" for r in reads] for s, reads in CLAIM_SLOTS.items()}
     filled = torch.zeros(n, len(keys), dtype=torch.bool)
     for j, (slot, ks) in enumerate(keys.items()):
@@ -673,6 +678,27 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     the bank should hold other deals' explanations too, which is what the
     model will have at inference."""
     w = w or LossWeights()
+    if getattr(batch, "task_profile", None) is None and getattr(batch, "task_input_digest", ""):
+        raise ValueError("materialized task profile cannot be removed")
+    if getattr(batch, "task_profile", None) is not None:
+        from .tasks import validate_batch
+        validate_batch(batch)
+        if bank is not None or rules is not None:
+            raise ValueError("external explanation banks are unsupported for isolated auxiliary tasks")
+        from .why2 import before_forward
+        before_forward(model, w)
+        desc = model.describe()
+        out = model(batch.inputs(), company=None, desc=desc, adv_lambda=adv_lambda, bank=None)
+        heads, numbers = head_losses(model, out, batch, w, "universal")
+        # No teacher, hindsight, reasons, absence, cards, pointers or outcome
+        # objectives are evaluated on this bounded source-local forward.
+        zero = out.r.new_zeros(())
+        parts = {k: zero for k in LossWeights.__dataclass_fields__ if k not in ("space", "head")}
+        parts.update(heads=heads, numbers=numbers, literals=literal_span_loss(model, out, batch))
+        if keep is not None:
+            keep.update(out=out, desc=desc, parts=parts)
+        total = w.heads * heads + w.numbers * numbers + w.literals * parts["literals"]
+        return total, {k: float(v.detach()) for k, v in parts.items()}
     from .why2 import before_forward  # noqa: PLC0415 (cycle)
 
     before_forward(model, w)
@@ -821,6 +847,8 @@ def rows_slice(batch: Batch, rows: list[int]) -> Batch:
 def teacher_context(brain, batch: Batch) -> dict:
     """What every chunk of a part's teacher loss shares: notes from the
     deal's other lines and each line's WHY (both read the whole part)."""
+    from .tasks import reject_teacher
+    reject_teacher(batch)
     from .brain import company_field_notes, notes_from_deal, told_why  # noqa: PLC0415
 
     notes, cnotes = notes_from_deal(batch)
@@ -928,6 +956,8 @@ def brain_loss(brain, batch: Batch, w: BrainWeights | None = None,
     ``rows`` / ``judged`` / ``flips`` / ``extras`` score one piece of the
     part (``teacher_chunks``); ``context`` lets the pieces share the notes.
     A term weighted 0 is not computed."""
+    from .tasks import reject_teacher
+    reject_teacher(batch)
     from .consolidate import context_distillation_loss  # noqa: PLC0415
     from .supercharge import _kl  # noqa: PLC0415
 
