@@ -899,6 +899,23 @@ def gate_failures(gates: list[tuple[str, str, str, float]], at: str,
     return bad
 
 
+def configure_training_view_tag(model: C3Model, parts: list[Batch], enabled: bool | None,
+                                *, resumed: bool = False) -> None:
+    """Opt in after INIT loading; a resumed run must retain its saved input contract."""
+    saved = bool(model.cfg.view_tag)
+    if resumed and enabled is not None and enabled != saved:
+        raise ValueError("view_tag differs from the resumed checkpoint; start a new run")
+    active = saved if enabled is None else enabled
+    if active:
+        bad = [b.deal_id for b in parts if len(b.view) != len(b)
+               or any(v not in ("quoting", "planning") for v in b.view)]
+        if bad:
+            raise ValueError("view_tag training requires rebuilt per-line view tags: " + ", ".join(bad))
+    # SMALL is a shared default; this training choice must not alter another model.
+    model.cfg = replace(model.cfg, view_tag=active)
+    model.encoder.cfg = model.cfg
+
+
 def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = None,
              budget: Budget | None = None, cfg: C3Config = SMALL, lr: float = 3e-3,
              seed: int = 0, warmup_passes: float = 0.0,
@@ -938,7 +955,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              max_atoms: int | None = None,
              deal_rate: float = DEAL_RATE,
              trunk_lr_scale: float = 1.0, trunk_pull: float = 0.0,
-             anchor_kl: float = 0.0, anchor_heads: tuple[str, ...] = ()) -> tuple[C3Model, BaseRun]:
+             anchor_kl: float = 0.0, anchor_heads: tuple[str, ...] = (),
+             view_tag: bool | None = None) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
@@ -1076,6 +1094,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
               f"step {state['completed']}", flush=True)
     elif resume:
         print(f"resume: no {resume_path or '<checkpoint>.resume.pt'}; starting fresh", flush=True)
+    configure_training_view_tag(model, train + validation, view_tag, resumed=state is not None)
+    print(f"view_tag={model.cfg.view_tag}", flush=True)
     # The fit check reads a fixed sample of training parts: a base that cannot
     # type the lines it trained on is under-fit, whatever validation says.
     fit_pool = (sorted(random.Random(seed + 1).sample(train, fit_parts), key=lambda b: b.deal_id)
@@ -1596,6 +1616,9 @@ def main() -> None:
                         help="Pretrained causal LM for the training-only teacher")
     parser.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     parser.add_argument("--tiny", action="store_true", help="CPU stand-in. Not the base.")
+    parser.add_argument("--view-tag", action=argparse.BooleanOptionalAction, default=None,
+                        help="Train with per-line view tags after loading INIT; default inherits the checkpoint. "
+                             "A resume must match its saved flag; rebuilt view files are required")
     parser.add_argument("--max-atoms", type=int, default=4096,
                         help="Lines per window. A bigger GPU takes more, so fewer deals are cut")
     parser.add_argument("--train-encoder-layers", type=int, default=0,
@@ -1724,7 +1747,8 @@ def main() -> None:
                   max_atoms=args.max_atoms, deal_rate=args.deal_rate,
                   trunk_lr_scale=args.trunk_lr_scale, trunk_pull=args.trunk_pull,
                   anchor_kl=args.anchor_kl,
-                  anchor_heads=tuple(k for k in args.anchor_heads.split(",") if k))
+                  anchor_heads=tuple(k for k in args.anchor_heads.split(",") if k),
+                  view_tag=args.view_tag)
     fresh_heads = set(filter(None, (k.strip() for k in args.allow_new_heads.split(","))))
     if set(checks["anchor_heads"]) & fresh_heads:
         raise SystemExit("--anchor-heads: INIT has no prediction for a new head: "

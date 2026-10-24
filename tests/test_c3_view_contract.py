@@ -2,6 +2,7 @@
 from dataclasses import replace
 
 import torch
+import pytest
 
 from app.core.c3_type_base import deal_payload
 from app.core import c3_type_base as serving
@@ -94,3 +95,50 @@ def test_read_cache_invalidates_for_every_wire_input():
     for field, value in [("speaker_role", "internal"), ("image_pixels", [1.0]),
                          ("table_row", 2), ("view", "planning")]:
         assert serving.read_key([dict(row, **{field: value})]) != before
+
+
+def test_training_opt_in_happens_after_init_and_refuses_untagged_parts(tmp_path):
+    from ml.c3.loop import configure_training_view_tag
+
+    schema = load_schema()
+    old = C3Model(schema, replace(SMALL, view_tag=False))
+    path = tmp_path / "init.pt"
+    save_checkpoint(path, old, step=0, schema_sha256="same")
+    model = C3Model(schema, replace(SMALL, view_tag=True))
+    load_checkpoint(path, model, schema_sha256="same")
+    assert not model.cfg.view_tag
+    batch = featurize(DealExample.from_dict({"deal_id": "900001", "atoms": [
+        {"key": "a", "text": "Install APs.", "entered_at": 1}]}), schema)
+    with pytest.raises(ValueError, match="rebuilt per-line"):
+        configure_training_view_tag(model, [batch], True)
+    batch.view = ["quoting"]
+    weights = {k: v.clone() for k, v in model.state_dict().items()}
+    configure_training_view_tag(model, [batch], True)
+    assert model.cfg.view_tag and model.encoder.cfg.view_tag
+    assert all(torch.equal(weights[k], v) for k, v in model.state_dict().items())
+    assert not old.cfg.view_tag and not SMALL.view_tag
+    with pytest.raises(ValueError, match="resumed checkpoint"):
+        configure_training_view_tag(model, [batch], False, resumed=True)
+
+
+def test_training_saves_and_resumes_the_explicit_view_contract(tmp_path):
+    from pathlib import Path
+    from ml.c3.loop import Budget, run_base
+
+    schema = load_schema()
+    fixture = Path(__file__).resolve().parents[1] / "ml/c3/fixtures/synthetic_deal.json"
+    deal = DealExample.load(fixture)
+    deal = replace(deal, atoms=[replace(a, view="quoting") for a in deal.atoms])
+    batch = featurize(deal, schema)
+    ck = str(tmp_path / "tagged.pt")
+    budget = Budget(teacher=0, lines=1, links=0, cards=0, numbers=0, deal=0, open_links=0, teach=0)
+    model, _ = run_base([batch], [], schema, budget, checkpoint=ck, score_holdout=False, view_tag=True)
+    assert model.cfg.view_tag
+    saved = torch.load(ck, map_location="cpu", weights_only=True)
+    assert saved["view_tag"] is True
+    resumed, _ = run_base([batch], [], schema, budget, checkpoint=ck, score_holdout=False,
+                          resume=True, view_tag=True)
+    assert resumed.cfg.view_tag
+    with pytest.raises(ValueError, match="resumed checkpoint"):
+        run_base([batch], [], schema, budget, checkpoint=ck, score_holdout=False,
+                 resume=True, view_tag=False)

@@ -53,6 +53,8 @@
 #   RESUME=1    carry on from $CK.resume.pt after a pod failure (same command
 #               otherwise; see the restart line the launch prints)
 #   TINY=1      the CPU stand-in (loop --tiny): no INIT, no GPU, ATOMS 512
+#   VIEW_TAG=1  train the quoting/planning input tag (default on); rebuilt per-line
+#               views are required. 0 retains the untagged input contract.
 #   FG=1        run in the foreground (tests), not detached
 #   LINES_GATE  the lines@2 valid_exact stop (0.50); 0 turns it off
 #   LINES LINKS CARDS NUMBERS OPEN_LINKS   passes per student stage (12 6 6 2 4);
@@ -402,6 +404,11 @@ PY
 )
 args+=(--trunk-lr-scale "$TRUNK_LR_SCALE" --trunk-pull "$TRUNK_PULL" --anchor-kl "$ANCHOR_KL"
        --anchor-heads "$anchor_heads")
+case "${VIEW_TAG:-1}" in
+  1) args+=(--view-tag) ;;
+  0) args+=(--no-view-tag) ;;
+  *) echo "VIEW_TAG must be 0 or 1" >&2; exit 1 ;;
+esac
 echo "trunk lr x$TRUNK_LR_SCALE, pull $TRUNK_PULL/step to INIT, KL $ANCHOR_KL on $anchor_heads; graph $GRAPH"
 # Pilot A M2: a text change is a breaking change until INIT reads as well under it.
 if [[ "$TINY" != 1 && "${DESC_GATE:-1}" == 1 ]]; then
