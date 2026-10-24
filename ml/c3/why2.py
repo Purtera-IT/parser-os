@@ -229,7 +229,7 @@ def described_alone_loss(model: C3Model, out: C3Output, batch: Batch, w) -> torc
         if not share:
             continue
         total = total + share * answer_loss(out.logits[key] - free, batch, key, rw)
-        terms += share
+        terms += 1.0
     return total / max(terms, 1.0)
 
 

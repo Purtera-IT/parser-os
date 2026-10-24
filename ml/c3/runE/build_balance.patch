@@ -1,0 +1,88 @@
+--- a/build.py
++++ b/build.py
+@@ -8,14 +8,15 @@
+ copyOf and position, which the converted files dropped), and writes ~/c3-local/runE/train/<deal>.json in
+ the same shape plus per-atom training fields the runE-data branch of ml/c3/data.py reads:
+ 
+-  loss_weight      multiplier on the line's row weight and WHY weight (a repeated copy, a capped deal)
++  loss_weight      relative background/tier multiplier; NEVER a deal cap
++  deal_loss_scale  explicit post-normalization part multiplier (1; trainer computes caps on actual parts)
+   layout_rewrites  the same table row in other layouts, for losses.layout_lock (the meaning lock)
+   table_id, sheet, table_header, table_row_index, background, same_as   metadata only (not model inputs)
+ 
+ (a) Repeats: one learned copy per repeated line (same text and type, the parser's copyOf, or a WHY that
+     says it is a copy); the others stay in the deal as context with loss_weight --bg. Site rows in one
+     deal that name the same street address (BevMo's stores x3) keep one learned copy, the rest --site-bg.
+-(b) Deal cap: no train deal's learned lines exceed --cap of the total; over-cap deals are down-weighted.
++(b) Deal/head caps: trainer computes coefficient caps across actual parts and both views; never row weights.
+ (c) Layout rewrites on every learned table row: header-tagged, bare, tabs, reversed cells.
+ (d) Table geometry from tableRef ("<table> r<N>"): table id, sheet (spreadsheets), header cells, row index.
+ (e) Out-of-set values (runE/sow_section_map.tsv, owner review): raw-heading sow_section values map onto the closed
+@@ -399,27 +400,14 @@
+           f"same-type lines), of {len(rows)} labeled input lines with a WHY")
+ 
+ 
+-def cap_scales(learned, cap):
+-    eff = dict(learned)
+-    for _ in range(100):
+-        total = sum(eff.values())
+-        over = {d: v for d, v in eff.items() if v > cap * total + 1e-9}
+-        if not over:
+-            break
+-        # capped deals get cap * total' where total' solves itself: t = rest + k * cap * t
+-        rest = sum(v for d, v in eff.items() if d not in over)
+-        k = len(over)
+-        t = rest / max(1e-9, 1 - k * cap)
+-        for d in over:
+-            eff[d] = cap * t
+-    return {d: (eff[d] / learned[d] if learned[d] else 1.0) for d in learned}
++# Cap calculation lives in ml.c3.balance and runs AFTER loading all training parts.
+ 
+ 
+ def main():
+     ap = argparse.ArgumentParser()
+     ap.add_argument("--cap", type=float, default=0.15)
+     ap.add_argument("--head-cap", type=float, default=0.15,
+-                    help="per-head deal cap for set-valued reads (read:feeds_decision): head_scale, never drops rows")
++                    help="trainer per-head coefficient cap (read:feeds_decision); pass as HEAD_CAP to runE.sh")
+     ap.add_argument("--bg", type=float, default=0.1)
+     ap.add_argument("--site-bg", type=float, default=0.25)
+     ap.add_argument("--geometry-input", action="store_true", help="no-op: table_row now always comes from the export")
+@@ -467,27 +455,17 @@
+         for blob, _ in built.values():
+             blob["head_scale"] = views.head_scale(view, keys)
+     why_weights(built, stats)
+-    scales = cap_scales({d: stats[d]["learned"] for d in TRAIN}, args.cap)
+-    # read:feeds_decision: one roster deal (010050's run sheet, 010140's store list) can carry a fifth of the
+-    # head's rows; its share of the head's loss (after the deal cap above) is capped by head_scale, rows kept.
+-    fd = {}
++    # Include every built non-validation source (also newly approved deals).
++    # The trainer groups both views by source_deal_id after windowing. Counting
++    # learned rows here cannot predict its per-part gradient coefficient mass.
++    train_sources = [d for d in built if d not in VALIDATION]
++    print(f"        balance deferred to trainer: {len(train_sources)} training source deals; "
++          f"DEAL_CAP={args.cap:g} HEAD_CAP={args.head_cap:g}")
+     for deal, (blob, _) in built.items():
+-        if deal in TRAIN:
+-            n = sum(1 for l in blob.get("labels") or []
+-                    if isinstance(l.get("reads_set"), dict) and l["reads_set"].get("feeds_decision") not in (None, "", []))
+-            fd[deal] = n * scales.get(deal, 1.0)
+-    if sum(fd.values()):
+-        hs = cap_scales(fd, args.head_cap)
+-        for deal, (blob, _) in built.items():
+-            if hs.get(deal, 1.0) < 1.0:
+-                blob.setdefault("head_scale", {})["read:feeds_decision"] = round(hs[deal], 4)
+-                stats[deal]["feeds_decision_head_scale_x1000"] = round(hs[deal] * 1000)
+-    for deal, (blob, _) in built.items():
+-        sc = scales.get(deal, 1.0)
+-        stats[deal]["scale_x1000"] = round(sc * 1000)
+-        if sc < 1.0:
+-            for a in blob["atoms"]:
+-                a["loss_weight"] = round(float(a.get("loss_weight", 1.0)) * sc, 4)
++        blob["deal_loss_scale"] = 1.0
++        blob["balance_version"] = 1
++        blob["balance_config"] = {"deal_cap": args.cap, "head_caps": {"read:feeds_decision": args.head_cap}}
++        stats[deal]["scale_x1000"] = 1000
+         blob["source"] = list(blob.get("source") or []) + ["runE/build.py"] if isinstance(blob.get("source"), list) \
+             else [blob.get("source"), "runE/build.py"]
+         if not blob.get("atoms"):

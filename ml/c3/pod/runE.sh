@@ -384,6 +384,7 @@ echo "validation window $VALID_ATOMS (serve reads 8192)"
 
 args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_files[@]}"
       --lr "${LR:-1e-4}" --warmup-passes "${WARMUP:-1}"
+      --deal-cap "${DEAL_CAP:-0.15}" --head-cap "read:feeds_decision=${HEAD_CAP:-0.15}"
       --free-head all --head-weight col:label_type="$TYPE_WEIGHT"
       "${loss_args[@]}" ${ramp_args[@]+"${ramp_args[@]}"}
       --keep-checkpoints "$KEEP" --pick-floors "$FLOORS"

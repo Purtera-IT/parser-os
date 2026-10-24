@@ -161,6 +161,35 @@ def part_scales(train: list[Batch]) -> dict[str, float]:
     return {b.deal_id: parts[source_deal_id(b.deal_id)] ** -0.5 for b in train}
 
 
+def training_scales(train: list[Batch], *, balance: bool = True, cap: float | None = None) -> dict[str, float]:
+    """Compose the explicit deal multiplier with the existing part balance.
+
+    Both are outside row/head normalization. All views and windows from a
+    source deal must carry the same multiplier; a partial rebuild is refused.
+    """
+    from .data import _deal_loss_scale
+
+    seen: dict[str, float] = {}
+    for batch in train:
+        value = _deal_loss_scale(batch.deal_loss_scale)
+        source = source_deal_id(batch.deal_id)
+        if source in seen and seen[source] != value:
+            raise ValueError(f"Inconsistent deal_loss_scale for source deal {source}")
+        seen[source] = value
+    base = part_scales(train) if balance else {b.deal_id: 1.0 for b in train}
+    scaled = {b.deal_id: base[b.deal_id] * b.deal_loss_scale for b in train}
+    if cap is not None:
+        from .balance import cap_scales
+
+        mass: dict[str, float] = {}
+        for batch in train:
+            source = source_deal_id(batch.deal_id)
+            mass[source] = mass.get(source, 0.0) + scaled[batch.deal_id]
+        factors = cap_scales(mass, cap)
+        scaled = {b.deal_id: scaled[b.deal_id] * factors[source_deal_id(b.deal_id)] for b in train}
+    return scaled
+
+
 def pool_scores(rows: list[dict[str, dict[str, float]]]) -> dict[str, dict[str, float]]:
     """Exact match pooled over parts or deals, weighted by how many were scored."""
     hit: dict[str, float] = {}
@@ -942,6 +971,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              encoder_lr: float | None = None,
              score_holdout: bool = True,
              head_weight: dict[str, float] | None = None,
+             deal_cap: float | None = None,
+             head_cap: dict[str, float] | None = None,
              loss_weight: dict[str, float] | None = None,
              free_heads: tuple[str, ...] = (),
              fit_parts: int = 8,
@@ -989,8 +1020,17 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     train, holdout = lock_split(train, holdout, need_holdout=score_holdout)
     validation = list(validation or [])
     lock_validation(train, holdout, validation)
-    scale = part_scales(train) if balance else {b.deal_id: 1.0 for b in train}
+    scale = training_scales(train, balance=balance, cap=deal_cap)
     schema = schema or load_schema()
+    from .balance import head_cap_scales
+
+    head_scales = head_cap_scales(train, schema, scale, head_cap or {}, head_weight)
+    # A repeated run/resume on the same Batch objects recomputes, never compounds.
+    for batch in train:
+        batch.head_loss_scale = head_scales[batch.deal_id]
+    if deal_cap is not None or head_cap:
+        print(f"balance: deal_cap={deal_cap} head_caps={head_cap or {}} "
+              "on actual training parts; coefficient mass, not gradient norms", flush=True)
     budget = budget or Budget()
     torch.manual_seed(seed)
     rng = random.Random(seed)
@@ -1668,6 +1708,11 @@ def main() -> None:
     parser.add_argument("--score-holdout", action="store_true",
                         help="Score the holdout here. Off for the live runs: the winner is scored "
                              "once with `python -m ml.c3.predict --score`")
+    parser.add_argument("--deal-cap", type=float, default=None,
+                        help="Cap source-deal loss coefficient mass over actual training parts (all views)")
+    parser.add_argument("--head-cap", action="append", default=[],
+                        help="Cap a head's direct CE/BCE coefficient mass per source deal, key=fraction; "
+                             "infeasible sparse caps warn and keep learning")
     parser.add_argument("--head-weight", action="append", default=[],
                         help="A question's share of the heads loss, e.g. col:label_type=20 (repeat)")
     parser.add_argument("--loss-weight", action="append", default=[],
@@ -1718,13 +1763,19 @@ def main() -> None:
         if not key:
             raise SystemExit(f"--head-weight: cannot read {spec!r}")
         head_weight[key] = float(w)
+    head_cap = {}
+    for spec in args.head_cap:
+        key, sep, value = spec.rpartition("=")
+        if not sep or not key:
+            raise SystemExit(f"--head-cap: cannot read {spec!r}")
+        head_cap[key] = float(value)
     loss_weight = {}
     for spec in args.loss_weight:
         key, _, w = spec.partition("=")
         if key not in LossWeights.__dataclass_fields__ or key in ("space", "head"):
             raise SystemExit(f"--loss-weight: no loss term {key!r}")
         loss_weight[key] = float(w)
-    unknown = [k for k in list(head_weight) + [f.removeprefix("r:") for f in args.free_head]
+    unknown = [k for k in list(head_cap) + list(head_weight) + [f.removeprefix("r:") for f in args.free_head]
                if k != "all" and k not in load_schema().by_key()]
     if unknown:
         raise SystemExit("Unknown question: " + ", ".join(unknown))
@@ -1739,7 +1790,8 @@ def main() -> None:
         # The smoke measures the peak with every term at its full weight.
         print("smoke: ramp off, every term at its full weight", flush=True)
         ramp = {}
-    checks = dict(head_weight=head_weight, loss_weight=loss_weight, free_heads=tuple(args.free_head),
+    checks = dict(deal_cap=args.deal_cap, head_cap=head_cap, head_weight=head_weight,
+                  loss_weight=loss_weight, free_heads=tuple(args.free_head),
                   fit_parts=args.fit_parts, check_every=args.check_every, gates=gates, ramp=ramp,
                   resume=args.resume, keep_checkpoints=args.keep_checkpoints,
                   pick_floors=args.pick_floors or None,

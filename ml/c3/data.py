@@ -157,6 +157,15 @@ class Atom:
     layout_rewrites: tuple[str, ...] = ()
 
 
+def _deal_loss_scale(value) -> float:
+    import math
+
+    scale = float(value)
+    if not math.isfinite(scale) or scale <= 0 or scale > 1:
+        raise ValueError("deal_loss_scale must be finite and in (0, 1]")
+    return scale
+
+
 @dataclass
 class DealExample:
     deal_id: str
@@ -183,6 +192,8 @@ class DealExample:
     #: loss scale per opportunity key in that view (0 masks the head there).
     view: str = ""
     head_scale: dict[str, float] = field(default_factory=dict)
+    #: Training-only multiplier AFTER per-part loss normalization; never a row weight or model input.
+    deal_loss_scale: float = 1.0
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -223,6 +234,7 @@ class DealExample:
             edge_notes={(str(e["src"]), str(e["dst"]), str(e["relation"])): str(e["note"])
                         for e in d.get("edges", []) if e.get("note")},
             doc_pointers=[(str(p[0]), str(p[1])) for p in d.get("doc_pointers", [])],
+            deal_loss_scale=_deal_loss_scale(d.get("deal_loss_scale", 1.0)),
             view=str(d.get("view") or ""),
             head_scale={str(k): float(v) for k, v in (d.get("head_scale") or {}).items()},
             source_supervision=d.get("source_supervision") or {
@@ -313,7 +325,8 @@ class DealExample:
         deal = DealExample.from_dict({"deal_id": deal_id, "company": company,
                                       "atoms": rows, "edges": edges, "doc_pointers": doc_pointers,
                                       "judgments": blob.get("judgments") or [],
-                                      "view": blob.get("view"), "head_scale": blob.get("head_scale")})
+                                      "view": blob.get("view"), "head_scale": blob.get("head_scale"),
+                                      "deal_loss_scale": blob.get("deal_loss_scale", 1.0)})
         deal.link_stats = link_stats
         # Keep deferred fields and tab targets inspectable instead of claiming
         # that storing a row means the model has a loss for it.
@@ -667,6 +680,10 @@ class Batch:
     #: Training only: loss scale per opportunity key for this deal view
     #: (DealExample.head_scale); a key not listed counts 1.
     head_scale: dict[str, float] = field(default_factory=dict)
+    #: Training-only multiplier AFTER per-part loss normalization; never a row weight or model input.
+    deal_loss_scale: float = 1.0
+    #: Runtime-only per-head balance multiplier, outside the heads-average divisor.
+    head_loss_scale: dict[str, float] = field(default_factory=dict)
     #: Inputs: the sender's organisation kind, the document's direction and
     #: the deal's stage when the line arrived (c3_record.sender), per line.
     org: list[str] = field(default_factory=list)
@@ -1898,6 +1915,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         geometry=[a.geometry or _geometry({}) for a in atoms],
         link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
         keys=[a.key for a in atoms], parser_targets=parser_targets, head_scale=dict(deal.head_scale),
+        deal_loss_scale=deal.deal_loss_scale,
         layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
                          for t in a.layout_rewrites if t.strip() != a.text.strip()],
         edge_notes=edge_notes, reason_notes=reason_notes, unplaced_notes=unplaced_notes)

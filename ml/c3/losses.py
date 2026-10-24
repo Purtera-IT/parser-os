@@ -221,8 +221,11 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
             share = w.head.get(opp.key, 1.0) * batch.head_scale.get(opp.key, 1.0)
             if not share:
                 continue
-            ce = ce + share * w.space.get(opp.space, 1.0) * answer_loss(out.logits[opp.key], batch, opp.key, rw)
-            terms += share
+            ce = ce + (batch.head_loss_scale.get(opp.key, 1.0) * share * w.space.get(opp.space, 1.0)
+                       * answer_loss(out.logits[opp.key], batch, opp.key, rw))
+            # The view/deal head scale must not renormalize itself away or
+            # increase the other heads. Zero remains an excluded head.
+            terms += w.head.get(opp.key, 1.0)
         scale = batch.head_scale.get(opp.key, 1.0)
         if opp.kind == NUMBER and opp.key in out.numbers and scale:
             vals = batch.numbers_target.get(opp.key, [])
