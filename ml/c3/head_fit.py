@@ -210,7 +210,19 @@ def main() -> None:
     p.add_argument("--max-atoms", type=int, default=8192)
     p.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     p.add_argument("--device", default="auto")
+    p.add_argument("--init-shape", default="",
+                   help="the checkpoint predates this schema's texts (desc_gate.py, pilot A M2): load it across "
+                        "the text change and the heads added since (ml/c3/runE/init_shape.json), and refit on "
+                        "this code's texts")
+    p.add_argument("--keys", default="", help="comma-separated heads to refit (default every universal class head)")
+    p.add_argument("--text-cache", default="", help="line vectors by sha1 of the text (desc_gate._text_cache)")
+    p.add_argument("--threads", type=int, default=0)
+    p.add_argument("--graph-set", default="",
+                   help="graph flags over the checkpoint's (graph.parse_graph keys): fit under the run's graph, "
+                        "e.g. rune,lattice_doc=1")
     args = p.parse_args()
+    if args.threads:
+        torch.set_num_threads(args.threads)
     from .gates import load_checkpoint, save_checkpoint
 
     dev = args.device
@@ -221,16 +233,37 @@ def main() -> None:
     rng = random.Random(0)
     schema = load_schema()
     sha = digest([asdict(o) for o in schema.opportunities])
-    model = live_student(schema, args.encoder).to(dev)
-    step = load_checkpoint(args.checkpoint, model, schema_sha256=sha)
+    if args.init_shape:
+        from .desc_gate import load_start  # noqa: PLC0415
+
+        model, _ = load_start(args.checkpoint, args.encoder, args.init_shape, dev, args.text_cache)
+        step = 0
+    else:
+        model = live_student(schema, args.encoder).to(dev)
+        step = load_checkpoint(args.checkpoint, model, schema_sha256=sha)
+    if args.graph_set:
+        from .graph import GRAPH_DEFAULTS, parse_graph  # noqa: PLC0415
+
+        over = parse_graph(args.graph_set)
+        model.enable_graph({**model.graph, **{k: v for k, v in over.items() if v != GRAPH_DEFAULTS[k]}})
+        model.to(dev)
+        print("graph " + " ".join(f"{k}={v}" for k, v in model.graph.items()), flush=True)
     model.eval()
     keys = [o.key for o in schema.select(layer="universal")
             if o.kind not in (RELATION, NUMBER) and len(o.answers) > 1]
+    if args.keys:
+        want = [k for k in args.keys.split(",") if k]
+        keys = [k for k in want if k in keys]
+        missing = sorted(set(want) - set(keys))
+        if missing:
+            raise SystemExit("--keys: not a universal class head: " + ", ".join(missing))
     train, _ = load_split(args.train, schema, args.max_atoms)
     val, _ = load_split(args.validation, schema, args.max_atoms)
     print(f"parts train={len(train)} validation={len(val)}", flush=True)
     tr = _cache(model, train, keys, dev)
     va = _cache(model, val, keys, dev)
+    if hasattr(model, "save_text_cache"):
+        model.save_text_cache()
     keys = [k for k in keys if k in tr]
     # The heads train on the CPU copy: they are small, and the cache is there.
     model.to("cpu")
@@ -248,7 +281,18 @@ def main() -> None:
         model.free_heads[k].load_state_dict(st)
     from .schema import shape_digest
 
-    save_checkpoint(args.out, model, step=step, schema_sha256=sha, shape_sha256=shape_digest(schema))
+    shape = shape_digest(schema)
+    if args.init_shape:
+        # A refit start for a run (runE.sh INIT=<out> INIT_MD5=skip): the shape is INIT's, so
+        # new_heads.py still derives the heads added since and loop --init-from accepts it.
+        import json  # noqa: PLC0415
+
+        from .loop import without_heads  # noqa: PLC0415
+        from .new_heads import derive  # noqa: PLC0415
+
+        old = json.loads(open(args.init_shape, encoding="utf-8").read())["shape"]
+        shape = shape_digest(without_heads(schema, ",".join(derive(schema, [(k, list(v)) for k, v in old]))))
+    save_checkpoint(args.out, model, step=step, schema_sha256=sha, shape_sha256=shape)
     print(f"saved {args.out} (valid_exact {best:.3f})", flush=True)
 
 

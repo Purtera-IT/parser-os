@@ -1,0 +1,26 @@
+{
+ "doc": "Description-gate pins (ml/c3/desc_gate.py; pilot A root cause M2). Each head here lost more than 2 points under the live weights (Run E's INIT) when read with this code's texts instead of INIT's (desc_gate on 010038, 010387, holdout B with drafts as gold, graph rune,lattice_doc=1; ~/c3-local/runE/pilot/rootcause/fix/gate_fixed_rune.json), so it reads INIT's texts (runE/init_texts.json) until a refit or a run has learned the new ones. col:label_type keeps the new, contrast-free texts except physical_site, whose rewrite alone cost 010447 55 site rows. Unpin a head only with a desc_gate pass on its new text (after head_fit or judgment refit). C3_TEXT_PINS=0 reads every head's new text.",
+ "heads": [
+  "col:about",
+  "jdg:conflict",
+  "jdg:conflict:reason",
+  "jdg:document_job",
+  "jdg:facility",
+  "jdg:image",
+  "jdg:image:reason",
+  "jdg:norm:reason",
+  "jdg:site",
+  "jdg:site_role",
+  "jdg:site_role:reason",
+  "jdg:suppression:reason",
+  "jdg:task_tier",
+  "read:co_reason",
+  "read:sow_fill",
+  "read:stage_std"
+ ],
+ "answers": {
+  "col:label_type": [
+   "physical_site"
+  ]
+ }
+}

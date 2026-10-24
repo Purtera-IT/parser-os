@@ -1,0 +1,3317 @@
+{
+"ref": "0b6efce",
+"schema_sha256": "d89c875d63ebdca3881aa51784e2bb267d6b04374e1e0d0d63089cead517f25c",
+"doc": "The question and answer texts INIT (run C, ref 0b6efce) was trained on, for ml/c3/desc_gate.py on a copy with no git history.",
+"texts": [
+[
+"col:label_type",
+"What it is. Which type is this line, or which kind of noise? What kind of fact the line states.",
+[
+[
+"physical_site",
+"physical site: Authoritative site declaration: site_id + facility name + street address. One per real building / location."
+],
+[
+"site_attribute",
+"site attribute: A scalar attribute of a site: user count, room count, square feet, priority, floors."
+],
+[
+"site_access_restriction",
+"site access restriction: A constraint on access: blackout window, restricted hours, badged escort required, weekend-only cutover, etc."
+],
+[
+"site_room_mix",
+"site room mix: A row from a per-site room-mix table: room type + count + standard build + validation test."
+],
+[
+"site_infrastructure",
+"site infrastructure: Site-bound infrastructure facts: MDF/IDF id, bandwidth/circuit, cable plant condition."
+],
+[
+"derived_finding",
+"derived finding: A statement nobody wrote: counted, measured or noticed-to-be-absent by the parser from an artifact's own structure -- 106 workstations counted as CAD block inserts, 828 ft of new partition summed from linework, a telecom layer noticed missing. Carries what it assumed and what it decides, because a derived claim has to be arguable."
+],
+[
+"deal_state",
+"deal state: Where the deal stands, derived from its own sentences rather than written by anyone: the step it waits on, who owns that step, and whether its price has been checked against the site. Consolidates the coordination traffic -- scheduling, acknowledgements, chasing -- that moves a deal but never reaches a SOW."
+],
+[
+"service_line",
+"service line: A services-row line item: service id + description + unit + qty + unit price + extended cost."
+],
+[
+"bom_line",
+"bom line: A hardware-BOM table row: item id + description + SKU + qty + unit price + extended cost + lead time + serial-capture flag."
+],
+[
+"payment_term",
+"payment term: One row of a billing/payment schedule, e.g. '30% at order acceptance'. Each tier is its own atom."
+],
+[
+"commercial_total",
+"commercial total: An aggregate price line: hardware subtotal, services subtotal, freight/logistics, contingency, taxes, grand total. Each is one atom."
+],
+[
+"pricing_assumption",
+"pricing assumption: An explicit pricing assumption or rate term (taxes excluded, hardware substitutions require approval, after-hours work billed at 150% of the standard rate, etc.)."
+],
+[
+"site_budget",
+"site budget: Per-site budget category amount (hardware budget / services budget / logistics estimate per site)."
+],
+[
+"rate_card",
+"rate card: A priced rate table row: role or service with a bill rate, OT/holiday multiplier, minimum hours."
+],
+[
+"work_scope_item",
+"work scope item: A general statement of work to be performed that is not a discrete task, deliverable or requirement."
+],
+[
+"deal_summary",
+"deal summary: THE line the whole deal can be read from: service, quantity, site and deal type in one sentence -- \"4 TVs install in CheckOut New York office.\" At most one per deal. Not every scope line -- a work_scope_item says one thing the job includes; this says what the job IS. Proposed on 010087."
+],
+[
+"requirement",
+"requirement: A formally numbered requirement (REQ-001 style) with applies-to + owner + verification method."
+],
+[
+"task",
+"task: Billable work we will perform for the customer on this job -- the labor the quote prices. It is written as the customer's request for our work or for a technician's time ('install and set up two devices at the site', 'looking for a partner to install their new display', 'please quote a technician onsite for 2-3 hours to get the register and printer running'), as a statement of what will be set up or installed on the job ('we will be setting 1 register and 1 kitchen printer', '3 Verkada cameras install', 'Relocate 10 APs to 15 ft', 'Conduct the site survey'), or as a row from a detailed-task table (task_id + site + phase + description + owner + dates + dependency + status). Our own sales and office steps (quoting, scheduling, onboarding, invoicing, account setup) are not tasks: _keep. Work the customer or a third party will do (send floor plans, provide access, ship equipment) is a dependency. A remark or plan to check something, a question about the site, a call summary of what was agreed, a description of the site as it is, or a quantity or date alone is not a task: _keep."
+],
+[
+"deliverable",
+"deliverable: A named deliverable that a phase produces (e.g. 'Network closet readiness checklist')."
+],
+[
+"acceptance_criterion",
+"acceptance criterion: A row from an acceptance-criteria table — area + criteria + pass threshold."
+],
+[
+"milestone_phase",
+"milestone phase: A row from a project phase/milestone table — phase number + name + start date + end date + owner + exit criteria. Synonyms accepted: phase, sprint, wave, milestone, stage."
+],
+[
+"cutover_step",
+"cutover step: A row from a cutover/runbook checklist — step number + timing relative to cutover + owner + action + evidence required."
+],
+[
+"electrical_acceptance_test",
+"electrical acceptance test: A measurable electrical/network acceptance test (Megger, ground resistance, load burn-in, witness/ATP)."
+],
+[
+"site_implementation_note",
+"site implementation note: Site-specific implementation instruction (asset-tag prefix, receiving rule, install rule)."
+],
+[
+"site_access_window",
+"site access window: When a site is accessible — days + hours + escort owner."
+],
+[
+"exclusion",
+"exclusion: Negative scope: something explicitly NOT included (\"electrical by others\", \"no patching\")."
+],
+[
+"integration_checkpoint",
+"integration checkpoint: A row from a system-to-system integration checkpoint table: checkpoint id + system + expected input/output + owner + due."
+],
+[
+"data_flow_step",
+"data flow step: One step of a data-flow pipeline (source system → sink system, what payload)."
+],
+[
+"system_mapping",
+"system mapping: A field mapping between two systems (e.g."
+],
+[
+"mitigation",
+"mitigation: A mitigation paired with a specific risk (separate from the risk atom itself)."
+],
+[
+"constraint",
+"constraint: A limit on how the work may be done: working hours, noise, dust, union labor, escort required."
+],
+[
+"compliance_rule",
+"compliance rule: A rule about access, data handling, retention, credential use, or auditing."
+],
+[
+"compliance_classification",
+"compliance classification: A document/data classification + its allowed and blocked destinations (Confidential, Internal, Mock, Production)."
+],
+[
+"approval_authority",
+"approval authority: A rule that some role/threshold requires a specific approver (e.g. 'CFO signoff required over $1.5M')."
+],
+[
+"submission_req",
+"submission req: A required element of the proposal submission: number of copies, file format, required form (SF330, W-9), page limit, sealed-bid labeling, delivery method."
+],
+[
+"change_order_rule",
+"change order rule: A rule that governs change orders — when one is required, T&M rate caps, materials markup, the rate for change-order work. A standing rate term (after-hours billed at 150%) is a pricing_assumption."
+],
+[
+"bonding_insurance",
+"bonding insurance: A bonding or insurance requirement: bid bond, performance bond, payment bond, general liability limit, workers comp, professional liability."
+],
+[
+"contract_term",
+"contract term: A contractual term governing the resulting agreement: contract length, renewal/option years, payment terms (net 30), warranty period, retainage, liquidated-damages clause reference."
+],
+[
+"certification",
+"certification: A certification or credential the provider or its technicians must hold (e.g. BICSI RCDD, OSHA-10, manufacturer cert)."
+],
+[
+"stakeholder",
+"stakeholder: A named person on the deal with their role and email. Synonyms accepted: owner, lead, sponsor, accountable, contact."
+],
+[
+"blackout_date_range",
+"blackout date range: A no-work date window (holiday freeze, exec blackout, peak travel exclusion)."
+],
+[
+"lead_time_constraint",
+"lead time constraint: Lead time + expediting policy for an item class (core switches, APs, AV kits, fiber panels, custom millwork)."
+],
+[
+"deadline",
+"deadline: A hard date/time the bidder must meet: proposal/bid due date, questions-due date, pre-bid meeting, site visit. NOT a project phase end (that is milestone_phase)."
+],
+[
+"dependency",
+"dependency: A dependency on a customer-provided input, third party, or infrastructure readiness."
+],
+[
+"deal_metadata",
+"deal metadata: Header-level fact about the deal itself: customer name, deal ID, quote/PO/MSA references, contract type, currency, target close date, deal stage."
+],
+[
+"source_caveat",
+"source caveat: A fact about a SOURCE DOCUMENT that changes how it must be read: who produced it, which part of it is wrong, what supersedes it, what it is out of date against. Not scope -- it must never reach the SOW -- and it must travel WITH the document it is about, because anything that reads that document without it builds from something we already know is wrong. Found in 11 deals across the dev corpus, typed scope_item in 9 of them: \"the Dates are incorrect as per the submitted SOW\", \"except as otherwise superseded by terms contained in a mutually executed Master Purchase Agreement\"."
+],
+[
+"legend_entry",
+"legend entry: The key that makes a document decodable: what a colour, symbol, hatch or abbreviation MEANS on the sheet it is printed on (\"Huzzard supplied Components\", \"orange = existing\", \"hatched = by others\"). Not a fact about the work and never scope -- its content transfers into the parts it governs, each of which names the side it was drawn in. It exists as an atom so a correction can point AT it: on 010288 the sender writes \"the 'Installer Supplied Components' are not accurate\", and a caveat aimed at a whole drawing says only that the drawing is unreliable, while one aimed at a single key says which eighteenth of it to distrust. Distinct from source_caveat, which is the correction rather than the thing corrected."
+],
+[
+"list_header",
+"list header: A pointer line that introduces a list and says nothing on its own: \"Locations:\", \"The following items are excluded:\". Its meaning lives in the items under it, which carry it as their lead-in. Not _keep -- the list it names is real -- and not the type of the items it introduces."
+],
+[
+"eval_criterion",
+"eval criterion: A scored evaluation/award criterion with its weight: 'Technical approach 40%', 'Price 30%', 'Past performance 20%'. One per criterion."
+],
+[
+"approval_decision",
+"approval decision: A recorded approval/conditional approval/rejection statement by a named stakeholder."
+],
+[
+"metadata_requirement",
+"metadata requirement: A required metadata key/value to set on an object (blob metadata, CRM custom field)."
+],
+[
+"signatory",
+"signatory: A signature-block entry — role + named person who signs."
+],
+[
+"addendum_qa",
+"addendum qa: An addendum, amendment, or question-and-answer item issued during the solicitation that modifies or clarifies the original documents."
+],
+[
+"site_allocation",
+"site allocation: Per-site qty breakdown of a single BOM line (e.g. 'HW-001: ATL-HQ:52; ATL-WEST:27; ATL-AIR:15')."
+],
+[
+"scope_item",
+"scope item: Legacy catch-all for a line of scope. Prefer a finer type; use only when none fits."
+],
+[
+"risk",
+"risk: A stated risk or concern that could affect delivery, cost or schedule."
+],
+[
+"assumption",
+"assumption: Something the proposal assumes to be true (\"customer provides lift\", \"pathways exist\")."
+],
+[
+"open_question",
+"open question: An unanswered question in the documents that someone must resolve."
+],
+[
+"decision",
+"decision: A decision already made and recorded (\"customer chose option B\")."
+],
+[
+"action_item",
+"action item: A to-do assigned to a person, usually from meeting notes or email."
+],
+[
+"vendor_line_item",
+"vendor line item: A vendor quote/BOM line: part, quantity, price."
+],
+[
+"customer_instruction",
+"customer instruction: A direct instruction from the customer about how to do the work."
+],
+[
+"quantity",
+"quantity: A bare count of a thing (\"110 TVs\", \"24 drops\") not attached to a line item."
+],
+[
+"entity",
+"entity: A named thing (company, product, person) with no claim attached."
+],
+[
+"answered_question",
+"answered question: A question together with its answer, in the same message or a later reply (\"How many doors?\" / \"1 external door\"). The answer is the fact; keep both."
+],
+[
+"internal_question",
+"internal question: A question between people on our own team (routing, who to ask, pricing among ourselves). Never a question for the customer."
+],
+[
+"commitment",
+"commitment: Someone promises to do something (\"we will send the floorplan Friday\", \"I will get a conversation going with the owner\")."
+],
+[
+"small_talk",
+"small talk: Relationship talk that carries no fact about the work: thanks, greetings, banter, \"sending this to my team\". If the line ALSO says something about the job (its size, a document we need, a promise), it is not small talk."
+],
+[
+"_keep",
+" keep: Not a fact worth typing: boilerplate, headers, signatures, table scaffolding, legal footer. The parser should drop or ignore it."
+]
+]
+],
+[
+"read:small_talk",
+"What it is. Which type is this line, or which kind of noise? Just relationship talk. Thanks, greetings, banter. NOT small talk if it also says anything about the work, promises something, or names a person or a document.",
+[
+[
+"_absent",
+"Just relationship talk: not marked"
+],
+[
+"true",
+"Just relationship talk: yes"
+],
+[
+"false",
+"Just relationship talk: no"
+]
+]
+],
+[
+"read:noise_class",
+"What it is. Which type is this line, or which kind of noise? What kind of noise. Only on _keep and small_talk rows: which kind of line carries no fact for anyone.",
+[
+[
+"_absent",
+"What kind of noise: not this kind of line"
+],
+[
+"greeting_thanks",
+"What kind of noise: greeting thanks. A hello, thank you or similar pleasantry."
+],
+[
+"banter_reassurance",
+"What kind of noise: banter reassurance. Friendly chat or reassurance with no fact in it (\"no worries, we've got you\")."
+],
+[
+"signoff_wrapper",
+"What kind of noise: signoff wrapper. A sign-off, signature block or the lines around one."
+],
+[
+"legal_footer",
+"What kind of noise: legal footer. A confidentiality notice, disclaimer or other legal footer."
+],
+[
+"automated_wrapper",
+"What kind of noise: automated wrapper. Text a system added around the message: forwarded headers, notification shells, tracking lines."
+],
+[
+"table_scaffolding",
+"What kind of noise: table scaffolding. A table's empty cells, ruling or repeated headers with no value of their own."
+],
+[
+"section_heading",
+"What kind of noise: section heading. A heading with no fact of its own and nothing below it to govern."
+],
+[
+"attachment_pointer",
+"What kind of noise: attachment pointer. A line that only says a file is attached, with no content of its own."
+],
+[
+"speech_filler",
+"What kind of noise: speech filler. Filler words from a call transcript (\"um\", \"yeah, so\")."
+],
+[
+"page_chrome",
+"What kind of noise: page chrome. Page numbers, running headers, footers and other print furniture."
+],
+[
+"template_instruction",
+"What kind of noise: template instruction. An instruction to whoever fills in a template (\"insert site name here\")."
+],
+[
+"cross_reference",
+"What kind of noise: cross reference. A pointer to another part of the document (\"see section 4\") with no fact of its own."
+]
+]
+],
+[
+"jdg:facet",
+"What it is. Which type is this line, or which kind of noise? Which section of a project brief does this line belong in?",
+[
+[
+"_absent",
+"Brief section: not this kind of line"
+],
+[
+"WORK",
+"Brief section: WORK. What is done: the work itself."
+],
+[
+"SITE",
+"Brief section: SITE. Where: the places and their conditions."
+],
+[
+"COMMERCIAL",
+"Brief section: COMMERCIAL. Money and terms."
+],
+[
+"COMPLIANCE",
+"Brief section: COMPLIANCE. Rules, insurance, safety and paperwork."
+],
+[
+"PARTY",
+"Brief section: PARTY. Who: the people and companies."
+],
+[
+"TIMING",
+"Brief section: TIMING. When: dates, windows and order."
+],
+[
+"META",
+"Brief section: META. About the documents themselves."
+]
+]
+],
+[
+"col:about",
+"Whose fact, and what it wants. Whose fact is it, what does it ask of us, who supplies it, and does it bring someone in? Whose fact is it? The type says WHAT a statement is; this says what it is ABOUT. Only 'deal' reaches the SOW -- 'account' and 'partner' belong in the brief's why-you-should-care, and are lost entirely if a labeler is forced to call them scope. See _LABELING_DOCTRINE.md.",
+[
+[
+"_absent",
+"about: not this kind of line"
+],
+[
+"deal",
+"about: deal. This job. This quote, this scope, this site. The only one that reaches the SOW."
+],
+[
+"account",
+"about: account. The customer relationship. True beyond this job: room to grow, who decides, how they buy."
+],
+[
+"partner",
+"about: partner. A partner's behaviour. How a reseller, vendor or installer works with us -- their drawings, their terms, what they get wrong."
+],
+[
+"internal",
+"about: internal. How we work. Our own routing and process. Never a deliverable."
+]
+]
+],
+[
+"col:wants",
+"Whose fact, and what it wants. Whose fact is it, what does it ask of us, who supplies it, and does it bring someone in? What does this statement want from us? Turns 'there is something we are missing' into a list someone can work. See _LABELING_DOCTRINE.md.",
+[
+[
+"_absent",
+"wants: not this kind of line"
+],
+[
+"nothing",
+"wants: nothing. Nothing — it is just true. The line is simply true; nobody has to fetch, ask or decide anything."
+],
+[
+"chase-artifact",
+"wants: chase artifact. Go get a document. It points at a drawing, quote or photo the deal does not hold."
+],
+[
+"chase-conversation",
+"wants: chase conversation. Find the conversation. It refers to a call or thread we do not have (\"as discussed earlier\")."
+],
+[
+"confirm-with-customer",
+"wants: confirm with customer. Ask the customer. We cannot price or build it until they answer."
+],
+[
+"decide-internally",
+"wants: decide internally. We must decide. Nobody else can answer it; it is our call to make."
+]
+]
+],
+[
+"col:supplier",
+"Whose fact, and what it wants. Whose fact is it, what does it ask of us, who supplies it, and does it bring someone in?",
+[
+[
+"_absent",
+"supplier: not this kind of line"
+],
+[
+"us",
+"supplier: us. The service provider writing the quote supplies or does it."
+],
+[
+"partner",
+"supplier: partner. Partner / reseller. A reseller or partner working with the provider supplies or does it."
+],
+[
+"customer",
+"supplier: customer. End customer. The end customer supplies or does it."
+],
+[
+"third_party",
+"supplier: third party. Another vendor. Another vendor or contractor outside the deal's main parties supplies or does it."
+],
+[
+"unresolved",
+"supplier: unresolved. Named but not resolved. The document names a ROLE and not an organisation -- \"Provided by Club/installer\" when we are the installer, so it means the club or us. Leaving it blank reads as \"not answered\"; this says the deal does not say, which is a finding and usually an unpriced cost."
+]
+]
+],
+[
+"read:introduces_party",
+"Whose fact, and what it wants. Whose fact is it, what does it ask of us, who supplies it, and does it bring someone in? Brings in someone not in this thread. A decision maker, landlord, installer or facilities manager being brought into the deal. Write the role alone when nobody named them (\"club owner\") -- that absence IS the finding, because we cannot contact a role.",
+[
+[
+"_absent",
+"Brings in someone not in this thread: the line does not say"
+],
+[
+"present",
+"Brings in someone not in this thread: the line says it"
+]
+]
+],
+[
+"read:situational",
+"Whose fact, and what it wants. Whose fact is it, what does it ask of us, who supplies it, and does it bring someone in? Matters here, generalises nowhere. Worth keeping for anyone reading THIS deal and worth no rule at all. Not a fact about the work, not pure boilerplate: the acknowledgement that explains why a second message arrived, the forward that says who now holds the job, the aside that only means something next to the line above it. Say what it is doing HERE -- \"explains why the address came separately\" -- never just that it is minor. `_keep` deletes a line; this one preserves it without teaching anything, which is the whole difference. A head should come away from it with nothing.",
+[
+[
+"_absent",
+"Matters here, generalises nowhere: the line does not say"
+],
+[
+"present",
+"Matters here, generalises nowhere: the line says it"
+]
+]
+],
+[
+"read:job_scale",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? How big the sender thinks it is. Sizing in the sender's own words, before any site visit.",
+[
+[
+"_absent",
+"How big the sender thinks it is: not this kind of line"
+],
+[
+"small",
+"How big the sender thinks it is: small. The sender calls the job small, quick or simple, or sizes it at a handful of devices, rooms or hours, before anyone has walked the site."
+],
+[
+"large",
+"How big the sender thinks it is: large. The sender calls the job large, a full build-out or a multi-phase project, or sizes it at many sites, floors or days, before anyone has walked the site."
+]
+]
+],
+[
+"read:bom_role",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? What the cell is in a BOM row. The role of this value in its bill-of-materials row: part number, description, quantity, unit_price, ext_price, and so on.",
+[
+[
+"_absent",
+"What the cell is in a BOM row: the line does not say"
+],
+[
+"present",
+"What the cell is in a BOM row: the line says it"
+]
+]
+],
+[
+"read:scope_facet",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? What kind of scope line. The universal kind of scope line. A company's own SOW group name goes in scope_category.",
+[
+[
+"_absent",
+"What kind of scope line: not this kind of line"
+],
+[
+"summary",
+"What kind of scope line: summary. A one-line summary of the whole job or a whole phase."
+],
+[
+"work_step",
+"What kind of scope line: work step. One task the crew performs, such as mount, run, terminate or configure."
+],
+[
+"schedule",
+"What kind of scope line: schedule. When the work happens or how long it takes."
+],
+[
+"tooling",
+"What kind of scope line: tooling. Tools, lifts or equipment the crew needs to do the work."
+],
+[
+"materials",
+"What kind of scope line: materials. The parts and materials installed or consumed."
+],
+[
+"staffing",
+"What kind of scope line: staffing. How many people, which skills and how many visits."
+],
+[
+"testing",
+"What kind of scope line: testing. Tests, certification or verification of the work."
+],
+[
+"documentation",
+"What kind of scope line: documentation. Drawings, as-builts, photos, reports or labels handed over."
+],
+[
+"responsibility",
+"What kind of scope line: responsibility. Who does what, said as a split of duties."
+],
+[
+"exclusion",
+"What kind of scope line: exclusion. Something the job leaves out."
+],
+[
+"other",
+"What kind of scope line: other. A scope line that fits none of the kinds above."
+]
+]
+],
+[
+"read:option_selected",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? The option is ticked. On a checkbox or option line: whether it was selected. Ticked or not, the line is a fact.",
+[
+[
+"_absent",
+"The option is ticked: not marked"
+],
+[
+"true",
+"The option is ticked: yes"
+],
+[
+"false",
+"The option is ticked: no"
+]
+]
+],
+[
+"read:start_date",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? When the work starts. The line sets or proposes when on-site work begins: \"see you Friday at 9am\". Copy the date and time as said. Label the confirmed start once, on the line that confirms it; an earlier proposal that changed is superseded by it.",
+[
+[
+"_absent",
+"When the work starts: the line does not say"
+],
+[
+"present",
+"When the work starts: the line says it"
+]
+]
+],
+[
+"read:billing_type",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? How the work is billed. The pricing basis a line states: one fixed price, time and materials (units times a rate, so every total is an estimate), milestone payments, or a price per site (a unit times the site count). Same values as the deal-level billing judgment.",
+[
+[
+"_absent",
+"How the work is billed: not this kind of line"
+],
+[
+"fixed",
+"How the work is billed: fixed. One fixed price for the stated scope, whatever the hours turn out to be."
+],
+[
+"t_and_m",
+"How the work is billed: t and m. Time and materials: hours or units times a rate, so any total is an estimate."
+],
+[
+"milestone",
+"How the work is billed: milestone. Payments tied to stages of the work, such as a deposit, a mid-point payment and a payment on completion."
+],
+[
+"per_site",
+"How the work is billed: per site. A price per site, multiplied by the number of sites."
+]
+]
+],
+[
+"read:display_size",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? Display size. The screen size the line states: \"75 inch\" is 75. Size sets how many techs a mount takes.",
+[
+[
+"_absent",
+"Display size: the line does not say"
+],
+[
+"present",
+"Display size: the line says it"
+]
+]
+],
+[
+"read:equipment_qty",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? How many units. The count of displays, devices or units the line states. A count of sites is job_scale; a count of people is crew_size.",
+[
+[
+"_absent",
+"How many units: the line does not say"
+],
+[
+"present",
+"How many units: the line says it"
+]
+]
+],
+[
+"read:requirement_kind",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? What kind of requirement. What the line requires, in a word or two (access, hardware, labor, permit, schedule...). Open set for now.",
+[
+[
+"_absent",
+"What kind of requirement: the line does not say"
+],
+[
+"present",
+"What kind of requirement: the line says it"
+]
+]
+],
+[
+"read:material",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? Material named. A material or consumable the line names (cable, mounts, conduit), in its own words.",
+[
+[
+"_absent",
+"Material named: the line does not say"
+],
+[
+"present",
+"Material named: the line says it"
+]
+]
+],
+[
+"read:scope_side",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? Whose side of the scope. Who the line puts the work or item on: the provider doing the job, the customer, a third party, or both.",
+[
+[
+"_absent",
+"Whose side of the scope: not this kind of line"
+],
+[
+"provider",
+"Whose side of the scope: provider. The service provider doing the job does the work or brings the item."
+],
+[
+"customer",
+"Whose side of the scope: customer. The end customer does the work or supplies the item themselves."
+],
+[
+"third_party",
+"Whose side of the scope: third party. Someone outside the provider and the customer does it, such as another contractor, the landlord, a carrier or a manufacturer."
+],
+[
+"shared",
+"Whose side of the scope: shared. Two or more parties split it, and the line says or implies each side's part."
+]
+]
+],
+[
+"read:site",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? Which site. The site the line is about, by the name the text uses.",
+[
+[
+"_absent",
+"Which site: the line does not say"
+],
+[
+"present",
+"Which site: the line says it"
+]
+]
+],
+[
+"read:location",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? Where it is. The address or place the line gives, verbatim.",
+[
+[
+"_absent",
+"Where it is: the line does not say"
+],
+[
+"present",
+"Where it is: the line says it"
+]
+]
+],
+[
+"read:rate",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? A rate the line states. A price per unit of work the text gives (\"$95/hr\", \"$920 per day\"). Whether it is our rate or theirs is policy, not this reading.",
+[
+[
+"_absent",
+"A rate the line states: the line does not say"
+],
+[
+"present",
+"A rate the line states: the line says it"
+]
+]
+],
+[
+"read:rate_for",
+"The facts it states. Which entity is it about, and which value does it give: size, quantity, date, billing basis, option? What the rate is for. The work or role the stated rate applies to (\"lead tech\", \"after-hours\").",
+[
+[
+"_absent",
+"What the rate is for: the line does not say"
+],
+[
+"present",
+"What the rate is for: the line says it"
+]
+]
+],
+[
+"read:doc_kind",
+"Its place in the document. What kind of document is it in, which section, and is it the deal's own words or template? What kind of document it comes from. The document's own kind (quote, BOM, SOW, floor plan, email), beyond the file type.",
+[
+[
+"_absent",
+"What kind of document it comes from: the line does not say"
+],
+[
+"present",
+"What kind of document it comes from: the line says it"
+]
+]
+],
+[
+"read:sow_fill",
+"Its place in the document. What kind of document is it in, which section, and is it the deal's own words or template? Filled in or still the template. On a SOW line: the deal's own words (filled), the template's placeholder text left as is (template), or standard template wording that still sets a real term for this deal (template_applies).",
+[
+[
+"_absent",
+"Filled in or still the template: not this kind of line"
+],
+[
+"filled",
+"Filled in or still the template: filled. The SOW line carries this deal's own facts: names, counts, dates or sites written for this job."
+],
+[
+"template",
+"Filled in or still the template: template. The SOW line is the template's placeholder or boilerplate left as it was, not written for this deal."
+],
+[
+"template_applies",
+"Filled in or still the template: template applies. The SOW line is standard template wording, but it still sets a real term for this deal, such as a rate uplift, a minimum or a cancellation fee."
+]
+]
+],
+[
+"read:sow_section",
+"Its place in the document. What kind of document is it in, which section, and is it the deal's own words or template? Which SOW section it belongs in. The standard SOW section this line lands in. overview is the introduction, executive summary or project overview; acceptance is how the work is accepted; change_control is how scope changes are requested and priced; terms is termination and the other legal terms. provider_responsibilities is the service provider's side; no company name belongs in the value.",
+[
+[
+"_absent",
+"Which SOW section it belongs in: not this kind of line"
+],
+[
+"overview",
+"Which SOW section it belongs in: overview. The introduction, executive summary or project overview: what the project is and why."
+],
+[
+"scope_of_work",
+"Which SOW section it belongs in: scope of work. The work to be done: tasks, quantities and where."
+],
+[
+"deliverables",
+"Which SOW section it belongs in: deliverables. What is handed over at the end: equipment in place, documents, drawings or test results."
+],
+[
+"acceptance",
+"Which SOW section it belongs in: acceptance. How the work is accepted as complete: the criteria, tests or sign-off."
+],
+[
+"out_of_scope",
+"Which SOW section it belongs in: out of scope. What the job explicitly does not include."
+],
+[
+"assumptions",
+"Which SOW section it belongs in: assumptions. What the price and plan assume to be true, such as access, existing conditions or working hours."
+],
+[
+"customer_responsibilities",
+"Which SOW section it belongs in: customer responsibilities. What the customer must do or provide."
+],
+[
+"provider_responsibilities",
+"Which SOW section it belongs in: provider responsibilities. What the service provider must do or provide beyond the listed tasks."
+],
+[
+"timeline",
+"Which SOW section it belongs in: timeline. Dates, durations, phases and the order of the work."
+],
+[
+"fees",
+"Which SOW section it belongs in: fees. Prices, rates, payment terms and invoicing."
+],
+[
+"change_control",
+"Which SOW section it belongs in: change control. How changes to the scope are requested, priced and approved."
+],
+[
+"terms",
+"Which SOW section it belongs in: terms. Termination and the other legal terms: liability, warranty, governing law."
+],
+[
+"contacts",
+"Which SOW section it belongs in: contacts. Who the people are and how to reach them."
+],
+[
+"other",
+"Which SOW section it belongs in: other. A real SOW line that fits none of the sections above."
+]
+]
+],
+[
+"read:derivation",
+"Its place in the document. What kind of document is it in, which section, and is it the deal's own words or template? How the value was arrived at. stated: the text says it. inferred: it follows from the text and trade knowledge. template: it came from a template default. not_derivable: nothing on the page supports it.",
+[
+[
+"_absent",
+"How the value was arrived at: not this kind of line"
+],
+[
+"stated",
+"How the value was arrived at: stated. The text says the value outright."
+],
+[
+"inferred",
+"How the value was arrived at: inferred. The value follows from the text plus trade knowledge, but the text does not say it."
+],
+[
+"template",
+"How the value was arrived at: template. The value came from a template default, not from this deal."
+],
+[
+"not_derivable",
+"How the value was arrived at: not derivable. Nothing on the page supports the value."
+]
+]
+],
+[
+"read:unreliable_part",
+"Its place in the document. What kind of document is it in, which section, and is it the deal's own words or template? Which part of it must not be trusted. Name the section, legend or column that is wrong -- \"Installer Supplied Components\" -- not just that something is. This is the reading that has to be carried down into the analysis of the document: a caveat nobody can act on is a caveat nobody applies.",
+[
+[
+"_absent",
+"Which part of it must not be trusted: the line does not say"
+],
+[
+"present",
+"Which part of it must not be trusted: the line says it"
+]
+]
+],
+[
+"read:points_at_artifact",
+"Its place in the document. What kind of document is it in, which section, and is it the deal's own words or template? Names a document. The line refers to a drawing or file, whether or not we hold it.",
+[
+[
+"_absent",
+"Names a document: the line does not say"
+],
+[
+"present",
+"Names a document: the line says it"
+]
+]
+],
+[
+"read:placeholder",
+"Its place in the document. What kind of document is it in, which section, and is it the deal's own words or template? A template placeholder. The line is an unfilled template slot (\"[Customer Name]\", \"TBD\") rather than a fact.",
+[
+[
+"_absent",
+"A template placeholder: not marked"
+],
+[
+"true",
+"A template placeholder: yes"
+],
+[
+"false",
+"A template placeholder: no"
+]
+]
+],
+[
+"jdg:billing_type",
+"The deal as a whole. What is this deal mainly, and what did the parser get wrong across it? How is this job billed?",
+[
+[
+"_absent",
+"How the job is billed: not this kind of line"
+],
+[
+"fixed",
+"How the job is billed: fixed. One fixed price."
+],
+[
+"t_and_m",
+"How the job is billed: t and m. Time and materials: billed for hours and parts used."
+],
+[
+"milestone",
+"How the job is billed: milestone. In payments tied to milestones."
+],
+[
+"per_site",
+"How the job is billed: per site. A unit price times the number of sites."
+]
+]
+],
+[
+"jdg:hardware_scope",
+"The deal as a whole. What is this deal mainly, and what did the parser get wrong across it? Who supplies the job's hardware?",
+[
+[
+"_absent",
+"Who supplies the hardware: not this kind of line"
+],
+[
+"we_supply",
+"Who supplies the hardware: we supply. The service provider supplies it."
+],
+[
+"customer_furnished",
+"Who supplies the hardware: customer furnished. The customer supplies it."
+],
+[
+"none",
+"Who supplies the hardware: none. The job needs no hardware."
+]
+]
+],
+[
+"jdg:materials_scope",
+"The deal as a whole. What is this deal mainly, and what did the parser get wrong across it? Does the job include consumables (fasteners, cable ties, patch cords)?",
+[
+[
+"_absent",
+"Consumables: not this kind of line"
+],
+[
+"consumables",
+"Consumables: consumables. Yes, consumables are in scope."
+],
+[
+"none",
+"Consumables: none. No consumables."
+]
+]
+],
+[
+"jdg:expenses_scope",
+"The deal as a whole. What is this deal mainly, and what did the parser get wrong across it? Are expenses (shipping, per diem, freight) billed on this job?",
+[
+[
+"_absent",
+"Expenses: not this kind of line"
+],
+[
+"expenses",
+"Expenses: expenses. Yes, expenses are billed."
+],
+[
+"none",
+"Expenses: none. No expenses."
+]
+]
+],
+[
+"jdg:travel_scope",
+"The deal as a whole. What is this deal mainly, and what did the parser get wrong across it? Is travel (mileage, airfare, hotel, drive time) billed on this job?",
+[
+[
+"_absent",
+"Travel: not this kind of line"
+],
+[
+"travel",
+"Travel: travel. Yes, travel is billed."
+],
+[
+"none",
+"Travel: none. No travel."
+]
+]
+],
+[
+"col:admission",
+"Which atoms exist. Should this text be an atom at all, did the parser form it right, and when it lost a line, why?",
+[
+[
+"_absent",
+"admission: not this kind of line"
+],
+[
+"keep",
+"admission: keep. keep: a real fact about the work, worth an atom"
+],
+[
+"drop",
+"admission: drop. drop: not a fact; wreckage, boilerplate, small talk or a torn fragment"
+]
+]
+],
+[
+"read:miss_cause",
+"Which atoms exist. Should this text be an atom at all, did the parser form it right, and when it lost a line, why? Why the parser lost the line. Only on a line added by hand (a Missed row, origin labeler): what the parse did that left the line with no atom of its own. It stays on the row as history after a later parse produces the line.",
+[
+[
+"_absent",
+"Why the parser lost the line: not this kind of line"
+],
+[
+"glued_paragraph",
+"Why the parser lost the line: glued paragraph. A fact sentence sat inside a paragraph the parser cut as a whole (a greeting or chatter paragraph), so the fact went with it."
+],
+[
+"table_cell_glued",
+"Why the parser lost the line: table cell glued. A table cell's parts ran together, or the cell was read with no atom of its own."
+],
+[
+"table_row_dropped",
+"Why the parser lost the line: table row dropped. A table row produced no atom, or only a fragment of one."
+],
+[
+"heading_as_section",
+"Why the parser lost the line: heading as section. A heading was used only as the section path of the lines under it and never became a line."
+],
+[
+"checkbox_cell",
+"Why the parser lost the line: checkbox cell. A grid's tick-box cell was read as decoration."
+],
+[
+"folded_copy",
+"Why the parser lost the line: folded copy. A dedup fold removed the only copy of the line under its own parent."
+],
+[
+"pasted_quote",
+"Why the parser lost the line: pasted quote. A line pasted or quoted from another source was dropped as a repeat, though it was the earliest copy or said something new."
+],
+[
+"split_mid_sentence",
+"Why the parser lost the line: split mid sentence. A sentence was cut in two, and one half has no atom."
+],
+[
+"spreadsheet_cell",
+"Why the parser lost the line: spreadsheet cell. A spreadsheet cell or row produced no atom."
+],
+[
+"other",
+"Why the parser lost the line: other. None of the above; the note says what happened."
+]
+]
+],
+[
+"jdg:document_job",
+"Which atoms exist. Should this text be an atom at all, did the parser form it right, and when it lost a line, why? A document in the deal. Is it about this job, or another job for the same customer?",
+[
+[
+"_absent",
+"Document belongs to this job: not this kind of line"
+],
+[
+"this_deal",
+"Document belongs to this job: this deal. About this job."
+],
+[
+"other_job",
+"Document belongs to this job: other job. About another job; it should not shape this one."
+]
+]
+],
+[
+"jdg:sheet",
+"Which atoms exist. Should this text be an atom at all, did the parser form it right, and when it lost a line, why? A sheet of a workbook. What is it for?",
+[
+[
+"_absent",
+"Sheet role: not this kind of line"
+],
+[
+"scope",
+"Sheet role: scope. The work to be done."
+],
+[
+"reference",
+"Sheet role: reference. Background to look things up in."
+],
+[
+"rate_card",
+"Sheet role: rate card. Prices per unit of work."
+],
+[
+"catalog",
+"Sheet role: catalog. A list of products."
+],
+[
+"financial_summary",
+"Sheet role: financial summary. Totals and margins."
+],
+[
+"instructions",
+"Sheet role: instructions. How to fill in or use the workbook."
+],
+[
+"empty",
+"Sheet role: empty. No content."
+]
+]
+],
+[
+"jdg:image",
+"Which atoms exist. Should this text be an atom at all, did the parser form it right, and when it lost a line, why? A picture in a document. What kind of picture is it?",
+[
+[
+"_absent",
+"Image kind: not this kind of line"
+],
+[
+"skip",
+"Image kind: skip. Not worth reading."
+],
+[
+"photo",
+"Image kind: photo. A photograph."
+],
+[
+"diagram",
+"Image kind: diagram. A drawing or diagram."
+],
+[
+"chart",
+"Image kind: chart. A chart or graph."
+],
+[
+"table_image",
+"Image kind: table image. A table captured as an image."
+],
+[
+"screenshot",
+"Image kind: screenshot. A screenshot."
+],
+[
+"instructions",
+"Image kind: instructions. Written instructions as an image."
+],
+[
+"label",
+"Image kind: label. A product or equipment label."
+],
+[
+"map",
+"Image kind: map. A map or floor plan."
+],
+[
+"logo",
+"Image kind: logo. A logo."
+],
+[
+"decorative",
+"Image kind: decorative. Decoration with no content."
+],
+[
+"signature",
+"Image kind: signature. A signature."
+],
+[
+"empty",
+"Image kind: empty. Blank."
+]
+]
+],
+[
+"read:superseded",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? A real fact later replaced. The fact was true when written and a later line replaced it. Pair it with a contradicts link to the replacement.",
+[
+[
+"_absent",
+"A real fact later replaced: not marked"
+],
+[
+"true",
+"A real fact later replaced: yes"
+],
+[
+"false",
+"A real fact later replaced: no"
+]
+]
+],
+[
+"rel:same_as",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? The same fact, said twice. Two lines that state the same fact in different places or words; both stay, and the fact counts once.",
+[]
+],
+[
+"rel:contradicts",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? Says the opposite. From a later line to an earlier one it disagrees with: a new count, date or site that replaces or conflicts with the old one.",
+[]
+],
+[
+"rel:near_miss",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? Looks alike, answers differently. Two lines that look or sound alike but answer differently, such as the same wording about a different party, site or item. The WHY of each says what makes the difference.",
+[]
+],
+[
+"jdg:conflict",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? Two lines the parser thought might disagree. Do they really conflict?",
+[
+[
+"_absent",
+"How these two lines relate: not this kind of line"
+],
+[
+"contradicts",
+"How these two lines relate: contradicts. They state incompatible facts about the same thing; at most one can hold."
+],
+[
+"supports",
+"How these two lines relate: supports. They agree; one confirms or restates the other."
+],
+[
+"excludes",
+"How these two lines relate: excludes. One carves the other out of scope: a stated exception or exclusion."
+],
+[
+"unrelated",
+"How these two lines relate: unrelated. They are about different things; no conflict and no support."
+]
+]
+],
+[
+"jdg:site",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? Two site names from the deal. Are they the same physical place?",
+[
+[
+"_absent",
+"One place or two: not this kind of line"
+],
+[
+"same_site",
+"One place or two: same site. The same physical place under two names or spellings."
+],
+[
+"distinct_site",
+"One place or two: distinct site. Two different physical places."
+]
+]
+],
+[
+"jdg:site_role",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? A place the deal names. Is it a place where the work happens?",
+[
+[
+"_absent",
+"Where the work happens: not this kind of line"
+],
+[
+"job_site",
+"Where the work happens: job site. A place where the work is done."
+],
+[
+"vendor_or_billing_address",
+"Where the work happens: vendor or billing address. An office, vendor or billing address; no work happens there."
+]
+]
+],
+[
+"jdg:geo_mention",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? A place named in the line. Is it a work site or only a mention?",
+[
+[
+"_absent",
+"Named place: not this kind of line"
+],
+[
+"job_site",
+"Named place: job site. The work happens at this place."
+],
+[
+"mention_only",
+"Named place: mention only. The place is mentioned (a head office, a city in a signature, a comparison) but no work happens there."
+]
+]
+],
+[
+"jdg:facility",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? How should this address be named as a site?",
+[
+[
+"_absent",
+"Site label: not this kind of line"
+],
+[
+"city_office",
+"Site label: city office. Name it by its city; the text gives no better name."
+],
+[
+"keep_facility",
+"Site label: keep facility. Keep the facility name the text gives (a building, campus or store)."
+],
+[
+"keep_name",
+"Site label: keep name. Keep the name exactly as written."
+]
+]
+],
+[
+"jdg:roster",
+"Current or replaced. Is this the same fact as another line, a different value for it, a value later replaced, or a look-alike that answers differently? A table in the deal. Is it a list of the job's sites?",
+[
+[
+"_absent",
+"Site list: not this kind of line"
+],
+[
+"site_roster",
+"Site list: site roster. A list of the places where the work happens."
+],
+[
+"not_site_roster",
+"Site list: not site roster. Not a site list."
+]
+]
+],
+[
+"read:commitment",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? Somebody undertook to do something. A promise with an owner. A promise conditional on OUR answer is a task on us before it is one on them.",
+[
+[
+"_absent",
+"Somebody undertook to do something: the line does not say"
+],
+[
+"present",
+"Somebody undertook to do something: the line says it"
+]
+]
+],
+[
+"read:task_owner_role",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? Whose task it is. The role that owns the triggered task. Put the person in entity_keys. Only PM, PC, SA or tech work counts: sellers do not get tasks from this. seller, customer, partner and other say who owns it when it is none of the delivery roles; which owners a company plans work for is that company's policy.",
+[
+[
+"_absent",
+"Whose task it is: not this kind of line"
+],
+[
+"project_manager",
+"Whose task it is: project manager. The project manager who runs the job day to day: schedule, budget and customer updates."
+],
+[
+"project_coordinator",
+"Whose task it is: project coordinator. The coordinator who books visits, ships equipment and keeps the paperwork moving."
+],
+[
+"solutions_architect",
+"Whose task it is: solutions architect. The technical designer who scopes the system, draws it and answers how it should be built."
+],
+[
+"technician",
+"Whose task it is: technician. The technician on site who installs, tests and documents the work."
+],
+[
+"seller",
+"Whose task it is: seller. The salesperson or account manager who sold the deal."
+],
+[
+"customer",
+"Whose task it is: customer. Someone on the customer's side owns the task."
+],
+[
+"partner",
+"Whose task it is: partner. A reseller, vendor or other contractor owns the task."
+],
+[
+"other",
+"Whose task it is: other. Someone in none of the roles above owns the task, such as a landlord or an inspector."
+]
+]
+],
+[
+"read:triggered_task",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? A task that starts when something happens. A PM, PC, SA or tech will act once an event lands: \"as soon as we receive confirmation that the TVs have arrived on site, we will coordinate a date\". Name the event in the line's own words (\"TVs confirmed on site\"). Link the event's atom with triggered_by when it arrives, the dependency with blocked_by, and the task with context. A seller saying they will reply or send something is not a task for us.",
+[
+[
+"_absent",
+"A task that starts when something happens: the line does not say"
+],
+[
+"present",
+"A task that starts when something happens: the line says it"
+]
+]
+],
+[
+"read:trigger_event",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? An event that starts a task. The line only reports that something happened, and that happening starts a waiting task: \"TVs were delivered today\". It is not scope and adds no work of its own, so planning and runbooks skip it. Link the task's atom to it with triggered_by.",
+[
+[
+"_absent",
+"An event that starts a task: not marked"
+],
+[
+"true",
+"An event that starts a task: yes"
+],
+[
+"false",
+"An event that starts a task: no"
+]
+]
+],
+[
+"read:fires_task",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? Which task it starts. The task this event starts, in short words: \"PM schedules the install date with the customer\". Pairs with trigger_event.",
+[
+[
+"_absent",
+"Which task it starts: the line does not say"
+],
+[
+"present",
+"Which task it starts: the line says it"
+]
+]
+],
+[
+"read:blocked_on",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? It cannot happen until somebody answers. The line is conditional: \"if you all would be able to…, I will…\". Whoever must answer owns the deal's next move, and a promise waiting on the provider is a task on the provider before it is one on anyone else. This is the critical path, and it is invisible if the conditional is flattened into the type.",
+[
+[
+"_absent",
+"It cannot happen until somebody answers: not this kind of line"
+],
+[
+"us",
+"It cannot happen until somebody answers: us. The service provider writing or receiving the quote must answer or act first; the line waits on the provider's own side."
+],
+[
+"customer",
+"It cannot happen until somebody answers: customer. The end customer must answer, approve or provide something first."
+],
+[
+"partner",
+"It cannot happen until somebody answers: partner. A reseller, vendor or other contractor must answer or act first."
+]
+]
+],
+[
+"read:urgency",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? How urgent it is. A deadline, rush or priority signal: \"need this installed before the store opens on the 15th\", \"ASAP, customer is escalating\". Say how soon and why, in the line's own words. A date that is only a schedule fact with no pressure behind it is not urgency.",
+[
+[
+"_absent",
+"How urgent it is: the line does not say"
+],
+[
+"present",
+"How urgent it is: the line says it"
+]
+]
+],
+[
+"read:expansion",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? Room to grow on this account. This job could repeat across more of the customer's sites. Say WHAT repeats (\"more clubs, same one-door scope\"), not just that it might. Never scope; it belongs in the brief's why-you-should-care, and it is why a small job can be worth quoting keenly.",
+[
+[
+"_absent",
+"Room to grow on this account: the line does not say"
+],
+[
+"present",
+"Room to grow on this account: the line says it"
+]
+]
+],
+[
+"read:lead_time",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? Lead time. How long before the work something must happen or arrive (\"2 weeks notice\", \"6-8 week lead on displays\").",
+[
+[
+"_absent",
+"Lead time: the line does not say"
+],
+[
+"present",
+"Lead time: the line says it"
+]
+]
+],
+[
+"rel:blocked_by",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? Cannot happen until that one does. From a task or commitment to the dependency it waits on: \"we will coordinate a date\" is blocked_by \"TVs are with the shipping carrier\".",
+[]
+],
+[
+"rel:triggered_by",
+"The work it causes. Does it promise, start or block a task, whose task is it, and how urgent is it? That event starts it. From a triggered task to the line saying its event happened: \"we will coordinate a date\" is triggered_by \"TVs were delivered today\".",
+[]
+],
+[
+"read:needs_artifact",
+"The question it raises. Is it a question, is it answered, and what document or conversation is still missing? A document to go and get. A drawing, floorplan or spec the sender names and the deal does not hold.",
+[
+[
+"_absent",
+"A document to go and get: the line does not say"
+],
+[
+"present",
+"A document to go and get: the line says it"
+]
+]
+],
+[
+"read:chase",
+"The question it raises. Is it a question, is it answered, and what document or conversation is still missing? Points at something we do not hold. A call or a file the deal does not contain, which someone would have to go and get.",
+[
+[
+"_absent",
+"Points at something we do not hold: not this kind of line"
+],
+[
+"conversation",
+"Points at something we do not hold: conversation. The line refers to a call, meeting or message thread the deal does not contain (\"as discussed\", \"per our call\")."
+],
+[
+"attachment",
+"Points at something we do not hold: attachment. The line refers to a file the deal does not contain: a drawing, photo, quote, spreadsheet or signed form."
+]
+]
+],
+[
+"rel:answers",
+"The question it raises. Is it a question, is it answered, and what document or conversation is still missing? Answers the question. From an answer to the question it settles. A question with no answer stays open.",
+[]
+],
+[
+"jdg:gap",
+"The question it raises. Is it a question, is it answered, and what document or conversation is still missing? A question the parser would ask the customer about this line. Would a person actually ask it?",
+[
+[
+"_absent",
+"Worth asking: not this kind of line"
+],
+[
+"valid",
+"Worth asking: valid. A real open question worth asking the customer."
+],
+[
+"invalid",
+"Worth asking: invalid. Not worth asking: already answered, a duplicate, or the wrong question for this job."
+]
+]
+],
+[
+"jdg:question_answered",
+"The question it raises. Is it a question, is it answered, and what document or conversation is still missing? An open question in the deal. Has a later line already answered it?",
+[
+[
+"_absent",
+"Question answered: not this kind of line"
+],
+[
+"answered",
+"Question answered: answered. A later line answers it."
+],
+[
+"open",
+"Question answered: open. Still open; nothing in the deal answers it."
+]
+]
+],
+[
+"read:sow_coverage",
+"Where it ends up. Does the final SOW carry it, which parser learns from it, and how much does it matter? How the SOW covers it. in_sow: the SOW says the same. missing_from_sow: the fact is real and the SOW omits it. differs: the SOW says something else. sow_not_available: there is no SOW to check. sow_only: the line exists only in the SOW.",
+[
+[
+"_absent",
+"How the SOW covers it: not this kind of line"
+],
+[
+"in_sow",
+"How the SOW covers it: in sow. The SOW states the same fact, possibly in other words."
+],
+[
+"missing_from_sow",
+"How the SOW covers it: missing from sow. The fact is real and affects the work, but the SOW never states it."
+],
+[
+"differs",
+"How the SOW covers it: differs. The SOW states the fact with a different number, site, date or party."
+],
+[
+"sow_not_available",
+"How the SOW covers it: sow not available. The deal holds no SOW to check against yet."
+],
+[
+"sow_only",
+"How the SOW covers it: sow only. The fact appears only in the SOW; nothing else in the deal says it."
+]
+]
+],
+[
+"read:train_for",
+"Where it ends up. Does the final SOW carry it, which parser learns from it, and how much does it matter? Which parser learns from it. The consumer this line trains: quote_parser reads a deal before the quote, delivery_parser reads what governs the work after it is sold. A list; a line can feed both.",
+[
+[
+"_absent",
+"Which parser learns from it: not this kind of line"
+],
+[
+"quote_parser",
+"Which parser learns from it: quote parser. The line matters before the sale: it helps read a deal well enough to price it."
+],
+[
+"delivery_parser",
+"Which parser learns from it: delivery parser. The line matters after the sale: it governs how the sold work is carried out."
+]
+]
+],
+[
+"read:co_deal_kit_route",
+"Where it ends up. Does the final SOW carry it, which parser learns from it, and how much does it matter? Which parser one of our own Deal Kit lines trains.",
+[
+[
+"_absent",
+"Which parser learns from it: not this kind of line"
+],
+[
+"quote_parser",
+"Which parser learns from it: quote parser. The line matters before the sale: it helps read a deal well enough to price it."
+],
+[
+"delivery_parser",
+"Which parser learns from it: delivery parser. The line matters after the sale: it governs how the sold work is carried out."
+]
+]
+],
+[
+"read:deal_summary",
+"What it governs. Does it open a block or sum up the deal, and which lines sit under it? The deal's scope in one line. THE line a router should read the whole deal from: service, quantity, site and deal type in one sentence -- \"4 TVs install in CheckOut New York office.\" At most one per deal: if you mark a second line, training keeps only your latest mark. Every other line you labeled on that deal teaches \"not the summary\". Not every scope line -- a work_scope_item says one thing the job includes; this says what the job IS.",
+[
+[
+"_absent",
+"The deal's scope in one line: not marked"
+],
+[
+"true",
+"The deal's scope in one line: yes"
+],
+[
+"false",
+"The deal's scope in one line: no"
+]
+]
+],
+[
+"read:opens_block",
+"What it governs. Does it open a block or sum up the deal, and which lines sit under it? It announces what follows. \"Here are the details for the small job\" governs everything under it until the next announcement. The atoms below inherit its readings -- job_scale applies to THOSE ten items, not to the whole thread. Which atoms it covers is the `governs` link, not this reading.",
+[
+[
+"_absent",
+"It announces what follows: the line does not say"
+],
+[
+"present",
+"It announces what follows: the line says it"
+]
+]
+],
+[
+"read:list_header",
+"What it governs. Does it open a block or sum up the deal, and which lines sit under it? It only introduces a list. The line only announces the list under it (\"The following sites are included:\"). It governs each item.",
+[
+[
+"_absent",
+"It only introduces a list: not marked"
+],
+[
+"true",
+"It only introduces a list: yes"
+],
+[
+"false",
+"It only introduces a list: no"
+]
+]
+],
+[
+"rel:governs",
+"What it governs. Does it open a block or sum up the deal, and which lines sit under it? Announces / scopes the atoms below. From the line that opens a block to every atom it covers. Carries no text of its own.",
+[]
+],
+[
+"jdg:task_tier",
+"What it governs. Does it open a block or sum up the deal, and which lines sit under it? A task line. Is it a whole line of work, or a step inside one?",
+[
+[
+"_absent",
+"Line or step: not this kind of line"
+],
+[
+"parent",
+"Line or step: parent. A line of work that other steps sit under."
+],
+[
+"child",
+"Line or step: child. A step inside a larger line of work."
+]
+]
+],
+[
+"rel:supports",
+"What backs it, and where it came from. Which line backs it up, gives it context, or is it derived from? Backs it up. From a line to an earlier line that backs it up with evidence or detail: a count supports the total it adds to.",
+[]
+],
+[
+"rel:context",
+"What backs it, and where it came from. Which line backs it up, gives it context, or is it derived from? Background for it. From a line to an earlier one that is background needed to read it, without backing it up or contradicting it.",
+[]
+],
+[
+"rel:derived_from",
+"What backs it, and where it came from. Which line backs it up, gives it context, or is it derived from? Worked out from it. From a line whose value was worked out, not stated, to the line it was worked out from: a SOW total derived_from the quantity and rate lines, a SOW location list derived_from the site lines in the emails. Pairs with the derivation reading (inferred).",
+[]
+],
+[
+"read:hours_stated",
+"Hours, crew and cost. Does the text state the hours or the crew, and does it take a cost off the quote? The text states labor hours. Whether the line itself gives the labor hours. An estimate made by a company rule is not stated.",
+[
+[
+"_absent",
+"The text states labor hours: not marked"
+],
+[
+"true",
+"The text states labor hours: yes"
+],
+[
+"false",
+"The text states labor hours: no"
+]
+]
+],
+[
+"read:crew_size",
+"Hours, crew and cost. Does the text state the hours or the crew, and does it take a cost off the quote? How many people go. The number of techs or crew sent or planned for the job: \"Tanner chose to send 2 techs out\" is 2. A count of devices or sites is job_scale, not crew size.",
+[
+[
+"_absent",
+"How many people go: the line does not say"
+],
+[
+"present",
+"How many people go: the line says it"
+]
+]
+],
+[
+"read:removes_cost",
+"Hours, crew and cost. Does the text state the hours or the crew, and does it take a cost off the quote? Takes a cost off our quote. Somebody else covers something we would otherwise price: \"the customer provides the wall mounts and parking\" removes the wall-mount and parking costs. Name WHICH cost goes, in the line's own words, not just that one does. Link the line to the quote, schedule or BOM row it removes; if that row still charges for it, that is a Conflict.",
+[
+[
+"_absent",
+"Takes a cost off our quote: the line does not say"
+],
+[
+"present",
+"Takes a cost off our quote: the line says it"
+]
+]
+],
+[
+"read:tech_level",
+"Hours, crew and cost. Does the text state the hours or the crew, and does it take a cost off the quote? Tech skill level. The skill level or certification the work needs, in the text's own words.",
+[
+[
+"_absent",
+"Tech skill level: the line does not say"
+],
+[
+"present",
+"Tech skill level: the line says it"
+]
+]
+],
+[
+"read:tech_coverage",
+"Hours, crew and cost. Does the text state the hours or the crew, and does it take a cost off the quote? Which techs cover it. Which techs, pool or area covers the work (\"local tech\", \"travel from Dallas\").",
+[
+[
+"_absent",
+"Which techs cover it: the line does not say"
+],
+[
+"present",
+"Which techs cover it: the line says it"
+]
+]
+],
+[
+"read:labor_hours",
+"Hours, crew and cost. Does the text state the hours or the crew, and does it take a cost off the quote? Labor hours the line states. The labor hours the text gives. hours_stated says whether there are any; this is the number. Our own estimate is co_hours_estimate.",
+[
+[
+"_absent",
+"Labor hours the line states: the line does not say"
+],
+[
+"present",
+"Labor hours the line states: the line says it"
+]
+]
+],
+[
+"read:cadence",
+"Hours, crew and cost. Does the text state the hours or the crew, and does it take a cost off the quote? How often. How often the work recurs (\"monthly\", \"2 visits per quarter\").",
+[
+[
+"_absent",
+"How often: the line does not say"
+],
+[
+"present",
+"How often: the line says it"
+]
+]
+],
+[
+"read:stage_std",
+"Deal stage. Where was the deal when this source entered it, and did a SOW exist yet? Canonical deal stage when written. The stage of the deal when the line was written, in a vocabulary any company can map its own stages to. A learning target, never an input.",
+[
+[
+"_absent",
+"Canonical deal stage when written: not this kind of line"
+],
+[
+"pre_deal",
+"Canonical deal stage when written: pre deal. Before there is a deal: an intro, a relationship note or a general inquiry."
+],
+[
+"intake",
+"Canonical deal stage when written: intake. The request has just come in: first details, sites and contacts."
+],
+[
+"scoping",
+"Canonical deal stage when written: scoping. The work is being defined: walkthroughs, questions and drawings."
+],
+[
+"quoted",
+"Canonical deal stage when written: quoted. A price has been sent and is waiting on a decision."
+],
+[
+"contracting",
+"Canonical deal stage when written: contracting. The SOW, purchase order or contract is being agreed and signed."
+],
+[
+"planning",
+"Canonical deal stage when written: planning. After signing, before work on site: scheduling, staffing and shipping."
+],
+[
+"delivery",
+"Canonical deal stage when written: delivery. Work is underway on site."
+],
+[
+"closeout",
+"Canonical deal stage when written: closeout. The work is done: sign-off, reports, invoicing and punch list."
+],
+[
+"unknown",
+"Canonical deal stage when written: unknown. The line does not show which stage the deal was in."
+]
+]
+],
+[
+"read:deal_stage",
+"Deal stage. Where was the deal when this source entered it, and did a SOW exist yet? Where the deal was when this was said. quoting: before the SOW is signed or the PO is received. planning: after the PO, before the first on-site visit. delivery: visits underway. closeout: after the last visit (completion reports, invoicing). Set it from the source's date against the deal's milestones. The same question or promise means different things at different stages.",
+[
+[
+"_absent",
+"Where the deal was when this was said: not this kind of line"
+],
+[
+"quoting",
+"Where the deal was when this was said: quoting. Before the SOW is signed or the purchase order is received; the price is still being worked out."
+],
+[
+"planning",
+"Where the deal was when this was said: planning. After the purchase order, before the first visit on site; dates, crews and equipment are being lined up."
+],
+[
+"delivery",
+"Where the deal was when this was said: delivery. Visits are underway; work is being done on site."
+],
+[
+"closeout",
+"Where the deal was when this was said: closeout. After the last visit: completion reports, sign-off, invoicing and punch-list follow-up."
+]
+]
+],
+[
+"read:sow_available_at_stage",
+"Deal stage. Where was the deal when this source entered it, and did a SOW exist yet? A SOW existed when this was written. Whether the deal held a SOW at the time of this line, so coverage is judged against what existed then.",
+[
+[
+"_absent",
+"A SOW existed when this was written: not marked"
+],
+[
+"true",
+"A SOW existed when this was written: yes"
+],
+[
+"false",
+"A SOW existed when this was written: no"
+]
+]
+],
+[
+"read:location_tier",
+"Labor market. What labor market is the site in, how precise is its address, and how far is it? What labor market the site is in. Geography only: whether a metro tech pool is within reach of the site. How a company prices a tier is its own policy and is not labeled here. A list only on a line that covers several sites, one tier per site; a single site has one tier.",
+[
+[
+"_absent",
+"What labor market the site is in: not this kind of line"
+],
+[
+"major_metro",
+"What labor market the site is in: major metro. Inside or next to a large metropolitan area, where many technicians live."
+],
+[
+"mid_metro",
+"What labor market the site is in: mid metro. In or near a mid-sized metro area with a smaller technician pool."
+],
+[
+"small_town",
+"What labor market the site is in: small town. A small town some distance from a metro area; technicians have to travel."
+],
+[
+"rural",
+"What labor market the site is in: rural. Rural, far from any metro area; travel, lodging or a long drive is likely."
+]
+]
+],
+[
+"read:address_level",
+"Labor market. What labor market is the site in, how precise is its address, and how far is it? How precise the address is. full: a street address with city and zip. street_no_zip: street and city, no zip. street_no_city: a street and number but no city. street_only: a street name with no number or city. city_only: only a city. region_only: only a metro area or region (\"Chicago area\"). state_only: only a state. name_only: only a site or building name.",
+[
+[
+"_absent",
+"How precise the address is: not this kind of line"
+],
+[
+"full",
+"How precise the address is: full. A complete street address with number, street, city and zip."
+],
+[
+"street_no_zip",
+"How precise the address is: street no zip. A street address and city, but the zip code is missing."
+],
+[
+"street_no_city",
+"How precise the address is: street no city. A street and number, but neither the city nor the zip."
+],
+[
+"street_only",
+"How precise the address is: street only. Only a street name, with no house number and no city."
+],
+[
+"city_only",
+"How precise the address is: city only. Only a city is named, with no street."
+],
+[
+"region_only",
+"How precise the address is: region only. Only a metro area or region is named (\"Chicago area\")."
+],
+[
+"state_only",
+"How precise the address is: state only. Only a state is named, with no city."
+],
+[
+"name_only",
+"How precise the address is: name only. Only a site or building name, with no address at all."
+]
+]
+],
+[
+"read:remote_miles",
+"Labor market. What labor market is the site in, how precise is its address, and how far is it? How far from the nearest metro. Distance from the site to the nearest metro area above a set size, e.g. \"85 miles from Denver\". Never distance from a company's own techs or offices.",
+[
+[
+"_absent",
+"How far from the nearest metro: the line does not say"
+],
+[
+"present",
+"How far from the nearest metro: the line says it"
+]
+]
+],
+[
+"read:region",
+"Labor market. What labor market is the site in, how precise is its address, and how far is it? Region. The metro area, region or state the line places the work in.",
+[
+[
+"_absent",
+"Region: the line does not say"
+],
+[
+"present",
+"Region: the line says it"
+]
+]
+],
+[
+"col:hints",
+"What told you. Which part of the context decided it, and where exactly? Which part of the context decided it.",
+[
+[
+"_absent",
+"what told you: not this kind of line"
+],
+[
+"own_words",
+"what told you: own words. The words themselves. The line's own words decided it; nothing around it was needed."
+],
+[
+"section",
+"what told you: section. Section heading. The heading of the section the line sits in decided it."
+],
+[
+"lead_in",
+"what told you: lead in. Intro line above a list. The intro line above a list (\"Provided by the customer:\") decided it."
+],
+[
+"neighbor_above",
+"what told you: neighbor above. Atom above. The line just above decided it."
+],
+[
+"neighbor_below",
+"what told you: neighbor below. Atom below. The line just below decided it."
+],
+[
+"who_said_it",
+"what told you: who said it. Who said it, and to whom. Who wrote or said it, and to whom, decided it."
+],
+[
+"table_column",
+"what told you: table column. Table column / header row. The table column or header row it sits under decided it."
+],
+[
+"doc_type",
+"what told you: doc type. What kind of document. The kind of document (email, SOW, BOM, call note) decided it."
+],
+[
+"other_doc",
+"what told you: other doc. Another document in the deal. Another document in the deal decided it."
+],
+[
+"domain_knowledge",
+"what told you: domain knowledge. Industry knowledge. Trade knowledge decided it: what any installer would know about the work."
+]
+]
+],
+[
+"read:co_action",
+"Keep, reject or ignore. Does our company use this line, drop it on purpose, or neither, and by which rule? What we do with it. keep: we use the line. reject: a real fact we drop on purpose; it trains our filter. ignore: we neither use it nor teach dropping it. Noise rows get none.",
+[
+[
+"_absent",
+"What we do with it: not this kind of line"
+],
+[
+"keep",
+"What we do with it: keep. We use the line in our quote or plan."
+],
+[
+"reject",
+"What we do with it: reject. A real fact we drop on purpose under one of our rules; it trains our filter."
+],
+[
+"ignore",
+"What we do with it: ignore. We neither use the line nor teach dropping it."
+]
+]
+],
+[
+"read:co_reason",
+"Keep, reject or ignore. Does our company use this line, drop it on purpose, or neither, and by which rule? Why we reject or ignore it. Required when co_action is reject or ignore. The [purtera] part of the note states the rule for this line.",
+[
+[
+"_absent",
+"Why we reject or ignore it: not this kind of line"
+],
+[
+"seller_promise",
+"Why we reject or ignore it: seller promise. A seller's promise: under our rule sellers own no delivery tasks, so it plans no work."
+],
+[
+"hw_price_not_ours",
+"Why we reject or ignore it: hw price not ours. A hardware price: we do not price hardware we do not sell."
+],
+[
+"bom_total_not_ours",
+"Why we reject or ignore it: bom total not ours. A BOM total or subtotal that is not our price."
+],
+[
+"quote_reference",
+"Why we reject or ignore it: quote reference. A reference to a quote number or quote document, not a fact about the work."
+],
+[
+"vendor_terms",
+"Why we reject or ignore it: vendor terms. A vendor's own terms and conditions."
+],
+[
+"contact_from_crm",
+"Why we reject or ignore it: contact from crm. A contact detail copied from the CRM, already held there."
+],
+[
+"handoff_announcement",
+"Why we reject or ignore it: handoff announcement. A note that the deal is being handed to another person or team."
+],
+[
+"customer_internal_process",
+"Why we reject or ignore it: customer internal process. The customer's own internal process, which does not change our work."
+],
+[
+"date_only_logistics",
+"Why we reject or ignore it: date only logistics. A date or scheduling remark with no work content."
+],
+[
+"superseded",
+"Why we reject or ignore it: superseded. Replaced by a later line that says otherwise."
+],
+[
+"old_manual_deal_kit",
+"Why we reject or ignore it: old manual deal kit. A row from an old, hand-built Deal Kit."
+],
+[
+"out_of_service_line",
+"Why we reject or ignore it: out of service line. Work in a service line we do not offer."
+],
+[
+"seller_status_update",
+"Why we reject or ignore it: seller status update. A seller's progress update with no fact about the work."
+],
+[
+"partner_internal_process",
+"Why we reject or ignore it: partner internal process. A partner's own internal process, which does not change our work."
+],
+[
+"parser_derived",
+"Why we reject or ignore it: parser derived. A value the parser worked out rather than one the deal states."
+],
+[
+"internal_housekeeping",
+"Why we reject or ignore it: internal housekeeping. Our own bookkeeping, not part of the deal."
+],
+[
+"other",
+"Why we reject or ignore it: other. Another reason, stated in the [purtera] line."
+]
+]
+],
+[
+"read:co_crew_rule",
+"Our crew, hours and travel. Which of our rules sets the crew, what do we estimate the hours at, and how far is the site from our techs? Our crew rule that sets the crew. When one of our crew rules, not the text, sets the crew, e.g. display_over_55in_2_techs.",
+[
+[
+"_absent",
+"Our crew rule that sets the crew: the line does not say"
+],
+[
+"present",
+"Our crew rule that sets the crew: the line says it"
+]
+]
+],
+[
+"read:co_hours_estimate",
+"Our crew, hours and travel. Which of our rules sets the crew, what do we estimate the hours at, and how far is the site from our techs? Our labor-hours estimate. Our estimate where the text states no hours (hours_stated=false).",
+[
+[
+"_absent",
+"Our labor-hours estimate: the line does not say"
+],
+[
+"present",
+"Our labor-hours estimate: the line says it"
+]
+]
+],
+[
+"read:co_tech_base_miles",
+"Our crew, hours and travel. Which of our rules sets the crew, what do we estimate the hours at, and how far is the site from our techs? How far from our nearest tech base. Travel distance from Purtera's nearest tech base or contractor pool to the site.",
+[
+[
+"_absent",
+"How far from our nearest tech base: the line does not say"
+],
+[
+"present",
+"How far from our nearest tech base: the line says it"
+]
+]
+],
+[
+"read:scope_category",
+"Where it goes in our systems. Which of our SOW groups, delivery fields or systems does it feed? Our SOW group. The group our own SOW files this line under. The universal kind is scope_facet.",
+[
+[
+"_absent",
+"Our SOW group: the line does not say"
+],
+[
+"present",
+"Our SOW group: the line says it"
+]
+]
+],
+[
+"read:delivery_field",
+"Where it goes in our systems. Which of our SOW groups, delivery fields or systems does it feed? Which of our delivery fields it fills. The field in our delivery tools this line fills.",
+[
+[
+"_absent",
+"Which of our delivery fields it fills: the line does not say"
+],
+[
+"present",
+"Which of our delivery fields it fills: the line says it"
+]
+]
+],
+[
+"read:source_of_truth",
+"Where it goes in our systems. Which of our SOW groups, delivery fields or systems does it feed? Where we hold the truth for it. The system we treat as authoritative for this fact, when it is not the document.",
+[
+[
+"_absent",
+"Where we hold the truth for it: the line does not say"
+],
+[
+"present",
+"Where we hold the truth for it: the line says it"
+]
+]
+],
+[
+"jdg:tier",
+"Where it goes in our systems. Which of our SOW groups, delivery fields or systems does it feed? Which of the company's project tiers is this job?",
+[
+[
+"_absent",
+"Project tier: not this kind of line"
+],
+[
+"1",
+"Project tier: 1. Tier 1."
+],
+[
+"2",
+"Project tier: 2. Tier 2."
+],
+[
+"3",
+"Project tier: 3. Tier 3."
+]
+]
+],
+[
+"read:intake_gap",
+"Our intake standard. Should we have asked this at quoting, and who on our side needs the answer? Should have been asked at quoting. A planning or delivery question about a site or customer fact that intake should have collected before the quote: \"is there power at the TV location?\" asked after the PO. Orbit learns to ask it earlier.",
+[
+[
+"_absent",
+"Should have been asked at quoting: not marked"
+],
+[
+"true",
+"Should have been asked at quoting: yes"
+],
+[
+"false",
+"Should have been asked at quoting: no"
+]
+]
+],
+[
+"read:needed_by",
+"Our intake standard. Should we have asked this at quoting, and who on our side needs the answer? Who needs the answer. Who downstream needs this fact: the PM running the job, Atlas planning, the customer portal, quoting (the quote and the Deal Kit), the SOW, or delivery (dispatch and the techs on site). A list; a fact can feed several.",
+[
+[
+"_absent",
+"Who needs the answer: not this kind of line"
+],
+[
+"project_manager",
+"Who needs the answer: project manager. The project manager running the job needs it to plan or run the work."
+],
+[
+"atlas",
+"Who needs the answer: atlas. Our Atlas planning tool needs it to build the plan and schedule."
+],
+[
+"portal",
+"Who needs the answer: portal. The customer portal needs it, so the customer can see it."
+],
+[
+"quoting",
+"Who needs the answer: quoting. Quoting needs it: the quote and the Deal Kit that prices it."
+],
+[
+"sow",
+"Who needs the answer: sow. The SOW needs it: it belongs in the written scope."
+],
+[
+"delivery",
+"Who needs the answer: delivery. Delivery needs it: dispatch and the techs on site."
+]
+]
+],
+[
+"read:co_stage_raw",
+"Our CRM stage. What did our CRM call the stage when this came in? Our CRM stage, verbatim. The stage exactly as our CRM names it; stage_std is the mapped, universal one.",
+[
+[
+"_absent",
+"Our CRM stage, verbatim: the line does not say"
+],
+[
+"present",
+"Our CRM stage, verbatim: the line says it"
+]
+]
+],
+[
+"deal:primary_service",
+"What primary service is this job?",
+[
+[
+"_absent",
+"primary service: not this kind of line"
+],
+[
+"audio_visual",
+"primary service: audio visual. Primary service: audio visual."
+],
+[
+"low_voltage_cabling",
+"primary service: low voltage cabling. Primary service: low voltage cabling."
+],
+[
+"wireless",
+"primary service: wireless. Primary service: wireless."
+],
+[
+"staff_augmentation",
+"primary service: staff augmentation. Primary service: staff augmentation."
+],
+[
+"security_camera",
+"primary service: security camera. Primary service: security camera."
+],
+[
+"camera_vms_operations",
+"primary service: camera vms operations. Primary service: camera vms operations."
+],
+[
+"security_access",
+"primary service: security access. Primary service: security access."
+],
+[
+"fire_safety",
+"primary service: fire safety. Primary service: fire safety."
+],
+[
+"paging_mass_notification",
+"primary service: paging mass notification. Primary service: paging mass notification."
+],
+[
+"das",
+"primary service: das. Primary service: das."
+],
+[
+"electrical",
+"primary service: electrical. Primary service: electrical."
+],
+[
+"telecom",
+"primary service: telecom. Primary service: telecom."
+],
+[
+"network_maintenance",
+"primary service: network maintenance. Primary service: network maintenance."
+],
+[
+"building_management_systems",
+"primary service: building management systems. Primary service: building management systems."
+],
+[
+"datacenter",
+"primary service: datacenter. Primary service: datacenter."
+],
+[
+"rack_and_stack",
+"primary service: rack and stack. Primary service: rack and stack."
+],
+[
+"hardware",
+"primary service: hardware. Primary service: hardware."
+],
+[
+"imac",
+"primary service: imac. Primary service: imac."
+],
+[
+"itad",
+"primary service: itad. Primary service: itad."
+],
+[
+"data_migration",
+"primary service: data migration. Primary service: data migration."
+],
+[
+"msp",
+"primary service: msp. Primary service: msp."
+],
+[
+"alm",
+"primary service: alm. Primary service: alm."
+],
+[
+"audit",
+"primary service: audit. Primary service: audit."
+],
+[
+"professional_services",
+"primary service: professional services. Primary service: professional services."
+],
+[
+"other",
+"primary service: other. Primary service: other."
+]
+]
+],
+[
+"jdg:term",
+"What kind of commercial term does this line state?",
+[
+[
+"_absent",
+"term kind: not this kind of line"
+],
+[
+"payment_term",
+"term kind: payment term. Term kind: payment term."
+],
+[
+"contract_term",
+"term kind: contract term. Term kind: contract term."
+],
+[
+"change_order_rule",
+"term kind: change order rule. Term kind: change order rule."
+],
+[
+"pricing_assumption",
+"term kind: pricing assumption. Term kind: pricing assumption."
+],
+[
+"commercial_total",
+"term kind: commercial total. Term kind: commercial total."
+],
+[
+"not_a_term",
+"term kind: not a term. Term kind: not a term."
+]
+]
+],
+[
+"jdg:term:renewal",
+"The renewal this term states.",
+[
+[
+"_absent",
+"renewal: not this kind of line"
+],
+[
+"auto",
+"renewal: auto. renewal: auto."
+],
+[
+"manual",
+"renewal: manual. renewal: manual."
+],
+[
+"none",
+"renewal: none. renewal: none."
+]
+]
+],
+[
+"jdg:term:timing",
+"The timing this term states.",
+[
+[
+"_absent",
+"timing: not this kind of line"
+],
+[
+"arrears",
+"timing: arrears. timing: arrears."
+],
+[
+"advance",
+"timing: advance. timing: advance."
+],
+[
+"on_completion",
+"timing: on completion. timing: on completion."
+],
+[
+"milestone",
+"timing: milestone. timing: milestone."
+]
+]
+],
+[
+"jdg:term:tax",
+"The tax this term states.",
+[
+[
+"_absent",
+"tax: not this kind of line"
+],
+[
+"included",
+"tax: included. tax: included."
+],
+[
+"excluded",
+"tax: excluded. tax: excluded."
+],
+[
+"at_invoice",
+"tax: at invoice. tax: at invoice."
+]
+]
+],
+[
+"jdg:term:approval",
+"The approval this term states.",
+[
+[
+"_absent",
+"approval: not this kind of line"
+],
+[
+"written",
+"approval: written. approval: written."
+],
+[
+"verbal",
+"approval: verbal. approval: verbal."
+]
+]
+],
+[
+"jdg:term:term_months",
+"The term months this term states.",
+[
+[
+"_absent",
+"term_months: the line does not say"
+],
+[
+"present",
+"term_months: the line says it"
+]
+]
+],
+[
+"jdg:term:notice_days",
+"The notice days this term states.",
+[
+[
+"_absent",
+"notice_days: the line does not say"
+],
+[
+"present",
+"notice_days: the line says it"
+]
+]
+],
+[
+"jdg:term:net_days",
+"The net days this term states.",
+[
+[
+"_absent",
+"net_days: the line does not say"
+],
+[
+"present",
+"net_days: the line says it"
+]
+]
+],
+[
+"jdg:term:min_hours",
+"The min hours this term states.",
+[
+[
+"_absent",
+"min_hours: the line does not say"
+],
+[
+"present",
+"min_hours: the line says it"
+]
+]
+],
+[
+"jdg:term:increment_min",
+"The increment min this term states.",
+[
+[
+"_absent",
+"increment_min: the line does not say"
+],
+[
+"present",
+"increment_min: the line says it"
+]
+]
+],
+[
+"jdg:term:after_hours_multiplier",
+"The after hours multiplier this term states.",
+[
+[
+"_absent",
+"after_hours_multiplier: the line does not say"
+],
+[
+"present",
+"after_hours_multiplier: the line says it"
+]
+]
+],
+[
+"jdg:term:rate_lock_months",
+"The rate lock months this term states.",
+[
+[
+"_absent",
+"rate_lock_months: the line does not say"
+],
+[
+"present",
+"rate_lock_months: the line says it"
+]
+]
+],
+[
+"jdg:commercial",
+"What billing shape did the finished kit give this request?",
+[
+[
+"_absent",
+"billing: not this kind of line"
+],
+[
+"fixed",
+"billing: fixed. Kit billing: fixed."
+],
+[
+"t_and_m",
+"billing: t and m. Kit billing: t and m."
+],
+[
+"milestone",
+"billing: milestone. Kit billing: milestone."
+],
+[
+"per_site",
+"billing: per site. Kit billing: per site."
+]
+]
+],
+[
+"jdg:commercial:pm_hours",
+"The kit's pm hours.",
+[
+[
+"_absent",
+"pm_hours: the line does not say"
+],
+[
+"present",
+"pm_hours: the line says it"
+]
+]
+],
+[
+"jdg:commercial:pc_hours",
+"The kit's pc hours.",
+[
+[
+"_absent",
+"pc_hours: the line does not say"
+],
+[
+"present",
+"pc_hours: the line says it"
+]
+]
+],
+[
+"jdg:commercial:travel_days",
+"The kit's travel days.",
+[
+[
+"_absent",
+"travel_days: the line does not say"
+],
+[
+"present",
+"travel_days: the line says it"
+]
+]
+],
+[
+"jdg:conflict:reason",
+"Why was the conflict verdict chosen?",
+[
+[
+"_absent",
+"conflict reason: not this kind of line"
+],
+[
+"kept",
+"conflict reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"conflict reason: overturned. The verdict goes against the parser's call or value."
+],
+[
+"duplicate",
+"conflict reason: duplicate. The two lines say the same words: a copy, not a conflict."
+],
+[
+"not_applicable",
+"conflict reason: not applicable. A pairing with no bearing on this job, such as an exclusion and an email header."
+]
+]
+],
+[
+"jdg:site:reason",
+"Why was the site verdict chosen?",
+[
+[
+"_absent",
+"site reason: not this kind of line"
+],
+[
+"kept",
+"site reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"site reason: overturned. The verdict goes against the parser's call or value."
+],
+[
+"duplicate",
+"site reason: duplicate. The two entries are copies of the same site line."
+]
+]
+],
+[
+"jdg:site_role:reason",
+"Why was the site role verdict chosen?",
+[
+[
+"_absent",
+"site_role reason: not this kind of line"
+],
+[
+"kept",
+"site_role reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"site_role reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:gap:reason",
+"Why was the gap verdict chosen?",
+[
+[
+"_absent",
+"gap reason: not this kind of line"
+],
+[
+"kept",
+"gap reason: kept. The parser's call or value was right."
+],
+[
+"answered",
+"gap reason: answered. Something in the deal already answers the question."
+],
+[
+"premature",
+"gap reason: premature. A real question, but not one to ask at this stage of the deal."
+],
+[
+"subsumed",
+"gap reason: subsumed. Another question on the deal already covers this one."
+],
+[
+"duplicate",
+"gap reason: duplicate. The same question asked again in the same or other words."
+],
+[
+"not_applicable",
+"gap reason: not applicable. Does not apply to this kind of job (a cutover date on a support contract)."
+],
+[
+"small_talk",
+"gap reason: small talk. Pleasantry or status chatter, not a question about the work."
+],
+[
+"template_text",
+"gap reason: template text. Boilerplate from a template, not a question this deal raised."
+]
+]
+],
+[
+"jdg:document_job:reason",
+"Why was the document job verdict chosen?",
+[
+[
+"_absent",
+"document_job reason: not this kind of line"
+],
+[
+"kept",
+"document_job reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"document_job reason: overturned. The verdict goes against the parser's call or value."
+],
+[
+"duplicate",
+"document_job reason: duplicate. A copy of another document on the deal."
+]
+]
+],
+[
+"jdg:suppression:reason",
+"Why was the suppression verdict chosen?",
+[
+[
+"_absent",
+"suppression reason: not this kind of line"
+],
+[
+"kept",
+"suppression reason: kept. The drop was right: the parser's call stands."
+],
+[
+"duplicate",
+"suppression reason: duplicate. A correct fold: the line is a copy of the survivor."
+],
+[
+"overturned",
+"suppression reason: overturned. The line should have been kept: the drop was wrong."
+]
+]
+],
+[
+"jdg:bom_owner:reason",
+"Why was the bom owner verdict chosen?",
+[
+[
+"_absent",
+"bom_owner reason: not this kind of line"
+],
+[
+"kept",
+"bom_owner reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"bom_owner reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:facility:reason",
+"Why was the facility verdict chosen?",
+[
+[
+"_absent",
+"facility reason: not this kind of line"
+],
+[
+"kept",
+"facility reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"facility reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:task_tier:reason",
+"Why was the task tier verdict chosen?",
+[
+[
+"_absent",
+"task_tier reason: not this kind of line"
+],
+[
+"kept",
+"task_tier reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"task_tier reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:roster:reason",
+"Why was the roster verdict chosen?",
+[
+[
+"_absent",
+"roster reason: not this kind of line"
+],
+[
+"kept",
+"roster reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"roster reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:billing_type:reason",
+"Why was the billing type verdict chosen?",
+[
+[
+"_absent",
+"billing_type reason: not this kind of line"
+],
+[
+"kept",
+"billing_type reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"billing_type reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:hardware_scope:reason",
+"Why was the hardware scope verdict chosen?",
+[
+[
+"_absent",
+"hardware_scope reason: not this kind of line"
+],
+[
+"kept",
+"hardware_scope reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"hardware_scope reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:materials_scope:reason",
+"Why was the materials scope verdict chosen?",
+[
+[
+"_absent",
+"materials_scope reason: not this kind of line"
+],
+[
+"kept",
+"materials_scope reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"materials_scope reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:expenses_scope:reason",
+"Why was the expenses scope verdict chosen?",
+[
+[
+"_absent",
+"expenses_scope reason: not this kind of line"
+],
+[
+"kept",
+"expenses_scope reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"expenses_scope reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:travel_scope:reason",
+"Why was the travel scope verdict chosen?",
+[
+[
+"_absent",
+"travel_scope reason: not this kind of line"
+],
+[
+"kept",
+"travel_scope reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"travel_scope reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:tier:reason",
+"Why was the tier verdict chosen?",
+[
+[
+"_absent",
+"tier reason: not this kind of line"
+],
+[
+"kept",
+"tier reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"tier reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:geo_mention:reason",
+"Why was the geo mention verdict chosen?",
+[
+[
+"_absent",
+"geo_mention reason: not this kind of line"
+],
+[
+"kept",
+"geo_mention reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"geo_mention reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:sheet:reason",
+"Why was the sheet verdict chosen?",
+[
+[
+"_absent",
+"sheet reason: not this kind of line"
+],
+[
+"kept",
+"sheet reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"sheet reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:facet:reason",
+"Why was the facet verdict chosen?",
+[
+[
+"_absent",
+"facet reason: not this kind of line"
+],
+[
+"kept",
+"facet reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"facet reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:image:reason",
+"Why was the image verdict chosen?",
+[
+[
+"_absent",
+"image reason: not this kind of line"
+],
+[
+"kept",
+"image reason: kept. The parser's call or value was right."
+],
+[
+"overturned",
+"image reason: overturned. The verdict goes against the parser's call or value."
+]
+]
+],
+[
+"jdg:norm:reason",
+"Why was the norm verdict chosen?",
+[
+[
+"_absent",
+"norm reason: not this kind of line"
+],
+[
+"kept",
+"norm reason: kept. The parser's call or value was right."
+],
+[
+"wrong_shape",
+"norm reason: wrong shape. The parser gave something the head cannot use, such as a bare word or a value with no unit."
+],
+[
+"overturned",
+"norm reason: overturned. The parser's value had the right shape but the wrong figure or term."
+]
+]
+],
+[
+"jdg:hours:reason",
+"Why was the hours verdict chosen?",
+[
+[
+"_absent",
+"hours reason: not this kind of line"
+],
+[
+"kept",
+"hours reason: kept. The parser's call or value was right."
+],
+[
+"wrong_shape",
+"hours reason: wrong shape. The parser gave something the head cannot use, such as a bare word or a value with no unit."
+],
+[
+"overturned",
+"hours reason: overturned. The parser's value had the right shape but the wrong figure or term."
+]
+]
+],
+[
+"jdg:commercial:reason",
+"Why was the commercial verdict chosen?",
+[
+[
+"_absent",
+"commercial reason: not this kind of line"
+],
+[
+"kept",
+"commercial reason: kept. The parser's call or value was right."
+],
+[
+"wrong_shape",
+"commercial reason: wrong shape. The parser gave something the head cannot use, such as a bare word (\"revenue\", \"contract length\")."
+],
+[
+"overturned",
+"commercial reason: overturned. The parser's value had the right shape but the wrong figure or term."
+]
+]
+],
+[
+"jdg:term:reason",
+"Why was the term verdict chosen?",
+[
+[
+"_absent",
+"term reason: not this kind of line"
+],
+[
+"kept",
+"term reason: kept. The parser's reading of the term line was right."
+],
+[
+"wrong_shape",
+"term reason: wrong shape. The parser gave something the head cannot use, such as no known kind or a bare phrase (\"net 30\")."
+],
+[
+"overturned",
+"term reason: overturned. The parser's reading had a known kind but the wrong kind, number or setting."
+]
+]
+]
+]
+}

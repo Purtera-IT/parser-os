@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -216,6 +217,117 @@ def _named(name: str, doc: str) -> str:
     if doc.lower().startswith(name.lower() + ":"):
         doc = doc[len(name) + 1:].lstrip()
     return f"{name}: {doc}"
+
+
+#: Pilot A root cause (M2): the "Unlike a site attribute ..., a site
+#: implementation note ... or a stakeholder" clauses b395fbb wrote into the
+#: line-type texts name the look-alikes inside the text that gets EMBEDDED, so
+#: each prototype is pulled toward its neighbours' (the live weights under the
+#: new texts read 010358 at 37 sites, not 89). The contrast is taught by the
+#: WHYs and the near-miss pairs; the registry (atom_types.json "desc", read by
+#: labelers) keeps it, and ``type_contrast`` returns it, but the model's answer
+#: text does not carry it. C3_EMBED_CONTRAST=1 embeds it again (the b395fbb
+#: texts); the schema digest records which, so a checkpoint never reads under
+#: the other.
+EMBED_CONTRAST = os.environ.get("C3_EMBED_CONTRAST", "0") == "1"
+_UNLIKE = re.compile(r"^\s*unlike\b", re.I)
+
+
+def _contrast_pieces(doc: str, others: Iterable[str]) -> list[tuple[str, bool]]:
+    """(piece, is_contrast) for each clause of ``doc`` (split after ". " / "; ").
+    A contrast clause opens with "Unlike", or redirects to another answer of
+    the same head ("invoice timing is a payment term", "it would be a task")."""
+    names = sorted({o.lower() for o in others if o}, key=len, reverse=True)
+    alts = "|".join(r"[\s-]+".join(map(re.escape, re.split(r"[\s-]+", n))) for n in names)
+    redirect = (re.compile(r"\b(?:is|are|would be)\s+(?:a\s+|an\s+)?(?:" + alts + r")\s*[.;]?\s*$", re.I)
+                if names else None)
+    out = []
+    for piece in re.split(r"(?<=[.;])\s+", doc.strip()):
+        if not piece:
+            continue
+        core = piece.strip()
+        out.append((piece, bool(_UNLIKE.match(core) or (redirect is not None and redirect.search(core)))))
+    return out
+
+
+#: A lead-in that only pointed back at a dropped contrast clause ("Greetings
+#: and closers are small talk; this is the rest: ...").
+_BACK_REF = re.compile(r"^this is the rest:\s*", re.I)
+
+
+def embedded_doc(doc: str, others: Iterable[str]) -> str:
+    """``doc`` without its contrast clauses (the text the model embeds)."""
+    kept, dropped = [], False
+    for p, c in _contrast_pieces(doc, others):
+        if c:
+            dropped = True
+            continue
+        if dropped:
+            p = _BACK_REF.sub("", p)
+            p = p[:1].upper() + p[1:]
+        kept.append(p)
+        dropped = False
+    text = " ".join(kept).strip()
+    if text.endswith(";"):
+        text = text[:-1].rstrip() + "."
+    return text
+
+
+#: Text pins (pilot A M2, the description gate): heads whose rewritten texts cost
+#: the start checkpoint more than the gate allows read INIT's texts instead
+#: (ml/c3/runE/init_texts.json, run C at 0b6efce), until a refit or a run has
+#: learned the new ones. ``heads``: the question and every answer; ``answers``:
+#: single answers of a head ({key: [value, ...]}). C3_TEXT_PINS=0 turns them off
+#: (every head reads this code's texts); a path reads another pin file. The
+#: schema digest records the texts, so a checkpoint never reads under the other.
+TEXT_PINS_PATH = REPO_ROOT / "ml" / "c3" / "runE" / "text_pins.json"
+INIT_TEXTS_PATH = REPO_ROOT / "ml" / "c3" / "runE" / "init_texts.json"
+
+
+def text_pins_path() -> Path | None:
+    v = os.environ.get("C3_TEXT_PINS", "")
+    if v == "0":
+        return None
+    p = Path(v) if v else TEXT_PINS_PATH
+    return p if p.is_file() else None
+
+
+def apply_text_pins(opps: list["Opportunity"], pins: dict[str, Any], init: list) -> list["Opportunity"]:
+    """``opps`` with the pinned heads / answers read in INIT's words. A head
+    whose answer values differ from INIT's is left as it is (no INIT text to pin)."""
+    from dataclasses import replace as _replace  # noqa: PLC0415
+
+    old = {k: (q, dict((v, t) for v, t in ans), [v for v, _ in ans]) for k, q, ans in init}
+    heads = set(pins.get("heads") or [])
+    answers = {k: set(v) for k, v in (pins.get("answers") or {}).items()}
+    out = []
+    for o in opps:
+        got = old.get(o.key)
+        if got is None or got[2] != [a.value for a in o.answers] or (o.key not in heads and o.key not in answers):
+            out.append(o)
+            continue
+        q, texts, _ = got
+        if o.key in heads:
+            o = _replace(o, description=q, answers=tuple(Answer(a.value, texts[a.value]) for a in o.answers))
+        else:
+            o = _replace(o, answers=tuple(Answer(a.value, texts[a.value]) if a.value in answers[o.key] else a
+                                          for a in o.answers))
+        out.append(o)
+    return out
+
+
+def type_contrast(types_path: Path | None = None) -> dict[str, list[str]]:
+    """The line types' contrast clauses (guidance for labelers and WHY writers;
+    never embedded): type name -> clauses, from atom_types.json."""
+    types = json.loads(Path(types_path or TYPES_PATH).read_text(encoding="utf-8"))
+    items = [(t["name"], t.get("desc", "")) for t in types["types"]] + [(types["keep"]["name"], types["keep"]["desc"])]
+    spelled = {n: _spell(n) for n, _ in items}
+    out = {}
+    for n, d in items:
+        got = [p.strip() for p, c in _contrast_pieces(d, [v for k, v in spelled.items() if k != n]) if c]
+        if got:
+            out[n] = got
+    return out
 
 
 def _value_kind(values: str) -> tuple[str, list[str]]:
@@ -430,6 +542,8 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
                 docs = {t["name"]: scrub(t.get("desc", ""), universal) for t in types["types"]}
                 docs[types["keep"]["name"]] = scrub(types["keep"]["desc"], universal)
                 values = list(docs)
+                if not EMBED_CONTRAST:
+                    docs = {v: embedded_doc(d, [_spell(u) for u in values if u != v]) for v, d in docs.items()}
                 opps.append(Opportunity(
                     key="col:label_type", field="label_type", source="column", kind=CLASS,
                     description=lead(h, universal) + " What kind of fact the line states.",
@@ -546,6 +660,10 @@ def load_schema(heads_path: Path = HEADS_PATH, types_path: Path = TYPES_PATH,
     reason_codes = {str(name): tuple(str(item["value"]) for item in items)
                     for name, items in reasons.items()}
     _add_extract_and_reason_opportunities(opps, homes, aliases, reasons)
+    pins_path = text_pins_path()
+    if pins_path is not None and INIT_TEXTS_PATH.is_file():
+        opps = apply_text_pins(opps, json.loads(pins_path.read_text(encoding="utf-8")),
+                               json.loads(INIT_TEXTS_PATH.read_text(encoding="utf-8"))["texts"])
     schema = Schema(opportunities=opps, spaces=spaces, version=str(heads.get("version", "")),
                     note_fields=note_fields, judgment_aliases=aliases, reason_codes=reason_codes)
     if guidance is not None:

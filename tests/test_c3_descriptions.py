@@ -5,7 +5,16 @@ from ml.c3.schema import TYPES_PATH, load_schema, scrub
 
 
 def _by_key():
-    return load_schema().by_key()
+    # The new texts themselves, without the description gate's pins (runE/text_pins.json).
+    import os
+    old, os.environ["C3_TEXT_PINS"] = os.environ.get("C3_TEXT_PINS"), "0"
+    try:
+        return load_schema().by_key()
+    finally:
+        if old is None:
+            del os.environ["C3_TEXT_PINS"]
+        else:
+            os.environ["C3_TEXT_PINS"] = old
 
 
 def test_the_supplier_question_reaches_the_model():
@@ -15,7 +24,7 @@ def test_the_supplier_question_reaches_the_model():
 
 
 def test_closed_answers_do_not_open_with_the_shared_subject():
-    for o in load_schema().opportunities:
+    for o in _by_key().values():
         if o.kind != "class" or len(o.answers) < 3:
             continue
         opened = [a for a in o.answers[1:] if a.description.lower().startswith(("why we reject", "primary service:",
@@ -27,7 +36,10 @@ def test_the_noise_type_does_not_say_keep():
     by_key = _by_key()
     noise = {a.value: a.description for a in by_key["col:label_type"].answers}["_keep"]
     assert noise.startswith("noise: ") and "keep" not in noise.split(".")[0].lower()
-    assert "stakeholder" in noise and "list header" in noise
+    # Where signatures and headings go is guidance, not embedded text (schema.EMBED_CONTRAST).
+    from ml.c3.schema import type_contrast
+    assert any("stakeholder" in c for c in type_contrast()["_keep"])
+    assert any("list header" in c for c in type_contrast()["_keep"])
 
 
 def test_primary_service_answers_say_what_the_work_is():
@@ -44,8 +56,12 @@ def test_admission_drop_covers_background_facts():
 def test_rulings_the_skill_makes_are_in_the_text():
     by_key = _by_key()
     types = {a.value: a.description for a in by_key["col:label_type"].answers}
-    assert "Payment timing is a payment term" in types["contract_term"]
-    assert "Unlike a dependency, nobody is asked" in types["assumption"]
+    # The contrast rulings are guidance (type_contrast), not the embedded answer text (pilot A M2).
+    from ml.c3.schema import type_contrast
+    contrast = type_contrast()
+    assert "Payment timing is a payment term." in contrast["contract_term"]
+    assert any(c.startswith("Unlike a dependency, nobody is asked") for c in contrast["assumption"])
+    assert "Payment timing" not in types["contract_term"] and "Unlike" not in types["assumption"]
     assert "seller" in types["task"]
     owner = {a.value: a.description for a in by_key["read:task_owner_role"].answers}
     assert "sellers do not get tasks" not in by_key["read:task_owner_role"].description
