@@ -38,6 +38,39 @@ COMPANY_PARTS = ("conduct_base.", "conduct_head.", "atom_u", "atom_v", "atom_gat
 CO_KEY = "read:co_action"
 
 
+def _device(model) -> str:
+    return str(next(model.parameters()).device)
+
+
+def _reading(model):
+    """Every forward here under the loop's autocast for the model's device:
+    on CUDA / MPS the bf16 encoder feeds fp32 layers only inside autocast."""
+    from .loop import _autocast  # noqa: PLC0415
+
+    return _autocast(_device(model))
+
+
+def dtype_safe(model) -> None:
+    """On the CPU (no autocast) the frozen bf16 line encoder's vectors are cast
+    to float32 before the fp32 deal graph reads them; a mixed bf16 x fp32
+    matmul raised there. The encoder is frozen, so nothing else changes."""
+    text = model.text
+    if getattr(text, "_c3_float_out", False):
+        return
+    fwd = text.forward
+
+    def forward(texts, _fwd=fwd):
+        return _fwd(texts).float()
+    text.forward = forward
+    if hasattr(text, "fixed"):
+        fixed = text.fixed
+
+        def fixed_(texts, _f=fixed):
+            return _f(texts).float()
+        text.fixed = fixed_
+    text._c3_float_out = True
+
+
 def company_param_names(model) -> list[str]:
     by = model.schema.by_key()
     names = []
@@ -54,7 +87,8 @@ def company_param_names(model) -> list[str]:
 @torch.no_grad()
 def universal_read(model, batch: Batch) -> dict[str, torch.Tensor]:
     model.eval()
-    out = model(batch.oneshot(), company=batch.company or None)
+    with _reading(model):
+        out = model(batch.oneshot(), company=batch.company or None)
     keep = {o.key for o in model.schema.opportunities if o.universal}
     got = {k: v.detach().cpu().clone() for k, v in out.logits.items() if k in keep}
     got.update({f"num:{k}": v.detach().cpu().clone() for k, v in out.numbers.items() if k in keep})
@@ -70,7 +104,8 @@ def co_exact(model, batches: list[Batch], key: str = CO_KEY) -> tuple[float, int
         y = b.targets.get(key)
         if y is None or not any(v != IGNORE for v in y):
             continue
-        out = model(b.oneshot(), company=b.company or None)
+        with _reading(model):
+            out = model(b.oneshot(), company=b.company or None)
         pred = out.logits[key].argmax(-1).tolist()
         for p, t in zip(pred, y):
             if t != IGNORE:
@@ -104,8 +139,9 @@ def refit_company(model, parts: list[Batch], *, passes: int = 2, lr: float = 1e-
             if not b.company:
                 continue
             model.train()
-            out = model(b.inputs(), company=b.company)
-            co, _ = head_losses(model, out, b, w, "company")
+            with _reading(model):
+                out = model(b.inputs(), company=b.company)
+                co, _ = head_losses(model, out, b, w, "company")
             if not co.requires_grad:
                 continue
             opt.zero_grad()
@@ -151,6 +187,7 @@ def main() -> None:
     ap.add_argument("--max-atoms", type=int, default=4096)
     ap.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     ap.add_argument("--out", default="")
+    ap.add_argument("--device", default="auto", help="auto: cuda when there is one, else cpu")
     a = ap.parse_args()
     from .gates import load_checkpoint  # noqa: PLC0415
     from .loop import SMALL, live_student, load_split  # noqa: PLC0415
@@ -165,6 +202,10 @@ def main() -> None:
     del payload
     model = C3Model(schema, SMALL) if tiny else live_student(schema, a.encoder)
     load_checkpoint(a.checkpoint, model, schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+    dev = a.device if a.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(dev)
+    if dev == "cpu":
+        dtype_safe(model)
     for p in model.parameters():
         p.requires_grad_(False)
     train, _ = load_split(a.train, schema, a.max_atoms)

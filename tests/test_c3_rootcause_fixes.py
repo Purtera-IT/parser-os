@@ -323,3 +323,23 @@ def test_run_base_trains_with_the_anchor_and_resumes_toward_init(schema, tmp_pat
     run_base([b], [hold], schema, Budget(teacher=0, lines=3, links=0, cards=0, numbers=0, deal=0,
                                          open_links=0, teach=0), resume=True, **kw)
     assert "anchor: INIT trunk and predictions from" in capsys.readouterr().out
+
+
+def test_company_refit_reads_a_bf16_encoder_on_the_cpu(schema):
+    """The live encoder is bf16; on the CPU there is no autocast, so its vectors
+    must be cast before the fp32 graph reads them (company_refit failed there)."""
+    from ml.c3.company_refit import dtype_safe, pretend_new_company
+
+    m = _model(schema)
+    m.add_free_head("read:co_action")
+    fwd = m.text.forward
+    m.text.forward = lambda texts, _f=fwd: _f(texts).to(torch.bfloat16)    # the live encoder's dtype
+    b = _labeled_fixture(schema)
+    with pytest.raises(RuntimeError):
+        with torch.no_grad():
+            m(b.oneshot(), company=b.company or None)
+    dtype_safe(m)
+    for p in m.parameters():
+        p.requires_grad_(False)
+    res = pretend_new_company(m, [b, b], b, hold=1, passes=1)
+    assert res["base_identical"], res
