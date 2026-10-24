@@ -557,12 +557,20 @@ def release_encoder_top(model: C3Model, layers: int) -> int:
 
 
 def _student_optimizer(model: C3Model, lr: float, adamw: bool,
-                       encoder_lr: float | None) -> torch.optim.Optimizer:
+                       encoder_lr: float | None, trunk_lr_scale: float = 1.0,
+                       trunk_decay: float | None = None) -> torch.optim.Optimizer:
     """One group for the deal model and heads; a smaller rate for any released
     encoder blocks; and the gate group (``_gate_params``) last, in the
     optimizer from the start (shut by requires_grad and a 0 rate until the
     links stage), so no group is ever added mid-run: torch >= 2.7's scheduler
-    refuses a group it was not built with."""
+    refuses a group it was not built with.
+
+    ``trunk_lr_scale`` != 1 puts the shared trunk (anchor.TRUNK_PREFIXES: the
+    deal graph's blocks, lift and norm) in its own group at ``lr x scale``,
+    second, with weight decay ``trunk_decay`` when given (0 when the trunk is
+    pulled toward INIT instead of toward zero)."""
+    from .anchor import trunk_ids  # noqa: PLC0415
+
     text = {id(p) for p in model.text.parameters()}
     gate = _gate_params(model)
     gate_ids = {id(p) for p in gate}
@@ -570,7 +578,17 @@ def _student_optimizer(model: C3Model, lr: float, adamw: bool,
     rest = [p for p in model.parameters() if p.requires_grad and id(p) not in text and id(p) not in gate_ids]
     if not rest:
         raise ValueError("No trainable parameters")
+    trunk: list = []
+    if trunk_lr_scale != 1.0:
+        tid = trunk_ids(model)
+        trunk = [p for p in rest if id(p) in tid]
+        rest = [p for p in rest if id(p) not in tid]
     groups = [{"params": rest, "lr": lr}]
+    if trunk:
+        g = {"params": trunk, "lr": lr * trunk_lr_scale, "trunk": True}
+        if trunk_decay is not None:
+            g["weight_decay"] = trunk_decay
+        groups.append(g)
     if released and encoder_lr is not None:
         groups.append({"params": released, "lr": encoder_lr})
     elif released:
@@ -655,7 +673,8 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
                   teacher: Brain | None, view, device: str,
                   lesson: TeachWeights | None = None,
                   unlabeled_keys: set[str] | None = None,
-                  scale: float = 1.0, shares: dict[str, list[float]] | None = None) -> torch.Tensor:
+                  scale: float = 1.0, shares: dict[str, list[float]] | None = None,
+                  anchor=None) -> torch.Tensor:
     model.train()
     with _autocast(device):
         kept: dict = {}
@@ -664,6 +683,13 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
             # Each term as it enters the total, so a stage shows what it trained on.
             for k, v in parts.items():
                 shares.setdefault(k, []).append(getattr(weights, k) * v)
+        if anchor is not None:
+            # anchor.py: KL to INIT's predictions on this part's unlabeled rows.
+            kl = anchor.loss(kept["out"], batch)
+            if kl is not None:
+                loss = loss + anchor.kl * kl
+                if shares is not None:
+                    shares.setdefault("anchor_kl", []).append(anchor.kl * float(kl.detach()))
         if teacher is not None and view is not None:
             # The lesson reads the same forward pass as the gold terms: a
             # second trunk pass would double what backward holds.
@@ -676,6 +702,10 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
     loss.backward()
     torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.grad is not None], 1.0)
     opt.step()
+    if anchor is not None and anchor.pull > 0:
+        # anchor.py: the decoupled L2 pull to INIT, at the trunk group's schedule.
+        g = next((g for g in opt.param_groups if g.get("trunk")), opt.param_groups[0])
+        anchor.pull_step(model, g["lr"] / max(g.get("initial_lr", g["lr"]), 1e-30))
     model.ema_update()
     return loss.detach()
 
@@ -906,7 +936,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
              pick_floors: str | None = None,
              graph: dict[str, Any] | None = None,
              max_atoms: int | None = None,
-             deal_rate: float = DEAL_RATE) -> tuple[C3Model, BaseRun]:
+             deal_rate: float = DEAL_RATE,
+             trunk_lr_scale: float = 1.0, trunk_pull: float = 0.0,
+             anchor_kl: float = 0.0, anchor_heads: tuple[str, ...] = ()) -> tuple[C3Model, BaseRun]:
     """Train on ``train`` only. Score ``holdout`` once, with atoms only.
 
     The language model is the teacher. Tests pass the tiny stand-in on CPU.
@@ -924,6 +956,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     ``graph``: graph.py's cross-line flags (``graph.parse_graph``), turned on
     before the optimizer is built; saved with every checkpoint. ``max_atoms``
     is recorded in each checkpoint (the training window).
+
+    ``trunk_lr_scale``, ``trunk_pull``, ``anchor_kl``, ``anchor_heads``: hold
+    the shared trunk near the start (anchor.py): its own rate, a decoupled L2
+    pull to its start weights, and a KL to the start's predictions on the
+    unlabeled rows of the anchor heads, read once before the first step.
 
     ``keep_checkpoints``: keep at most this many saved checkpoints on disk
     (0 keeps all), plus the best one by the pick (pick.best_at against
@@ -1072,7 +1109,29 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if bad:
             print(f"GATE FAILED at {at}: " + "; ".join(bad), flush=True)
         return bad
-    opt = _student_optimizer(model, lr, adamw, encoder_lr)
+    opt = _student_optimizer(model, lr, adamw, encoder_lr, trunk_lr_scale,
+                             0.0 if trunk_pull > 0 else None)
+    anchor = None
+    if trunk_pull > 0 or (anchor_kl > 0 and anchor_heads):
+        from .anchor import TrunkAnchor  # noqa: PLC0415
+
+        missing = [k for k in anchor_heads if k not in schema.by_key()]
+        if missing:
+            raise ValueError("anchor heads not in the schema: " + ", ".join(missing))
+        anchor = TrunkAnchor(model, pull=trunk_pull, kl=anchor_kl, heads=tuple(anchor_heads))
+        anchor_path = f"{checkpoint}.anchor.pt" if checkpoint else ""
+        if state is not None and anchor_path and anchor.load(anchor_path, device):
+            print(f"anchor: INIT trunk and predictions from {anchor_path}", flush=True)
+        else:
+            if state is not None:
+                print(f"anchor: no {anchor_path or '<checkpoint>.anchor.pt'} to resume from; anchoring "
+                      "to the resumed weights", flush=True)
+            rows = anchor.cache(model, train, device, _autocast)
+            if anchor_path:
+                anchor.save(anchor_path)
+            print(f"anchor: trunk lr x{trunk_lr_scale:g}, pull {trunk_pull:g}/step to INIT; KL {anchor_kl:g} "
+                  f"on {rows} unlabeled rows of {len(train)} parts ({','.join(anchor_heads) or 'no heads'})",
+                  flush=True)
     lesson_stages = {"teach", "flips", "spread"}
     student_stages = []
     for stage in ("lines", "links", "cards", "numbers", "deal", "open_links", "bind", "teach", "flips", "spread"):
@@ -1261,7 +1320,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
                                          teacher if taught else None,
                                          views.get(batch.deal_id) if taught else None,
                                          device, lesson if taught else None,
-                                         allowed if taught else None, scale[batch.deal_id], shares)
+                                         allowed if taught else None, scale[batch.deal_id], shares,
+                                         anchor=anchor)
                 _finite(step_loss, stage)
                 stage_losses.append(float(step_loss.detach()))
                 completed += 1
@@ -1284,6 +1344,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if stage_losses:
             stage_loss[stage] = sum(stage_losses) / len(stage_losses)
             print(f"stage {stage} loss {stage_loss[stage]:.4f}", flush=True)
+            if anchor is not None and anchor.pull > 0:
+                print(f"stage {stage} trunk_drift {anchor.drift(model):.4f} (||p - INIT|| / ||INIT||)", flush=True)
             means = {k: sum(v) / len(v) for k, v in shares.items() if v}
             top = sorted(((k, m) for k, m in means.items() if abs(m) > 1e-4), key=lambda kv: -abs(kv[1]))
             print(f"stage {stage} terms " + " ".join(f"{k}={m:.3f}" for k, m in top), flush=True)
@@ -1608,12 +1670,21 @@ def main() -> None:
     parser.add_argument("--graph", default="",
                         help="Cross-line reasoning flags (ml/c3/graph.py): rune, or key=value,... over the "
                              "defaults (mask=index|arrival|view, cut_dropout, hop_both, hop2, hop_to_h, "
-                             "pointer_edge, hop_near_miss, nodes, card_slots). Saved in every checkpoint")
+                             "pointer_edge, hop_near_miss, nodes, card_slots, lattice_doc). Saved in every checkpoint")
     parser.add_argument("--validation-max-atoms", type=int, default=0,
                         help="Lines per validation window (default --max-atoms). Run E scores at serve's "
                              "window (8192), so the checks and the pick read what serve will read")
     parser.add_argument("--deal-rate", type=float, default=DEAL_RATE,
                         help="The main groups' rate floor (share of --lr) through the deal stage")
+    parser.add_argument("--trunk-lr-scale", type=float, default=1.0,
+                        help="The shared trunk (deal graph blocks, lift, ln) at lr x this (ml/c3/anchor.py)")
+    parser.add_argument("--trunk-pull", type=float, default=0.0,
+                        help="Decoupled L2 pull of the trunk to the start weights: the share of the drift "
+                             "removed per step at the full rate (0 = off)")
+    parser.add_argument("--anchor-kl", type=float, default=0.0,
+                        help="Weight of KL(start || model) on the anchor heads' unlabeled rows (0 = off)")
+    parser.add_argument("--anchor-heads", default="",
+                        help="Comma-separated heads the KL anchor holds; none may be a new head")
     parser.add_argument("--gate", action="append", default=[],
                         help="Stop the run when a check misses its bar, e.g. lines@5.fit_exact>=0.5 "
                              "or lines.valid_exact>=0.45 (repeat)")
@@ -1650,7 +1721,14 @@ def main() -> None:
                   resume=args.resume, keep_checkpoints=args.keep_checkpoints,
                   pick_floors=args.pick_floors or None,
                   graph=parse_graph(args.graph) if args.graph else None,
-                  max_atoms=args.max_atoms, deal_rate=args.deal_rate)
+                  max_atoms=args.max_atoms, deal_rate=args.deal_rate,
+                  trunk_lr_scale=args.trunk_lr_scale, trunk_pull=args.trunk_pull,
+                  anchor_kl=args.anchor_kl,
+                  anchor_heads=tuple(k for k in args.anchor_heads.split(",") if k))
+    fresh_heads = set(filter(None, (k.strip() for k in args.allow_new_heads.split(","))))
+    if set(checks["anchor_heads"]) & fresh_heads:
+        raise SystemExit("--anchor-heads: INIT has no prediction for a new head: "
+                         + ", ".join(sorted(set(checks["anchor_heads"]) & fresh_heads)))
     if checks["graph"] is not None:
         print("graph " + " ".join(f"{k}={v}" for k, v in checks["graph"].items()), flush=True)
     require_live_teacher("" if args.tiny else args.teacher, args.tiny)
