@@ -169,3 +169,47 @@ def test_invalid_explicit_scale_fails(value):
     b=batch_stub()
     b.deal_loss_scale=value
     with pytest.raises(ValueError): training_scales([b])
+
+
+def test_runtime_schema_cap_denominator_matches_direct_head_ce(monkeypatch):
+    """Real schema has relations plus numeric-presence CE and regression targets."""
+    import ml.c3.balance as balance
+    from ml.c3.losses import answer_loss
+    from ml.c3.schema import RELATION
+
+    schema = load_schema()
+    deal = DealExample.from_dict({'deal_id': 'synthetic-runtime-schema', 'atoms': [
+        {'key': 'a', 'text': 'An invented scheduling decision.', 'label': {
+            'label_type': 'decision', 'reads_set': {'feeds_decision': ['schedule'], 'labor_hours': 2}}}]})
+    batch = featurize(deal, schema)
+    key = 'read:feeds_decision'
+    numeric = 'read:labor_hours'
+    assert 'rel:same_as' not in batch.targets
+    logits = {o.key: torch.zeros(1, len(o.answers), requires_grad=True)
+              for o in schema.select(layer=schema.by_key()[key].layer) if o.kind != RELATION}
+    assert numeric in logits and batch.numbers_target[numeric] == [2.0]
+    out = NS(r=torch.zeros(1, 2), logits=logits, numbers={})
+    weights = LossWeights(head={key: 3., numeric: 2.})
+    ce, _ = head_losses(NS(schema=schema), out, batch, weights, schema.by_key()[key].layer)
+    actual_grad = torch.autograd.grad(ce, logits[key], retain_graph=True)[0]
+    unscaled = answer_loss(logits[key], batch, key, torch.ones(1))
+    raw_grad = torch.autograd.grad(unscaled, logits[key])[0]
+    # Measure the real direct-CE coefficient instead of copying the census formula.
+    coefficient = (actual_grad / raw_grad).mean().item()
+    seen = {}
+    def capture(mass, cap, **kw):
+        seen.update(mass)
+        return {source: 1. for source in mass}
+    monkeypatch.setattr(balance, 'cap_scales', capture)
+    balance.head_cap_scales([batch], schema, {batch.deal_id: 1.}, {key: .15}, weights.head)
+    assert seen[batch.deal_id] == pytest.approx(coefficient)
+    # Numeric regression alone must not enter that divisor. Its presence CE
+    # does enter when labeled, as head_losses actually trains it.
+    batch.targets[numeric] = [IGNORE]
+    ce, _ = head_losses(NS(schema=schema), out, batch, weights, schema.by_key()[key].layer)
+    actual_grad = torch.autograd.grad(ce, logits[key])[0]
+    coefficient_without_presence = (actual_grad / raw_grad).mean().item()
+    seen.clear()
+    balance.head_cap_scales([batch], schema, {batch.deal_id: 1.}, {key: .15}, weights.head)
+    assert seen[batch.deal_id] == pytest.approx(coefficient_without_presence)
+    assert coefficient_without_presence > coefficient

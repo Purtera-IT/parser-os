@@ -101,6 +101,7 @@ def head_cap_scales(train, schema, part_scale, caps, head_weight=None):
     """
     from .losses import has_answers
     from .loop import source_deal_id
+    from .schema import RELATION
 
     weights = head_weight or {}
     result = {b.deal_id: {} for b in train}
@@ -113,7 +114,9 @@ def head_cap_scales(train, schema, part_scale, caps, head_weight=None):
             if not view or not has_answers(batch, key):
                 continue
             denom = max(sum(weights.get(o.key, 1.0) for o in schema.select(layer=opp.layer)
-                            if batch.head_scale.get(o.key, 1.0) and has_answers(batch, o.key)), 1.0)
+                            if o.kind != RELATION
+                            and (o.key in batch.targets or o.key in batch.multi_targets)
+                            and batch.head_scale.get(o.key, 1.0) and has_answers(batch, o.key)), 1.0)
             coefficient = part_scale[batch.deal_id] * weights.get(key, 1.0) * view / denom
             if coefficient <= 0:
                 continue
