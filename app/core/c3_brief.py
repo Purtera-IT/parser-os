@@ -563,11 +563,26 @@ def envelope_questions(brief: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _tables_with_atoms(tables: dict[str, Any], atoms: list[Any]) -> dict[str, Any]:
+    """Carry each table verdict with the source occurrences it describes."""
+    from app.core import c3_type_base
+
+    ids: dict[str, list[str]] = {}
+    for a in atoms:
+        key = f"{c3_type_base._doc_id(a)}||{c3_type_base._section(a)}"
+        if key in tables:
+            ids.setdefault(key, []).append(str(getattr(a, "id", "") or ""))
+    return {t: dict(v, atom_ids=ids.get(t, [])) for t, v in tables.items() if isinstance(v, dict)}
+
+
 def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None) -> dict[str, Any]:
     """Build (and, when switched on, write) the brief from this compile's read."""
     from app.core import c3_type_base
 
-    brief = build(atoms, packets, service_fallback=service_fallback, readings=c3_type_base.full_read())
+    readings = c3_type_base.full_read()
+    brief = build(atoms, packets, service_fallback=service_fallback, readings=readings)
+    brief["view"] = readings.get("view") or ""
+    brief["tables"] = _tables_with_atoms(readings.get("tables") or {}, atoms)
     # The base's line type for every line that names a site, for the roster
     # filter (site_identity.filter_roster): a site only ever mentioned in lines
     # the base does not read as a site is a mention, not a job site.

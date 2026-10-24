@@ -29,9 +29,10 @@ When a line entered the deal is what the foresight mask, the direction of
    labeling page) the latest time in the deal: it was written after
    everything the deal had seen.
 
-Only the atoms the parser kept become lines: the page also lists the
-compile's suppressed copies and mail chrome (``suppressed``), which the
-compile never sends the base. A line's ``order`` is its rank in the deal
+Only the lines the parser's read holds become lines: the atoms it kept and
+the copies its pre-read folds set aside (``c3_record.read_with_deal``, the
+compile's ``also_read``); the other suppressed lines (drops, chrome the
+parser removed outright, post-read folds) never reach the base. A line's ``order`` is its rank in the deal
 record's reading order (``c3_record.reading_order``), its document kind
 ``c3_record.document_kind`` and a missing arrival is filled in reading order
 (``c3_record.document_times``): the rules the parser's compile uses.
@@ -120,7 +121,8 @@ def _record_documents(documents: list[dict[str, Any]], doc_time: dict[str, str])
     who brought each."""
     return [{"doc_id": str(d.get("artifactId") or ""), "kind": _doc_kind(d),
              "arrival": doc_time.get(str(d.get("artifactId") or "")), "origin": _origin(d),
-             "role": str(d.get("docRole") or "")}
+             "role": str(d.get("docRole") or ""), "filename": str(d.get("filename") or ""),
+             "sent_at": (d.get("origin") if isinstance(d.get("origin"), dict) else {}).get("sent_at")}
             for d in documents]
 
 
@@ -136,8 +138,12 @@ def is_page_export(payload: Any) -> bool:
 
 
 def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "purtera",
-                     deal_answers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """One training file: ``{deal_id, company, atoms, labels, judgments, links, deal_answers}``."""
+                     deal_answers: list[dict[str, Any]] | None = None,
+                     stage_timeline: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One training file: ``{deal_id, company, atoms, labels, judgments, links, deal_answers}``.
+
+    ``stage_timeline``: the deal's ``crm.stage_timeline`` (its envelope's), read by ``c3_record.annotate``
+    for ``stage_at`` the way the compile reads the parser manifest's."""
     if not is_page_export(payload):
         raise ValueError("Not a labeling page export (needs atoms and myLinks)")
     if not str(deal_id or "").strip():
@@ -155,7 +161,11 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
     # Only the lines the parser kept are model input: the compile never sends
     # a suppressed copy or mail chrome (the page shows them, marked
     # ``suppressed``, so a person can label what the parser dropped).
-    kept = [a for a in payload["atoms"] if not a.get("suppressed")]
+    # The parser's read also holds the copies its pre-read folds set aside
+    # (c3_record.read_with_deal = c3_type_base.also_read): those are inputs too.
+    from c3_record import read_with_deal
+
+    kept = [a for a in payload["atoms"] if read_with_deal(a.get("suppressed"))]
     # Reading order (c3_record.reading_order), the rule the compile uses: the
     # page's own place inside each document, documents by authored time.
     rank = reading_order(
@@ -196,7 +206,7 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
     # rules the parser's compile uses (c3_record.sender).
     from c3_record import annotate
 
-    annotate(atoms, _record_documents(documents, doc_time))
+    annotate(atoms, _record_documents(documents, doc_time), timeline=stage_timeline)
     labels = []
     for lb in payload.get("labels") or []:
         row = dict(lb)

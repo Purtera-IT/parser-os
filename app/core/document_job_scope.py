@@ -222,6 +222,14 @@ def c3_mode() -> str:
     return "on" if v in ("1", "true", "yes", "on") else "off"
 
 
+def c3_aside() -> float:
+    """Confidence required for a model-only other-job exclusion."""
+    try:
+        return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_ASIDE", "0.98"))
+    except ValueError:
+        return 0.98
+
+
 def c3_sure() -> float:
     try:
         return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_SURE", "0.8"))

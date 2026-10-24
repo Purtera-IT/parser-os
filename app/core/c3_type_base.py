@@ -64,7 +64,6 @@ _TRUE = ("1", "true", "yes", "on")
 #: estimating calc. The live parser does not read them and the base was not
 #: scored on them (``ml.c3.loop.CHECK_SKIP_DOC_KINDS``).
 _SKIP_KINDS = ("deal_kit", "estimating_calc")
-_CALC_NAME = re.compile(r"estimat\w*calc")
 
 #: The window the base was trained and scored with (ml/c3/pod/*.sh ATOMS):
 #: a deal past this is read in windows. Reading smaller windows than it saw
@@ -268,18 +267,10 @@ def _value(atom: Any) -> dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
-#: Every document kind the base trained on: the lowercased lifecycle types
-#: (document_lifecycle/taxonomy.py) the training files carry, plus the three
-#: event kinds and ``file``, training's own bucket for a document of no known
-#: type. Anything else reads as ``file``, so the model never sees a tag it
-#: never trained on.
-TRAINED_KINDS = frozenset({
-    "email", "meeting", "note", "file", "sow_draft", "deal_kit", "site_survey",
-    "estimating_calc", "sow_signed", "site_list", "runbook", "cost_breakdown", "w9",
-    "purchase_order", "rfq", "rate_card", "engineering_design", "install_instructions",
-    "credit_application", "sow", "intake_request", "checklist", "quote", "bom",
-    "vendor_datasheet", "floor_plan", "case_manifest", "sow_template", "nda", "crm_note",
-})
+#: Every document kind the base trained on (``c3_record.TRAINED_KINDS``):
+#: anything else reads as ``file``, so the model never sees a tag it never
+#: trained on.
+from c3_record import TRAINED_KINDS  # noqa: E402
 _EMAIL_TYPES = ("email", "msg", "mbox")
 
 
@@ -299,27 +290,28 @@ def _event_kind(atom: Any) -> str:
     return ""
 
 
-def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
-    """A file's lifecycle type, looked up by its bytes' sha256 as the envelope
-    does; else ``deal_kit`` / ``estimating_calc`` by the file's name; else
-    ``file``."""
-    sha = (artifact_sha256 or {}).get(_doc_id(atom))
-    if sha:
-        try:
-            from app.core.document_lifecycle.dataset import lookup
+def _lifecycle(sha: str | None) -> dict[str, Any]:
+    """The document lifecycle record for a file's bytes, as the envelope looks
+    it up (its ``lifecycle``: type, role, delivered), else {}."""
+    if not sha:
+        return {}
+    try:
+        from app.core.document_lifecycle.dataset import lookup
 
-            rec = lookup(sha)
-        except Exception:
-            rec = None
-        kind = str((rec or {}).get("type") or "").strip().lower()
-        if kind:
-            return kind if kind in TRAINED_KINDS else "file"
-    name = re.sub(r"[^a-z]", "", _ref(atom, "filename").lower())
-    if "dealkit" in name:
-        return "deal_kit"
-    if _CALC_NAME.search(name):
-        return "estimating_calc"
-    return "file"
+        return lookup(sha) or {}
+    except Exception:
+        return {}
+
+
+def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
+    """A file's kind by the deal record's rule (``c3_record.file_kind``, the
+    one the training export uses): its lifecycle type, looked up by its bytes'
+    sha256 as the envelope does (the page's ``docType``); else ``deal_kit`` /
+    ``estimating_calc`` / ``site_list`` by the file's name; else ``file``."""
+    from c3_record import file_kind
+
+    sha = (artifact_sha256 or {}).get(_doc_id(atom))
+    return file_kind(_ref(atom, "filename"), _lifecycle(sha).get("type"))
 
 
 def doc_kind(atom: Any, artifact_sha256: dict[str, str] | None = None) -> str:
@@ -360,11 +352,6 @@ def _section(atom: Any) -> str:
     return str(sheet) if sheet else ""
 
 
-#: The speaker values training saw; anything else is '' (as on ~95% of lines).
-_ROLES = frozenset({"internal", "reseller", "unknown"})
-_SIDES = frozenset({"ours", "theirs"})
-
-
 def _speaker(atom: Any) -> tuple[str, str]:
     """(role, side): the page's ``saidBy``, which is ``value.said_by``. A
     transcript line's locator ``speaker_role`` is not it: training has '' on
@@ -375,6 +362,36 @@ def _speaker(atom: Any) -> tuple[str, str]:
     if not isinstance(by, dict):
         return "", ""
     return speaker(by.get("role") or by.get("role_guess"), by.get("side"))
+
+
+def _sender_inputs(atom: Any) -> dict[str, Any]:
+    """What ``c3_record.sender`` reads off one line, as the labeling page
+    exports it (atom-labeling.js): ``saidBy`` / ``saidTo`` (``value.said_by``
+    / ``said_to``), the email message it was written in (``messageOf``: the
+    thread stage's ``email_thread.message.author``, else the locator's
+    ``sender``, for a line with a message index), and a call transcript's
+    speaker (the locator's ``speaker``, the page's section for that line)."""
+    v, loc = _value(atom), _locator(atom)
+    out: dict[str, Any] = {}
+    by = v.get("said_by")
+    if isinstance(by, dict):
+        out["said_by"] = {"name": by.get("name"), "email": by.get("email"), "side": by.get("side"),
+                          "role": by.get("role") or by.get("role_guess")}
+    to = v.get("said_to")
+    if isinstance(to, list):
+        out["said_to"] = [{"name": p.get("name"), "email": p.get("email")} for p in to if isinstance(p, dict)]
+    et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+    msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+    index = msg.get("index") if msg.get("index") is not None else loc.get("message_index", v.get("message_index"))
+    if index not in (None, ""):
+        author = msg.get("author") or loc.get("sender") or v.get("sender")
+        if author:
+            out["message_author"] = str(author)
+    if (_ref(atom, "artifact_type") or "").strip().lower() == "transcript" or "utterance_index" in loc:
+        name = str(loc.get("speaker") or "").strip()
+        if name:
+            out["speaker_name"] = name
+    return out
 
 
 def _when(raw: Any) -> float | None:
@@ -422,13 +439,20 @@ def _build(atoms: list[Any], artifact_sha256: dict[str, str] | None = None):
       document: an artifact any of whose atoms is an email, note or meeting
       line is that kind throughout;
     * section: the locator's ``section_path`` joined with " > ", else its sheet;
-    * speaker_role / speaker_side: ``value.said_by`` role and side, else the
-      transcript locator's ``speaker_role``;
+    * speaker_side / speaker_role / speaker_org, doc_direction, stage_at:
+      ``c3_record.sender`` (``build_rows``), from ``value.said_by``, else the
+      line's email message author, else a transcript line's speaker, else its
+      document's ``origin`` (``deal_documents``: an attachment's is the
+      message that carried it); stage from the deal's CRM stage history when
+      it has two or more transitions (``set_deal``'s ``stage_timeline``),
+      else from the deal's own milestones;
     * entered_at: the locator's ``sent_at``; else the time of the document
       before it in arrival order (a document's own origin and ``authoredAt``
       are not on the atom); else the latest time in the deal; else 0 for every
       line, so the deal reads in compile order;
-    * order: position in the compile.
+    * order: rank in the deal record's reading order (``_reading_rank``,
+      ``c3_record.reading_order``), the rule the training export uses;
+    * table_row: ``c3_record.table_geometry`` of the line's table ref.
 
     Returns the deal and each atom's key, in the compile's order.
     """
@@ -451,15 +475,27 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     from c3_record import build_rows
 
     sha = artifact_sha256 if artifact_sha256 is not None else _DEAL.get("sha")
+    atoms = _with_also(atoms)
     docs = list(documents if documents is not None else (_DEAL.get("documents") or []))
     have = {str(d.get("doc_id")) for d in docs}
     lines, keys, seen = [], [], set()
     extra: dict[str, dict[str, Any]] = {}
+    seen_ids: set[str] = set()
+    messages: dict[str, tuple] = {}
+    said_to: dict[str, Any] = {}
     for i, a in enumerate(atoms):
         key = _key(a, i)
         if key in seen:
             key = f"{key}#{i}"
         seen.add(key)
+        # The base refuses a read in which two lines share an atom id
+        # (data.DealExample.from_dict), and a compile can hold duplicates at
+        # this point (ids are made unique later): 010115 read nothing at all
+        # and typed every line with the LLM. A repeat carries its unique key.
+        aid = str(getattr(a, "id", "") or "")
+        if aid in seen_ids:
+            aid = key
+        seen_ids.add(aid)
         keys.append(key)
         d = _doc_id(a)
         if d not in have:
@@ -470,9 +506,15 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
                 e["authored_at"] = t
                 e["sent_at"] = t
         role, side = _speaker(a)
+        msg = _message_of(a)
+        if msg is not None:
+            messages[aid] = msg
+        to = _value(a).get("said_to")
+        if isinstance(to, list) and to:
+            said_to[aid] = to
         lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
                       "section": _section(a), "order": float(i), "speaker_role": role,
-                      "speaker_side": side, "atom_id": str(getattr(a, "id", "") or "")})
+                      "speaker_side": side, "atom_id": aid, **_sender_inputs(a), **_geometry(a)})
     rank = _reading_rank(atoms, docs)
     if rank is not None:
         for ln, r in zip(lines, rank):
@@ -481,28 +523,274 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         if not e["kind"]:
             first = next(a for a in atoms if _doc_id(a) == d)
             e["kind"] = _file_kind(first, sha)
-    rows = build_rows(lines, docs + list(extra.values()), latest_fallback=0.0)
+    rows = build_rows(lines, docs + list(extra.values()), latest_fallback=0.0, timeline=_DEAL.get("stage_timeline"))
     _STATUS["rows"] = {"documents": len(docs), "documents_from_atoms": len(extra),
                        "times": len({r["entered_at"] for r in rows})}
+    if view_name():
+        deal_id0 = next((str(getattr(a, "project_id", "") or "") for a in atoms if getattr(a, "project_id", None)),
+                        "") or "live"
+        kinds = doc_kind_reads(deal_id0, rows)
+        rows = _view_rows(rows, docs + list(extra.values()), messages, said_to, kinds)
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
                     if getattr(a, "project_id", None)), "") or "live"
     return deal_id, rows, keys
 
 
-def _reading_rank(atoms: list[Any], docs: list[dict[str, Any]]) -> list[int] | None:
-    """Each atom's place in the envelope's reading order (``_in_reading_order``,
-    the order the labeling page lists lines in, which is training's ``order``):
-    documents by authored time, ties by their place in the compile manifest,
-    then page, paragraph or row, line and sentence. None without the compile's
-    documents; the atoms' own order stands."""
-    if not docs or not all("pos" in d for d in docs):
-        return None
-    try:
-        from app.core.orbitbrief_envelope import _in_reading_order
+def view_name() -> str:
+    """This compile's read of the deal (``c3_record.view``): ``quoting`` when the run has an as_of,
+    ``planning`` otherwise; '' when ``SOWSMITH_C3_VIEW`` is off (every line read, every head asked)."""
+    return str(_DEAL.get("view") or "")
 
-        reading = [{"artifact_id": d["doc_id"], "authored_at": d.get("authored_at") or ""}
-                   for d in sorted(docs, key=lambda d: d["pos"])]
-        place = {id(a): i for i, a in enumerate(_in_reading_order(list(atoms), reading))}
+
+def views_enabled() -> bool:
+    """``SOWSMITH_C3_VIEW`` (default on): the read is the training view the run is in."""
+    return os.environ.get("SOWSMITH_C3_VIEW", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def set_other_job(doc_ids: Any) -> None:
+    """Documents set aside as another job (``c3_record.document_job.set_aside``): never in either view's
+    read, as training drops them (S5). The compile's own lines are unchanged."""
+    _DEAL["other_job"] = {str(d): "document_job other_job" for d in (doc_ids or ()) if d}
+
+
+def view_drops_other_job() -> bool:
+    """``SOWSMITH_C3_VIEW_OTHER_JOB`` (default on, dev included): with document_job_scope off, the view's
+    read still leaves out the documents the base's document head sets aside as another job, by the one
+    rule training's views drop them by (``c3_record.document_job.set_aside``)."""
+    return os.environ.get("SOWSMITH_C3_VIEW_OTHER_JOB", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def other_job_by_head(atoms: list[Any], *, deal_name: str = "", crm: dict[str, Any] | None = None,
+                      floor: float | None = None) -> set[str]:
+    """Documents the base's ``jdg:document_job`` reading sets aside (``c3_record.document_job.set_aside``:
+    a sure other_job, never a drawing on the model's word, never a document whose own lines name the
+    deal). Empty when the base did not read the deal."""
+    from c3_record.document_job import deal_anchors, is_drawing, names_deal, set_aside
+
+    got = documents(atoms)
+    if not got:
+        return set()
+    if floor is None:
+        from app.core.document_job_scope import c3_aside
+
+        floor = c3_aside()
+    bar = floor
+    anchors = deal_anchors(deal_name, crm or {})
+    texts: dict[str, list[str]] = {}
+    names: dict[str, str] = {}
+    for a in atoms:
+        d = _doc_id(a)
+        texts.setdefault(d, []).append(str(getattr(a, "raw_text", "") or ""))
+        names.setdefault(d, _ref(a, "filename"))
+    out = set()
+    for d, heads in got.items():
+        v = heads.get(DOCUMENT_JOB_KEY)
+        if not v:
+            continue
+        if set_aside(v[0], taught=False, confidence=float(v[1] or 0.0), floor=bar,
+                     drawing=is_drawing([names.get(d, "")]), named=names_deal(texts.get(d, ()), anchors)):
+            out.add(d)
+    return out
+
+
+def _message_of(atom: Any) -> tuple | None:
+    """The message a mail line was written in, as training's provenance reads it off the page's line
+    (``message``: author, sentAt, quoted, index) or the envelope's locator: (author, at, quoted, index)."""
+    from c3_record.provenance import parse_when, zoned
+
+    v, loc = _value(atom), _locator(atom)
+    et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+    msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+    index = msg.get("index") if msg.get("index") is not None else loc.get("message_index")
+    if index in (None, "") and "message_index" not in loc:
+        return None
+    author = msg.get("author") or loc.get("sender") or ""
+    sent = msg.get("sentAt") or msg.get("sent_at") or loc.get("sent_at")
+    quoted = msg.get("quoted") if msg.get("quoted") is not None else loc.get("quoted")
+    return (str(author or ""), parse_when(sent), bool(quoted), index, zoned(sent))
+
+
+DOC_KIND_KEY = "jdg:doc_kind"
+
+
+def doc_kind_enabled() -> bool:
+    """``SOWSMITH_C3_DOC_KIND`` (default on): the view's provenance takes each document's kind from the base's
+    document-kind head (``jdg:doc_kind``) when the base serves it; else the compile's own kind, as before."""
+    return os.environ.get("SOWSMITH_C3_DOC_KIND", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def doc_kind_reads(deal_id: str, rows: list[dict[str, Any]]) -> dict[str, str]:
+    """``{doc_id: kind}`` from the base's ``jdg:doc_kind`` reading of the whole deal (before any view cut:
+    the kind decides the cut), each at or above ``SOWSMITH_C3_DOC_KIND_BAR`` (default 0.8) and one of the
+    head's kinds. Empty -- the compile's own kinds stand -- when it is off, no base is reachable, or the base
+    does not serve the head. Read once per deal record; ``_DEAL["doc_kinds"]`` set beforehand (an audit's
+    stand-in) is used as given."""
+    from c3_record.provenance import head_kind
+
+    if "doc_kinds" in _DEAL and _DEAL.get("doc_kinds_key") in (None, read_key(rows, DOC_KIND_KEY)):
+        return dict(_DEAL.get("doc_kinds") or {})
+    out: dict[str, str] = {}
+    if doc_kind_enabled():
+        raw: dict[str, Any] = {}
+        budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
+        try:
+            if _url():
+                health = _request("/health", None, timeout=_env_float("SOWSMITH_C3_CONNECT_S", 5.0))
+                if health.get("ready"):
+                    got = _request("/read", {"deal": {"deal_id": deal_id, "company": "purtera", "atoms": rows},
+                                             "budget_s": budget, "document_heads": [DOC_KIND_KEY]},
+                                   timeout=budget + 10.0)
+                    raw = got.get("documents") or {}
+            else:
+                loaded = get_model() if enabled() or document_job_enabled() else None
+                if loaded is not None and DOC_KIND_KEY in loaded[1].by_key():
+                    from ml.c3.data import DealExample
+                    from ml.c3.predict import read_deal
+
+                    model, schema, device = loaded
+                    doc = read_deal(model, DealExample.from_dict({"deal_id": deal_id, "company": "purtera",
+                                                                  "atoms": rows}), schema,
+                                    max_atoms=MAX_ATOMS, device=device, lines_only=True,
+                                    deadline=time.monotonic() + budget, heads=("col:label_type",),
+                                    document_heads=(DOC_KIND_KEY,))
+                    raw = {d: {k: [v["answer"], v.get("p")] for k, v in h.items()}
+                           for d, h in (doc.get("documents") or {}).items()}
+        except Exception as exc:  # noqa: BLE001 - no kind read is the compile's own kinds, never a failed read
+            log.warning("C3 document-kind read failed (%s); the compile's own kinds stand", type(exc).__name__)
+            raw = {}
+        bar = _env_float("SOWSMITH_C3_DOC_KIND_BAR", 0.8)
+        for d, heads in raw.items():
+            v = (heads or {}).get(DOC_KIND_KEY)
+            if v and v[0] is not None and float(v[1] or 0.0) >= bar and head_kind(v[0]):
+                out[str(d)] = head_kind(v[0])
+    _DEAL["doc_kinds"], _DEAL["doc_kinds_key"] = dict(out), read_key(rows, DOC_KIND_KEY)
+    _STATUS["doc_kinds"] = {"read": len(out)}
+    return out
+
+
+def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages: dict[str, tuple],
+               said_to: dict[str, Any], kinds: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """The rows of this compile's view (c3_record.provenance / c3_record.view, the rules training's
+    views use): a quoting read holds the customer's and partner's lines before our first pricing (cut
+    earlier by the run's as_of), never our own paper or a Deal Kit line; a planning read every line before
+    our kickoff once the deal is won. Neither holds another job's documents. Each kept row gets the view's
+    stage clamp and its ``view``. The compile's atoms are unchanged: a line outside the view has no reading."""
+    from c3_record import crm_marks
+    from c3_record import provenance as prov
+    from c3_record import view as cview
+    from c3_record.provenance import parse_when
+
+    v = view_name()
+    from c3_record.sender import epoch
+
+    if not any((epoch(r.get("entered_at")) or 0.0) > 0 for r in rows):
+        # A deal with no time anywhere (training refuses one): no cut can be placed, so the read is every
+        # line, as before views.
+        _STATUS["view"] = {"view": v, "undated": True, "inputs": len(rows), "out": 0}
+        for r in rows:
+            r["view"] = v
+        return rows
+    docinfo: dict[str, dict[str, Any]] = {}
+    for d in docs:
+        o = d.get("origin") if isinstance(d.get("origin"), dict) else {}
+        direction = str(o.get("direction") or "")
+        sender = str(o.get("sender_email") or o.get("sender_name") or "")
+        kind = str(d.get("kind") or "").strip().lower()
+        docinfo[str(d.get("doc_id") or "")] = {
+            "direction": direction, "sender": sender, "role": str(d.get("role") or ""),
+            "kind": "" if kind == "file" else kind,
+            "carrier": ("email", direction, sender) if o.get("via") == "email" else None,
+            "carrier_at": parse_when(o.get("sent_at")) if o.get("via") == "email" else 0.0,
+            "message": kind in ("email", "note"), "filename": str(d.get("filename") or "")}
+    lines = [{"label_key": r["key"], "atom_id": r.get("atom_id") or r["key"], "doc_id": r.get("doc_id"),
+              "text": r.get("text"), "entered_at": r.get("entered_at"), "doc_kind": r.get("doc_kind"),
+              "speaker_side": r.get("speaker_side"), "section": r.get("section"), "order": r.get("order")}
+             for r in rows]
+    texts_of = {x["atom_id"]: (str(x["text"] or ""), messages[x["atom_id"]][4]) for x in lines
+                if x["atom_id"] in messages}
+    other = dict(_DEAL.get("other_job") or {})
+    P = prov.decide(lines, docinfo, {k: m[:4] for k, m in messages.items()}, texts_of=texts_of, to_of=said_to, other_job=other,
+                    source="compile", kinds=kinds)
+    dk = prov.pricing_workbook_keys(P, lines)
+    marks = crm_marks(_DEAL.get("stage_timeline"))
+    end = None
+    if v == cview.QUOTING:
+        keep = prov.quoting_inputs(P, lines, exclude=dk, as_of=_DEAL.get("as_of"))
+    else:
+        won = min((x["arrival"] for x in P.doc.values() if x["ours"] and x["kind"] in ("sow_signed", "signed_sow",
+                                                                                     "purchase_order")), default=None)
+        end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
+        keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
+    _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
+    kept = [rows[i] for i in keep]
+    cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
+    _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
+                       "plan_end": None if end in (None, float("inf")) else end, "inputs": len(kept),
+                       "out": len(rows) - len(kept), "ours": len(P.ours_atoms), "deal_kit": len(dk),
+                       "other_job_docs": len(other)}
+    return kept
+
+
+def _geometry(atom: Any) -> dict[str, int]:
+    """Where a table-row line sits (``c3_record.table_geometry``), from the
+    table ref the labeling page also stamps (``_atom_table_ref``: the page's
+    ``tableRef``, which training's ``table_row`` is read from)."""
+    try:
+        from app.core.typed_atom_classifier import _atom_table_ref
+        from c3_record import table_geometry
+
+        return table_geometry(_atom_table_ref(atom))
+    except Exception:  # noqa: BLE001 - no geometry is a line read without it, never a failed read
+        return {}
+
+
+def also_read(atoms: list[Any]) -> None:
+    """Lines the deal's read must hold that are not in the compile's list:
+    the copies a dedup folded before the heads read (``head_fold``) and the
+    lines an admission regex held aside. Each is read in its own document's
+    context, so the heads decide about it; the compile's list is unchanged.
+    Every read after this (``documents``, typing's ``classify``, the late
+    re-read) appends them after the compile's own lines."""
+    _DEAL["also"] = list(atoms or [])
+
+
+def _with_also(atoms: list[Any]) -> list[Any]:
+    extra = _DEAL.get("also") or []
+    if not extra:
+        return list(atoms)
+    have = {id(a) for a in atoms}
+    ids = {str(getattr(a, "id", "") or "") for a in atoms}
+    return list(atoms) + [a for a in extra if id(a) not in have and str(getattr(a, "id", "") or "") not in ids]
+
+
+def _reading_rank(atoms: list[Any], docs: list[dict[str, Any]]) -> list[int] | None:
+    """Each atom's rank in the deal record's reading order
+    (``c3_record.reading_order``), the rule the training export orders the
+    labeling page's lines by: documents by authored time, ties by manifest
+    place; inside one, the page's own order (``c3_record.page_position``:
+    message, page, block, line, sentence, column), a workbook's sheets one
+    after another. Ties fall to the envelope's order (``_in_reading_order``,
+    which is the page's envelope order), else the compile's."""
+    try:
+        from c3_record import is_email_file, page_group, page_position, reading_order
+
+        envelope = list(atoms)
+        if docs and all("pos" in d for d in docs):
+            try:
+                from app.core.orbitbrief_envelope import _in_reading_order
+
+                reading = [{"artifact_id": d["doc_id"], "authored_at": d.get("authored_at") or ""}
+                           for d in sorted(docs, key=lambda d: d["pos"])]
+                envelope = _in_reading_order(list(atoms), reading)
+            except Exception:
+                envelope = list(atoms)
+        lines = [{"doc_id": _doc_id(a),
+                  "within": page_position(_locator(a), _value(a), getattr(a, "raw_text", "") or "",
+                                          email=is_email_file(_ref(a, "artifact_type"), _ref(a, "filename"))),
+                  "group": page_group(_locator(a))} for a in envelope]
+        rank = reading_order(lines, [{"doc_id": d.get("doc_id"), "authored_at": d.get("authored_at"),
+                                      "pos": d.get("pos")} for d in docs or []])
+        place = {id(a): r for a, r in zip(envelope, rank)}
         return [place[id(a)] for a in atoms]
     except Exception:
         return None
@@ -525,10 +813,12 @@ def document_job_enabled() -> bool:
 #: one read of the deal when ``SOWSMITH_C3_BRIEF`` is on.
 BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
                     "read:scope_facet", "col:wants", "read:intake_gap", "read:needed_by",
-                    "read:blocked_on", "read:superseded",
+                    "read:blocked_on", "read:superseded", "read:task_owner_role",
                     # Site role for site_geo_fallback (line_reading): on the labeled
                     # deals the base was right 241/243, the LLM/parser 234/243.
-                    "jdg:site_role", "jdg:geo_mention")
+                    "jdg:site_role", "jdg:geo_mention",
+                    # Who furnishes a priced line (c3_brief._customer_furnished).
+                    "col:supplier")
 
 
 def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
@@ -536,6 +826,47 @@ def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
     read (created after the read) or the head was not asked."""
     v = ((_DEAL.get("reads") or {}).get(str(atom_id)) or {}).get(head)
     return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else None
+
+
+#: Type answers that are the type head's reject: in training, chatter and
+#: "_keep" lines carry their drop in label_type (rejected=true) and never a
+#: read:co_action label, so co_action is answering outside what it learned on
+#: them (010388 "Yesterday's game was nuts.": small_talk 0.94, co_action keep
+#: 0.99). Whose call a line's keep is: the type head's here, co_action's on the
+#: lines the type head reads as substantive.
+CHATTER_ANSWERS = frozenset({"small_talk", "_keep"})
+
+
+def type_reading(atom_id: str) -> tuple[str, float] | None:
+    """This compile's type head (col:label_type) reading of one line."""
+    v = (_DEAL.get("types") or {}).get(str(atom_id))
+    return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else None
+
+
+def is_chatter_reading(reading: tuple[str, float] | None) -> bool:
+    """The type head reads the line as small_talk or _keep at its SURE bar."""
+    return bool(reading) and reading[0] in CHATTER_ANSWERS and float(reading[1] or 0.0) >= sure_for(reading[0])
+
+
+def type_head_drops(atom_id: str) -> bool:
+    """True when the type head drops this line (``is_chatter_reading``): no
+    keep head reading rescues it."""
+    return is_chatter_reading(type_reading(atom_id))
+
+
+def stamp_type_reads(atoms: list[Any]) -> int:
+    """Write the type head's reading on every line it read
+    (``value.c3_read = {"type", "p"}``), acted on or not, so the SOW writer
+    and audits see it without a re-read. Returns lines stamped."""
+    n = 0
+    for a in atoms:
+        got = type_reading(str(getattr(a, "id", "") or ""))
+        v = getattr(a, "value", None)
+        if got is None or not isinstance(v, dict):
+            continue
+        v["c3_read"] = {"type": got[0], "p": round(got[1], 4)}
+        n += 1
+    return n
 
 
 def brief_enabled() -> bool:
@@ -552,9 +883,24 @@ def brief_questions() -> list[str]:
         return []
 
 
+#: Table verdicts the read asks (predict._judge_tables): whether a table is the deal's site roster or a
+#: sheet, per table (doc_id||section). The Deal Kit reads a site_roster table as one site list.
+TABLE_HEADS = ("jdg:roster", "jdg:sheet")
+
+
+def brief_line_heads() -> list[str]:
+    """``BRIEF_LINE_HEADS`` this compile's view asks (``c3_record.view.heads``): a quoting read asks no PM
+    head, a planning read no quote or SOW head."""
+    from c3_record.view import heads
+
+    return heads(view_name(), BRIEF_LINE_HEADS)
+
+
 def _brief_body(body: dict[str, Any]) -> dict[str, Any]:
+    if view_name():
+        body["view"] = view_name()
     if brief_enabled():
-        body.update(line_heads=list(BRIEF_LINE_HEADS), full=True)
+        body.update(line_heads=brief_line_heads(), full=True, table_heads=list(TABLE_HEADS))
         qs = brief_questions()
         if qs:
             body["questions"] = qs
@@ -562,35 +908,42 @@ def _brief_body(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _keep_full(got: dict[str, Any]) -> None:
-    """Hold the read's line readings, links, deal answers and question
-    answers for the brief."""
+    """Hold the read's line readings, links, deal answers, question answers
+    and table verdicts for the brief. A later read of the deal replaces the
+    links, questions and tables of an earlier one: a later line can change an
+    earlier reading, so the two never mix."""
     if "reads" in _DEAL:
-        _DEAL["reads"].update(got.get("reads") or {})
-        _DEAL["questions"].extend(got.get("questions") or [])
-        if got.get("question_bar") is not None:
-            _DEAL["question_bar"] = float(got["question_bar"])
-        _DEAL["links"].extend(got.get("links") or [])
-        _DEAL["deal"].update(got.get("deal") or {})
+        _DEAL["reads"] = dict(got.get("reads") or {})
+        _DEAL["questions"] = list(got.get("questions") or [])
+        _DEAL["question_bar"] = float(got["question_bar"]) if got.get("question_bar") is not None else None
+        _DEAL["links"] = list(got.get("links") or [])
+        _DEAL["deal"] = dict(got.get("deal") or {})
+        _DEAL["tables"] = dict(got.get("tables") or {})
 
 
 def full_read() -> dict[str, Any]:
     """This compile's readings beyond types: ``{"reads", "links", "deal"}``."""
-    return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions", "question_bar")}
+    return {k: _DEAL.get(k) for k in ("reads", "links", "deal", "questions", "question_bar", "tables", "view")}
 
 
-def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None) -> None:
+def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None,
+             stage_timeline: dict[str, Any] | None = None, as_of: Any = None) -> None:
+    """``stage_timeline``: the deal's ``crm.stage_timeline`` from the parser manifest (the envelope's,
+    cut to the run's as_of date), which ``c3_record.build_rows`` reads for ``stage_at``. ``as_of``: the
+    run's cutoff (manifest ``context.as_of``): a run with one is a quoting read, one without a planning
+    read (``view_name``; ``SOWSMITH_C3_VIEW=0`` reads every line as before)."""
     _DEAL.clear()
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
-                 reads={}, links=[], deal={}, questions=[])
+                 reads={}, links=[], deal={}, questions=[], also=[], tables={},
+                 stage_timeline=stage_timeline if isinstance(stage_timeline, dict) else None)
+    if views_enabled() and documents is not None:
+        from c3_record.view import of_run
+
+        _DEAL.update(view=of_run(as_of), as_of=as_of or None)
 
 
 def _delivered_at(sha256: str) -> Any:
-    try:
-        from app.core.document_lifecycle.dataset import lookup
-
-        rec = lookup(sha256) or {}
-    except Exception:
-        return None
+    rec = _lifecycle(sha256)
     for d in rec.get("delivered") or []:
         if isinstance(d, dict) and d.get("ts"):
             return d["ts"]
@@ -605,8 +958,11 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
     from the manifest Purpulse writes: the email or note that carried a file
     (``carried_by.sent_at``, else that carrier's authored time), and an
     event's own authored time; a file nothing carried has none (it takes the
-    one before it, as on the labeling page). Kind is the atoms' event kind,
-    else the file's type by its bytes (``_file_kind``)."""
+    arrival of the document before it in reading order, ``c3_record.
+    document_times``, as the training export does). Kind is the labeling
+    page's event kind (``c3_record.event_kind``), else the file's type by its
+    bytes (``_file_kind``); role is the lifecycle's (the page's ``docRole``);
+    origin is ``doc_origin.origin_for`` with the deal roster's names."""
     prov: dict[str, dict[str, Any]] = {}
     index: dict[str, dict[str, Any]] = {}
     if project_dir:
@@ -622,19 +978,42 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             index = manifest_index(project_dir) or {}
         except Exception:
             index = {}
+    from c3_record import event_kind
+
     first: dict[str, Any] = {}
-    event: dict[str, str] = {}
+    own: dict[str, list[Any]] = {}
     for a in atoms:
         d = _doc_id(a)
         first.setdefault(d, a)
-        if d not in event or not event[d]:
-            event[d] = _event_kind(a)
+        own.setdefault(d, []).append(a)
+    # A document is an email, note or meeting by the labeling page's rule
+    # (c3_record.event_kind: its type, its name, its own atoms), which is the
+    # kind training reads.
+    event = {d: event_kind(_ref(a, "artifact_type"), (fingerprints or {}).get(d, {}).get("filename")
+                           or _ref(a, "filename"), [_value(x) for x in own[d]]) for d, a in first.items()}
     sha = {k: str(v.get("sha256") or "") for k, v in (fingerprints or {}).items() if v.get("sha256")}
+    by_name = {str(fp.get("filename") or ""): d for d, fp in (fingerprints or {}).items()}
+    prov = _as_envelope_documents(prov, own, by_name, sha)
+    # The HubSpot note each file was attached to (note_attachments), which the envelope's own
+    # documents carry as ``hubspot_note`` and the labeling page's origin reads ("Uploaded internally by
+    # Trent Torrence · Jul 27 note"): without it every note-attached file read "Uploaded internally",
+    # with no sender and no arrival (11,577 speaker and 2,988 arrival differences from training, run E).
+    try:
+        from app.core.note_attachments import note_attachment_links
+
+        _links = note_attachment_links(project_dir) if project_dir else None
+        for name, link in ((_links.attachments if _links else {}) or {}).items():
+            if name in prov and isinstance(link, dict):
+                prov[name].setdefault("hubspot_note", link)
+    except Exception:  # noqa: BLE001 - no links is today's behaviour
+        pass
+    names = _roster_names(atoms, prov)
     docs = []
     for pos, (d, fp) in enumerate((fingerprints or {}).items()):
         name = str(fp.get("filename") or "")
         p = prov.get(name) or {}
-        authored = p.get("authored_at") or (index.get(name) or {}).get("authored_at") or None
+        authored = (p.get("authored_at") or (index.get(name) or {}).get("authored_at")
+                    or _own_date(own.get(d) or [], event.get(d) or "") or None)
         cb = p.get("carried_by") if isinstance(p.get("carried_by"), dict) else {}
         carrier = prov.get(str(cb.get("filename") or "")) or {}
         sent = (cb.get("sent_at") or carrier.get("authored_at")) if cb else None
@@ -644,8 +1023,18 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             # arrived with the note at 23:32:57.777, as the page had it).
             sent = _delivered_at(sha[d])
         kind = event.get(d) or (_file_kind(first[d], sha) if d in first else "file")
+        # The lifecycle's role sentence, the page's docRole: whose paper it is
+        # (c3_record.sender.is_ours reads it for the stage).
+        role = str(_lifecycle(sha.get(d)).get("role") or "")
+        origin = _origin(p, prov, first.get(d), names)
+        # The arrival training reads is the page's ``origin.sent_at`` (export.py) and nothing else: the
+        # carrier's time, a HubSpot note's when the file came on one, the delivering message's when the
+        # lifecycle matched one (doc_origin.origin_for). A file nothing delivered has none and takes the
+        # arrival of the document before it (c3_record.document_times), as in training -- not the
+        # lifecycle's own delivered_at guess (010050's 2022 predictive survey, 207 lines a day apart).
+        sent = origin.get("sent_at") if origin else sent
         docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
-                     "filename": name, "pos": pos})
+                     "filename": name, "pos": pos, "role": role, "origin": origin})
     from c3_record import EVENT_KINDS
 
     def arrival(doc):
@@ -663,6 +1052,110 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
     return [doc for _, _, doc in keyed]
 
 
+def _as_envelope_documents(prov: dict[str, dict[str, Any]], own: dict[str, list[Any]],
+                           by_name: dict[str, str], sha: dict[str, str] | None = None
+                           ) -> dict[str, dict[str, Any]]:
+    """The manifest provenance with what the envelope adds to each document
+    before it reads the document's origin (``orbitbrief_envelope``): from its
+    own atoms, an email's thread block (its MIME sender), the sender a
+    forwarded chain started with and a HubSpot note's author; its lifecycle
+    record; then the envelope's own passes over the documents -- who sent the
+    message that delivered a file (``_resolve_delivered_by``), a file's
+    direction from its originator, and the note that captions an upload
+    (``_link_caption_notes``). ``doc_origin.origin_for`` reads these on the
+    page's side."""
+    try:
+        from app.core.orbitbrief_envelope import (_direction_from_originator, _document_thread,
+                                                  _link_caption_notes, _note_author, _originating_sender,
+                                                  _resolve_delivered_by)
+    except Exception:
+        return prov
+    out: dict[str, dict[str, Any]] = {}
+    for name, p in prov.items():
+        q = dict(p)
+        d = by_name.get(name, "")
+        mine = own.get(d) or []
+        art = _ref(mine[0], "artifact_type").strip().lower() if mine else ""
+        q.update(artifact_id=d, filename=name, artifact_type=art)
+        try:
+            if mine:
+                q.setdefault("email_thread", _document_thread(mine, artifact_id=d, is_message=art == "email"))
+            if mine and (p.get("attachment_ids") or []):
+                q.setdefault("originated_by", _originating_sender(mine, artifact_id=d))
+            if mine:
+                for k, v in _note_author(mine, d).items():
+                    q.setdefault(k, v)
+        except Exception:  # noqa: BLE001 - what cannot be read is left as the manifest has it
+            pass
+        lc = _lifecycle((sha or {}).get(d))
+        if lc:
+            q.setdefault("lifecycle", lc)
+        out[name] = q
+    docs = list(out.values())
+    compact = {"atoms": [{"artifact_id": d, "structured": _value(a)} for d, xs in own.items() for a in xs]}
+    for step in (lambda: _resolve_delivered_by(docs), lambda: _direction_from_originator(docs, None),
+                 lambda: _link_caption_notes(docs, compact, None)):
+        try:
+            step()  # in place, in the envelope's order
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
+def _roster_names(atoms: list[Any], prov: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """The deal's people, address -> name, as the envelope's ``deal_roster``
+    has them (the labeling page passes ``rosterNames(env)`` to the origin of
+    every document): message senders and signatures."""
+    try:
+        from app.core.deal_roster import build_deal_roster
+
+        roster = build_deal_roster(atoms=list(atoms), documents=[
+            {"sender_email": p.get("sender_email"), "filename": name} for name, p in prov.items()])
+    except Exception:
+        return {}
+    return {str(p["email"]).lower(): str(p["name"]) for p in roster.get("people") or []
+            if isinstance(p, dict) and p.get("email") and p.get("name")}
+
+
+def _own_date(own: list[Any], kind: str) -> Any:
+    """The page's fallback for a document's authored time: an email's thread
+    date, a note's own date (atom-labeling.js: ``th.date``, ``note.date``)."""
+    from c3_record.reading import is_note_meta
+
+    for a in own:
+        v = _value(a)
+        if kind == "email":
+            et = v.get("email_thread")
+            if isinstance(et, dict) and et.get("thread_id") and et.get("date"):
+                return et["date"]
+        elif kind == "note" and is_note_meta(v):
+            return v.get("date") or None
+    return None
+
+
+def _origin(p: dict[str, Any], prov: dict[str, dict[str, Any]], atom: Any = None,
+            names: dict[str, str] | None = None) -> dict[str, Any]:
+    """Who brought a document in, as the labeling page's ``origin`` says it:
+    ``doc_origin.origin_for`` on the manifest's provenance (an attachment's
+    is the email or note that carried it; an email's is its own sender), with
+    the deal roster's names (``names``: address -> name, as the page passes
+    them), so a sender known only by address still has a name a quoted
+    message author can be matched to."""
+    try:
+        from app.core.doc_origin import origin_for
+
+        art = (_ref(atom, "artifact_type") if atom is not None else "") or ""
+        doc = {"carried_by": p.get("carried_by"), "direction": p.get("direction"),
+               "sender_email": p.get("sender_email"), "authored_at": p.get("authored_at"),
+               "artifact_type": "email" if art.strip().lower() in _EMAIL_TYPES else art,
+               **{k: p[k] for k in ("email_thread", "originated_by", "note_author", "lifecycle", "delivered_by",
+                                    "delivered_by_source", "forwarded_by", "hubspot_note") if p.get(k)}}
+        o = origin_for(doc, prov, names or {})
+    except Exception:  # noqa: BLE001 - an origin that cannot be read is no sender, never a failed read
+        return {}
+    return {k: o.get(k) for k in ("direction", "sender_email", "sender_name", "sent_at", "via")}
+
+
 def _url() -> str:
     return os.environ.get("SOWSMITH_C3_URL", "").strip().rstrip("/")
 
@@ -678,6 +1171,50 @@ def _request(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
+
+
+def quote_enabled() -> bool:
+    """Deal Kit quote heads (POST /v1/quote on the C3 server). Off unless SOWSMITH_C3_QUOTE is on."""
+    return os.environ.get("SOWSMITH_C3_QUOTE", "").strip().lower() in ("1", "on", "true", "yes")
+
+
+def _text_type(atom: Any) -> tuple[str, str, str]:
+    kind = getattr(atom, "atom_type", "")
+    # A compile's atoms carry their words in raw_text (as _rows reads them); text is a fallback.
+    text = getattr(atom, "raw_text", None) or getattr(atom, "text", "")
+    return (str(getattr(atom, "id", "") or ""), str(text or ""), str(getattr(kind, "value", kind) or ""))
+
+
+def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[str, Any]:
+    """The quote heads' labor proposal for this deal: task line, job type, techs, hours per tech,
+    rate line and price, each with its reason. Sends the final atoms and the brief's sections and
+    job details; returns {} on any failure so a compile never waits on it."""
+    if not quote_enabled() or not _url():
+        return {}
+    deal = brief.get("deal") or {}
+    rows = []
+    for a in atoms:
+        aid, text, kind = _text_type(a)
+        if text.strip():
+            rows.append({"id": aid, "text": text[:4000], "type": kind})
+    # The deal's site list count (the same list the envelope's site_readiness shows), so the heads'
+    # "N places: check the site list" flag can fire. It was a literal 0, so it never did.
+    try:
+        from app.core.declared_scope import _found_site_count
+
+        site_count = int(_found_site_count(atoms) or 0)
+    except Exception:  # noqa: BLE001 - a count that cannot be read is sent as 0, as before
+        site_count = 0
+    body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
+                     "atoms": rows, "site_count": site_count,
+                     "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
+                                               for k, v in (brief.get("sections") or {}).items()},
+                                  "job_details": brief.get("job_details") or []}}}
+    try:
+        return _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60")))
+    except Exception as exc:  # noqa: BLE001 - best effort, like every other C3 call
+        log.warning("quote heads unavailable: %s", type(exc).__name__)
+        return {}
 
 
 def warm() -> None:
@@ -701,8 +1238,46 @@ def deal_payload(deal: Any) -> dict[str, Any]:
     return {"deal_id": deal.deal_id, "company": deal.company, "atoms": [
         {"key": a.key, "text": a.text, "entered_at": a.entered_at, "doc_id": a.doc_id,
          "doc_kind": a.doc_kind, "section": a.section, "order": a.order,
-         "speaker_role": a.speaker_role, "speaker_side": a.speaker_side, "atom_id": a.atom_id}
+         "speaker_role": a.speaker_role, "speaker_side": a.speaker_side, "atom_id": a.atom_id,
+         # Sender and stage (c3_record.sender), as the training export writes them.
+         "speaker_org": getattr(a, "speaker_org", ""), "doc_direction": getattr(a, "doc_direction", ""),
+         "stage_at": getattr(a, "stage_at", ""),
+         # The read the line is in (c3_record.view), as training's views write it.
+         **({"view": a.view} if getattr(a, "view", "") else {}),
+         # Geometry: training writes table_row only (c3_record.table_geometry).
+         **_table_row(a)}
         for a in deal.atoms]}
+
+
+def _table_row(atom: Any) -> dict[str, int]:
+    """``{"table_row": n}`` as the training export writes it, read back off
+    the base's geometry (``ml.c3.data._geometry``: slot 4), else {}."""
+    geo = tuple(getattr(atom, "geometry", ()) or ())
+    return {"table_row": int(geo[4])} if len(geo) > 4 and geo[4] else {}
+
+
+#: The base's name for a type the parser calls by another. ``work_scope_item``
+#: is the parser's ``scope_item`` (the labelers' word for it); without this
+#: every sure work_scope_item answer had no parser type and went to the LLM.
+BASE_ALIAS = {"work_scope_item": "scope_item"}
+
+
+def _aliased(types: dict[str, Any] | None) -> dict[str, Any]:
+    return {k: ([BASE_ALIAS.get(str(v[0]), v[0]), *list(v[1:])] if v else v) for k, v in (types or {}).items()}
+
+
+def read_key(rows: list[dict[str, Any]], *extra: Any) -> str:
+    """What one read of the deal saw: every row the base reads (its key, text, document, arrival, order,
+    sender, stage and view) and what was asked. A reading is reused only for the same key: a later line
+    can change an earlier line's reading, so a subset of the atoms is not the same read."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for r in rows:
+        # Every wire input matters, including speaker_role, pixels and geometry.
+        h.update(json.dumps(r, sort_keys=True, default=str).encode())
+    h.update(json.dumps([str(x) for x in extra]).encode())
+    return h.hexdigest()
 
 
 def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list[int]
@@ -712,9 +1287,10 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     started = time.monotonic()
     shared = _DEAL.get("types") or {}
-    if keys and all(k in shared for k in keys):
-        # This compile already read the deal (document_job_scope, on the same
-        # record): its lines only dropped since, so the readings stand.
+    if keys and shared and _DEAL.get("read_key") == read_key(rows):
+        # This compile already read exactly this deal (document_job_scope, on
+        # the same record): the readings stand. Any change -- a line added,
+        # dropped or rewritten -- reads again.
         _STATUS.update(state="read", reason="shared", remote=True, lines=len(rows), read_ms=0.0)
         return {i: (str(shared[k][0]), float(shared[k][1] or 0.0)) for i, k in zip(ids, keys)
                 if shared[k] and shared[k][0] is not None}
@@ -756,9 +1332,10 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
     _STATUS.update(state="read", reason="", remote=True, lines=len(rows),
                    read_ms=round((time.monotonic() - started) * 1000, 1),
                    service_read_ms=got.get("read_ms"))
-    types = got.get("types") or {}
+    types = _aliased(got.get("types"))
     if "types" in _DEAL:
-        _DEAL["types"].update(types)
+        _DEAL["types"] = dict(types)
+        _DEAL["read_key"] = read_key(rows)
     out: dict[int, tuple[str, float]] = {}
     for i, key in zip(ids, keys):
         t = types.get(key)
@@ -795,7 +1372,7 @@ def _local(deal: Any, keys: list[str], ids: list[int]) -> dict[int, tuple[str, f
     for i, key in zip(ids, keys):
         got = ((lines.get(key) or {}).get("reads") or {}).get("col:label_type")
         if got and got.get("answer") is not None:
-            out[i] = (str(got["answer"]), float(got.get("p") or 0.0))
+            out[i] = (BASE_ALIAS.get(str(got["answer"]), str(got["answer"])), float(got.get("p") or 0.0))
     return out
 
 
@@ -964,8 +1541,8 @@ _OVERRIDE_TO = _SIMPLE | {"small_talk", "deal_state"}
 
 def _override_simple_types(atoms: list[Any]) -> int:
     """A line whose type the parser set by rule, before typing ever asked the
-    base, takes the base's type where the base is sure (at least 0.85 and its
-    own bar) and both types are simple. Validation deal 010043 (2026-10-15):
+    base, takes the base's type where the base is sure (its one bar,
+    ``sure_for``) and both types are simple. Validation deal 010043 (2026-10-15):
     on the gold-labeled lines this fixed 101 and broke none; at 0.85 the base
     reads 88% right where the parser is 45% on the same lines."""
     from app.core.schemas import AtomType
@@ -979,7 +1556,7 @@ def _override_simple_types(atoms: list[Any]) -> int:
         if not got or got[0] not in _OVERRIDE_TO:
             continue
         ans, p = str(got[0]), float(got[1] or 0.0)
-        if p < max(0.85, sure_for(ans)):
+        if p < sure_for(ans):
             continue
         t = getattr(a, "atom_type", None)
         before = str(getattr(t, "value", t) or "")
@@ -1020,15 +1597,14 @@ def authority_enabled() -> bool:
 
 
 def _authority_bar(answer: str) -> float:
-    raw = os.environ.get("SOWSMITH_C3_AUTHORITY_SURE_BY_TYPE", "")
-    for part in raw.split(","):
-        k, _, v = part.partition(":")
-        if k.strip() == answer:
-            try:
-                return float(v)
-            except ValueError:
-                pass
-    return _env_float("SOWSMITH_C3_AUTHORITY_SURE", 0.9)
+    """The one bar every line's type answer must reach to act: the same
+    ``sure_for`` typing uses (``SOWSMITH_C3_SURE``, per type by
+    ``SOWSMITH_C3_SURE_BY_TYPE``). It was a second bar (0.9,
+    ``SOWSMITH_C3_AUTHORITY_SURE``) for every line typing did not route, so
+    a scope_item/entity line took the head's type at 0.5 and every other line
+    needed 0.9: 1549 of 2183 read lines on the 8 audited deals were off the
+    0.5 path (overrides.md point 7). The old variables are no longer read."""
+    return sure_for(answer)
 
 
 #: Never assigned by authority: a placeholder, or a type that only exists as
@@ -1036,6 +1612,8 @@ def _authority_bar(answer: str) -> float:
 _AUTHORITY_SKIP = frozenset({"_keep", "raw_utterance", "raw_table_row", "dropped_sheet", "entity"})
 #: Types a line can take without extracted values.
 _VALUELESS = _SIMPLE | frozenset({"small_talk", "deal_state", "list_header", "answered_question",
+                                    "internal_question", "deal_summary", "source_caveat", "legend_entry",
+                                    "certification",
                                     "commitment", "open_question", "action_item", "scope_item"})
 
 
@@ -1046,6 +1624,140 @@ def is_locked(atom: Any) -> bool:
     return isinstance(lab, dict) and lab.get("act") == "authority"
 
 
+def base_decided(atom: Any) -> bool:
+    """True when the base typed this line: authority, or typing's assign /
+    keep / fill on the base's answer."""
+    v = getattr(atom, "value", None)
+    lab = v.get("c3_label") if isinstance(v, dict) else None
+    return isinstance(lab, dict) and lab.get("act") in ("authority", "assign", "keep", "fill")
+
+
+def reread_if_new(atoms: list[Any]) -> int:
+    """Read the deal again when its lines changed after the base's read
+    (signature splits, site backfills, geo mentions, a line dropped or
+    rewritten): a line is read in its document's context, and a later line
+    can change an earlier one's reading, so any change reads the whole deal
+    again and its answers REPLACE the first read's. A re-read that fails
+    leaves no readings rather than the stale ones. Returns the lines whose
+    reading changed hands (new, rewritten or gone), 0 when nothing changed."""
+    if not authority_enabled() or "types" not in _DEAL:
+        return 0
+    if not _DEAL.get("read_key"):
+        return 0
+    _deal_id, rows, _keys = _rows(atoms, _DEAL.get("sha"))
+    if read_key(rows) == _DEAL.get("read_key"):
+        return 0
+    seen = set(_DEAL.get("types") or {})
+    now = {r["key"] for r in rows}
+    changed = len(now ^ seen) or len(rows)
+    _DEAL.update(docs={}, docs_key=None, reads={}, links=[], deal={}, questions=[], question_bar=None, tables={},
+                 types={}, read_key=None)
+    documents(atoms)
+    return changed
+
+
+def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
+    """Apply the base's answer to every line still carrying one unapplied
+    (``value.c3_base_says``): a type with no fields is assigned, a type whose
+    fields something reads is filled by the LLM, as typing does. On 010038
+    56 lines kept a generic type although the base had them right (the OLD and
+    NEW site lines at 1.00, a CDW contact at 0.94). Returns (assigned, filled)."""
+    from app.core.schemas import AtomType
+
+    try:
+        from app.core.typed_atom_classifier import _TAXONOMY, _c3_fill_types, _fill_values
+    except Exception:
+        return 0, 0
+    sha = _DEAL.get("sha")
+    fills, assigned = [], 0
+    for a in atoms:
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict) or isinstance(v.get("c3_label"), dict):
+            continue
+        says = v.get("c3_base_says")
+        if not isinstance(says, dict) or not says.get("type"):
+            continue
+        try:
+            if skipped(a, sha):
+                continue
+        except Exception:
+            pass
+        ans, p = str(says["type"]), float(says.get("p") or 0.0)
+        if p < _authority_bar(ans) or ans in _AUTHORITY_SKIP:
+            continue
+        try:
+            t = AtomType(ans)
+        except ValueError:
+            continue
+        if ans in _TAXONOMY and ans in _c3_fill_types():
+            fills.append((a, (t, ans)))
+            continue
+        before = str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", "")) or "")
+        a.atom_type = t
+        a.value = {**v, "c3_label": {"type": ans, "p": round(p, 3), "act": "authority", "was": before}}
+        assigned += 1
+    filled = 0
+    if fills:
+        filled, _back = _fill_values(fills)
+    return assigned, filled
+
+
+_CITY = re.compile(r"\b([A-Z][a-z.']+(?:\s+[A-Z][a-z.']+){0,2}),\s*([A-Z]{2})\b")
+_ADDRESS = re.compile(r"\b(\d{1,6})\s+[A-Za-z0-9][^\n|]*?\b[A-Z]{2}\s+\d{5}(?:-\d{4})?")
+
+
+def own_site_keys(atoms: list[Any]) -> int:
+    """A line the base types physical_site names its own place: it gets the
+    site key of the address it states, and loses site keys of other street
+    numbers. Keys are minted at parse time, so a line that became a site later
+    had none of its own; on 010038 "NEW Site: 323 Lakeside Ave, Suite 403,
+    Cleveland, OH 44113" carried only the OLD office's key, and the new office
+    never reached the roster. Returns lines changed."""
+    n = 0
+    for a in atoms:
+        t = getattr(a, "atom_type", None)
+        if str(getattr(t, "value", t) or "") != "physical_site":
+            continue
+        text = str(getattr(a, "raw_text", "") or "")
+        m = _ADDRESS.search(text)
+        if not m:
+            # A site the base reads that gives only its town ("Location is
+            # Fairfield, CA.", 010440): the roster takes a site line only
+            # with a site id and key, and one it had neither, so the deal's
+            # only job site never reached it.
+            c = _CITY.search(text)
+            v = getattr(a, "value", None)
+            if c and isinstance(v, dict) and not (v.get("id") or v.get("site_id")):
+                slug = re.sub(r"[^a-z0-9]+", "_", f"{c.group(1)} {c.group(2)}".lower()).strip("_")
+                keys = list(getattr(a, "entity_keys", None) or [])
+                if not any(str(k).startswith("site:") for k in keys):
+                    keys.append("site:" + slug)
+                try:
+                    name = str(v.get("name") or "")
+                    if not name or not re.search(r",\s*[A-Z]{2}\b", name):
+                        name = f"{c.group(1)}, {c.group(2)}"
+                    a.value = {**v, "site_id": slug, "name": name}
+                    a.entity_keys = keys
+                    n += 1
+                except Exception:
+                    pass
+            continue
+        house = m.group(1)
+        mine = "site:" + re.sub(r"[^a-z0-9]+", "_", m.group(0).lower()).strip("_")
+        keys = list(getattr(a, "entity_keys", None) or [])
+        kept = [k for k in keys if not k.startswith("site:")
+                or not re.match(r"site:(\d{1,6})_", k) or re.match(rf"site:{house}_", k)]
+        if mine not in kept:
+            kept.append(mine)
+        if kept != keys:
+            try:
+                a.entity_keys = kept
+                n += 1
+            except Exception:
+                pass
+    return n
+
+
 def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
     """Give each line the base's type where it is sure. Before typing
     (``final=False``) and again at the end (``final=True``: a locked line a
@@ -1054,10 +1766,35 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
 
     if not authority_enabled():
         return 0
+    n = 0
+    if final:
+        # A line typing gave the base's type (filled or assigned) is the
+        # base's decision too: a rule that re-typed it after typing loses. On
+        # 010038 "NEW Site: 323 Lakeside Ave" was filled as physical_site
+        # (base 0.999) and a later rule turned it back into deal_metadata, so
+        # the new office never reached the roster.
+        from app.core.schemas import AtomType as _AT
+
+        for a in atoms:
+            v = getattr(a, "value", None)
+            lab = v.get("c3_label") if isinstance(v, dict) else None
+            # "keep" too: the base agreed with the parser's type, so it is the
+            # base's decision as much as a fill is ("Some additional
+            # information from Raf-" was kept list_header at 0.945 and a later
+            # rule made it scope_item, so it reached the brief's scope).
+            if not isinstance(lab, dict) or lab.get("act") not in ("fill", "assign", "keep") or not lab.get("type"):
+                continue
+            t = getattr(a, "atom_type", None)
+            if str(getattr(t, "value", t) or "") == lab["type"]:
+                continue
+            try:
+                a.atom_type = _AT(lab["type"])
+                n += 1
+            except ValueError:
+                continue
     readings = _DEAL.get("types") or {}
     if not readings:
-        return 0
-    n = 0
+        return n
     sha = _DEAL.get("sha")
     for a in atoms:
         got = readings.get(str(getattr(a, "id", "") or ""))
@@ -1078,8 +1815,14 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         t = getattr(a, "atom_type", None)
         before = str(getattr(t, "value", t) or "")
         v = dict(getattr(a, "value", None) or {}) if isinstance(getattr(a, "value", None), dict) else {}
-        if final and not is_locked(a):
-            continue
+        # At the end the base's answer wins for every line it read at its bar,
+        # locked or not, valued or not: a later stage rebuilds a line's value
+        # and loses its lock (010043's "Do you have the model of the camera?"
+        # was read answered_question at 0.9985 and ended open_question, so
+        # the brief made it a customer responsibility; 010388's "Nick
+        # Robertow", stakeholder 0.99, ended deal_metadata). The rule's type
+        # rides on the line as a hint (value.rule_type). A value type whose
+        # values the line lacks is parked for the fill path (settle).
         if before == ans:
             if not final and not is_locked(a):
                 v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
@@ -1095,11 +1838,19 @@ def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
         try:
             a.atom_type = AtomType(ans)
         except ValueError:
+            # A base type the parser has no type for (answered_question,
+            # list_header, rate_card, commitment ...): the line keeps its type,
+            # and the base's answer rides on it for every reader after (the
+            # brief leaves an answered question or a heading out).
+            v["c3_base_type"] = {"type": ans, "p": round(p, 3)}
+            a.value = v
             continue
         alt = list(v.get("alt_atom_types") or [])
         if before and before not in alt:
             alt.append(before)
         v["alt_atom_types"] = alt
+        if final and before:
+            v["rule_type"] = before
         v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
         if ans == "small_talk":
             v.setdefault("rejected_by", "c3")
@@ -1135,13 +1886,14 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
     the caller then asks its own judge, exactly as without the base."""
     if not atoms:
         return {}
-    if _DEAL.get("docs"):
-        return dict(_DEAL["docs"])
     import urllib.error
 
     started = time.monotonic()
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     deal_id, rows, _keys = _rows(atoms, artifact_sha256)
+    cache = read_key(rows, *keys)
+    if _DEAL.get("docs") and _DEAL.get("docs_key") == cache:
+        return dict(_DEAL["docs"])
     try:
         if _url():
             try:
@@ -1158,7 +1910,8 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _request("/read", body, timeout=budget + 10.0)
             raw = got.get("documents") or {}
             if "types" in _DEAL:
-                _DEAL["types"].update(got.get("types") or {})
+                _DEAL["types"] = dict(_aliased(got.get("types")))
+                _DEAL["read_key"] = read_key(rows)
             _keep_full(got)
         else:
             from ml.c3.predict import read_deal
@@ -1187,6 +1940,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
                 out.setdefault(str(d), {})[k] = (str(v[0]), float(v[1] or 0.0))
     if "docs" in _DEAL:
         _DEAL["docs"] = dict(out)
+        _DEAL["docs_key"] = cache
     _DOC_STATUS.update(state="read", reason="", documents=len(out),
                        read_ms=round((time.monotonic() - started) * 1000, 1))
     return out

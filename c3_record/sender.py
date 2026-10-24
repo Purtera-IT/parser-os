@@ -17,6 +17,12 @@ Sender, per line, first that answers:
    ``direction``; the carrier's, for an attachment);
 5. else blank (an upload nobody is known to have sent).
 
+Rule 4 reads the document's AUTHOR where that is not its carrier (``document_authors``): a CRM record
+(a HubSpot meeting/note/call export, a "HubSpot user" AI recap) is ours and internal; a file whose role
+names its author is that author's (our SOW draft a partner forwarded back stays ours, a customer's RFQ we
+uploaded is theirs), and so are its later revisions; a file we uploaded that the other side's message
+names, and the files uploaded in the same batch, keep that sender.
+
 ``speaker_side`` is ``ours`` (our own domains), ``partner`` (a reseller /
 distributor, by the domains the labeling page names), ``vendor`` (a
 manufacturer we buy from: no domain list yet, so only a speaker already
@@ -37,9 +43,14 @@ in from the customer or a partner (an inbound direction or carrier, an
 outside sender) and its role does not name another party as its author or
 call it a blank template: a customer's own SOW draft or a partner's PO is
 not our milestone (010043: a partner PO made every pre-quote line
-"contracting"). The CRM stage history is not used: the training deals carry
-none, and a field read one way in training and another in serving is worse
-than none.
+"contracting"). When the deal's CRM stage history (``crm.stage_timeline``,
+the envelope's, which the compile reads from the parser manifest) has at
+least two transitions, the stage is instead the CRM stage the deal stood in
+when the line arrived (``crm_marks`` / ``crm_stage_at``): an open or
+pre-quote stage is ``scoping``, "Submitted for Quoting" and "Decision
+Pending" are ``quoted``, "Closed Won" is ``contracting``; "Closed Lost",
+archive and unnamed stage ids keep the stage before them. A deal with no
+timeline, or one transition (no movement to read), keeps the milestones.
 """
 from __future__ import annotations
 
@@ -71,6 +82,42 @@ PRICE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,.]*\s*(?:/\s?(?:hr|hour|sit
                    r"tech|technician|day|visit|location|drop|ap|camera|unit))\b|\b(?:usd|eur)\s?\d", re.I)
 _PROVIDER = re.compile(r"\b(?:supplied|provided|prepared|issued)\s+by\s+([A-Za-z][\w&.-]*)", re.I)
 _MESSAGE_KINDS = frozenset({"email", "note", "meeting", "crm_note"})
+#: A document that is an event (a message, note or call), never a file.
+EVENT_DOC_KINDS = _MESSAGE_KINDS
+#: Our quote going out in words, with no price in the line (000061, 2026-05-04: "Please see the attached
+#: survey quote and install ROM."): an outbound line of ours that sends a quote, ROM, estimate, proposal,
+#: pricing, SOW or LOE is the quote, as a priced one is. Asking for a quote ("request for quote", RFQ) is not.
+QUOTE_SENT = re.compile(r"\b(?:attached|attaching|enclosed|here\s+is|here'?s|please\s+(?:see|find))\b[^.!?\n]{0,60}?"
+                        r"\b(?:quotes?|quotation|rom|estimates?|proposal|pricing|sow|statement\s+of\s+work|loe)\b", re.I)
+_ASKS_FOR_QUOTE = re.compile(r"\brequest(?:ing)?\s+(?:for\s+)?(?:a\s+)?(?:quot|proposal|pricing)|\bquote\s+request|\brf[qpi]\b",
+                             re.I)
+
+
+#: Asking the other party for ITS price is our cost side, not our quote (owner ruling, 010224: "What travel
+#: budget would you need to get the rate down to $95?" to the French subcontractor).
+ASKS_THEIR_PRICE = re.compile(
+    r"\byour\s+(?:best\s+)?(?:rates?|prices?|pricing|costs?|fees?|quotes?|quotation)\b|"
+    r"\b(?:would|could|can|will)\s+you\s+(?:need|charge|accept|do|go|offer|bill)\b[^.?!]{0,60}(?:\brate|\bprice|\bcost|\$)|"
+    r"\b(?:get|bring)\s+(?:the|your)\s+(?:rate|price|cost)\s+down\b", re.I)
+
+
+def sends_quote(text: Any) -> bool:
+    """A line of ours that carries a price or sends our quote (``PRICE`` / ``QUOTE_SENT``), unless it asks
+    the other party for its own price (``ASKS_THEIR_PRICE``)."""
+    t = str(text or "")
+    if ASKS_THEIR_PRICE.search(t):
+        return False
+    return bool(PRICE.search(t) or (QUOTE_SENT.search(t) and not _ASKS_FOR_QUOTE.search(t)))
+
+
+def to_supplier_only(said_to: Any, suppliers: Iterable[str]) -> bool:
+    """Every outside recipient of a line is at a supplier's domain (``suppliers``: the deal's vendors and
+    subcontractors, as its record names them): a priced line to them is our cost side, never our quote."""
+    doms = {str(d).lower() for d in suppliers or ()}
+    outside = [address(p.get("email")) for p in (said_to or []) if isinstance(p, dict) and address(p.get("email"))
+               and party(p.get("email"))[0] != "ours"]
+    return bool(outside and doms) and all(any(x.split("@", 1)[1] == d or x.split("@", 1)[1].endswith("." + d)
+                                              for d in doms) for x in outside)
 
 _ADDR = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 
@@ -116,8 +163,11 @@ def doc_direction(direction: Any, sender_email: Any = None) -> str:
     d = {"purtera_outbound": "outbound", "customer_inbound": "inbound"}.get(d, d)
     if d not in DIRECTIONS:
         return ""
-    if d == "inbound" and party(sender_email)[0] == "partner":
-        return "partner_inbound"
+    if d in ("inbound", "partner_inbound") and address(sender_email):
+        # Whose side an inbound document came from is its sender's domain (PARTNER_DOMAINS), on both
+        # sides: the labeling page's own partner list (a deal's third party, 010224 Network Dynamics) and
+        # the compile's customer_inbound for every outside sender both read the same way here.
+        return "partner_inbound" if party(sender_email)[0] == "partner" else "inbound"
     return d
 
 
@@ -217,10 +267,46 @@ def epoch(t: Any) -> float | None:
     return None
 
 
-def is_ours(doc: dict[str, Any]) -> bool:
-    """Our own paper: no sign it came in from outside, and its role (the
-    parser's ``docRole``, when known) names no other author and no blank
-    template."""
+#: Who a document's role sentence names as its author: "... provided by PurTera-IT to SHI" (ours),
+#: "Request for quotation ..., issued by Medtronic" (the customer's).
+_AUTHORED_BY = re.compile(r"\b(?:supplied|provided|prepared|issued|authored|written|created)\s+by\s+(?:the\s+)?"
+                          r"([A-Za-z][\w&.-]*)", re.I)
+#: A partner by the name its role sentence uses (the first label of PARTNER_DOMAINS: "CDW", "SHI").
+PARTNER_NAMES = frozenset(d.split(".", 1)[0] for d in PARTNER_DOMAINS)
+_NOT_A_PARTY = frozenset({"enterprise", "account", "technical", "project", "field", "team", "engineering",
+                          "network", "operations", "site", "it", "our", "their", "its", "this", "that", "each",
+                          "all", "one", "senior", "lead", "manager", "director", "staff", "internal", "external"})
+_ROLE_WORDS = {"customer": "theirs", "client": "theirs", "partner": "partner", "reseller": "partner",
+               "distributor": "partner"}
+
+
+def role_author(role: Any) -> str:
+    """The side whose paper a document is by its role sentence: ``ours``, ``partner``, ``theirs``, or ''
+    when the role names no author (or names one this rule cannot place: "the provider")."""
+    m = _AUTHORED_BY.search(str(role or ""))
+    if not m:
+        return ""
+    raw = m.group(1)
+    who = raw.lower().strip(".-")
+    if who in _NOT_A_PARTY or (not raw[:1].isupper() and who not in _ROLE_WORDS):
+        return ""                          # a job title or a description, not a party ("by technical team")
+    if who.startswith(("pur", "sales")):
+        return "ours"
+    if who in PARTNER_NAMES:
+        return "partner"
+    if who in _ROLE_WORDS:
+        return _ROLE_WORDS[who]
+    if who in ("provider", "subcontractor", "vendor", "supplier", "us", "a", "an"):
+        return ""
+    return "theirs"
+
+
+def is_ours(doc: dict[str, Any], author: dict[str, Any] | None = None) -> bool:
+    """Our own paper: ``document_authors`` placed it with us (a SOW draft of ours a partner forwarded
+    back stays ours), or there is no sign it came in from outside and its role (the parser's ``docRole``,
+    when known) names no other author and no blank template."""
+    if author and author.get("side") == "ours" and author.get("why") in ("role_author", "lineage"):
+        return True
     o = doc.get("origin") if isinstance(doc.get("origin"), dict) else {}
     direction = doc_direction(o.get("direction"), o.get("sender_email"))
     if direction in ("inbound", "partner_inbound"):
@@ -235,7 +321,8 @@ def is_ours(doc: dict[str, Any]) -> bool:
 
 
 def milestones(documents: Iterable[dict[str, Any]],
-               rows: Iterable[dict[str, Any]] | None = None) -> list[tuple[float, str]]:
+               rows: Iterable[dict[str, Any]] | None = None,
+               authors: dict[str, dict[str, Any]] | None = None) -> list[tuple[float, str]]:
     """(arrival, stage) at each of our milestones: our first priced paper or
     priced outbound message (``quoted``), then the first signed SOW or
     purchase order at or after it (``contracting``). ``documents``:
@@ -247,14 +334,15 @@ def milestones(documents: Iterable[dict[str, Any]],
     for d in docs:
         kind = str(d.get("kind") or "").strip().lower()
         t = epoch(d.get("arrival"))
-        if t is not None and kind in QUOTE_KINDS and is_ours(d) and (quoted is None or t < quoted):
+        if t is not None and kind in QUOTE_KINDS and is_ours(d, (authors or {}).get(str(d.get("doc_id") or ""))) \
+                and (quoted is None or t < quoted):
             quoted = t
     kinds = {str(d.get("doc_id") or ""): str(d.get("kind") or "").strip().lower() for d in docs}
     for r in rows or ():
         if (r.get("speaker_side") == "ours" and r.get("doc_direction") == "outbound"
                 and (kinds.get(str(r.get("doc_id") or "")) in _MESSAGE_KINDS
                      or str(r.get("doc_kind") or "") in _MESSAGE_KINDS)
-                and PRICE.search(str(r.get("text") or ""))):
+                and sends_quote(r.get("text"))):
             t = epoch(r.get("entered_at"))
             if t is not None and (quoted is None or t < quoted):
                 quoted = t
@@ -278,13 +366,258 @@ def stage_at(entered_at: Any, marks: list[tuple[float, str]]) -> str:
     return STAGES[best]
 
 
+#: HubSpot pipeline labels (lower-cased, letters and digits only; prefix match) -> STAGES. People type these
+#: ("Submitted for Quoting ", "Closed Won: 100%"); a label not listed (an unnamed stage id, "Closed Lost",
+#: archive) moves nothing.
+CRM_STAGES = (("openawaitingscope", "scoping"), ("appointmentscheduled", "scoping"), ("qualifiedtobuy", "scoping"),
+              ("presentationscheduled", "scoping"), ("submittedforquoting", "quoted"), ("decisionpending", "quoted"),
+              ("closedwon", "contracting"))
+#: A timeline with fewer transitions than this shows no movement: the milestones decide.
+CRM_MIN_TRANSITIONS = 2
+
+
+def crm_stage(label: Any) -> str:
+    """The STAGES name of one CRM pipeline label, '' when it names none."""
+    n = re.sub(r"[^a-z0-9]+", "", str(label or "").lower())
+    return next((st for pre, st in CRM_STAGES if n.startswith(pre)), "")
+
+
+def crm_marks(timeline: Any) -> list[tuple[float, str]] | None:
+    """(time, stage) at each CRM transition that names a stage, in time order, when the timeline has at least
+    ``CRM_MIN_TRANSITIONS`` transitions; else None (the milestones decide)."""
+    if not isinstance(timeline, dict):
+        return None
+    moves = [t for t in timeline.get("transitions") or [] if isinstance(t, dict)]
+    if len(moves) < CRM_MIN_TRANSITIONS:
+        return None
+    marks = []
+    for t in moves:
+        when, stage = epoch(t.get("ts")), crm_stage(t.get("label"))
+        if when is not None and stage:
+            marks.append((when, stage))
+    return sorted(marks) or None
+
+
+def crm_stage_at(entered_at: Any, marks: list[tuple[float, str]]) -> str:
+    """The CRM stage in force when the line arrived (the last named transition at or before it), ``scoping``
+    before the first; '' when the line has no time."""
+    t = epoch(entered_at)
+    if t is None:
+        return ""
+    current = "scoping"
+    for when, stage in marks:
+        if when > t:
+            break
+        current = stage
+    return current
+
+
+_NOTE_HEADER = re.compile(r"^\s*note_id=\d+\s*\|\s*author=([^|]*)\|\s*author_email=([^|\s]+)", re.I)
+
 #: What a row may carry for ``annotate``; taken off the row once read.
 SENDER_INPUTS = ("said_by", "said_to", "message_author", "speaker_name")
 
+#: The CRM's own records: a HubSpot meeting, note or call export, and a note the CRM itself wrote
+#: ("HubSpot user": the AI call recap). Ours, internal, whatever direction the upload was stamped with.
+_CRM_RECORD = re.compile(r"-hs-(?:meeting|note|call)-", re.I)
+_CRM_MEETING = re.compile(r"-hs-meeting-", re.I)
+_CRM_SYSTEM = re.compile(r"^\s*hubspot(?:\s+user)?\s*$", re.I)
+#: Words a filename stem is matched on (runE provenance._stem_words): letters only, four or more.
+_STEM_STOP = frozenset({"the", "and", "for", "with", "from", "this", "that", "copy", "final", "draft", "updated",
+                        "update", "new", "docx", "xlsx", "pdf", "csv", "purtera", "file", "2026", "2025", "version"})
+_LINEAGE_STOP = frozenset({"v", "rev", "version", "copy", "of", "final", "draft", "updated", "am", "pm", "jan",
+                           "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+                           "docx", "doc", "xlsx", "xls", "pdf", "csv", "redline", "clean", "signed"})
+_CALL_NAME = re.compile(r"\b(?:sync|call|meeting|transcript|recap|check-?in|catch-?up|debrief)\b", re.I)
+#: Files uploaded together (one note, one email's attachments) arrive within this many seconds.
+_BATCH_S = 120.0
+_OUR_PAPER = QUOTE_KINDS | WON_KINDS
 
-def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+
+def _stem(filename: Any) -> str:
+    return re.sub(r"\.[A-Za-z0-9]{2,4}$", "", str(filename or "").replace("\\", "/").rsplit("/", 1)[-1])
+
+
+def _stem_words(filename: Any) -> set[str]:
+    return {w.lower() for w in re.findall(r"[A-Za-z]{4,}", _stem(filename))} - _STEM_STOP
+
+
+def _lineage(filename: Any) -> str:
+    """One draft's name across its revisions: "PurTeraIT_BitGo_..._SOW_v1-0" and "..._SOW_v2-0" and
+    "..._SOW_v1-0-Aug-17-2026-05-12-09-5101-PM" are one document. '' for a name too short to say."""
+    words = [w for w in re.findall(r"[a-z]+", _stem(filename).lower()) if w not in _LINEAGE_STOP]
+    return " ".join(words) if len(words) >= 3 else ""
+
+
+def _norm_words(text: Any) -> str:
+    return " " + " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower())) + " "
+
+
+#: Our own naming on a file: our name in it, or the deal code our drafts are filed under ("010149 - CDW
+#: Medtronic Teams Phone Migration (8.4.26_v1).docx", "PurTeraIT_BitGo_..._SOW_v1-0.docx").
+_OUR_NAME = re.compile(r"pur\s*-?\s*terr?a|^\d{6}\s*-\s*(?!hs-)", re.I)
+
+
+def _our_name(filename: Any) -> bool:
+    return bool(_OUR_NAME.search(_stem(filename)))
+
+
+def _blank_form(doc: dict[str, Any]) -> bool:
+    """A blank form someone sent us to fill (``is_ours``: a template is not our paper unless it is ours)."""
+    role, name = str(doc.get("role") or "").lower(), str(doc.get("filename") or "").lower()
+    return ("template" in role or "template" in name) and "purtera" not in role
+
+
+def _own_arrival(doc: dict[str, Any]) -> float | None:
+    return epoch(doc.get("sent_at") if "sent_at" in doc else doc.get("arrival"))
+
+
+def _side_origin(side: str, by: str) -> dict[str, Any]:
+    direction = {"ours": "internal", "partner": "partner_inbound", "theirs": "inbound", "vendor": "inbound"}[side]
+    return {"direction": direction, "sender_email": None, "via": by}
+
+
+def document_authors(documents: Iterable[dict[str, Any]], rows: Iterable[dict[str, Any]] | None = None,
+                     people: People | None = None) -> dict[str, dict[str, Any]]:
+    """Who wrote each document, where that is not who carried it. ``doc_id -> {side, why, direction}``;
+    a document left out is its carrier's (``sender`` rule 4).
+
+    1. A CRM record (a ``-hs-meeting-/-hs-note-/-hs-call-`` export with no sender, or a note the CRM itself
+       wrote, "HubSpot user") is ours and internal: the call recap of our own call is not the customer's.
+    2. A file whose role names its author is that author's: our SOW draft a partner forwarded back stays
+       ours; the customer's RFQ we uploaded to a note is the customer's.
+    3. A later revision of such a file (the same name but for version and date) is the same author's.
+    4. A file that reached us through our own upload or note (no outbound carrier), that a customer's or
+       partner's message names by most of its name's words (three or more, company names aside)
+       ("For reference - Teams Voice Site Migration Build Workbook ..."), is that sender's: an attachment
+       keeps the sender of the message that first carried it, however it was forwarded or re-uploaded.
+    5. A file uploaded in the same batch as a file rule 2 or 4 placed with the other side (one note, one
+       email's attachments) is theirs too, unless it is our own paper kind or names its own author.
+    ``direction`` is the document's direction once its author is known (''= unchanged): a CRM record is
+    internal, a file of theirs that only our upload carried came in from them."""
+    docs = [d for d in documents if isinstance(d, dict)]
+    out: dict[str, dict[str, Any]] = {}
+    oinfo = {}
+    for d in docs:
+        o = d.get("origin") if isinstance(d.get("origin"), dict) else {}
+        oinfo[str(d.get("doc_id") or "")] = (o, doc_direction(o.get("direction"), o.get("sender_email")))
+    lineage: dict[str, str] = {}
+    pending: list[dict[str, Any]] = []
+    for d in docs:
+        doc, kind = str(d.get("doc_id") or ""), str(d.get("kind") or "").strip().lower()
+        o, direction = oinfo[doc]
+        name = str(d.get("filename") or "")
+        has_sender = bool(address(o.get("sender_email")) or str(o.get("sender_name") or "").strip())
+        if (kind in _MESSAGE_KINDS or _CRM_RECORD.search(name)) and (
+                _CRM_SYSTEM.match(str(o.get("sender_name") or "")) and not address(o.get("sender_email"))
+                or _CRM_RECORD.search(name) and not has_sender):
+            out[doc] = {"side": "ours", "why": "crm_record", "direction": "internal"}
+            continue
+        if kind in ("email", "meeting"):
+            continue
+        side = role_author(d.get("role"))
+        if side in ("theirs", "partner") and kind in _OUR_PAPER and not _blank_form(d) and direction not in (
+                "inbound", "partner_inbound") and party(o.get("sender_email"))[0] not in ("theirs", "partner"):
+            # Our own pricing workbook, carried by us, whose role sentence names the customer it prices
+            # ("Onsite Level of Effort estimation ... supplied by Medtronic"): the carrier stands.
+            side = ""
+        came_in = direction in ("inbound", "partner_inbound") or party(o.get("sender_email"))[0] in (
+            "theirs", "partner", "vendor")
+        if side == "ours" and came_in and not _our_name(name):
+            # A role sentence can misread the customer's own form as ours (010082: Sodexo's Smarthands SOW
+            # request, "provided by PurTera-IT"). Over a carrier from outside it needs our own naming, or a
+            # revision of the same draft that our side carried (below).
+            pending.append(d)
+            continue
+        if side:
+            out[doc] = {"side": side, "why": "role_author",
+                        "direction": "" if side == "ours" or came_in else _side_origin(side, "")["direction"]}
+            if _lineage(name):
+                lineage.setdefault(_lineage(name), side)
+    ours_carried = {_lineage(d.get("filename")) for d in docs
+                    if _lineage(d.get("filename")) and oinfo[str(d.get("doc_id") or "")][1] in ("internal", "outbound")}
+    for d in pending:
+        if _lineage(d.get("filename")) in ours_carried:
+            out[str(d.get("doc_id") or "")] = {"side": "ours", "why": "role_author", "direction": ""}
+            lineage.setdefault(_lineage(d.get("filename")), "ours")
+    for d in docs:
+        doc = str(d.get("doc_id") or "")
+        if doc in out or str(d.get("kind") or "").strip().lower() in EVENT_DOC_KINDS:
+            continue
+        side = lineage.get(_lineage(d.get("filename")))
+        if side:
+            _, direction = oinfo[doc]
+            out[doc] = {"side": side, "why": "lineage",
+                        "direction": "" if side == "ours" or direction in ("inbound", "partner_inbound")
+                        else _side_origin(side, "")["direction"]}
+    # Messages of the other side, by author: the text each one wrote (its own lines, quoted or not).
+    said: dict[tuple[str, str], list[str]] = {}
+    for r in rows or ():
+        author = r.get("message_author")
+        if not author:
+            continue
+        p = party(author)
+        if not p[0] and people is not None:
+            p = party(people.find(author))
+        if p[0] in ("theirs", "partner"):
+            said.setdefault((p[0], address(author) or str(author)), []).append(str(r.get("text") or ""))
+    texts = [(side, _norm_words(" ".join(xs))) for (side, _), xs in said.items()]
+    # A company's name says nothing about which file is meant ("Medtronic - Onsite LOE.xlsx").
+    orgs = {a.split("@", 1)[1].split(".", 1)[0] for a in
+            [address(r.get("message_author")) for r in rows or ()] + [address(oinfo[k][0].get("sender_email"))
+                                                                       for k in oinfo] if a}
+    for d in docs:
+        doc, kind = str(d.get("doc_id") or ""), str(d.get("kind") or "").strip().lower()
+        if doc in out or kind in EVENT_DOC_KINDS or kind in _OUR_PAPER and not _blank_form(d):
+            continue
+        o, direction = oinfo[doc]
+        if direction not in ("internal", "") or party(o.get("sender_email"))[0] in ("theirs", "partner"):
+            continue                       # it came in from them already, or we sent it out ourselves
+        if _CALL_NAME.search(_stem(d.get("filename"))):
+            continue                       # a call's own notes, named like the invite that announced it
+        words = _stem_words(d.get("filename")) - orgs - {"purterait"}
+        if len(words) < 3:
+            continue
+        best = None
+        for side, body in texts:
+            hits = sum(1 for w in words if f" {w} " in body or f" {w}s " in body)
+            if hits >= 3 and hits * 3 >= 2 * len(words) and (
+                    best is None or hits > best[0] or hits == best[0] and side == "theirs"):
+                best = (hits, side)
+        if best:
+            out[doc] = {"side": best[1], "why": "named_in_their_message", "direction": _side_origin(best[1], "")["direction"]}
+    # The batch a placed file arrived in.
+    placed = [(str(d.get("doc_id") or ""), d) for d in docs if out.get(str(d.get("doc_id") or ""), {}).get("side")
+              in ("theirs", "partner") and out[str(d.get("doc_id") or "")]["why"] != "crm_record"]
+    for d in docs:
+        doc, kind = str(d.get("doc_id") or ""), str(d.get("kind") or "").strip().lower()
+        if doc in out or kind in EVENT_DOC_KINDS or kind in _OUR_PAPER and not _blank_form(d):
+            continue
+        o, direction = oinfo[doc]
+        if direction not in ("internal", ""):
+            continue
+        # One batch: the same uploader (or, where neither upload records one, none), within _BATCH_S.
+        # A document's own arrival only (``sent_at``): an arrival filled in from the document before it is
+        # a guess, not a batch.
+        t, who = _own_arrival(d), address(o.get("sender_email")) or str(o.get("sender_name") or "")
+        if t is None:
+            continue
+        for pd, p in placed:
+            po, _ = oinfo[pd]
+            pt = _own_arrival(p)
+            if pt is not None and abs(pt - t) <= _BATCH_S and (
+                    address(po.get("sender_email")) or str(po.get("sender_name") or "")) == who:
+                out[doc] = {"side": out[pd]["side"], "why": "same_batch", "direction": out[pd]["direction"]}
+                break
+    return out
+
+
+def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]],
+             timeline: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Give every row ``speaker_side``, ``speaker_role``, ``speaker_org``,
-    ``doc_direction`` and ``stage_at``, in place.
+    ``doc_direction`` and ``stage_at``, in place. ``timeline``: the deal's
+    ``crm.stage_timeline`` when known (``crm_marks`` decides whether it is
+    read; otherwise the milestones are).
 
     A row: ``doc_id``, ``entered_at`` and, when known, ``said_by`` / ``said_to``
     (``{name, email, side, role}``), ``message_author`` and ``speaker_name``.
@@ -294,6 +627,21 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
     docs = [d for d in documents if isinstance(d, dict)]
     origin = {str(d.get("doc_id") or ""): (d.get("origin") if isinstance(d.get("origin"), dict) else {})
               for d in docs}
+    # A HubSpot note's own export header names its author ("note_id=... | author=Trent Torrence |
+    # author_email=t@purtera-it.com | ..."): a note whose origin records no sender takes it, so a compile
+    # whose note header carries no structured meta reads the author the labeling page shows.
+    kinds = {str(d.get("doc_id") or ""): str(d.get("kind") or "").strip().lower() for d in docs}
+    for r in rows:
+        doc = str(r.get("doc_id") or "")
+        o = origin.get(doc)
+        if o is None or kinds.get(doc) != "note" or address(o.get("sender_email")):
+            continue
+        m = _NOTE_HEADER.search(str(r.get("text") or ""))
+        if m and address(m.group(2)):
+            email = address(m.group(2))
+            origin[doc] = dict(o, sender_email=email, sender_name=m.group(1).strip() or None, via="note",
+                               direction="internal" if party(email)[0] == "ours" else "inbound")
+    docs = [dict(d, origin=origin.get(str(d.get("doc_id") or ""), {})) for d in docs]
     people = People()
     for o in origin.values():
         people.add(o.get("sender_name"), o.get("sender_email"))
@@ -302,14 +650,24 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
             if isinstance(p, dict):
                 people.add(p.get("name"), p.get("email"))
         people.add(r.get("message_author"))
+    authors = document_authors(docs, rows, people)
+    names = {str(d.get("doc_id") or ""): str(d.get("filename") or "") for d in docs}
     for r in rows:
-        o = origin.get(str(r.get("doc_id") or ""), {})
-        r.update(sender(said_by=r.get("said_by"), message_author=r.get("message_author"),
-                        speaker_name=r.get("speaker_name"), origin=o, people=people))
-        r["doc_direction"] = doc_direction(o.get("direction"), o.get("sender_email"))
-    marks = milestones(docs, rows)
+        doc = str(r.get("doc_id") or "")
+        o = origin.get(doc, {})
+        who = authors.get(doc)
+        # A CRM meeting record (an invite, a recap) is the CRM's own text, neither a call nor a mail thread:
+        # its lines name no speaker and no message author, whatever a locator calls them.
+        crm_meeting = bool(who and who.get("why") == "crm_record" and _CRM_MEETING.search(names.get(doc, "")))
+        r.update(sender(said_by=r.get("said_by"),
+                        message_author=None if crm_meeting else r.get("message_author"),
+                        speaker_name=None if who and who.get("why") == "crm_record" else r.get("speaker_name"),
+                        origin=_side_origin(who["side"], who["why"]) if who else o, people=people))
+        r["doc_direction"] = (who or {}).get("direction") or doc_direction(o.get("direction"), o.get("sender_email"))
+    crm = crm_marks(timeline)
+    marks = milestones(docs, rows, authors) if crm is None else crm
     for r in rows:
-        r["stage_at"] = stage_at(r.get("entered_at"), marks)
+        r["stage_at"] = stage_at(r.get("entered_at"), marks) if crm is None else crm_stage_at(r.get("entered_at"), crm)
         for k in SENDER_INPUTS:
             r.pop(k, None)
     return rows
@@ -317,4 +675,6 @@ def annotate(rows: list[dict[str, Any]], documents: Iterable[dict[str, Any]]) ->
 
 __all__ = ["OUR_DOMAINS", "PARTNER_DOMAINS", "SIDES_FULL", "ROLES_FULL", "ORG_KINDS", "DIRECTIONS",
            "STAGES", "SENDER_INPUTS", "People", "party", "doc_direction", "sender", "epoch", "is_ours",
-           "milestones", "stage_at", "annotate", "PRICE"]
+           "milestones", "stage_at", "CRM_STAGES", "CRM_MIN_TRANSITIONS", "crm_stage", "crm_marks", "crm_stage_at",
+           "annotate", "PRICE", "QUOTE_SENT", "sends_quote", "ASKS_THEIR_PRICE", "to_supplier_only", "role_author",
+           "document_authors", "PARTNER_NAMES"]

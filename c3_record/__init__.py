@@ -20,6 +20,8 @@ Document (one per source file, email, note or meeting), in arrival order:
     pos          its place in the compile manifest (the page export: its
                  place in the page's document list), if known
     role         the lifecycle's role sentence (the page's ``docRole``), if known
+    filename     the source file's name, if known (``sender.document_authors``: a revision of one
+                 draft, a file another party's message names)
 
 Line (one per atom), in the order it appears in its source:
     key, text, doc_id, section, speaker_role, speaker_side, atom_id, and when
@@ -59,7 +61,8 @@ from typing import Any, Iterable
 
 from .reading import (TRAINED_KINDS, document_arrivals, document_kind, document_rank,  # noqa: F401
                       event_kind, file_kind, is_email_file, page_group, page_position, reading_order)
-from .sender import SENDER_INPUTS, annotate, doc_direction, is_ours, milestones, sender, stage_at  # noqa: F401
+from .sender import (SENDER_INPUTS, annotate, crm_marks, crm_stage_at, doc_direction, is_ours,  # noqa: F401
+                     milestones, sender, stage_at)
 
 #: Document kinds whose ``authored_at`` is the moment they entered the deal.
 EVENT_KINDS = ("meeting", "note", "email")
@@ -86,6 +89,27 @@ def table_geometry(table_ref: Any) -> dict[str, int]:
     return {"table_row": int(m.group(2)) + 1} if m else {}
 
 
+#: Fold stages whose copies the deal's read holds besides the compile's kept
+#: lines (the parser's ``head_fold.PRE_HEAD_FOLDS``: ``c3_type_base.also_read``
+#: hands every folded copy of these stages to the heads, chrome-classed ones
+#: too). A stage's drop (no survivor) is never read.
+ALSO_READ_STAGES = frozenset({"quoted_history_dedup", "quoted_chatter_dedup", "pasted_note_dedup",
+                              "duplicate_atom_collapse", "pre_classify_dedup"})
+
+
+def read_with_deal(suppressed: Any) -> bool:
+    """True when a line is a model input: a kept line (no ``suppressed``), or
+    a copy a pre-read fold set aside. ``suppressed`` is the labeling page's
+    marker (``{kind: copy|chrome|dropped, stage}``) or an envelope ledger row
+    (``{kind: fold|drop, stage}``)."""
+    if not suppressed:
+        return True
+    if not isinstance(suppressed, dict):
+        return False
+    kind = str(suppressed.get("kind") or "").lower()
+    return str(suppressed.get("stage") or "") in ALSO_READ_STAGES and kind not in ("drop", "dropped")
+
+
 def is_deal_kit(doc_kind: Any) -> bool:
     """Our own pricing workbook, however the document kind is spelled. The
     base is never scored on, and never acts on, a Deal Kit line."""
@@ -110,12 +134,13 @@ def speaker(role: Any, side: Any) -> tuple[str, str]:
 
 
 def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, Any]],
-               *, latest_fallback: Any = None) -> list[dict[str, Any]]:
+               *, latest_fallback: Any = None, timeline: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """The base's rows: each line with its document's arrival and kind.
 
     ``order`` is the line's position in ``lines``. A line whose document has
     no arrival takes the latest arrival in the deal (rule 4); with no arrival
-    anywhere, ``latest_fallback`` (export.py refuses that deal instead)."""
+    anywhere, ``latest_fallback`` (export.py refuses that deal instead).
+    ``timeline``: the deal's ``crm.stage_timeline`` (``sender.crm_marks``)."""
     docs = [d for d in documents if isinstance(d, dict)]
     times = document_times(docs)
     kinds = {str(d.get("doc_id")): str(d.get("kind") or "").strip().lower() for d in docs}
@@ -139,7 +164,8 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         rows.append(row)
     annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
                      "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin"),
-                     "role": d.get("role")} for d in docs])
+                     "role": d.get("role"), "filename": d.get("filename"), "sent_at": d.get("sent_at")}
+                    for d in docs], timeline=timeline)
     return rows
 
 
@@ -150,5 +176,6 @@ def _sort_key(t: Any) -> tuple[int, Any]:
 
 __all__ = ["EVENT_KINDS", "ROLES", "SIDES", "GEOMETRY_KEYS", "TRAINED_KINDS", "is_deal_kit", "document_times",
            "speaker", "build_rows", "table_geometry", "annotate", "sender", "doc_direction", "is_ours",
-           "milestones", "stage_at", "event_kind", "file_kind", "document_kind", "is_email_file", "document_rank",
-           "document_arrivals", "page_position", "page_group", "reading_order"]
+           "milestones", "stage_at", "crm_marks", "crm_stage_at", "event_kind", "file_kind", "document_kind", "is_email_file", "document_rank",
+           "document_arrivals", "page_position", "page_group", "reading_order", "ALSO_READ_STAGES",
+           "read_with_deal"]
