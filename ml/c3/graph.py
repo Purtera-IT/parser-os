@@ -42,6 +42,17 @@ serve builds the same graph the run trained.
 
 * **Card slots** (``card_slots``): the card pool reads r plus the lattice slot
   of its question's space.
+
+* **Own-document lattice** (``lattice_doc``). The asked lattice's slots read
+  only lines of their own document (pilot A root cause, M1: a site row's
+  content slot put 32-48% of its attention on other documents' email chatter,
+  "Thank you,", "I'll get the quote over to you", and once the trunk drifted
+  that chatter voted deal_metadata). Evidence from another document still
+  arrives, through the paths built for it: the deal graph's own blocks, the
+  link hop, the table and document nodes and the pointers to them. A hard
+  mask, not a bias: a learned w_doc can be trained back to 0 and an
+  ``--init-from`` start loads the live w_doc (0) over any init. The flag is in
+  the checkpoint, so serve applies the same mask.
 """
 from __future__ import annotations
 
@@ -54,11 +65,15 @@ from torch import nn
 GRAPH_DEFAULTS: dict[str, Any] = {
     "mask": "index", "cut_dropout": 0.0, "hop_both": False, "hop2": False, "hop_to_h": False,
     "pointer_edge": False, "hop_near_miss": True, "nodes": False, "card_slots": False,
+    "lattice_doc": False,
 }
 #: Run E's graph (pod/runE.sh turns it on with ``--graph rune``).
 RUNE_GRAPH: dict[str, Any] = {
     "mask": "view", "cut_dropout": 0.3, "hop_both": True, "hop2": True, "hop_to_h": True,
     "pointer_edge": True, "hop_near_miss": False, "nodes": True, "card_slots": True,
+    # On in pod/runE.sh (GRAPH=rune,lattice_doc=1); off here so "rune" keeps
+    # meaning the graph runE-graph's tests were written against.
+    "lattice_doc": False,
 }
 MASKS = ("index", "arrival", "view")
 #: The "no parent" logit of the governs hop (log 0.5): a row whose best
@@ -169,6 +184,14 @@ def visibility(times, n: int, dev, mode: str, cut: float | None = None) -> torch
         seen = torch.maximum(t, torch.tensor(float(cut), dtype=torch.float64))
         allowed = t.view(1, -1) <= seen.view(-1, 1)
     return (allowed | torch.eye(n, dtype=torch.bool)).to(dev)
+
+
+def lattice_scope(allowed: torch.Tensor, same_doc: torch.Tensor) -> torch.Tensor:
+    """The lattice's own-document mask (``lattice_doc``): allowed and in the
+    same document, diagonal on (a line in no document reads only itself)."""
+    n = allowed.shape[0]
+    eye = torch.eye(n, dtype=torch.bool, device=allowed.device)
+    return (allowed & (same_doc > 0)) | eye
 
 
 def training_cut(times, p: float) -> float | None:
@@ -283,5 +306,5 @@ def node_pass(model, out, r: torch.Tensor, inp: dict[str, Any], allowed: torch.T
     return r
 
 
-__all__ = ["GRAPH_DEFAULTS", "RUNE_GRAPH", "enable_graph", "graph_parameters", "hop", "link_weights",
-           "node_pass", "parse_graph", "training_cut", "visibility"]
+__all__ = ["GRAPH_DEFAULTS", "RUNE_GRAPH", "enable_graph", "graph_parameters", "hop", "lattice_scope",
+           "link_weights", "node_pass", "parse_graph", "training_cut", "visibility"]

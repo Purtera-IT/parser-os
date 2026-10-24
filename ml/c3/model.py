@@ -793,6 +793,10 @@ class C3Model(nn.Module):
             allowed = torch.tril(torch.ones(n, n, dtype=torch.bool, device=dev))
         same_doc = pair_tensor(inp["same_doc"], dev)
         same_sec = pair_tensor(inp["same_section"], dev)
+        if self.graph.get("lattice_doc"):
+            # graph.py lattice_doc: slots read their own document only; other
+            # documents reach the line through links, nodes and pointers.
+            allowed = cross.lattice_scope(allowed, same_doc)
         cdesc = company_description(self.schema, desc) if company is not None else None
         out.slots, out.company_slot, out.citations = self.lattice(
             out.h, space_desc, allowed, same_doc, same_sec, cdesc)

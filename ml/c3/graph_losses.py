@@ -114,9 +114,15 @@ def citation_loss(model, out: C3Output, batch: Batch) -> torch.Tensor:
         return out.r.new_zeros(())
     spaces = [model.lattice.spaces.index(s) for s in CITE_SPACES if s in model.lattice.spaces]
     n = out.citations.shape[0]
+    # Under lattice_doc a slot cannot look at another document: a hint line
+    # there is out of its reach (it trains the pointers instead), not a miss.
+    doc = None
+    if (getattr(model, "graph", None) or {}).get("lattice_doc"):
+        from .model import pair_tensor  # noqa: PLC0415 (cycle)
+        doc = pair_tensor(batch.same_doc, "cpu") > 0
     rows, cols = [], []
     for i, js in enumerate(batch.hint_lines):
-        js = [j for j in js if j != i and j < n]
+        js = [j for j in js if j != i and j < n and (doc is None or bool(doc[i, j]))]
         if i < n and js:
             rows.append(i)
             cols.append(js)
