@@ -190,3 +190,17 @@ The synthetic checkpoint test checks immutable parent bytes, fresh optimizer,
 view_tag load/save and a distinct reloadable candidate after one small CPU step.
 It does not run a customer pass, select a winner, validate a real checkpoint or
 approve either main or auxiliary data.
+
+## Teacher artifact and active-loss receipts
+
+Auxiliary `run_base` skips final teacher initialization/finalization and does not
+write an untrained `.teacher` sidecar. The normal main-run teacher finalization
+behavior is unchanged. Any teacher sidecars from earlier auxiliary probes are
+unsupported artifacts, not compatible teachers or WHY coverage evidence.
+
+A lines-only auxiliary schedule has `numbers=0` and `literals=0` by the existing
+curriculum. Nonempty numeric/span targets do not demonstrate value learning.
+An adaptation claiming that learning must enable the numbers stage (or explicit
+positive direct-loss weights) and report positive named numeric/literal weighted
+contributions. The actual-loop synthetic regression checks this with the numbers
+stage, verifies no teacher write/step, and preserves a legacy finalization control.

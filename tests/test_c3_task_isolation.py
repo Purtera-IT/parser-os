@@ -1,5 +1,6 @@
 """Adversarial closure of bounded v2 extraction tasks (all data invented)."""
 import copy
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -534,3 +535,46 @@ def test_source_row_weight_is_not_flattened_by_projection(tier,weight):
     b=payload(); b['labels'][0]['weight_tier']=tier
     _,part=load(b)
     assert part.weights==[weight]
+
+
+def test_actual_auxiliary_numbers_run_does_not_emit_teacher_sidecar(tmp_path,monkeypatch):
+    import ml.c3.loop as loop
+    from ml.c3.model import C3Config
+    _,b=load()
+    cfg=C3Config(d_text=32,d=32,n_layers=1,n_heads=4,d_r=16,d_q=8,
+                 d_head=16,residual_dim=4,box_dim=4,n_policy_atoms=2,policy_rank=2)
+    budget=loop.Budget(**{**{k:0 for k in loop.Budget.__dataclass_fields__},'numbers':1})
+    def forbidden(*a,**kw): raise AssertionError('auxiliary teacher execution/artifact')
+    monkeypatch.setattr(loop,'save_teacher',forbidden)
+    monkeypatch.setattr(loop,'_teacher_part',forbidden)
+    measured=[]
+    original=loop.c3_loss
+    def record(*args,**kwargs):
+        loss,logs=original(*args,**kwargs)
+        measured.append((args[2].numbers,args[2].literals,logs['numbers'],logs['literals']))
+        return loss,logs
+    monkeypatch.setattr(loop,'c3_loss',record)
+    checkpoint=tmp_path/'aux.pt'
+    _,result=loop.run_base([b],[],load_schema(),budget,cfg=cfg,checkpoint=str(checkpoint),
+                           score_holdout=False,fit_parts=0,balance=False,adamw=True)
+    assert checkpoint.exists() and not Path(str(checkpoint)+'.teacher').exists()
+    assert 'teacher' not in result.stage_loss and result.stage_loss['numbers']>0
+    assert measured and all(nw>0 and lw>0 and n>0 and lit>0 for nw,lw,n,lit in measured)
+    line_weights,_=loop.gold_weights('lines')
+    assert line_weights.numbers==line_weights.literals==0
+
+
+def test_legacy_teacher_finalization_is_unchanged(tmp_path,monkeypatch):
+    import ml.c3.loop as loop
+    from ml.c3.model import C3Config
+    raw=payload(); raw['supervision_holds']=dict(version=1,groups=[])
+    _,b=load(raw)
+    cfg=C3Config(d_text=32,d=32,n_layers=1,n_heads=4,d_r=16,d_q=8,
+                 d_head=16,residual_dim=4,box_dim=4,n_policy_atoms=2,policy_rank=2)
+    writes=[]
+    monkeypatch.setattr(loop,'save_teacher',lambda path,*a,**kw:writes.append(path))
+    budget=loop.Budget(**{k:0 for k in loop.Budget.__dataclass_fields__})
+    checkpoint=tmp_path/'main.pt'
+    loop.run_base([b],[],load_schema(),budget,cfg=cfg,checkpoint=str(checkpoint),
+                  score_holdout=False,fit_parts=0,balance=False)
+    assert writes==[str(checkpoint)+'.teacher']

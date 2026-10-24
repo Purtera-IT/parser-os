@@ -1057,7 +1057,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             validate_batch(batch)
         elif getattr(batch, "task_input_digest", ""):
             raise ValueError("materialized task profile cannot be removed")
-    if any(getattr(b, "task_profile", None) is not None for b in train):
+    auxiliary_run = any(getattr(b, "task_profile", None) is not None for b in train)
+    if auxiliary_run:
         if resume:
             raise ValueError("auxiliary resume is unsupported; use a separate fresh-optimizer candidate pass")
         if teacher_from or any(getattr(budget, k) > 0 for k in ("teacher", "bind", "teach", "flips", "spread")):
@@ -1135,7 +1136,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         for p in teacher.parameters():
             p.requires_grad_(False)
         teacher.eval()
-        if checkpoint:
+        if checkpoint and not auxiliary_run:
             save_teacher(f"{checkpoint}.teacher", teacher, "teacher")
 
     model = model or C3Model(schema, cfg)
@@ -1485,7 +1486,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if stopped:
             print(f"run stopped at {stopped}: a gate failed; later stages did not run", flush=True)
             break
-    if not teacher_ready and not stopped:
+    if not teacher_ready and not stopped and not auxiliary_run:
         train_teacher()
     if checkpoint and budget.teacher and teacher_ready:
         save_teacher(f"{checkpoint}.teacher", teacher, "end")
