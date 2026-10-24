@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "policy_id": "runE-main17-owner-split-2026-10-24",
+  "golden_holdout": [
+    "010038",
+    "010387"
+  ],
+  "reserved_holdout": [
+    "000026",
+    "010269",
+    "010155",
+    "010358"
+  ],
+  "pending_holdout": [
+    "010279"
+  ],
+  "selection": [
+    "010043"
+  ],
+  "kit_holdout": [
+    "000051",
+    "010095",
+    "010164",
+    "010253",
+    "010287"
+  ],
+  "released_to_training": [
+    "010215"
+  ]
+}

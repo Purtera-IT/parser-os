@@ -44,7 +44,7 @@ from .brain import Brain
 from .coverage import READY_FOR_TRAINING
 from .data import IGNORE, Batch, DealExample
 from .gates import load_checkpoint, save_checkpoint
-from .holdout import LABEL_HOLDOUT, refuse_fixed_holdout
+from .holdout import LABEL_HOLDOUT, SELECTION, refuse_fixed_holdout
 from .lm import TinyCausalLM
 from .losses import BrainWeights, LossWeights, brain_loss, c3_loss, teacher_chunks, teacher_context
 from .longdeal import plan_long_deal
@@ -132,6 +132,9 @@ def lock_split(train: list[Batch], holdout: list[Batch],
     if len(train_ids) != len(set(train_ids)) or len(hold_ids) != len(set(hold_ids)):
         raise ValueError("Duplicate deal id in a split")
     refuse_fixed_holdout(train_ids)
+    selected_as_test = {source_deal_id(i) for i in hold_ids} & SELECTION
+    if selected_as_test:
+        raise ValueError("Selection deals cannot be reused as holdout tests: " + ", ".join(sorted(selected_as_test)))
     shared = {source_deal_id(i) for i in train_ids} & {source_deal_id(i) for i in hold_ids}
     if shared:
         raise ValueError("Holdout deal is in the training set: " + ", ".join(sorted(shared)))
@@ -143,7 +146,7 @@ def lock_validation(train: list[Batch], holdout: list[Batch], validation: list[B
     if not validation:
         return
     ids = {source_deal_id(b.deal_id) for b in validation}
-    refuse_fixed_holdout(ids)
+    refuse_fixed_holdout(ids, allow_selection=True)
     clash = ids & ({source_deal_id(b.deal_id) for b in train} | {source_deal_id(b.deal_id) for b in holdout})
     if clash:
         raise ValueError("Validation deal is also in training or the holdout: " + ", ".join(sorted(clash)))
