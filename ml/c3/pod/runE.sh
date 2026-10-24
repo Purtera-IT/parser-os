@@ -114,7 +114,35 @@
 #   DEAL        passes of the deal stage (2), at a rate floor of DEAL_RATE (0.3) x LR
 #   REFIT=1     (default) after the pick, refit the Questions overlay on the picked
 #               checkpoint ($CK.best.question_refit.pt, base md5 inside); 0 = serve without it
+#
+# Pilot A's three measured causes (~/c3-local/runE/pilot/rootcause/rootcause.md), each fixed
+# behind a flag that is on here:
+#   LATTICE_DOC=1  (M1) the asked lattice's slots read their own document only (graph flag
+#               lattice_doc, saved in the checkpoint, so serve masks the same way); other
+#               documents reach a line through the deal graph, the link hop, the table /
+#               document nodes and the pointers. 0 = the old cross-document slots
+#   TRUNK_LR_SCALE TRUNK_PULL ANCHOR_KL ANCHOR_HEADS  (M1, the drift) the shared trunk
+#               (deal graph blocks, lift, ln) at LR x 0.1, pulled 1% of its drift per step
+#               back to INIT (decoupled L2), and KL to INIT's predictions on the unlabeled
+#               rows of the anchor heads at 0.5 (ml/c3/anchor.py; loss_plan.md "Trunk
+#               anchor"). 1 / 0 / 0 turn each off
+#   EMBED_CONTRAST=0 (M2) the line types' "Unlike X ..." clauses stay out of the embedded
+#               answer texts (schema.EMBED_CONTRAST; the registry and the WHYs keep them);
+#               1 = b395fbb's texts
+#   TEXT_PINS   (M2) the heads the description gate failed read INIT's texts
+#               (ml/c3/runE/text_pins.json over runE/init_texts.json; empty = that file,
+#               0 = every head's new text, or a path to another pin file)
+#   DESC_GATE=1 (M2) before the loop, INIT is read under INIT's texts and this code's
+#               (ml/c3/desc_gate.py) on the validation files plus DESC_GATE_DEALS (space
+#               separated, labeled; DESC_GATE_DRAFTS read drafts as gold): NO-GO when the
+#               text change alone costs a head with >= 20 rows more than 2 points. Refit
+#               the affected heads (ml/c3/head_fit.py --init-shape ... --keys ...) before launching,
+#               never past it; then INIT=<refit> INIT_MD5=skip DESC_OLD_CK=<the live checkpoint>
 source "$(dirname "$0")/common.sh"
+# Pilot A M2: the embedded type texts, the same in every python below and in serve (the
+# schema digest records it, so a checkpoint never loads under the other texts).
+export C3_EMBED_CONTRAST=${EMBED_CONTRAST:-0}
+export C3_TEXT_PINS=${TEXT_PINS:-}
 cd "$REPO"
 CK=${CK:-$C3/out/runE.pt}
 INIT=${INIT:-$C3/runC.pt.open_links.slim}
@@ -251,6 +279,13 @@ TYPE_WEIGHT=${TYPE_WEIGHT:-5} RAMP=${RAMP:-2}   # 5: type was ~43% of head CE at
 WHY_ALIGN=${WHY_ALIGN:-0} WHY_SUFFICIENCY=${WHY_SUFFICIENCY:-0}   # E-base ablation: 0.1 / 0.5 (run C)
 LINK_WHY_CONTRAST=${LINK_WHY_CONTRAST:-0.3} LINK_WHY_ALONE=${LINK_WHY_ALONE:-0.2}   # link notes (link_why.py)
 GRAPH=${GRAPH:-rune}
+# Pilot A M1: own-document lattice slots (graph.py lattice_doc).
+LATTICE_DOC=${LATTICE_DOC:-1}
+[[ "$GRAPH" != off && "$LATTICE_DOC" == 1 && "$GRAPH" != *lattice_doc=* ]] && GRAPH="$GRAPH,lattice_doc=1"
+# Pilot A M1 (the drift): the trunk slower than the heads, held near INIT (ml/c3/anchor.py,
+# runE/loss_plan.md "Trunk anchor"). The KL heads must all be INIT's (no new head).
+TRUNK_LR_SCALE=${TRUNK_LR_SCALE:-0.1} TRUNK_PULL=${TRUNK_PULL:-0.01} ANCHOR_KL=${ANCHOR_KL:-0.5}
+ANCHOR_HEADS=${ANCHOR_HEADS:-col:label_type,col:admission,col:supplier,col:about,read:site}
 CITATIONS=${CITATIONS:-0.1} DERIVED_CARDS=${DERIVED_CARDS:-0.5} TABLE_KIND=${TABLE_KIND:-0.2}
 COHERENCE=${COHERENCE:-0.2} NODE_POINTERS=${NODE_POINTERS:-0.2}   # graph_losses.py
 weights=(
@@ -358,6 +393,28 @@ if [[ "$TINY" != 1 ]]; then
   fi
   new_heads=$derived
   echo "new heads since INIT: $new_heads"
+fi
+anchor_heads=$(python - "$ANCHOR_HEADS" "$new_heads" <<'PY'
+import sys
+new = set(filter(None, sys.argv[2].split(",")))
+print(",".join(k for k in sys.argv[1].split(",") if k and k not in new))
+PY
+)
+args+=(--trunk-lr-scale "$TRUNK_LR_SCALE" --trunk-pull "$TRUNK_PULL" --anchor-kl "$ANCHOR_KL"
+       --anchor-heads "$anchor_heads")
+echo "trunk lr x$TRUNK_LR_SCALE, pull $TRUNK_PULL/step to INIT, KL $ANCHOR_KL on $anchor_heads; graph $GRAPH"
+# Pilot A M2: a text change is a breaking change until INIT reads as well under it.
+if [[ "$TINY" != 1 && "${DESC_GATE:-1}" == 1 ]]; then
+  # DESC_OLD_CK: when INIT is a head_fit refit on the new texts, the checkpoint it was refit from.
+  gate_args=(--checkpoint "$INIT" ${DESC_OLD_CK:+--old-checkpoint "$DESC_OLD_CK"} --deal "${valid_files[@]}" ${DESC_GATE_DEALS:-}
+             --max-drop "${DESC_MAX_DROP:-0.02}" --device cuda --json "$C3/out/desc_gate.json")
+  [[ -n "${DESC_GATE_DRAFTS:-}" ]] && gate_args+=(--drafts-gold $DESC_GATE_DRAFTS)
+  [[ "$GRAPH" != off ]] && gate_args+=(--graph-set "$GRAPH")
+  set +e
+  python -m ml.c3.desc_gate "${gate_args[@]}" 2>&1 | tee "$C3/out/desc_gate.log"
+  s=${PIPESTATUS[0]}
+  set -e
+  (( s == 0 )) || { echo "NO-GO: the new texts alone cost INIT more than ${DESC_MAX_DROP:-0.02} on a head ($C3/out/desc_gate.json); refit those heads (ml/c3/head_fit.py) first" >&2; exit 1; }
 fi
 if [[ "$TINY" == 1 ]]; then
   args+=(--tiny)

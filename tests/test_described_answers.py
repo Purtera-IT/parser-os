@@ -58,7 +58,9 @@ def test_the_heads_read_the_answer_descriptions():
     assert "rel:near_miss" in by_key and "answers differently" in by_key["rel:near_miss"].description
 
 
-def test_sow_fill_answers_include_template_applies():
+def test_sow_fill_answers_include_template_applies(monkeypatch):
+    # The new text; the description gate pins read:sow_fill to INIT's (runE/text_pins.json).
+    monkeypatch.setenv("C3_TEXT_PINS", "0")
     by_key = load_schema().by_key()
     answers = {a.value: a.description for a in by_key["read:sow_fill"].answers}
     assert [v for v in answers if v != "_absent"] == ["filled", "template", "template_applies"]
