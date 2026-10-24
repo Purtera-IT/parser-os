@@ -168,3 +168,19 @@ def test_a_leading_undated_document_arrives_at_the_deals_latest_time():
              {"doc_id": "b", "kind": "file", "authored_at": "2026-03-01T00:00:00Z"}]
     assert set(document_times(files).values()) == {"2026-03-01T00:00:00Z"}
     assert document_times([{"doc_id": "x", "kind": "file"}]) == {}
+
+
+def test_our_notes_restatement_of_their_asks_is_theirs():
+    """Owner Q66 (e): in our own priced note, the unpriced lines of a "<them> confirmed:" / "requested:" block
+    are the other side's words (inputs); the BOM, our own "(you) noted:" block and the takeaways stay ours."""
+    texts = ["SOW JSON", "BOM: 4 x camera $250 each", "Pat confirmed:", "Install at 3 sites", "Weekend work only",
+             "Lee requested:", "Labels on every cable", "Price per site $1,200", "Chase (you) noted:",
+             "Check lift access", "Key Takeaways", "Send the quote Friday", "Sam (you) confirmed:", "Our crew of 2"]
+    atoms = [_atom(f"n{i}", "note1", t, T0, kind="note", side="ours") | {"order": i} for i, t in enumerate(texts)]
+    atoms.append(_atom("c1", "m1", "We need cameras at 3 sites.", T0 - DAY))
+    docinfo = {"note1": _doc("internal", "crm_note", True, sender="chase@purtera-it.com"),
+               "m1": _doc("inbound", "email", True, sender="pat@example.com")}
+    P = prov.decide(atoms, docinfo, {})
+    assert P.their_asks == {"n3", "n4", "n6"}
+    assert {"n1", "n7", "n9", "n11", "n13"} <= P.ours_atoms
+    assert all(prov.is_input(P, a) for a in atoms if a["label_key"] in P.their_asks)

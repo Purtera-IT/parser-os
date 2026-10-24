@@ -704,7 +704,8 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
             "message": kind in ("email", "note"), "filename": str(d.get("filename") or "")}
     lines = [{"label_key": r["key"], "atom_id": r.get("atom_id") or r["key"], "doc_id": r.get("doc_id"),
               "text": r.get("text"), "entered_at": r.get("entered_at"), "doc_kind": r.get("doc_kind"),
-              "speaker_side": r.get("speaker_side"), "section": r.get("section")} for r in rows]
+              "speaker_side": r.get("speaker_side"), "section": r.get("section"), "order": r.get("order")}
+             for r in rows]
     texts_of = {x["atom_id"]: (str(x["text"] or ""), messages[x["atom_id"]][4]) for x in lines
                 if x["atom_id"] in messages}
     other = dict(_DEAL.get("other_job") or {})

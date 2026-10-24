@@ -208,6 +208,7 @@ class Prov:
         self.estimate_atoms: set[str] = set()      # our estimate said on a call / recap / note (ESTIMATE_TALK)
         self.estimate_chain: set[str] = set()      # recap copies whose same_as chain ends on one
         self.other_job: dict[str, str] = {}        # doc_id -> why (document_job.set_aside)
+        self.their_asks: set[str] = set()          # our note's lines restating the other side's asks (inputs)
         self.source = ""
 
 
@@ -379,7 +380,60 @@ def decide(atoms: list[dict[str, Any]], docinfo: dict[str, dict[str, Any]], line
         if outbound and 0 < tm < P.cut:
             P.cut, P.cut_why = tm, f"our priced message in {d}"
     estimate_lines(P, atoms, docinfo, links)
+    their_asks(P, atoms, docinfo)
     return P
+
+
+#: In our own note, a block that restates the other side's asks: it opens on a line that ends "<who> confirmed:"
+#: or "<who> requested:" where <who> is not us ("(you)", our address), and runs until a line that hands back to
+#: us ("... noted:") or to the note's summary ("Key Takeaways"), or until the next opener.
+ASK_OPEN = re.compile(r"\b(?:confirmed|requested)\s*:\s*$", re.I)
+ASK_CLOSE = re.compile(r"\bnoted\s*:|\bkey takeaways\b", re.I)
+_US = re.compile(r"\(you\)|purtera", re.I)
+_NOTE_KINDS = ("note", "crm_note")
+
+
+def _is_note(i: dict[str, Any], xs: list[dict[str, Any]]) -> bool:
+    return bool(i.get("message")) and (str(i.get("kind") or "") in _NOTE_KINDS + ("meeting_recap",)
+                                       or "-hs-note-" in str(i.get("filename") or "")
+                                       or any(a.get("doc_kind") in _NOTE_KINDS for a in xs))
+
+
+def their_asks(P: Prov, atoms: list[dict[str, Any]], docinfo: dict[str, dict[str, Any]]) -> None:
+    """Owner Q66 (e): our note's unpriced lines inside a block that restates the customer's or partner's asks
+    ("Tvo confirmed:" / "Pete requested:" ... until "Chase (you) noted:" or "Key Takeaways") are the other
+    side's words: never ours, so they are inputs before the cut. The note's priced lines (a BOM, a price
+    basis), our own notes and its takeaways stay ours. Per line, in the note's own order; the cut is unchanged.
+    The admitted lines are ``P.their_asks``."""
+    P.their_asks = set()
+    by_doc: dict[Any, list[tuple[int, dict[str, Any]]]] = collections.defaultdict(list)
+    for n, a in enumerate(atoms):
+        by_doc[a.get("doc_id")].append((n, a))
+    for d, xs in by_doc.items():
+        i = docinfo.get(d) or {}
+        lines = [a for _, a in sorted(xs, key=lambda na: (_order(na[1].get("order"), na[0]), na[0]))]
+        if not _is_note(i, lines) or not any(a["label_key"] in P.ours_atoms for a in lines):
+            continue
+        on = False
+        for a in lines:
+            text = str(a.get("text") or "").strip()
+            if ASK_CLOSE.search(text):
+                on = False
+            elif ASK_OPEN.search(text):
+                on = not _US.search(text)
+                continue
+            if on and not PRICE.search(text) and a["label_key"] in P.ours_atoms:
+                P.ours_atoms.discard(a["label_key"])
+                P.estimate_atoms.discard(a["label_key"])
+                P.estimate_chain.discard(a["label_key"])
+                P.their_asks.add(a["label_key"])
+
+
+def _order(v: Any, fallback: int) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float(fallback)
 
 
 def estimate_lines(P: Prov, atoms: list[dict[str, Any]], docinfo: dict[str, dict[str, Any]],
@@ -525,4 +579,4 @@ def estimator_sources(atoms: list[dict[str, Any]], artifacts: dict[str, dict[str
 
 __all__ = ["DOC_KINDS", "DOC_KIND_HEAD", "DOC_KIND_SYNONYMS", "head_kind", "PAPER", "SOW_LIKE", "INBOUND", "DK_KINDS", "PRICE", "RULINGS", "Prov", "decide", "is_input",
            "theirs_line", "quoting_inputs", "pricing_workbook_docs", "pricing_workbook_keys", "supplier_domains",
-           "estimate_lines", "estimator_sources", "parse_when", "zoned", "zone_fix", "is_ours_addr", "t"]
+           "estimate_lines", "their_asks", "ASK_OPEN", "ASK_CLOSE", "estimator_sources", "parse_when", "zoned", "zone_fix", "is_ours_addr", "t"]
