@@ -139,6 +139,7 @@ def test_training_saves_and_resumes_the_explicit_view_contract(tmp_path):
     resumed, _ = run_base([batch], [], schema, budget, checkpoint=ck, score_holdout=False,
                           resume=True, view_tag=True)
     assert resumed.cfg.view_tag
+    assert not SMALL.view_tag
     with pytest.raises(ValueError, match="resumed checkpoint"):
         run_base([batch], [], schema, budget, checkpoint=ck, score_holdout=False,
                  resume=True, view_tag=False)

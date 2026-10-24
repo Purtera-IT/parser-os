@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import copy
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import torch
@@ -300,7 +300,8 @@ class C3Model(nn.Module):
     def __init__(self, schema: Schema, cfg: C3Config | None = None,
                  text: nn.Module | None = None, companies: tuple[str, ...] = ("purtera",)):
         super().__init__()
-        self.schema, self.cfg = schema, cfg or C3Config()
+        # Checkpoint loading changes flags; never mutate a caller's shared default.
+        self.schema, self.cfg = schema, replace(cfg) if cfg is not None else C3Config()
         c = self.cfg
         self.text = text or HashingEncoder(c.d_text)
         self.encoder = DealEncoder(c, self.text)
