@@ -733,11 +733,12 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
     loss.backward()
     torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.grad is not None], 1.0)
     opt.step()
-    if anchor is not None and anchor.pull > 0:
+    if anchor is not None and anchor.pull > 0 and getattr(batch, "task_profile", None) is None:
         # anchor.py: the decoupled L2 pull to INIT, at the trunk group's schedule.
         g = next((g for g in opt.param_groups if g.get("trunk")), opt.param_groups[0])
         anchor.pull_step(model, g["lr"] / max(g.get("initial_lr", g["lr"]), 1e-30))
-    model.ema_update()
+    if getattr(batch, "task_profile", None) is None:
+        model.ema_update()
     return loss.detach()
 
 
@@ -752,7 +753,13 @@ def _score_oneshot(model: C3Model, batch: Batch, device: str = "cpu") -> dict[st
 
 
 def _score_oneshot_inner(model: C3Model, batch: Batch) -> dict[str, dict[str, float]]:
-    out = model(batch.oneshot(), company=batch.company or None)
+    auxiliary = getattr(batch, "task_profile", None) is not None
+    if auxiliary:
+        from .tasks import validate_batch
+        validate_batch(batch)
+    elif getattr(batch, "task_input_digest", ""):
+        raise ValueError("materialized task profile cannot be removed")
+    out = model(batch.oneshot(), company=None if auxiliary else batch.company or None)
     scores: dict[str, dict[str, float]] = {}
     for key, logits in out.logits.items():
         if key in batch.multi_targets:
@@ -777,6 +784,8 @@ def _score_oneshot_inner(model: C3Model, batch: Batch) -> dict[str, dict[str, fl
                 total += 1
         if total:
             scores[key] = {"exact": hit / total, "n": float(total)}
+    if auxiliary:
+        return scores  # no invented no-link/card/forecast evaluation targets
     judged: dict[str, list] = {}
     for item in batch.judged:
         judged.setdefault(item.key, []).append(item)
@@ -1049,6 +1058,8 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         elif getattr(batch, "task_input_digest", ""):
             raise ValueError("materialized task profile cannot be removed")
     if any(getattr(b, "task_profile", None) is not None for b in train):
+        if resume:
+            raise ValueError("auxiliary resume is unsupported; use a separate fresh-optimizer candidate pass")
         if teacher_from or any(getattr(budget, k) > 0 for k in ("teacher", "bind", "teach", "flips", "spread")):
             raise ValueError("isolated auxiliary tasks require teacher/bind/lesson stages disabled")
     torch.manual_seed(seed)
@@ -1570,7 +1581,8 @@ def accept_drafts(payload: dict[str, Any]) -> int:
     return n
 
 
-def load_deal(path: str | Path, accepted: dict[str, str] | None = None) -> DealExample:
+def load_deal(path: str | Path, accepted: dict[str, str] | None = None, *,
+              task_consumer: str = "legacy") -> DealExample:
     """A joined deal file, or a labeling export that still has ``labels`` and ``atoms``.
 
     ``accepted`` (``--accept-drafts``): file name -> sha256 the owner approved.
@@ -1580,9 +1592,17 @@ def load_deal(path: str | Path, accepted: dict[str, str] | None = None) -> DealE
     payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("A training file must be one JSON object")
+    if task_consumer not in ("legacy", "bounded_auxiliary"):
+        raise ValueError("unknown task consumer")
+    contract = payload.get("supervision_holds")
+    auxiliary = isinstance(contract, dict) and contract.get("version") == 2
+    if auxiliary != (task_consumer == "bounded_auxiliary"):
+        raise ValueError("task consumer mismatch: v2 requires explicit bounded_auxiliary; legacy/cache/postfit refuses it")
     name = Path(path).name
     want = approved_sha(accepted, path)
     if want is not None:
+        if auxiliary:
+            raise ValueError("draft promotion is unsupported in the bounded auxiliary loader")
         if hashlib.sha256(raw).hexdigest() != want:
             raise ValueError(f"{name} changed since the owner approved its drafts")
         accept_drafts(payload)
@@ -1600,7 +1620,7 @@ def load_deal(path: str | Path, accepted: dict[str, str] | None = None) -> DealE
         deal = DealExample.from_training_blob(payload, atoms, deal_id=deal_id,
                                               company=str(payload.get("company") or "purtera"))
         policy = payload.get("company_policy")
-        if policy:
+        if policy and deal.task_profile is None:
             deal.company_policy = str(policy)
         return deal
     if "atoms" not in payload or "deal_id" not in payload:
@@ -1609,11 +1629,12 @@ def load_deal(path: str | Path, accepted: dict[str, str] | None = None) -> DealE
 
 
 def load_split(paths: list[str], schema: Schema, max_atoms: int = 4096,
-               accepted: dict[str, str] | None = None) -> tuple[list[Batch], list[str]]:
+               accepted: dict[str, str] | None = None, *,
+               task_consumer: str = "legacy") -> tuple[list[Batch], list[str]]:
     batches: list[Batch] = []
     notes: list[str] = []
     for path in paths:
-        parts, part_notes = training_batches(load_deal(path, accepted), schema, max_atoms=max_atoms)
+        parts, part_notes = training_batches(load_deal(path, accepted, task_consumer=task_consumer), schema, max_atoms=max_atoms)
         batches.extend(parts)
         notes.extend(part_notes)
     return batches, notes
@@ -1662,6 +1683,8 @@ def live_student(schema: Schema, encoder_name: str) -> C3Model:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Base loop. Does not release a model.")
     parser.add_argument("--train", nargs="+", required=True)
+    parser.add_argument("--task-consumer", choices=("legacy", "bounded_auxiliary"), default="legacy",
+                        help="Explicit separate auxiliary pass; legacy/cache/postfit consumers refuse v2")
     parser.add_argument("--holdout", nargs="*", default=[],
                         help="The labeling holdout. Required with --score-holdout; without it the "
                              "files may be left out (the fixed holdout still cannot train)")
@@ -1839,12 +1862,13 @@ def main() -> None:
     accepted = read_draft_approvals(args.accept_drafts) if args.accept_drafts else None
     if accepted:
         print("accept_drafts", len(accepted), "approved files", flush=True)
-    train, train_notes = load_split(args.train, schema, args.max_atoms, accepted)
+    train, train_notes = load_split(args.train, schema, args.max_atoms, accepted, task_consumer=args.task_consumer)
     from .balance import validate_balance_inputs
 
     validate_balance_inputs(train, deal_cap=args.deal_cap, head_caps=head_cap)
-    holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
-    validation, val_notes = load_split(args.validation, schema, args.validation_max_atoms or args.max_atoms)
+    holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms, task_consumer=args.task_consumer)
+    validation, val_notes = load_split(args.validation, schema, args.validation_max_atoms or args.max_atoms,
+                                     task_consumer=args.task_consumer)
     if args.validation_max_atoms:
         print(f"validation window {args.validation_max_atoms} lines (training {args.max_atoms})", flush=True)
     caps, ground, view_parts = TEACHER_CAPS, VIEW_GROUND_ROWS, args.view_parts

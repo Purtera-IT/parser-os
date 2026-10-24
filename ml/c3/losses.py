@@ -681,8 +681,9 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     if getattr(batch, "task_profile", None) is None and getattr(batch, "task_input_digest", ""):
         raise ValueError("materialized task profile cannot be removed")
     if getattr(batch, "task_profile", None) is not None:
-        from .tasks import validate_batch
+        from .tasks import LOSS_TERMS, validate_batch, validate_loss_census
         validate_batch(batch)
+        validate_loss_census(LossWeights)
         if bank is not None or rules is not None:
             raise ValueError("external explanation banks are unsupported for isolated auxiliary tasks")
         from .why2 import before_forward
@@ -693,7 +694,7 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
         # No teacher, hindsight, reasons, absence, cards, pointers or outcome
         # objectives are evaluated on this bounded source-local forward.
         zero = out.r.new_zeros(())
-        parts = {k: zero for k in LossWeights.__dataclass_fields__ if k not in ("space", "head")}
+        parts = {k: zero for k in LOSS_TERMS}
         parts.update(heads=heads, numbers=numbers, literals=literal_span_loss(model, out, batch))
         if keep is not None:
             keep.update(out=out, desc=desc, parts=parts)

@@ -727,6 +727,7 @@ class Batch:
     head_loss_scale: dict[str, float] = field(default_factory=dict)
     task_profile: dict[str, Any] | None = None
     task_input_digest: str = ""
+    task_supervision_digest: str = ""
     #: Inputs: the sender's organisation kind, the document's direction and
     #: the deal's stage when the line arrived (c3_record.sender), per line.
     org: list[str] = field(default_factory=list)

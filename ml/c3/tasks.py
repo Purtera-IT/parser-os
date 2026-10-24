@@ -17,10 +17,27 @@ LITERAL_HEADS = frozenset({
     "read:display_size", "read:run_length", "read:work_window", "read:start_date",
     "read:site", "read:address_level", "read:price_basis", "read:rate", "read:rate_for",
     "read:billing_type",
+    "read:stage_std", "read:deal_stage",
 })
 NOISE_HEADS = frozenset({"col:label_type", "col:admission", "read:noise_class"})
 PROFILES = {"source_local_literal": LITERAL_HEADS, "source_local_noise": NOISE_HEADS}
 MAX_CONTEXT_ATOMS = 2048
+DIRECT_LOSSES = frozenset({"heads", "numbers", "literals"})
+LOSS_TERMS = frozenset("""absence adversary card_alone card_contrast changes citations claims
+clause_use co_why_alone co_why_contrast coherence conduct deal_numbers derived_cards
+described_alone entities explanation_only governs heads hindsight judgment_rationale
+judgment_why_alone judgments keyword_dropout layout_lock link_why_alone link_why_contrast
+literals near_misses negatives node_pointers number_why_alone numbers pointers policy_l1
+relations residual rule_links table_kind variance why_align why_alone why_contrast why_echo
+why_sufficiency why_swap""".split())
+LOSS_CONFIG_FIELDS = frozenset("""card_cap company_r_grad described_alone_p free_h_out head
+keyword_dropout_cap keyword_dropout_p link_why_hard_negative near_miss_margin space
+why_hard_negative why_swap_cap""".split())
+
+
+def validate_loss_census(weights_type):
+    if set(weights_type.__dataclass_fields__) != LOSS_TERMS | LOSS_CONFIG_FIELDS:
+        raise ValueError("unclassified loss/config field: auxiliary disposition must be reviewed")
 
 
 def digest(value):
@@ -46,7 +63,8 @@ def validate_profile(profile):
         raise ValueError("auxiliary task must execute with no temporal/as_of claim and exact v2 fields")
     context = profile["context"]
     if (not isinstance(context, dict)
-            or set(context) != {"document_id", "source_keys", "source_fingerprints", "evidence_ref"}
+            or not {"document_id", "source_keys", "source_fingerprints", "evidence_ref"} <= set(context)
+            or set(context) - {"document_id", "source_keys", "source_fingerprints", "evidence_ref", "observed_stage_evidence"}
             or not isinstance(context["document_id"], str) or not context["document_id"]
             or not isinstance(context["evidence_ref"], str) or not context["evidence_ref"]):
         raise ValueError("task needs an explicit source-local context and evidence reference")
@@ -58,6 +76,10 @@ def validate_profile(profile):
             or not all(isinstance(h, str) and len(h) == 64
                        and all(c in "0123456789abcdef" for c in h) for h in fingerprints.values())):
         raise ValueError("task needs exact bounded source keys and fingerprints")
+    stages = context.get("observed_stage_evidence", {})
+    if (not isinstance(stages, dict) or not set(stages) <= set(keys)
+            or not all(isinstance(v, str) and v for v in stages.values())):
+        raise ValueError("observed source stage needs per-occurrence evidence references")
     from .schema import LINE, RELATION, load_schema
 
     by = load_schema().by_key()
@@ -112,20 +134,29 @@ def project_blob(blob, atoms):
             "label_key", "atom_id", "text", "entered_at", "doc_id", "doc_kind", "section", "order",
             "speaker_role", "speaker_side", "speaker_org", "doc_direction", "image_pixels",
             "bbox", "table_row", "table_col", "row_span", "col_span", "loss_weight"}}
-        a["stage_at"], a["view"] = "", ""
+        a["stage_at"] = (by_key[key].get("stage_at") or "") if key in context.get("observed_stage_evidence", {}) else ""
+        if key in context.get("observed_stage_evidence", {}) and not a["stage_at"]:
+            raise ValueError("observed stage admission names a missing source stage")
+        a["view"] = ""
         selected.append(a)
     keys = set(context["source_keys"])
     result = copy.deepcopy(blob)
     from .schema import load_schema
+    from .data import excluded, select_labels
     by = load_schema().by_key()
     labels = []
-    for row in result.get("labels") or []:
+    # Resolve conflicts/person precedence and all existing source exclusions
+    # before removing notes/metadata; provenance never overrides an exclusion.
+    chosen = select_labels([r for r in result.get("labels") or [] if r.get("label_key") in keys])
+    for row in chosen.values():
         key = row.get("label_key")
         if key not in keys:
             continue
         if row.get("promoted_from"):
             raise ValueError("promoted target is not certified source-local supervision")
-        clean = {k: row[k] for k in ("id", "label_key", "labeler", "purpose", "supersedes") if k in row}
+        clean = {k: row[k] for k in ("id", "label_key", "labeler", "purpose", "supersedes", "weight_tier") if k in row}
+        if excluded(row):
+            clean["weight_tier"] = "exclude"
         clean["reads_set"] = {}
         for source, head in targets:
             if source != key:
@@ -147,6 +178,13 @@ def atom_input_digest(atom):
     from dataclasses import asdict
     return digest({k: v for k, v in asdict(atom).items()
                    if k not in {"label", "row_weight", "loss_weight"}})
+
+
+def supervision_digest(batch):
+    from dataclasses import asdict
+    return digest({"keys": batch.keys, "targets": batch.targets,
+                   "numbers": batch.numbers_target, "sets": batch.multi_targets,
+                   "literals": [asdict(t) for t in batch.literals], "head_scale": batch.head_scale})
 
 
 def validate_deal(deal):
@@ -198,6 +236,7 @@ def constrain_batch(batch, profile, schema):
     batch.company_policy = ""
     batch.context = {k: [None] * len(batch) for k in batch.context}
     batch.task_input_digest = digest({"profile": batch.task_profile, "inputs": batch.inputs()})
+    batch.task_supervision_digest = supervision_digest(batch)
     validate_batch(batch)
     return batch
 
@@ -210,6 +249,8 @@ def validate_batch(batch):
         raise ValueError("task contains context outside its admitted source keys")
     if batch.task_input_digest != digest({"profile": p, "inputs": batch.inputs()}):
         raise ValueError("task input context changed after physical materialization")
+    if batch.task_supervision_digest != supervision_digest(batch):
+        raise ValueError("task supervision/holds changed after materialization")
     for key, col in batch.targets.items():
         if any(v != -100 and (batch.keys[i], key) not in eligible for i, v in enumerate(col)):
             raise ValueError("task contains unapproved head supervision")
@@ -236,7 +277,7 @@ def validate_batch(batch):
             or batch.rule_links or batch.flips or batch.negatives or any(batch.entities) or any(batch.hint_lines)
             or batch.outcome or batch.parser_targets or batch.near_misses or batch.twins
             or batch.layout_rewrites or any(batch.changes) or batch.company_policy
-            or any(batch.why_weights)):
+            or any(batch.why_weights) or batch.__dict__.get("_table_facts")):
         raise ValueError("task contains dependent auxiliary/forecast supervision")
     if any((batch.keys[t.line], t.key) not in eligible for t in batch.literals):
         raise ValueError("task contains unapproved literal supervision")

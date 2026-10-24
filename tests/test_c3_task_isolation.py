@@ -260,7 +260,7 @@ def test_windows_and_chunks_preserve_task_boundaries():
         assert part.task_profile == p
 
 
-def test_actual_small_cpu_forward_backward_is_bounded():
+def test_actual_small_cpu_forward_backward_is_bounded(tmp_path):
     from ml.c3.model import C3Config, C3Model
     from ml.c3.loop import configure_training_view_tag
     _, b = load()
@@ -269,9 +269,29 @@ def test_actual_small_cpu_forward_backward_is_bounded():
     model = C3Model(load_schema(),cfg)
     configure_training_view_tag(model, [b], True)
     assert model.cfg.view_tag
+    from ml.c3.gates import save_checkpoint,load_checkpoint
+    import hashlib
+    parent=tmp_path/'certified-main.pt'
+    candidate=tmp_path/'aux-candidate.pt'
+    save_checkpoint(parent,model,step=11,schema_sha256='synthetic-registry')
+    parent_hash=hashlib.sha256(parent.read_bytes()).hexdigest()
+    fork=C3Model(load_schema(),cfg)
+    assert load_checkpoint(parent,fork,schema_sha256='synthetic-registry')==11
+    assert fork.cfg.view_tag
+    model=fork
+    optimizer=torch.optim.AdamW(model.parameters(),lr=.001)
+    assert not optimizer.state  # no main momentum imported into auxiliary pass
     loss, logs = c3_loss(model, b)
     assert torch.isfinite(loss) and loss > 0
     loss.backward()
+    assert model.q_head.weight.grad is not None  # shared/q updates are allowed, not strict parameter isolation
+    optimizer.step()
+    save_checkpoint(candidate,model,step=12,schema_sha256='synthetic-registry')
+    assert hashlib.sha256(parent.read_bytes()).hexdigest()==parent_hash
+    assert candidate.read_bytes()!=parent.read_bytes()
+    restored=C3Model(load_schema(),cfg)
+    assert load_checkpoint(candidate,restored,schema_sha256='synthetic-registry')==12
+    assert restored.cfg.view_tag
     assert logs['conduct'] == logs['hindsight'] == logs['relations'] == 0
 
 
@@ -337,3 +357,167 @@ def test_removing_profile_does_not_enable_teacher_or_legacy_loss_fallback():
     b.task_profile = None
     with pytest.raises(ValueError): c3_loss(None,b)
     with pytest.raises(ValueError): teacher_context(None,b)
+
+
+def test_complete_loss_census_and_all_staged_objectives_cannot_reactivate(monkeypatch):
+    import ml.c3.losses as losses
+    from ml.c3.tasks import LOSS_TERMS, LOSS_CONFIG_FIELDS, validate_loss_census
+    from ml.c3.loop import gold_weights, STAGES
+    validate_loss_census(LossWeights)
+    assert len(LOSS_TERMS) == 46 and len(LOSS_CONFIG_FIELDS) == 12
+    class Unknown:
+        __dataclass_fields__ = {**LossWeights.__dataclass_fields__, 'new_forecast_objective':None}
+    with pytest.raises(ValueError): validate_loss_census(Unknown)
+    _, b = load()
+    model = DirectModel(b)
+    def forbidden(*a,**kw): raise AssertionError('forbidden eager loss path')
+    # Patch every loss-module consumer except the three direct targets.
+    for name in list(vars(losses)):
+        if name.endswith('_loss') and name not in ('c3_loss','literal_span_loss','answer_loss'):
+            monkeypatch.setattr(losses,name,forbidden)
+    for stage in STAGES:
+        w, sizes = gold_weights(stage)
+        _, parts = c3_loss(model,b,w,judgment_sizes=sizes)
+        assert set(parts) == LOSS_TERMS
+        assert all(v == 0 for k,v in parts.items() if k not in ('heads','numbers','literals'))
+
+
+def test_observed_stage_is_an_explicit_source_input_not_a_gold_context_slot():
+    b = payload()
+    b['atoms'][0]['stage_at'] = 'scoping'
+    p = b['supervision_holds']['task_profile']
+    p['context']['source_fingerprints']['local'] = source_fingerprint(b['atoms'][0])
+    p['context']['observed_stage_evidence'] = {'local':'review/actual-source-stage'}
+    p['allow_heads'].append('read:stage_std')
+    p['target_provenance'].append(dict(source_key='local',head='read:stage_std',
+        evidence_keys=['local'],evidence_ref='review/stated-stage-classification'))
+    b['labels'][0]['reads_set']['stage_std'] = 'scoping'
+    _, batch = load(b)
+    assert batch.stage == ['scoping'] and batch.view == ['']
+    assert batch.targets['read:stage_std'][0] >= 0
+    assert all(not any(v) for v in batch.context.values())  # no gold label inputs
+    del p['context']['observed_stage_evidence']
+    _, other = load(b)
+    assert other.stage == ['']
+
+
+def test_legacy_cache_and_postfit_loaders_refuse_auxiliary_files(tmp_path):
+    import json
+    from ml.c3.loop import load_deal,load_split
+    b=payload(); b['deal_id']='synthetic'
+    path=tmp_path/'aux.json'; path.write_text(json.dumps(b))
+    with pytest.raises(ValueError,match='consumer mismatch'): load_deal(path)
+    with pytest.raises(ValueError,match='consumer mismatch'): load_split([str(path)],load_schema())
+    d=load_deal(path,task_consumer='bounded_auxiliary')
+    assert d.task_profile
+    parts,_=load_split([str(path)],load_schema(),task_consumer='bounded_auxiliary')
+    assert parts and all(p.task_profile for p in parts)
+    with pytest.raises(ValueError,match='draft promotion'):
+        load_deal(path,{str(path):'wrong'},task_consumer='bounded_auxiliary')
+    b['supervision_holds']=dict(version=1,groups=[])
+    path.write_text(json.dumps(b))
+    assert load_deal(path).task_profile is None
+    with pytest.raises(ValueError): load_deal(path,task_consumer='bounded_auxiliary')
+
+
+def test_auxiliary_step_cannot_pull_anchor_update_ema_or_move_unused_adamw_state(monkeypatch):
+    import ml.c3.loop as loop
+    _,b=load()
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.shared=torch.nn.Parameter(torch.tensor(1.))
+            self.held=torch.nn.Parameter(torch.tensor(2.))
+        def ema_update(self): raise AssertionError('auxiliary EMA update')
+    m=Model()
+    opt=torch.optim.AdamW(m.parameters(),lr=.1,weight_decay=.1)
+    # Prime actual optimizer momentum for the excluded scalar.
+    (m.held.square()+m.shared.square()).backward(); opt.step(); opt.zero_grad(set_to_none=True)
+    held=m.held.detach().clone(); shared=m.shared.detach().clone()
+    anchor=SimpleNamespace(pull=1.,pull_step=lambda *a: (_ for _ in ()).throw(AssertionError('anchor pull')))
+    monkeypatch.setattr(loop,'c3_loss',lambda *a,**kw:(m.shared.square(),{}))
+    loop._student_step(m,opt,b,LossWeights(),None,None,None,'cpu',anchor=anchor)
+    assert torch.equal(m.held,held) and not torch.equal(m.shared,shared)
+    assert m.held.grad is None
+
+
+def test_auxiliary_evaluation_uses_direct_context_and_never_scores_no_link():
+    from ml.c3.loop import _score_oneshot_inner
+    _,b=load()
+    model=DirectModel(b)
+    def forward(inputs,**kw):
+        assert kw['company'] is None
+        return model.out
+    class Eval:
+        def __call__(self,*a,**kw): return forward(*a,**kw)
+    # No .relations/.judge supplied: a generic relation/card evaluator would fail.
+    scores=_score_oneshot_inner(Eval(),b)
+    assert scores and not any(k.startswith(('rel:','jdg:')) for k in scores)
+    b._table_facts={'future':'cached-outcome'}
+    with pytest.raises(ValueError): c3_loss(None,b)
+
+
+def test_effective_read_hold_and_numeric_identity_cannot_be_reintroduced():
+    b=payload()
+    b['supervision_holds']['groups']=[dict(group='hold',source_keys=['local'],read_fields=['site'])]
+    _,part=load(b)
+    part.targets['read:site'][0]=1
+    with pytest.raises(ValueError,match='supervision/holds'): c3_loss(None,part)
+    _,part=load()
+    part.numbers_target['read:labor_hours'][0]=999.
+    with pytest.raises(ValueError,match='supervision/holds'): c3_loss(None,part)
+
+
+def test_question_and_headfit_cache_execution_refuses_v2_before_forward(tmp_path):
+    import json
+    from ml.c3.question_fit import cache_deal
+    from ml.c3.head_fit import _cached_split
+    b=payload(); b['deal_id']='synthetic'
+    b['judgments']=[dict(head='gap',target={'kind':'deal','query':'Outcome sentinel?'},verdict='valid')]
+    p=tmp_path/'aux.json'; p.write_text(json.dumps(b))
+    class NoForward:
+        def eval(self): pass
+        def __call__(self,*a,**kw): raise AssertionError('postfit must not forward')
+    with pytest.raises(ValueError,match='consumer mismatch'):
+        cache_deal(NoForward(),load_schema(),'cpu',str(p),['Outcome sentinel?'],10)
+    with pytest.raises(ValueError,match='consumer mismatch'):
+        _cached_split(None,[str(p)],load_schema(),10,['col:label_type'],'cpu',None)
+
+
+def test_mixed_run_refusal_never_rewrites_certified_teacher_schedule():
+    from ml.c3.loop import run_base,Budget
+    _,aux=load()
+    raw=payload(); raw['supervision_holds']=dict(version=1,groups=[])
+    main,_=load(raw)
+    main=featurize(main,load_schema())
+    main.deal_id='different-main'
+    budget=Budget(teacher=3,teach=4,bind=2,flips=1,spread=1)
+    with pytest.raises(ValueError,match='stages disabled'):
+        run_base([main,aux],[],budget=budget,score_holdout=False)
+    assert (budget.teacher,budget.teach,budget.bind,budget.flips,budget.spread)==(3,4,2,1,1)
+    assert any(main.why)
+    with pytest.raises(ValueError,match='resume is unsupported'):
+        run_base([aux],[],budget=Budget(teacher=0,teach=0),score_holdout=False,resume=True)
+
+
+@pytest.mark.parametrize('marker',['tier','note','consumer','skip','exclude_read'])
+def test_raw_source_exclusion_always_precedes_sanitization(marker):
+    b=payload(); row=b['labels'][0]
+    if marker=='tier': row['weight_tier']='exclude'
+    if marker=='note': row['note']='EXCLUDE_FROM_TRAINING: protected owner decision'
+    if marker=='consumer': row['consumer']='ignore'
+    if marker=='skip': row['reads_set']['skip']='true'
+    if marker=='exclude_read': row['reads_set']['exclude_from_training']='true'
+    original=copy.deepcopy(b)
+    _,part=load(b)
+    assert part.targets['read:site']==[-100]
+    assert part.numbers_target['read:equipment_qty']==[None]
+    assert not part.literals and not part.why[0]
+    assert len(part)==1 and b==original
+
+
+def test_source_conflicting_saved_labels_are_not_hidden_by_note_sanitization():
+    b=payload()
+    other=copy.deepcopy(b['labels'][0]); other['id']='conflict'; other['note']='conflicting owner reasoning'
+    b['labels'].append(other)
+    with pytest.raises(ValueError,match='Conflicting saved'): load(b)
