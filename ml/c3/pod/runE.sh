@@ -242,6 +242,11 @@ PY
 train_files=()
 while IFS= read -r f; do [[ -n "$f" ]] && train_files+=("$f"); done <<< "$kept"
 (( ${#train_files[@]} )) || { echo "no training deals left in $TRAIN_DIR" >&2; exit 1; }
+# Check the selected inputs before any model/GPU work. The loop rechecks the
+# metadata carried by its actual loaded parts (also on direct calls/resume).
+balance_args=(--deal-cap "${DEAL_CAP:-0.15}" --head-cap "read:feeds_decision=${HEAD_CAP:-0.15}")
+python -m ml.c3.balance --train "${train_files[@]}" "${balance_args[@]}"
+
 # Validation: 010043's quoting view and its planning view, both (the quoting
 # view alone is 494 typed lines and 3 task-tier cards: one card is 33 points).
 if [[ -z "${VALID_FILE:-}" ]]; then
@@ -384,7 +389,7 @@ echo "validation window $VALID_ATOMS (serve reads 8192)"
 
 args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_files[@]}"
       --lr "${LR:-1e-4}" --warmup-passes "${WARMUP:-1}"
-      --deal-cap "${DEAL_CAP:-0.15}" --head-cap "read:feeds_decision=${HEAD_CAP:-0.15}"
+      "${balance_args[@]}"
       --free-head all --head-weight col:label_type="$TYPE_WEIGHT"
       "${loss_args[@]}" ${ramp_args[@]+"${ramp_args[@]}"}
       --keep-checkpoints "$KEEP" --pick-floors "$FLOORS"

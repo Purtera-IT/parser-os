@@ -194,6 +194,9 @@ class DealExample:
     head_scale: dict[str, float] = field(default_factory=dict)
     #: Training-only multiplier AFTER per-part loss normalization; never a row weight or model input.
     deal_loss_scale: float = 1.0
+    #: Rebuild contract for runtime caps; absent on legacy/uncapped inputs. Never model inputs.
+    balance_version: int | None = None
+    balance_config: dict[str, Any] | None = None
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "DealExample":
@@ -235,6 +238,7 @@ class DealExample:
                         for e in d.get("edges", []) if e.get("note")},
             doc_pointers=[(str(p[0]), str(p[1])) for p in d.get("doc_pointers", [])],
             deal_loss_scale=_deal_loss_scale(d.get("deal_loss_scale", 1.0)),
+            balance_version=d.get("balance_version"), balance_config=d.get("balance_config"),
             view=str(d.get("view") or ""),
             head_scale={str(k): float(v) for k, v in (d.get("head_scale") or {}).items()},
             source_supervision=d.get("source_supervision") or {
@@ -326,7 +330,9 @@ class DealExample:
                                       "atoms": rows, "edges": edges, "doc_pointers": doc_pointers,
                                       "judgments": blob.get("judgments") or [],
                                       "view": blob.get("view"), "head_scale": blob.get("head_scale"),
-                                      "deal_loss_scale": blob.get("deal_loss_scale", 1.0)})
+                                      "deal_loss_scale": blob.get("deal_loss_scale", 1.0),
+                                      "balance_version": blob.get("balance_version"),
+                                      "balance_config": blob.get("balance_config")})
         deal.link_stats = link_stats
         # Keep deferred fields and tab targets inspectable instead of claiming
         # that storing a row means the model has a loss for it.
@@ -682,6 +688,9 @@ class Batch:
     head_scale: dict[str, float] = field(default_factory=dict)
     #: Training-only multiplier AFTER per-part loss normalization; never a row weight or model input.
     deal_loss_scale: float = 1.0
+    #: Rebuild contract for runtime caps; absent on legacy/uncapped inputs. Never model inputs.
+    balance_version: int | None = None
+    balance_config: dict[str, Any] | None = None
     #: Runtime-only per-head balance multiplier, outside the heads-average divisor.
     head_loss_scale: dict[str, float] = field(default_factory=dict)
     #: Inputs: the sender's organisation kind, the document's direction and
@@ -1916,6 +1925,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         link_elsewhere=_elsewhere_rows(elsewhere, index), notes=value_notes + notes,
         keys=[a.key for a in atoms], parser_targets=parser_targets, head_scale=dict(deal.head_scale),
         deal_loss_scale=deal.deal_loss_scale,
+        balance_version=deal.balance_version, balance_config=deal.balance_config,
         layout_rewrites=[(i, t) for i, a in enumerate(atoms) if a.label is not None and not a.history_only
                          for t in a.layout_rewrites if t.strip() != a.text.strip()],
         edge_notes=edge_notes, reason_notes=reason_notes, unplaced_notes=unplaced_notes)

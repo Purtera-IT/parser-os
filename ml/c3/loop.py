@@ -1020,6 +1020,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     train, holdout = lock_split(train, holdout, need_holdout=score_holdout)
     validation = list(validation or [])
     lock_validation(train, holdout, validation)
+    from .balance import validate_balance_inputs
+
+    validate_balance_inputs(train, deal_cap=deal_cap, head_caps=head_cap)
     scale = training_scales(train, balance=balance, cap=deal_cap)
     schema = schema or load_schema()
     from .balance import head_cap_scales
@@ -1821,6 +1824,9 @@ def main() -> None:
     if accepted:
         print("accept_drafts", len(accepted), "approved files", flush=True)
     train, train_notes = load_split(args.train, schema, args.max_atoms, accepted)
+    from .balance import validate_balance_inputs
+
+    validate_balance_inputs(train, deal_cap=args.deal_cap, head_caps=head_cap)
     holdout, hold_notes = load_split(args.holdout, schema, args.max_atoms)
     validation, val_notes = load_split(args.validation, schema, args.validation_max_atoms or args.max_atoms)
     if args.validation_max_atoms:

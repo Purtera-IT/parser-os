@@ -10,6 +10,54 @@ import warnings
 from collections import defaultdict
 
 
+def validate_balance_metadata(version, config, *, deal_cap=None, head_caps=None, source="input"):
+    """Caps require rebuilt inputs declaring the exact requested cap policy.
+
+    No caps means the legacy/direct-call contract stays unchanged. Metadata is
+    validated, never inferred from row weights (which also encode background).
+    """
+    if deal_cap is None and not head_caps:
+        return
+    expected = {"deal_cap": deal_cap, "head_caps": head_caps or {}}
+    def valid_cap(value):
+        return type(value) in (int, float) and math.isfinite(value) and 0 < value <= 1
+
+    if ((deal_cap is not None and not valid_cap(deal_cap))
+            or any(not valid_cap(v) for v in (head_caps or {}).values())):
+        raise ValueError("runtime caps must be finite and in (0, 1]")
+    if type(version) is not int or version != 1:
+        raise ValueError(f"{source}: runtime caps require rebuilt balance_version=1 inputs; "
+                         "legacy baked-in factors must be removed by rebuilding")
+    valid = (isinstance(config, dict) and set(config) == {"deal_cap", "head_caps"}
+             and (config["deal_cap"] is None or valid_cap(config["deal_cap"]))
+             and isinstance(config["head_caps"], dict)
+             and all(isinstance(k, str) and valid_cap(v) for k, v in config["head_caps"].items()))
+    if not valid or config != expected:
+        raise ValueError(f"{source}: balance_config must match runtime caps {expected!r}; rebuild inputs "
+                         "with the matching cap policy")
+
+
+def validate_balance_inputs(train, *, deal_cap=None, head_caps=None):
+    """Validate the actual loaded parts before scaling or model initialization."""
+    for batch in train:
+        validate_balance_metadata(getattr(batch, "balance_version", None),
+                                  getattr(batch, "balance_config", None),
+                                  deal_cap=deal_cap, head_caps=head_caps, source=batch.deal_id)
+
+
+def check_balance_files(paths, *, deal_cap=None, head_caps=None):
+    """Run E's early preflight on exactly the selected training files."""
+    import json
+    from pathlib import Path
+
+    if deal_cap is None and not head_caps:
+        return
+    for path in paths:
+        blob = json.loads(Path(path).read_text())
+        validate_balance_metadata(blob.get("balance_version"), blob.get("balance_config"),
+                                  deal_cap=deal_cap, head_caps=head_caps, source=str(path))
+
+
 def cap_scales(mass: dict[str, float], cap: float, *, name: str = "deal") -> dict[str, float]:
     """Downscale large sources to at most ``cap`` of effective coefficient mass.
 
@@ -76,3 +124,25 @@ def head_cap_scales(train, schema, part_scale, caps, head_weight=None):
         for part, source in supported:
             result[part][key] = factors[source]
     return result
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fail closed on legacy or mismatched capped training inputs")
+    parser.add_argument("--train", nargs="+", required=True)
+    parser.add_argument("--deal-cap", type=float, default=None)
+    parser.add_argument("--head-cap", action="append", default=[])
+    args = parser.parse_args()
+    head_caps = {}
+    for spec in args.head_cap:
+        key, sep, value = spec.rpartition("=")
+        if not sep or not key:
+            parser.error(f"invalid --head-cap {spec!r}; expected key=fraction")
+        head_caps[key] = float(value)
+    check_balance_files(args.train, deal_cap=args.deal_cap, head_caps=head_caps)
+    print(f"balance input contract checked: {len(args.train)} training files")
+
+
+if __name__ == "__main__":
+    main()
