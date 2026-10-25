@@ -361,5 +361,19 @@ class HFCausalLM(LMBase):
             x = torch.cat([prefix.to(x.dtype), x], 1)
             mask = torch.cat([torch.ones(prefix.shape[:2], dtype=torch.bool,
                                          device=mask.device), mask], 1)
-        h = body(inputs_embeds=x, attention_mask=mask.long()).last_hidden_state
+        def read_body(embeddings, attention):
+            return body(inputs_embeds=embeddings, attention_mask=attention).last_hidden_state
+
+        # Optional bind-only recomputation: per-layer checkpoint inputs from
+        # many pages otherwise coexist until the piece loss runs backward.
+        # Preserve the complete page and graph-prefix derivative. Trainable
+        # LM adapters retain their existing execution path.
+        recompute = (getattr(self, "checkpoint_frozen_hidden", False)
+                     and torch.is_grad_enabled() and x.requires_grad
+                     and not any(p.requires_grad for p in self.parameters()))
+        if recompute:
+            from torch.utils.checkpoint import checkpoint
+            h = checkpoint(read_body, x, mask.long(), use_reentrant=False)
+        else:
+            h = read_body(x, mask.long())
         return h[:, prefix.shape[1]:] if prefix is not None else h
