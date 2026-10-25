@@ -542,6 +542,15 @@ def to_read_precision(model: Any) -> Any:
     return model
 
 
+def _saved_on_host(device: str):
+    """Opt-in (``C3_SAVE_ON_HOST=1``, CUDA): keep the tensors backward needs in pinned host memory and bring
+    each back when backward reaches it. Same values and gradients; one 8,192-line step's many passes then
+    fit one 80 GB GPU (the host has the room)."""
+    if os.environ.get("C3_SAVE_ON_HOST", "").strip() == "1" and str(device).startswith("cuda"):
+        return torch.autograd.graph.save_on_cpu(pin_memory=True)
+    return nullcontext()
+
+
 def _autocast(device: str):
     if device.startswith("cuda"):
         return torch.autocast(device_type="cuda", dtype=half_dtype())
@@ -719,7 +728,7 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
     if getattr(batch, "task_profile", None) is not None and (teacher is not None or view is not None):
         raise ValueError("teacher/lesson execution is unsupported for isolated auxiliary tasks")
     model.train()
-    with _autocast(device):
+    with _autocast(device), _saved_on_host(device):
         kept: dict = {}
         loss, parts = c3_loss(model, batch, weights, judgment_sizes=sizes, keep=kept)
         if shares is not None:
