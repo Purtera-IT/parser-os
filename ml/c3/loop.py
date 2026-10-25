@@ -405,6 +405,14 @@ def _arm_teacher_memory(teacher: Brain) -> None:
     inner = getattr(teacher.lm, "model", None)
     if inner is None:
         return
+    # Bind-only whole-body recomputation is automatically bypassed by the LM
+    # whenever its adapters are trainable or gradients are disabled.
+    teacher.lm.checkpoint_frozen_hidden = True
+    if next(inner.parameters()).device.type == "mps":
+        # Calls contain complete pages; microbatching changes no target,
+        # context window, piece sampling, or objective weight.
+        teacher.page_batch = 1
+        teacher.read_chunk = 1
     config = getattr(inner, "config", None)
     if config is not None:
         config.use_cache = False

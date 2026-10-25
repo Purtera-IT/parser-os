@@ -84,3 +84,44 @@ def test_recomputation_reduces_saved_activation_bytes_for_repeated_pages():
         sum(page.sum() for page in pages).backward()
         return sum(saved)
     assert retained(True) < retained(False)
+
+
+def test_main_memory_arm_enables_recomputation_without_changing_objectives():
+    from types import SimpleNamespace
+    from ml.c3.loop import _arm_teacher_memory
+    lm = make_lm()
+    teacher = SimpleNamespace(lm=lm, page_batch=8, read_chunk=16,
+                              context_lines=6, call_tokens=32768)
+    _arm_teacher_memory(teacher)
+    assert lm.checkpoint_frozen_hidden is True
+    assert lm.model.config.use_cache is False
+    assert lm.model.training is True
+    # CPU defaults remain unchanged; actual bounded MPS probe exercises 1/1.
+    assert (teacher.page_batch, teacher.read_chunk) == (8, 16)
+    assert teacher.context_lines == 6 and teacher.call_tokens == 32768
+
+
+def test_mps_arm_uses_measured_microbatch_without_context_truncation():
+    from types import SimpleNamespace
+    from ml.c3.loop import _arm_teacher_memory
+    class DeviceOnlyBody:
+        def __init__(self):
+            self.config = SimpleNamespace(use_cache=True)
+            self.training = False
+        def parameters(self):
+            yield SimpleNamespace(device=torch.device('mps'))
+        def gradient_checkpointing_enable(self):
+            self.checkpointing = True
+        def enable_input_require_grads(self):
+            self.input_grad = True
+        def train(self):
+            self.training = True
+        def modules(self):
+            return []
+    body = DeviceOnlyBody()
+    teacher = SimpleNamespace(lm=SimpleNamespace(model=body), page_batch=8,
+                              read_chunk=16, context_lines=6, call_tokens=32768)
+    _arm_teacher_memory(teacher)
+    assert (teacher.page_batch, teacher.read_chunk) == (1, 1)
+    assert (teacher.context_lines, teacher.call_tokens) == (6, 32768)
+    assert teacher.lm.checkpoint_frozen_hidden and body.checkpointing and body.input_grad
