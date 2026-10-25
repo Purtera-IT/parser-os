@@ -134,7 +134,17 @@ class Brain(nn.Module):
     # ------------------------------------------------------------ text
     def describe(self) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
         """Every head and answer description, embedded by the LM itself."""
-        emb = self.lm.embed(self.schema.texts())
+        # HF input-gradient hooks remain armed during graph binding for the
+        # graph prefix. They also make description tokens request gradients,
+        # even though a frozen LM has no trainable path from those tokens.
+        # Do not retain that unused graph for every schema description. Reader
+        # and graph parameters still differentiate through their own uses of
+        # these constant embeddings; trainable LM adapters keep the full path.
+        needs_lm_grad = torch.is_grad_enabled() and any(
+            p.requires_grad for p in self.lm.parameters()
+        )
+        with torch.set_grad_enabled(needs_lm_grad):
+            emb = self.lm.embed(self.schema.texts())
         out, i = {}, 0
         for o in self.schema.opportunities:
             out[o.key] = (emb[i], emb[i + 1:i + 1 + len(o.answers)])
