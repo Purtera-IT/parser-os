@@ -33,6 +33,7 @@ They are listed in ml/c3/README.md with what each needs first.
 from __future__ import annotations
 
 import copy
+import os
 import math
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -244,6 +245,9 @@ class DealEncoder(nn.Module):
 # 8,192 lines one graph block's attention bias is 2 GB, and the containment
 # boxes are [N, N, 32] per step. Same numbers, a fraction of the memory.
 CHECKPOINT_LINES = 512
+#: Opt-in (``C3_CHECKPOINT_HOPS=1``): also checkpoint the cross-line hops at CHECKPOINT_LINES and more, so an
+#: 8,192-line part fits one 80 GB GPU. Off by default: the certified run reads the same code path as before.
+CHECKPOINT_HOPS = os.environ.get("C3_CHECKPOINT_HOPS", "").strip() == "1"
 BOX_ROWS = 512
 
 
@@ -531,7 +535,12 @@ class C3Model(nn.Module):
             # The trained pointer head is an edge: "this line's decision rests on j".
             out.pointers = self._pointers(r, allowed)
         if g["hop_both"]:
-            r = self._graph_hops(out, r, inp, allowed, off)
+            if CHECKPOINT_HOPS and _remember_less(n):
+                # Recompute the hops in backward instead of keeping every relation's n x n weights:
+                # the hops are pure functions, so values and gradients are unchanged.
+                r = checkpoint(lambda r_: self._graph_hops(out, r_, inp, allowed, off), r, use_reentrant=False)
+            else:
+                r = self._graph_hops(out, r, inp, allowed, off)
         else:
             proposed = {k: v for k, v in out.relations.items()
                         if g["hop_near_miss"] or k != "near_miss"}

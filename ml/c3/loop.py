@@ -1094,7 +1094,11 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     if teacher.graph is not None:
         for p in teacher.graph.parameters():
             p.requires_grad_(False)
-    teacher.to(device)
+    # Opt-in (``C3_TEACHER_LAZY=1``, CUDA only): the teacher waits in host memory until the first stage that
+    # reads it (bind or a lesson), so the gold-only stages have its ~16 GB of GPU memory. Same weights and math.
+    lazy_teacher = os.environ.get("C3_TEACHER_LAZY", "").strip() == "1" and str(device).startswith("cuda")
+    if not lazy_teacher:
+        teacher.to(device)
     teacher_opt = _optimizer(teacher.parameters(), teacher_lr if teacher_lr is not None else lr, adamw)
     teacher_updates = max(1, budget.teacher * len(train))
     teacher_sched = (torch.optim.lr_scheduler.CosineAnnealingLR(teacher_opt, T_max=teacher_updates)
@@ -1335,6 +1339,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             if stage == resume_at[0]:
                 start_pass = resume_at[1]
         if not teacher_ready and (stage == "bind" or stage in lesson_stages):
+            if lazy_teacher:
+                torch.cuda.empty_cache()
+                teacher.to(device)
             train_teacher()
             teacher_ready = True
         if stage == GATE_STAGE:
