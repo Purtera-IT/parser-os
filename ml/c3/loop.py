@@ -408,7 +408,8 @@ def _arm_teacher_memory(teacher: Brain) -> None:
     # Bind-only whole-body recomputation is automatically bypassed by the LM
     # whenever its adapters are trainable or gradients are disabled.
     teacher.lm.checkpoint_frozen_hidden = True
-    if next(inner.parameters()).device.type == "mps":
+    first = next(inner.parameters(), None)
+    if first is not None and first.device.type == "mps":
         # Calls contain complete pages; microbatching changes no target,
         # context window, piece sampling, or objective weight.
         teacher.page_batch = 1
