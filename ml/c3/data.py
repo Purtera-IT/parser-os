@@ -1065,6 +1065,20 @@ def field_note_targets(schema: Schema) -> dict[str, str]:
 NOT_A_PERSON = ("(assistant)", "(bot)", "(model)")
 
 
+#: Judgment heads whose person verdict still trains on a line whose card is an
+#: owner-approved draft set aside. The image head judges parser readings of
+#: pictures, the very lines those drafts set aside ("a reading the parser made
+#: of a drawing or picture, not a line a person wrote"). Owner, 2026-10-26:
+#: "yes otpion a for me". Every other head keeps the rule that a verdict on a
+#: set-aside line trains nothing (test_verdicts_on_a_row_set_aside_train_nothing).
+VERDICT_OVER_DRAFT_ASIDE = frozenset({"jdg:image"})
+APPROVED_DRAFT_MARK = "[owner-approved draft]"   # loop.APPROVED_DRAFT
+
+
+def _verdict_over_draft_aside(key: str, card: dict[str, Any] | None) -> bool:
+    return key in VERDICT_OVER_DRAFT_ASIDE and APPROVED_DRAFT_MARK in str((card or {}).get("labeler") or "")
+
+
 def _is_a_person(labeler: Any) -> bool:
     v = str(labeler or "").strip().lower()
     return bool(v) and not any(m in v for m in NOT_A_PERSON)
@@ -1867,13 +1881,15 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
                             why_weight=why_weight(j), query=query, subject_key=subject))
                 elif opp.size == LINE:
                     i = idx[0]
-                    if not excluded(deal.atoms[i].label) and targets[key][i] in (IGNORE, ix):
+                    card_aside = excluded(deal.atoms[i].label) and not _verdict_over_draft_aside(
+                        key, deal.atoms[i].label)
+                    if not card_aside and targets[key][i] in (IGNORE, ix):
                         targets[key][i] = ix
                         if note:
                             field_notes[i].setdefault(key, mask_verdict(note) if opp.universal else note)
                         if pol:
                             policy[i] = " ".join(x for x in (policy[i], pol) if x)
-                    elif not excluded(deal.atoms[i].label) and targets[key][i] != ix:
+                    elif not card_aside and targets[key][i] != ix:
                         # The line's own card already answers this question
                         # and the judgment tab disagrees: the line card wins
                         # (an alias only fills a blank), and the clash is

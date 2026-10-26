@@ -184,6 +184,35 @@ def test_verdicts_on_a_row_set_aside_train_nothing(schema):
     assert b.targets["jdg:gap"][_i(b, "Rooms:")] == schema.by_key()["jdg:gap"].index("valid")
 
 
+def test_an_image_verdict_trains_on_a_picture_reading_an_approved_draft_set_aside(schema):
+    """Owner, 2026-10-26 ("yes otpion a for me"): the image head judges parser
+    readings of pictures, which approved drafts set aside as "not a line a
+    person wrote". A person's image verdict there still trains; a card a person
+    set aside, and every other head's verdict on a set-aside draft, still don't."""
+    from ml.c3.data import APPROVED_DRAFT_MARK
+    from ml.c3.loop import APPROVED_DRAFT
+
+    assert APPROVED_DRAFT_MARK == APPROVED_DRAFT
+    aside = "EXCLUDE_FROM_TRAINING: a reading the parser made of a drawing or picture, not a line a person wrote."
+    blob = {"labels": [
+        {"label_key": "k3", "label_type": "schedule", "about": "deal", "reads_set": {}, "note": aside,
+         "labeler": f"claude-code {APPROVED_DRAFT}"},
+        {"label_key": "k4", "label_type": "schedule", "about": "deal", "reads_set": {},
+         "note": "EXCLUDE_FROM_TRAINING: old manual Deal Kit.", "labeler": "pm@example.com"},
+    ]}
+    judgments = [
+        _j("image", "diagram", {}, text=ATOMS[2]["text"], target_key="atom:at-k3"),
+        _j("image", "photo", {}, text=ATOMS[3]["text"], target_key="atom:at-k4"),
+        _j("site_role", "vendor_or_billing_address", {"site": {"evidence": {"atomId": "at-k3"}}}),
+    ]
+    b = featurize(DealExample.from_training_blob({**blob, "judgments": judgments}, ATOMS,
+                                                 deal_id="synthetic-image-aside"), schema)
+    image = schema.by_key()["jdg:image"]
+    assert b.targets["jdg:image"][_i(b, "Saturday")] == image.index("diagram")
+    assert b.targets["jdg:image"][_i(b, "weekdays")] == IGNORE
+    assert b.targets["jdg:site_role"][_i(b, "Saturday")] == IGNORE
+
+
 def test_a_model_drafted_judgment_note_counts_draft_weight(schema):
     """why_author on a judgment row scales its note like an atom label's WHY;
     the verdict itself still trains in full."""
