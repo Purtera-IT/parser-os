@@ -70,6 +70,11 @@ def _doc_kind(doc: dict[str, Any], atom: dict[str, Any] | None = None) -> str:
                          doc.get("filename") or a.get("filename"))
 
 
+#: An atom field: its document's time could not be read (export fills the deal's latest arrival, the
+#: unknown-time rule). Leak-safe use: such a line is never a quoting (pre_quote) input; runE views.cut drops it.
+TIME_UNKNOWN = "time_unknown"
+
+
 def _doc_times(documents: list[dict[str, Any]]) -> dict[str, str]:
     """Arrival time per artifact, a missing one filled forward in reading
     order (the deal record's rules, ``record.document_times``). The page lists
@@ -166,6 +171,9 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
     from c3_record import read_with_deal
 
     kept = [a for a in payload["atoms"] if read_with_deal(a.get("suppressed"))]
+    from c3_record.sender import epoch
+
+    unreadable: set[str] = set()
     # Reading order (c3_record.reading_order), the rule the compile uses: the
     # page's own place inside each document, documents by authored time.
     rank = reading_order(
@@ -182,7 +190,11 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
         keys.add(key)
         art = str(a.get("artifactId") or "")
         origin = a.get("docOrigin") if isinstance(a.get("docOrigin"), dict) else {}
-        when = origin.get("sent_at") or doc_time.get(art) or ""
+        # A time the deal record cannot read (a note's "end of year", "6/3") is no arrival: the line
+        # takes the unknown-time rule below and is marked, so a quoting view never takes it.
+        when = next((w for w in (origin.get("sent_at"), doc_time.get(art)) if w and epoch(w) is not None), "")
+        if any(w and epoch(w) is None for w in (origin.get("sent_at"), doc_time.get(art))):
+            unreadable.add(key)
         section = _section(a.get("section"))
         atoms.append({
             "label_key": key, "atom_id": str(a.get("atomId") or ""), "text": str(a.get("text") or ""),
@@ -196,12 +208,15 @@ def from_page_export(payload: dict[str, Any], deal_id: str, *, company: str = "p
         })
         last_in[(art, section)] = i
         last_in[(art, "")] = i
-    latest = max((a["entered_at"] for a in atoms if a["entered_at"]), default=None)
+    # The latest arrival in the deal, by time (ISO and RFC 2822 dates mix: never by string order).
+    latest = max((a["entered_at"] for a in atoms if a["entered_at"]), key=epoch, default=None)
     for a in atoms:
         if not a["entered_at"]:
             if latest is None:
                 raise ValueError(f"No arrival time for atom {a['atom_id']}")
             a["entered_at"] = latest
+        if a["label_key"] in unreadable:
+            a[TIME_UNKNOWN] = True
     # Who sent each line and where the deal stood when it arrived: the same
     # rules the parser's compile uses (c3_record.sender).
     from c3_record import annotate

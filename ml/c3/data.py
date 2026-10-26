@@ -593,11 +593,16 @@ def _blob_links(links: list[Any], rows: list[dict[str, Any]], *,
 
 
 def _time(v: Any) -> float:
+    """Epoch seconds of an arrival: a number, an ISO time or an RFC 2822 mail date (the dates the deal record
+    reads, ``c3_record.sender.epoch``). 0.0 = unknown: missing, or text that is no time ("end of year", "6/3").
+    The views never let an unknown-time line into a quoting read (export marks it ``time_unknown``)."""
     if v is None or v == "":
         return 0.0
     if isinstance(v, (int, float)):
         return float(v)
-    return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    from c3_record.sender import epoch  # noqa: PLC0415
+
+    return epoch(v) or 0.0
 
 
 # --------------------------------------------------------------- featurize
