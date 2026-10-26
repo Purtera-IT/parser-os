@@ -554,6 +554,24 @@ def _saved_on_host(device: str):
     return nullcontext()
 
 
+_host_steps = 0
+
+
+def _release_host_cache(device: str) -> None:
+    """With ``C3_SAVE_ON_HOST=1`` the pinned buffers backward used go back to torch's host cache, which never
+    shrinks: over hundreds of differently sized parts it pinned 209 GB of a 221 GB host and the kernel killed
+    Run E (2026-10-26). Return them to the OS every ``C3_HOST_EMPTY_EVERY`` steps (default 1). Same math."""
+    global _host_steps
+    if os.environ.get("C3_SAVE_ON_HOST", "").strip() != "1" or not str(device).startswith("cuda"):
+        return
+    empty = getattr(torch._C, "_host_emptyCache", None)
+    if empty is None:
+        return
+    _host_steps += 1
+    if _host_steps % max(1, int(os.environ.get("C3_HOST_EMPTY_EVERY", "1") or 1)) == 0:
+        empty()
+
+
 def _autocast(device: str):
     if device.startswith("cuda"):
         return torch.autocast(device_type="cuda", dtype=half_dtype())
@@ -764,6 +782,7 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
     loss.backward()
     torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.grad is not None], 1.0)
     opt.step()
+    _release_host_cache(device)
     if anchor is not None and anchor.pull > 0 and getattr(batch, "task_profile", None) is None:
         # anchor.py: the decoupled L2 pull to INIT, at the trunk group's schedule.
         g = next((g for g in opt.param_groups if g.get("trunk")), opt.param_groups[0])
