@@ -64,6 +64,10 @@ class LossWeights:
     # The meaning lock for table rows: the same row in another layout keeps
     # its answers. A no-op unless the data carries layout_rewrites (run E).
     layout_lock: float = 0.5
+    # The meaning lock for names: the part read again with its people, companies,
+    # places and IDs swapped consistently (entity_swap.py, gate 2's entity kind)
+    # keeps its saved answers and its own reading. One more forward; 0 is off.
+    entity_swap: float = 0.3
     # The WHY carries the decision, teacher-free (why_carry.py). Each is a
     # part of c3_loss; 0 turns it off. why_contrast supersedes why_align
     # (identical WHYs are never negatives) and why_alone supersedes
@@ -662,6 +666,57 @@ def layout_lock_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights
     return ce + w.conduct * co + (kl / n if n else zero)
 
 
+def entity_swap_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
+                     rng=None, desc: dict[str, Any] | None = None) -> torch.Tensor:
+    """The meaning lock for names, modelled on layout_lock_loss: one more
+    forward with the part's line texts under one consistent entity swap
+    (entity_swap.swap_texts: the gate-2 entity edits, training's own
+    stand-ins). Every labeled line keeps its saved answers (the same head
+    losses) and, with every line the swap touched, its first-pass reading (KL
+    to the first pass, detached), because gate 2 counts a changed answer on
+    every labeled line, not only the renamed ones. A part with nothing to
+    rename costs nothing.
+
+    ``rng``: the swap's draw. By default seeded from torch's generator (as
+    why_carry_losses), so a seeded run repeats; nothing is drawn when the
+    term is off. ``desc``: the step's encoded descriptions, reused."""
+    import random as _random
+
+    from .data import number_tokens  # noqa: PLC0415
+    from .entity_swap import swap_texts  # noqa: PLC0415
+
+    zero = out.r.new_zeros(())
+    if rng is None:
+        rng = _random.Random(int(torch.randint(0, 2**31 - 1, (1,))))
+    texts = swap_texts(list(batch.texts), batch.company, rng)
+    changed = {i for i, (a, b) in enumerate(zip(batch.texts, texts)) if a != b}
+    if not changed:
+        return zero
+    numbers = [number_tokens(t) if i in changed else n for i, (t, n) in enumerate(zip(texts, batch.numbers))]
+    keep = changed | {i for i, on in enumerate(batch.labeled) if on}
+    lines = sorted(keep)
+    base = batch.weights if len(batch.weights) == len(batch) else [1.0] * len(batch)
+    b = replace(batch, texts=texts, numbers=numbers, layout_rewrites=[],
+                weights=[x if i in keep else 0.0 for i, x in enumerate(base)])
+    moved = model(b.inputs(), company=batch.company, desc=desc)
+    ce, _ = head_losses(model, moved, b, w, "universal")
+    co, _ = head_losses(model, moved, b, w, "company")
+    rows = torch.tensor(lines, device=out.r.device)
+    rw = row_weights(b, out.r.device)[rows]
+    kl, n = zero, 0
+    for key, logits in moved.logits.items():
+        ref = out.logits.get(key)
+        opp = model.schema.by_key().get(key)
+        if ref is None or opp is None or opp.multiple or logits.shape != ref.shape:
+            continue
+        per = F.kl_div(F.log_softmax(logits[rows].float(), -1),
+                       F.log_softmax(ref[rows].detach().float(), -1),
+                       reduction="none", log_target=True).sum(-1)
+        kl = kl + (per * rw).sum() / rw.sum().clamp(min=1e-6)
+        n += 1
+    return ce + w.conduct * co + (kl / n if n else zero)
+
+
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None,
@@ -744,6 +799,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.layout_lock and batch.layout_rewrites:
         parts["layout_lock"] = layout_lock_loss(model, out, batch, w, desc=desc)
+    if w.entity_swap:
+        parts["entity_swap"] = entity_swap_loss(model, out, batch, w, desc=desc)
     from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
 
     parts.update(why_carry_losses(model, out, batch, desc, w))

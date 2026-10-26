@@ -25,7 +25,7 @@ MAX_CONTEXT_ATOMS = 2048
 DIRECT_LOSSES = frozenset({"heads", "numbers", "literals"})
 LOSS_TERMS = frozenset("""absence adversary card_alone card_contrast changes citations claims
 clause_use co_why_alone co_why_contrast coherence conduct deal_numbers derived_cards
-described_alone entities explanation_only governs heads hindsight judgment_rationale
+described_alone entities entity_swap explanation_only governs heads hindsight judgment_rationale
 judgment_why_alone judgments keyword_dropout layout_lock link_why_alone link_why_contrast
 literals near_misses negatives node_pointers number_why_alone numbers pointers policy_l1
 relations residual rule_links table_kind variance why_align why_alone why_contrast why_echo
