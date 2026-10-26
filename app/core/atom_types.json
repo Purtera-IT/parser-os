@@ -971,9 +971,20 @@
     {
       "key": "requirement_kind",
       "label": "What kind of requirement",
-      "values": "the kind of requirement",
-      "desc": "What the line requires, in a word or two (access, hardware, labor, permit, schedule...). Open set for now.",
-      "layer": "universal"
+      "values": "access | schedule | personnel | safety | access_equipment | tech_toolkit | technical_spec | documentation | commercial",
+      "desc": "The kind of requirement the line states: getting in, timing, who the workers must be, safety, equipment to reach the work, the tools a technician brings, how the work must be built, documents to produce or hand over, or contract terms. A line that names several takes the one it leads with or spends the most words on.",
+      "layer": "universal",
+      "value_desc": {
+        "access": "Getting in to do the work, physical or logical: badges, escorts, check-in, parking or dock, permits and landlord approvals, access hours, credentials, admin rights and logins.",
+        "schedule": "When the work may happen or how much notice it needs: work windows, after-hours or weekend-only work, blackout days, notice periods and lead days before scheduling.",
+        "personnel": "Who the workers must be: background checks, drug screens, identity or citizenship vetting, licenses or certifications, union or prevailing-wage labor, required roles, skills and crew make-up.",
+        "safety": "Safety rules and protective gear: PPE, site safety plans, lockout/tagout, confined-space programs, spotters and harnesses, and hazard procedures.",
+        "access_equipment": "Equipment needed to reach the work: ladders, scissor, boom or server lifts, scaffolds, telehandlers and bucket trucks.",
+        "tech_toolkit": "Tools and devices the technician brings and takes away again: hand and power tools, testers, toners, crimpers, label makers, laptops and console cables.",
+        "technical_spec": "How the work or the site must be built or configured: standards, cable and fiber types, termination and labeling rules, hardware or material to install, and technical preconditions such as power or network in place.",
+        "documentation": "Documents to produce or hand over: as-builts, completion photos, test reports, closeout packages, and customer-supplied runbooks, designs or floor plans.",
+        "commercial": "Contract and business terms: insurance and certificates of insurance, bonds, purchase orders, tax certificates, proposal format, confidentiality, and business certifications."
+      }
     },
     {
       "key": "material",

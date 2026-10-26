@@ -55,8 +55,10 @@ def test_derived_heads_load_the_live_checkpoint_shape(schema):
               "read:sow_transform", "jdg:sow_slot", "jdg:hours:per", "jdg:hours:qty",
               "jdg:rule", "col:said_by_role", "col:said_by_side", "col:said_to_side", "col:internal_only"):
         assert k in added, k
-    # Everything this schema has beyond INIT is in the list.
-    assert set(added) == {k for k, _ in shape_of(schema)} - {k for k, _ in old}
+    # Everything this schema has beyond INIT is in the list, and the heads reshaped since (loop.RESHAPED).
+    from ml.c3.loop import RESHAPED
+    reshaped = {k for k, v in old if k in RESHAPED and v != [a for k2, a in shape_of(schema) if k2 == k][0]}
+    assert set(added) == ({k for k, _ in shape_of(schema)} - {k for k, _ in old}) | reshaped
     assert schema_digests_at(str(SHAPE)) == (blob["schema_sha256"], blob["shape_sha256"])
 
 

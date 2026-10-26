@@ -1679,14 +1679,32 @@ def load_split(paths: list[str], schema: Schema, max_atoms: int = 4096,
     return batches, notes
 
 
+#: Heads whose answer list changed after checkpoints were saved: key -> the answer values those checkpoints
+#: have. A reshaped head is a new head to a checkpoint (it has no prediction over the new answers): it is
+#: listed with the added heads (--allow-new-heads, new_heads.derive), keeps its place in the schema, and
+#: starts from its description (gates.load_checkpoint drops its old free-head rows).
+#: read:requirement_kind: open-set presence -> the 9-value class list (owner, round-2 approval 2026-10-26).
+RESHAPED: dict[str, tuple[str, ...]] = {"read:requirement_kind": ("_absent", "present")}
+
+
 def without_heads(schema: Schema, keys: str) -> Schema:
-    """The schema without the opportunities ``keys`` (comma separated) names:
-    the shape a checkpoint saved before those heads were added has."""
+    """The schema as a checkpoint saved before the heads ``keys`` (comma separated) names has it: an added
+    head left out, a reshaped head (``RESHAPED``) back on the answer values that checkpoint has."""
     drop = {k.strip() for k in str(keys or "").split(",") if k.strip()}
     unknown = drop - {o.key for o in schema.opportunities}
     if unknown:
         raise SystemExit("--allow-new-heads: no such question " + ", ".join(sorted(unknown)))
-    return replace(schema, opportunities=[o for o in schema.opportunities if o.key not in drop]) if drop else schema
+    if not drop:
+        return schema
+    from .schema import Answer  # noqa: PLC0415
+
+    out = []
+    for o in schema.opportunities:
+        if o.key not in drop:
+            out.append(o)
+        elif o.key in RESHAPED and [a.value for a in o.answers] != list(RESHAPED[o.key]):
+            out.append(replace(o, answers=tuple(Answer(v, "") for v in RESHAPED[o.key])))
+    return replace(schema, opportunities=out)
 
 
 def require_live_teacher(teacher: str, tiny: bool) -> None:

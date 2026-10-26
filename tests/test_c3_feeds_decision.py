@@ -122,7 +122,9 @@ def test_a_checkpoint_from_before_the_head_loads_with_allow_new_heads(schema, tm
         paths[name].write_text(git("show", f"{ref}:{rel}"), encoding="utf-8")
     old = load_schema(paths["heads"], paths["types"], judgments_path=paths["judgments"])
     assert "read:feeds_decision" not in old.by_key()
-    later = ",".join(k for k in schema.by_key() if k not in old.by_key())
+    from ml.c3.loop import RESHAPED  # a head reshaped since (its answer list changed) is new to the old checkpoint
+    later = ",".join(k for k in schema.by_key() if k not in old.by_key() or (
+        k in RESHAPED and [a.value for a in old.by_key()[k].answers] != [a.value for a in schema.by_key()[k].answers]))
     assert "read:feeds_decision" in later.split(",")
     assert shape_digest(without_heads(schema, later)) == shape_digest(old)
     small = C3Config(d_text=32, d=32, n_layers=1, n_heads=2, d_r=16, d_q=8, d_head=16,

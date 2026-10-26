@@ -241,6 +241,16 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
     # An r-only row (free_rows.py) is built as one first.
     from .free_rows import build_from_state  # noqa: PLC0415
 
+    # A reshaped head (loop.RESHAPED: its answer list changed since the checkpoint; the shape check above
+    # read it at its old answers) has free-head rows for the old answers: dropped, so it starts from its
+    # description like any added head.
+    from .loop import RESHAPED  # noqa: PLC0415
+
+    by_key = model.schema.by_key() if hasattr(model, "schema") else {}
+    for key in RESHAPED:
+        w = state.get(f"free_heads.{key}.weight")
+        if w is not None and key in by_key and w.shape[0] != len(by_key[key].answers):
+            state = {k: v for k, v in state.items() if not k.startswith(f"free_heads.{key}.")}
     build_from_state(model, state)
     for k in state:
         if k.startswith("free_heads.") and k.endswith(".weight"):

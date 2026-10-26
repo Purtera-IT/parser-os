@@ -211,7 +211,9 @@ def _schema_before_the_heads(tmp_path):
 def test_a_checkpoint_from_before_the_heads_loads_with_allow_new_heads(schema, tmp_path):
     old = _schema_before_the_heads(tmp_path)
     assert "read:visit_count" not in old.by_key()
-    added = [o.key for o in schema.opportunities if o.key not in old.by_key()]
+    from ml.c3.loop import RESHAPED  # a head reshaped since (its answer list changed) is new to the old checkpoint
+    added = [o.key for o in schema.opportunities if o.key not in old.by_key() or (
+        o.key in RESHAPED and [a.value for a in old.by_key()[o.key].answers] != [a.value for a in o.answers])]
     assert set(NEW.split(",")) <= set(added)
     new = ",".join(added)          # these heads and any added since (runE.sh NEW_HEADS lists them)
     assert shape_digest(without_heads(schema, new)) == shape_digest(old)

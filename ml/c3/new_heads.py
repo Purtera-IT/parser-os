@@ -15,6 +15,8 @@ failed with "differs in more than text"), so the launch derives them:
   ``{"ref", "schema_sha256", "shape": [[key, [answer values]], ...]}``, keys and
   answer values only), for a pod copy of the repo with no git history;
 * the added heads are this schema's keys the old shape lacks;
+* a head in ``loop.RESHAPED`` whose answer list changed from the listed old
+  one is a new head too (INIT has no prediction over its new answers);
 * anything else (a key removed, keys reordered, an answer list changed) is
   not a head addition: the tool fails and names each difference;
 * with ``--checkpoint`` the old shape's digest must be the one the checkpoint
@@ -97,11 +99,18 @@ def diff(new: list[tuple[str, list[str]]], old: list[tuple[str, list[str]]]) -> 
 
 
 def derive(schema, old: list[tuple[str, list[str]]]) -> list[str]:
-    """The heads ``schema`` adds to ``old``; SystemExit naming every other difference."""
-    from .loop import without_heads  # noqa: PLC0415
+    """The heads ``schema`` adds to ``old``, and the reshaped heads (``loop.RESHAPED``: a listed head whose
+    answer list changed from exactly the listed old one); SystemExit naming every other difference."""
+    from .loop import RESHAPED, without_heads  # noqa: PLC0415
     from .schema import shape_digest, shape_of  # noqa: PLC0415
 
     added, problems = diff(shape_of(schema), old)
+    old_by = {k: list(v) for k, v in old}
+    reshaped = [k for k, v in shape_of(schema) if k in RESHAPED and k in old_by
+                and old_by[k] == list(RESHAPED[k]) and v != old_by[k]]
+    problems = [p for p in problems if not any(p.startswith(f"{k}: answers") for k in reshaped)]
+    order = [k for k, _ in shape_of(schema)]
+    added = sorted(added + reshaped, key=order.index)
     if problems:
         raise SystemExit("the schema differs from INIT's in more than added heads:\n  "
                          + "\n  ".join(problems))
