@@ -197,6 +197,38 @@ if [[ "${PICK_ONLY:-0}" == 1 ]]; then pick "$CK"; exit; fi
 TRAIN_DIR=${TRAIN_DIR:-$C3/runE/train_presow $C3/runE/train_plan}
 read -ra dirs <<< "$TRAIN_DIR"
 for d in "${dirs[@]}"; do [[ -d "$d" ]] || { echo "no TRAIN_DIR $d" >&2; exit 1; }; done
+# Eval-only deals (owner, 2026-10-26: holdout C, held-out 7, fresh-site; recovery/EVAL_ONLY_DEALS.txt) never train.
+# Refuse the launch if ANY file in a TRAIN_DIR belongs to one, by file name or by the deal_id inside, before any
+# selection: a silent skip would hide a mis-built view. Role "validation" (010043) is VALID_FILE, kept out below.
+EVAL_ONLY=${EVAL_ONLY:-$C3/recovery/EVAL_ONLY_DEALS.txt}
+[[ -f "$EVAL_ONLY" ]] || { echo "no EVAL_ONLY list $EVAL_ONLY" >&2; exit 1; }
+python - "$EVAL_ONLY" "${dirs[@]}" <<'PY' || exit 1
+import glob, json, os, re, sys
+roles = {}
+for line in open(sys.argv[1]):
+    if line[:1].isdigit():
+        code, role = line.split("\t")[:2]
+        roles[code] = role
+banned = {c for c, r in roles.items() if r != "validation"}
+if not banned:
+    sys.exit(f"{sys.argv[1]}: no eval-only deals listed")
+hits = []
+for d in sys.argv[2:]:
+    for path in sorted(glob.glob(os.path.join(d, "*.json"))):
+        name = os.path.basename(path)
+        codes = {name[:6]} if re.match(r"\d{6}", name) else set()
+        try:
+            blob = json.load(open(path))
+        except ValueError:
+            blob = {}
+        if isinstance(blob, dict) and blob.get("deal_id"):
+            codes.add(str(blob["deal_id"]).partition("#c3part")[0].partition("@")[0][:6])
+        for c in codes & banned:
+            hits.append(f"{path}: deal {c} is eval-only ({roles[c]})")
+if hits:
+    sys.exit("refusing to launch: eval-only deals in TRAIN_DIR\n" + "\n".join(hits))
+print(f"eval-only guard: {len(banned)} deals, none in TRAIN_DIR", file=sys.stderr)
+PY
 FIXED=$(python -c "from ml.c3.holdout import FIXED_HOLDOUT; print(' '.join(sorted(FIXED_HOLDOUT)))")
 NEVER=" $VALIDATION $FIXED "
 train_files=()
