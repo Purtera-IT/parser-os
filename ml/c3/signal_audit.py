@@ -510,12 +510,13 @@ class Probe:
         model.eval()                      # no dropout: with and without differ by the signal only
 
     def forward(self, batch: Batch) -> dict[str, torch.Tensor]:
-        from .loop import _autocast  # noqa: PLC0415
+        from .loop import _autocast, _saved_on_host  # noqa: PLC0415
 
         torch.manual_seed(self.seed)
         random.seed(self.seed)
         keep: dict = {}
-        with _autocast(self.device):
+        # C3_SAVE_ON_HOST=1: the graphs this probe keeps alive (retain_graph) live in host memory, not on the GPU.
+        with _autocast(self.device), _saved_on_host(self.device):
             c3_loss(self.model, batch, self.probe, keep=keep)
         if "parts" not in keep:
             raise SystemExit("losses.c3_loss does not hand back its terms (keep['parts'])")
