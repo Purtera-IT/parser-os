@@ -46,6 +46,7 @@ bit-identical under any company text (tests/test_c3_brain.py).
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 import torch
 from torch import nn
@@ -193,11 +194,32 @@ class Brain(nn.Module):
         """Whether ``text`` fits the LM's window (or ``limit``). A token is at
         least one character, so a short text is checked without the tokenizer."""
         limit = min(limit or self.lm.max_len, self.lm.max_len) - self.FIT_MARGIN
-        return len(text) <= limit or self.lm.token_count(text) <= limit
+        # A byte-level BPE token is at least one BYTE, not one character: one
+        # non-ASCII character can be several tokens, so the shortcut counts bytes.
+        return len(str(text).encode("utf-8")) <= limit or self.lm.token_count(text) <= limit
 
     def card_fits(self, batch: Batch, judgment) -> bool:
         """A card is read whole or not at all: its evidence is the question."""
         return self.fits(self.card_page(batch, judgment, with_why=True))
+
+    def row_fits(self, batch: Batch, i: int, why: list[str | None]) -> bool:
+        """Whether line i can be read at all: the line alone (``page`` drops
+        every earlier line and note before it cuts the line, and it never cuts
+        the line) with the longest tail any per-line pass puts after it."""
+        bare = self._page(batch, i, i, [])
+        tails = [_tail(None, i), _tail(why, i)]
+        if batch.why[i]:
+            tails.append("Why: " + batch.why[i])
+        if not all(self.fits(bare + t) for t in tails):
+            return False
+        return all(self.fits(batch.texts[i] + "\nValue: " + str(item.text))
+                   for item in batch.literals if item.line == i and str(item.text or "").strip())
+
+    def flip_fits(self, batch: Batch, flip, why: list[str | None]) -> bool:
+        """Whether a supposition page can be read with its line alone on it."""
+        tail = (f"Why: {why[flip.line]}\n" if why[flip.line] else "") + \
+            f"Suppose instead: {flip.condition}\nAnswer:"
+        return self.fits(self._page(batch, flip.line, flip.line, []) + tail)
 
     def _lm_rows(self, ids: torch.Tensor, mask: torch.Tensor,
                  prefix: torch.Tensor | None = None, *, logits: bool = True):
@@ -597,10 +619,27 @@ def company_field_notes(batch: Batch, schema: Schema) -> list[list[str]]:
             for i in range(len(batch))]
 
 
+#: What the teacher has left out because it cannot fit its window, by kind
+#: (cards, rows, flips), for the whole process. Every leave-out is also printed.
+TEACHER_LEFT_OUT: Counter = Counter()
+
+
+def report_left_out(brain: "Brain", batch: Batch, kind: str, left: int, total: int) -> None:
+    """Count and print what the teacher could not read whole; never silent."""
+    if left <= 0:
+        return
+    TEACHER_LEFT_OUT[kind] += left
+    print(f"teacher_left_out {batch.deal_id} {kind}={left}/{total} over the "
+          f"{brain.lm.max_len}-token window (run total {kind}={TEACHER_LEFT_OUT[kind]})", flush=True)
+
+
 def teacher_cards(brain: "Brain", batch: Batch) -> list:
     """The cards the teacher can read whole. A card whose evidence and WHY
-    overflow the window is left to the student, never cut."""
-    return [j for j in batch.judged if brain.card_fits(batch, j)]
+    overflow the window is left to the student, never cut; how many is
+    counted and printed (``report_left_out``)."""
+    kept = [j for j in batch.judged if brain.card_fits(batch, j)]
+    report_left_out(brain, batch, "cards", len(batch.judged) - len(kept), len(batch.judged))
+    return kept
 
 
 def _tail(why: list[str | None] | None, i: int) -> str:

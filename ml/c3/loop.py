@@ -390,9 +390,9 @@ def _progress(stage: str, done: int, total: int, started: float) -> None:
               f"eta {rate * (total - done) / 60:.0f} min", flush=True)
 
 
-def _finite(loss: torch.Tensor, stage: str) -> None:
+def _finite(loss: torch.Tensor, stage: str, detail: str = "") -> None:
     if not torch.isfinite(loss.detach()):
-        raise RuntimeError(f"Non-finite loss during {stage}")
+        raise RuntimeError(f"Non-finite loss during {stage}" + (f": {detail}" if detail else ""))
 
 
 def _arm_teacher_memory(teacher: Brain) -> None:
@@ -458,11 +458,14 @@ def _teacher_part(teacher: Brain, batch: Batch, weights, *, device: str, scale: 
     loss, tokens = None, 0
     for n, part in enumerate(pieces, 1):
         with _autocast(device):
-            piece, _ = brain_loss(teacher, batch, weights, graph=graph, rows=part.rows,
-                                  judged=part.cards, flips=part.flips, extras=part.extras,
-                                  desc=leaves, context=context)
+            piece, terms = brain_loss(teacher, batch, weights, graph=graph, rows=part.rows,
+                                      judged=part.cards, flips=part.flips, extras=part.extras,
+                                      desc=leaves, context=context)
             piece = piece * (scale * part.scale)
-        _finite(piece, label)
+        _finite(piece, label, f"{batch.deal_id} piece {n}/{len(pieces)} "
+                f"({len(part.rows or [])} lines, {len(part.cards)} cards, {len(part.flips)} flips, "
+                f"{part.tokens} grad tokens, scale {scale * part.scale:.4g}); non-finite terms "
+                + (", ".join(k for k, v in terms.items() if not math.isfinite(v)) or "none"))
         if piece.requires_grad:
             piece.backward()
         loss = piece.detach() if loss is None else loss + piece.detach()
@@ -674,7 +677,14 @@ def _deal_graph(model: C3Model, teacher: Brain, batch: Batch, device: str):
         return None
     model.eval()
     with torch.no_grad(), _autocast(device):
-        return model(batch.oneshot(), company=batch.company or None).r.detach()
+        graph = model(batch.oneshot(), company=batch.company or None).r.detach()
+    if not bool(torch.isfinite(graph).all()):
+        # The graph is the teacher's prefix on every page: a bad one makes every
+        # piece NaN, so it stops here, named, before any teacher forward.
+        bad = int((~torch.isfinite(graph)).sum())
+        raise RuntimeError(f"Non-finite student deal graph for {batch.deal_id}: "
+                           f"{bad} of {graph.numel()} values; the teacher was not run")
+    return graph
 
 
 def _bind_graph(teacher: Brain, model: C3Model, train: list[Batch], steps: int,
