@@ -1466,6 +1466,11 @@ def build_orbitbrief_envelope(
                 if _town and (_filey.search(_dn) or not _dn):
                     _row["display_name"] = f"{_town.group(1).strip()} (address not given)"
 
+        # A site no document names renders "site 3 of 7, name unknown"
+        # (PUR-22), never a composed placeholder.
+        from app.core.site_naming import annotate_site_name_status
+        annotate_site_name_status((envelope.get("site_readiness") or {}).get("sites") or [])
+
         # Pairs that look like one place, for a person to judge.
         #
         # Computed HERE and not in `build_site_readiness` because the rows only
