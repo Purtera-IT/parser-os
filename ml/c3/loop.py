@@ -549,8 +549,10 @@ def _saved_on_host(device: str):
     """Opt-in (``C3_SAVE_ON_HOST=1``, CUDA): keep the tensors backward needs in pinned host memory and bring
     each back when backward reaches it. Same values and gradients; one 8,192-line step's many passes then
     fit one 80 GB GPU (the host has the room)."""
-    if os.environ.get("C3_SAVE_ON_HOST", "").strip() == "1" and str(device).startswith("cuda"):
-        return torch.autograd.graph.save_on_cpu(pin_memory=True)
+    mode = os.environ.get("C3_SAVE_ON_HOST", "").strip()
+    if mode in ("1", "pageable") and str(device).startswith("cuda"):
+        # "pageable": ordinary host memory, freed like any tensor; no pinned cache to grow or re-pin.
+        return torch.autograd.graph.save_on_cpu(pin_memory=(mode == "1"))
     return nullcontext()
 
 
