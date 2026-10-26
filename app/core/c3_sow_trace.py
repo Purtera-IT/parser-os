@@ -87,8 +87,14 @@ def _round(p: Any) -> float | None:
 
 
 def build_atom_trace(envelope: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    sow = envelope.get("c3_sow") or {}
-    ids = cited_ids(sow)
+    return trace_atoms(envelope, cited_ids(envelope.get("c3_sow") or {}))
+
+
+def trace_atoms(envelope: dict[str, Any], ids: list[str]) -> dict[str, dict[str, Any]]:
+    """The same trace for any atoms, cited by the SOW or not: the main heads'
+    correction queue (scripts/main_heads_queue.py) attaches it to a PM's fix of
+    an atom's type, keep/drop, supplier or site, the way the SOW fix triage
+    attaches it to a SOW line."""
     if not ids:
         return {}
     atoms = [a for a in envelope.get("atoms") or [] if isinstance(a, dict)]
