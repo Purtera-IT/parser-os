@@ -313,6 +313,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--old-texts", default=str(REPO / "ml/c3/runE/init_texts.json"))
     ap.add_argument("--old-ref", default="", help="instead of --old-texts: the commit INIT was trained on")
     ap.add_argument("--init-shape", default=str(REPO / "ml/c3/runE/init_shape.json"))
+    ap.add_argument("--old-init-shape", default="",
+                    help="shape for --old-checkpoint when it differs from INIT's (default: --init-shape)")
     ap.add_argument("--encoder", default="answerdotai/ModernBERT-large")
     ap.add_argument("--deal", nargs="*", default=[], help="labeled deal files (training format)")
     ap.add_argument("--drafts-gold", nargs="*", default=[], help="labeled files whose drafts read as gold")
@@ -356,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
         dumps[code] = (_parts(path, schema, False, args.max_atoms, True), rows[code])
     old_model = None
     if args.old_checkpoint:
-        old_model, _ = load_start(args.old_checkpoint, args.encoder, args.init_shape, args.device, "")
+        old_model, _ = load_start(args.old_checkpoint, args.encoder, args.old_init_shape or args.init_shape, args.device, "")
         if args.text_cache:
             # The same frozen encoder weights: share the cached line vectors.
             old_model.text.forward = model.text.forward
