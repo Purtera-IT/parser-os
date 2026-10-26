@@ -1,6 +1,7 @@
 """Site tier and remote_miles from official US place classifications.
 
-A labeler used to guess ``location_tier`` ("small_town/rural" for Tupelo, MS).
+A labeler used to guess ``location_tier`` (e.g. "small_town/rural", which is
+not a registered value).
 This tool reads it instead from the OMB Core Based Statistical Area (CBSA)
 delineation, the federal definition of a labor market: a county belongs to a
 Metropolitan area, a Micropolitan area, or neither, by where its people
@@ -31,9 +32,9 @@ Pure stdlib apart from loading the table (pandas + pyarrow, which
 ``uszipinfo`` already needs). Read-only.
 
 Usage:
-  pip install uszipinfo
-  python tools/geo_tier.py "Tupelo, MS" "Hudson, WI" 10014
-  python tools/geo_tier.py --json "Delphos, OH"
+  pip install -e ".[geo]"   # or: pip install uszipinfo
+  python tools/geo_tier.py "Memphis, TN" "Minneapolis, MN" 60601
+  python tools/geo_tier.py --json "Columbus, OH"
 """
 from __future__ import annotations
 
