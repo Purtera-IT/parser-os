@@ -143,11 +143,18 @@ def teacher_view(teacher, batch: Batch, company: str | None = None,
     reject_teacher(batch)
     from .brain import company_field_notes, notes_from_deal, teacher_cards, told_why  # noqa: PLC0415
 
+    why = told_why(batch, teacher.schema)
+    # The view reads every line: one the teacher cannot read even alone stops
+    # the view here, named, before any forward.
+    unfit = [i for i in range(len(batch)) if not teacher.row_fits(batch, i, why)]
+    if unfit:
+        raise ValueError(f"{batch.deal_id}: {len(unfit)} lines cannot fit the teacher's "
+                         f"{teacher.lm.max_len}-token window even alone (first: line {unfit[0]}, "
+                         f"{teacher.lm.token_count(batch.texts[unfit[0]])} tokens); the view reads every line")
     was = teacher.training
     teacher.eval()
     desc = teacher.describe()
     notes, cnotes = notes_from_deal(batch)
-    why = told_why(batch, teacher.schema)
     told = teacher(batch, company=company, why=why, desc=desc, graph=graph,
                    company_notes=company_field_notes(batch, teacher.schema))
     noted = teacher(batch, company=company, notes=notes, company_notes=cnotes, desc=desc,

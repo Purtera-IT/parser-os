@@ -135,7 +135,8 @@ class LMBase(nn.Module):
             if not b:
                 raise ValueError("Supervised text encodes to no tokens")
             if len(a) + len(b) > self.max_len:
-                raise ValueError("Teacher text exceeds context budget; explicit context preparation is required")
+                raise ValueError(f"Teacher text exceeds context budget ({len(a) + len(b)} > {self.max_len} "
+                                 "tokens); explicit context preparation is required")
             seqs.append(a + b)
             start.append(len(a))
         width = max(len(q) for q in seqs)
@@ -245,8 +246,10 @@ class TinyCausalLM(LMBase):
         return self.PAD
 
     def tokenize(self, texts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
-        if any(self.token_count(t) > self.max_len for t in texts):
-            raise ValueError("Teacher text exceeds context budget; explicit context preparation is required")
+        longest = max((self.token_count(t) for t in texts), default=0)
+        if longest > self.max_len:
+            raise ValueError(f"Teacher text exceeds context budget ({longest} > {self.max_len} tokens); "
+                             "explicit context preparation is required")
         seqs = [[self.BOS] + list(str(t).encode("utf-8")) for t in texts]
         t = max(len(s) for s in seqs)
         ids = torch.full((len(seqs), t), self.PAD, dtype=torch.long)
@@ -319,8 +322,10 @@ class HFCausalLM(LMBase):
         return self.tokenizer.pad_token_id
 
     def tokenize(self, texts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
-        if any(self.token_count(t) > self.max_len for t in texts):
-            raise ValueError("Teacher text exceeds context budget; explicit context preparation is required")
+        longest = max((self.token_count(t) for t in texts), default=0)
+        if longest > self.max_len:
+            raise ValueError(f"Teacher text exceeds context budget ({longest} > {self.max_len} tokens); "
+                             "explicit context preparation is required")
         enc = self.tokenizer(list(texts), padding=True, truncation=False, return_tensors="pt")
         dev = next(self.model.parameters()).device
         return enc["input_ids"].to(dev), enc["attention_mask"].bool().to(dev)

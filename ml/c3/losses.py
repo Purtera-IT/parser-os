@@ -953,20 +953,29 @@ def teacher_chunks(brain, batch: Batch, size: int, budget: int = 0, *,
                    caps: tuple[int, int, int] = (0, 0, 0), rng=None) -> list[Piece]:
     """A part's teacher loss in pieces of at most ``size`` lines, cards or
     flips and about ``budget`` grad tokens each. Cards the teacher cannot read
-    whole are left out (``brain.teacher_cards``). ``size`` and ``budget`` 0 is
+    whole, and lines or flips it cannot read even alone, are left out, counted
+    and printed (``brain.report_left_out``); no page in a piece is over the
+    teacher's window. ``size`` and ``budget`` 0 is
     one piece holding everything. Deal-level values ride the first piece.
 
     ``caps`` (lines, cards, flips; 0 is all) with ``rng`` teach a fresh random
     sample of the part each step, so a step costs the same on any part and
     the steps together cover it."""
-    from .brain import teacher_cards, told_why  # noqa: PLC0415
+    from .brain import report_left_out, teacher_cards, told_why  # noqa: PLC0415
 
     why = told_why(batch, brain.schema)
     sup, _ = supposed_twins(batch)
     rows, _ = teacher_rows(batch, why)
     rows = list(range(len(batch))) if rows is None else rows
+    # A line the teacher cannot read even alone, like a card it cannot read
+    # whole, is left to the student: never cut, never sent to the forward.
+    readable = [i for i in rows if brain.row_fits(batch, i, why)]
+    report_left_out(brain, batch, "rows", len(rows) - len(readable), len(rows))
+    dropped = len(readable) != len(rows)
+    rows = readable
     judged = teacher_cards(brain, batch)
-    flip_ids = list(range(len(sup)))
+    flip_ids = [k for k in range(len(sup)) if brain.flip_fits(batch, sup[k], why)]
+    report_left_out(brain, batch, "flips", len(sup) - len(flip_ids), len(sup))
     if rng is not None:
         def take(items, cap):
             return sorted(rng.sample(items, cap)) if cap and len(items) > cap else items
@@ -975,7 +984,7 @@ def teacher_chunks(brain, batch: Batch, size: int, budget: int = 0, *,
         judged = [judged[k] for k in picked]
         flip_ids = take(flip_ids, caps[2])
     if size <= 0 and budget <= 0:
-        return [Piece(None if rng is None else rows, judged, flip_ids, True, 1.0, 0)]
+        return [Piece(None if rng is None and not dropped else rows, judged, flip_ids, True, 1.0, 0)]
     count = brain.lm.token_count
     row_cost = [ROW_PASSES * count(brain.page(batch, i) + _why_tail(why, i)) for i in rows]
     card_cost = [CARD_PASSES * count(brain.card_page(batch, j, with_why=True)) for j in judged]

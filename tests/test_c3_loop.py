@@ -735,3 +735,99 @@ def test_stage_steps_override_named_stages_only():
     assert (b.lines, b.links, b.teach, b.cards) == (30, 0, 0, Budget().cards)
     with pytest.raises(SystemExit):
         with_stage_steps(Budget(), "linez=3")
+
+
+def test_no_teacher_page_is_over_the_window_and_what_is_left_out_is_counted(capsys):
+    """Pilot C's bind died on a digest part whose whole-deal cards cite all
+    8,192 lines (one card page: 337,557 Qwen tokens). Here a byte-level
+    stand-in with a 1,024-token window plays the teacher: an over-long
+    card, an over-long plain line, and a line that is short in characters
+    but long in tokens (the old character shortcut said it fit). None of
+    them reaches a forward; each is counted and printed; the part trains."""
+    import math
+    import torch
+    from ml.c3.brain import TEACHER_LEFT_OUT, Brain, told_why
+    from ml.c3.data import Judged
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.loop import _teacher_part
+    from ml.c3.losses import BrainWeights, teacher_chunks, teacher_rows
+
+    window = 1024
+    widths: list[int] = []
+
+    class Recording(TinyCausalLM):
+        def forward(self, ids, mask, prefix=None, inputs_embeds=None):
+            widths.append(int(ids.shape[1]))
+            return super().forward(ids, mask, prefix=prefix, inputs_embeds=inputs_embeds)
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    taught, _ = teacher_rows(train, told_why(train, schema))
+    taught = list(range(len(train))) if taught is None else taught
+    wide_chars, plain = taught[0], taught[1]
+    texts = list(train.texts)
+    texts[wide_chars] = "é" * 700          # 700 characters, 1,400 byte tokens
+    texts[plain] = "x" * 3000
+    key = next(o.key for o in schema.opportunities if o.key.startswith("jdg:") and o.universal
+               and not o.multiple)
+    everything = Judged(key, "GROUP", tuple(range(len(train))), 0, note="whole deal", subject_key="all")
+    calm = tuple(i for i in range(len(train)) if i not in (wide_chars, plain))[:2]
+    short = Judged(key, "PAIR", calm, 0, note="short", subject_key="s")
+    part = replace(train, texts=texts, judged=[short, everything])
+
+    torch.manual_seed(0)
+    brain = Brain(schema, Recording(32, 1, 2, window), page_batch=2, read_chunk=2)
+    limit = window - brain.FIT_MARGIN
+    # The token count the old shortcut never asked for.
+    assert len(texts[wide_chars]) <= limit < brain.lm.token_count(texts[wide_chars])
+    assert not brain.fits(texts[wide_chars]) and not brain.fits(texts[plain])
+    assert brain.lm.token_count(brain.card_page(part, everything, with_why=True)) > window
+
+    before = dict(TEACHER_LEFT_OUT)
+    pieces = teacher_chunks(brain, part, 4, 4000)
+    rows = {r for p in pieces for r in p.rows}
+    assert wide_chars not in rows and plain not in rows
+    assert set(taught) - {wide_chars, plain} <= rows
+    assert [c for p in pieces for c in p.cards] == [short]
+    assert TEACHER_LEFT_OUT["rows"] - before.get("rows", 0) == 2
+    assert TEACHER_LEFT_OUT["cards"] - before.get("cards", 0) == 1
+    printed = capsys.readouterr().out
+    assert f"teacher_left_out {part.deal_id} rows=2/" in printed
+    assert f"teacher_left_out {part.deal_id} cards=1/2" in printed
+
+    widths.clear()
+    loss = _teacher_part(brain, part, BrainWeights(consolidate=0.0), device="cpu", scale=1.0,
+                         size=4, budget=4000, caps=(0, 0, 0), rng=None, label="bind")
+    assert math.isfinite(float(loss))
+    assert widths and max(widths) <= window
+
+    # The lesson view reads every line, so it stops before any forward, named.
+    from ml.c3.supercharge import teacher_view
+
+    widths.clear()
+    with pytest.raises(ValueError, match="2 lines cannot fit the teacher's 1024-token window"):
+        teacher_view(brain, part, grounding=False)
+    assert widths == []
+
+
+def test_a_non_finite_teacher_piece_names_its_part_piece_and_terms(monkeypatch):
+    import torch
+    import ml.c3.loop as loop
+    from ml.c3.brain import Brain
+    from ml.c3.lm import TinyCausalLM
+    from ml.c3.losses import BrainWeights
+
+    schema = load_schema()
+    train, _ = _batches(schema)
+    brain = Brain(schema, TinyCausalLM(32, 1, 2, 4096))
+    real = loop.brain_loss
+
+    def poisoned(*args, **kwargs):
+        total, terms = real(*args, **kwargs)
+        return total * float("nan"), {**terms, "distill": float("nan")}
+
+    monkeypatch.setattr(loop, "brain_loss", poisoned)
+    with pytest.raises(RuntimeError, match=r"Non-finite loss during bind: synthetic.* piece 1/\d+ .*"
+                                           r"non-finite terms distill"):
+        loop._teacher_part(brain, train, BrainWeights(consolidate=0.0, flip=0.0), device="cpu",
+                           scale=1.0, size=4, budget=4000, caps=(0, 0, 0), rng=None, label="bind")
