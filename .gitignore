@@ -66,3 +66,21 @@ _lastcid*.txt
 # copy that prompted this contains a captured shell error.
 _extracted_images/
 nul
+
+# Root scratch output from local runs and scripts/ experiments. These hold raw
+# LLM responses, deal content and local machine paths; regenerate, never commit.
+/_ob_test_out/
+/_env_latest.json
+/aps_b_prompt_results.json
+/aps_b_raw_*.txt
+/atoms_*.json
+/cloud_*_atoms.json
+/envelope_current.json
+/instrument_paths_results.json
+/pipeline_*.json
+/pm_handoff_*.json
+/site_bake_off_results.json
+/v55_real_verify_results.json
+/v56f_local.txt
+/*.log
+/collect_out.txt
