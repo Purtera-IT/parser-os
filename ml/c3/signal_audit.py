@@ -636,6 +636,10 @@ def audit_set(name: str, files: list[tuple[str, bool]], counts_by_file: dict[str
 
             def baseline(k: int):
                 if k not in cache:
+                    # Each entry keeps a whole graph alive; a big file's parts overran an 80 GB GPU. Past the
+                    # cap the oldest is dropped and recomputed when asked again (seeded, eval: same values).
+                    while args.baseline_cache and len(cache) >= args.baseline_cache:
+                        cache.pop(next(iter(cache)))
                     parts = probe.forward(base[k])
                     cache[k] = (parts, probe.grad_norm(probe.weighted(parts)))
                 return cache[k]
@@ -957,6 +961,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--carrier-order", choices=("size", "density"), default="density",
                    help="carriers by smallest file, or by most rows of the signal per byte")
     p.add_argument("--parts-per-signal", type=int, default=2)
+    p.add_argument("--baseline-cache", type=int, default=0,
+                   help="most baseline graphs kept per file (0 = all); older ones are recomputed")
     p.add_argument("--value-tol", type=float, default=1e-7)
     p.add_argument("--grad-tol", type=float, default=1e-6)
     p.add_argument("--min-count", type=int, default=0, help="gate: fail on a signal with this many rows")
