@@ -185,9 +185,15 @@ pick() {
   # deal must stay bit-identical. COMPANY_REFIT=0 skips it.
   # The picked file; a tiny run's fallback (an INIT that is not there) reads the last one.
   local refit_ck; refit_ck=$(readlink "$1.best"); [[ -f "$refit_ck" ]] || refit_ck=$(readlink -f "$1")
-  if [[ "${COMPANY_REFIT:-1}" == 1 && ${#train_files[@]} -gt 0 && -f "$refit_ck" ]]; then
+  # The start fallback is INIT, saved under an older schema (a reshaped head): it does not load here,
+  # and refitting the live model proves nothing about this run. A failed refit is a finding for the
+  # grade, not a reason to leave the pick unslimmed.
+  if [[ "$(readlink -f "$refit_ck")" == "$(readlink -f "$INIT")" ]]; then
+    echo "company_refit skipped: the pick is the start (INIT)"
+  elif [[ "${COMPANY_REFIT:-1}" == 1 && ${#train_files[@]} -gt 0 && -f "$refit_ck" ]]; then
     python -m ml.c3.company_refit --checkpoint "$refit_ck" --train "${train_files[@]}" \
-      --probe "${valid_files[@]}" --max-atoms "$ATOMS" ${ENCODER:+--encoder "$ENCODER"} --out "$1.company_refit.json"
+      --probe "${valid_files[@]}" --max-atoms "$ATOMS" ${ENCODER:+--encoder "$ENCODER"} --out "$1.company_refit.json" ||
+      echo "company_refit FAILED (exit $?): see above; the pick stands, grade it as a finding"
   fi
 }
 if [[ "${PICK_ONLY:-0}" == 1 ]]; then pick "$CK"; exit; fi
