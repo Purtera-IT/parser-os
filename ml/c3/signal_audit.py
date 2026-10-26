@@ -44,7 +44,7 @@ import random
 import re
 import sys
 import time
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
@@ -525,11 +525,37 @@ class Probe:
     def weighted(self, parts: dict[str, torch.Tensor]) -> torch.Tensor:
         return sum(float(getattr(self.union, k, 0.0)) * v.float() for k, v in parts.items())
 
-    def grad_norm(self, t: torch.Tensor) -> float:
+    def grad_norm(self, t: torch.Tensor, retain_graph: bool = True) -> float:
         if not torch.is_tensor(t) or not t.requires_grad:
             return 0.0
-        gs = torch.autograd.grad(t, self.params, retain_graph=True, allow_unused=True)
+        gs = torch.autograd.grad(t, self.params, retain_graph=retain_graph, allow_unused=True)
         return float(torch.sqrt(sum((g.float() ** 2).sum() for g in gs if g is not None) or torch.zeros(())))
+
+    def grads(self, targets: dict[Any, torch.Tensor | None]) -> dict[Any, list | None]:
+        """The gradient of each target (scalars of ONE forward's graph) in host
+        memory, per parameter: one backward per target, the graph's buffers freed
+        by the last. A target with no graph or no gradient into the model maps
+        to None (a zero gradient)."""
+        out: dict[Any, list | None] = {k: None for k in targets}
+        todo = [k for k, t in targets.items() if torch.is_tensor(t) and t.requires_grad]
+        for i, k in enumerate(todo):
+            gs = torch.autograd.grad(targets[k], self.params, retain_graph=i < len(todo) - 1, allow_unused=True)
+            kept = [None if g is None else g.detach().float().cpu() for g in gs]
+            out[k] = kept if any(g is not None for g in kept) else None
+        return out
+
+    def diff_norm(self, a: list | None, b: list | None) -> float:
+        """|| a - b || of two per-parameter gradients (None: zero), in float32: by
+        linearity the gradient of (with - without) without either graph alive."""
+        total = 0.0
+        for i in range(len(self.params)):
+            x = a[i] if a is not None else None
+            y = b[i] if b is not None else None
+            if x is None and y is None:
+                continue
+            d = x if y is None else (-y if x is None else x - y)
+            total += float((d ** 2).sum())
+        return total ** 0.5
 
 
 def build_model(schema, args):
@@ -597,6 +623,10 @@ class Finding:
     error: str = ""
 
 
+def _nbytes(grads: list | None) -> int:
+    return sum(g.numel() * g.element_size() for g in grads or () if g is not None)
+
+
 def _rank(status: str) -> int:
     return {"OK": 0, "ERROR": 1, "ZERO-GRAD": 2, "UNUSED": 3, "NO-CARRIER": 4}.get(status, 5)
 
@@ -632,17 +662,46 @@ def audit_set(name: str, files: list[tuple[str, bool]], counts_by_file: dict[str
             except Exception as e:  # noqa: BLE001
                 log(f"{name}: {Path(path).name} does not featurize: {e}")
                 continue
-            cache: dict[int, tuple[dict, float]] = {}
+            # Per part with the signal: its terms' values and the step's gradient norm. Never a graph:
+            # holding the "with" graph while the "without" one was built (and backpropagating through
+            # both) overran an 80 GB GPU on the largest files. At most one graph is alive at a time; the
+            # gradient of a weighted difference is grad(w * with) - grad(w * without) by linearity, each
+            # taken from its own forward with the same backward seeds as before. Past --baseline-cache
+            # entries the oldest is dropped and recomputed when asked again (seeded, eval: same values).
+            cache: dict[int, dict] = {}
+            # (part, target) -> a "with" gradient on the host, least recently used dropped past
+            # --grad-cache-gb (a dropped one costs one more "with" forward when asked again).
+            gcache: OrderedDict = OrderedDict()
+            gbytes = [0]
 
-            def baseline(k: int):
+            def baseline(k: int) -> dict:
                 if k not in cache:
-                    # Each entry keeps a whole graph alive; a big file's parts overran an 80 GB GPU. Past the
-                    # cap the oldest is dropped and recomputed when asked again (seeded, eval: same values).
                     while args.baseline_cache and len(cache) >= args.baseline_cache:
                         cache.pop(next(iter(cache)))
                     parts = probe.forward(base[k])
-                    cache[k] = (parts, probe.grad_norm(probe.weighted(parts)))
+                    cache[k] = {"values": {t: float(v.detach().float()) for t, v in parts.items()},
+                                "norm": probe.grad_norm(probe.weighted(parts), retain_graph=False)}
+                    del parts
                 return cache[k]
+
+            def with_grads(k: int, targets: dict[Any, Callable[[dict], Any]]) -> dict:
+                out, missing = {}, {}
+                for key, build in targets.items():
+                    if (k, key) in gcache:
+                        gcache.move_to_end((k, key))
+                        out[key] = gcache[(k, key)]
+                    else:
+                        missing[key] = build
+                if missing:
+                    parts = probe.forward(base[k])
+                    got = probe.grads({key: build(parts) for key, build in missing.items()})
+                    del parts
+                    for key, g in got.items():
+                        out[key] = gcache[(k, key)] = g
+                        gbytes[0] += _nbytes(g)
+                    while gcache and gbytes[0] > args.grad_cache_gb * 2 ** 30:
+                        gbytes[0] -= _nbytes(gcache.popitem(last=False)[1])
+                return out
 
             started = time.time()
             for s in plan[path]:
@@ -672,31 +731,44 @@ def audit_set(name: str, files: list[tuple[str, bool]], counts_by_file: dict[str
                 else:
                     f.status = "ZERO-GRAD"
                     for k in moved[:args.parts_per_signal]:
-                        with_parts, total_norm = baseline(k)
+                        entry = baseline(k)
+                        with_vals, total_norm = entry["values"], entry["norm"]
                         without = probe.forward(parts[k])
+                        wo_vals = {t: float(v.detach().float()) for t, v in without.items()}
                         diff_total = 0.0
                         changed = []
-                        for term, t in with_parts.items():
-                            u = without.get(term)
-                            dv = float(t.detach().float()) - (float(u.detach().float()) if u is not None else 0.0)
-                            if abs(dv) > args.value_tol * max(1.0, abs(float(t.detach().float()))):
+                        for term, tv in with_vals.items():
+                            u = wo_vals.get(term)
+                            dv = tv - (u if u is not None else 0.0)
+                            if abs(dv) > args.value_tol * max(1.0, abs(tv)):
                                 changed.append(term)
-                        for term in sorted(set(without) - set(with_parts)):
+                        for term in sorted(set(wo_vals) - set(with_vals)):
                             changed.append(term)
                         weight = {t: float(getattr(probe.union, t, 0.0)) for t in changed}
-                        for term in changed:
-                            a_t, b_t = with_parts.get(term), without.get(term)
-                            delta = (a_t if a_t is not None else 0) - (b_t if b_t is not None else 0)
-                            share = (probe.grad_norm(weight[term] * delta) / total_norm
-                                     if weight[term] and total_norm else 0.0)
-                            f.terms[term] = max(f.terms.get(term, 0.0), share)
                         live = [t for t in changed if weight[t]]
-                        if live:
-                            d = sum(weight[t] * ((with_parts[t] if t in with_parts else 0)
-                                                 - (without[t] if t in without else 0)) for t in live)
-                            diff_total = probe.grad_norm(d) / total_norm if total_norm else 0.0
+                        if not (live and total_norm):
+                            del without
+                            for term in changed:
+                                f.terms[term] = max(f.terms.get(term, 0.0), 0.0)
+                            continue
+                        # Each live term at its weight, and their sum (the step's difference), on each side.
+                        total_key = ("*",) + tuple(live)
+                        g_wo = probe.grads({**{t: weight[t] * without[t] for t in live if t in without},
+                                            total_key: sum(weight[t] * without[t] for t in live if t in without)})
+                        del without             # the "without" graph is gone before the "with" one is built
+
+                        def build(t):
+                            return lambda p: weight[t] * p[t] if t in p else None
+
+                        g_w = with_grads(k, {**{t: build(t) for t in live},
+                                             total_key: lambda p: sum(weight[t] * p[t] for t in live if t in p)})
+                        for term in changed:
+                            share = (probe.diff_norm(g_w.get(term), g_wo.get(term)) / total_norm
+                                     if weight[term] else 0.0)
+                            f.terms[term] = max(f.terms.get(term, 0.0), share)
+                        diff_total = probe.diff_norm(g_w[total_key], g_wo[total_key]) / total_norm
                         f.share = max(f.share, diff_total)
-                        del without
+                        del g_wo, g_w
                     if f.share > args.grad_tol:
                         f.status = "OK"
                 if _rank(f.status) < _rank(findings[s].status) or findings[s].status == "NO-CARRIER":
@@ -706,6 +778,7 @@ def audit_set(name: str, files: list[tuple[str, bool]], counts_by_file: dict[str
             log(f"{name}: {Path(path).name} {len(plan[path])} signals, {len(base)} parts, "
                 f"{time.time() - started:.0f}s")
             cache.clear()
+            gcache.clear()
         if not pending:
             break
     return findings
@@ -962,7 +1035,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="carriers by smallest file, or by most rows of the signal per byte")
     p.add_argument("--parts-per-signal", type=int, default=2)
     p.add_argument("--baseline-cache", type=int, default=0,
-                   help="most baseline graphs kept per file (0 = all); older ones are recomputed")
+                   help="most parts' baseline values kept per file (0 = all); older ones are recomputed")
+    p.add_argument("--grad-cache-gb", type=float, default=16.0,
+                   help="host memory for cached gradients of the parts with the signal; past it the least "
+                        "recently used is dropped and recomputed by one more forward when asked again")
     p.add_argument("--value-tol", type=float, default=1e-7)
     p.add_argument("--grad-tol", type=float, default=1e-6)
     p.add_argument("--min-count", type=int, default=0, help="gate: fail on a signal with this many rows")
