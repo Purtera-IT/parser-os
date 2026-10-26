@@ -30,6 +30,15 @@
 # consistently (gate 2's entity edits, training's own stand-ins), holding the
 # saved answers and the first reading. One more forward on every part with a
 # name in it, so it counts as a graph too (ENTITY_SWAP=0 turns it off).
+# meaning_flip (losses.meaning_flip_loss, ml/c3/meaning_flip.py) is the other
+# half: the contrast test (runE/contrast_gate.py) showed pilot C stays put when
+# the one meaning-bearing word changes (supplier party 1/13 and 0/9, an explicit
+# exclusion 3%, a street added to a city/zip row 0/46). The part is read once
+# more with some labeled lines given a minimal edit whose new answer is certain
+# from the head definitions (party swapped, street added, explicit leave-out,
+# fact <-> small talk; templates disjoint from the gate's), and each edited line
+# trains toward its NEW answer (cross-entropy, from the saved gold). One more
+# forward, so it counts as a graph (MEANING_FLIP=0 turns it off).
 # The teacher's own rewrites
 # (supercharge.teach_rewrites) stay unwired in loop.py. FLIPS=1 adds the flips
 # lesson (teach_flip at 0.2).
@@ -48,13 +57,13 @@
 #   INIT        start checkpoint (default $C3/runC.pt.open_links.slim, the live
 #               one; its md5 is checked unless INIT_SHA256 pins a refitted checkpoint)
 #   INIT_SHA256 exact SHA256 for a refitted INIT; checked before any training.
-#   LAYOUT_LOCK KEYWORD_DROPOUT ENTITY_SWAP WHY_CONTRAST WHY_ALONE WHY_SWAP TYPE_WEIGHT RAMP
+#   LAYOUT_LOCK KEYWORD_DROPOUT ENTITY_SWAP MEANING_FLIP WHY_CONTRAST WHY_ALONE WHY_SWAP TYPE_WEIGHT RAMP
 #   WHY_ALIGN WHY_SUFFICIENCY LINK_WHY_CONTRAST LINK_WHY_ALONE  override the
-#               loss table (0.5 0.3 0.3 0.3 0.2 0.1 5 2 0 0 0.3 0.2); 0 turns a term off. The ablation configs are in loss_plan.md
+#               loss table (0.5 0.3 0.3 0.3 0.3 0.2 0.1 5 2 0 0 0.3 0.2); 0 turns a term off. The ablation configs are in loss_plan.md
 #   ATOMS       lines per part. Default from the card and the graphs a step
-#               holds (1 + layout_lock on + keyword_dropout on + entity_swap on): 8192 /
-#               graphs at >=120 GB (H200), 4096 / graphs at >=70 GB, rounded down to 512.
-#               With all three on: 2048 / 1024 (two of them: 2560 / 1024). Under 70 GB it refuses. Prove the
+#               holds (1 + layout_lock on + keyword_dropout on + entity_swap on + meaning_flip on):
+#               8192 / graphs at >=120 GB (H200), 4096 / graphs at >=70 GB, rounded down to 512.
+#               With all four on: 1536 / 512 (three of them: 2048 / 1024). Under 70 GB it refuses. Prove the
 #               peak with SMOKE=1 C3_SMOKE_LARGEST=1 and set ATOMS from it
 #   FLOORS      the live model's per-head scores on 010043 ($C3/runE/live_floors.json)
 #   KEEP        checkpoints kept on disk, plus the best (3)
@@ -302,6 +311,7 @@ fi
 # cards, numbers/literals from numbers, deal_numbers from deal/open_links).
 LAYOUT_LOCK=${LAYOUT_LOCK:-0.5} KEYWORD_DROPOUT=${KEYWORD_DROPOUT:-0.3}
 ENTITY_SWAP=${ENTITY_SWAP:-0.3}   # names/companies/places/IDs swapped: same answers (gate 2 entities)
+MEANING_FLIP=${MEANING_FLIP:-0.3}   # one meaning word edited: the certain NEW answer (contrast gate's logic)
 WHY_CONTRAST=${WHY_CONTRAST:-0.3} WHY_ALONE=${WHY_ALONE:-0.2} WHY_SWAP=${WHY_SWAP:-0.1}
 TYPE_WEIGHT=${TYPE_WEIGHT:-5} RAMP=${RAMP:-2}   # 5: type was ~43% of head CE at 10
 # HEAD_WEIGHTS: more per-head loss weights, space separated "key=w" (e.g. "col:admission=5 jdg:facility=4");
@@ -330,6 +340,7 @@ weights=(
   keyword_dropout="$KEYWORD_DROPOUT" keyword_dropout_p=0.3 keyword_dropout_cap=256
   layout_lock="$LAYOUT_LOCK"
   entity_swap="$ENTITY_SWAP"
+  meaning_flip="$MEANING_FLIP"
   link_why_contrast="$LINK_WHY_CONTRAST" link_why_hard_negative=4 link_why_alone="$LINK_WHY_ALONE"
   pointers=0.1 entities=0.05 hindsight=0.1 near_misses=0.2 near_miss_margin=1   # run C
   residual=0.01 variance=0.1 absence=0.2 adversary=0.1 policy_l1=0   # 0 while there is one company: L1 only collapsed alpha
@@ -342,7 +353,7 @@ loss_args=()
 for kv in "${weights[@]}"; do loss_args+=(--loss-weight "$kv"); done
 ramp_args=()
 if [[ "$RAMP" != 0 ]]; then
-  for t in why_contrast why_alone why_swap keyword_dropout layout_lock entity_swap link_why_contrast link_why_alone \
+  for t in why_contrast why_alone why_swap keyword_dropout layout_lock entity_swap meaning_flip link_why_contrast link_why_alone \
            citations derived_cards table_kind coherence node_pointers; do ramp_args+=(--ramp "$t=$RAMP"); done
   ramp_args+=(--ramp numbers=1)   # the numbers stage opens on the new hours heads
 fi
@@ -386,6 +397,7 @@ graphs=1
 [[ "$LAYOUT_LOCK" != 0 ]] && graphs=$((graphs + 1))
 [[ "$KEYWORD_DROPOUT" != 0 ]] && graphs=$((graphs + 1))
 [[ "$ENTITY_SWAP" != 0 ]] && graphs=$((graphs + 1))
+[[ "$MEANING_FLIP" != 0 ]] && graphs=$((graphs + 1))
 if [[ -z "${ATOMS:-}" ]]; then
   if [[ "$TINY" == 1 ]]; then ATOMS=512
   else
@@ -565,7 +577,7 @@ fi
 # The run, then the pick and a slim copy of it for the Mac, all detached.
 # RESUME=1 carries on from $CK.resume.pt (the loop writes it at every check).
 [[ "${RESUME:-0}" == 1 ]] && args+=(--resume)
-echo "restart after a failure: RESUME=1 with the same environment ($(env | grep -E '^(TRAIN_DIR|VALID_FILE|ATOMS|LINES|LINKS|CARDS|NUMBERS|OPEN_LINKS|TEACH|LAYOUT_LOCK|KEYWORD_DROPOUT|ENTITY_SWAP|WHY_[A-Z]+|LINK_WHY_[A-Z]+|TYPE_WEIGHT|RAMP|KEEP|CK|INIT|ACCEPT_DRAFTS)=' | tr '\n' ' '))bash $0"
+echo "restart after a failure: RESUME=1 with the same environment ($(env | grep -E '^(TRAIN_DIR|VALID_FILE|ATOMS|LINES|LINKS|CARDS|NUMBERS|OPEN_LINKS|TEACH|LAYOUT_LOCK|KEYWORD_DROPOUT|ENTITY_SWAP|MEANING_FLIP|WHY_[A-Z]+|LINK_WHY_[A-Z]+|TYPE_WEIGHT|RAMP|KEEP|CK|INIT|ACCEPT_DRAFTS)=' | tr '\n' ' '))bash $0"
 run() {
   set +e
   python -m ml.c3.loop "${args[@]}" --steps 1 --check-every "${CHECK_EVERY:-2}" ${gates[@]+"${gates[@]}"} \

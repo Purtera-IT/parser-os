@@ -1481,7 +1481,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             # A term the stage weights on that never moved the total: no data for it here.
             silent = sorted({k for k in shares if getattr(weights, k, 0) and abs(means.get(k, 0.0)) <= 1e-8}
                             | {k for k in ("layout_lock", "why_contrast", "why_swap", "why_alone", "keyword_dropout",
-                                         "entity_swap", "link_why_contrast", "link_why_alone")
+                                         "entity_swap", "meaning_flip", "link_why_contrast", "link_why_alone")
                                if getattr(weights, k, 0) and k not in shares})
             if silent:
                 print(f"stage {stage} silent " + " ".join(silent), flush=True)

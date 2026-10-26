@@ -68,6 +68,12 @@ class LossWeights:
     # places and IDs swapped consistently (entity_swap.py, gate 2's entity kind)
     # keeps its saved answers and its own reading. One more forward; 0 is off.
     entity_swap: float = 0.3
+    # The meaning CONTRAST (the other half): a line whose one meaning-bearing
+    # word is edited (the supplying party swapped, a street added, an explicit
+    # leave-out, small talk for a fact or a fact into small talk) must give the
+    # edit's certain new answer (meaning_flip.py; contrast_gate.py measures it
+    # with other templates). One more forward; 0 is off.
+    meaning_flip: float = 0.3
     # The WHY carries the decision, teacher-free (why_carry.py). Each is a
     # part of c3_loss; 0 turns it off. why_contrast supersedes why_align
     # (identical WHYs are never negatives) and why_alone supersedes
@@ -717,6 +723,62 @@ def entity_swap_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights
     return ce + w.conduct * co + (kl / n if n else zero)
 
 
+def meaning_flip_loss(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
+                      rng=None, desc: dict[str, Any] | None = None) -> torch.Tensor:
+    """The meaning contrast, the other half of the locks above: one more
+    forward with some labeled lines given a minimal meaning edit whose new
+    answer is certain from the heads' own definitions (meaning_flip.plan_flips:
+    the supplying party swapped, a street added to a city-only line, a work
+    line made an explicit leave-out, a scope fact replaced by small talk, a job
+    fact put into small talk). Each edited line is trained toward its NEW
+    answer with cross-entropy (not a pull toward its old reading); the
+    pre-condition is read from the saved gold (``batch.targets``), never from
+    the model. Lines that were not edited carry no term here (the first pass
+    and the locks hold them). One mean per head, then a mean over the heads.
+    A part with nothing to edit, or of a held-out deal, costs nothing.
+
+    ``rng``: the edits' draw, seeded from torch's generator by default (as
+    entity_swap_loss); nothing is drawn when the term is off. ``desc``: the
+    step's encoded descriptions, reused."""
+    import random as _random
+
+    from .data import number_tokens  # noqa: PLC0415
+    from .meaning_flip import gold_of, held_out, plan_flips  # noqa: PLC0415
+
+    zero = out.r.new_zeros(())
+    if held_out(batch.deal_id):
+        return zero
+    if rng is None:
+        rng = _random.Random(int(torch.randint(0, 2**31 - 1, (1,))))
+    flips = plan_flips(batch.texts, gold_of(batch, model.schema), rng)
+    by_key = model.schema.by_key()
+    flips = [f for f in flips if any(k in out.logits and k in by_key and by_key[k].index(v) is not None
+                                     for k, v in f.targets.items())]
+    if not flips:
+        return zero
+    texts, numbers = list(batch.texts), list(batch.numbers)
+    for f in flips:
+        texts[f.line] = f.text
+        numbers[f.line] = number_tokens(f.text)
+    b = replace(batch, texts=texts, numbers=numbers, layout_rewrites=[])
+    moved = model(b.inputs(), company=batch.company, desc=desc)
+    dev = out.r.device
+    total, n = zero, 0
+    for key in sorted({k for f in flips for k in f.targets}):
+        logits = moved.logits.get(key)
+        if logits is None or key not in by_key:
+            continue
+        rows = [(f.line, by_key[key].index(f.targets[key])) for f in flips if key in f.targets]
+        rows = [(i, y) for i, y in rows if y is not None]
+        if not rows:
+            continue
+        idx = torch.tensor([i for i, _ in rows], device=dev)
+        y = torch.tensor([y for _, y in rows], device=dev)
+        total = total + F.cross_entropy(logits[idx].float(), y)
+        n += 1
+    return total / n if n else zero
+
+
 def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
             adv_lambda: float = 1.0, bank: ExplanationBank | None = None,
             rules: ExplanationBank | None = None,
@@ -801,6 +863,8 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
         parts["layout_lock"] = layout_lock_loss(model, out, batch, w, desc=desc)
     if w.entity_swap:
         parts["entity_swap"] = entity_swap_loss(model, out, batch, w, desc=desc)
+    if w.meaning_flip:
+        parts["meaning_flip"] = meaning_flip_loss(model, out, batch, w, desc=desc)
     from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
 
     parts.update(why_carry_losses(model, out, batch, desc, w))
