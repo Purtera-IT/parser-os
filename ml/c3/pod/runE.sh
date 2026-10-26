@@ -304,6 +304,10 @@ LAYOUT_LOCK=${LAYOUT_LOCK:-0.5} KEYWORD_DROPOUT=${KEYWORD_DROPOUT:-0.3}
 ENTITY_SWAP=${ENTITY_SWAP:-0.3}   # names/companies/places/IDs swapped: same answers (gate 2 entities)
 WHY_CONTRAST=${WHY_CONTRAST:-0.3} WHY_ALONE=${WHY_ALONE:-0.2} WHY_SWAP=${WHY_SWAP:-0.1}
 TYPE_WEIGHT=${TYPE_WEIGHT:-5} RAMP=${RAMP:-2}   # 5: type was ~43% of head CE at 10
+# HEAD_WEIGHTS: more per-head loss weights, space separated "key=w" (e.g. "col:admission=5 jdg:facility=4");
+# pilot C weighted only line type, and admission / the site judgments lagged live (2026-10-26).
+head_weight_args=(--head-weight col:label_type="$TYPE_WEIGHT")
+for hw in ${HEAD_WEIGHTS:-}; do head_weight_args+=(--head-weight "$hw"); done
 WHY_ALIGN=${WHY_ALIGN:-0} WHY_SUFFICIENCY=${WHY_SUFFICIENCY:-0}   # E-base ablation: 0.1 / 0.5 (run C)
 LINK_WHY_CONTRAST=${LINK_WHY_CONTRAST:-0.3} LINK_WHY_ALONE=${LINK_WHY_ALONE:-0.2}   # link notes (link_why.py)
 GRAPH=${GRAPH:-rune}
@@ -400,7 +404,7 @@ echo "validation window $VALID_ATOMS (serve reads 8192)"
 args=(--max-atoms "$ATOMS" --train "${train_files[@]}" --validation "${valid_files[@]}"
       --lr "${LR:-1e-4}" --warmup-passes "${WARMUP:-1}"
       "${balance_args[@]}"
-      --free-head all --head-weight col:label_type="$TYPE_WEIGHT"
+      --free-head all "${head_weight_args[@]}"
       "${loss_args[@]}" ${ramp_args[@]+"${ramp_args[@]}"}
       --keep-checkpoints "$KEEP" --pick-floors "$FLOORS"
       --validation-max-atoms "$VALID_ATOMS" --deal-rate "${DEAL_RATE:-0.3}")
@@ -509,7 +513,7 @@ if [[ "${SMOKE:-0}" == 1 ]]; then
     # Every labeled signal and every kind of reasoning text must reach the
     # step's gradient (ml/c3/signal_audit.py).
     audit=(--train "${train_files[@]}" --max-atoms "$ATOMS" "${loss_args[@]}"
-           --head-weight col:label_type="$TYPE_WEIGHT" --stage-steps "$stages"
+           "${head_weight_args[@]}" --stage-steps "$stages"
            --min-count "${SIGNAL_MIN:-50}" --allowlist "${SIGNAL_ALLOWLIST:-$REPO/ml/c3/runE/signal_allowlist.json}"
            --min-kind-words "${SIGNAL_KIND_WORDS:-10000}" --min-coverage "${SIGNAL_COVERAGE:-0.95}"
            --out "$C3/out/signal_audit.md" --json "$C3/out/signal_audit.json" "${model_args[@]}"
