@@ -1,6 +1,6 @@
 import json
 
-from ml.c3 import sow_fix_triage as t
+from scripts import sow_fix_triage as t
 
 A1, A2, A3 = "atm_00000000000000a1", "atm_00000000000000a2", "atm_00000000000000a3"
 

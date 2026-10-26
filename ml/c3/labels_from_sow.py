@@ -41,6 +41,8 @@ from pathlib import Path
 
 from c3_record import build_rows
 
+from .sow_tables import LIST_SECTION, TEACHABLE
+
 NOISE_RULES = ("grounding",)  # the noise filters run inside _grounding
 
 
@@ -66,8 +68,6 @@ def _rows(env: dict) -> list[dict]:
 
 def _read(head: str, value: str, rule: str) -> tuple[str, str] | None:
     """The trainer's (reads key, answer) for one decision, from c3_sow.TEACHABLE."""
-    from app.core.c3_sow import TEACHABLE
-
     spec = TEACHABLE.get(head)
     if not spec or not value:
         return None
@@ -226,14 +226,12 @@ def outcome_reviews(envelopes: list[str]) -> list[dict]:
     only. The overview is a summary of other lines, not a placement, and is
     skipped. Silver: the SOW graders rated these drafts, they are not a PM's
     word."""
-    from app.core.c3_sow import _LIST_SECTION
-
     out = []
     for path in envelopes:
         env = json.loads(Path(path).read_text())
         deal = str((env.get("crm") or {}).get("deal_name") or "")[:6] or Path(path).stem
         seen = set()
-        for lst, sec in _LIST_SECTION.items():
+        for lst, sec in LIST_SECTION.items():
             if lst == "overview":
                 continue
             for line in (env.get("c3_sow") or {}).get(lst) or []:

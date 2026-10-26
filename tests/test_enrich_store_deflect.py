@@ -124,9 +124,11 @@ def test_no_store_calls_llm(monkeypatch):
     assert calls["n"] == 1
 
 
-def test_self_teach_warms_store(monkeypatch):
-    """With teacher-cache ON, the LLM's keep/drop is folded back so the SAME
-    shape deflects on the next pass without an LLM call."""
+def test_self_taught_drop_never_deflects(monkeypatch):
+    """With teacher-cache ON, the LLM's drop is saved, but a self-taught row
+    answers as source 'teacher', never 'store' (decide(), 33d55199): one such
+    row deleted 49 of 010194's customer stores. Only a person's drop deflects,
+    so the LLM decides the same shape again."""
     monkeypatch.setenv("SOWSMITH_TEACHER_CACHE", "1")
     store = _store_with()  # empty: store abstains on first sight
     set_store(store)
@@ -139,13 +141,7 @@ def test_self_teach_warms_store(monkeypatch):
 
     monkeypatch.setattr(me, "_call_ollama", _fake_ollama)
 
-    # First pass: store abstains → LLM fires → drop is learned.
     assert me._canonicalize_candidate(novel, "site") is None
     assert calls["n"] == 1
-
-    # Second pass: the learned drop should deflect — LLM must not fire again.
-    def _tripwire(prompt, *, max_tokens=256):
-        raise AssertionError("learned drop should deflect without an LLM call")
-
-    monkeypatch.setattr(me, "_call_ollama", _tripwire)
     assert me._canonicalize_candidate(novel, "site") is None
+    assert calls["n"] == 2

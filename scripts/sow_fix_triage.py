@@ -1,6 +1,6 @@
 """Nightly triage of PM fixes to the heads' SOW: which kind of fix each one is.
 
-    python -m ml.c3.sow_fix_triage --edits ~/c3-local/sow_fix/exports \\
+    python scripts/sow_fix_triage.py --edits ~/c3-local/sow_fix/exports \\
         --envs ~/c3-local/heads_loop/envs/nightly --out ~/c3-local/sow_fix/runs/20261019
     # add --post to send the head labels to the DEV feedback route (dry run otherwise)
 
@@ -43,7 +43,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from app.core import c3_sow_trace
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.core import c3_sow_trace  # noqa: E402
 
 DEV_FEEDBACK = "https://parser-os-service-dev-eus2.whitehill-a3348ba5.eastus2.azurecontainerapps.io"
 

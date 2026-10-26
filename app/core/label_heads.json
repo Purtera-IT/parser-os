@@ -98,7 +98,8 @@
       ],
       "relations": [],
       "judgments": [
-        "bom_owner"
+        "bom_owner",
+        "sow_supplier"
       ],
       "tasks": [
         "about",
@@ -162,7 +163,9 @@
         "derivation_note"
       ],
       "relations": [],
-      "judgments": [],
+      "judgments": [
+        "sow_section"
+      ],
       "tasks": []
     },
     {
@@ -270,7 +273,9 @@
         "blocked_by",
         "triggered_by"
       ],
-      "judgments": [],
+      "judgments": [
+        "sow_party"
+      ],
       "tasks": []
     },
     {
@@ -500,7 +505,9 @@
         "co_reason"
       ],
       "relations": [],
-      "judgments": [],
+      "judgments": [
+        "sow_keep"
+      ],
       "tasks": [
         "policy:{company}",
         "rationale:policy:{company}"

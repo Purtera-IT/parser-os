@@ -40,7 +40,7 @@ if [ -n "${POST:-}" ]; then
     --secret-name bang-internal-bearer --query value -o tsv 2>/dev/null)
   FLAGS=(--post)
 fi
-python3 -m ml.c3.sow_fix_triage --edits "$ROOT/exports" --envs "$ENV_DIR" --out "$OUT" $FLAGS || echo "  triage failed"
+python3 scripts/sow_fix_triage.py --edits "$ROOT/exports" --envs "$ENV_DIR" --out "$OUT" $FLAGS || echo "  triage failed"
 
 ls -1d "$ROOT"/runs/* 2>/dev/null | sort -r | tail -n +31 | while read old; do rm -rf "$old"; done
 echo "== $(date -u +%FT%TZ) sow_fix_nightly done"
