@@ -187,7 +187,7 @@ pick() {
   local refit_ck; refit_ck=$(readlink "$1.best"); [[ -f "$refit_ck" ]] || refit_ck=$(readlink -f "$1")
   if [[ "${COMPANY_REFIT:-1}" == 1 && ${#train_files[@]} -gt 0 && -f "$refit_ck" ]]; then
     python -m ml.c3.company_refit --checkpoint "$refit_ck" --train "${train_files[@]}" \
-      --probe "${valid_files[@]}" --max-atoms "$ATOMS" --out "$1.company_refit.json"
+      --probe "${valid_files[@]}" --max-atoms "$ATOMS" ${ENCODER:+--encoder "$ENCODER"} --out "$1.company_refit.json"
   fi
 }
 if [[ "${PICK_ONLY:-0}" == 1 ]]; then pick "$CK"; exit; fi
@@ -491,7 +491,7 @@ echo "trunk lr x$TRUNK_LR_SCALE, pull $TRUNK_PULL/step to INIT, KL $ANCHOR_KL on
 if [[ "$TINY" != 1 && "${DESC_GATE:-1}" == 1 ]]; then
   # DESC_OLD_CK: when INIT is a head_fit refit on the new texts, the checkpoint it was refit from.
   gate_args=(--checkpoint "$INIT" ${DESC_OLD_CK:+--old-checkpoint "$DESC_OLD_CK"} --deal "${valid_files[@]}" ${DESC_GATE_DEALS:-}
-             --max-drop "${DESC_MAX_DROP:-0.02}" --device "${C3_DEVICE:-cuda}" ${ENCODER:+--encoder "$ENCODER"} --json "$C3/out/desc_gate.json")
+             --max-drop "${DESC_MAX_DROP:-0.02}" --device "${C3_DEVICE:-cuda}" ${ENCODER:+--encoder "$ENCODER"} --init-shape "$INIT_SHAPE" --json "$C3/out/desc_gate.json")
   [[ -n "${DESC_GATE_DRAFTS:-}" ]] && gate_args+=(--drafts-gold $DESC_GATE_DRAFTS)
   [[ "$GRAPH" != off ]] && gate_args+=(--graph-set "$GRAPH")
   set +e
@@ -551,7 +551,7 @@ if [[ "${SMOKE:-0}" == 1 ]]; then
   if [[ "$TINY" == 1 ]]; then model_args=(--tiny)
   else
     model_args=(--allow-new-heads "$new_heads" --train-encoder-layers 2
-                --init-schema-ref "${INIT_SCHEMA_REF:-$INIT_SHAPE}")
+                --init-schema-ref "${INIT_SCHEMA_REF:-$INIT_SHAPE}" ${ENCODER:+--encoder "$ENCODER"})
   fi
   if [[ "${SIGNAL_AUDIT:-1}" == 1 ]]; then
     # Every labeled signal and every kind of reasoning text must reach the
@@ -619,7 +619,7 @@ run() {
     best=$(readlink "$CK.best") &&
     if [[ "$best" == "$(readlink -f "$INIT")" ]]; then echo "pick is the start: nothing to slim" >> "$C3/out/runE.log"
     elif [[ "$TINY" == 1 ]]; then echo "tiny: no slim" >> "$C3/out/runE.log"
-    else python -m ml.c3.slim --checkpoint "$best" --out "$CK.best.slim" >> "$C3/out/runE.log" 2>&1
+    else python -m ml.c3.slim --checkpoint "$best" ${ENCODER:+--encoder "$ENCODER"} --out "$CK.best.slim" >> "$C3/out/runE.log" 2>&1
       refit "$CK.best.slim"; fi
 }
 # The Questions overlay reads the base's pooled features: one fitted on run C
