@@ -563,6 +563,45 @@ def drop_contextless_stakeholders(atoms: list[Any]) -> tuple[list[Any], list[Any
     return kept, dropped
 
 
+# ── keyed structured fields ──
+# A JSON leaf reaches the gate as "coordination.call_on_arrival: yes": a key
+# path, then the value. Its meaning is the key path, which the parser keeps on
+# the atom (``value.key_path``). Judged as prose, the snake_case path is not
+# dictionary words and a bare "yes" is filler, so the line read as a
+# context-free fragment and was dropped -- losing who the tech calls on
+# arrival. A keyed field with a short value (yes/no, true/false, a number, a
+# date, a phone, a name) is a stated fact, not a fragment. A long free-text
+# value is still prose, and is judged on its own words, not on the key path.
+_KEYED_SHORT_MAX_TOKENS = 4
+_KEYED_SHORT_MAX_CHARS = 48
+
+
+def _keyed_field_value(atom: Any) -> str | None:
+    """The value text of a keyed structured field, or None when the atom is
+    not one (free prose, a sheet row, an email line)."""
+    v = _atom_value(atom)
+    key_path = str(v.get("key_path") or "").strip()
+    if not key_path or key_path.startswith("("):
+        return None
+    if v.get("value_type") not in {"string", "boolean", "number"}:
+        return None
+    raw = v.get("value")
+    if isinstance(raw, bool):
+        return "true" if raw else "false"
+    return " ".join(str(raw if raw is not None else "").split())
+
+
+def _is_keyed_short_field(atom: Any) -> bool:
+    """A key/value field whose key path gives it meaning and whose value is
+    short: never a context-free fragment."""
+    val = _keyed_field_value(atom)
+    if val is None or not val:
+        return False
+    if _atom_value(atom).get("value_type") in {"boolean", "number"}:
+        return True
+    return len(val) <= _KEYED_SHORT_MAX_CHARS and len(val.split()) <= _KEYED_SHORT_MAX_TOKENS
+
+
 def _content_tokens(text: str) -> list[str]:
     probe = _SPEAKER_LABEL_RE.sub("", text).strip()
     return [re.sub(r"[^a-z0-9]", "", t) for t in probe.lower().split() if t.strip()]
@@ -598,6 +637,9 @@ def drop_nonsubstantive_fragments(atoms: list[Any]) -> tuple[list[Any], list[Any
         # what?" carry nothing a PM can act on (live 010300: 58 of the call's
         # 207 atoms were three words or fewer).
         if _atom_type_str(atom) not in _FILLER_ELIGIBLE | {"raw_utterance"}:
+            kept.append(atom)
+            continue
+        if _is_keyed_short_field(atom):
             kept.append(atom)
             continue
         text = _atom_text(atom)
@@ -705,6 +747,11 @@ def drop_contact_chrome(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     dropped: list[Any] = []
     for atom in atoms:
         if _atom_type_str(atom) not in _FILLER_ELIGIBLE:
+            kept.append(atom)
+            continue
+        # "contacts[1].phone: (555) 010-0100" is a phone filed under whose it
+        # is; the bare-identifier test is for one appearing with no label.
+        if _is_keyed_short_field(atom):
             kept.append(atom)
             continue
         if _is_contact_chrome(_atom_text(atom)):
@@ -951,7 +998,13 @@ def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         if str(_atom_value(atom).get("kind") or "") in _ROUTING_HEADER_KINDS:
             kept.append(atom)
             continue
-        text = _atom_text(atom)
+        # A keyed field is judged on its value, never on its key path: a
+        # snake_case path is an identifier, not OCR'd words.
+        if _is_keyed_short_field(atom):
+            kept.append(atom)
+            continue
+        keyed_value = _keyed_field_value(atom)
+        text = keyed_value if keyed_value else _atom_text(atom)
         if is_unreadable(text) and not _speech_or_stated_fact(atom, text):
             flags = list(getattr(atom, "review_flags", None) or [])
             if "unreadable_ocr" not in flags:
