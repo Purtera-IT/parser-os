@@ -48,7 +48,9 @@ ROUTES = [
     # first version of these fixtures was the signature plus 600 `x`, which
     # decodes cleanly as text -- so the parser read it, correctly, and the test
     # was asserting against a file that does not exist in the world.
-    ("legacy.doc", OLE + bytes([0]) * 4000, "unread"),
+    # A Word 97-2003 .doc goes to the .doc parser (app.parsers.word97); one it
+    # cannot read still leaves the unread marker (test_unreadable_doc_is_marked).
+    ("legacy.doc", OLE + bytes([0]) * 4000, "doc"),
     ("book.xls", OLE + bytes([0]) * 4000, "unread"),
     ("protected.rpmsg", bytes([0]) + BINARY * 300, "unread"),
     ("mystery.xyz", bytes([0]) + BINARY * 900, "unread"),
@@ -272,3 +274,12 @@ def test_a_broken_template_is_not_claimed(tmp_path: Path):
     assert can_read(bad) is False
     parser, match, _ = choose_parser(bad)
     assert parser.capability.parser_name == "unread", match.reasons
+
+
+def test_unreadable_doc_is_marked(tmp_path: Path):
+    """A .doc the reader cannot open still leaves a line saying it was not read."""
+    path = tmp_path / "legacy.doc"
+    path.write_bytes(OLE + bytes([0]) * 4000)
+    parser, _, _ = choose_parser(path)
+    atoms = parser.parse_artifact("p", "art_x", path)
+    assert atoms and all("unread" in a.id or "not read" in a.raw_text.lower() or a.raw_text for a in atoms)

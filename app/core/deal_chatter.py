@@ -346,6 +346,19 @@ def _previous_turns(atoms: list[Any]) -> dict[int, Any]:
     return out
 
 
+def _typed_by_base(atom: Any) -> bool:
+    """The C3 base typed this line and nothing has re-typed it since: its
+    reading stands. 010043 (2026-10-15): 96 signature lines the labels call
+    stakeholder, which the base typed stakeholder, were turned to small_talk
+    here by the signature rule."""
+    v = getattr(atom, "value", None)
+    lab = v.get("c3_label") if isinstance(v, dict) else None
+    if not isinstance(lab, dict) or lab.get("act") not in ("assign", "fill"):
+        return False
+    t = getattr(atom, "atom_type", None)
+    return str(getattr(t, "value", t) or "") == str(lab.get("type") or "")
+
+
 def retype_small_talk(atoms: list[Any]) -> int:
     """Type relationship talk as ``small_talk``, the reject type the labeler
     already has, instead of deal_metadata (010087: 478 of a call's 717 lines
@@ -357,6 +370,8 @@ def retype_small_talk(atoms: list[Any]) -> int:
     n = 0
     previous = _previous_turns(atoms)
     for atom in atoms:
+        if _typed_by_base(atom):
+            continue
         if not is_small_talk_line(atom):
             t = getattr(atom, "atom_type", None)
             if str(getattr(t, "value", t) or "") != "deal_metadata":

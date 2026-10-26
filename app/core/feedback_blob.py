@@ -103,6 +103,7 @@ def sync_into_store(store: "FeedbackStore") -> int:
         local = {}
     changed = 0
     try:
+        wanted = []
         for b in cc.list_blobs(name_starts_with=_PREFIX):
             cid = b.name[len(_PREFIX):]
             if cid.endswith(".json"):
@@ -117,10 +118,26 @@ def sync_into_store(store: "FeedbackStore") -> int:
                 # correction's blob is never meaningfully newer than its row.
                 if blob_ts is not None and blob_ts <= local[cid] + 1.0:
                     continue
-            try:
-                raw = cc.download_blob(b.name).readall()
-                incoming = Correction(**json.loads(raw))
-            except Exception:
+            wanted.append((cid, b.name))
+    except Exception:
+        return changed
+
+    def _fetch(item):
+        cid, name = item
+        try:
+            return cid, Correction(**json.loads(cc.download_blob(name).readall()))
+        except Exception:
+            return cid, None
+
+    # In parallel: a new replica's empty store fetched 1,766 corrections one
+    # at a time (12.9 s live, 67.9 s from the Mac, 2026-10-15). The writes
+    # stay on this thread, in listing order.
+    import concurrent.futures
+
+    workers = max(1, int(os.environ.get("SOWSMITH_FEEDBACK_BLOB_FETCH", "16") or 16))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for cid, incoming in pool.map(_fetch, wanted):
+            if incoming is None:
                 continue
             if cid in local and float(getattr(incoming, "updated_at", 0.0) or 0.0) <= local[cid]:
                 continue
@@ -129,8 +146,6 @@ def sync_into_store(store: "FeedbackStore") -> int:
                 changed += 1
             except Exception:
                 continue
-    except Exception:
-        return changed
     return changed
 
 

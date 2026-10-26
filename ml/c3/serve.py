@@ -1,0 +1,343 @@
+"""The C3 base as a small service: a deal's lines in, each line's type out.
+
+    SOWSMITH_C3_CHECKPOINT=... SOWSMITH_C3_ENCODER=... [SOWSMITH_C3_TOKEN=...] \\
+        python -m ml.c3.serve --port 8765
+
+It loads the base once, on the GPU when there is one (the live layer's
+``SOWSMITH_C3_*`` settings: checkpoint, encoder, device, dtype), and answers:
+
+* ``GET /health``: ``{"ready": bool, "device", "load_ms"}``. The worker calls
+  it when a compile starts, so a service that scaled to zero starts loading
+  while the documents are still being read.
+* ``POST /read``: body ``{"deal": <DealExample dict>, "budget_s": float,
+  "line_heads"?: [key], "document_heads"?: [key]}`` (the rows
+  ``c3_type_base.deal_payload`` builds). Answer: ``{"types": {key: [answer,
+  p]}, "reads"?: {key: {head: [answer, p]}}, "documents"?: {doc_id: {head:
+  [answer, p]}}, "read_ms", "lines"}``, or 504 when the read passes its
+  budget, or 503 at once while it is still loading (that compile's atoms go
+  to the LLM, so a cold start never slows a compile). One read at a time.
+
+With ``SOWSMITH_C3_TOKEN`` set, both need ``Authorization: Bearer <token>``.
+Nothing is logged but counts and times: no line text.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Callable
+
+log = logging.getLogger(__name__)
+
+TYPE_KEY = "col:label_type"
+MAX_BODY = 256 << 20
+#: The window the base was trained and scored with; equal to
+#: ``app.core.c3_type_base.MAX_ATOMS`` (a test keeps them equal). The service
+#: ships with ml/ only, so it does not import the parser.
+MAX_ATOMS = 8192
+
+
+def _load() -> tuple[Any, Any, str]:
+    """(model, schema, device) from the same settings as the live layer."""
+    from dataclasses import asdict
+
+    import torch
+
+    from .gates import load_checkpoint
+    from .loop import live_student
+    from .readiness import digest
+    from .schema import load_schema
+
+    path = os.environ.get("SOWSMITH_C3_CHECKPOINT", "").strip()
+    encoder = os.environ.get("SOWSMITH_C3_ENCODER", "").strip()
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError("SOWSMITH_C3_CHECKPOINT is unset or missing")
+    if not encoder:
+        raise ValueError("SOWSMITH_C3_ENCODER is unset")
+    device = os.environ.get("SOWSMITH_C3_DEVICE", "").strip().lower()
+    if not device or device == "auto":
+        device = ("cuda" if torch.cuda.is_available()
+                  else "mps" if torch.backends.mps.is_available() else "cpu")
+    schema = load_schema()
+    model = live_student(schema, encoder).to(device)
+    load_checkpoint(path, model, schema_sha256=digest([asdict(o) for o in schema.opportunities]))
+    from .loop import to_read_precision
+
+    to_read_precision(model)
+    if os.environ.get("SOWSMITH_C3_DTYPE", "").strip().lower() in ("bf16", "bfloat16"):
+        model.to(torch.bfloat16)
+    model.eval()
+    refit = os.environ.get("SOWSMITH_C3_QUESTION_REFIT", "").strip()
+    if refit and os.path.exists(refit):
+        from .question_fit import load_refit
+
+        model.question_refit = load_refit(refit, device)
+    # Judgment add-ons (judgment_fit.py, e.g. jdg:document_job) on the frozen heads.
+    jrefit = os.environ.get("SOWSMITH_C3_JUDGMENT_REFIT", "").strip()
+    if jrefit and os.path.exists(jrefit):
+        from .judgment_fit import load_refits
+
+        model.judgment_refits = load_refits(jrefit, device)
+    _prewarm_questions(model, device)
+    return model, schema, device
+
+
+def _prewarm_questions(model, device: str) -> None:
+    """Encode the question catalog once at start (predict._query_features),
+    so the first compile pays nothing for its questions."""
+    try:
+        import json as _json
+        from pathlib import Path
+
+        import torch
+
+        from .predict import _query_features, _read_autocast
+
+        path = Path(__file__).resolve().parents[2] / "c3_record" / "questions.json"
+        texts = [q["text"] for q in _json.loads(path.read_text(encoding="utf-8"))["questions"]]
+        with torch.no_grad(), _read_autocast(device):
+            for i in range(0, len(texts), 64):
+                _query_features(model, texts[i:i + 64])
+        log.info("question catalog encoded: %d", len(texts))
+    except Exception as exc:
+        log.info("question catalog not encoded at start: %s", type(exc).__name__)
+
+
+class Base:
+    """The loaded model and one read at a time. ``load`` and ``read`` are
+    seams for tests; by default they are the live layer's own."""
+
+    def __init__(self, load: Callable[[], tuple[Any, Any, str]] | None = None,
+                 read: Callable[..., dict[str, Any]] | None = None):
+        self._load_fn = load
+        self._read_fn = read
+        self.model: tuple[Any, Any, str] | None = None
+        self.error = ""
+        self.load_ms = 0.0
+        self._lock = threading.Lock()
+        self._loaded = threading.Event()
+
+    def load(self) -> None:
+        started = time.monotonic()
+        try:
+            self.model = (self._load_fn or _load)()
+        except Exception as exc:
+            self.error = f"{type(exc).__name__}: {exc}"[:300]
+            log.error("C3 base did not load: %s", self.error)
+        self.load_ms = round((time.monotonic() - started) * 1000, 1)
+        self._loaded.set()
+
+    def ready(self) -> bool:
+        return self._loaded.is_set() and self.model is not None
+
+    def read(self, payload: dict[str, Any], budget_s: float, *,
+             line_heads: tuple[str, ...] = (), document_heads: tuple[str, ...] = (),
+             full: bool = False, questions: tuple[str, ...] = ()) -> dict[str, Any]:
+        """Line types always; with ``line_heads``, those readings of every
+        line under ``reads``; with ``document_heads``, each document's group
+        judgments under ``documents``. One pass of the model answers all of
+        them, so asking for more costs the read almost nothing."""
+        from .data import DealExample
+
+        model, schema, device = self.model  # type: ignore[misc]
+        deal = DealExample.from_dict(payload)
+        read = self._read_fn
+        if read is None:
+            from .predict import read_deal
+
+            def read(m, d, s, **kw):
+                return read_deal(m, d, s, max_atoms=MAX_ATOMS, **kw)
+        wanted = tuple(dict.fromkeys((TYPE_KEY,) + tuple(line_heads)))
+        kwargs: dict[str, Any] = {}
+        if document_heads:
+            kwargs["document_heads"] = tuple(document_heads)
+        if questions:
+            kwargs["questions"] = tuple(questions)
+        with self._lock:
+            started = time.monotonic()
+            # ``full``: the links between lines and the whole-deal answers
+            # too (primary service, billing, scopes, tier), from the same
+            # model -- what a brief is assembled from.
+            doc = read(model, deal, schema, device=device, lines_only=not full,
+                       deadline=started + budget_s, heads=wanted, **kwargs)
+            read_ms = round((time.monotonic() - started) * 1000, 1)
+        types: dict[str, list[Any]] = {}
+        reads: dict[str, dict[str, list[Any]]] = {}
+        for key, line in (doc.get("lines") or {}).items():
+            got_all = line.get("reads") or {}
+            got = got_all.get(TYPE_KEY)
+            if got and got.get("answer") is not None:
+                types[key] = [str(got["answer"]), round(float(got.get("p") or 0.0), 4)]
+            for head in line_heads:
+                r = got_all.get(head)
+                if r and r.get("answer") is not None:
+                    reads.setdefault(key, {})[head] = [str(r["answer"]), round(float(r.get("p") or 0.0), 4)]
+        out: dict[str, Any] = {"types": types, "read_ms": read_ms, "lines": len(deal.atoms)}
+        if line_heads:
+            out["reads"] = reads
+        if full:
+            out["links"] = [{"src": l["src"], "dst": l["dst"], "relation": l["relation"],
+                             "p": round(float(l.get("p") or 0.0), 4)} for l in (doc.get("links") or [])]
+            out["deal"] = {k: ([str(v["answer"]), round(float(v.get("p") or 0.0), 4)] if "answer" in v
+                               else [v.get("value"), None]) for k, v in (doc.get("deal") or {}).items()}
+        if document_heads:
+            out["documents"] = {
+                d: {k: [str(v["answer"]), round(float(v.get("p") or 0.0), 4)] for k, v in heads.items()}
+                for d, heads in (doc.get("documents") or {}).items()}
+        if questions:
+            out["questions"] = doc.get("questions") or []
+            # The bar the refit was chosen at on held-out deals (question_fit),
+            # so the asker keeps a bar that matches the scores it gets.
+            out["question_bar"] = getattr(getattr(model, "question_refit", None), "bar", None)
+        return out
+
+
+def _asked(value: Any) -> tuple[str, ...]:
+    """A request's list of head keys (``jdg:document_job``), checked for
+    shape only: an unknown key reads as nothing, never as an error."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError("heads must be a list of strings")
+    return tuple(dict.fromkeys(v.strip() for v in value if v.strip()))[:64]
+
+
+def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):  # counts and times only, below
+            pass
+
+        def _send(self, code: int, body: dict[str, Any]) -> None:
+            raw = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def _allowed(self) -> bool:
+            if token and self.headers.get("Authorization", "") != f"Bearer {token}":
+                self._send(401, {"error": "unauthorized"})
+                return False
+            return True
+
+        def do_GET(self):
+            if not self._allowed():
+                return
+            if self.path != "/health":
+                return self._send(404, {"error": "not found"})
+            device = base.model[2] if base.model else ""
+            self._send(200, {"ready": base.ready(), "device": device,
+                             "load_ms": base.load_ms, "error": base.error})
+
+        def do_POST(self):
+            if not self._allowed():
+                return
+            if self.path == "/v1/quote":
+                return self._quote()
+            if self.path != "/read":
+                return self._send(404, {"error": "not found"})
+            size = int(self.headers.get("Content-Length") or 0)
+            if size <= 0 or size > MAX_BODY:
+                return self._send(413, {"error": "body size"})
+            try:
+                body = json.loads(self.rfile.read(size))
+                budget = float(body.get("budget_s") or 90.0)
+                deal = body["deal"]
+                line_heads = _asked(body.get("line_heads"))
+                document_heads = _asked(body.get("document_heads"))
+                full = bool(body.get("full"))
+                questions = tuple(str(q)[:500] for q in (body.get("questions") or [])[:400])
+            except (ValueError, KeyError, TypeError):
+                return self._send(400, {"error": "bad body"})
+            started = time.monotonic()
+            # A cold service answers at once instead of making the compile
+            # wait: that compile's atoms go to the LLM, the next one is warm.
+            if not base.ready():
+                return self._send(503, {"error": base.error or "still loading"})
+            try:
+                out = base.read(deal, max(1.0, budget - (time.monotonic() - started)),
+                                line_heads=line_heads, document_heads=document_heads, full=full,
+                                questions=questions)
+            except TimeoutError as exc:
+                log.warning("read over budget: %s", exc)
+                return self._send(504, {"error": "over budget"})
+            except Exception as exc:
+                # Where it failed (file:line:function per frame) and the
+                # message's first 160 characters -- never the deal's text.
+                import traceback as _tb
+
+                frames = " < ".join(f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}"
+                                    for f in reversed(_tb.extract_tb(exc.__traceback__)[-6:]))
+                log.error("read failed: %s: %s | %s", type(exc).__name__, str(exc)[:160], frames)
+                return self._send(500, {"error": type(exc).__name__})
+            log.info("read lines=%d typed=%d read_ms=%.0f", out["lines"], len(out["types"]),
+                     out["read_ms"])
+            self._send(200, out)
+
+        def _quote(self):
+            """Deal Kit quote heads (ml/c3/quote_heads.py): a labor proposal from the deal's atoms and
+            c3_brief. No trunk pass, so it never waits on a compile's /read; it is not dumped to disk."""
+            size = int(self.headers.get("Content-Length") or 0)
+            if size <= 0 or size > MAX_BODY:
+                return self._send(413, {"error": "body size"})
+            try:
+                body = json.loads(self.rfile.read(size))
+                deal = body["deal"]
+            except (ValueError, KeyError, TypeError):
+                return self._send(400, {"error": "bad body"})
+            qh = _quote_heads()
+            if qh is None:
+                return self._send(503, {"error": "quote heads not loaded"})
+            started = time.monotonic()
+            try:
+                out = qh.quote(deal, word=bool(body.get("word", True)))
+            except Exception as exc:
+                log.error("quote failed: %s: %s", type(exc).__name__, str(exc)[:160])
+                return self._send(500, {"error": type(exc).__name__})
+            log.info("quote job=%s ms=%.0f", out.get("job_type"), (time.monotonic() - started) * 1000)
+            self._send(200, out)
+
+    return Handler
+
+
+_QH: list[Any] = []
+_QH_LOCK = threading.Lock()
+
+
+def _quote_heads():
+    """Load the quote-heads bundle once (SOWSMITH_C3_QUOTE_HEADS, default next to the checkpoint)."""
+    with _QH_LOCK:
+        if _QH:
+            return _QH[0]
+        path = os.environ.get("SOWSMITH_C3_QUOTE_HEADS", "").strip() or os.path.expanduser("~/c3-serve/c3_base/quote_heads_bundle.json")
+        if not os.path.exists(path):
+            return None
+        from .quote_heads import QuoteHeads
+
+        _QH.append(QuoteHeads(path))
+        log.info("quote heads %s loaded", _QH[0].version)
+        return _QH[0]
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
+    args = p.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    base = Base()
+    # Answer /health at once and load behind it, so a cold start is visible.
+    threading.Thread(target=base.load, daemon=True).start()
+    server = ThreadingHTTPServer((args.host, args.port),
+                                 handler(base, os.environ.get("SOWSMITH_C3_TOKEN", "").strip()))
+    log.info("C3 base service on %s:%d", args.host, args.port)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

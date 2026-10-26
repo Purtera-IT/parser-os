@@ -290,8 +290,17 @@ def _is_authoritative_physical_site_atom(atom: Any) -> bool:
     ).lower()
     text_blob = str(getattr(atom, "raw_text", "") or "").lower()
     flags = {str(f).lower() for f in (getattr(atom, "review_flags", None) or [])}
+    # A row the roster extractor read off a header-matched table is a roster
+    # row whatever the file is called ("Site List Project Bastion.xlsx" never
+    # matched the name test, so one email-footer address made 010447's 145
+    # sites aliases of it).
+    extraction = " ".join(
+        f"{getattr(ref, 'extraction_method', '') or ''} {(getattr(ref, 'locator', None) or {}).get('extraction', '') if isinstance(getattr(ref, 'locator', None), dict) else ''}"
+        for ref in (getattr(atom, "source_refs", None) or [])
+    ).lower()
     return bool(
-        "authoritative" in filename_blob
+        "site_roster" in extraction
+        or "authoritative" in filename_blob
         or "site_roster" in filename_blob
         or "site roster" in filename_blob
         or "site roster" in text_blob
@@ -858,6 +867,12 @@ def _merge_grouped_by_location_buckets(grouped: dict[str, list[Any]]) -> dict[st
                 # Both know their street, and the streets differ.
                 continue
             same_street = bool(s1 and s2 and (s1 & s2))
+            # Two keys that each carry their own number are two coded places
+            # (010279's "Store 64" and "Store 33", both Greensboro): a shared
+            # town or a missing name never makes them one.
+            d1, d2 = re.findall(r"\d+", c1), re.findall(r"\d+", c2)
+            if d1 and d2 and set(d1).isdisjoint(d2) and not s1 and not s2:
+                continue
             if all(b.startswith("town:") for b in shared):
                 # Only the town is shared: the names alone must say one place.
                 i1, i2 = _identity(c1), _identity(c2)
@@ -949,6 +964,26 @@ def _states_more_than_the_site(atom: Any, winner: Any) -> bool:
     return bool(extra & _STATEMENT_VERBS)
 
 
+_PLACE_LABEL_RE = re.compile(r"^[^|]{1,40}\|\s*")
+
+
+def _names_a_place_the_site_does_not(atom: Any, winner: Any) -> bool:
+    """Does this alias name a place inside the site that the site never names?
+
+    A request form's "Specific Location(s) | Sodexo Dining CAFE" is typed
+    physical_site and points at the one address on the deal, so it folded in as
+    an alias and the room the work happens in was gone (010115: the only line
+    saying where in the Delta building). A name the address does not carry is a
+    detail of the site, not a second spelling of it: keep its words.
+    """
+    raw = str(getattr(atom, "raw_text", "") or "")
+    name = _PLACE_LABEL_RE.sub("", raw, count=1) if "|" in raw else raw
+    words = set(re.sub(r"[^a-z0-9 ]+", " ", name.lower()).split())
+    other = set(_norm_for_containment(winner).split())
+    extra = {w for w in words - other if len(w) > 2 and not w.isdigit()}
+    return len(extra) >= 2 and not (extra & _ADDRESS_WORDS)
+
+
 def _covered_by_a_site(atom: Any, sites: list[Any]) -> bool:
     """Does some site in ``sites`` state every ZIP, phone, email and
     instruction ``atom`` does, so dropping ``atom`` loses nothing?
@@ -975,7 +1010,15 @@ _NO_DETAIL = _NoDetail()
 
 
 def _demote_from_site(atom: Any) -> None:
-    """Keep the sentence, drop its claim to be a site declaration."""
+    """Keep the sentence, drop its claim to be a site declaration. Never for a
+    line the base typed (c3 authority): a dedup rule does not outrank it."""
+    try:
+        from app.core.c3_type_base import is_locked
+
+        if is_locked(atom):
+            return
+    except Exception:
+        pass
     try:
         from app.core.schemas import AtomType
 
@@ -1014,6 +1057,7 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         if not physical:
             return atoms
 
+    kept_lines: set[int] = set()  # alias lines kept for their words; never dropped below
     # If a real location-backed site exists, weak name-only prose guesses ("new
     # office/workshop location") are aliases at best and should not become the
     # canonical site shown to PMs. Authoritative roster-only rows still survive:
@@ -1044,17 +1088,24 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 if target is None:
                     # An alias of nothing has no survivor: it may go only
                     # when a located site already states its details.
-                    if not _covered_by_a_site(alias_atom, location_backed):
+                    if (all(_names_a_place_the_site_does_not(alias_atom, s) for s in location_backed)
+                            or not _covered_by_a_site(alias_atom, location_backed)):
                         _demote_from_site(alias_atom)
                         kept_for_words.add(id(alias_atom))
                     continue
                 if target is not None:
                     _merge_physical_site_alias_metadata(target, alias_atom)
-                    if _states_more_than_the_site(alias_atom, target) or _detail_lost(target, alias_atom):
+                    if (_states_more_than_the_site(alias_atom, target) or _detail_lost(target, alias_atom)
+                            or _names_a_place_the_site_does_not(alias_atom, target)):
                         _demote_from_site(alias_atom)
                         kept_for_words.add(id(alias_atom))
             name_only_ids -= kept_for_words
-            physical = [a for a in physical if id(a) not in name_only_ids]
+            kept_lines |= kept_for_words
+            # A kept line also stays out of the site-id grouping below. The base
+            # may have typed it (locked: _demote_from_site leaves it a site), and
+            # grouping would fold it into the address after all (010115 Dining
+            # CAFE, p 0.993 physical_site, kept here and merged two steps later).
+            physical = [a for a in physical if id(a) not in name_only_ids and id(a) not in kept_for_words]
             atoms = [
                 a
                 for a in atoms
@@ -1263,6 +1314,9 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
             out.append(atom)
             continue
         aid = id(atom)
+        if aid in kept_lines and aid not in merged_by_id:
+            out.append(atom)  # a base-typed line kept for its words stays (it was not demoted)
+            continue
         if aid in consumed_ids:
             continue
         if aid in merged_by_id:

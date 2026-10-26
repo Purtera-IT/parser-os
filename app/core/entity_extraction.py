@@ -5311,6 +5311,24 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
     return out
 
 
+#: Seconds per part of the last ``enrich_atoms`` call (counts only).
+ENRICH_SECONDS: dict[str, float] = {}
+
+
+def _roster_site_key(atom: Any) -> str | None:
+    """``site:<slug>`` of a site-roster row's own id: a physical_site whose value
+    carries its sheet row's cells (xlsx/csv rosters), else None."""
+    if str(getattr(getattr(atom, "atom_type", None), "value", "")) != "physical_site":
+        return None
+    v = getattr(atom, "value", None)
+    roster = any("site_roster" in str(getattr(r, "extraction_method", "") or "")
+                 for r in (getattr(atom, "source_refs", None) or []))
+    if not isinstance(v, dict) or not (roster or v.get("cells")) or not isinstance(v.get("site_id"), str):
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "_", v["site_id"].strip().lower()).strip("_")
+    return f"site:{slug}" if slug else None
+
+
 def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     """Mutate ``atoms`` in place: populate ``entity_keys``.
 
@@ -5337,7 +5355,15 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # landmarks, standards bodies, header fragments) gets dropped.
     from app.core.site_detection import find_authoritative_site_phrases
     atom_list = list(atoms)
+    # Each part's seconds, for the compile notes (010043, 2026-10-15: this
+    # stage took 39 s and nothing said where).
+    import time as _ee_time
+
+    _ee_t0 = _ee_time.perf_counter()
     authoritative_sites = find_authoritative_site_phrases(atom_list)
+    ENRICH_SECONDS.clear()
+    ENRICH_SECONDS["site_phrases"] = round(_ee_time.perf_counter() - _ee_t0, 1)
+    _ee_t0 = _ee_time.perf_counter()
 
     # When the catalog contains LLM-discovered sites that NO atom's
     # raw_text would naturally emit (e.g. "Geary County Schools USD
@@ -5383,6 +5409,8 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
     # v53.2: STRICT mode — when ANY physical_site atom exists, the
     # roster catalog is the ONLY valid set of sites. Reject any
     # site:* key not aliasing to a roster row.
+    ENRICH_SECONDS["site_role_drops"] = round(_ee_time.perf_counter() - _ee_t0, 1)
+    _ee_t0 = _ee_time.perf_counter()
     _has_physical_site_atoms = any(
         (getattr(a, "atom_type", None).value
             if hasattr(getattr(a, "atom_type", None), "value")
@@ -5722,6 +5750,16 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
                     # other meaningful word from the phrase are
                     # both present in the atom text+headings.
                     longest = max(words, key=len)
+                    # A site named by its street number is that street: the
+                    # line must carry the same number. On 010038 "OLD Site:
+                    # 1220 W 6th Street, Suite 502, Cleveland" took the new
+                    # site's key from "cleveland" + "suite", and the roster
+                    # then merged the old and new offices into one.
+                    # The house number, not the ZIP: both offices are in
+                    # 44113.
+                    house = re.match(r"\s*(\d{1,6})\b", phrase)
+                    if house and not re.search(rf"\b{house.group(1)}\b", full):
+                        continue
                     if longest in full:
                         hits = sum(1 for w in words if w in full)
                         if hits >= min(2, len(words)):
@@ -5975,9 +6013,17 @@ def enrich_atoms(atoms: Iterable[Any], pack: DomainPack) -> tuple[int, int]:
         current = atom.entity_keys or []
         if not current:
             continue
+        # A site roster row's own key (its "Site No." cell, a header-matched
+        # column) is a site by structure. The wording filters below judge a
+        # bare slug: "dc5841" reads as a part code, which dropped 143 of
+        # 010447's 145 sites.
+        _roster_key = _roster_site_key(atom)
         kept = []
         dropped_any = False
         for k in current:
+            if k.startswith("site:") and k == _roster_key:
+                kept.append(k)
+                continue
             if k.startswith("site:"):
                 # Universal store-learned role gate first; denylist second.
                 if k in _site_role_drops:

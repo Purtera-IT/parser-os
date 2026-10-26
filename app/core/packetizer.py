@@ -291,6 +291,15 @@ PACKET_ANCHOR_ELIGIBLE: dict[AtomType, PacketFamily] = {
 # oversight.
 PACKET_NON_ANCHOR: frozenset[AtomType] = frozenset(
     {
+        AtomType.answered_question,
+        AtomType.internal_question,
+        AtomType.list_header,
+        AtomType.commitment,
+        AtomType.rate_card,
+        AtomType.deal_summary,
+        AtomType.certification,
+        AtomType.source_caveat,
+        AtomType.legend_entry,
         AtomType.entity,
         AtomType.assumption,
         # PR2 structured rows — render in their own OrbitBrief sections.

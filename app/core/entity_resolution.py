@@ -766,13 +766,16 @@ def collect_site_alias_groups(atoms: list[EvidenceAtom]) -> list[frozenset[str]]
         prefix = m.group(1) if m else slug
         prefix_map.setdefault(prefix, set()).add(k)
     for prefix, group in prefix_map.items():
-        if len(group) >= 2:
-            # Also include the bare-prefix form (no suffix) when it
-            # exists as a separate site key.
-            bare = f"site:{prefix}"
-            if bare in all_site_keys:
-                group.add(bare)
-            all_groups.append(group)
+        # Only an extractor's re-emission: the bare key and ONE numbered copy
+        # of it (site:main_office + site:main_office_2). Two numbered keys are
+        # two places: a customer's site codes end in the store number, and
+        # merging on the prefix collapsed JFK_Bronx_620 and JFK_Bronx_637,
+        # every ORD_Chicago_* and every PHL_Philadelphia_* store into one site
+        # each (010194 published 26 sites of 65).
+        bare = f"site:{prefix}"
+        numbered = [k for k in group if k != bare]
+        if bare in all_site_keys and len(numbered) == 1:
+            all_groups.append({bare, numbered[0]})
 
     # Separators are not identity.
     #
@@ -985,6 +988,21 @@ def _address_identity(row: dict[str, Any]) -> str:
     return f"{street}|{code}"
 
 
+#: A customer site code: a short prefix, a place, a number ("OAK_Albany_449",
+#: "SJC_Santa-Clara_407"), read off the site's own key or name.
+_SITE_CODE = re.compile(r"^([a-z]{2,5}(?:_[a-z][a-z.]*)+_\d{1,5})(?:_|$)")
+
+
+def _site_code(key: str, row: dict[str, Any]) -> str:
+    for raw in (row.get("site_id"), row.get("site_code"), key.split(":", 1)[-1],
+                row.get("name"), row.get("facility_name")):
+        slug = re.sub(r"[^a-z0-9.]+", "_", str(raw or "").lower()).strip("_")
+        m = _SITE_CODE.match(slug)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def address_identity_groups(
     site_keys: set[str],
     rows_by_key: dict[str, dict[str, Any]] | None = None,
@@ -1011,15 +1029,37 @@ def address_identity_groups(
     keys = sorted(k for k in site_keys if isinstance(k, str) and k.startswith("site:"))
     if len(keys) < 2:
         return []
-    by_address: dict[str, set[str]] = {}
+    # Two identities, either one enough: street + postcode, or the customer's
+    # own site code. 000123 published 55 stores twice each, "OAK_Albany_449
+    # (Bevmosto)" and "OAK_Albany_449 (San)", the second copy's address a
+    # garbled repeat; every pair was labeled same_site and none merged.
+    parent = {k: k for k in keys}
+
+    def root(k: str) -> str:
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+    by_ident: dict[str, str] = {}
     for key in keys:
         row = (rows_by_key or {}).get(key)
-        if not isinstance(row, dict):
-            continue
-        ident = _address_identity(row)
-        if ident:
-            by_address.setdefault(ident, set()).add(key)
-    groups = [g for g in by_address.values() if len(g) >= 2]
+        idents = []
+        if isinstance(row, dict):
+            addr = _address_identity(row)
+            if addr:
+                idents.append("a:" + addr)
+        code = _site_code(key, row if isinstance(row, dict) else {})
+        if code:
+            idents.append("c:" + code)
+        for ident in idents:
+            if ident in by_ident:
+                parent[root(key)] = root(by_ident[ident])
+            else:
+                by_ident[ident] = key
+    by_root: dict[str, set[str]] = {}
+    for key in keys:
+        by_root.setdefault(root(key), set()).add(key)
+    groups = [g for g in by_root.values() if len(g) >= 2]
     if groups:
         logging.getLogger(__name__).info(
             "address_identity: %d site key(s) share %d address(es) -> merged %s",
@@ -1515,6 +1555,15 @@ _EXACT_MATCH_ENTITY_TYPES: frozenset[str] = frozenset({
 })
 
 
+def _numbers_differ(a: EntityRecord, b: EntityRecord) -> bool:
+    """Two site names whose digit runs differ name different places."""
+    if a.entity_type != "site":
+        return False
+    na = re.findall(r"\d+", a.canonical_name or "")
+    nb = re.findall(r"\d+", b.canonical_name or "")
+    return bool(na or nb) and na != nb
+
+
 def resolve_aliases(records: list[EntityRecord]) -> list[EntityRecord]:
     if not records:
         return []
@@ -1538,6 +1587,11 @@ def resolve_aliases(records: list[EntityRecord]) -> list[EntityRecord]:
             elif exact_only:
                 # Skip fuzzy merging for numeric / structured entity
                 # types — "100000" vs "10000" must NOT collapse.
+                continue
+            elif _numbers_differ(merged, other):
+                # "dc 7340" / "dc 7341", "Store 12" / "Store 13": the number IS
+                # the identity. A one-digit edit scores ~83 and used to fold
+                # 147 of 010447's roster sites into 29.
                 continue
             else:
                 score = _fuzzy_score(merged.canonical_name, other.canonical_name)

@@ -1,0 +1,186 @@
+<title>Super Heads Overnight</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one reading column; findings first, then the evidence tables, then what to label */
+:root{--bg:#f5f6f3;--panel:#fff;--fg:#1c231f;--muted:#5b6862;--line:#dde3de;--accent:#2f6f5e;--good:#2f7a3a;--warn:#a5641a;
+--f-display:'Fraunces',Georgia,serif;--f-body:'IBM Plex Sans',system-ui,sans-serif;--f-mono:'IBM Plex Mono',ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121614;--panel:#1a201d;--fg:#e3eae6;--muted:#97a59d;--line:#2b342f;--accent:#7cc4ad;--good:#8fcf7c;--warn:#e0a84a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121614;--panel:#1a201d;--fg:#e3eae6;--muted:#97a59d;--line:#2b342f;--accent:#7cc4ad;--good:#8fcf7c;--warn:#e0a84a;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);padding:28px 16px 56px}
+.wrap{max-width:980px;margin:0 auto;display:grid;gap:28px}
+h1{font:600 2rem/1.15 var(--f-display);margin:0;text-wrap:balance}
+h2{font:600 1.2rem/1.3 var(--f-body);margin:0 0 10px;text-wrap:balance}
+h3{font:600 1.02rem var(--f-body);margin:0 0 8px} h4{font:500 .8rem var(--f-body);text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:8px 0}
+p{margin:0 0 8px;max-width:70ch} .muted{color:var(--muted)}
+ul,ol{margin:0;padding-left:20px} li{margin:3px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:.9rem}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)} th{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:500}
+td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums} td.ok{color:var(--good);font-weight:600}
+.p{font-family:var(--f-mono);color:var(--muted);font-size:.8rem} .cite{color:var(--muted);font-size:.84rem}
+.summary{font-style:italic;color:var(--muted)}
+code{font-family:var(--f-mono);font-size:.88em}
+</style>
+<div class=wrap>
+<header><h1>Super Heads Overnight</h1><p class=muted>Updated 16 October, evening: go-live assessment first, then the four asks.</p>
+<p class=muted>Dev only; prod untouched. Branch <code>claude/c3-serve-all-heads</code>. Every number below was measured on a live dev compile or against your labels; training deals (the base learned from them) are marked as flattering, and 010043 is the deal it never trained on.</p></header>
+
+<section><h2>Ready to go live? Where it stands</h2>
+<p><b>Ready for people to use and label on dev now.</b> Going live in prod needs three things first, listed at the end.</p>
+<h3>Speed: final numbers on dev</h3>
+<p class=muted>"Cold" is a fresh container with an empty cache, which is what most real compiles get, because the worker scales from zero. "Warm" is a re-parse soon after another one.</p>
+<div class=tbl><table><thead><tr><th>Deal</th><th>Lines</th><th>Yesterday</th><th>Now, cold</th><th>Now, warm</th><th>Quality vs your labels</th></tr></thead><tbody>
+<tr><td>000002</td><td class=n>386</td><td class=n>122 s</td><td class=n>—</td><td class="n ok">74 s</td><td>keep 51/52, sections 46/48</td></tr>
+<tr><td>010043</td><td class=n>2,312</td><td class=n>334 s</td><td class="n ok">241 s</td><td class="n ok">162 s</td><td>keep precision 0.74, sections 84/119</td></tr>
+<tr><td>010115</td><td class=n>6,898</td><td class=n>672 s</td><td class="n ok">377 s</td><td class="n ok">357 s</td><td>keep 0.99, sections 84/149</td></tr>
+</tbody></table></div>
+<p>What made it faster today:</p>
+<ul>
+<li><b>Parsing: 130 s → 36 s on 010043.</b> Two parser checks embedded one line per network call: 351 calls of about 0.38 s each. They now ask in one batch, and the image-label check only runs on pages that have images. The parse output is identical: all 3,811 lines of 010043's 38 files, before and after.</li>
+<li><b>Cold starts.</b> One TLS timeout used to fail the compile's embedding warm-up, and every later step then embedded one line per call (010043 took 393 s). Embedding requests now retry. Span admission no longer re-types lines the base already typed; that saved 335 calls.</li>
+<li><b>nano on the small LLM jobs</b>, with 10 calls in flight instead of 5.</li>
+</ul>
+<p>Small deals are under 2 minutes warm. On big deals, what's left is value filling (75 s, 94 calls on 010115) and the entity pass (32 s). Both go away when the heads run on the GPU and fill values themselves.</p>
+<h3>Big deals had no PM page on dev</h3>
+<p>Every Core brief that ran over about 5 minutes was killed. Core accepts the run over HTTP and works in the background, and with no open request Container Apps scaled it to zero after a 300 s cooldown. 010115's page failed every time today. The dev cooldown is now 20 minutes, and 010115's page built for the first time. Prod has the same setting and is unchanged. Core also runs each brief 2–3 times at once, which makes this worse.</p>
+<h3>What a PM sees now</h3>
+<ul>
+<li><b>Headline:</b> the brief's first sentence ("This project involves installing three Verkada cameras at the Lane Construction office…").</li>
+<li><b>Overview:</b> the heads' summary, then Scope, Customer responsibilities, Out of scope, Schedule, Fees and Terms, each sentence drawn only from cited lines.</li>
+<li><b>Questions:</b> the deal's own questions first, then the catalog questions the base asked, each with the file and line it rests on. The old pipeline's questions stay in the audit pool.</li>
+</ul>
+<p>Three things on dev had been overwriting this:</p>
+<ul>
+<li>Core's own overview writer;</li>
+<li>its polish LLM;</li>
+<li>a headline template in the Function App (<a href="https://github.com/Purtera-IT/Platform-infra/pull/631">Platform-infra PR #631</a>).</li>
+</ul>
+<p>All three now leave the heads' brief alone.</p>
+<h3>If the Mac that serves the heads is off</h3>
+<p>Nothing breaks. Lines with no reading go to the LLM typing path as before. With no heads' brief, the PM page falls back to Core's old pipeline. The compile is slower and back at the old quality.</p>
+<h3>Before prod</h3>
+<ol>
+<li><b>The heads on the Azure GPU</b>, not the Mac. The Mac is one machine behind a relay and fine for dev, but prod needs it always on. The GPU quota ticket is still pending.</li>
+<li><b>Merge and migrate, in one go:</b>
+<ul>
+<li>parser-os branch <code>claude/c3-serve-all-heads</code>;</li>
+<li><a href="https://github.com/Purtera-IT/Orbitbrief-Core/pull/89">Core PR #89</a>;</li>
+<li><a href="https://github.com/Purtera-IT/Platform-infra/pull/631">Platform-infra PR #631</a>;</li>
+<li>the env switches (<code>SOWSMITH_C3_*</code>, <code>SOWSMITH_SMALL_MODEL</code>, <code>SOWSMITH_LLM_PARALLEL=10</code>, <code>ORBITBRIEF_C3_BRIEF</code>);</li>
+<li>a gpt-4.1-nano deployment on the prod Azure account.</li>
+</ul></li>
+<li><b>Severity:</b> every heads' question is a "clarification" until a severity head exists. PMs will see no blockers from the heads. Label blocker vs clarification on the Questions card to train it.</li>
+</ol>
+</section>
+
+<section><h2>Today: the four asks</h2><ol>
+<li><b>The PM page reads the heads' brief.</b> Orbitbrief-Core now builds the handoff's questions from <code>c3_brief</code>: first the questions the deal itself asks (cited lines), then the catalog questions the base asked, most likely first. Its summary line also comes from the brief. The old pipeline's questions move to the audit pool, so nothing is lost. It is behind <code>ORBITBRIEF_C3_BRIEF</code>, which is on in dev only (Core revision 0000140, <a href="https://github.com/Purtera-IT/Orbitbrief-Core/pull/89">Core PR #89</a>, not merged). Live on 010043, the page opens with the brief's summary ("installing three Verkada cameras at the Lane Construction office… 6125 Tyvola Centre Drive"). Next come the deal's own five questions (camera model/BOM, address and quantity, the 2-camera quote, an NC install partner, cable lengths), each citing its email. Then 44 catalog questions, and six cited sections. Severity is not a head yet, so every question is a clarification and none is a blocker.</li>
+<li><b>Quote rows stay whole.</b> The cause was not the text splitter. CDW's grid reader stopped after the first item: items sit about 33pt apart, past its gap limit, and a wrapped "60 d" looked like a number. The rest fell back to text, with each item's tail glued onto the next. Page 2 ("ORDER DETAILS (CONT.)") has no header row. Now on live dev, all five PVDP685 items are one line each with QTY, CDW#, prices and Mfg. Part#, and they add up to the quote's subtotal ($5,707.28). A regression test covers spacing, the wrap and the continued page.</li>
+<li><b>Supplier is company config.</b> Your partners (CDW, SHI) live in the Purtera layer (<code>purtera_layer.json</code>), and a base "third party" on their lines reads as "partner". The schema move for the next retrain is written down in <code>docs/RETRAIN_SCHEMA_CHANGES.md</code>.</li>
+<li><b>PR #418 is merged.</b> The old typing code is gone from the dev branch. One leftover: the worker's build check still required the deleted module, so the first deploy failed. Fixed in <a href="https://github.com/Purtera-IT/parser-os-worker/pull/30">worker PR #30</a> (merged; dev only).</li>
+</ol>
+<h3>nano: what it buys</h3>
+<p>gpt-4.1-nano now runs the small LLM jobs (value filling, vendor check, BOM owner, entity extraction and resolution). The brief's writing call stays on mini.</p>
+<div class=tbl><table><thead><tr><th>Deal</th><th>Before (mini) s</th><th>nano s</th><th>LLM-seconds before → after</th><th>Quality vs your labels</th></tr></thead><tbody>
+<tr><td>000002</td><td class=n>122</td><td class=n>105</td><td class=n>78 → 82</td><td>keep 51/52 both; sections 48/48 → 46/48</td></tr>
+<tr><td>010043</td><td class=n>334</td><td class=n>285</td><td class=n>368 → 134</td><td>keep precision 0.68 → 0.74 (whole quote rows); sections 85/119 both</td></tr>
+<tr><td>010115</td><td class=n>672</td><td class=n>468</td><td class=n>1752 → 934</td><td>keep 0.99 both; sections 87/150 → 86/151</td></tr>
+</tbody></table></div>
+<p class=muted>The first 010043 run on nano (351 s) lost its whole written brief: the writing call's answer runs about 1,800 tokens, right at its 2,000 cap, and came back cut off. The cap is now 3,500, and a cut-off answer keeps its complete sentences. The 285 s run is on that fix. About 100 s of every compile is still cold embeddings at setup, so no deal here is under 2 minutes yet. The next big cuts are that warm-up and the 38 entity-extraction calls on 010043.</p>
+</section>
+
+<section><h2>What changed</h2><ol>
+<li><b>The super heads type every line; the parser only parses.</b> Measured on 010043, the deal the base never trained on (Deal Kit sheets excluded, <code>_keep</code> read as "the current type stands"), the base beats the parser/LLM in every confidence band: 67.7% vs 54.0% overall, 91.8% vs 67.5% when sure. Dev now gives the base every line except Deal Kit and estimating sheets, before typing and again at the end of the compile, so no parser rule can overrule it. The LLM no longer types; it only fills values (an address, an amount) on lines the base typed.</li>
+<li><b>Questions come from the base.</b> A 154-question catalog (149 base, 5 Purtera), scored per deal by the Questions super head, refit on the Mac in about 4 minutes from your verdicts (held-out ranking 0.75 → 0.85). The writing call only drops questions the deal already answers, citing the line. Verdicts on the Questions card train the head.</li>
+<li><b>Brief v2 in the parse.</b> The heads choose what goes in, and one short writing call words it with citations. On 000002: 50 of 51 kept lines right, every section right. On 010043: 67% of kept lines right, 81% of your keeps found.</li>
+<li><b>Site bugs fixed in the parser, with the base deciding.</b> Different stores were merged by store number, a customer's own site list was deleted by one self-taught lesson, passing mentions in a call became sites, and the roster never applied merges. Details below.</li>
+<li><b>The LLM's self-taught lessons can no longer act as your corrections.</b> They answered as "store", the label rules trust to delete or drop. One deleted 49 of 010194's stores. They now answer as "teacher".</li>
+<li><b>Faster.</b> Vision replies are cached (42.8 s → 0.2 s on 010043), the brief's writing calls are 13–14 s, the base's question read went from 24 s to 11 s, and a lesson-embedding warm-up that skipped by timing (18 minutes on 010082) now always runs.</li>
+<li><b>Old typing code removed.</b> <a href="https://github.com/Purtera-IT/parser-os/pull/418">PR #418</a> deletes the replaced type heads, the typing student, the rubric gate and the lesson-lookup typing. Merged 16 October.</li>
+</ol></section>
+
+
+<section><h2>What your labels say</h2>
+<p class=muted>18 labeled deals, 78,641 labeled lines (9,869 on Deal Kit / estimating sheets), every one with a written note.</p>
+<div class=tbl><table><thead><tr><th>Decision</th><th>Your labels</th><th>Unseen deal 010043</th><th>Who decides now</th></tr></thead><tbody>
+<tr><td>Line type</td><td class=n>78,641 lines</td><td>base 67.7% vs parser/LLM 54.0%</td><td><b>Base, every line</b></td></tr>
+<tr><td>Keep / noise in the brief</td><td class=n>39,294 + 21,846</td><td>keeps 81% found, 67% right</td><td>Purtera head</td></tr>
+<tr><td>Brief section</td><td class=n>10,736</td><td>sections 72–100% right</td><td>Base</td></tr>
+<tr><td>Questions</td><td class=n>1,310 verdicts</td><td>ranking 0.82 → 0.92 with the Mac refit</td><td>Base + refit</td></tr>
+<tr><td>Document is another job</td><td class=n>1,011 documents</td><td>LLM: never caught one of your 124 other-job docs, and all 145 lines it set aside should have been kept. Base: catches 118/124 on deals it learned, but on 010043 flags 8 of 38 real documents. 88 of your 124 other-job labels are calls, and only 45 calls are labeled "this deal", so it learned "a call is usually another job"; 4 of the 8 are calls. The signed SOW and the PO at 1.00 are not explained by that and are still open</td><td>Stage off; label calls on single-job deals</td></tr>
+<tr><td>Who supplies</td><td class=n>53,045 lines</td><td>"us" 329/462, "customer" 58/100, "partner" 111/281. The base says <i>third party</i> on CDW quote lines you labeled <i>partner</i>: who counts as a partner is Purtera's relationship, not a universal fact, and the parser splits each quote row into fragments ("$109.76" alone)</td><td>Move supplier to the Purtera layer; keep quote rows whole</td></tr>
+<tr><td>Site lines</td><td class=n>~2,200 site lines</td><td>precision 96.7% vs 89.2% across deals</td><td>Base</td></tr>
+<tr><td>Job site vs vendor</td><td class=n>245 (236 / 9)</td><td>one-sided: always "job site"</td><td>LLM until vendor labels</td></tr>
+<tr><td>Same site</td><td class=n>219 pairs (55 of 64 "same" in one deal)</td><td>not learnable yet</td><td>Strict identity rules (0 false merges)</td></tr>
+</tbody></table></div></section>
+
+<section><h2>The parser's drops, against your verdicts</h2>
+<p class=muted>68,537 dropped lines you reviewed: 99.2% right overall. Structural parsing is excellent; every drop that is really a judgment is not.</p>
+<div class=tbl><table><thead><tr><th>Drop stage</th><th>Reviewed</th><th>Wrong</th><th>Kind</th></tr></thead><tbody>
+<tr><td>Quoted email history</td><td class=n>45,591</td><td class=n>56 (0.1%)</td><td>parsing</td></tr>
+<tr><td>Quoted chatter</td><td class=n>8,275</td><td class=n>63 (0.8%)</td><td>parsing</td></tr>
+<tr><td>Duplicate collapse</td><td class=n>7,145</td><td class=n>77 (1.1%)</td><td>parsing</td></tr>
+<tr><td>Document-job "other job"</td><td class=n>145</td><td class=n>145 (100%)</td><td>judgment (LLM)</td></tr>
+<tr><td>Pasted-note dedup</td><td class=n>34</td><td class=n>18 (53%)</td><td>judgment (rule)</td></tr>
+<tr><td>Site vendor check</td><td class=n>87</td><td class=n>25 (29%)</td><td>judgment</td></tr>
+<tr><td>Section heading</td><td class=n>133</td><td class=n>21 (16%)</td><td>judgment (rule)</td></tr>
+<tr><td>Meaning-based dedup</td><td class=n>505</td><td class=n>76 (15%)</td><td>judgment (rule)</td></tr>
+<tr><td>Substance gate</td><td class=n>221</td><td class=n>27 (12%)</td><td>judgment (rule)</td></tr>
+</tbody></table></div></section>
+
+<section><h2>Sites: the final roster against your labels</h2>
+<p class=muted>The roster is what SOW, Atlas and the Deal Kit read. "Start" is the last compile before tonight; "Now" is the final dev compile with every fix. Set aside = places only ever mentioned in lines the base does not read as a site (kept visible with the reason).</p>
+<div class=tbl><table><thead><tr><th>Deal</th><th>Labeled sites</th><th>Start</th><th>Now</th><th>Set aside</th><th>Compile s</th></tr></thead><tbody>
+<tr><td>000002</td><td class=n>1</td><td class=n>2</td><td class='n ok'>1</td><td class=n>1</td><td class=n>122</td></tr>
+<tr><td>010043</td><td class=n>1</td><td class=n>3</td><td class='n ok'>1</td><td class=n></td><td class=n>334</td></tr>
+<tr><td>010082</td><td class=n>1</td><td class=n>9</td><td class='n'>3</td><td class=n>6</td><td class=n>592</td></tr>
+<tr><td>010115</td><td class=n>1</td><td class=n>8</td><td class='n ok'>1</td><td class=n>4</td><td class=n>672</td></tr>
+<tr><td>010045</td><td class=n>12</td><td class=n>7</td><td class='n'>10</td><td class=n>3</td><td class=n>553</td></tr>
+<tr><td>010149</td><td class=n>35</td><td class=n>43</td><td class='n'>—</td><td class=n></td><td class=n>—</td></tr>
+<tr><td>010194</td><td class=n>65</td><td class=n>26</td><td class='n'>—</td><td class=n></td><td class=n>—</td></tr>
+<tr><td>010087</td><td class=n>33</td><td class=n>0</td><td class='n'>1</td><td class=n></td><td class=n>240</td></tr>
+<tr><td>000123</td><td class=n>161</td><td class=n>366</td><td class='n'>263</td><td class=n>4</td><td class=n>1113</td></tr>
+</tbody></table></div>
+<p class=muted>010087's 33 schools are a stated count with no addresses in the documents; the count check flags it for a PM. CDW's address (a reseller "Ship To") can still appear: deciding vendor vs job site belongs to the site-role head, which needs vendor labels first.</p>
+</section>
+
+<section><h2>Timing: final configuration</h2>
+<p class=muted>Full dev compile on the final build (base on every line, document-job off, parallel LLM calls), seconds from the compile's own timer. The base itself reads a deal in 2–30 s; the rest is LLM calls at about 10 s each (gpt-4.1-mini, the only chat model on the dev Azure account) and cold embedding batches after each deploy. 000123 and 010082 are from the build before the last fix.</p>
+<div class=tbl><table><thead><tr><th>Deal</th><th>Lines</th><th>Total s</th><th>LLM calls (LLM-seconds, overlapping)</th><th>Cold embed s</th><th>Slowest stages</th></tr></thead><tbody>
+<tr><td>000002</td><td class=n>386</td><td class=n>122</td><td class=n>8 (78s)</td><td class=n>19</td><td>site_geo_fallback 26s, typed_atom_classification 20s, c3_brief 15s, enrich_entities 12s</td></tr>
+<tr><td>010043</td><td class=n>2312</td><td class=n>334</td><td class=n>68 (368s)</td><td class=n>101</td><td>site_geo_fallback 85s, typed_atom_classification 54s, enrich_entities 35s, c3_brief 16s</td></tr>
+<tr><td>010115</td><td class=n>6898</td><td class=n>672</td><td class=n>286 (1752s)</td><td class=n>96</td><td>typed_atom_classification 183s, c3_brief 81s, enrich_entities 79s, graph_build 63s</td></tr>
+<tr><td>010082</td><td class=n>8473</td><td class=n>592</td><td class=n>—</td><td class=n>—</td><td>typed_atom_classification 147s, graph_build 110s, enrich_entities 46s, c3_brief 19s</td></tr>
+<tr><td>000123</td><td class=n>—</td><td class=n>1113</td><td class=n>—</td><td class=n>—</td><td>typed_atom_classification 171s, entity_resolution 101s, site_geo_fallback 82s, enrich_entities 59s</td></tr>
+</tbody></table></div></section>
+
+<section><h2>The brief, hand-checked</h2><div class=cols>
+<section class=card><h3>000002 · low-voltage cabling, Miramar Beach</h3><p class=summary>This project involves onsite support to install a new CAT6 cable run and replace an existing relay box to connect a barcode swipe reader at 12200 Emerald Coast Pkwy, Miramar Beach, FL. Services will be performed during normal business hours with billing based on time and materials, with a minimum two-hour charge per resource visit. Customer must provide site access, identify equipment locations, and assist with basic validation during the visit [atm_090980a5c08c06f3, atm_0598c4a37f001e04, atm_6d18573a59c81a6b, atm_2b60e378c1ff20d6, atm_ba7d08f1d9d6ce48, atm_a1758800ed0c0d2].</p><div class=cols><div><h4>Asked (head-ranked)</h4><ol><li>Does prevailing wage / union / Davis-Bacon labor apply? <span class=p>0.90</span></li><li>Are travel / per-diem / freight expenses billable and capped? <span class=p>0.86</span></li><li>What indemnification terms apply? <span class=p>0.84</span></li><li>What workmanship warranty / defect-remediation window applies? <span class=p>0.83</span></li><li>What insurance / COI limits and bonding are required? <span class=p>0.80</span></li><li>Who approves site/badge access and security clearance? <span class=p>0.77</span></li><li>Are there service credits or penalties for missed dates or targets? <span class=p>0.76</span></li><li>Who is responsible for taxes / duties / permits? <span class=p>0.70</span></li><li>Who is responsible for grounding, bonding and backboards in the telecom rooms? <span class=p>0.66</span></li><li>What are the allowed work hours / windows on site? <span class=p>0.65</span></li></ol></div><div><h4>Already answered by the deal</h4><ul><li>What are the payment / invoicing terms?<br><span class=cite>↳ Payment terms are Net 30 days.</span></li><li>Do any sites need after-hours work at a premium rate?<br><span class=cite>↳ After Hours: 5:00 PM (17:00) to 8:00 AM: 50% increase of Stated Rate.</span></li><li>Is there a minimum call-out / trip charge / cancellation fee?<br><span class=cite>↳ The customer will be billed for actual time onsite, a minimum of two (2) hours per resource visit.</span></li><li>What is the change-order / out-of-scope rate and approval process?<br><span class=cite>↳ After a Change Order that requires an amended PO is executed the amended PO must be returned within 5 business days or work will be suspende</span></li><li>Is pricing T&amp;M, fixed-fee, or per-device, and what&#x27;s the rate basis?<br><span class=cite>↳ The estimated Fees for Services outlined below are for a time and materials engagement.</span></li></ul></div></div></section>
+<section class=card><h3>010043 · three Verkada cameras, Charlotte</h3><p class=summary>This project involves installing three Verkada cameras at the Lane Construction Charlotte office located at 6125 Tyvola Centre Drive, Charlotte, NC. PurTera LLC will provide cabling technicians to mount the cameras, run and label cables, and verify basic connectivity during normal business hours. The customer is responsible for providing the cameras, mounting hardware, and necessary site preparations prior to installation.</p><div class=cols><div><h4>Asked (head-ranked)</h4><ol><li>Does prevailing wage / union / Davis-Bacon labor apply? <span class=p>0.95</span></li><li>What indemnification terms apply? <span class=p>0.94</span></li><li>What insurance / COI limits and bonding are required? <span class=p>0.93</span></li><li>What are the known risks, and who owns each one? <span class=p>0.93</span></li><li>What workmanship warranty / defect-remediation window applies? <span class=p>0.92</span></li><li>What is the kickoff / project start date? <span class=p>0.92</span></li><li>Who approves site/badge access and security clearance? <span class=p>0.91</span></li><li>What are the site access, escort, and badging terms? <span class=p>0.89</span></li><li>What configuration/programming/testing is in scope per device? <span class=p>0.89</span></li><li>Who approves extra days or visits beyond the planned window? <span class=p>0.89</span></li></ol></div><div><h4>Already answered by the deal</h4><ul><li>Do any sites need after-hours work at a premium rate?<br><span class=cite>↳ After-Hours: 5:00 PM (17:00) to 8:00 AM: 50% increase of Stated Rate.</span></li><li>Are travel / per-diem / freight expenses billable and capped?<br><span class=cite>↳ Travel-related expenses will be billed to the Customer for services performed at locations more than thirty (30) miles from a major metropol</span></li><li>What are the payment / invoicing terms?<br><span class=cite>↳ Payment Terms: NET 30 Days</span></li><li>Is there a minimum call-out / trip charge / cancellation fee?<br><span class=cite>↳ Cancellation or rescheduling two (2) business days before scheduled visit - 50% of the total planned visit site costs and/or SOW changes spe</span></li><li>Is each dispatch billed at a day rate or time and materials, and with what minimum hours?<br><span class=cite>↳ Customer will be billed for actual time onsite, a minimum of two (2) hours per resource visit.</span></li><li>Is pricing T&amp;M, fixed-fee, or per-device, and what&#x27;s the rate basis?<br><span class=cite>↳ Services Fees hereunder are FIXED FEES, meaning that the amount invoiced for the Services will be $1,668.00.</span></li></ul></div></div></section>
+</div></section>
+
+<section><h2>Label next, in this order</h2><ol>
+<li><b>Site role: vendor/billing addresses.</b> 236 job site vs 9 vendor labels, so the head always says job site. Needed before the base can replace the per-address LLM check (53 s on 010043) and catch addresses like CDW's.</li>
+<li><b>Site pairs (same/different) on 5–10 multi-site deals.</b> 55 of 64 same-site labels are one deal. This is what lets the site-pair head replace the rule-based merges.</li>
+<li><b>Calls on single-job deals: "this deal".</b> Two of every three labeled calls are "other job" today (programme deals), so the document head over-flags calls.</li>
+<li><b>Questions card on every new deal.</b> Valid/invalid on catalog questions. Each verdict feeds the 4-minute refit and the next retrain.</li>
+<li><b>Service on every deal.</b> 33 labels across 16 deals. It decides which trade questions are asked; 010043 read IMAC at 0.52 where you said cameras.</li>
+<li><b>Other-job documents and suppliers on new deals.</b> These two heads are ahead on the deals they learned from and close to guessing on a new one; labels on unseen deals are what close that gap.</li>
+<li><b>The other answer on one-sided heads:</b> geo mention (27 of 30 are "mention only"), wants, intake gap, superseded, small talk.</li>
+</ol></section>
+
+<section><h2>Final ask</h2><ol>
+<li><b>Check the PM page on 010043 in dev</b>: the summary and questions now come from the heads. Then merge <a href="https://github.com/Purtera-IT/Orbitbrief-Core/pull/89">Core PR #89</a> if it reads right. A Core deploy from main drops the change until then.</li>
+<li><b>Label next</b>, in the order above. Severity (blocker vs clarification) is the one question decision that is still not a head.</li>
+<li><b>Prod</b>: one migration when you say so, with the heads on the Azure GPU.</li>
+</ol></section>
+
+<section><h2>Still open</h2><ul>
+<li><b>Sub-2-minute parses.</b> Cold embeddings at setup take about 100 s, and entity extraction makes 38 calls on 010043 and 81 on 010115. These are the next things to move to heads or cache.</li>
+<li><b>The PM page does not show the brief's sections yet.</b> They are on PM_HANDOFF (<code>c3_brief.sections</code>), but the frontend does not render them. Frontend main deploys to prod, so that change waits for you.</li>
+<li>Big deals are slow on a cold compile (000123: about 21 minutes before today's changes).</li>
+<li>The prod migration waits for your call.</li>
+</ul></section>
+</div>

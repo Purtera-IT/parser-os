@@ -730,14 +730,26 @@ def dedup_quoted_history(
     # the copy in whichever reply was listed first -- live 010003, sixteen
     # lines of earlier emails (and their signatures) sat on a late reply,
     # "You guys are the best! Thank you!" among them.
-    def _file_rank(item: tuple[int, EvidenceAtom]) -> tuple[int, int]:
+    # Inside one file the oldest message comes first (deepest quote, highest
+    # index): its author wrote the words, and a forward that pastes them is the
+    # copy. Live 010387: Bill Ort's "I need to get our AV company out" survived
+    # in Chris Heist's forward above it, so the line read as CDW's words and
+    # the brief made the customer coordinate "our AV company".
+    def _file_rank(item: tuple[int, EvidenceAtom]) -> tuple[int, int, int]:
         i, atom = item
         et = _thread_of(atom) or {}
         try:
             ti = int(et.get("thread_index")) if et.get("thread_index") is not None else 10**6
         except (TypeError, ValueError):
             ti = 10**6
-        return (ti, i)
+        msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+        v = atom.value if isinstance(atom.value, dict) else {}
+        mi = msg.get("index") if msg.get("index") is not None else v.get("message_index")
+        try:
+            mi = int(mi) if mi is not None else 0
+        except (TypeError, ValueError):
+            mi = 0
+        return (ti, -mi if v.get("quoted") else 0, i)
 
     # The same words twice in ONE message are two lines (a "5:00-6:00 PM"
     # slot under each of three days), never a repeat: a quoted line is keyed

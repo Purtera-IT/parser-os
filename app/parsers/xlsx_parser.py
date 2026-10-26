@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import os
 import re
 from functools import lru_cache
@@ -26,6 +27,7 @@ from app.core.schemas import (
     ParserCapability,
     ParserMatch,
 )
+from app.core.roster_locations import join_sheet_locations
 from app.core.sheet_profile import (
     has_header,
     header_index,
@@ -2050,6 +2052,20 @@ def _emit_scope_constraint_atoms(
         )
 
 
+#: Workbooks whose hidden sheets carry real figures (rates, cost lookups).
+_PRICING_BOOK = re.compile(r"(?i)deal ?kit|rate ?card|pricing|quote|estimat|cost")
+
+
+
+def _is_tsv(text: str) -> bool:
+    """At least three lines, nearly all with the same number (>= 2) of tabs."""
+    lines = [ln for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
+    if len(lines) < 3:
+        return False
+    counts = [ln.count("\t") for ln in lines[:60]]
+    top = max(set(counts), key=counts.count)
+    return top >= 2 and counts.count(top) >= 0.8 * len(counts)
+
 class XlsxParser(BaseParser):
     #: Per-WORKBOOK state on a parser the registry SHARES between threads.
     #: These accumulate through a parse and are drained at the end, so a second
@@ -2070,7 +2086,7 @@ class XlsxParser(BaseParser):
     capability = ParserCapability(
         parser_name=parser_name,
         parser_version=parser_version,
-        supported_extensions=[".xlsx", ".csv", ".xls", ".xlsb", ".ods"],
+        supported_extensions=[".xlsx", ".xlsm", ".csv", ".xls", ".xlsb", ".ods"],
         # .xls/.xlsb/.ods are converted to .xlsx on entry (see
         # legacy_spreadsheet). Claimed here so routing sends them to the
         # spreadsheet parser instead of the `unread` fallback -- a 1.9MB
@@ -2107,10 +2123,17 @@ class XlsxParser(BaseParser):
         notes.append(message)
 
     def match(self, path: Path, sample_text: str | None, domain_pack: DomainPack | None) -> ParserMatch:
-        del sample_text, domain_pack
+        del domain_pack
         suffix = path.suffix.lower()
         confidence = 0.0
         reasons: list[str] = []
+        # A .txt that is a tab-separated table is a table: 000123's BevMo
+        # roster ("Bevmo locations 1.txt", 161 rows of store, address, city,
+        # state) went to the plain-text parser as one paragraph, and sentence
+        # splitting glued each row's county onto the next row's number.
+        if suffix == ".txt" and _is_tsv(sample_text or ""):
+            return ParserMatch(parser_name=self.parser_name, confidence=0.9,
+                               reasons=["tab_separated_text"], artifact_type=ArtifactType.csv)
         # A legacy binary workbook is claimed on its extension alone. The
         # sniffers below open the file with openpyxl, which cannot read .xls at
         # all, so they stay OOXML-only -- but a pricing sheet saved in 2003 is
@@ -2140,7 +2163,10 @@ class XlsxParser(BaseParser):
                 reasons=reasons,
                 artifact_type=ArtifactType.xlsx,
             )
-        if suffix in {".xlsx", ".csv"}:
+        # A macro workbook (.xlsm) is the same container; openpyxl reads its
+        # sheets and leaves the macros alone. 010264's 1,563-clock inventory
+        # was one, and the compile read it as nothing.
+        if suffix in {".xlsx", ".xlsm", ".csv"}:
             from app.parsers.spreadsheet_route_signals import (
                 path_roster_schedule_hint,
                 sniff_operations_workbook_strength,
@@ -2154,7 +2180,7 @@ class XlsxParser(BaseParser):
             # detection. Wins decisively over QuoteParser when the
             # workbook has asset / site / port / circuit / risk /
             # cutover sheets (even if it ALSO has a BOM sheet).
-            if suffix == ".xlsx":
+            if suffix in (".xlsx", ".xlsm"):
                 ops_score, ops_reasons = sniff_operations_workbook_strength(path)
                 reasons.extend(ops_reasons)
                 if ops_score >= 0.55:
@@ -2178,7 +2204,7 @@ class XlsxParser(BaseParser):
             parser_name=self.parser_name,
             confidence=confidence,
             reasons=reasons,
-            artifact_type=ArtifactType.xlsx if suffix == ".xlsx" else ArtifactType.csv,
+            artifact_type=ArtifactType.csv if suffix == ".csv" else ArtifactType.xlsx,
         )
 
     def parse(self, artifact_path: Path) -> list[EvidenceAtom]:
@@ -2240,7 +2266,7 @@ class XlsxParser(BaseParser):
             # None means no reader is installed or the book is unreadable.
             # Falling through leaves today's behaviour rather than raising.
 
-        if suffix == ".csv":
+        if suffix in (".csv", ".txt"):
             atoms, sheets, parse_error = self._parse_csv(
                 project_id=project_id, artifact_id=artifact_id, path=path
             )
@@ -2321,6 +2347,11 @@ class XlsxParser(BaseParser):
                 artifact_type=ArtifactType.xlsx,
                 parser_version=self.parser_version,
             )
+        try:
+            atoms = list(atoms) + sheet_count_rollups(atoms, project_id=project_id, artifact_id=artifact_id,
+                                                      filename=path.name, parser_version=self.parser_version)
+        except Exception as exc:  # pragma: no cover - a rollup never costs the parse
+            warnings.append(f"WARNING: sheet rollup failed: {type(exc).__name__}")
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
@@ -2678,7 +2709,22 @@ class XlsxParser(BaseParser):
                 sheet.reset_dimensions()
             except Exception:
                 pass
-            _grids.append((sheet.title, [list(r) for r in sheet.iter_rows(values_only=True)]))
+            # A sheet the author hid is the workbook's machinery, not what it
+            # says: 010147's questionnaire hid a "Lists" sheet of dropdown
+            # options, and "Dedicated Direct Truck/Climate Controlled" (the
+            # first option) went into the SOW over the answer the customer
+            # chose. A pricing workbook keeps its hidden rate sheets.
+            if getattr(sheet, "sheet_state", "visible") != "visible" and not _PRICING_BOOK.search(path.name):
+                continue
+            _rows = [list(r) for r in sheet.iter_rows(values_only=True)]
+            # The same machinery left visible (010147's other questionnaire
+            # copy): a sheet named for dropdown options whose cells are short
+            # option values, no sentence, is not something the customer said.
+            if re.fullmatch(r"(?i)\s*(lists?|lookups?|drop ?downs?|options|validation|ref(erence)? ?data|picklists?)\s*", sheet.title or ""):
+                _vals = [str(c).strip() for r in _rows for c in r if c is not None and str(c).strip()]
+                if _vals and all(len(v) <= 60 and not re.search(r"[.!?]\s", v) for v in _vals) and not _PRICING_BOOK.search(path.name):
+                    continue
+            _grids.append((sheet.title, _rows))
         _mined = {t for t, r in _grids if not self._reads_as_a_table(t, r)}
         hidden = self._hidden_dims(path, _mined) if _mined else {}
         styles_by_sheet = self._sheet_styles(path, _mined) if _mined else {}
@@ -2725,6 +2771,9 @@ class XlsxParser(BaseParser):
             ))
         self._sheet_profiles = []
         self._sheet_supplies = []
+        # A site list that names its sites by id only takes each site's city/state from the
+        # sibling sheet keyed by the same id (010447: "2027_145_Sites" + "annette source").
+        join_sheet_locations(atoms, sheets)
 
         # Roster preference: several sheets in one workbook can all pass the
         # roster gate. Rank them so consumers can prefer the best one. Additive
@@ -2749,8 +2798,9 @@ class XlsxParser(BaseParser):
     ) -> tuple[list[EvidenceAtom], list[dict[str, Any]], str | None]:
         try:
             with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
-                reader = csv.reader(handle)
-                rows = [list(row) for row in reader]
+                text = handle.read()
+            reader = csv.reader(io.StringIO(text), delimiter="\t" if _is_tsv(text[:4000]) else ",")
+            rows = [list(row) for row in reader]
         except Exception as exc:
             code = self._tabular_read_error_code(exc, tabular="csv")
             return [], [], f"{code}:{type(exc).__name__}:{exc}"
@@ -2917,6 +2967,20 @@ class XlsxParser(BaseParser):
                 data_rows.append(cells)
         if not data_rows:
             return []
+        # A bill of materials is not a roster: rows of quantity | part number |
+        # description (010116's "Location | 1221 Brickell Ave" title row over
+        # "1 | QM75C | Samsung 75IN 4K UHD LED Display") became 17 sites named
+        # after part numbers and the descriptions were lost.
+        def _bom_row(r: list[Any]) -> bool:
+            vals = [str(v).strip() for v in (r or ()) if v is not None and str(v).strip()]
+            if len(vals) < 3:
+                return False
+            qty = re.fullmatch(r"\d{1,4}(\.0)?", vals[0])
+            part = re.fullmatch(r"[A-Z0-9][A-Z0-9./_-]{3,30}", vals[1]) and re.search(r"\d", vals[1])
+            return bool(qty and part and len(vals[2]) >= 8)
+        filled = [r for r in body[1:] if any(v is not None and str(v).strip() for v in (r or ()))]
+        if filled and sum(1 for r in filled if _bom_row(r)) >= max(3, 0.5 * len(filled)):
+            return []
         try:
             if not looks_like_site_roster(
                 columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
@@ -2935,7 +2999,9 @@ class XlsxParser(BaseParser):
             # A roster-specific column is sufficient on its own; otherwise the
             # sheet must name a facility AND place it somewhere. A sheet with
             # neither is a generic table, not a site roster.
-            if not (mapped & ROSTER_SPECIFIC_FIELDS) and not (has_name and has_location):
+            # A table of places by City + Zip with a size per place is a site list too (010358).
+            place_table = {"city", "zip"} <= mapped and bool(mapped & {"sqft", "occupancy"})
+            if not (mapped & ROSTER_SPECIFIC_FIELDS) and not (has_name and has_location) and not place_table:
                 return []
             roster_rows = extract_site_roster(
                 columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
@@ -2953,11 +3019,25 @@ class XlsxParser(BaseParser):
             filename=filename, sheet_name=sheet_name, columns=header_raw
         )
         out: list[EvidenceAtom] = []
+
+        def _place(r: Any) -> str:
+            return f"{str(r.city).strip().title()} {str(r.zip).strip()}" if r.city and r.zip else ""
+
+        place_count: dict[str, int] = {}
+        for r in roster_rows:
+            if _place(r):
+                place_count[_place(r)] = place_count.get(_place(r), 0) + 1
         for site_row in roster_rows:
             sid = (site_row.site_id or "").strip()
             # An address identifies a site just as well as a name does; a
             # roster row with a blank display name is still a real location.
             canon_id = sid or site_row.facility_name or site_row.street_address or ""
+            if not canon_id and _place(site_row):
+                # A place table names a site by its city and ZIP. Two buildings in one ZIP stay two, and neither
+                # name may be a prefix of the other (the duplicate pass reads "X" beside "X 2" as a clipped id
+                # and folds them): each takes its sheet row (010358: 30 buildings share a ZIP with another).
+                place = _place(site_row)
+                canon_id = place if place_count[place] == 1 else f"{place} (row {first_data_row + 1 + site_row.row_index})"
             if not canon_id:
                 continue
             row_index = first_data_row + 1 + site_row.row_index
@@ -2979,6 +3059,18 @@ class XlsxParser(BaseParser):
                 if val:
                     text_parts.append(f"{label}: {val}")
             row_text = " | ".join(text_parts) or canon_id
+            # A roster whose headers only gave us the id (010447: "Site No." plus
+            # y/n work columns) keeps the row as the sheet wrote it. "site_id: dc5841"
+            # alone reads to the base as metadata; the full row reads as a site.
+            if len(text_parts) <= 1 and 0 <= site_row.row_index < len(data_rows):
+                cells = [str(v).strip() for v in dict(data_rows[site_row.row_index]).values()
+                         if v is not None and str(v).strip()]
+                if len(cells) > 1:
+                    row_text = " | ".join(cells)
+            if not (sid or site_row.facility_name or site_row.street_address) and canon_id:
+                # A place-table row says its own name, the way the base read site rows in training
+                # ("site_id: … | …"): a name the text does not carry is stripped later as unsupported.
+                row_text = f"site_id: {canon_id} | {row_text}"
             source_ref = SourceRef(
                 id=stable_id("src", atom_id),
                 artifact_id=artifact_id,
@@ -2995,8 +3087,10 @@ class XlsxParser(BaseParser):
                 parser_version=self.parser_version,
             )
             entity_keys: list[str] = []
-            if sid:
-                slug = re.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+            # A place-table row has no id, name or street: its city + ZIP is its name and its key.
+            place_name = canon_id if not (sid or site_row.facility_name or site_row.street_address) else None
+            if sid or place_name:
+                slug = re.sub(r"[^a-z0-9]+", "_", (sid or place_name).lower()).strip("_")
                 if slug:
                     entity_keys.append(f"site:{slug}")
             out.append(
@@ -3011,10 +3105,12 @@ class XlsxParser(BaseParser):
                     normalized_text=row_text.lower(),
                     value={
                         "kind": "physical_site",
-                        "id": sid or site_row.site_id,  # canonical id
-                        "site_id": sid or site_row.site_id,
-                        "name": site_row.facility_name,
-                        "facility_name": site_row.facility_name,
+                        # A place-table row's id is its city + ZIP (+ "#2" for a second building there), so the
+                        # duplicate pass keys each building on its own id instead of folding same-ZIP ones (010358).
+                        "id": sid or site_row.site_id or place_name,  # canonical id
+                        "site_id": sid or site_row.site_id or place_name,
+                        "name": site_row.facility_name or place_name,
+                        "facility_name": site_row.facility_name or place_name,
                         "address": site_row.street_address,
                         "street_address": site_row.street_address,
                         "mdf_idf": site_row.mdf_idf,
@@ -6553,3 +6649,70 @@ class XlsxParser(BaseParser):
         )
 
         return atoms
+
+
+#: A column that counts things a job is priced by.
+_COUNT_COL = re.compile(r"\b(aps?|access points?|devices?|cameras?|drops?|runs?|cables?|qty|quantity|count|tvs?|"
+                        r"monitors?|displays?|units?|readers?|phones?|desks?|seats?)\b", re.I)
+_CELL = re.compile(r"\s*([^:|]{1,60}):\s*([^|]*)")
+
+
+def sheet_count_rollups(atoms: list[Any], *, project_id: str, artifact_id: str, filename: str,
+                        parser_version: str) -> list[Any]:
+    """One line per counting column of a sheet: its total and each row's value.
+
+    A sheet's rows are read one by one, so no line says what they add up to:
+    010428's "Proposed Summary - AP LAG" gives "AP LAG Ports Added" per closet
+    (one per AP), and the brief never knew it was 82 APs across 17 closets."""
+    by_sheet: dict[str, list[dict[str, str]]] = {}
+    for a in atoms:
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        sheet = str((loc or {}).get("sheet") or "")
+        text = str(getattr(a, "raw_text", "") or "")
+        if not sheet or text.count("|") < 3:
+            continue
+        cells = {k.strip(): v.strip() for k, v in _CELL.findall(text) if k.strip()}
+        if len(cells) >= 3:
+            rows_here = by_sheet.setdefault(sheet, [])
+            # The same row comes back more than once (a row atom and its
+            # copies); count each row once.
+            if cells not in rows_here:
+                rows_here.append(cells)
+    out = []
+    for sheet, rows in by_sheet.items():
+        if len(rows) < 3 or len(rows) > 200:
+            continue
+        key = next(iter(rows[0]))
+        for col in rows[0]:
+            if col == key or not _COUNT_COL.search(col):
+                continue
+            vals, seen_keys = [], set()
+            for r in rows:
+                k = r.get(key, "")
+                if not k or k in seen_keys or re.search(r"\btotal\b", k, re.I):
+                    continue
+                seen_keys.add(k)
+                v = r.get(col, "")
+                if re.fullmatch(r"-?\d+(\.\d+)?", v.replace(",", "")):
+                    vals.append((r.get(key, ""), float(v.replace(",", ""))))
+            if len(vals) < 3 or not sum(v for _, v in vals):
+                continue
+            total = sum(v for _, v in vals)
+            each = ", ".join(f"{k} {int(v) if v.is_integer() else v}" for k, v in vals if v)[:900]
+            nz = sum(1 for _, v in vals if v)
+            text = (f"{sheet}: {col} totals {int(total) if total.is_integer() else round(total, 2)} across "
+                    f"{nz} {key} rows ({each}).")
+            atom_id = stable_id("atm", artifact_id, "sheet_rollup", sheet, col)
+            src = SourceRef(id=stable_id("src", atom_id), artifact_id=artifact_id, artifact_type=ArtifactType.xlsx,
+                            filename=filename, locator={"sheet": sheet, "rollup": col},
+                            extraction_method="xlsx_count_rollup_v1", parser_version=parser_version)
+            out.append(EvidenceAtom(
+                id=atom_id, project_id=project_id, artifact_id=artifact_id, atom_type=AtomType.quantity,
+                raw_text=text, normalized_text=normalize_text(text),
+                value={"kind": "sheet_rollup", "sheet": sheet, "column": col, "total": total, "rows": len(vals)},
+                entity_keys=[], source_refs=[src], receipts=[], authority_class=AuthorityClass.meeting_note,
+                confidence=0.8, confidence_raw=0.8, calibrated_confidence=0.8,
+                review_status=ReviewStatus.needs_review, review_flags=["sheet_rollup"], parser_version=parser_version,
+            ))
+    return out

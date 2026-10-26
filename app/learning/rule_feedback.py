@@ -115,11 +115,15 @@ def rows_from_judgments(judgments: Iterable[dict[str, Any]],
     excluded) is dropped too, and counted on ``report`` (an
     ``IngestReport``) when one is given.
     """
-    from app.learning.human_labels import _marked_excluded
+    from app.learning.human_labels import _is_a_person, _marked_excluded
 
     rows: list[dict[str, Any]] = []
     for j in judgments or ():
         if not isinstance(j, dict) or str(j.get("head") or "") != "rule":
+            continue
+        if not str(j.get("labeler") or "").strip() or not _is_a_person(j.get("labeler")):
+            if report is not None:
+                report.skip("rule judgment is not a saved person's verdict")
             continue
         if _marked_excluded(j):
             if report is not None:
@@ -215,3 +219,84 @@ def judged_index(judgments: Iterable[dict[str, Any]],
 
 __all__ = ["LOG_PATH_ENV", "log_path", "read_decisions", "truth_from_labels",
            "rows_from_judgments", "judged_index", "join", "write_labelled"]
+
+
+def export_frozen_training(manifest: dict[str, Any], output: Path) -> int:
+    """Explicit preparation only: export approved Rules, never train a model.
+
+    A separate artifact from C3, consumed by the semantic-rule trainer's
+    feedback JSONL reader. Only the training partition is opened. All source
+    blobs must be verified and byte-hash pinned. Conflicting judgments stop
+    the export instead of allowing order to decide the truth.
+    """
+    import hashlib
+    import tempfile
+
+    repo = Path(__file__).resolve().parents[2]
+    output = output.resolve()
+    if output.is_relative_to(repo):
+        raise ValueError("Customer training exports must stay outside the code repository")
+    if manifest.get("holdout_used_for_tuning") is not False:
+        raise ValueError("Untouched holdout certification is required")
+    seen, groups = set(), {}
+    for split in ("train", "validation", "holdout"):
+        entries = manifest.get(split)
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("All three deal partitions are required")
+        for entry in entries:
+            deal = entry.get("deal_id")
+            if not deal or deal in seen or entry.get("audit_status") != "verified":
+                raise ValueError("Manifest has duplicate, missing or unverified deals")
+            if not isinstance(entry.get("source_groups"), list) or not entry["source_groups"]:
+                raise ValueError("Source-group inventory is required for partition checks")
+            seen.add(deal)
+            for group in entry.get("source_groups", []):
+                if group in groups and groups[group] != split:
+                    raise ValueError("Shared sources cross deal partitions")
+                groups[group] = split
+    rows = []
+    answers = {}
+    for entry in manifest["train"]:
+        raw = Path(entry["blob_path"]).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != entry.get("blob_sha256"):
+            raise ValueError("Training blob differs from frozen manifest")
+        blob = json.loads(raw)
+        rows_in_blob = (blob.get("labels") or []) + (blob.get("judgments") or [])
+        if blob.get("purpose") == "eval" or any(r.get("purpose") == "eval" for r in rows_in_blob):
+            raise ValueError("Evaluation-purpose source cannot enter rule training")
+        for row in rows_from_judgments(blob.get("judgments") or []):
+            identity = (row["rule"], row["text"])
+            if identity in answers and answers[identity] != row["label"]:
+                raise ValueError("Conflicting saved rule decisions require adjudication")
+            answers[identity] = row["label"]
+            rows.append({**row, "deal_id": entry["deal_id"], "blob_sha256": entry["blob_sha256"]})
+    output.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic publication prevents a failed preparation leaving a half corpus.
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
+                                     prefix=".rule-feedback-", delete=False) as fh:
+        temporary = Path(fh.name)
+        try:
+            for row in rows:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            fh.flush()
+            fh.close()
+            temporary.replace(output)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return len(rows)
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Export frozen human Rules supervision; no training")
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    count = export_frozen_training(json.loads(args.manifest.read_text()), args.output)
+    print(f"Exported {count} saved rule judgments from training deals only")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

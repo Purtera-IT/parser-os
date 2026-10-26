@@ -1,0 +1,2251 @@
+{
+ "version": 1,
+ "description": "Questions a PM asks before field-services work starts. The base reads `text` (labeled entries keep the wording it was trained on) and judges each one per deal; the PM sees `display`. layer base = any field-services company; purtera = Purtera's own channel and pricing model.",
+ "questions": [
+  {
+   "id": "site_access_approver",
+   "text": "Who approves site/badge access and security clearance?",
+   "display": "Who approves site/badge access and security clearance?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:generic"
+   ],
+   "labeled": {
+    "valid": 9,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "site_access_terms",
+   "text": "What are the site access, escort, and badging terms?",
+   "display": "What are the site access, escort, and badging terms?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "work_hours",
+   "text": "What are the allowed work hours / windows on site?",
+   "display": "What are the allowed work hours / windows on site?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "ob:av_install"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "blackout_windows",
+   "text": "Are there blackout / maintenance windows to avoid?",
+   "display": "Are there blackout / maintenance windows to avoid?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "ob:generic"
+   ],
+   "labeled": {
+    "valid": 6,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "after_hours",
+   "text": "Does any site need after-hours work, and who escorts the crew then?",
+   "display": "Does any site need after-hours work, and who escorts the crew then?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:sow_rules:after_hours"
+   ]
+  },
+  {
+   "id": "parking_dock",
+   "text": "Is there parking, a loading dock, and freight access?",
+   "display": "Is there parking, a loading dock, and freight access?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:av_install"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 4
+   }
+  },
+  {
+   "id": "elevator_hoisting",
+   "text": "Is elevator / lift / hoisting access available for materials?",
+   "display": "Is elevator / lift / hoisting access available for materials?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "staging_storage",
+   "text": "Where can equipment be staged / stored on site?",
+   "display": "Where can equipment be staged / stored on site?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules:receiving"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 4
+   }
+  },
+  {
+   "id": "background_checks",
+   "text": "Are background checks / drug screening / NDAs required?",
+   "display": "Are background checks / drug screening / NDAs required?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:decommission"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "safety_ppe",
+   "text": "Missing: PPE / safety requirements",
+   "display": "What safety training, PPE or site-safety rules apply to the crew?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "environmental_constraints",
+   "text": "Are there environmental constraints (clean room, occupied space, noise)?",
+   "display": "Are there environmental constraints (clean room, occupied space, noise)?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 3,
+    "invalid": 3
+   }
+  },
+  {
+   "id": "lift_equipment",
+   "text": "Missing: Lift / boom / scaffolding requirements",
+   "display": "Does any work need a lift, boom or scaffolding, and who provides it?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist",
+    "ob:av_install",
+    "ob:wireless"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "ceilings_walls_pathways",
+   "text": "Are ceilings/walls/pathways suitable and accessible for the install?",
+   "display": "Are ceilings/walls/pathways suitable and accessible for the install?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 2
+   }
+  },
+  {
+   "id": "power_at_work_area",
+   "text": "Is adequate power / circuits available at each work area?",
+   "display": "Is adequate power / circuits available at each work area?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "telecom_rooms_ready",
+   "text": "Where are the IDF/MDF / telecom closets and are they ready?",
+   "display": "Where are the IDF/MDF / telecom closets and are they ready?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:wireless"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 7
+   }
+  },
+  {
+   "id": "start_date",
+   "text": "What is the kickoff / project start date?",
+   "display": "What is the kickoff / project start date?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "parser:gap_map"
+   ],
+   "labeled": {
+    "valid": 9,
+    "invalid": 4
+   }
+  },
+  {
+   "id": "go_live_date",
+   "text": "What is the cutover / go-live date?",
+   "display": "What is the cutover / go-live date?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "parser:gap_map"
+   ],
+   "labeled": {
+    "valid": 4,
+    "invalid": 11
+   }
+  },
+  {
+   "id": "milestones",
+   "text": "What are the phase milestones and their dates?",
+   "display": "What are the phase milestones and their dates?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "label:headstart",
+    "ob:sow_rules:global"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 8
+   }
+  },
+  {
+   "id": "duration_trips",
+   "text": "What is the expected project duration / number of trips?",
+   "display": "What is the expected project duration / number of trips?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 2
+   }
+  },
+  {
+   "id": "lead_times",
+   "text": "What are material / equipment lead times and order-by dates?",
+   "display": "What are material / equipment lead times and order-by dates?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 3,
+    "invalid": 2
+   }
+  },
+  {
+   "id": "site_sequence",
+   "text": "In what order are the sites done, and is any site tied to a fixed date?",
+   "display": "In what order are the sites done, and is any site tied to a fixed date?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:decommission",
+    "ob:network_edge"
+   ]
+  },
+  {
+   "id": "first_site_pilot",
+   "text": "Which site goes first as the survey or pilot, and who signs it off before the rollout?",
+   "display": "Which site goes first as the survey or pilot, and who signs it off before the rollout?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:network_edge"
+   ]
+  },
+  {
+   "id": "onsite_contact",
+   "text": "Who is the on-site contact (name + phone) for each location?",
+   "display": "Who is the on-site contact (name + phone) for each location?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "ob:generic"
+   ],
+   "labeled": {
+    "valid": 10,
+    "invalid": 5
+   }
+  },
+  {
+   "id": "sponsor",
+   "text": "Who is the customer project sponsor / decision-maker?",
+   "display": "Who is the customer project sponsor / decision-maker?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap"
+   ],
+   "labeled": {
+    "valid": 9,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "vendor_pm",
+   "text": "Who is the vendor-side project manager / coordinator?",
+   "display": "Who is the vendor-side project manager / coordinator?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 12
+   }
+  },
+  {
+   "id": "technical_lead",
+   "text": "Missing: Technical / Engineering Lead",
+   "display": "Who is the customer's technical lead for design and configuration questions?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 3,
+    "invalid": 8
+   }
+  },
+  {
+   "id": "security_owner",
+   "text": "Missing: Security / Compliance Owner",
+   "display": "Who owns security and compliance sign-off on the customer side?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 13
+   }
+  },
+  {
+   "id": "escalation_path",
+   "text": "What is the escalation path and after-hours contact?",
+   "display": "What is the escalation path and after-hours contact?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 3
+   }
+  },
+  {
+   "id": "blocked_on_arrival",
+   "text": "Who do we call if a site is blocked or not ready when the crew arrives?",
+   "display": "Who do we call if a site is blocked or not ready when the crew arrives?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:wireless",
+    "ob:av_install",
+    "ob:decommission"
+   ]
+  },
+  {
+   "id": "remote_support",
+   "text": "Who provides remote support or a bridge line while technicians are on site?",
+   "display": "Who provides remote support or a bridge line while technicians are on site?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:generic",
+    "ob:staff_aug"
+   ]
+  },
+  {
+   "id": "device_count",
+   "text": "What is the confirmed device count per site?",
+   "display": "What is the confirmed device count per site?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 5
+   }
+  },
+  {
+   "id": "site_list",
+   "text": "Is the site list / address / count confirmed for every location?",
+   "display": "Is the site list / address / count confirmed for every location?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules:global"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "site_addresses",
+   "text": "Missing: Site street addresses present",
+   "display": "What is the street address of every site?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 3
+   }
+  },
+  {
+   "id": "in_scope_wave",
+   "text": "Which sites or rooms are in this wave, and are any added or dropped before mobilizing?",
+   "display": "Which sites or rooms are in this wave, and are any added or dropped before mobilizing?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:wireless",
+    "ob:av_install",
+    "ob:decommission"
+   ]
+  },
+  {
+   "id": "config_scope",
+   "text": "What configuration/programming/testing is in scope per device?",
+   "display": "What configuration/programming/testing is in scope per device?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 3
+   }
+  },
+  {
+   "id": "work_boundary",
+   "text": "Does the work stop at diagnosis, or include parts swaps and full remediation, and who approves expanding it?",
+   "display": "Does the work stop at diagnosis, or include parts swaps and full remediation, and who approves expanding it?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:generic"
+   ]
+  },
+  {
+   "id": "out_of_scope",
+   "text": "Missing: Out-of-scope items documented",
+   "display": "What is explicitly out of scope?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist",
+    "ob:sow_rules:global"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "customer_dependencies",
+   "text": "What customer-side responsibilities / dependencies are required (power, network, credentials)?",
+   "display": "What customer-side responsibilities / dependencies are required (power, network, credentials)?",
+   "family": "risks_dependencies",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "third_party_coordination",
+   "text": "Are there third-party / OEM / GC dependencies or coordination?",
+   "display": "Are there third-party / OEM / GC dependencies or coordination?",
+   "family": "risks_dependencies",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 8
+   }
+  },
+  {
+   "id": "removal_disposal",
+   "text": "What is the removal / haul-away / ITAD / e-waste process?",
+   "display": "What is the removal / haul-away / ITAD / e-waste process?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:av_install",
+    "ob:wireless"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 3
+   }
+  },
+  {
+   "id": "inventory_on_arrival",
+   "text": "Is an inventory / asset-tag count required on arrival?",
+   "display": "Is an inventory / asset-tag count required on arrival?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "training_scope",
+   "text": "Is end-user training / knowledge transfer in scope?",
+   "display": "Is end-user training / knowledge transfer in scope?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 4,
+    "invalid": 2
+   }
+  },
+  {
+   "id": "makes_models",
+   "text": "Are exact makes/models and part numbers confirmed?",
+   "display": "Are exact makes/models and part numbers confirmed?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 2
+   }
+  },
+  {
+   "id": "furnished_by",
+   "text": "Which equipment and materials are customer-furnished, and which does the provider supply?",
+   "display": "Which equipment and materials are customer-furnished, and which does the provider supply?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:av_install",
+    "ob:access_control",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "mounts_hardware",
+   "text": "Who supplies mounts/brackets/hardware and to what spec?",
+   "display": "Who supplies mounts/brackets/hardware and to what spec?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "spares",
+   "text": "Are spares / attic-stock / replacement units required?",
+   "display": "Are spares / attic-stock / replacement units required?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:wireless"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "rma_parts",
+   "text": "Who furnishes replacement parts or RMA units if hardware fails during the work?",
+   "display": "Who furnishes replacement parts or RMA units if hardware fails during the work?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:generic",
+    "ob:staff_aug"
+   ]
+  },
+  {
+   "id": "receiving",
+   "text": "Where is equipment shipped and received, and who signs for it?",
+   "display": "Where is equipment shipped and received, and who signs for it?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:sow_rules:receiving"
+   ]
+  },
+  {
+   "id": "network_ready",
+   "text": "Will the network/VLAN/IP/DHCP be provisioned before arrival?",
+   "display": "Will the network/VLAN/IP/DHCP be provisioned before arrival?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 3,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "credentials",
+   "text": "Will customer credentials / system access be provided?",
+   "display": "Will customer credentials / system access be provided?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:generic"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "integrations",
+   "text": "What upstream systems must this integrate with (VMS, ACS, DNS)?",
+   "display": "What upstream systems must this integrate with (VMS, ACS, DNS)?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 9
+   }
+  },
+  {
+   "id": "firmware_standard",
+   "text": "Is there a firmware / image / golden-config standard to apply?",
+   "display": "Is there a firmware / image / golden-config standard to apply?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 8
+   }
+  },
+  {
+   "id": "cabling_spec",
+   "text": "What cabling type/category, lengths, and termination standard apply?",
+   "display": "What cabling type/category, lengths, and termination standard apply?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:cabling"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "permits",
+   "text": "Are permits / AHJ approvals / inspections required?",
+   "display": "Are permits / AHJ approvals / inspections required?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 4
+   }
+  },
+  {
+   "id": "acceptance",
+   "text": "What are the customer acceptance criteria and sign-off gate?",
+   "display": "What are the customer acceptance criteria and sign-off gate?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "label:checklist",
+    "ob:generic"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 4
+   }
+  },
+  {
+   "id": "test_plan",
+   "text": "Missing: Test / validation plan referenced",
+   "display": "What testing must pass before the work is accepted?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 3
+   }
+  },
+  {
+   "id": "proof_of_completion",
+   "text": "What test results / photos / proof-of-completion are required?",
+   "display": "What test results / photos / proof-of-completion are required?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:decommission"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 5
+   }
+  },
+  {
+   "id": "closeout_package",
+   "text": "What closeout package (as-builts, warranties, manuals) is required?",
+   "display": "What closeout package (as-builts, warranties, manuals) is required?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "labeling_standard",
+   "text": "What labeling / documentation / as-built standard is required?",
+   "display": "What labeling / documentation / as-built standard is required?",
+   "family": "documentation",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 3,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "ops_handoff",
+   "text": "Missing: Operations handoff package defined",
+   "display": "What does the customer's operations team need handed over at the end?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 9
+   }
+  },
+  {
+   "id": "pricing_basis",
+   "text": "Is pricing T&M, fixed-fee, or per-device, and what's the rate basis?",
+   "display": "Is pricing T&M, fixed-fee, or per-device, and what's the rate basis?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:generic"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "payment_terms",
+   "text": "What are the payment / invoicing terms?",
+   "display": "What are the payment / invoicing terms?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:generated_gap",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "change_order",
+   "text": "What is the change-order / out-of-scope rate and approval process?",
+   "display": "What is the change-order / out-of-scope rate and approval process?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "label:checklist",
+    "ob:generic"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "extra_days",
+   "text": "Who approves extra days or visits beyond the planned window?",
+   "display": "Who approves extra days or visits beyond the planned window?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "ob:staff_aug"
+   ]
+  },
+  {
+   "id": "travel_expenses",
+   "text": "Are travel / per-diem / freight expenses billable and capped?",
+   "display": "Are travel / per-diem / freight expenses billable and capped?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:staff_aug"
+   ],
+   "labeled": {
+    "valid": 2,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "trip_charge",
+   "text": "Is there a minimum call-out / trip charge / cancellation fee?",
+   "display": "Is there a minimum call-out / trip charge / cancellation fee?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "taxes",
+   "text": "Who is responsible for taxes / duties / permits?",
+   "display": "Who is responsible for taxes / duties / permits?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "workmanship_warranty",
+   "text": "What workmanship warranty / defect-remediation window applies?",
+   "display": "What workmanship warranty / defect-remediation window applies?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 6,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "oem_warranty",
+   "text": "Are OEM warranties / RMA handling defined?",
+   "display": "Are OEM warranties / RMA handling defined?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 1
+   }
+  },
+  {
+   "id": "insurance",
+   "text": "What insurance / COI limits and bonding are required?",
+   "display": "What insurance / COI limits and bonding are required?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:decommission"
+   ],
+   "labeled": {
+    "valid": 7,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "indemnification",
+   "text": "Missing: Indemnification clause",
+   "display": "What indemnification terms apply?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 13,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "service_credits",
+   "text": "Missing: Service credits / penalty terms",
+   "display": "Are there service credits or penalties for missed dates or targets?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 10,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "ip_ownership",
+   "text": "Missing: IP ownership / work product",
+   "display": "Who owns the work product and documentation?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "prevailing_wage",
+   "text": "Does prevailing wage / union / Davis-Bacon labor apply?",
+   "display": "Does prevailing wage / union / Davis-Bacon labor apply?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 13,
+    "invalid": 0
+   }
+  },
+  {
+   "id": "data_privacy",
+   "text": "Are there data-privacy / security compliance constraints (HIPAA, PCI, CJIS)?",
+   "display": "Are there data-privacy / security compliance constraints (HIPAA, PCI, CJIS)?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:headstart",
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 1,
+    "invalid": 8
+   }
+  },
+  {
+   "id": "risk_register",
+   "text": "Missing: Risk register present with owners",
+   "display": "What are the known risks, and who owns each one?",
+   "family": "risks_dependencies",
+   "layer": "base",
+   "applies_to": [],
+   "sources": [
+    "label:checklist",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 12,
+    "invalid": 3
+   }
+  },
+  {
+   "id": "sla_targets",
+   "text": "Missing: SLA targets stated (uptime / response / resolution)",
+   "display": "What response, resolution and uptime targets apply?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [
+    "msp",
+    "network_maintenance",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "label:checklist",
+    "ob:sow_rules"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 15
+   }
+  },
+  {
+   "id": "support_tiers",
+   "text": "Missing: Support tier structure (P1/P2/P3 or similar)",
+   "display": "How are support priorities defined (P1/P2/P3) and what does each get?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [
+    "msp",
+    "network_maintenance",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "label:checklist"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 6
+   }
+  },
+  {
+   "id": "maintenance_window",
+   "text": "Missing: Routine maintenance window",
+   "display": "When is the routine maintenance or patch window, and what is the rollback process?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [
+    "msp",
+    "network_maintenance",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "label:checklist",
+    "ob:network_ops"
+   ],
+   "labeled": {
+    "valid": 0,
+    "invalid": 5
+   }
+  },
+  {
+   "id": "coverage_tier",
+   "text": "What support coverage tier and renewal status apply to each device family?",
+   "display": "What support coverage tier and renewal status apply to each device family?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [
+    "msp",
+    "network_maintenance",
+    "hardware"
+   ],
+   "sources": [
+    "ob:network_ops"
+   ]
+  },
+  {
+   "id": "reporting_kpis",
+   "text": "What reporting cadence and KPIs does the customer expect?",
+   "display": "What reporting cadence and KPIs does the customer expect?",
+   "family": "documentation",
+   "layer": "base",
+   "applies_to": [
+    "msp",
+    "network_maintenance",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "backup_dr",
+   "text": "What backup, disaster-recovery and RTO/RPO targets apply?",
+   "display": "What backup, disaster-recovery and RTO/RPO targets apply?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "msp",
+    "datacenter",
+    "data_migration"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "drop_count",
+   "text": "How many drops or cable runs are needed, and where does each one land?",
+   "display": "How many drops or cable runs are needed, and where does each one land?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling"
+   ],
+   "sources": [
+    "ob:sow_rules:cabling"
+   ]
+  },
+  {
+   "id": "cable_rating",
+   "text": "What cable category and plenum rating do new drops need?",
+   "display": "What cable category and plenum rating do new drops need?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling",
+    "wireless"
+   ],
+   "sources": [
+    "ob:cabling",
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "pathway",
+   "text": "Who provides pathway (conduit, raceway, J-hooks), and can existing pathway be reused?",
+   "display": "Who provides pathway (conduit, raceway, J-hooks), and can existing pathway be reused?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling",
+    "wireless",
+    "security_camera",
+    "camera_vms_operations",
+    "security_access",
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:wireless",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "termination_scheme",
+   "text": "Which termination scheme and patch-panel layout apply (T568A/B, panel, port map)?",
+   "display": "Which termination scheme and patch-panel layout apply (T568A/B, panel, port map)?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling"
+   ],
+   "sources": [
+    "ob:sow_rules:cabling"
+   ]
+  },
+  {
+   "id": "cable_certification",
+   "text": "What cable certification and test reports are required for each drop?",
+   "display": "What cable certification and test reports are required for each drop?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling",
+    "wireless"
+   ],
+   "sources": [
+    "ob:sow_rules:cabling"
+   ]
+  },
+  {
+   "id": "abandoned_cable",
+   "text": "Is removing abandoned cable or other demolition in scope?",
+   "display": "Is removing abandoned cable or other demolition in scope?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling"
+   ],
+   "sources": [
+    "ob:sow_rules:cabling"
+   ]
+  },
+  {
+   "id": "firestop_patch",
+   "text": "Who handles firestopping, core drilling and patch/paint where cable passes walls or floors?",
+   "display": "Who handles firestopping, core drilling and patch/paint where cable passes walls or floors?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling",
+    "electrical",
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:sow_rules",
+    "ob:av_install"
+   ]
+  },
+  {
+   "id": "grounding",
+   "text": "Who is responsible for grounding, bonding and backboards in the telecom rooms?",
+   "display": "Who is responsible for grounding, bonding and backboards in the telecom rooms?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling",
+    "telecom"
+   ],
+   "sources": [
+    "ob:sow_rules:cabling"
+   ]
+  },
+  {
+   "id": "rough_trim",
+   "text": "Is the work split into rough-in and trim-out visits?",
+   "display": "Is the work split into rough-in and trim-out visits?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [
+    "low_voltage_cabling",
+    "electrical"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "ap_count_model",
+   "text": "How many access points, and which models, are in scope?",
+   "display": "How many access points, and which models, are in scope?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "wireless"
+   ],
+   "sources": [
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "ap_new_or_swap",
+   "text": "Is AP work new cable pulls, or a 1-for-1 swap on existing drops?",
+   "display": "Is AP work new cable pulls, or a 1-for-1 swap on existing drops?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "wireless"
+   ],
+   "sources": [
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "wireless_survey",
+   "text": "Is a site survey needed before the final quote, or is the prior walkthrough enough?",
+   "display": "Is a site survey needed before the final quote, or is the prior walkthrough enough?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "wireless",
+    "das"
+   ],
+   "sources": [
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "ap_mounting",
+   "text": "Where is each AP mounted, and what mounting and ceiling access does that need?",
+   "display": "Where is each AP mounted, and what mounting and ceiling access does that need?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "wireless"
+   ],
+   "sources": [
+    "ob:wireless",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "poe_budget",
+   "text": "Do the switches have the ports and PoE budget for every new device?",
+   "display": "Do the switches have the ports and PoE budget for every new device?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "wireless",
+    "security_camera",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:wireless",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "ap_adoption",
+   "text": "Who adopts and configures the APs on the controller or cloud, and in which tenant?",
+   "display": "Who adopts and configures the APs on the controller or cloud, and in which tenant?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "wireless"
+   ],
+   "sources": [
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "ssid_vlan_auth",
+   "text": "What SSID, VLAN and authentication (RADIUS/802.1X/guest) setup applies?",
+   "display": "What SSID, VLAN and authentication (RADIUS/802.1X/guest) setup applies?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "wireless"
+   ],
+   "sources": [
+    "ob:wireless_config",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "rf_design_owner",
+   "text": "Who owns the RF design, channel plan and heatmap deliverables?",
+   "display": "Who owns the RF design, channel plan and heatmap deliverables?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "wireless"
+   ],
+   "sources": [
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "wireless_acceptance",
+   "text": "What coverage or speed test is the pass/fail acceptance at each site?",
+   "display": "What coverage or speed test is the pass/fail acceptance at each site?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [
+    "wireless"
+   ],
+   "sources": [
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "camera_count_model",
+   "text": "How many cameras, of which models and mount types, are in scope?",
+   "display": "How many cameras, of which models and mount types, are in scope?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "security_camera",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:sow_rules:camera"
+   ]
+  },
+  {
+   "id": "vms_platform",
+   "text": "Which VMS or NVR do the cameras record to, and who configures it?",
+   "display": "Which VMS or NVR do the cameras record to, and who configures it?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "security_camera",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:sow_rules:camera"
+   ]
+  },
+  {
+   "id": "camera_network",
+   "text": "Which switch port and VLAN does each camera use?",
+   "display": "Which switch port and VLAN does each camera use?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "security_camera",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:sow_rules:camera"
+   ]
+  },
+  {
+   "id": "video_retention",
+   "text": "What recording mode, resolution and video retention are required?",
+   "display": "What recording mode, resolution and video retention are required?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "security_camera",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:sow_rules:camera"
+   ]
+  },
+  {
+   "id": "camera_acceptance",
+   "text": "What are the camera acceptance criteria (field of view, focus, recording verified)?",
+   "display": "What are the camera acceptance criteria (field of view, focus, recording verified)?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [
+    "security_camera",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:sow_rules:camera"
+   ]
+  },
+  {
+   "id": "privacy_masking",
+   "text": "Are there privacy masking or recording-notice requirements?",
+   "display": "Are there privacy masking or recording-notice requirements?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [
+    "security_camera",
+    "camera_vms_operations"
+   ],
+   "sources": [
+    "ob:sow_rules:camera"
+   ]
+  },
+  {
+   "id": "licenses",
+   "text": "Are the device and software licenses customer-owned and in place before install day?",
+   "display": "Are the device and software licenses customer-owned and in place before install day?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [
+    "security_camera",
+    "camera_vms_operations",
+    "wireless",
+    "security_access"
+   ],
+   "sources": [
+    "ob:wireless",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "door_count",
+   "text": "How many doors and readers, and what door types, are in scope?",
+   "display": "How many doors and readers, and what door types, are in scope?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "security_access"
+   ],
+   "sources": [
+    "ob:access_control",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "electrified_hardware",
+   "text": "Is the electrified locking hardware customer-furnished or provider-supplied, and who installs it?",
+   "display": "Is the electrified locking hardware customer-furnished or provider-supplied, and who installs it?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [
+    "security_access"
+   ],
+   "sources": [
+    "ob:access_control",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "access_platform",
+   "text": "Which access control platform and controllers do the doors connect to?",
+   "display": "Which access control platform and controllers do the doors connect to?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "security_access"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "rex_dps",
+   "text": "Which doors need request-to-exit, door-position switches and monitoring?",
+   "display": "Which doors need request-to-exit, door-position switches and monitoring?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "security_access"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "door_acceptance",
+   "text": "What door-by-door acceptance test is required?",
+   "display": "What door-by-door acceptance test is required?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [
+    "security_access"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "fire_release",
+   "text": "Do any doors tie into fire alarm release or egress, and who signs that off?",
+   "display": "Do any doors tie into fire alarm release or egress, and who signs that off?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [
+    "security_access",
+    "fire_safety"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "uc_platform",
+   "text": "Which UC platform (Teams, Zoom, other) do the rooms run?",
+   "display": "Which UC platform (Teams, Zoom, other) do the rooms run?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:av_install",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "wall_type",
+   "text": "What wall type is at each mount, and is blocking or a backing plate needed?",
+   "display": "What wall type is at each mount, and is blocking or a backing plate needed?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:av_install"
+   ]
+  },
+  {
+   "id": "power_data_at_mount",
+   "text": "Does each display location have live power and a data drop within reach?",
+   "display": "Does each display location have live power and a data drop within reach?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:av_install"
+   ]
+  },
+  {
+   "id": "in_wall_or_surface",
+   "text": "Are cable runs in-wall or in surface raceway, and who owns drywall cut, patch and paint?",
+   "display": "Are cable runs in-wall or in surface raceway, and who owns drywall cut, patch and paint?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:av_install"
+   ]
+  },
+  {
+   "id": "dsp_control",
+   "text": "What DSP, control system and programming is in scope?",
+   "display": "What DSP, control system and programming is in scope?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:sow_rules:av"
+   ]
+  },
+  {
+   "id": "speaker_mic",
+   "text": "What speakers, microphones and amplifier power does each room or zone need?",
+   "display": "What speakers, microphones and amplifier power does each room or zone need?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "audio_visual",
+    "paging_mass_notification"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "av_acceptance",
+   "text": "What test call or AV check is the pass/fail sign-off for each room?",
+   "display": "What test call or AV check is the pass/fail sign-off for each room?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [
+    "audio_visual"
+   ],
+   "sources": [
+    "ob:av_install"
+   ]
+  },
+  {
+   "id": "decom_scope",
+   "text": "Is the scope inventory only, or also de-rack, pack and ship, and which sites are racked versus boxed?",
+   "display": "Is the scope inventory only, or also de-rack, pack and ship, and which sites are racked versus boxed?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "itad"
+   ],
+   "sources": [
+    "ob:decommission"
+   ]
+  },
+  {
+   "id": "data_destruction",
+   "text": "Who wipes or destroys data before equipment leaves, and is a certificate of destruction required?",
+   "display": "Who wipes or destroys data before equipment leaves, and is a certificate of destruction required?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [
+    "itad",
+    "hardware",
+    "imac"
+   ],
+   "sources": [
+    "ob:decommission",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "chain_of_custody",
+   "text": "Who signs chain of custody and the bill of lading at pickup?",
+   "display": "Who signs chain of custody and the bill of lading at pickup?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [
+    "itad"
+   ],
+   "sources": [
+    "ob:decommission",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "packing_freight",
+   "text": "Who provides packing materials and pallets, and what labeling does the carrier need?",
+   "display": "Who provides packing materials and pallets, and what labeling does the carrier need?",
+   "family": "materials_hardware",
+   "layer": "base",
+   "applies_to": [
+    "itad",
+    "datacenter",
+    "rack_and_stack"
+   ],
+   "sources": [
+    "ob:decommission"
+   ]
+  },
+  {
+   "id": "dock_truck_access",
+   "text": "What dock hours, truck size and freight elevator access apply at each pickup or delivery site?",
+   "display": "What dock hours, truck size and freight elevator access apply at each pickup or delivery site?",
+   "family": "site_access",
+   "layer": "base",
+   "applies_to": [
+    "itad",
+    "datacenter",
+    "rack_and_stack"
+   ],
+   "sources": [
+    "ob:decommission"
+   ]
+  },
+  {
+   "id": "asset_capture",
+   "text": "Must serials and asset tags be captured, and into which system?",
+   "display": "Must serials and asset tags be captured, and into which system?",
+   "family": "documentation",
+   "layer": "base",
+   "applies_to": [
+    "itad",
+    "imac",
+    "hardware",
+    "datacenter",
+    "rack_and_stack"
+   ],
+   "sources": [
+    "ob:decommission",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "rack_strategy",
+   "text": "How many racks of what size, and how are they anchored and powered?",
+   "display": "How many racks of what size, and how are they anchored and powered?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "datacenter",
+    "rack_and_stack"
+   ],
+   "sources": [
+    "ob:sow_rules:datacenter"
+   ]
+  },
+  {
+   "id": "device_list_u",
+   "text": "What is the device list with rack-unit height and position?",
+   "display": "What is the device list with rack-unit height and position?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "datacenter",
+    "rack_and_stack"
+   ],
+   "sources": [
+    "ob:sow_rules:datacenter"
+   ]
+  },
+  {
+   "id": "imaging_scope",
+   "text": "Is imaging and configuration in scope, or physical install only?",
+   "display": "Is imaging and configuration in scope, or physical install only?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "imac",
+    "hardware",
+    "staff_augmentation"
+   ],
+   "sources": [
+    "ob:staff_aug"
+   ]
+  },
+  {
+   "id": "move_type",
+   "text": "What kind of moves, adds or changes are planned, and when does each happen?",
+   "display": "What kind of moves, adds or changes are planned, and when does each happen?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [
+    "imac"
+   ],
+   "sources": [
+    "ob:sow_rules:imac"
+   ]
+  },
+  {
+   "id": "roles_headcount",
+   "text": "What roles, headcount, skills and clearance are required, onsite or remote?",
+   "display": "What roles, headcount, skills and clearance are required, onsite or remote?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [
+    "staff_augmentation",
+    "professional_services"
+   ],
+   "sources": [
+    "ob:staff_aug"
+   ]
+  },
+  {
+   "id": "supervision",
+   "text": "Who supervises the technicians on site and signs off their time?",
+   "display": "Who supervises the technicians on site and signs off their time?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [
+    "staff_augmentation"
+   ],
+   "sources": [
+    "ob:staff_aug"
+   ]
+  },
+  {
+   "id": "rates_overtime",
+   "text": "What bill rate, overtime rules and minimum hours per dispatch apply?",
+   "display": "What bill rate, overtime rules and minimum hours per dispatch apply?",
+   "family": "commercial_terms",
+   "layer": "base",
+   "applies_to": [
+    "staff_augmentation"
+   ],
+   "sources": [
+    "ob:staff_aug",
+    "ob:generic"
+   ]
+  },
+  {
+   "id": "facp_panel",
+   "text": "Which fire alarm panel is in place, and who programs and tests it?",
+   "display": "Which fire alarm panel is in place, and who programs and tests it?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "fire_safety"
+   ],
+   "sources": [
+    "ob:sow_rules:fire"
+   ]
+  },
+  {
+   "id": "ahj_acceptance",
+   "text": "What inspection and acceptance testing does the authority having jurisdiction require?",
+   "display": "What inspection and acceptance testing does the authority having jurisdiction require?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [
+    "fire_safety",
+    "das",
+    "paging_mass_notification",
+    "electrical"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "paging_zones",
+   "text": "What zones, schedules and paging sources are required?",
+   "display": "What zones, schedules and paging sources are required?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "paging_mass_notification"
+   ],
+   "sources": [
+    "ob:sow_rules:paging"
+   ]
+  },
+  {
+   "id": "das_headend",
+   "text": "Which DAS or BDA head-end and how many antennas, and has an RF survey been done?",
+   "display": "Which DAS or BDA head-end and how many antennas, and has an RF survey been done?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "das"
+   ],
+   "sources": [
+    "ob:sow_rules:das"
+   ]
+  },
+  {
+   "id": "panel_capacity",
+   "text": "Which panels and breakers feed the new loads, and is there capacity?",
+   "display": "Which panels and breakers feed the new loads, and is there capacity?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "electrical"
+   ],
+   "sources": [
+    "ob:sow_rules:electrical"
+   ]
+  },
+  {
+   "id": "bms_points",
+   "text": "Which BMS platform does this tie into, and what is the points list with sequences and alarms?",
+   "display": "Which BMS platform does this tie into, and what is the points list with sequences and alarms?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "building_management_systems"
+   ],
+   "sources": [
+    "ob:sow_rules:bms"
+   ]
+  },
+  {
+   "id": "circuit_demarc",
+   "text": "Who owns the carrier circuits and demarc extension, and are the circuits live?",
+   "display": "Who owns the carrier circuits and demarc extension, and are the circuits live?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "telecom",
+    "network_maintenance",
+    "wireless"
+   ],
+   "sources": [
+    "ob:network_edge",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "number_porting",
+   "text": "Is voice number porting or a UCaaS cutover in scope, and when?",
+   "display": "Is voice number porting or a UCaaS cutover in scope, and when?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "telecom"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "cutover_rollback",
+   "text": "What is the cutover plan, and how is it rolled back if it fails?",
+   "display": "What is the cutover plan, and how is it rolled back if it fails?",
+   "family": "schedule",
+   "layer": "base",
+   "applies_to": [
+    "network_maintenance",
+    "data_migration",
+    "telecom"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "network_topology",
+   "text": "What is the network design: one edge device per site, or a shared hub-and-spoke model?",
+   "display": "What is the network design: one edge device per site, or a shared hub-and-spoke model?",
+   "family": "network_it",
+   "layer": "base",
+   "applies_to": [
+    "network_maintenance"
+   ],
+   "sources": [
+    "ob:network_edge"
+   ]
+  },
+  {
+   "id": "source_target",
+   "text": "What are the source and target platforms, and how much data or how many users move?",
+   "display": "What are the source and target platforms, and how much data or how many users move?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "data_migration"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "migration_acceptance",
+   "text": "What proves the migration succeeded, and who signs off?",
+   "display": "What proves the migration succeeded, and who signs off?",
+   "family": "acceptance_closeout",
+   "layer": "base",
+   "applies_to": [
+    "data_migration"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "environments_gates",
+   "text": "Which environments are in scope, and what are the promotion gates?",
+   "display": "Which environments are in scope, and what are the promotion gates?",
+   "family": "technical_spec",
+   "layer": "base",
+   "applies_to": [
+    "alm"
+   ],
+   "sources": [
+    "ob:alm"
+   ]
+  },
+  {
+   "id": "audit_scope",
+   "text": "Which locations and systems are in the audit, and what does the report contain?",
+   "display": "Which locations and systems are in the audit, and what does the report contain?",
+   "family": "quantities_scope",
+   "layer": "base",
+   "applies_to": [
+    "audit"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "rules_of_engagement",
+   "text": "What are the rules of engagement: systems, time windows, allow-lists and emergency contacts?",
+   "display": "What are the rules of engagement: systems, time windows, allow-lists and emergency contacts?",
+   "family": "compliance_safety",
+   "layer": "base",
+   "applies_to": [
+    "audit",
+    "professional_services"
+   ],
+   "sources": [
+    "ob:security_assessment"
+   ]
+  },
+  {
+   "id": "workshops",
+   "text": "Which workshops are needed, and which stakeholders attend?",
+   "display": "Which workshops are needed, and which stakeholders attend?",
+   "family": "people_contacts",
+   "layer": "base",
+   "applies_to": [
+    "professional_services"
+   ],
+   "sources": [
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "partner_contract",
+   "text": "Which partner or reseller holds the customer contract, and who quotes the hardware?",
+   "display": "Which partner or reseller holds the customer contract, and who quotes the hardware?",
+   "family": "commercial_terms",
+   "layer": "purtera",
+   "applies_to": [],
+   "sources": [
+    "ob:network_edge"
+   ]
+  },
+  {
+   "id": "survey_charge",
+   "text": "Is the site survey a separate charge, or included in the install quote?",
+   "display": "Is the site survey a separate charge, or included in the install quote?",
+   "family": "commercial_terms",
+   "layer": "purtera",
+   "applies_to": [],
+   "sources": [
+    "ob:network_edge",
+    "ob:wireless"
+   ]
+  },
+  {
+   "id": "after_hours_premium",
+   "text": "Do any sites need after-hours work at a premium rate?",
+   "display": "Do any sites need after-hours work at a premium rate?",
+   "family": "commercial_terms",
+   "layer": "purtera",
+   "applies_to": [],
+   "sources": [
+    "ob:wireless",
+    "ob:sow_rules"
+   ]
+  },
+  {
+   "id": "day_rate_dispatch",
+   "text": "Is each dispatch billed at a day rate or time and materials, and with what minimum hours?",
+   "display": "Is each dispatch billed at a day rate or time and materials, and with what minimum hours?",
+   "family": "commercial_terms",
+   "layer": "purtera",
+   "applies_to": [],
+   "sources": [
+    "ob:generic"
+   ]
+  },
+  {
+   "id": "local_resource",
+   "text": "Can a local technician cover this, or does it need travel?",
+   "display": "Can a local technician cover this, or does it need travel?",
+   "family": "people_contacts",
+   "layer": "purtera",
+   "applies_to": [],
+   "sources": [
+    "ob:staff_aug"
+   ]
+  }
+ ]
+}

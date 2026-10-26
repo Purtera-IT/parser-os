@@ -224,6 +224,12 @@ def teacher_model(default: str = _DEFAULT_MODEL) -> str:
 _VCACHE_LOCK = threading.Lock()
 _VCACHE_CONN = None
 _VCACHE_PATH = None
+#: Replies this process stored, for the blob mirror (cache_blob.mirror_vision):
+#: only what this container paid for is uploaded, never the whole file.
+VCACHE_NEW: list[dict] = []
+#: Set when the blob merge is not running (cache_blob.sync_vision_into_cache_background).
+VCACHE_MERGED = threading.Event()
+VCACHE_MERGED.set()
 
 
 def _vision_cache_conn():
@@ -264,6 +270,8 @@ def _vision_cache_get(key: str):
     conn = _vision_cache_conn()
     if conn is None:
         return None
+    # A merge from the blob mirror may still be running at compile start.
+    VCACHE_MERGED.wait(60.0)
     try:
         with _VCACHE_LOCK:
             row = conn.execute("SELECT reply FROM vision_cache WHERE k=?", (key,)).fetchone()
@@ -283,6 +291,7 @@ def _vision_cache_put(key: str, model: str, reply: str) -> None:
                 (key, model, reply),
             )
             conn.commit()
+            VCACHE_NEW.append({"key": key, "model": model, "reply": reply})
     except Exception:
         pass
 
@@ -332,14 +341,23 @@ def pool_budget_seconds(default_per_call: int = _DEFAULT_API_TIMEOUT) -> int:
     return max(per * 3, 600)
 
 
+_REASONING_HEADROOM = 3
+
+
+def _reasoning_model(model: str | None) -> bool:
+    """A model that takes max_completion_tokens and no temperature."""
+    m = str(model or "").lower()
+    return m.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
 def complete(prompt: str, *, max_tokens: int = 1024, model: str | None = None,
-             timeout: int | None = None) -> str:
+             timeout: int | None = None, reasoning_effort: str | None = None) -> str:
     """One OpenAI-compatible ``/chat/completions`` text call. Returns the
     assistant text, or ``""`` on any failure (so callers degrade exactly as they
     do for a local Ollama miss). No-op (``""``) if no hosted teacher configured."""
     return _chat(
         [{"role": "user", "content": prompt}],
-        max_tokens=max_tokens, model=model, timeout=timeout,
+        max_tokens=max_tokens, model=model, timeout=timeout, reasoning_effort=reasoning_effort,
     )
 
 
@@ -418,9 +436,55 @@ def complete_vision(prompt: str, image_b64: str, *, mime: str = "image/png",
     return reply
 
 
+#: Stages whose LLM work is small and structured (filling a line's fields,
+#: job site or vendor, who supplies a BOM line, pulling entities out of a
+#: document): they use SOWSMITH_SMALL_MODEL when it is set. On a 24-line fill
+#: batch gpt-4.1-nano answered in ~5.7 s against gpt-4.1-mini's 10-18 s, with
+#: the same output. The brief's prose stays on the teacher model.
+_SMALL_MODEL_STAGES_DEFAULT = ("typed_atom_classification", "bom_owner", "site_geo_fallback",
+                               "enrich_entities", "entity_resolution")
+
+
+def _small_model_for_stage() -> str | None:
+    small = os.environ.get("SOWSMITH_SMALL_MODEL", "").strip()
+    if not small:
+        return None
+    raw = os.environ.get("SOWSMITH_SMALL_MODEL_STAGES", "").strip()
+    stages = tuple(x.strip() for x in raw.split(",") if x.strip()) if raw else _SMALL_MODEL_STAGES_DEFAULT
+    try:
+        from app.core import telemetry as _tel
+
+        return small if _tel.CURRENT_STAGE in stages else None
+    except Exception:
+        return None
+
+
 def _chat(messages: list, *, max_tokens: int, model: str | None,
           timeout: int | None, base: str | None = None,
-          key: str | None = None) -> str:
+          key: str | None = None, reasoning_effort: str | None = None) -> str:
+    """Timed per compile stage (telemetry.charge), then ``_chat_inner``."""
+    import time as _t
+
+    started = _t.perf_counter()
+    # The stage's small model replaces the default teacher only: a caller that
+    # names a model (the SOW writer's gpt-5.4-mini, a judge's ollama: route)
+    # keeps it, whatever stage label is current when it runs.
+    model = model or _small_model_for_stage()
+    try:
+        return _chat_inner(messages, max_tokens=max_tokens, model=model, timeout=timeout, base=base, key=key,
+                           reasoning_effort=reasoning_effort)
+    finally:
+        try:
+            from app.core import telemetry as _tel
+
+            _tel.charge("llm", _t.perf_counter() - started)
+        except Exception:
+            pass
+
+
+def _chat_inner(messages: list, *, max_tokens: int, model: str | None,
+                timeout: int | None, base: str | None = None,
+                key: str | None = None, reasoning_effort: str | None = None) -> str:
     """Shared OpenAI-compatible chat-completions transport for text and vision:
     bounded retry on 429/5xx/transport errors, global concurrency semaphore,
     usage metering. Returns assistant text or ``""``.
@@ -442,6 +506,15 @@ def _chat(messages: list, *, max_tokens: int, model: str | None,
         "max_tokens": int(max_tokens),
         "stream": False,
     }
+    if _reasoning_model(model):
+        # gpt-5 / o-series: the cap is max_completion_tokens and covers the
+        # model's reasoning too, temperature is fixed, and effort is a knob.
+        payload.pop("max_tokens", None)
+        payload.pop("temperature", None)
+        payload["max_completion_tokens"] = int(max_tokens) * _REASONING_HEADROOM
+        effort = (reasoning_effort or os.environ.get("TEACHER_REASONING_EFFORT", "low")).strip()
+        if effort:
+            payload["reasoning_effort"] = effort
     # Preemptively drop params this provider has already told us it rejects, so
     # we don't re-pay a failed round-trip on every call after the first.
     with _UNSUPPORTED_LOCK:

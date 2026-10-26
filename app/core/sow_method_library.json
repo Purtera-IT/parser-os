@@ -1,0 +1,7892 @@
+{
+ "low_voltage_cabling": {
+  "method_steps": [
+   {
+    "text": "Install low voltage homerun cabling from individual units back to assigned IDF locations.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Install single mode fiber backbone cabling between MDF and IDF locations.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203",
+     "010320"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Complete rack and closet buildout activities for MDF and IDF locations including installation and organization of customer provided equipment, cable management, labeling, and patching support.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Terminate and label cabling at applicable endpoints and patch panels.",
+    "deals": [
+     "000089",
+     "010245",
+     "010247",
+     "Tillys"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Route cabling through available conduits, wall penetrations, ceiling spaces, perimeter wall fixture systems, storefront chases, and access panels where available.",
+    "deals": [
+     "010247",
+     "010315",
+     "Lora F",
+     "Tillys"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Label the new cable at both ends using customer provided labeling standards, if applicable.",
+    "deals": [
+     "000116",
+     "010247",
+     "010299",
+     "010379"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Perform basic continuity and pinout testing on each installed cable to verify proper installation.",
+    "deals": [
+     "010082",
+     "010126",
+     "010355",
+     "010379"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Clear the immediate work area of installation-related debris upon completion.",
+    "deals": [
+     "010082",
+     "010247",
+     "010306",
+     "010379"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Install owner or customer provided wireless access points including mounting, patching to designated cabling, and basic physical installation support.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide installation closeout support including field notes or test documentation if required.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Furnish and install plenum-rated CAT6 cable from designated telecommunications rooms to designated device locations.",
+    "deals": [
+     "000048",
+     "010247",
+     "Choate"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide, install, terminate, label, and test horizontal Category 6 and Category 6A cabling for designated device locations.",
+    "deals": [
+     "010245",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Support new horizontal cabling with appropriate cable management hardware such as J hooks.",
+    "deals": [
+     "010245",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Label all installed cabling to applicable standards using machine printed self-adhesive labels or per customer requirements.",
+    "deals": [
+     "010245",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Document newly installed cabling on as-built floor plans and provide cable inventory records in spreadsheet format.",
+    "deals": [
+     "010245",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Terminate all cabling with proper RJ-45/keystone terminations; no passthrough connectors allowed.",
+    "deals": [
+     "010126",
+     "010167",
+     "010296"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Seal all penetrations with fire caulking in compliance with fire-stop requirements.",
+    "deals": [
+     "010126",
+     "010167",
+     "010296"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Install common area low voltage cabling routed back to assigned IDF locations, including installation, routing, labeling, termination, and basic testing.",
+    "deals": [
+     "000089",
+     "010167"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic continuity or certification testing as applicable to the agreed project standard.",
+    "deals": [
+     "000089",
+     "010167"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform limited drywall cutting required solely to install low voltage mounting bracket and faceplate.",
+    "deals": [
+     "010249",
+     "010315"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Maintain proper cable pathway installation practices including bend radius and separation from electrical systems.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Terminate, test, and label all new data cabling per design specifications and industry standards.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform cable testing for copper and fiber optic cabling according to industry standards and provide test results in electronic or printed format.",
+    "deals": [
+     "000048",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Follow manufacturer recommendations and industry best practices for cable routing, bend radii, separation from EMI sources, labeling, and documentation.",
+    "deals": [
+     "010126",
+     "010167"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Confirm designated equipment locations, cable pathways, and source equipment location with the onsite customer contact before installation begins.",
+    "deals": [
+     "010082",
+     "010315"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide and install incidental cable support hardware such as J hooks, Velcro, and similar low voltage cable management materials as required.",
+    "deals": [
+     "000019",
+     "010247"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform certification testing of installed Cat 6 cabling using appropriate cable certification testers after termination and prior to final acceptance.",
+    "deals": [
+     "000019",
+     "010247"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide and install a CAT6 cable run from the designated location to the target device location.",
+    "deals": [
+     "010082",
+     "Retter"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Terminate RJ45 connectors on both ends of the cable run.",
+    "deals": [
+     "010306",
+     "Retter"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Test the suspected cable run for continuity, wiring faults, and basic pass or fail condition.",
+    "deals": [
+     "000119",
+     "010306"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Review the designated work areas prior to beginning cable removal.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Identify legacy low voltage cabling to be removed based on customer direction, visible cable paths, and accessible pathway conditions.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cut, pull, and remove legacy low voltage cabling from accessible ceiling spaces, open ceiling areas, cable bundles, and pathways.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Remove legacy cable bundles routed back to the identified termination area or closet.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Support cleanup of abandoned low voltage cabling within accessible work areas.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Neatly stage removed cabling and debris in a customer designated onsite location for disposal or removal.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Maintain reasonable housekeeping throughout the work area during the removal process.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide basic completion photos of the work areas where cabling was removed.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Notify the customer of any inaccessible cabling, safety concerns, unknown pathways, or conditions that prevent removal.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform cable pulling, routing, labeling, termination, and basic testing for all low voltage cables.",
+    "deals": [
+     "010126",
+     "Choate"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Drill and drill bits",
+    "deals": [
+     "000089",
+     "010064",
+     "010082",
+     "010126",
+     "010167",
+     "010203",
+     "010214",
+     "010296"
+    ],
+    "n": 8
+   },
+   {
+    "text": "Labeling equipment",
+    "deals": [
+     "000048",
+     "010126",
+     "010296",
+     "010299",
+     "010355",
+     "Choate",
+     "DSM- R",
+     "Tillys"
+    ],
+    "n": 8
+   },
+   {
+    "text": "Rack mounting and hardware installation tools",
+    "deals": [
+     "000048",
+     "000116",
+     "010203",
+     "010319",
+     "010355",
+     "010360",
+     "Tillys"
+    ],
+    "n": 7
+   },
+   {
+    "text": "Cable testers and certification tools",
+    "deals": [
+     "010064",
+     "010126",
+     "010167",
+     "010203",
+     "010214",
+     "010296",
+     "Choate"
+    ],
+    "n": 7
+   },
+   {
+    "text": "Cable management and installation tools",
+    "deals": [
+     "000048",
+     "010214",
+     "010245",
+     "010299",
+     "010320",
+     "Choate"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Standard low voltage installation tools (e.g., cable testers, punch down tools, crimpers)",
+    "deals": [
+     "000089",
+     "010247",
+     "010299",
+     "010360",
+     "010410"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Ladders or lifts as required for mounting",
+    "deals": [
+     "010126",
+     "010245",
+     "010296",
+     "010360",
+     "Tillys"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Cable labeling tools",
+    "deals": [
+     "000116",
+     "010082",
+     "010247",
+     "010249",
+     "010360"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Cable termination and testing tools for Category 6 and Category 6A cabling",
+    "deals": [
+     "000116",
+     "010245",
+     "010315",
+     "010319",
+     "010320"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Basic hand tools for termination and mounting",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010319"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Cable termination tools (crimpers, punch down tools)",
+    "deals": [
+     "010296",
+     "010299",
+     "Choate",
+     "Tillys"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Punchdown tool",
+    "deals": [
+     "000119",
+     "010064",
+     "010214",
+     "Lora F"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Toner and probe",
+    "deals": [
+     "010064",
+     "010214",
+     "010315",
+     "Lora F"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Fish tape or cable pulling tools",
+    "deals": [
+     "010064",
+     "010214",
+     "Lora F",
+     "Retter"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Cable management accessories (zip ties, clips, d-rings, fasteners)",
+    "deals": [
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Cable pulling tools",
+    "deals": [
+     "010082",
+     "DSM- R",
+     "Tillys"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable testers and certifiers for Cat6 and speaker wiring",
+    "deals": [
+     "000019",
+     "DSM- R",
+     "Tillys"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable termination and testing tools",
+    "deals": [
+     "000048",
+     "010249",
+     "010355"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable management and support hardware such as J hooks",
+    "deals": [
+     "010249",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Fire caulking tools",
+    "deals": [
+     "010126",
+     "010167",
+     "010296"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable ties",
+    "deals": [
+     "000089",
+     "010214"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fiber optic termination and testing equipment including power meter and light source",
+    "deals": [
+     "000048",
+     "010319"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fiber optic test equipment including power meter and light source",
+    "deals": [
+     "010245",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Flashlight",
+    "deals": [
+     "010214",
+     "010433"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable stripper and snips",
+    "deals": [
+     "010064",
+     "010214"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Label maker",
+    "deals": [
+     "010064",
+     "010315"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic hand tools (screwdrivers, pliers, cutters)",
+    "deals": [
+     "010064",
+     "010296"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Patch cables",
+    "deals": [
+     "000119",
+     "Lora F"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Labeling tools",
+    "deals": [
+     "010167",
+     "010203"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Stud finder",
+    "deals": [
+     "010082",
+     "010315"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Category 6 cable certification and testing equipment",
+    "deals": [
+     "010247",
+     "010315"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable management hardware (e.g., J hooks, Velcro)",
+    "deals": [
+     "000019",
+     "010247"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ladders or access equipment suitable for drop ceiling cable routing",
+    "deals": [
+     "000116",
+     "010247"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Continuity tester or 4-pair cable tester.",
+    "deals": [
+     "000116",
+     "000119"
+    ],
+    "n": 2
+   },
+   {
+    "text": "RJ45 crimp tool.",
+    "deals": [
+     "000119",
+     "010214"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Screwdrivers including Phillips and flathead.",
+    "deals": [
+     "000119",
+     "010214"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard low voltage hand tools",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard ladders",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Personal protective equipment (PPE)",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Termination tools for RJ-45 and keystone jacks",
+    "deals": [
+     "010203",
+     "010306"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Consumable installation materials including zip ties, clips, d-rings, cable rated fasteners, fire caulk, drill bits, and other ancillary consumables necessary for installation activities",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010296"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Labels and consumables for cable identification",
+    "deals": [
+     "000116",
+     "010247",
+     "010249",
+     "010410"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Cable supports such as J hooks and Velcro",
+    "deals": [
+     "010082",
+     "010247",
+     "010249"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Patch panels and wire management panels",
+    "deals": [
+     "010245",
+     "010320",
+     "010355"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable management materials and supports.",
+    "deals": [
+     "000116",
+     "010379",
+     "010410"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standardized reports upon project completion",
+    "deals": [
+     "000140",
+     "010080",
+     "010081"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Plenum rated Cat 6 cable",
+    "deals": [
+     "000019",
+     "010249"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Low voltage cabling including plenum-rated CAT6 cables",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fiber optic cables and related termination hardware",
+    "deals": [
+     "000048",
+     "010355"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Patch panels and faceplates",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Category 6 and Category 6A horizontal station cables with plenum jacket",
+    "deals": [
+     "010245",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Copper and fiber patch cords of various lengths",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fiber enclosures and adapter plates",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "PoE surge protectors for network devices as required",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Four post floor mounted data racks and enclosed wall cabinets",
+    "deals": [
+     "010245",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Labeling materials",
+    "deals": [
+     "000019",
+     "Lora F"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Category 6 cabling and associated components for new runs",
+    "deals": [
+     "010315",
+     "010360"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Category 6 rated keystone jacks",
+    "deals": [
+     "010247",
+     "010315"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Horizontal and vertical cable management hardware",
+    "deals": [
+     "000019",
+     "DSM- R"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Patch panels suitable for terminating installed cables.",
+    "deals": [
+     "010379",
+     "DSM- R"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Knowledgeable low voltage field technicians",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Project management resources to coordinate scheduling, resource deployment, and issue escalation",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable management hardware such as clips, straps, and hangers",
+    "deals": [
+     "010245",
+     "Choate"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Ensure all customer provided equipment is onsite and available prior to arrival.",
+    "deals": [
+     "000019",
+     "000048",
+     "000116",
+     "000119",
+     "000140",
+     "010082",
+     "010214",
+     "010320",
+     "Choate",
+     "DSM- R",
+     "Laundr",
+     "Tillys"
+    ],
+    "n": 12
+   },
+   {
+    "text": "Provide a point of contact for the project and onsite visits.",
+    "deals": [
+     "000019",
+     "000119",
+     "000140",
+     "010214",
+     "010319",
+     "010320",
+     "Choate",
+     "DSM- R",
+     "Tillys"
+    ],
+    "n": 9
+   },
+   {
+    "text": "Provide rack and cable diagrams as required.",
+    "deals": [
+     "000048",
+     "000116",
+     "000140",
+     "010319",
+     "010320",
+     "Tillys"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Provide approved construction drawings, cabling paths, IDF assignments, MDF location, AP locations, and data jack locations.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Provide power, grounding, backboards, sleeves, conduit, cable tray, J hooks, or other pathway infrastructure unless specifically included in provider\u2019s quote.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Provide network configuration, programming, licensing, and commissioning unless separately included in provider\u2019s quote.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Provide timely approvals and answers to field questions that may affect routing, mounting, or installation methods.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Coordinate any required permits, inspections, fire stopping standards, and site-specific compliance requirements unless specifically added to the provider\u2019s scope.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Provide device locations including grid, rack, and elevation details as applicable.",
+    "deals": [
+     "000116",
+     "000140",
+     "010319",
+     "010320",
+     "Tillys"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Provide clear access to units, common areas, MDF, IDFs, risers, pathways, and ceilings.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Ensure MDF and IDF rooms are secure, powered, cooled, and ready for equipment installation.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203",
+     "010355"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Perform all device configurations and troubleshooting as required",
+    "deals": [
+     "000019",
+     "010319",
+     "010320",
+     "Tillys"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide any specific installation requirements as needed.",
+    "deals": [
+     "000119",
+     "010214",
+     "010320",
+     "Tillys"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Ensure customer employees are prepared for technician visits on scheduled dates.",
+    "deals": [
+     "000119",
+     "010320",
+     "Tillys"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide network cabinet or wall rack and patch panel.",
+    "deals": [
+     "010064",
+     "010082",
+     "010410"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide timely access to all required areas including communications closets and equipment locations.",
+    "deals": [
+     "010249",
+     "Lora F"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure existing ceiling areas, communications spaces, and cable pathways are accessible and free of obstructions.",
+    "deals": [
+     "000048",
+     "010249"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure customer employees are prepared for onsite visits.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide electronics commissioning, testing, and solution engineering as required.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Identify any union labor or permitting requirements and provide necessary approvals.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure work areas, telecommunications rooms, pathways, ceilings, equipment locations, and other required areas are accessible and ready for installation prior to provider mobilization.",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide final approved floor plans, device locations, and cable drop locations before dispatch.",
+    "deals": [
+     "010064",
+     "010379"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide device locations, rack and cable diagrams, and any specific installation requirements prior to installation",
+    "deals": [
+     "000019",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide access to network closet, patch panel, and related network equipment as needed.",
+    "deals": [
+     "000119",
+     "010247"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide reasonable and safe access to project site and work areas during scheduled installation window.",
+    "deals": [
+     "010247",
+     "010355"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide a point of contact for coordination and communication",
+    "deals": [
+     "010082",
+     "Retter"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide site access to work areas, closets, ceilings, and pathways as required",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Confirm which cabling is abandoned and approved for removal.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure any powered electrical infrastructure or high voltage wiring is disconnected, de energized, made safe, and clearly identified prior to work",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide building rules, safety, security requirements, and work hour restrictions prior to scheduling",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide onsite escort support if required by the building.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Designate an onsite area for staging removed cabling and debris.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Coordinate disposal, dumpster access, or removal of staged debris unless separately included.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure telecommunications rooms are secure, powered, cooled, and ready for equipment installation.",
+    "deals": [
+     "010126",
+     "010296"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "000019",
+     "000048",
+     "000089",
+     "000116",
+     "000119",
+     "000140",
+     "010064",
+     "010080",
+     "010081",
+     "010082",
+     "010126",
+     "010167",
+     "010203",
+     "010214",
+     "010245",
+     "010249",
+     "010296",
+     "010306",
+     "010315",
+     "010319",
+     "010320",
+     "010379",
+     "010410",
+     "010433",
+     "Choate",
+     "DSM- R",
+     "Retter",
+     "Tillys"
+    ],
+    "n": 28
+   },
+   {
+    "text": "No legacy hardware removal is required.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Average cabling run length is approximately 110 feet.",
+    "deals": [
+     "000089",
+     "010064",
+     "010167",
+     "010203"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Rack equipment is provided by others and available onsite when scheduled to perform closet buildout.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Pathways are available, accessible, and suitable for cabling installation.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Standard key door locks and doors are precut.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Walls, ceilings, and unit areas are sufficiently complete and accessible for low voltage work.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Parking is available onsite and reimbursed if there is a fee.",
+    "deals": [
+     "000089",
+     "010247",
+     "010296"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Media panels are directly mounted to wall or panel.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are considered out of scope.",
+    "deals": [
+     "000048",
+     "010299",
+     "DSM- R"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Any required lifts or special equipment beyond a step ladder will be handled via Change Order.",
+    "deals": [
+     "000048",
+     "010306",
+     "Choate"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Customer provided equipment is complete, functional, and onsite prior to installation.",
+    "deals": [
+     "010082",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "No conduit materials or installation are included unless specifically quoted.",
+    "deals": [
+     "010126",
+     "010167",
+     "010296"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provider is not responsible for network design, configuration, programming, or commissioning unless specifically included.",
+    "deals": [
+     "000119",
+     "010167",
+     "010203"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Lift requirements, if needed, will be handled through a change request.",
+    "deals": [
+     "000019",
+     "010080",
+     "DSM- R"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Conduit materials or installation is not in scope and may be addressed via change request.",
+    "deals": [
+     "000089",
+     "010203"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Existing pathways and building conditions will permit installation without major construction or specialty access equipment.",
+    "deals": [
+     "010245",
+     "010249"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Lift or special equipment requirements will be handled through change requests.",
+    "deals": [
+     "010249",
+     "010296"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Pricing assumes contiguous schedule without significant breaks.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Scaffolding, lifts, tool rentals, and large ladders are excluded.",
+    "deals": [
+     "000048",
+     "010355"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Reasonable and accessible pathways are available for installation of copper and fiber cabling.",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Required electrical power and network infrastructure are operational and available.",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Changes to quantities, locations, routing, methods, schedule, or site conditions may require change orders and additional fees.",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider scope is limited to physical installation and cabling activities specifically identified in the SOW.",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable pathways are accessible and do not require major construction such as conduit installation, core drilling, or trenching unless included.",
+    "deals": [
+     "010355",
+     "Lora F"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Finished ceilings and install height will not exceed standard low voltage installation heights.",
+    "deals": [
+     "010167",
+     "010203"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Low voltage work to be installed prior to sheetrock installation.",
+    "deals": [
+     "010167",
+     "010203"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider is not responsible for electrical power installation or grounding and bonding infrastructure unless specifically quoted.",
+    "deals": [
+     "010167",
+     "010245"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No core drilling or raceway installation included unless specifically added",
+    "deals": [
+     "000019",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard office ceiling heights and existing accessible cable pathways are available for cable routing.",
+    "deals": [
+     "010247",
+     "010410"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Existing ceiling conditions are standard drop ceiling accessible with a standard ladder.",
+    "deals": [
+     "000119",
+     "010082"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cabling to be removed is abandoned, inactive, and approved for removal by the customer.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "If cables cannot be removed fully to their origination point, cables will be cut and abandoned in place.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No energized electrical or high voltage work is included",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No new cabling installation, termination, testing, certification, or labeling is included.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Removed cabling and debris will be staged onsite in a customer designated location unless disposal is separately included.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "All major materials, equipment, and network hardware will be provided by the customer or others.",
+    "deals": [
+     "010126",
+     "010296"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider does not own or guarantee interoperability between devices; compatibility is managed by product manufacturers.",
+    "deals": [
+     "010126",
+     "010203"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard working day is eight hours per day unless otherwise specified.",
+    "deals": [
+     "010299",
+     "DSM- R"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No core drilling, conduit installation, trenching, or wall/ceiling/floor repair is required.",
+    "deals": [
+     "000116",
+     "010306"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Firewall, router, switch, or wireless controller configuration.",
+    "deals": [
+     "000089",
+     "000119",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Drywall repair, painting, patching, or finish restoration.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010249",
+     "010296"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Furnishing major materials or network hardware.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Network design, engineering, configuration, programming, licensing, or cloud controller setup.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Grounding and bonding infrastructure unless specifically quoted.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Conduits, sleeves, coring, trenching, cable tray, or pathway construction.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Remediation of blocked pathways, damaged conduits, inaccessible ceilings, or missing construction infrastructure.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Rework caused by design changes, unit access issues, missing or incorrect materials, or revised device locations.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Lift or specialty access equipment unless separately approved.",
+    "deals": [
+     "010064",
+     "010245",
+     "010247",
+     "010249",
+     "010355"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Any services not specified in the project scope.",
+    "deals": [
+     "000140",
+     "010082",
+     "010299",
+     "010315",
+     "010320"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Electrical power installation.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Fire stopping unless specifically included.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203",
+     "010296"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Certification testing beyond the agreed standard if not included in the final quote.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Core drilling, trenching, boring, concrete cutting, or significant structural penetrations.",
+    "deals": [
+     "000116",
+     "010249",
+     "010299"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Coring, floor coring, boring, or in-slab pathways.",
+    "deals": [
+     "000048",
+     "Choate",
+     "DSM- R"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Installation of EMT or raceway to conceal new cabling",
+    "deals": [
+     "010245",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Conduit installation, coring, trenching, wall repair, ceiling repair, painting, or other construction work.",
+    "deals": [
+     "000119",
+     "010064",
+     "010306"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Electrical or high voltage work.",
+    "deals": [
+     "010080",
+     "010247",
+     "010299"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable testing or certification.",
+    "deals": [
+     "010080",
+     "010081",
+     "010296"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Any work outside of normal business hours unless otherwise agreed.",
+    "deals": [
+     "Choate",
+     "Tillys"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Electrical work or installation of electrical receptacles.",
+    "deals": [
+     "010249",
+     "010379"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation of conduits or raceways.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation or management of access control, audio/video, or camera equipment.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Repair of finished surfaces such as walls, ceilings, millwork, painted surfaces, or masonry.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Union labor, permit research, fees, and inspections unless specifically included.",
+    "deals": [
+     "000048",
+     "Choate"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fire alarm cabling and device installation",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Access control cabling and device installation",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Speaker wiring and device installation",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "CCTV devices and head end equipment",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Specialty permits and related work",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Electrical work, outlet installation, circuit work, or power modifications.",
+    "deals": [
+     "010064",
+     "010315"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network configuration or switch programming",
+    "deals": [
+     "Laundr",
+     "Lora F"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Core drilling, major wall repair, painting, ceiling replacement, structural modifications, and hazardous material remediation",
+    "deals": [
+     "000019",
+     "010214"
+    ],
+    "n": 2
+   },
+   {
+    "text": "New conduit, raceway, core drilling, structural penetrations, or major pathway modifications.",
+    "deals": [
+     "010247",
+     "010360"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Drywall repair, painting, cosmetic restoration, and demolition or removal of existing cabling.",
+    "deals": [
+     "010247",
+     "010410"
+    ],
+    "n": 2
+   },
+   {
+    "text": "De energizing or disconnecting powered electrical infrastructure.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Removal of energized or active production cabling.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "New cable installation.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable termination",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Patch panel installation or removal.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Standardized project completion reports.",
+    "deals": [
+     "010080",
+     "010081",
+     "010296",
+     "010299",
+     "Choate"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Completed rack and closet buildout for MDF and IDF locations including equipment mounting, cable management, and labeling.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203",
+     "010355"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Terminated and labeled cabling at applicable endpoints and patch panels.",
+    "deals": [
+     "000089",
+     "010203",
+     "Lora F",
+     "Tillys"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Installation closeout support including field notes or test documentation if required.",
+    "deals": [
+     "000089",
+     "010126",
+     "010167",
+     "010203"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Cable testing results documentation.",
+    "deals": [
+     "000019",
+     "000048",
+     "010064",
+     "010410"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Installed and mounted unit wireless access points.",
+    "deals": [
+     "000089",
+     "010203",
+     "010296"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Installed single mode fiber backbone runs between MDF and IDF locations.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Basic continuity or certification testing as applicable to the agreed project standard.",
+    "deals": [
+     "000089",
+     "010167",
+     "010203"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Installed telecommunications room infrastructure including racks, cabinets, patch panels, and cable management",
+    "deals": [
+     "010126",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "As-built floor plans documenting installed cabling",
+    "deals": [
+     "010245",
+     "010319",
+     "010320"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable labeling compliant with applicable standards or customer requirements",
+    "deals": [
+     "010245",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Test results for copper and fiber cabling in electronic or printed format",
+    "deals": [
+     "010319",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable inventory records provided in spreadsheet format.",
+    "deals": [
+     "010245",
+     "010320"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installed low voltage cabling homeruns from units to IDF locations with terminations and labeling.",
+    "deals": [
+     "010167",
+     "010203"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Rack or cabinet elevation updates as applicable",
+    "deals": [
+     "000019",
+     "010214"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Confirmation that each newly installed cable passed basic continuity and pinout testing.",
+    "deals": [
+     "010247",
+     "010379"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work completion report including photographs and cable test results for the affected cable run and additional tested cables.",
+    "deals": [
+     "000119",
+     "010410"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable test results confirming continuity and proper termination.",
+    "deals": [
+     "010299",
+     "010306"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Completion photos documenting the work areas where cabling was removed.",
+    "deals": [
+     "010080",
+     "010081"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installed, routed, labeled, terminated, and tested low voltage cabling including CAT6, speaker cable, access control cable, and fiber optic backbone cabling as applicable.",
+    "deals": [
+     "010126",
+     "010319"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "relocation_move": {
+  "method_steps": [
+   {
+    "text": "Seal the transport vehicle with a uniquely numbered security tag to establish a documented Chain of Custody.",
+    "deals": [
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Continuously monitor the shipment via GPS tracking to enable real-time location visibility and status updates.",
+    "deals": [
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Unload the equipment at the destination location.",
+    "deals": [
+     "010290",
+     "010294",
+     "LA Rel"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Terminate cables at patch panels with available open jacks.",
+    "deals": [
+     "010008",
+     "010157"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Unpack, install rack slides if required, and re-rack equipment at the destination location.",
+    "deals": [
+     "010351",
+     "NYC- M"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Remove and coil designated fiber and copper cabling back to specified points of presence as identified in the scope.",
+    "deals": [
+     "010317",
+     "010351"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Disconnect and remove designated electrical distribution equipment, panels, conduits, racks, fiber trays, ladder racks, containment, and other tenant infrastructure as specified.",
+    "deals": [
+     "010317",
+     "010351"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Dispose of or recycle removed materials and equipment in accordance with applicable regulations and site standards.",
+    "deals": [
+     "010317",
+     "010351"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Prepare and securely pack the equipment for transportation using appropriate packing materials.",
+    "deals": [
+     "010290",
+     "LA Rel"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Assign a dedicated project manager to oversee the engagement from kickoff through completion, including scheduling, logistics coordination, customer communication, documentation, and quality assurance.",
+    "deals": [
+     "010147",
+     "010294"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide packing materials required to safely prepare equipment for transportation and processing, including boxes, pallets, bubble wrap, foam, and protective packaging.",
+    "deals": [
+     "010147",
+     "010294"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Packing supplies including pallets, boxes, banding kits, shrink wrap, and bubble wrap.",
+    "deals": [
+     "010157",
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Security tags for sealing transportation vehicle.",
+    "deals": [
+     "010290",
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 4
+   },
+   {
+    "text": "GPS tracking system for shipment monitoring.",
+    "deals": [
+     "010290",
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Packing materials suitable for white-glove handling of IT equipment",
+    "deals": [
+     "010317",
+     "010351"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cleaning equipment for HEPA and static-safe environments",
+    "deals": [
+     "010317",
+     "010351"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard rack and cable installation tools.",
+    "deals": [
+     "010290",
+     "LA Rel"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Packing materials such as boxes, pallets, bubble wrap, foam, and protective packaging",
+    "deals": [
+     "010147",
+     "010290"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Packing materials required for safe equipment preparation and transportation",
+    "deals": [
+     "010147",
+     "010157",
+     "010290",
+     "010294",
+     "NYC- M"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Security tags for sealing and chain of custody documentation.",
+    "deals": [
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Transportation vehicle dedicated to secure equipment movement.",
+    "deals": [
+     "010290",
+     "010294",
+     "NYC- M"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Packing materials and protective supplies for IT equipment relocation",
+    "deals": [
+     "010317",
+     "010351"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Provide a point of contact for project coordination and onsite visits.",
+    "deals": [
+     "010008",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Ensure all equipment to be moved is onsite and available before service begins.",
+    "deals": [
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Prepare Customer employees for Provider engineer visits on scheduled dates",
+    "deals": [
+     "010147",
+     "010294"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure employees are prepared for the provider's onsite visit",
+    "deals": [
+     "010147",
+     "NYC- M"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified",
+    "deals": [
+     "010008",
+     "010147",
+     "010290",
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Any services not expressly included in the project scope are out of scope",
+    "deals": [
+     "010147",
+     "010290",
+     "010294",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Cancellation or rescheduling fees apply based on timing relative to scheduled visits",
+    "deals": [
+     "010147",
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standard working day is eight hours.",
+    "deals": [
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider will bill according to agreed milestones",
+    "deals": [
+     "010147",
+     "010294"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Any services not explicitly included in the project scope",
+    "deals": [
+     "010008",
+     "010290",
+     "010294",
+     "NYC- M"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Work performed outside of agreed business hours unless otherwise specified",
+    "deals": [
+     "010290",
+     "NYC- M"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Chain of Custody documentation for all transported equipment.",
+    "deals": [
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standardized project completion reports.",
+    "deals": [
+     "LA Rel",
+     "NYC- M"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "site_survey": {
+  "method_steps": [
+   {
+    "text": "Dispatch a wireless field technician to perform onsite wireless survey data collection for the specified location and areas.",
+    "deals": [
+     "010014",
+     "010225"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Conduct a coverage walk of existing wireless coverage in the 2.4 GHz and 5 GHz frequency bands, where applicable.",
+    "deals": [
+     "010014",
+     "010225"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Documentation tools for recording site conditions and installation status",
+    "deals": [
+     "010132",
+     "Olin C"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Standardized site survey and assessment report templates",
+    "deals": [
+     "010132",
+     "010235",
+     "01025-"
+    ],
+    "n": 3
+   }
+  ],
+  "customer_responsibilities": [],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "010132",
+     "010225",
+     "010235",
+     "01025-",
+     "010425",
+     "Olin C"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are considered out of scope.",
+    "deals": [
+     "010132",
+     "010225",
+     "Olin C"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cancellation or reschedule policies apply as specified in the agreement.",
+    "deals": [
+     "010132",
+     "010225"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Concealed conditions not reasonably observable may impact final installation scope, labor, or materials.",
+    "deals": [
+     "010235",
+     "01025-"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Configuration development or any services not specified in the project scope.",
+    "deals": [
+     "010132",
+     "010225"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any work or services not explicitly described in the scope of work.",
+    "deals": [
+     "01025-",
+     "Olin C"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Comprehensive site survey report documenting physical infrastructure, cabling pathways, equipment locations, and environmental conditions",
+    "deals": [
+     "010235",
+     "01025-"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Photographic documentation supporting the assessment findings",
+    "deals": [
+     "010235",
+     "01025-"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "other": {
+  "method_steps": [
+   {
+    "text": "Secure each device in accordance with the applicable manufacturer installation requirements.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Arrive onsite during the customer approved service window with the required standard field toolkit and installation materials.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Check in with the designated customer or site contact and confirm access to the designated installation locations and applicable safety requirements.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Locate the designated installation points and confirm the intended installation location for each device.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Review the applicable manufacturer installation instructions and customer provided installation requirements prior to installation.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install each monitoring device on the designated location in accordance with the provided installation instructions without modifying the existing equipment or process system.",
+    "deals": [
+     "000141",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic physical installation verification and confirm each device is properly installed and secured.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic activation or application based verification where required, provided the necessary application, credentials, connectivity, and device provisioning have been made available.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Document completion status and identify any installation exceptions, access issues, damaged fittings, missing equipment, unsafe conditions, or other blockers encountered onsite.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Clean the immediate work area of packaging and installation debris.",
+    "deals": [
+     "000124",
+     "010244"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Tape measure",
+    "deals": [
+     "000124",
+     "010284",
+     "010309",
+     "010354"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Standard hand tools suitable for device installation activities.",
+    "deals": [
+     "000141",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Mobile phone or tablet capable of accessing required activation or verification applications",
+    "deals": [
+     "000141",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard personal protective equipment (PPE) required by the customer site",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Screwdrivers.",
+    "deals": [
+     "000124",
+     "010284"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Pipe wrench or large channel locks",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cheater bar or equivalent leverage tool for tightly secured plugs.",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fuel appropriate thread tape or equivalent sealing material for threaded connections.",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Standardized reports upon project completion",
+    "deals": [
+     "000124",
+     "010173",
+     "010244"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standard field toolkit appropriate for the installation",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Qualified field technicians or subcontractors.",
+    "deals": [
+     "010244",
+     "Wyndha"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Ensure all customer provided equipment, mounting components, accessories, and materials are on site and available prior to technician arrival",
+    "deals": [
+     "000054",
+     "000124",
+     "000141",
+     "010284",
+     "010309",
+     "010354"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Provide a point of contact for the project and onsite visit.",
+    "deals": [
+     "000054",
+     "000124",
+     "010309",
+     "010354"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Ensure the installation locations, fittings, plugs, caps, threads, and surrounding area are suitable for installation.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide a customer representative or site contact when required for access, direction, escorting, or approval.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Ensure connectivity requirements are available where needed for activation or verification.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Correct any site condition that prevents safe or complete installation.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Ensure customer employees are prepared for provider technician visits on scheduled dates",
+    "deals": [
+     "000054",
+     "000124",
+     "010309"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide any specific installation requirements as needed.",
+    "deals": [
+     "000054",
+     "000124",
+     "010309"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide device location(s) prior to arrival on site.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide site specific safety requirements, including SDS information, PPE requirements, environmental and permitting requirements, and access restrictions prior to dispatch",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide any required authorization for work on or around the installation locations.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide the correct device type, quantity, and any device-specific information for each site prior to technician dispatch.",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure technicians have safe and authorized access to the installation location.",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "000054",
+     "000124",
+     "000141",
+     "010054",
+     "010173",
+     "010244",
+     "010284",
+     "010309",
+     "010354",
+     "Wyndha"
+    ],
+    "n": 10
+   },
+   {
+    "text": "The technician can access the installation location safely without specialized access equipment.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "No tank modification, repair, system remediation, excavation, electrical work, welding, hot work, confined space entry, or hazardous material remediation is included.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Customer will provide accurate site, device, access, and safety information before dispatch.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "The existing mounting locations, openings, or fittings are serviceable, accessible, and compatible with the device installation",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation guides and video instructions are available for each device type.",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Devices can be installed using a standard toolkit and listed tools and materials.",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cancellation or reschedule policies apply as specified.",
+    "deals": [
+     "000054",
+     "010309"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Repair or remediation of seized, damaged, corroded, stripped, inaccessible, or incompatible fittings.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Welding, cutting, hot work, excavation, or structural modification.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Electrical work or low voltage cabling.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope",
+    "deals": [
+     "000124",
+     "010054",
+     "010173"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Tank or equipment repair, modification, cleaning, or process system repair",
+    "deals": [
+     "000141",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fuel transfer, removal, handling, disposal, or environmental remediation.",
+    "deals": [
+     "000141",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any work not specifically stated in the scope of work.",
+    "deals": [
+     "000141",
+     "010284"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Installation of one assigned monitoring device at each designated site.",
+    "deals": [
+     "000141",
+     "010309",
+     "010354"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Basic onsite installation verification.",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Completion status reporting and documentation of any exceptions or blockers preventing completion",
+    "deals": [
+     "010309",
+     "010354"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Site completion status reporting.",
+    "deals": [
+     "000141",
+     "010309"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic power, network, and connectivity validation results.",
+    "deals": [
+     "010244",
+     "Wyndha"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "network_switch_refresh": {
+  "method_steps": [
+   {
+    "text": "Coordinate onsite arrival and check in with the designated site contact.",
+    "deals": [
+     "010085",
+     "010262"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Take prework photographs and document existing switch locations, equipment, and connected cabling where required.",
+    "deals": [
+     "010110",
+     "010209"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Remove existing network switches as required.",
+    "deals": [
+     "010083",
+     "010110"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install new network switches following the customer provided port matrix and rack elevations.",
+    "deals": [
+     "010110",
+     "010344"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Stage removed switches onsite in a customer designated area.",
+    "deals": [
+     "010083",
+     "010085"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Cable management tools",
+    "deals": [
+     "010110",
+     "010262"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Camera or device for photographic documentation",
+    "deals": [
+     "010110",
+     "010209"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard rack mounting tools (e.g., screwdrivers, rack screws)",
+    "deals": [
+     "010083",
+     "010110"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Project management and coordination resources.",
+    "deals": [
+     "010085",
+     "010118",
+     "010269"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standardized reports upon project completion.",
+    "deals": [
+     "010085",
+     "010110",
+     "010269"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Knowledgeable technical resources to perform the described services",
+    "deals": [
+     "010110",
+     "010269"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standardized reporting templates for project documentation",
+    "deals": [
+     "010110",
+     "010118"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Provide a point of contact for the project and onsite visit.",
+    "deals": [
+     "010004",
+     "010083",
+     "010085",
+     "010262",
+     "SOW - "
+    ],
+    "n": 5
+   },
+   {
+    "text": "Ensure all customer-provided equipment is onsite and available before the technician arrives",
+    "deals": [
+     "010085",
+     "010110",
+     "010118",
+     "SOW - "
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide device locations including grid, rack(s), and elevation(s) as applicable.",
+    "deals": [
+     "010004",
+     "010083",
+     "010085",
+     "010110"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide all new network switches and ensure all customer provided equipment is onsite and available prior to arrival.",
+    "deals": [
+     "010083",
+     "010262"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide all switches, licenses, rack mounting hardware, power supplies, cables, optics, transceivers, and accessories.",
+    "deals": [
+     "010118",
+     "010262"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide a customer designated remote engineering team or personnel available during the work window to provide configuration support, troubleshooting direction, and final validation",
+    "deals": [
+     "010085",
+     "010110"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide a designated onsite area for removed equipment.",
+    "deals": [
+     "010085",
+     "010110"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide rack and cable diagrams as required",
+    "deals": [
+     "010004",
+     "010085"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide rack ears, power supplies, power cords, stack cables, optics, patch cables, rack hardware, and any additional materials required for installation.",
+    "deals": [
+     "010083",
+     "010110"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure customer employees are prepared for technician visits on scheduled dates.",
+    "deals": [
+     "010085",
+     "010269"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide an onsite runbook for Smart Hands to follow for refresh tasks.",
+    "deals": [
+     "010085",
+     "010209"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure onsite personnel are prepared for scheduled visits.",
+    "deals": [
+     "010083",
+     "SOW - "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide final site list, site addresses, and contacts for each location.",
+    "deals": [
+     "010083",
+     "010209"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified",
+    "deals": [
+     "010004",
+     "010021",
+     "010085",
+     "010110",
+     "010209",
+     "010262",
+     "SOW - "
+    ],
+    "n": 7
+   },
+   {
+    "text": "Provider is not responsible for repairing or certifying existing cabling.",
+    "deals": [
+     "010262",
+     "010344"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Customer or customer designated remote engineering team will be available during the work window for configuration support and validation",
+    "deals": [
+     "010085",
+     "010110"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No union labor, electrical work, or permits are included in the scope",
+    "deals": [
+     "010021",
+     "010300"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are out of scope.",
+    "deals": [
+     "010110",
+     "010269"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Services will be performed predominantly after-hours on weekdays at the local time of the service location.",
+    "deals": [
+     "010083",
+     "010269"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Removed switches will be left onsite in a customer designated area.",
+    "deals": [
+     "010083",
+     "010085"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Extended troubleshooting of existing network, connectivity, application, server, or production equipment issues.",
+    "deals": [
+     "010118",
+     "010262",
+     "010269"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Logical switch configuration, programming, firmware changes, licensing, network engineering, routing, firewall, wireless, cloud configuration, or network design.",
+    "deals": [
+     "010209",
+     "010262"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation of new permanent copper or fiber cabling.",
+    "deals": [
+     "010118",
+     "010262"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Repair, replacement, troubleshooting, or certification of existing cabling that is damaged or nonworking.",
+    "deals": [
+     "010262",
+     "010344"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Electrical work, circuit installation, or modification of existing power infrastructure",
+    "deals": [
+     "010110",
+     "010262"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope.",
+    "deals": [
+     "010004",
+     "010085"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Standardized project completion reports",
+    "deals": [
+     "010004",
+     "010110"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "data_center": {
+  "method_steps": [
+   {
+    "text": "Remove installation debris from the immediate work area.",
+    "deals": [
+     "010015",
+     "010097",
+     "010158",
+     "010328"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Arrive onsite during regular business hours.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Confirm the work area and equipment location with the customer site contact.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Inspect the customer provided battery pack for obvious visible shipping damage prior to installation.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Remove the existing battery pack from the applicable UPS or related equipment, if present and accessible.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Install the customer provided battery pack into the applicable UPS or related equipment.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Confirm the battery pack is seated and connected in accordance with normal manufacturer installation practices.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Power on or return the applicable equipment to normal operating status, if required and safe to do so.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Perform basic visual and operational validation after installation.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Notify the customer site contact when the installation is complete.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Coordinate the replacement sequence with the customer technical point of contact.",
+    "deals": [
+     "010361",
+     "010376"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform a basic visual installation check to verify proper installation.",
+    "deals": [
+     "010361",
+     "010376"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Personal protective equipment as required for onsite work",
+    "deals": [
+     "010015",
+     "010097",
+     "010105",
+     "010328"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Standard hand tools required for battery pack removal and installation",
+    "deals": [
+     "010015",
+     "010097",
+     "010328",
+     "010361"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Personal protective equipment appropriate for the work environment.",
+    "deals": [
+     "010158",
+     "010307"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Device for capturing photographs and documentation",
+    "deals": [
+     "010105",
+     "010307"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable management hardware and tools",
+    "deals": [
+     "010017",
+     "010281"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic inspection tools for physical verification",
+    "deals": [
+     "010281",
+     "010376"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Standardized reports upon project completion",
+    "deals": [
+     "010015",
+     "010017",
+     "010281"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Knowledgeable technician resource to perform the installation",
+    "deals": [
+     "010097",
+     "010328"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standardized project completion report including photos of installed devices",
+    "deals": [
+     "010097",
+     "010328"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Ensure all customer provided equipment is onsite and available prior to arrival.",
+    "deals": [
+     "010015",
+     "010158",
+     "010281",
+     "010328",
+     "PowerV",
+     "RFP Se"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Ensure customer employees are prepared for the provider engineer(s) visit on the specified date(s).",
+    "deals": [
+     "010015",
+     "010223",
+     "010281",
+     "010328"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide a point of contact for the project and onsite visits.",
+    "deals": [
+     "010015",
+     "010105",
+     "010223",
+     "010328"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide any required access credentials, escort, parking instructions, security procedures, or site specific check-in requirements.",
+    "deals": [
+     "010015",
+     "010097",
+     "010223",
+     "010328"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Confirm that the provided battery pack is the correct replacement part for the applicable equipment.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide any specific installation requirements as needed.",
+    "deals": [
+     "010015",
+     "010223"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Review and approve additional work before provider proceeds with material services outside the defined scope.",
+    "deals": [
+     "010223",
+     "010307"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure the applicable UPS or related equipment is accessible and not blocked by obstacles.",
+    "deals": [
+     "010015",
+     "010328"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform all device configurations and troubleshooting if required.",
+    "deals": [
+     "010097",
+     "010328"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide the battery pack at the site prior to the scheduled service date.",
+    "deals": [
+     "010015",
+     "010097"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide a point of contact available during the service window.",
+    "deals": [
+     "010015",
+     "010097"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide finalized rack layout and patching matrix before installation.",
+    "deals": [
+     "010017",
+     "010281"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Coordinate and authorize any required equipment shutdown, bypass, power isolation, and interruption of connected equipment using appropriately qualified personnel.",
+    "deals": [
+     "010307",
+     "010376"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "010015",
+     "010017",
+     "010097",
+     "010158",
+     "010223",
+     "010281",
+     "010307",
+     "010328",
+     "010436",
+     "RFP Se"
+    ],
+    "n": 10
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are considered out of scope.",
+    "deals": [
+     "010017",
+     "010307",
+     "010436",
+     "RFP Se"
+    ],
+    "n": 4
+   },
+   {
+    "text": "The installation can be completed during a single onsite visit.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "The work does not require electrical contracting, licensed electrical work, hardwiring, circuit modification, or changes to building power.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "The work does not require rack relocation, equipment relocation, cabling redesign, network configuration, software configuration, or firmware upgrades.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "The existing equipment is in working condition except for the battery condition prompting replacement.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Parking is available onsite and reimbursed if there is a fee.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "All required equipment and materials will be onsite, complete, and functional before technician arrival.",
+    "deals": [
+     "010158",
+     "PowerV"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard working day is eight hours per day.",
+    "deals": [
+     "010223",
+     "010307"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider will bill for actual time onsite with a minimum charge per resource visit.",
+    "deals": [
+     "010223",
+     "RFP Se"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work is performed during normal business hours unless otherwise authorized.",
+    "deals": [
+     "010361",
+     "010376"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No specialty lifting equipment, rigging, rack modification, or electrical infrastructure work is included.",
+    "deals": [
+     "010361",
+     "010376"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Any services not expressly set forth in the project scope.",
+    "deals": [
+     "010015",
+     "010097",
+     "010105",
+     "010328"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Electrical work, hardwiring, circuit work, outlet installation, breaker work, and power infrastructure modifications.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328",
+     "010376"
+    ],
+    "n": 4
+   },
+   {
+    "text": "UPS repair, replacement, diagnostics beyond basic post installation validation, and manufacturer support troubleshooting.",
+    "deals": [
+     "010015",
+     "010097",
+     "010328"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Rack modification.",
+    "deals": [
+     "010017",
+     "010361"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Removal of legacy batteries from a site, recycling, disposal, transport, or hazardous materials remediation.",
+    "deals": [
+     "010307",
+     "010361"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Work completion report including photos of installed devices in PDF format.",
+    "deals": [
+     "010097",
+     "010328"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "pos_install_refresh": {
+  "method_steps": [
+   {
+    "text": "Disconnect and remove existing POS terminals and peripherals as specified.",
+    "deals": [
+     "010279",
+     "010359"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Network testing and validation tools",
+    "deals": [
+     "010071",
+     "010140",
+     "010198"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standard hand tools for mounting and securing equipment",
+    "deals": [
+     "010013",
+     "010071"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable testers and network patching tools",
+    "deals": [
+     "010013",
+     "DP-BK "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Power and network cable management tools",
+    "deals": [
+     "010013",
+     "010071"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic cable management supplies (if consumables are provided)",
+    "deals": [
+     "000123",
+     "010140"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Camera or mobile device for photo documentation",
+    "deals": [
+     "010013",
+     "010140"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Technician labor and expertise",
+    "deals": [
+     "010013",
+     "010140"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation guides and documentation",
+    "deals": [
+     "010071",
+     "010140"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Provide all required equipment onsite and ensure it is available prior to technician arrival",
+    "deals": [
+     "000123",
+     "010013",
+     "010279"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide all device configurations and troubleshooting if required.",
+    "deals": [
+     "000123",
+     "DP-BK "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide any specific installation requirements as needed.",
+    "deals": [
+     "000123",
+     "DP-BK "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide a point of contact for the project and onsite visit.",
+    "deals": [
+     "000123",
+     "DP-BK "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide rack and cable diagrams as needed for installation.",
+    "deals": [
+     "010013",
+     "DP-BK "
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services performed during normal business hours unless otherwise specified",
+    "deals": [
+     "010013",
+     "010115",
+     "DP-BK "
+    ],
+    "n": 3
+   },
+   {
+    "text": "Work outside the documented scope requires approved and paid change orders before proceeding",
+    "deals": [
+     "010013",
+     "DP-BK "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any services not expressly set forth in the Project Scope are out of scope.",
+    "deals": [
+     "000123",
+     "010359"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Procurement of POS hardware, tablets, printers, card readers, hubs, switches, cables, mounts, or other equipment.",
+    "deals": [
+     "000123",
+     "010279",
+     "010359"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Any services not specified in the project scope.",
+    "deals": [
+     "000123",
+     "010115",
+     "DP-BK "
+    ],
+    "n": 3
+   },
+   {
+    "text": "New cabling, electrical work, conduit, raceway, pathways, construction, core drilling, or repair of existing cabling or infrastructure.",
+    "deals": [
+     "010071",
+     "010279",
+     "010359"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Disposal, recycling, shipping, or offsite removal of legacy equipment.",
+    "deals": [
+     "000123",
+     "010279"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": []
+ },
+ "smart_hands_general": {
+  "method_steps": [
+   {
+    "text": "Escalate issues that require advanced engineering, vendor support, or administrative access not available to the technician.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135",
+     "010270",
+     "010301"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Connect monitors, docks, keyboards, mice, phones, printers, and related peripherals.",
+    "deals": [
+     "000053",
+     "000085",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide photos, notes, or live video review as requested by the customer.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide visit notes, findings, and recommended next steps after work is completed.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide local on site technician support at designated customer locations.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Coordinate with the customer's designated IT resource by phone, video call, or messaging during the visit.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Perform basic issue triage and hands on troubleshooting.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Validate user reported issues and document observed conditions.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Support remote direction from the customer's internal IT team or third party vendors.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Set up, move, reconnect, or reposition PCs and workstations.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Assist with workstation cabling and cable organization.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Verify basic power, network connectivity, and peripheral function.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Support desk moves, adds, changes, and basic office IT adjustments.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Remove TVs or displays from walls as requested.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Disconnect related power, AV, network, or peripheral cabling.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Assist with moving or staging removed display equipment.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Identify and document existing cabling connected to displays.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Coordinate with the customer before relocation or remounting of any equipment.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Trace visible low voltage, network, AV, and workstation cables where accessible.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Pull, remove, organize, or route cables as requested and where safely accessible.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Identify loose, abandoned, or unclear cabling for customer review.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Label cables where requested and where endpoints can be reasonably confirmed.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Document cable conditions, visible pathways, and items requiring further review.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Perform guided walkthroughs of IT closets, network areas, or equipment rooms.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Identify visible equipment, cabling, patch panels, switches, UPS units, modems, routers, or other IT infrastructure.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Assist customer in understanding current site conditions.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Support basic cleanup, labeling, or cable organization where requested and feasible.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide hands on assistance for sites without dedicated IT staff.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Support issue validation, equipment checks, basic troubleshooting, and site readiness tasks.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Coordinate with the customer for prioritization during each visit.",
+    "deals": [
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Check in with the onsite contact or designated customer representative upon arrival.",
+    "deals": [
+     "010131",
+     "010162"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Coordinate arrival and site access with the designated onsite contact.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Capture closeout photos of the network closet, newly installed device, monitoring devices, and related cabling.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Document any unresolved issues, exceptions, or follow-up requirements identified during the onsite visit.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide basic onsite assistance for end user devices including laptops, workstations, peripherals, and connectivity issues.",
+    "deals": [
+     "000132",
+     "010301"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic physical hardware and connectivity troubleshooting.",
+    "deals": [
+     "010270",
+     "010301"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Visually inspect accessible networking equipment, power indicators, and in-rack connections.",
+    "deals": [
+     "010366",
+     "010395"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Standard IT field service tools required to perform workstation migrations and troubleshooting.",
+    "deals": [
+     "000053",
+     "010131"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard IT technician tool kit including cable testers, basic hand tools, and labeling equipment.",
+    "deals": [
+     "010107",
+     "010135"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard toolkit including screwdrivers, Allen key set, Torx set, adjustable wrenches, sockets",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Laptop with Ethernet capability or USB Ethernet adapter.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Console cable with appropriate adapters.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Smartphone for photos and communication.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Mobile hotspot to support connectivity and remote engineer access during the visit.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Remote support tools",
+    "deals": [
+     "000052",
+     "SOW - "
+    ],
+    "n": 2
+   },
+   {
+    "text": "General hand tools including screwdrivers, driver bits, and pliers.",
+    "deals": [
+     "010078",
+     "010395"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Labeling tools for cable identification.",
+    "deals": [
+     "000053",
+     "000132"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic hand tools for equipment moves and cable management.",
+    "deals": [
+     "000053",
+     "000132"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Standardized visit reports documenting work performed, findings, and recommendations.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standardized reports upon project completion.",
+    "deals": [
+     "000132",
+     "010112",
+     "010407"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Knowledgeable onsite technician resource to perform the services.",
+    "deals": [
+     "010131",
+     "Clayto"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Qualified onsite L2 network technician.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard toolkit as described.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Qualified onsite technician(s)",
+    "deals": [
+     "010162",
+     "010301"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Provide all device configurations and troubleshooting support as required.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010112",
+     "010135",
+     "010407",
+     "Clayto"
+    ],
+    "n": 7
+   },
+   {
+    "text": "Ensure all customer-provided equipment is onsite and available prior to technician arrival.",
+    "deals": [
+     "010078",
+     "010112",
+     "010156",
+     "010366",
+     "010395",
+     "010407",
+     "AOC_Ci"
+    ],
+    "n": 7
+   },
+   {
+    "text": "Ensure employees are prepared for technician visits on scheduled dates.",
+    "deals": [
+     "000053",
+     "010107",
+     "010112",
+     "010135",
+     "010407",
+     "Clayto"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Provide site access, building access, parking instructions, suite access, and security requirements.",
+    "deals": [
+     "000052",
+     "000053",
+     "000085",
+     "010107"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide direction on task priority during each visit.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Confirm whether equipment should be moved, stored, reused, or left in place.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide approval before any equipment removal, cable removal, or material changes to the site environment.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide any required equipment, replacement hardware, cables, adapters, labels, mounting materials, or tools not normally carried by the technician.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Designate a point of contact for project coordination and onsite visits.",
+    "deals": [
+     "010112",
+     "010407",
+     "AOC_Ci",
+     "Clayto"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide site location, contact, and scheduling details.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide a point of contact available by phone during scheduled visits.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide any required administrative access, system credentials, vendor contacts, or escalation paths.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Coordinate site access and provide necessary security clearances such as visitor badges and parking passes.",
+    "deals": [
+     "010131",
+     "AOC_Ci"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide remote engineer responsible for network device configuration and technical direction during onsite visit.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide required credentials, configuration information, licensing, subscriptions, and management platform access.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide approval before any work continues beyond authorized scope or onsite visit.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Supply any necessary hardware, peripherals, replacement devices, software licenses, or accessories.",
+    "deals": [
+     "000085",
+     "010301"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide access passes and onsite contact personnel.",
+    "deals": [
+     "010078",
+     "010395"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide a primary contact for scheduling, coordination, and escalations.",
+    "deals": [
+     "010112",
+     "010366"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "000052",
+     "000053",
+     "000085",
+     "000132",
+     "010107",
+     "010112",
+     "010131",
+     "010135",
+     "010162",
+     "010270",
+     "010301",
+     "010338",
+     "010362",
+     "010366",
+     "010407",
+     "010419",
+     "AOC_Ci",
+     "Clayto"
+    ],
+    "n": 18
+   },
+   {
+    "text": "Technician will not perform work requiring building permits, electrical licensing, wall construction, core drilling, lift operation, or other specialized trade work.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Travel-related expenses will be billed for locations beyond a defined distance from metropolitan areas, subject to prior approval.",
+    "deals": [
+     "000085",
+     "010107",
+     "010135",
+     "AOC_Ci"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Cancellation or rescheduling fees apply based on timing relative to scheduled visits.",
+    "deals": [
+     "000052",
+     "000085",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are considered out of scope.",
+    "deals": [
+     "010131",
+     "010380",
+     "010407"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable pulling is limited to accessible, low voltage, non-hazardous, and non-construction related tasks.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "TV removal assumes equipment is safely accessible and can be removed without specialized mounting, lift equipment, or structural work.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provider is not responsible for existing site conditions, undocumented cabling, damaged equipment, or hidden infrastructure issues.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Services are intended for basic on site IT support, triage, equipment moves, cable review, and IT closet walkthroughs.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Customer will provide a remote IT contact to guide or approve work during visits.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cancellation or reschedule policies apply as specified in the SOW.",
+    "deals": [
+     "000053",
+     "000132",
+     "Clayto"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provider will bill for actual time onsite with a minimum billing increment as specified.",
+    "deals": [
+     "010131",
+     "010419"
+    ],
+    "n": 2
+   },
+   {
+    "text": "All removed equipment will be left in a centralized location on site; disposal is the customer's responsibility.",
+    "deals": [
+     "010107",
+     "010135"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any services not expressly described in the SOW will require customer approval and may require a change order",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider will bill monthly in arrears for all services provided during the month.",
+    "deals": [
+     "000052",
+     "010407"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Procurement of hardware, software, licensing, mounts, cables, or accessories.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135",
+     "010301",
+     "010366",
+     "010395"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Advanced network, firewall, server, cloud, cybersecurity, or systems engineering.",
+    "deals": [
+     "000052",
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Electrical work, construction, wall repair, painting, or structural modifications.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135",
+     "010362"
+    ],
+    "n": 5
+   },
+   {
+    "text": "After hours, weekend, holiday, or emergency support unless separately priced.",
+    "deals": [
+     "000052",
+     "000053",
+     "000085",
+     "010107",
+     "010135"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Managed IT services or ongoing help desk coverage.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Dedicated full time on site staffing.",
+    "deals": [
+     "000053",
+     "000132",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Disposal, recycling, or shipment of removed equipment unless separately approved.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135",
+     "010362"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Work requiring access, credentials, or approvals not provided by customer.",
+    "deals": [
+     "000052",
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope.",
+    "deals": [
+     "010131",
+     "010407",
+     "Clayto"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Installation of new in-wall cabling requiring permits, ladders beyond standard safe access, lifts, conduit, or licensed trade work.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "TV mounting or remounting unless specifically approved.",
+    "deals": [
+     "000053",
+     "010107",
+     "010135"
+    ],
+    "n": 3
+   },
+   {
+    "text": "New structured cabling installation or remediation.",
+    "deals": [
+     "010301",
+     "010338",
+     "010362"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Repair or replacement of defective customer equipment, cabling, circuits, or power.",
+    "deals": [
+     "010162",
+     "010338",
+     "010362"
+    ],
+    "n": 3
+   },
+   {
+    "text": "New permanent cabling, cable termination, certification testing, pathway work, conduit, raceway, core drilling, or firestopping.",
+    "deals": [
+     "010162",
+     "010380"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network redesign or architecture changes.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Configuration changes to switches, routers, wireless equipment, servers, or unrelated network devices.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Electrical work",
+    "deals": [
+     "010112",
+     "010338"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any work not expressly set forth in the Project Scope.",
+    "deals": [
+     "000085",
+     "010270"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network configuration, programming, scripting, licensing, firmware management, routing, firewall, VPN, or network design services.",
+    "deals": [
+     "010162",
+     "010366"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Fiber installation, splicing, extension, or certification.",
+    "deals": [
+     "010366",
+     "010395"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Electrical work external to equipment.",
+    "deals": [
+     "010078",
+     "010395"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Service level agreements or guaranteed response times.",
+    "deals": [
+     "010078",
+     "010395"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Standardized reports upon project or task completion.",
+    "deals": [
+     "000085",
+     "000132",
+     "010112",
+     "010407"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Work completion report including verbal confirmation by the onsite contact and updated runbook if applicable.",
+    "deals": [
+     "010131",
+     "010380"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work completion report per visit in PDF format documenting services performed and findings.",
+    "deals": [
+     "010107",
+     "010135"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Confirmation of post-transition connectivity and operational status as validated with remote engineer.",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Summary of actions performed onsite and any unresolved issues",
+    "deals": [
+     "010338",
+     "010362"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work completion report documenting completed activities, unresolved issues, equipment requiring additional attention, and items escalated to the customer or designated support team.",
+    "deals": [
+     "010270",
+     "010301"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "wireless_ap": {
+  "method_steps": [
+   {
+    "text": "Remove packaging and installation debris from the immediate work area.",
+    "deals": [
+     "010088",
+     "010091",
+     "010418",
+     "SC AP "
+    ],
+    "n": 4
+   },
+   {
+    "text": "Locate and remove existing wireless APs designated for replacement.",
+    "deals": [
+     "010183",
+     "010336",
+     "SC AP "
+    ],
+    "n": 3
+   },
+   {
+    "text": "Check in with the customer designated site contact upon arrival.",
+    "deals": [
+     "010091",
+     "010280",
+     "SC AP "
+    ],
+    "n": 3
+   },
+   {
+    "text": "Conduct a coverage walk of existing wireless coverage in applicable frequency bands (2.4 GHz, 5 GHz, 6 GHz).",
+    "deals": [
+     "010019",
+     "010289",
+     "010322"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Capture practical field notes regarding observed radio interference, neighboring WLANs, floor plan discrepancies, inaccessible areas, visible physical obstructions, or other site conditions.",
+    "deals": [
+     "010019",
+     "010289",
+     "010322"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Review available customer supplied floor plans, block diagrams, device placement information, IDF locations, network room information, and installation instructions before beginning work.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Obtain final approved locations for all replacement and net new APs from the customer or designated wireless engineering resource before installation begins.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Retain or remove existing mounting components depending upon compatibility with the replacement AP and mounting hardware.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install wireless APs at customer approved locations.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Replace existing wireless access points on a one-for-one basis using existing cabling where applicable.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Mount wireless access points to approved structural mounting locations such as beams, columns, ceiling tile grids, or other customer approved surfaces using appropriate mounting hardware.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install new structured cabling limited to net new AP locations as defined in the scope.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Support new cabling using standard commercial low voltage support methods appropriate for the environment.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Terminate new cable drops using applicable standard termination methods at both AP and network ends.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Test new cable drops for continuity and proper operation using appropriate structured cabling test equipment.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide applicable new cable test results as part of project closeout documentation.",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Reinstall customer provided wireless access points in existing mounting locations.",
+    "deals": [
+     "010088",
+     "010289"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Reconnect the existing network cable to the replacement access point.",
+    "deals": [
+     "010088",
+     "010091"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Assess existing cabling for reuse, extension, or replacement and confirm cabling requirements including cable type and pathway availability.",
+    "deals": [
+     "000061",
+     "010322"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Evaluate lift, ladder, or other access equipment requirements and confirm onsite access conditions and safety requirements.",
+    "deals": [
+     "000061",
+     "010322"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install new CAT6 cabling for new or relocated access points following approved cable routing paths.",
+    "deals": [
+     "010289",
+     "TSC Wi"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Utilize a lift as required to safely access elevated access point mounting locations.",
+    "deals": [
+     "010289",
+     "TSC Wi"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Disconnect and remove the existing access point.",
+    "deals": [
+     "010091",
+     "010280"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Confirm that the replacement access point is securely mounted and physically connected.",
+    "deals": [
+     "010091",
+     "SC AP "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Dispatch a qualified wireless field technician to the specified location to perform onsite wireless survey data collection following installation, modification, or activation of wireless infrastructure.",
+    "deals": [
+     "010019",
+     "010289"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Collect post validation survey data using industry-standard wireless survey software.",
+    "deals": [
+     "010019",
+     "010289"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Record the MAC address and serial number of each installed wireless access point.",
+    "deals": [
+     "010280",
+     "010289"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Review and validate proposed wireless access point installation locations and mounting conditions.",
+    "deals": [
+     "010322",
+     "010335"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Access wireless access points using a standard ladder without requiring lifts, scaffolds, or specialized access equipment.",
+    "deals": [
+     "010335",
+     "SC AP "
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Cable testers for length and continuity",
+    "deals": [
+     "000066",
+     "010289",
+     "SC AP ",
+     "TSC Wi"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Structured cabling termination tools",
+    "deals": [
+     "000066",
+     "010183",
+     "010336"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Basic hand tools for mounting and installation",
+    "deals": [
+     "000115",
+     "010035",
+     "010335"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Access equipment such as ladders or lifts (if available or required)",
+    "deals": [
+     "000061",
+     "010322",
+     "SC AP "
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standard installation tools for low voltage cabling and device mounting",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Elevated access equipment such as ladders, articulating boom lifts, or scissor lifts suitable for site conditions",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Labeling tools for cable identification",
+    "deals": [
+     "010289",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard technician toolkit",
+    "deals": [
+     "010088",
+     "010418"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ladders for ceiling access",
+    "deals": [
+     "010088",
+     "AP and"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard personal protective equipment",
+    "deals": [
+     "010418",
+     "010428"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Photography equipment for installation documentation",
+    "deals": [
+     "010289",
+     "TSC Wi"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Wireless survey tools",
+    "deals": [
+     "010019",
+     "010289"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Signal strength measurement tools",
+    "deals": [
+     "010019",
+     "010289"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Standard low voltage materials associated with new cabling scope including Cat6 non plenum cable, termination components, labels, cable supports, fasteners, and installation consumables",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Wireless AP mounting hardware such as universal mounting brackets or customer approved equivalents",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standardized reports upon project completion",
+    "deals": [
+     "000115",
+     "010418"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Technician labor and expertise",
+    "deals": [
+     "010088",
+     "010335"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Standard tools and equipment required for physical installation",
+    "deals": [
+     "010088",
+     "Wirele"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation tools and equipment",
+    "deals": [
+     "010335",
+     "TSC Wi"
+    ],
+    "n": 2
+   },
+   {
+    "text": "CAT6 cabling and related installation materials",
+    "deals": [
+     "010289",
+     "TSC Wi"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Provide a point of contact for the project and onsite visit.",
+    "deals": [
+     "000061",
+     "000115",
+     "010035",
+     "010091",
+     "010289",
+     "010418",
+     "AP and",
+     "SC AP "
+    ],
+    "n": 8
+   },
+   {
+    "text": "Ensure all customer-provided equipment is on site and available prior to installation.",
+    "deals": [
+     "000061",
+     "000115",
+     "010091",
+     "AP and"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Ensure Customer employees are prepared for the technician visit on the specified date(s).",
+    "deals": [
+     "010091",
+     "010289",
+     "010418",
+     "SC AP "
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide designated areas for staging removed equipment",
+    "deals": [
+     "010183",
+     "010280",
+     "010336"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide device location information including grid, rack, and elevation as applicable prior to installation.",
+    "deals": [
+     "000115",
+     "010091",
+     "AP and"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide final approved locations for all replacement and net new APs before installation begins",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide customer supplied floor plans, block diagrams, AP placement information, IDF locations, network room information, and installation instructions",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide labeling standards for cabling if applicable",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide access to all work areas, closets, racks, ceilings, classrooms, offices, and secure areas as required.",
+    "deals": [
+     "000115",
+     "010289"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide rack and cable diagrams as required",
+    "deals": [
+     "000061",
+     "010035"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide all replacement wireless access points and ensure availability onsite in designated staging area prior to provider arrival.",
+    "deals": [
+     "010418",
+     "SC AP "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide current floor plan suitable for wireless survey use.",
+    "deals": [
+     "010019",
+     "010322"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "000061",
+     "000115",
+     "010019",
+     "010088",
+     "010091",
+     "010289",
+     "010322",
+     "010418",
+     "010428",
+     "AP and",
+     "SC AP "
+    ],
+    "n": 11
+   },
+   {
+    "text": "Any services not expressly set forth in the scope are considered out of scope.",
+    "deals": [
+     "000061",
+     "010019",
+     "010418",
+     "010428",
+     "TMG_Pu"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Cancellation or reschedule policies apply as specified.",
+    "deals": [
+     "010019",
+     "010035",
+     "010289",
+     "010322"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Existing cabling serving replacement AP locations is operational and serviceable",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider\u2019s physical validation does not include wireless RF engineering, predictive design, spectrum analysis, or coverage certification",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "All work can be performed using an 8 foot step ladder; lifts, scaffolding, and specialty access equipment are excluded.",
+    "deals": [
+     "000115",
+     "010035"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network configuration and advanced troubleshooting are performed by the customer or their designated network team.",
+    "deals": [
+     "000115",
+     "010335"
+    ],
+    "n": 2
+   },
+   {
+    "text": "The replacement will be a like-for-like physical access point swap.",
+    "deals": [
+     "010091",
+     "SC AP "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Lift or specialty access equipment requirements will be handled through a change request.",
+    "deals": [
+     "010428",
+     "AP and"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Existing cabling is in good condition and reusable without modification.",
+    "deals": [
+     "010335",
+     "SC AP "
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Certification, remediation, replacement, repair, rerouting, or troubleshooting of existing cabling",
+    "deals": [
+     "010183",
+     "010335",
+     "010336"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Disposal, recycling, or return logistics for removed equipment unless separately agreed.",
+    "deals": [
+     "000115",
+     "010035",
+     "010280"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Wireless testing, coverage validation, heat mapping, or performance testing.",
+    "deals": [
+     "010091",
+     "010322",
+     "SC AP "
+    ],
+    "n": 3
+   },
+   {
+    "text": "Wireless network engineering, design, controller configuration, and AP provisioning",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Predictive wireless design, formal wireless engineering, spectrum analysis, wireless survey, or post deployment wireless heat mapping.",
+    "deals": [
+     "000115",
+     "010183"
+    ],
+    "n": 2
+   },
+   {
+    "text": "New structured cabling installation, major cabling remediation, pathway work, conduit, core drilling, fire stopping, or repairs outside the immediate access point replacement area.",
+    "deals": [
+     "000115",
+     "SC AP "
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network configuration, programming, firmware updates, or wireless troubleshooting.",
+    "deals": [
+     "010088",
+     "010091"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation of new cabling, patch panels, conduit, pathways, electrical circuits, or network equipment.",
+    "deals": [
+     "000066",
+     "010091"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any cabling installation or remediation work.",
+    "deals": [
+     "010035",
+     "AP and"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are out of scope.",
+    "deals": [
+     "010289",
+     "AP and"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Use of lifts, scaffolds, or specialized access equipment.",
+    "deals": [
+     "010280",
+     "010335"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Documentation of installed equipment including device identifiers and physical locations",
+    "deals": [
+     "010183",
+     "010336"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installed wireless access points at validated locations.",
+    "deals": [
+     "000115",
+     "010336"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "av_conference_room": {
+  "method_steps": [
+   {
+    "text": "Verify that each display is securely mounted and physically level.",
+    "deals": [
+     "000126",
+     "010003",
+     "010171",
+     "010217"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Install the display using customer-provided mounting options such as freestanding stands or wall mounts.",
+    "deals": [
+     "000126",
+     "010003",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Perform basic visible cable routing and management without in-wall or concealed routing.",
+    "deals": [
+     "000126",
+     "010003",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Connect the display to an available power source.",
+    "deals": [
+     "000126",
+     "010003",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Clean the work area upon completion of installation.",
+    "deals": [
+     "000126",
+     "010003",
+     "010117",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Mount each display on the customer-provided mounting bracket or stand.",
+    "deals": [
+     "010171",
+     "010243",
+     "Marcos"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Place removed equipment in a customer designated onsite location.",
+    "deals": [
+     "000064",
+     "010120",
+     "010266"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Remove installation debris and leave the work area clean.",
+    "deals": [
+     "010116",
+     "010120",
+     "010387"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Dress and secure accessible cabling to provide a clean and professional installation.",
+    "deals": [
+     "010217",
+     "010316",
+     "010332"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Power on installed equipment and perform basic physical installation verification.",
+    "deals": [
+     "010117",
+     "010316",
+     "010332"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Install, secure, level, and align displays on the mounts.",
+    "deals": [
+     "010116",
+     "010117",
+     "010217"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Connect installed equipment to available power sources.",
+    "deals": [
+     "010012",
+     "010116",
+     "010117"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Power on each display and verify basic device functionality.",
+    "deals": [
+     "000126",
+     "010003",
+     "010217"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Connect the display to Wi-Fi if credentials are provided onsite.",
+    "deals": [
+     "000126",
+     "010003",
+     "San Fr"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Test all installed equipment and control system functionality to ensure proper operation.",
+    "deals": [
+     "010116",
+     "010243"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Unbox and inspect all video conferencing equipment prior to installation.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install video conferencing devices using customer-provided or approved mounting hardware and locations.",
+    "deals": [
+     "000063",
+     "010171"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic power on and connectivity checks for all installed equipment.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Dress and organize visible cabling using existing pathways, raceways, or conduits where practical.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Disconnect and remove existing conferencing equipment being replaced.",
+    "deals": [
+     "010120",
+     "010266"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide completion photographs of installed equipment, cable pathways, and work areas.",
+    "deals": [
+     "010116",
+     "010120"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install the approved wall mount at the designated display location.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Mount and securely fasten the display to the installed wall mount.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install an ADA compliant overfloor cable pathway across finished flooring to provide a protected route for cabling where required.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Unbox and visually inspect all equipment for shipping damage prior to installation.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Verify proposed mounting locations before drilling or permanently fastening equipment.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Assemble and secure wall mounts to designated mounting surfaces.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Connect installed equipment using available customer provided power, network, video, audio, control, and signal cabling.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic visible cable routing, dressing, and management using standard consumable materials such as hook and loop straps.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic cable management and dressing for all installed devices.",
+    "deals": [
+     "010171",
+     "010266"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Unbox and visually inspect each display for obvious physical damage or missing components.",
+    "deals": [
+     "000126",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Arrive onsite at the scheduled location and check in with the site contact.",
+    "deals": [
+     "010012",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Remove installation debris and place in customer designated area onsite.",
+    "deals": [
+     "010012",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Dispatch qualified technicians to the site to perform installation services.",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Secure and level the display to ensure proper positioning and safety.",
+    "deals": [
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Power on the device and confirm basic functionality.",
+    "deals": [
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Unbox and visually inspect all display units prior to installation.",
+    "deals": [
+     "010003",
+     "Baltim"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Tape measure",
+    "deals": [
+     "000063",
+     "000126",
+     "010003",
+     "010012",
+     "010116",
+     "010117",
+     "010171",
+     "010316",
+     "010332",
+     "San Fr"
+    ],
+    "n": 10
+   },
+   {
+    "text": "Assorted drill bits suitable for wood, masonry, and multi-purpose use",
+    "deals": [
+     "000126",
+     "010003",
+     "010116",
+     "010117",
+     "010316",
+     "010332",
+     "010404",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 9
+   },
+   {
+    "text": "Cordless drill and impact driver",
+    "deals": [
+     "000126",
+     "010003",
+     "010171",
+     "010316",
+     "010332",
+     "010404",
+     "San Fr"
+    ],
+    "n": 7
+   },
+   {
+    "text": "Allen key set",
+    "deals": [
+     "000126",
+     "010116",
+     "010117",
+     "010171",
+     "010316",
+     "010332",
+     "010404"
+    ],
+    "n": 7
+   },
+   {
+    "text": "Screwdriver set",
+    "deals": [
+     "000063",
+     "010012",
+     "010116",
+     "010117",
+     "010171",
+     "Baltim"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Stud finder",
+    "deals": [
+     "000063",
+     "000126",
+     "010012",
+     "010116",
+     "010117",
+     "Baltim"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Toggle bolts and/or wall anchors rated for appropriate weight",
+    "deals": [
+     "000126",
+     "010003",
+     "010116",
+     "010117",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Zip ties or Velcro straps for cable management",
+    "deals": [
+     "000126",
+     "010003",
+     "010116",
+     "010117",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Pencil or marker for layout",
+    "deals": [
+     "000063",
+     "000126",
+     "010012",
+     "010116",
+     "010117"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Socket set or wrench set",
+    "deals": [
+     "000126",
+     "010003",
+     "010116",
+     "010117",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Adjustable wrench",
+    "deals": [
+     "000126",
+     "010003",
+     "010116",
+     "010117",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Socket and ratchet set",
+    "deals": [
+     "010171",
+     "010316",
+     "010332",
+     "010404"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Adjustable wrench and channel lock pliers",
+    "deals": [
+     "010171",
+     "010316",
+     "010332",
+     "010404"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Stud finder capable of detecting wood and metal studs",
+    "deals": [
+     "010171",
+     "010316",
+     "010332",
+     "010404"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Screwdriver set including Phillips, flathead, and multi-bit drivers",
+    "deals": [
+     "000126",
+     "010003",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Cable testers",
+    "deals": [
+     "010120",
+     "010243",
+     "Marcos"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Zip ties",
+    "deals": [
+     "000063",
+     "010012",
+     "010171"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Phillips and flathead screwdrivers",
+    "deals": [
+     "010316",
+     "010332",
+     "010404"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Laser level and standard bubble level",
+    "deals": [
+     "010316",
+     "010332",
+     "010404"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Drill/impact driver (battery-powered)",
+    "deals": [
+     "010116",
+     "010117",
+     "Marcos"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Stud finder for locating wall studs",
+    "deals": [
+     "010003",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Allen key set for mounts and brackets",
+    "deals": [
+     "010003",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Light-use hammer",
+    "deals": [
+     "010003",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Hammer (light use)",
+    "deals": [
+     "000126",
+     "010116",
+     "010117"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Cable termination tools",
+    "deals": [
+     "010120",
+     "010243"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cordless drill or driver with drill bits suitable for approved mounting surfaces",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Spare wall anchors or fasteners",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Velcro cable ties",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Step ladder",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Labeling equipment",
+    "deals": [
+     "010079",
+     "010120"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cable management hardware and installation tools",
+    "deals": [
+     "010120",
+     "010266"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Vacuum or portable cleanup equipment",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Spare drywall anchors rated to support heavy mounts",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Level (12 inches or longer preferred)",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network testing tools",
+    "deals": [
+     "000064",
+     "010079"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Level tool (24 inches or longer preferred)",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Pencil or marker for layout marking",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Knowledgeable technician resources to perform installation services",
+    "deals": [
+     "010316",
+     "Baltim",
+     "Marcos"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standardized project completion reports",
+    "deals": [
+     "000064",
+     "010116",
+     "Baltim"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Project coordination and management resources",
+    "deals": [
+     "000064",
+     "010316",
+     "Baltim"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Technician labor and expertise to perform installation services",
+    "deals": [
+     "000126",
+     "010003",
+     "San Fr"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Standardized reports documenting installation and validation results",
+    "deals": [
+     "000063",
+     "010316"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Qualified onsite technicians to perform physical installation services as described",
+    "deals": [
+     "000064",
+     "010404"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Ensure customer employees are prepared for technician visits on scheduled dates.",
+    "deals": [
+     "000064",
+     "000126",
+     "010003",
+     "010079",
+     "010116",
+     "010117",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 8
+   },
+   {
+    "text": "Provide a point of contact for the project and onsite visit.",
+    "deals": [
+     "000064",
+     "010012",
+     "010079",
+     "010116",
+     "010117",
+     "010266",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 8
+   },
+   {
+    "text": "Provide all equipment onsite and available prior to installation",
+    "deals": [
+     "000063",
+     "010012",
+     "010116",
+     "010120",
+     "010266",
+     "Baltim"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Ensure all customer-provided equipment, including displays and mounting hardware, are onsite and available before arrival.",
+    "deals": [
+     "000064",
+     "010117",
+     "010217",
+     "010387",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Ensure installation area is accessible, clear, and prepared with adequate space and power.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Provide all displays, conferencing equipment, wall mounts, and manufacturer supplied hardware unless otherwise agreed.",
+    "deals": [
+     "010171",
+     "010266",
+     "010316",
+     "010332"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Ensure onsite personnel availability for access or approvals during installation.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide any specific installation requirements as needed.",
+    "deals": [
+     "000064",
+     "000126",
+     "010117",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Provide Wi-Fi credentials if network connection is required.",
+    "deals": [
+     "010003",
+     "010117",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Confirm wall structure suitability for mounting if applicable.",
+    "deals": [
+     "010003",
+     "010117",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Ensure wall conditions and structural support are suitable for mounting equipment without modification.",
+    "deals": [
+     "010116",
+     "010316",
+     "010332"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide required network credentials, device licensing, accounts, subscriptions, and administrative access for equipment activation or configuration.",
+    "deals": [
+     "010266",
+     "010316",
+     "010332"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide all display units, mounts, mounting hardware, brackets, cables, remotes, power cords, and required accessories onsite and available prior to arrival.",
+    "deals": [
+     "000126",
+     "010003",
+     "010117"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Provide mounting brackets or stands suitable for the displays.",
+    "deals": [
+     "010243",
+     "Marcos"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide access to all applicable rooms and facilities during the scheduled service window.",
+    "deals": [
+     "000063",
+     "010266"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure displays are already installed and operational in each applicable room.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide valid network credentials for device connectivity",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide any required building approvals, escorts, security access, or site access coordination.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Designate onsite location for staging removed equipment",
+    "deals": [
+     "010120",
+     "010266"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide a resource dedicated to the engagement for knowledge transfer and coordination",
+    "deals": [
+     "010120",
+     "010171"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure power outlets are available at installation locations.",
+    "deals": [
+     "000126",
+     "Marcos"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure existing functional AC power and network connectivity at required equipment locations.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Approve final installation locations for displays, devices, and cable pathways.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Designate onsite or remote contact to assist with equipment activation or network questions.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide clear access to all rooms and installation locations during scheduled service windows.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide Wi-Fi credentials and any required network information, configuration files, licenses, and remote engineering support.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform all device configurations, troubleshooting, advanced programming, commissioning, and final system acceptance.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure work areas are reasonably clear and accessible prior to technician arrival.",
+    "deals": [
+     "000126",
+     "010217"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "000063",
+     "000064",
+     "000126",
+     "010003",
+     "010012",
+     "010079",
+     "010116",
+     "010117",
+     "010217",
+     "010316",
+     "010332",
+     "010387",
+     "010404",
+     "Baltim",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 16
+   },
+   {
+    "text": "No electrical work, drywall modification, or furniture relocation is required.",
+    "deals": [
+     "000126",
+     "010003",
+     "010116",
+     "010117",
+     "Baltim",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 7
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are considered out of scope.",
+    "deals": [
+     "010003",
+     "010079",
+     "010387",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Cancellation and rescheduling policies apply as specified",
+    "deals": [
+     "010079",
+     "010316",
+     "010332",
+     "Marcos"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Installation area is clear, accessible, and ready for work upon arrival.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Power outlets are available within reasonable proximity of device locations",
+    "deals": [
+     "000063",
+     "010012",
+     "Marcos"
+    ],
+    "n": 3
+   },
+   {
+    "text": "No concrete, tile, or other difficult surfaces requiring special drilling are present.",
+    "deals": [
+     "000126",
+     "010003",
+     "San Fr"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Customer-provided brackets are suitable and structurally sound for mounting displays.",
+    "deals": [
+     "010243",
+     "Marcos"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Lift requirements, if needed, will be handled through a change request",
+    "deals": [
+     "010079",
+     "010243"
+    ],
+    "n": 2
+   },
+   {
+    "text": "All equipment is new, complete, undamaged, and available onsite",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Existing mounting locations and surfaces are suitable for installation of new equipment utilizing manufacturer supplied mounting hardware.",
+    "deals": [
+     "000063",
+     "010266"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Required cabling is included with equipment or provided by Customer",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Existing cable management pathways such as raceways or conduits are in place where needed",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "WiFi is available and functioning in each room.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Customer will provide valid wireless or network credentials at time of installation",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provider is not responsible for advanced configuration, licensing, platform setup, or network troubleshooting unless specifically included",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Subcontractor is not responsible for lost data; customer should perform full data backup prior to services",
+    "deals": [
+     "010120",
+     "010171"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No new structured cabling, raceway, conduit, floor boxes, core drilling, or other pathway construction is required.",
+    "deals": [
+     "010266",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation locations will be identified and approved prior to commencement of work",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "All required hardware and manufacturer supplied mounting accessories will be onsite and available at the start of installation.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work is limited to physical installation, cable connection, cable management, and basic equipment verification unless otherwise stated.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Drywall has proper backing to support mounted equipment.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Subcontractors may be used to perform services without prior written consent.",
+    "deals": [
+     "Baltim",
+     "Marcos"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Designated mounting surfaces will be standard drywall and stud construction suitable for safely supporting installed equipment.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No hardware removal is required.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Required wall blocking, backing, or structural support will already be in place.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Functional power outlets and all required network, video, audio, and control cabling are installed, correctly terminated, and available at designated equipment locations.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Technicians will have access to all required work areas during the scheduled installation window.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Equipment can be transported to installation areas using normal building access without specialty rigging.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Existing power, network, cabling pathways, mounting locations, displays, and room infrastructure are usable as is.",
+    "deals": [
+     "000064",
+     "010387"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No structural modifications, wall reinforcements, or new electrical or cabling infrastructure installation are included",
+    "deals": [
+     "000064",
+     "010316"
+    ],
+    "n": 2
+   },
+   {
+    "text": "No in-wall cable routing or concealment will be performed.",
+    "deals": [
+     "000126",
+     "Baltim"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Furniture relocation, room reconfiguration, or removal of existing non-display equipment is not required.",
+    "deals": [
+     "000126",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Nearby power outlets are available and functional.",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Wall structures are suitable and capable of supporting the displays.",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Parking is available onsite and reimbursed if there is a fee.",
+    "deals": [
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Customer will provide all necessary equipment and mounting hardware.",
+    "deals": [
+     "010003",
+     "Baltim"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "In-wall cable routing, concealment, or low-voltage work.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "Baltim",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Drywall cutting, patching, reinforcement, or structural modifications.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "Baltim",
+     "Marcos",
+     "San Fr"
+    ],
+    "n": 6
+   },
+   {
+    "text": "Device configuration beyond power-on and basic Wi-Fi connection.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Electrical work, outlet installation, or power remediation.",
+    "deals": [
+     "000126",
+     "010003",
+     "010116",
+     "010117",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Troubleshooting or remediation of customer network issues.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Procurement of additional hardware or materials not provided by the customer.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 5
+   },
+   {
+    "text": "Furniture movement or workspace reconfiguration.",
+    "deals": [
+     "010003",
+     "010116",
+     "010117",
+     "San Fr"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Drilling, drywall cutting, wall fishing, patching, painting, or wall modification work.",
+    "deals": [
+     "000063",
+     "010012",
+     "010171"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Electrical work including installation of new power outlets or low voltage cabling",
+    "deals": [
+     "000063",
+     "010012",
+     "Baltim"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Electrical work including installation or modification of power circuits",
+    "deals": [
+     "010120",
+     "010171",
+     "010387"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Return trips caused by unavailable access, missing hardware, missing displays, unavailable credentials, or incomplete customer readiness.",
+    "deals": [
+     "000126",
+     "010079",
+     "010120"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Travel-related expenses beyond standard service area unless pre-approved.",
+    "deals": [
+     "000064",
+     "010243"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ongoing maintenance or support beyond initial installation and programming.",
+    "deals": [
+     "010243",
+     "Marcos"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Providing or installing raceways, conduits, cable pathways, sleeves, or related materials.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network configuration or troubleshooting including switches, VLANs, firewalls, port activation, or WiFi issues",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Display mounting, wall reinforcement, furniture modification, or construction work",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Conferencing platform setup, licensing, tenant administration, room account setup, or application configuration.",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Advanced acoustic tuning, room design, or custom control programming",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ceiling work, above ceiling cabling, or ceiling microphone installation",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Services not specified in the project scope.",
+    "deals": [
+     "000063",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation of new electrical circuits, outlets, or power infrastructure",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation or relocation of new structured cabling or permanent network drops.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Core drilling, floor cutting, trenching, or creation of new floor penetrations.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Wall reinforcement, blocking, structural modifications, or significant drywall repair",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Advanced configuration or administration of conferencing platforms or AV control systems",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Programming or modification of control systems or third party AV systems.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Furnishing of cable raceways or ADA compliant floor pathways.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "New structured cabling, raceway, conduit, floor boxes, core drilling, or other pathway construction.",
+    "deals": [
+     "000064",
+     "010266"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Network design, Wi Fi remediation, firewall configuration, or switch configuration.",
+    "deals": [
+     "000064",
+     "000126"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": [
+   {
+    "text": "Documentation of any installation exceptions or unresolved site conditions.",
+    "deals": [
+     "010266",
+     "010316",
+     "010332"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Installation areas cleared of packaging materials and installation debris.",
+    "deals": [
+     "010116",
+     "010117",
+     "010171"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Confirmation of Wi-Fi connectivity establishment if applicable.",
+    "deals": [
+     "010003",
+     "Baltim",
+     "San Fr"
+    ],
+    "n": 3
+   },
+   {
+    "text": "Basic validation that installed devices power on and connect to network where credentials are provided",
+    "deals": [
+     "000063",
+     "010012"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work completion report documenting installed and secured equipment in the conference room.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic power on and physical functionality verification of installed equipment",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Installation completion photographs including cable pathway installations.",
+    "deals": [
+     "010316",
+     "010332"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work completion report including photographs of all newly installed hardware.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic installation validation completed with the customer.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Documentation and reporting of any missing equipment, visible damage, site readiness issues, or incomplete work.",
+    "deals": [
+     "010116",
+     "010117"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Work completion report confirming installation and secure mounting of the display.",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Clean and orderly workspace at project completion.",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Customer signoff form acknowledging completion.",
+    "deals": [
+     "010003",
+     "San Fr"
+    ],
+    "n": 2
+   }
+  ]
+ },
+ "time_clock_kiosk": {
+  "method_steps": [
+   {
+    "text": "Check in with the onsite representative upon arrival and comply with applicable site access and security requirements.",
+    "deals": [
+     "010215",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Install the time clock device at the designated location using standard mounting hardware.",
+    "deals": [
+     "010215",
+     "010263"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Remove installation debris generated by provider and leave the immediate work area in a clean condition.",
+    "deals": [
+     "010215",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Perform basic wire molding and cable dressing immediately associated with the time clock installation for cosmetic cable management.",
+    "deals": [
+     "010263",
+     "010264"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Standard mounting hardware appropriate for existing wall construction",
+    "deals": [
+     "010215",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic cable management tools for wire molding and dressing",
+    "deals": [
+     "010263",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Testing tools to verify power and network connectivity",
+    "deals": [
+     "010263",
+     "010264"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [],
+  "customer_responsibilities": [
+   {
+    "text": "Provide the time clocks and applicable manufacturer supplied components",
+    "deals": [
+     "010215",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure existing functional AC power is available within a short distance of each designated device location",
+    "deals": [
+     "010215",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Provide existing functional power and network connectivity at the approved installation location.",
+    "deals": [
+     "010263",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Ensure all customer provided equipment is onsite and available prior to the scheduled deployment.",
+    "deals": [
+     "010263",
+     "010326"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "010215",
+     "010263",
+     "010264",
+     "010326"
+    ],
+    "n": 4
+   },
+   {
+    "text": "Existing wall construction supports normal surface mounting using standard installation hardware.",
+    "deals": [
+     "010215",
+     "010263",
+     "010264"
+    ],
+    "n": 3
+   },
+   {
+    "text": "No new structured cabling or electrical infrastructure is included in the scope",
+    "deals": [
+     "010215",
+     "010326"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Replacement clocks requiring preconfiguration or provisioning will be configured prior to provider installation.",
+    "deals": [
+     "010263",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Basic wire mold and cable dressing included within the installation price is intended for normal cosmetic cable management immediately associated with the clock installation.",
+    "deals": [
+     "010263",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Replacement devices requiring pre-configuration will be configured prior to installation.",
+    "deals": [
+     "010263",
+     "010326"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Transportation, shipping, pallet freight, recycling processing, asset disposition, data destruction, resale, or final disposition of removed equipment",
+    "deals": [
+     "010149",
+     "010326"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope.",
+    "deals": [
+     "010215",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Extensive raceway installation, long cable routing, or structured cabling",
+    "deals": [
+     "010263",
+     "010264"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Electrical installation or modification.",
+    "deals": [
+     "010263",
+     "010326"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": []
+ },
+ "imac_deskside": {
+  "method_steps": [
+   {
+    "text": "Verify that monitor arms and mounted monitors are physically secure and stable.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Route and organize monitor cables using available arm cable management features, allowing appropriate movement and cable slack.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   }
+  ],
+  "tools": [
+   {
+    "text": "Standard hand tools appropriate for dual monitor arm assembly and desk mounting, such as screwdrivers and hex keys.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [
+   {
+    "text": "Standard installation hand tools.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   }
+  ],
+  "customer_responsibilities": [
+   {
+    "text": "Provide all monitors, compatible dual monitor mounting arms, and all required mounting components, power cables, video cables, and adapters.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "All services will be performed during normal business hours at the local time where the services are to be performed, unless specified otherwise.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Any services not expressly set forth in the project scope are out of scope.",
+    "deals": [
+     "010373",
+     "010423"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [
+   {
+    "text": "Removal, relocation, or disposal of existing monitors, mounting arms, or other installed equipment.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Wall mounting, drilling, cutting, desk modification, furniture alteration, or structural reinforcement.",
+    "deals": [
+     "010373",
+     "010426"
+    ],
+    "n": 2
+   }
+  ],
+  "deliverables": []
+ },
+ "cameras_security": {
+  "method_steps": [],
+  "tools": [
+   {
+    "text": "Cable termination and testing equipment",
+    "deals": [
+     "000129",
+     "010169"
+    ],
+    "n": 2
+   }
+  ],
+  "provider_materials": [],
+  "customer_responsibilities": [
+   {
+    "text": "Ensure all customer provided equipment is onsite, complete, undamaged, and ready for installation prior to technician arrival.",
+    "deals": [
+     "000129",
+     "010169"
+    ],
+    "n": 2
+   }
+  ],
+  "assumptions": [
+   {
+    "text": "Services will be performed during normal business hours unless otherwise specified.",
+    "deals": [
+     "000129",
+     "010169"
+    ],
+    "n": 2
+   },
+   {
+    "text": "Cancellation or reschedule policies apply as specified.",
+    "deals": [
+     "000129",
+     "010169"
+    ],
+    "n": 2
+   }
+  ],
+  "exclusions": [],
+  "deliverables": []
+ }
+}

@@ -92,6 +92,15 @@ class OcrCache:
         self._conn.commit()
 
     def get(self, image_bytes: bytes) -> dict[str, Any] | None:
+        try:
+            from app.core.cache_blob import wait_for_ocr_merge
+
+            wait_for_ocr_merge()
+        except Exception:
+            pass
+        return self._get(image_bytes)
+
+    def _get(self, image_bytes: bytes) -> dict[str, Any] | None:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT text, backend, confidence, extra FROM ocr WHERE key = ?",

@@ -43,6 +43,7 @@ written to the compile trace. No store and no model means nothing moves.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections import OrderedDict
@@ -53,6 +54,7 @@ from typing import Any
 from app.core import telemetry as _telemetry
 from app.core.utterance_typing import is_untyped_speech as _untyped_speech
 
+log = logging.getLogger(__name__)
 RELATION = "document_job"
 CANDIDATES = ["this_deal", "other_job"]
 INSTRUCTION = (
@@ -201,6 +203,94 @@ def judge_model() -> str | None:
     """The model this discrimination is routed to; '' or 'default' keeps decide()'s own."""
     raw = os.environ.get("SOWSMITH_DOCUMENT_JOB_MODEL", _DEFAULT_MODEL).strip()
     return None if raw.lower() in ("", "default") else raw
+
+
+def c3_mode() -> str:
+    """``SOWSMITH_C3_DOCUMENT_JOB``: off (default) | shadow | on.
+
+    The C3 base answers this stage's question per document
+    (``jdg:document_job``). ``on``: a conversation every judged document of
+    which the base calls ``this_deal`` at ``c3_sure()`` or more is kept on the
+    base's word, without asking the model; anything else -- an ``other_job``
+    call, an unsure one, no read -- goes to the model as before. The base
+    never sets a document aside by itself: run C, 2026-10-15, at 0.8 was right
+    on every ``this_deal`` call of validation deal 010043 (28/28) and 71/79 on
+    the holdout, but its ``other_job`` calls were wrong on 010043 (0/7, none of
+    its documents is another job). ``shadow`` records the base's call beside
+    the model's and changes nothing. A PM's taught verdict still comes first."""
+    v = os.environ.get("SOWSMITH_C3_DOCUMENT_JOB", "").strip().lower()
+    if v == "shadow":
+        return "shadow"
+    return "on" if v in ("1", "true", "yes", "on") else "off"
+
+
+def c3_sure() -> float:
+    try:
+        return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_SURE", "0.8"))
+    except ValueError:
+        return 0.8
+
+
+def c3_bundle_verdict(docs: list[list[Any]], verdicts: dict[str, dict[str, tuple[str, float]]],
+                      sure: float) -> tuple[str | None, float]:
+    """The base's call on one conversation: ``this_deal`` when every one of
+    its documents the base read says so at ``sure`` or more (its lowest
+    certainty comes back), ``other_job`` when any says that, else None."""
+    from app.core.c3_type_base import DOCUMENT_JOB_KEY, _doc_id
+
+    seen: dict[str, tuple[str, float]] = {}
+    for doc_atoms in docs:
+        for a in doc_atoms:
+            d = _doc_id(a)
+            got = (verdicts.get(d) or {}).get(DOCUMENT_JOB_KEY)
+            if got:
+                seen[d] = got
+    if not seen:
+        return None, 0.0
+    if any(ans == "other_job" for ans, _ in seen.values()):
+        return "other_job", max(p for ans, p in seen.values() if ans == "other_job")
+    if all(ans == "this_deal" and p >= sure for ans, p in seen.values()):
+        return "this_deal", min(p for _, p in seen.values())
+    return None, min(p for _, p in seen.values())
+
+
+def c3_aside() -> float:
+    """How sure the base must be that a conversation is another job for that
+    alone to set it aside (``SOWSMITH_C3_DOCUMENT_JOB_ASIDE``). At 0.98 it set
+    aside 010279's Lineage transcript and "rack and stack with UPS" note
+    (0.99 / 0.98) and 010082's three SD-WAN opportunity documents
+    (0.998 / 0.993 / 0.990), and nothing of this deal's own on six deals; its
+    lower other_job calls (010082's own Smarthands notes, 0.85 / 0.78) keep."""
+    try:
+        return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_ASIDE", "0.98"))
+    except ValueError:
+        return 0.98
+
+
+def c3_max_share() -> float:
+    """The share of a deal's conversations above which the base's other_job
+    calls are taken as confusion, not strays (SOWSMITH_C3_DOCUMENT_JOB_MAX_SHARE)."""
+    try:
+        return float(os.environ.get("SOWSMITH_C3_DOCUMENT_JOB_MAX_SHARE", "0.4"))
+    except ValueError:
+        return 0.4
+
+
+def model_enabled() -> bool:
+    """``SOWSMITH_DOCUMENT_JOB_MODEL_JUDGE``: whether a conversation the base is
+    not sure about goes to the LLM judge (default on). Off, it is kept: the base
+    decides alone."""
+    return os.environ.get("SOWSMITH_DOCUMENT_JOB_MODEL_JUDGE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+class _C3Decision:
+    """The base's call, shaped like decide()'s answer."""
+
+    def __init__(self, confidence: float, verdict: str = "this_deal"):
+        self.verdict = verdict
+        self.confidence = confidence
+        self.source = "c3"
+        self.correction_id = None
 
 
 def judge_timeout() -> int:
@@ -507,7 +597,12 @@ def judge_documents(
     them. Without a deal name there is nothing to compare against, so nothing
     is judged.
     """
-    if not deal_name or not atoms:
+    # Without a deal name the model has nothing to compare against, but the
+    # base's own call needs none: on live dev compiles the worker's manifest
+    # carried no CRM deal name, this stage returned here in 15 ms, and
+    # 010279's Lineage transcript (other_job 0.99) and 010264's Marion County
+    # school job reached the SOW. With no name, only a sure base call acts.
+    if not atoms or (not deal_name and c3_mode() != "on"):
         return list(atoms), [], []
     try:
         from app.core.decide import DecisionScope, decide
@@ -529,6 +624,15 @@ def judge_documents(
     idx = index if index is not None else manifest_index(project_dir)
     anchors = deal_anchors(deal_name, crm if crm is not None else crm_from_manifest(project_dir))
     deal_line = strip_refs(deal_name)
+    mode, sure = c3_mode(), c3_sure()
+    c3_docs: dict[str, dict[str, tuple[str, float]]] = {}
+    if mode != "off":
+        try:
+            from app.core import c3_type_base as _c3
+
+            c3_docs = _c3.documents(list(atoms))
+        except Exception:
+            c3_docs = {}
 
     # SAY HOW FAR THROUGH THIS IS. The unit is the DOCUMENT BUNDLE, because
     # that is what costs: one judge call per bundle, however many atoms it
@@ -537,7 +641,7 @@ def judge_documents(
     _total = len(bundles)
     if _total:
         _telemetry.set_stage_progress(0, _total)
-    for _i, b in enumerate(bundles.values(), 1):
+    def _judge_one(b):
         keys = list(b["docs"])
         # In the order they were written, so the opener's lines lead.
         keys.sort(key=lambda k: _when(str((idx.get(_doc_filename(by_doc[k][0], k)) or {}).get("authored_at") or "")) or datetime.max.replace(tzinfo=timezone.utc))
@@ -563,14 +667,70 @@ def judge_documents(
         # lessons are keyed on.
         text = f"DOCUMENT: {subject}"
         context = f"DEAL: {deal_line}\n" + "\n".join(f"- {l}" for l in bundle_lines(docs, common))
-        try:
-            # Judgments only: a person's or a Deal Kit's verdict decides; the
-            # model's own cached verdicts never do, since one wrong other_job
-            # would then remove a whole thread on every later compile.
-            d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
-                       scope=scope, model=model, timeout=timeout, exclude_created_by=("teacher",))
-        except Exception:
-            d = None
+        c3_verdict, c3_p = c3_bundle_verdict(docs, c3_docs, sure) if c3_docs else (None, 0.0)
+        d = None
+        if mode == "on" and c3_verdict == "this_deal":
+            # The base keeps the conversation. A PM's taught verdict still
+            # decides first: the store alone, no model.
+            try:
+                d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
+                           scope=scope, llm=False, exclude_created_by=("teacher",))
+            except Exception:
+                d = None
+            if getattr(d, "verdict", None) is None:
+                d = _C3Decision(c3_p)
+        elif mode == "on" and c3_verdict == "other_job" and c3_p >= c3_aside() and aside_ok:
+            # The base is sure this conversation is another job. A PM's taught
+            # verdict still decides first; otherwise the base's word stands.
+            try:
+                d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
+                           scope=scope, llm=False, exclude_created_by=("teacher",))
+            except Exception:
+                d = None
+            if getattr(d, "verdict", None) is None:
+                d = _C3Decision(c3_p, "other_job")
+        if d is None and (not model_enabled() or not deal_line):
+            d = _C3Decision(c3_p or 0.0)
+        if d is None:
+            try:
+                # Judgments only: a person's or a Deal Kit's verdict decides; the
+                # model's own cached verdicts never do, since one wrong other_job
+                # would then remove a whole thread on every later compile.
+                d = decide(RELATION, text[:600], CANDIDATES, instruction=INSTRUCTION, context=context[:1200],
+                           scope=scope, model=model, timeout=timeout, exclude_created_by=("teacher",))
+            except Exception:
+                d = None
+        return keys, docs, filenames, subject, text, context, c3_verdict, c3_p, d
+
+    # Each conversation's verdict is independent: they are worked out in
+    # parallel (the judge is an LLM call for every conversation the base does
+    # not keep) and applied below in the original order, so nothing changes
+    # but the time (010043, 2026-10-15: 13.5 s, one call after another).
+    # A deal is never mostly another job. When the base would set aside a large
+    # share of the deal's conversations it is confused about which job the deal
+    # is, not finding strays: live 2026-10-18, it set aside 13 of 20 of 010264's
+    # conversations (the program plan calls and the clock inventory) and 11 of 19
+    # of 010284's install discussions at 0.98-1.00, while its right calls
+    # (010082's SD-WAN documents, 010279's Lineage documents) were 3 of 12 and
+    # 2 of 9. Above the share, its word alone sets nothing aside.
+    aside_ok = True
+    if mode == "on" and c3_docs and bundles:
+        _calls = [c3_bundle_verdict([by_doc[k] for k in b["docs"]], c3_docs, sure) for b in bundles.values()]
+        _n_aside = sum(1 for v, p in _calls if v == "other_job" and p >= c3_aside())
+        # A small deal (under four conversations) is never emptied; a larger one
+        # keeps the share rule.
+        if (_n_aside >= len(bundles)) if len(bundles) < 4 else (_n_aside / len(bundles) >= c3_max_share()):
+            aside_ok = False
+            log.warning("document_job_scope: base would set aside %d of %d conversations; "
+                        "too many to be strays, none set aside on its word", _n_aside, len(bundles))
+
+    import concurrent.futures as _cf
+
+    _par = max(1, int(os.environ.get("SOWSMITH_DOCUMENT_JOB_PARALLEL", "8") or 8))
+    with _cf.ThreadPoolExecutor(max_workers=_par) as _pool:
+        _judged = list(_pool.map(_judge_one, list(bundles.values())))
+    for _i, (b, (keys, docs, filenames, subject, text, context, c3_verdict, c3_p, d)) in enumerate(
+            zip(bundles.values(), _judged), 1):
         verdict = getattr(d, "verdict", None) or "this_deal"
         conf = float(getattr(d, "confidence", 0.0) or 0.0)
         source = getattr(d, "source", "fallback")
@@ -605,6 +765,7 @@ def judge_documents(
             "confidence": round(conf, 3), "source": source, "atoms": n_atoms,
             "correction_id": getattr(d, "correction_id", None),
             "drawing_spared": drawing_spared,
+            "c3_verdict": c3_verdict, "c3_confidence": round(c3_p, 3),
             "content_spared": content_spared, "content_match": matched,
             "reason": reason,
             "atom_ids": [str(getattr(a, "id", "") or "") for d_ in docs for a in d_] if other else [],
@@ -645,6 +806,6 @@ def verdict_note(v: dict[str, Any]) -> str:
     return f"INFO: document_job_scope kept {what}; {how}"
 
 
-__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "deal_name_from_manifest", "common_lines",
+__all__ = ["RELATION", "CANDIDATES", "INSTRUCTION", "enabled", "c3_mode", "c3_sure", "c3_bundle_verdict", "deal_name_from_manifest", "common_lines",
            "thread_key", "manifest_index", "bundle_documents", "bundle_lines", "bundle_text", "document_text",
            "judge_documents", "verdict_note", "strip_refs", "deal_anchors", "content_match", "judge_model", "judge_timeout", "min_confidence"]

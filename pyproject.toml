@@ -96,9 +96,11 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*", "orbitbrief_page_os*"]
+include = ["app*", "orbitbrief_page_os*", "c3_record*"]
 
 [tool.setuptools.package-data]
+# The head registry (which super heads are ready, and what each replaces).
+c3_record = ["heads.json", "questions.json", "purtera_layer.json"]
 app = [
   "domain/*.yaml",
   "domain/ontology/*.yaml",
@@ -115,6 +117,12 @@ app = [
   # returned None, and nothing failed -- sites shipped with a ZIP and no state
   # while five digits named the state outright.
   "data/*.tsv.gz",
+  # The SOW writer's standard items: PurTera's learned method library and its
+  # fixed per-job-type handling. Same lesson a fourth time: neither shipped, so
+  # every dev SOW was written with no standard items and nothing failed
+  # (010115: standards_added 0 on the worker, 10 locally).
+  # Every data file beside the code (vocabularies, label heads, reasons too).
+  "core/*.json",
 ]
 orbitbrief_page_os = [
   "segmentation/core_runtime/chunks/*",

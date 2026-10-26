@@ -99,7 +99,7 @@ def test_the_multitask_table_carries_and_reports_the_version(tmp_path) -> None:
     assert "v0" in table.summary() and "v2" in table.summary()
 
 
-# ── A3: the typed mode in the contrastive slot ──────────────────────────
+# ── A3: the typed mode in the contrastive slot (retired from typing) ──────────────────────────
 
 
 class _Atom:
@@ -113,63 +113,18 @@ class _Atom:
         self.project_id = "p"
 
 
-class _FakeTypedHead:
-    """Stands in for the built store: answers what the test dictates."""
-
-    mode = "typed"
-
-    def __init__(self, answers) -> None:
-        self._answers = answers
-
-    def classify_batch(self, texts):
-        return [self._answers.get(idx) for idx in range(len(texts))]
-
-
-def _run_cascade(monkeypatch, atoms, answers):
+def test_typing_never_loads_the_contrastive_store(monkeypatch) -> None:
+    """The contrastive typing layer was retired (the C3 base types lines):
+    even with its old flag set, typing never loads the store."""
     from app.core import typed_atom_classifier as tac
 
-    # The suite runs with SOWSMITH_DISABLE_LLM=1, which short-circuits the
-    # WHOLE cascade before any deflect layer -- unset it here and stub the LLM
-    # batch call instead, so survivors fall through with their types intact,
-    # which is exactly the guess-free contract under test.
     monkeypatch.delenv("SOWSMITH_DISABLE_LLM", raising=False)
     monkeypatch.setenv("SOWSMITH_CONTRASTIVE_TYPE", "1")
-    monkeypatch.setattr(tac, "_classify_batch", lambda batch: {})
-    monkeypatch.setattr(
-        "app.core.contrastive_type_knn.load_promoted",
-        lambda *a, **k: _FakeTypedHead(answers),
-    )
-    return tac.classify_atoms(atoms)
-
-
-def test_typed_mode_assigns_value_light_and_only_value_light(monkeypatch) -> None:
-    """The head's best classes (bom_line 94%) are value-heavy ON PURPOSE:
-    the LLM synthesises their value payloads, so the label alone is not the
-    deliverable. A value-heavy answer must fall through untouched."""
-    atoms = [
-        _Atom("Mid-turn jumpers are excluded from this order."),
-        _Atom("Technician #1 - TV Install | $98.00 | Per Hour"),
-        _Atom("Escort access is required at the dock."),
-    ]
-    _run_cascade(monkeypatch, atoms, {
-        0: ("exclusion", 0.99),     # value-light -> assigned
-        1: ("bom_line", 0.99),      # value-heavy -> MUST fall through
-        2: None,                     # abstain -> falls through
-    })
-    assert str(atoms[0].atom_type).split(".")[-1] == "exclusion"
-    assert atoms[1].atom_type == "scope_item", "value-heavy must reach the LLM"
-    assert atoms[2].atom_type == "scope_item", "abstain must reach the LLM"
-
-
-def test_flag_off_is_byte_identical(monkeypatch) -> None:
-    from app.core import typed_atom_classifier as tac
-
-    monkeypatch.delenv("SOWSMITH_CONTRASTIVE_TYPE", raising=False)
     called = {"n": 0}
 
     def _boom(*a, **k):
         called["n"] += 1
-        raise AssertionError("must not load with the flag off")
+        raise AssertionError("typing must not load the contrastive store")
 
     monkeypatch.setattr("app.core.contrastive_type_knn.load_promoted", _boom)
     monkeypatch.setattr(tac, "_classify_batch", lambda batch: {})

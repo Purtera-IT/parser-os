@@ -161,6 +161,23 @@ class _StageToken:
     input_count: int | None
 
 
+#: The stage running now (process-wide, so pool threads see it): what the LLM
+#: and embedding counters charge their calls to.
+CURRENT_STAGE: str = "setup"
+#: {stage: {"llm_calls", "llm_s", "embed_calls", "embed_s"}} for this compile.
+CALLS_BY_STAGE: dict[str, dict[str, float]] = {}
+import threading as _threading
+_CALLS_LOCK = _threading.Lock()
+
+
+def charge(kind: str, seconds: float, n: int = 1) -> None:
+    """Add ``n`` calls of ``kind`` ("llm" | "embed") taking ``seconds``."""
+    with _CALLS_LOCK:
+        row = CALLS_BY_STAGE.setdefault(CURRENT_STAGE, {"llm_calls": 0, "llm_s": 0.0, "embed_calls": 0, "embed_s": 0.0})
+        row[f"{kind}_calls"] += n
+        row[f"{kind}_s"] = round(row[f"{kind}_s"] + seconds, 2)
+
+
 class CompileTelemetry:
     def __init__(
         self,
@@ -337,12 +354,16 @@ class CompileTelemetry:
         *,
         input_count: int | None = None,
     ) -> Iterator[_StageToken]:
+        global CURRENT_STAGE
         token = self.start_stage(stage_name, input_count=input_count)
+        before, CURRENT_STAGE = CURRENT_STAGE, stage_name
         try:
             yield token
         except Exception as exc:
             self.end_stage(token, output_count=None, warnings=[], errors=[str(exc)])
             raise
+        finally:
+            CURRENT_STAGE = before
 
     def build_trace(
         self,

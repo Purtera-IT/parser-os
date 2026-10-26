@@ -13,10 +13,12 @@ ALLOWED_EXTENSIONS = {
     ".html", ".htm", ".xhtml",   # Confluence / wiki / customer static docs
     ".mbox",                       # Gmail / Thunderbird email archive
     ".rtf",                        # Rich Text Format (legacy SOW templates)
+    ".doc", ".dot",                # Word 97-2003 binary (010279's RFP)
     ".ics", ".ical",               # iCalendar invites
     ".zip",                        # ZIP container; contents listed via parser
     ".msg",                        # Outlook native email
     ".odt", ".ods",                # OpenDocument writer / spreadsheet
+    ".xlsm",                       # macro workbook (010264's clock inventory)
     ".vsdx", ".vsd",               # Visio diagrams
     ".mpp",                        # Microsoft Project schedule
 }

@@ -53,7 +53,9 @@ class HashingEncoder(nn.Module):
     def tokens(self, texts: list[str], max_len: int = 128) -> tuple[torch.Tensor, torch.Tensor]:
         """Per-word vectors [B, T, d] and a mask [B, T]: every word kept, so a
         reader can attend to the exact words of a paragraph (operators.py)."""
-        words = [_WORD.findall(str(t or "").lower())[:max_len] or ["<empty>"] for t in texts]
+        words = [_WORD.findall(str(t or "").lower()) or ["<empty>"] for t in texts]
+        if any(len(w) > max_len for w in words):
+            raise ValueError("Encoder paragraph exceeds token budget; do not truncate rich supervision")
         T = max(len(w) for w in words)
         ids, offsets = [], []
         for ws in words:
@@ -72,29 +74,133 @@ class HashingEncoder(nn.Module):
 
 
 class HFEncoder(nn.Module):
-    """A pretrained encoder, mean-pooled. ``pip install transformers`` first."""
+    """A pretrained encoder, mean-pooled. ``pip install transformers`` first.
 
-    def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256):
+    Lines are encoded in length-sorted chunks of at most ``chunk_tokens``
+    padded tokens, so a 4,096-line window never becomes one padded batch.
+    While the body is frozen (no parameter requires grad) a line's vector
+    never changes, so it is computed once and kept (``cache``); the deal
+    graph and every head above it still train. A read (eval mode, no
+    gradient) keeps vectors the same way, fine-tuned body or not: a line
+    repeated across a deal (signatures, quoted replies) or a deal parsed
+    again is encoded once. ``train()`` drops what a read kept, since the
+    body's weights change from there.
+    """
+
+    #: Most line vectors kept (about 2 KB each in bf16); past it the cache
+    #: starts over.
+    CACHE_MAX = 200_000
+
+    def __init__(self, name: str = "answerdotai/ModernBERT-large", max_length: int = 256,
+                 dtype: torch.dtype | None = None, chunk_tokens: int = 32768):
         super().__init__()
         from transformers import AutoModel, AutoTokenizer  # optional dependency
 
         self.tok = AutoTokenizer.from_pretrained(name)
-        self.model = AutoModel.from_pretrained(name)
+        kwargs = {"torch_dtype": dtype} if dtype is not None else {}
+        self.model = AutoModel.from_pretrained(name, **kwargs)
         self.dim = self.model.config.hidden_size
         self.max_length = max_length
+        self.chunk_tokens = chunk_tokens
+        self.cache: dict[str, torch.Tensor] = {}
+
+    # The submodule loaded from the hub. A slim checkpoint leaves it out and
+    # the reader fills it from its own download (``gates.slim_state``).
+    pretrained_body = "model"
+
+    def frozen(self) -> bool:
+        return not any(p.requires_grad for p in self.model.parameters())
+
+    def _ids(self, texts: list[str], budget: int) -> list[list[int]]:
+        ids = self.tok([str(t) for t in texts], truncation=False)["input_ids"]
+        if any(len(x) > budget for x in ids):
+            raise ValueError("Encoder paragraph exceeds token budget; do not truncate rich supervision")
+        return ids
+
+    def _all_ids(self, texts: list[str]) -> list[list[int]]:
+        return self.tok([str(t) for t in texts], truncation=False)["input_ids"]
+
+    def _windows(self, ids: list[list[int]]) -> list[tuple[int, list[int]]]:
+        """(owner, window) pairs. A paragraph longer than ``max_length`` is
+        cut into consecutive windows, each with its own special tokens, and
+        nothing is dropped: its vector is the mean over every window's
+        tokens, as one pass would pool them (without attention across the
+        cut)."""
+        out: list[tuple[int, list[int]]] = []
+        for owner, x in enumerate(ids):
+            if len(x) <= self.max_length:
+                out.append((owner, x))
+                continue
+            head = x[:1] if x[0] == self.tok.cls_token_id else []
+            tail = x[-1:] if x[-1] == self.tok.sep_token_id else []
+            body = x[len(head):len(x) - len(tail)]
+            step = self.max_length - len(head) - len(tail)
+            for k in range(0, len(body), step):
+                out.append((owner, head + body[k:k + step] + tail))
+        return out
+
+    def _encode(self, ids: list[list[int]]) -> torch.Tensor:
+        dev = next(self.model.parameters()).device
+        wins = self._windows(ids)
+        order = sorted(range(len(wins)), key=lambda i: len(wins[i][1]))
+        sums: list = [None] * len(ids)
+        counts: list = [None] * len(ids)
+        start = 0
+        while start < len(order):
+            end = start + 1
+            while end < len(order) and len(wins[order[end]][1]) * (end + 1 - start) <= self.chunk_tokens:
+                end += 1
+            rows = order[start:end]
+            enc = self.tok.pad({"input_ids": [wins[i][1] for i in rows]}, return_tensors="pt").to(dev)
+            h = self.model(**enc).last_hidden_state
+            mask = enc["attention_mask"].unsqueeze(-1).to(h.dtype)
+            total, n = (h * mask).sum(1), mask.sum(1)
+            for k, i in enumerate(rows):
+                owner = wins[i][0]
+                sums[owner] = total[k] if sums[owner] is None else sums[owner] + total[k]
+                counts[owner] = n[k] if counts[owner] is None else counts[owner] + n[k]
+            start = end
+        return torch.stack([t / c.clamp(min=1) for t, c in zip(sums, counts)])
+
+    def train(self, mode: bool = True):
+        if mode and not self.frozen():
+            self.cache.clear()
+        return super().train(mode)
 
     def forward(self, texts: list[str]) -> torch.Tensor:
-        dev = next(self.model.parameters()).device
-        enc = self.tok(list(texts), padding=True, truncation=True,
-                       max_length=self.max_length, return_tensors="pt").to(dev)
-        out = self.model(**enc).last_hidden_state
-        mask = enc["attention_mask"].unsqueeze(-1).to(out.dtype)
-        return (out * mask).sum(1) / mask.sum(1).clamp(min=1)
+        texts = [str(t) for t in texts]
+        reading = not self.training and not torch.is_grad_enabled()
+        if not self.frozen() and not reading:
+            return self._encode(self._all_ids(texts))
+        todo = sorted({t for t in texts if t not in self.cache})
+        if len(self.cache) + len(todo) > self.CACHE_MAX:
+            self.cache.clear()
+            todo = sorted(set(texts))
+        if todo:
+            with torch.no_grad():
+                vecs = self._encode(self._all_ids(todo))
+            for t, v in zip(todo, vecs):
+                self.cache[t] = v
+        return torch.stack([self.cache[t] for t in texts])
+
+    def fixed(self, texts: list[str]) -> torch.Tensor:
+        """Encode texts that are not the deal's lines (WHYs, notes, queries,
+        words, flip sentences) without a gradient into the encoder. Only the
+        lines teach the released blocks; the rest would hold every one of
+        those texts' activations for backward."""
+        texts = [str(t) for t in texts]
+        if self.frozen():
+            return self(texts)
+        with torch.no_grad():
+            return self._encode(self._all_ids(texts))
+
+    def _check_budget(self, texts: list[str], budget: int) -> None:
+        self._ids(texts, budget)
 
     def tokens(self, texts: list[str], max_len: int = 256) -> tuple[torch.Tensor, torch.Tensor]:
         dev = next(self.model.parameters()).device
-        enc = self.tok(list(texts), padding=True, truncation=True,
-                       max_length=max_len, return_tensors="pt").to(dev)
+        self._check_budget(texts, max_len)
+        enc = self.tok(list(texts), padding=True, truncation=False, return_tensors="pt").to(dev)
         return self.model(**enc).last_hidden_state, enc["attention_mask"].bool()
 
 

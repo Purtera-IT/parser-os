@@ -163,6 +163,27 @@ _SITE_ROLE_MODEL = os.environ.get("OLLAMA_SITE_ROLE_MODEL", "qwen3:14b")
 _VENDOR_DROP_CONFIDENCE = 0.6
 
 
+def _base_site_role(atom_id: str):
+    """The C3 base's job_site / vendor reading for this site line as a
+    decide()-shaped decision (source ``c3``), or None when it is off, unsure,
+    or the line was not read."""
+    import os as _os
+    from types import SimpleNamespace
+
+    if _os.environ.get("SOWSMITH_C3_SITE_ROLE", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    try:
+        from app.core.c3_type_base import line_reading
+
+        got = line_reading(str(atom_id), "jdg:site_role")
+    except Exception:
+        return None
+    sure = float(_os.environ.get("SOWSMITH_C3_SITE_ROLE_SURE", "0.9") or 0.9)
+    if not got or got[0] not in _SITE_ROLE_CANDIDATES or got[1] < sure:
+        return None
+    return SimpleNamespace(verdict=got[0], confidence=got[1], source="c3", reason="c3 base site_role")
+
+
 def _stamp_decision(atom: Any, decision: Any) -> None:
     """Record WHY a site was demoted, on the atom itself (provenance, invariant
     I). Captures which tier decided (``store``/``llm``) and, when a learned
@@ -208,7 +229,14 @@ def _site_address_text(atom: Any) -> tuple[str, str]:
 
 
 def _is_roster_site(atom: Any) -> bool:
-    """Did this site come out of a locations table (site roster row)?"""
+    """Did this site come out of a locations table (site roster row)?
+
+    The roster extractor names itself on the ref (``extraction_method:
+    xlsx_site_roster_v1``), not only in the locator: 010194's 49 store rows
+    carried it there, had no facility column, failed both checks below, and
+    were judged -- and deleted -- as vendor addresses."""
+    if _is_roster_sourced(atom):
+        return True
     for ref in (getattr(atom, "source_refs", None) or []):
         loc = getattr(ref, "locator", None)
         if isinstance(loc, dict) and str(loc.get("extraction") or "").startswith("site_roster"):
@@ -307,6 +335,12 @@ def suppress_vendor_sites(
         llm_budget = max(0, int(_os.environ.get("SOWSMITH_VENDOR_SUPPRESS_LLM_MAX", "60")))
     except Exception:
         llm_budget = 60
+    # Store-only pass on every site, then the bounded LLM fallback for the
+    # first `llm_budget` undecided ones IN PARALLEL (the LLM client caps
+    # concurrency): 53 s of a warm 010043 compile was these calls one by one.
+    from concurrent.futures import ThreadPoolExecutor
+
+    pending: list[tuple[Any, str, str, Any]] = []
     for a in sites:
         aid = getattr(a, "id", None)
         if not aid:
@@ -325,14 +359,29 @@ def suppress_vendor_sites(
             instruction=_SITE_ROLE_INSTRUCTION, context=context,
             scope=scope, model=_SITE_ROLE_MODEL, llm=False,
         )
-        # 2) bounded LLM fallback only when the store abstained AND budget remains.
-        if decision.verdict is None and llm_budget > 0:
-            decision = decide(
-                "physical_site", addr, _SITE_ROLE_CANDIDATES,
-                instruction=_SITE_ROLE_INSTRUCTION, context=context,
-                scope=scope, model=_SITE_ROLE_MODEL,
-            )
-            llm_budget -= 1
+        # 2) the base's site-role reading, when it is sure (SOWSMITH_C3_SITE_ROLE).
+        #    It decides like the LLM does: a vendor reading only proposes.
+        if decision.verdict is None:
+            base = _base_site_role(aid)
+            if base is not None:
+                decision = base
+        pending.append((a, addr, context, decision))
+    asks = [i for i, (_, _, _, d) in enumerate(pending) if d.verdict is None][:llm_budget]
+
+    def _ask(i):
+        _, addr, context, _ = pending[i]
+        try:
+            return decide("physical_site", addr, _SITE_ROLE_CANDIDATES, instruction=_SITE_ROLE_INSTRUCTION,
+                          context=context, scope=scope, model=_SITE_ROLE_MODEL)
+        except Exception:
+            return None
+    if asks:
+        with ThreadPoolExecutor(max_workers=max(1, int(_os.environ.get("SOWSMITH_SITE_ROLE_PARALLEL", "8") or 8))) as pool:
+            for i, d in zip(asks, pool.map(_ask, asks)):
+                if d is not None:
+                    pending[i] = pending[i][:3] + (d,)
+    for a, addr, context, decision in pending:
+        aid = getattr(a, "id", None)
         if (
             decision is not None
             and decision.verdict == "vendor_or_billing_address"
@@ -360,7 +409,11 @@ def suppress_vendor_sites(
             # the labelling workspace, gets a verdict, and that verdict lands in
             # the store as a correction -- after which `source == "store"` and
             # this branch deletes it for free, on this deal and every other.
-            if getattr(decision, "source", None) == "store":
+            # A person's correction, never the model's own cached guess: a
+            # self-taught row (correction id teacher_*) deleted 49 of 010194's
+            # customer stores by similarity alone.
+            if getattr(decision, "source", None) == "store" and not str(
+                    getattr(decision, "correction_id", "") or "").startswith("teacher"):
                 drop_ids.add(aid)
                 _stamp_decision(a, decision)
             else:

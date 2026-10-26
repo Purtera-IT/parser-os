@@ -37,6 +37,7 @@ authoritative starting points; the PM cockpit renders them directly.
 """
 from __future__ import annotations
 
+import os
 import re
 
 from collections import Counter, defaultdict
@@ -1540,6 +1541,18 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
             alias_groups = []
     out: dict[str, str] = {}
     _n_groups = len(list(alias_groups or []))
+    # site key -> (its row's explicit id, its street), for rows that state both.
+    _own: dict[str, tuple[str, str]] = {}
+    for _a in atoms or []:
+        _v = getattr(_a, "value", None)
+        if not isinstance(_v, dict):
+            continue
+        _sid = str(_v.get("site_id") or _v.get("id") or "").strip().lower()
+        _st = re.sub(r"\W+", " ", str(_v.get("street_address") or _v.get("address") or "").lower()).strip()
+        if _sid and _st:
+            for _k in getattr(_a, "entity_keys", None) or []:
+                if str(_k).startswith("site:"):
+                    _own.setdefault(str(_k), (_sid, _st))
     for group in alias_groups or []:
         keys = sorted(
             k for k in group
@@ -1549,6 +1562,12 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
             continue
         canon = keys[0]
         for k in keys:
+            # Two rows that each carry their own id and a different street are
+            # two places, whatever name they share: 000123's roster lists
+            # Glendale (locid 495, 200 S. Brand Blvd) under Point Loma's
+            # facility name (locid 446, 3210 Rosecrans Pl).
+            if k != canon and k in _own and canon in _own and _own[k] != _own[canon]:
+                continue
             out[k] = canon
     # The other half of the same question: the roster saw N groups and
     # collapsed M keys. A group formed upstream and lost here looks identical
@@ -1560,6 +1579,29 @@ def _site_canonical_map(atoms: Any, alias_groups: Any = None) -> dict[str, str]:
         _n_groups, len(out), sorted(set(out.values())) if out else "",
     )
     return out
+
+
+#: How sure the type head must be that a line is a site for it to make a row.
+SITE_HEAD_BAR = float(os.environ.get("SOWSMITH_SITE_HEAD_BAR", "0.5"))
+
+
+def _head_says_site(val: Any, keys: Any = ()) -> bool:
+    """The C3 type head labeled this line a physical site, or never read it and
+    the parser's own reading names a place (000132's six "City, ST" lines under
+    a Locations heading carried no head label and three of six sites vanished).
+    A line the head read as something else stays out."""
+    lab = val.get("c3_label") if isinstance(val, dict) else None
+    if not lab:
+        # Except a row keyed only off an address string: the old ghost-site shape.
+        sk = [str(k) for k in (keys or []) if str(k).startswith("site:")]
+        if sk and all(k.startswith("site:address_") for k in sk):
+            return False
+        place = " ".join(str(val.get(k) or "") for k in ("name", "city", "address", "display_name", "facility_name"))
+        return bool(re.search(r"[A-Za-z]{3}", place))
+    if not (isinstance(lab, dict) and lab.get("type") == "physical_site"):
+        return False
+    # A label the head filled in carries no score (000123's last 15 stores).
+    return lab.get("p") is None or float(lab.get("p") or 0) >= SITE_HEAD_BAR
 
 
 def build_site_readiness(
@@ -1607,8 +1649,12 @@ def build_site_readiness(
             sid = ""
             if isinstance(val, dict):
                 sid = val.get("id") or val.get("site_id") or ""
-            if not sid:
-                # No explicit site code → skip. Don't pollute site_readiness.
+            if not (sid and re.search(r"[A-Za-z]{2}", str(sid))) and not _head_says_site(val, getattr(atom, "entity_keys", None)):
+                # The type head decides what a site line is. A line it labeled
+                # physical_site is one whatever its id looks like: an id-shape
+                # test here threw away 142 of 000123's 157 BevMo stores (store
+                # numbers like "407"). A line the head did not label keeps the
+                # old guard: 010043's bare "34" and 010387's signature address.
                 continue
             # The atom's OWN entity key is the one the rest of the system uses.
             #
@@ -1630,9 +1676,14 @@ def build_site_readiness(
                 k for k in (getattr(atom, "entity_keys", None) or [])
                 if isinstance(k, str) and k.startswith("site:")
             ]
+            # A store number's own key ("site:407") is a second name for the
+            # row the full key already makes: one store, one row.
+            if len(site_keys) > 1:
+                site_keys = [k for k in site_keys if not re.fullmatch(r"site:\d+", k)] or site_keys[:1]
             if not site_keys:
                 import re as _re_sid
-                site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", sid.lower()).strip("_")
+                base = sid or (val.get("facility_name") or val.get("name") or val.get("address") or "")
+                site_slug = _re_sid.sub(r"[^a-z0-9]+", "_", str(base).lower()).strip("_")
                 site_keys = [f"site:{site_slug}"] if site_slug else []
         else:
             # v49.1: skip v49 schema atom types entirely — they're
@@ -1645,6 +1696,12 @@ def build_site_readiness(
                 "integration_checkpoint", "compliance_classification",
                 "system_mapping", "signatory", "site_attribute",
             ):
+                continue
+            # Text read off an image (OCR, vision) names places in title
+            # blocks and legends -- an architect's office on 010043's floor
+            # plan became a second site. It never makes a site row.
+            _v = getattr(atom, "value", None)
+            if isinstance(_v, dict) and _v.get("kind") in ("image_ocr_text", "image_fact"):
                 continue
             site_keys = [k for k in (atom.entity_keys or []) if k.startswith("site:")]
         # Two surface forms of one place become one row. Without this the
@@ -1709,6 +1766,7 @@ def build_site_readiness(
         # These are the ONLY truly canonical sites — every other slug
         # must alias into one of these or be dropped (if it has no
         # substantive signal).
+        _name_targets: dict[str, set[str]] = {}
         for _a in atoms:
             if _atom_type_str(_a) != "physical_site":
                 continue
@@ -1716,15 +1774,16 @@ def build_site_readiness(
             if not isinstance(_val, dict):
                 continue
             _sid = _val.get("id") or _val.get("site_id") or ""
-            if not _sid:
+            if not (_sid and re.search(r"[A-Za-z]{2}", str(_sid))) and not _head_says_site(_val, getattr(_a, "entity_keys", None)):
                 continue
+            # A store number names its row only through the row's own key
+            # (000123's "407" is the store, "site:407" also a count's shape).
             _canon_slug = "site:" + _re_canon.sub(
                 r"[^a-z0-9]+", "_", str(_sid).lower()
-            ).strip("_")
-            if not _canon_slug or _canon_slug == "site:":
-                continue
-            canonical_set.add(_canon_slug)
-            anchored_set.add(_canon_slug)
+            ).strip("_") if _sid and re.search(r"[A-Za-z]{2}", str(_sid)) else ""
+            if _canon_slug and _canon_slug != "site:":
+                canonical_set.add(_canon_slug)
+                anchored_set.add(_canon_slug)
             # The atom's own entity key is canonical too.
             #
             # This set is a STRICT final gate — anything not in it is dropped —
@@ -1751,8 +1810,21 @@ def build_site_readiness(
                     _nslug = "site:" + _re_canon.sub(
                         r"[^a-z0-9]+", "_", str(_nm).lower()
                     ).strip("_")
-                    if _nslug and _nslug != _canon_slug:
-                        canonical_map[_nslug] = _canon_slug
+                    # A store numbered "6" has no id slug of its own; its names
+                    # alias its own key, never a blank one (010279: every store
+                    # name mapped to "" and the roster emptied).
+                    _target = _canon_slug or next((str(k) for k in (getattr(_a, "entity_keys", None) or [])
+                                                   if str(k).startswith("site:") and len(str(k)) > 5), "")
+                    if _nslug and _target and _nslug != _target:
+                        _name_targets.setdefault(_nslug, set()).add(_target)
+                        canonical_map[_nslug] = _target
+
+        # A name two rows with their own ids share names neither: 000123's
+        # roster lists Glendale (locid 495) under Point Loma's facility name,
+        # and the alias folded Glendale into Point Loma.
+        for _nslug, _targets in _name_targets.items():
+            if len(_targets) > 1 and canonical_map.get(_nslug) in _targets:
+                canonical_map.pop(_nslug, None)
 
         # (a) LLM cache aliases (v48 structured site extraction)
         if _llm_site_attr_cache:

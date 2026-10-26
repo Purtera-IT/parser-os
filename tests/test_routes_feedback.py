@@ -420,6 +420,11 @@ _FE_HEAD_CORRECTIONS: dict[str, str] = {
     "term": "commercial_term_read",
     # A place the documents name: a job site, or only a mention.
     "geo_mention": "geo_mention_role",
+    # The Studio's SOW edit log: section moves and deletions of generated lines.
+    "sow_section": "sow_section",
+    "sow_keep": "sow_keep",
+    "sow_party": "sow_party",
+    "sow_supplier": "sow_supplier",
 }
 
 

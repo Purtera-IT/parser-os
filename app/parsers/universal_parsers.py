@@ -489,6 +489,78 @@ class RtfParser(BaseParser):
         return ParserOutput(atoms=atoms, derived_files=[])
 
 
+class DocParser(BaseParser):
+    """Parse a Word 97-2003 binary (.doc): one line per paragraph or table row,
+    with the numbered heading it sits under. 010279's RFP was a .doc and its
+    whole task list reached the compile as nothing (app.parsers.word97)."""
+    parser_name = "doc"
+    parser_version = "doc_parser_v1"
+    capability = ParserCapability(
+        parser_name=parser_name,
+        parser_version=parser_version,
+        supported_extensions=[".doc", ".dot"],
+        supported_artifact_types=[ArtifactType.docx],
+        emitted_atom_types=[
+            AtomType.scope_item, AtomType.exclusion, AtomType.constraint,
+            AtomType.assumption, AtomType.open_question,
+        ],
+        supported_domain_packs=["*"],
+        requires_binary=True,
+        supports_source_replay=True,
+    )
+
+    def match(self, path: Path, sample_text: str | None, domain_pack: DomainPack | None) -> ParserMatch:
+        del sample_text, domain_pack
+        confidence = 0.93 if path.suffix.lower() in (".doc", ".dot") else 0.0
+        return ParserMatch(
+            parser_name=self.parser_name,
+            confidence=confidence,
+            reasons=["doc_extension"] if confidence else [],
+            artifact_type=ArtifactType.docx,
+        )
+
+    def parse(self, artifact_path: Path) -> list[Any]:
+        artifact_id = stable_id("art", str(artifact_path))
+        return self.parse_artifact("unknown_project", artifact_id, artifact_path)
+
+    def parse_artifact(self, project_id: str, artifact_id: str, path: Path, domain_pack: DomainPack | None = None) -> list[EvidenceAtom]:
+        return self.parse_artifact_full(project_id=project_id, artifact_id=artifact_id, path=path).atoms
+
+    def parse_artifact_full(self, *, project_id: str, artifact_id: str, path: Path, domain_pack: DomainPack | None = None) -> ParserOutput:
+        del domain_pack
+        from app.parsers.word97 import doc_lines
+
+        try:
+            lines = doc_lines(path.read_bytes())
+        except Exception:
+            lines = []
+        if not lines:
+            # Unreadable (encrypted, corrupt, a template stub): say so, as the
+            # unread marker does, rather than let the file vanish.
+            from app.parsers.unread_parser import UnreadParser
+
+            return ParserOutput(atoms=UnreadParser().parse_artifact(project_id, artifact_id, path), derived_files=[])
+        atoms: list[EvidenceAtom] = []
+        heading = ""
+        for i, line in enumerate(lines):
+            if len(line) < 3:
+                continue
+            if _DOC_HEADING.match(line) and len(line) < 80:
+                heading = line
+            atoms.append(_make_atom(
+                project_id=project_id, artifact_id=artifact_id, filename=path.name,
+                artifact_type=ArtifactType.docx, text=line[:1000],
+                locator={"line_start": i, "line_end": i, "paragraph": i, **({"section": heading} if heading else {})},
+                extraction_method="word97_piece_table",
+                parser_version=self.parser_version,
+            ))
+        return ParserOutput(atoms=atoms, derived_files=[])
+
+
+#: "2.2 Installation", "Section 3", "1.     Administrative Information".
+_DOC_HEADING = re.compile(r"^(?:section\s+\d+|\d+(?:\.\d+)*\.?\s+[A-Z][^.]{2,70})$", re.I)
+
+
 # ───────────────────────────────────── ICS ──────────────────────────────────────
 
 

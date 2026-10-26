@@ -275,8 +275,27 @@ def _embed_azure(texts: list[str]) -> list[list[float] | None]:
         data=_json.dumps(payload).encode("utf-8"),
         headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = _json.loads(resp.read().decode("utf-8", errors="ignore"))
+    # Retry a transient failure (TLS handshake timeout, 429, 5xx). One failed
+    # request used to fail the compile's whole warm-up batch, and every later
+    # stage then embedded one line per round trip: 010043 on a cold replica
+    # took 393 s instead of 162 s (2026-10-16, "_ssl.c:999 handshake timed out").
+    import urllib.error
+
+    attempts = max(1, int(os.environ.get("SOWSMITH_EMBED_RETRIES", "3")))
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = _json.loads(resp.read().decode("utf-8", errors="ignore"))
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (408, 429, 500, 502, 503, 504) or attempt == attempts - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            if attempt == attempts - 1:
+                raise
+        import time as _t
+
+        _t.sleep(1.0 * (attempt + 1) * (attempt + 1))
     out: list[list[float] | None] = [None] * len(texts)
     for row in body.get("data") or []:
         i = int(row.get("index", -1))
@@ -390,6 +409,22 @@ def _embed_batch_endpoint(texts: list[str]) -> list[list[float] | None] | None:
 
 
 def _embed_uncached(texts: list[str]) -> list[list[float] | None]:
+    """Timed per compile stage (telemetry.charge), then ``_embed_uncached_inner``."""
+    import time as _t
+
+    started = _t.perf_counter()
+    try:
+        return _embed_uncached_inner(texts)
+    finally:
+        try:
+            from app.core import telemetry as _tel
+
+            _tel.charge("embed", _t.perf_counter() - started, n=1)
+        except Exception:
+            pass
+
+
+def _embed_uncached_inner(texts: list[str]) -> list[list[float] | None]:
     """Embed texts with no caching. Prefers the one-round-trip batch endpoint;
     falls back to the legacy ThreadPoolExecutor per-text path."""
     if embed_backend() == "azure":
