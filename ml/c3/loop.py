@@ -545,15 +545,27 @@ def to_read_precision(model: Any) -> Any:
     return model
 
 
-def _saved_on_host(device: str):
+def _saved_on_host(device: str, mode: str | None = None):
     """Opt-in (``C3_SAVE_ON_HOST=1``, CUDA): keep the tensors backward needs in pinned host memory and bring
     each back when backward reaches it. Same values and gradients; one 8,192-line step's many passes then
     fit one 80 GB GPU (the host has the room)."""
-    mode = os.environ.get("C3_SAVE_ON_HOST", "").strip()
+    mode = os.environ.get("C3_SAVE_ON_HOST", "").strip() if mode is None else mode
     if mode in ("1", "pageable") and str(device).startswith("cuda"):
         # "pageable": ordinary host memory, freed like any tensor; no pinned cache to grow or re-pin.
         return torch.autograd.graph.save_on_cpu(pin_memory=(mode == "1"))
     return nullcontext()
+
+
+def _host_fallback(device: str) -> str:
+    """``C3_SAVE_ON_HOST_FALLBACK=pageable`` (CUDA, save-on-host off): a part whose step runs out of GPU memory
+    is run again with its saved tensors in host memory (the same values and gradients as C3_SAVE_ON_HOST=pageable),
+    so a large GPU trains the rare heavy part instead of the whole run dying on it. Off by default."""
+    mode = os.environ.get("C3_SAVE_ON_HOST_FALLBACK", "").strip()
+    on = os.environ.get("C3_SAVE_ON_HOST", "").strip() in ("1", "pageable")
+    return mode if mode in ("1", "pageable") and not on and str(device).startswith("cuda") else ""
+
+
+_host_fallbacks = 0
 
 
 _host_steps = 0
@@ -757,31 +769,60 @@ def _student_step(model: C3Model, opt: torch.optim.Optimizer, batch: Batch,
                   anchor=None) -> torch.Tensor:
     if getattr(batch, "task_profile", None) is not None and (teacher is not None or view is not None):
         raise ValueError("teacher/lesson execution is unsupported for isolated auxiliary tasks")
-    model.train()
-    with _autocast(device), _saved_on_host(device):
-        kept: dict = {}
-        loss, parts = c3_loss(model, batch, weights, judgment_sizes=sizes, keep=kept)
+    global _host_fallbacks
+    fallback = _host_fallback(device)
+    marks = {k: len(v) for k, v in shares.items()} if shares is not None else None
+
+    def forward_backward(host: str | None) -> torch.Tensor:
+        model.train()
+        with _autocast(device), _saved_on_host(device, host):
+            kept: dict = {}
+            loss, parts = c3_loss(model, batch, weights, judgment_sizes=sizes, keep=kept)
+            if shares is not None:
+                # Each term as it enters the total, so a stage shows what it trained on.
+                for k, v in parts.items():
+                    shares.setdefault(k, []).append(getattr(weights, k) * v)
+            if anchor is not None and getattr(batch, "task_profile", None) is None:
+                # anchor.py: KL to INIT's predictions on this part's unlabeled rows.
+                kl = anchor.loss(kept["out"], batch)
+                if kl is not None:
+                    loss = loss + anchor.kl * kl
+                    if shares is not None:
+                        shares.setdefault("anchor_kl", []).append(anchor.kl * float(kl.detach()))
+            if teacher is not None and view is not None:
+                # The lesson reads the same forward pass as the gold terms: a
+                # second trunk pass would double what backward holds.
+                loss = loss + weighted(
+                    supercharge_loss(model, kept["out"], view, texts=batch.texts, batch=batch,
+                                     desc=kept["desc"], unlabeled_keys=unlabeled_keys),
+                    lesson or TeachWeights.for_base())
+            loss = loss * scale
+        opt.zero_grad()
+        loss.backward()
+        return loss
+
+    host: str | None = None
+    while True:
+        try:
+            loss = forward_backward(host)
+            break
+        except torch.OutOfMemoryError:
+            if not fallback or host is not None:
+                raise
+        # Out of the except block, so the failed attempt's frames (and the GPU memory they hold) are freed. No
+        # optimizer step has run; the partial gradients and this part's share entries are dropped.
+        opt.zero_grad(set_to_none=True)
         if shares is not None:
-            # Each term as it enters the total, so a stage shows what it trained on.
-            for k, v in parts.items():
-                shares.setdefault(k, []).append(getattr(weights, k) * v)
-        if anchor is not None and getattr(batch, "task_profile", None) is None:
-            # anchor.py: KL to INIT's predictions on this part's unlabeled rows.
-            kl = anchor.loss(kept["out"], batch)
-            if kl is not None:
-                loss = loss + anchor.kl * kl
-                if shares is not None:
-                    shares.setdefault("anchor_kl", []).append(anchor.kl * float(kl.detach()))
-        if teacher is not None and view is not None:
-            # The lesson reads the same forward pass as the gold terms: a
-            # second trunk pass would double what backward holds.
-            loss = loss + weighted(
-                supercharge_loss(model, kept["out"], view, texts=batch.texts, batch=batch,
-                                 desc=kept["desc"], unlabeled_keys=unlabeled_keys),
-                lesson or TeachWeights.for_base())
-        loss = loss * scale
-    opt.zero_grad()
-    loss.backward()
+            for k in list(shares):
+                if k not in marks:
+                    del shares[k]
+                else:
+                    del shares[k][marks[k]:]
+        torch.cuda.empty_cache()
+        _host_fallbacks += 1
+        print(f"oom fallback {_host_fallbacks}: {getattr(batch, 'deal_id', '?')} retried with saved tensors "
+              f"on the host ({fallback})", file=sys.stderr, flush=True)
+        host = fallback
     torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.grad is not None], 1.0)
     opt.step()
     _release_host_cache(device)
