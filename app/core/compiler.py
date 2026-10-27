@@ -2129,11 +2129,23 @@ def compile_project(
         _c3_deal.set_deal(None)
         if _c3_deal.enabled() or _c3_deal.document_job_enabled():
             _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
-            from app.core.orbitbrief_envelope import _load_manifest_crm
+            from app.core.orbitbrief_envelope import _load_manifest_crm, _load_manifest_run_cutoff
+            from c3_record import read_with_deal
 
+            # as_of: a run with a cutoff is the quoting read, one without the planning read
+            # (c3_record.view.of_run), the view the training rows carry.
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
                               {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")},
-                              stage_timeline=(_load_manifest_crm(project_dir) or {}).get("stage_timeline"))
+                              stage_timeline=(_load_manifest_crm(project_dir) or {}).get("stage_timeline"),
+                              as_of=_load_manifest_run_cutoff(project_dir))
+            # The copies a pre-read fold set aside are lines of the deal's read in training
+            # (c3_record.read_with_deal), so the base reads them too.
+            _c3_deal.also_read([
+                a for a in suppressed_atoms
+                if isinstance(getattr(a, "value", None), dict)
+                and a.value.get("_suppression")
+                and read_with_deal(a.value["_suppression"])
+            ] + held_chatter + held_headings)
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
@@ -2181,6 +2193,22 @@ def compile_project(
         except Exception as exc:
             warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
+
+    # A disabled document-job stage must not admit other jobs into a view: training's views drop the
+    # documents the base's document head sets aside (c3_record.document_job.set_aside).
+    try:
+        from app.core import c3_type_base as _c3_view
+        from app.core import document_job_scope as _djs_v
+        from app.core.orbitbrief_envelope import _load_manifest_crm as _c3_crm_v
+
+        if _c3_view.view_name() and not _djs_v.enabled() and _c3_view.view_drops_other_job() \
+                and (_c3_view.enabled() or _c3_view.document_job_enabled()):
+            _other = _c3_view.other_job_by_head(
+                atoms, deal_name=_djs_v.deal_name_from_manifest(project_dir) or "",
+                crm=_c3_crm_v(project_dir) or {})
+            _c3_view.set_other_job(_other)
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 view other-job set-aside failed: {type(exc).__name__}: {exc}")
 
     # v47 typed-atom classification — promotes scope_item / entity
     # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
