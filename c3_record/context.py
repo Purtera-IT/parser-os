@@ -104,15 +104,42 @@ def _name(text: Any) -> str:
     return "_".join(_words(text)[:MAX_NAME_WORDS])[:32]
 
 
+def quoted_depth(quoted: Any = False, message_index: Any = None, authority_class: Any = "") -> int:
+    """How deep in quoted reply history a line sits: 0 for the message's own
+    text; else its message's place in the thread (``message_index``, newest
+    message 0), at least 1. A line is quoted when the parser marked it so
+    (``locator.quoted`` / ``value.quoted``) or classed it ``quoted_old_email``.
+    An extraction fact, the same rule for a training row and a served one."""
+    auth = str(getattr(authority_class, "value", authority_class) or "").rsplit(".", 1)[-1]
+    if not (quoted is True or str(quoted).strip().lower() in ("true", "1") or auth == "quoted_old_email"):
+        return 0
+    try:
+        idx = int(message_index)
+    except (TypeError, ValueError):
+        idx = 0
+    return max(1, idx)
+
+
+def quoted_tags(depth: Any) -> list[str]:
+    """``quoted:1`` / ``quoted:2+`` for a line in quoted history, else none."""
+    try:
+        d = int(depth or 0)
+    except (TypeError, ValueError):
+        d = 0
+    return [] if d <= 0 else ["quoted:1"] if d == 1 else ["quoted:2+"]
+
+
 def context_tags(section: Any = "", sheet: Any = "", table_header: Iterable[Any] = (),
-                 doc_kind: Any = "") -> list[str]:
+                 doc_kind: Any = "", quoted_depth: Any = 0) -> list[str]:
     """The line's context tags, in a fixed order, no repeats:
 
     * ``hdr:<cell>`` per header cell (first MAX_HEADER_CELLS cells, words joined by _);
     * ``sheet:<name>`` the sheet's name words;
     * ``sec:<word>`` per word of the nearest heading (the section path's last
       part), capped; not for a meeting line (its section is the speaker) or a
-      section that is the sheet itself."""
+      section that is the sheet itself;
+    * ``quoted:1`` / ``quoted:2+`` for a line in quoted reply history
+      (``quoted_tags``)."""
     out: list[str] = []
     for h in list(table_header or ())[:MAX_HEADER_CELLS]:
         n = _name(h)
@@ -126,12 +153,14 @@ def context_tags(section: Any = "", sheet: Any = "", table_header: Iterable[Any]
     if sec and str(doc_kind or "").strip().lower() not in _SPEAKER_KINDS and not (sh and _name(last) == sh):
         for w in _words(last)[:MAX_HEADING_WORDS]:
             out.append(f"sec:{w}")
+    out.extend(quoted_tags(quoted_depth))
     seen: set[str] = set()
     return [t for t in out if not (t in seen or seen.add(t))]
 
 
 #: Row keys these facts travel in (training views and the serving payload).
-CONTEXT_KEYS = ("sheet", "table_header")
+CONTEXT_KEYS = ("sheet", "table_header", "quoted_depth")
 
-__all__ = ["cells_of", "table_fields", "table_headers", "context_tags", "CONTEXT_KEYS",
+__all__ = ["cells_of", "table_fields", "table_headers", "context_tags", "quoted_depth", "quoted_tags",
+           "CONTEXT_KEYS",
            "MAX_HEADER_CELLS", "MAX_HEADING_WORDS"]

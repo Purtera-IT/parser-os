@@ -63,6 +63,9 @@ SIDES = frozenset({"ours", "theirs", "partner", "vendor"})
 
 #: A table row's place (c3_record.context.table_fields; build.py's (d)); table_header follows from them.
 TABLE_KEYS = ("table_id", "table_row_index", "sheet")
+#: Extraction facts of a line, sent as given when set: its depth in quoted reply
+#: history (c3_record.context.quoted_depth) and the line it copies (the parser's duplicate_of).
+LINE_FACT_KEYS = ("quoted_depth", "copy_of")
 #: The sender and stage fields every row carries (``c3_record.sender.annotate``).
 SENDER_FIELDS = ("speaker_side", "speaker_role", "speaker_org", "doc_direction", "stage_at")
 
@@ -126,6 +129,7 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         row.update({k: ln.get(k) for k in SENDER_INPUTS if ln.get(k)}, said_by=said)
         # Where the line sits (c3_record.context): its table and sheet, as the training build stamps them.
         row.update({k: ln[k] for k in TABLE_KEYS if ln.get(k) not in (None, "", [])})
+        row.update({k: ln[k] for k in LINE_FACT_KEYS if ln.get(k)})
         rows.append(row)
     try:
         annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
