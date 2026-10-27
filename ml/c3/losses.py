@@ -24,6 +24,33 @@ _AUX_ROTATE = os.environ.get("C3_AUX_ROTATE") == "1"
 _AUX_TURN = itertools.count()
 
 
+def _answer_weights(spec: str) -> dict[str, dict[str, float]]:
+    """C3_ANSWER_WEIGHTS="jdg:facility=city_office:4,keep_name:4;jdg:site_role=x:2": in that judgment head's
+    cross-entropy a rare answer counts that many times (class weights); unlisted answers weigh 1."""
+    out: dict[str, dict[str, float]] = {}
+    for part in filter(None, (x.strip() for x in spec.split(";"))):
+        key, _, answers = part.partition("=")
+        out[key.strip()] = {a.split(":")[0].strip(): float(a.split(":")[1]) for a in answers.split(",") if ":" in a}
+    return out
+
+
+_ANSWER_WEIGHTS = _answer_weights(os.environ.get("C3_ANSWER_WEIGHTS", ""))
+
+
+def _class_weight(o, n: int, device) -> torch.Tensor | None:
+    """The per-answer weight vector for ``o`` (C3_ANSWER_WEIGHTS), or None when the head has none."""
+    spec = _ANSWER_WEIGHTS.get(o.key)
+    if not spec:
+        return None
+    w = torch.ones(n, device=device)
+    for value, weight in spec.items():
+        i = o.index(value)
+        if i is None or i >= n:
+            raise ValueError(f"C3_ANSWER_WEIGHTS: {o.key} has no answer {value!r}")
+        w[i] = weight
+    return w
+
+
 @dataclass
 class LossWeights:
     heads: float = 1.0
@@ -283,7 +310,7 @@ def judgment_loss(model: C3Model, out: C3Output, batch: Batch,
                 truth[i, list(j.answers)] = 1
             total = total + view_scale * F.binary_cross_entropy_with_logits(logits, truth)
         else:
-            total = total + view_scale * F.cross_entropy(logits, y)
+            total = total + view_scale * F.cross_entropy(logits, y, weight=_class_weight(o, logits.shape[-1], logits.device))
         terms += 1
         cited = [j for j in js if j.cites and j.query]
         if cited:
