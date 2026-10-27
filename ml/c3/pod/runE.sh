@@ -320,6 +320,12 @@ PY
 fi
 read -ra valid_files <<< "$VALID_FILE"
 for f in "${valid_files[@]}"; do [[ -f "$f" ]] || { echo "no VALID_FILE $f" >&2; exit 1; }; done
+# A validation file's deal never trains: it must be one of VALIDATION (NEVER), or training would see it.
+for f in "${valid_files[@]}"; do
+  v=$(basename "$f" .json); v=${v%%@*}
+  [[ "$NEVER" == *" $v "* ]] || { echo "VALID_FILE $f: deal $v is not in VALIDATION ($VALIDATION), so it would train" >&2; exit 1; }
+  for t in "${train_files[@]}"; do [[ "$(basename "$t")" == "$v"* ]] && { echo "validation deal $v is in training ($t)" >&2; exit 1; }; done
+done
 echo "train ${#train_files[@]} files from $TRAIN_DIR: $(for f in "${train_files[@]}"; do basename "$f" .json; done | tr '\n' ' ')"
 echo "validation ${valid_files[*]}"
 

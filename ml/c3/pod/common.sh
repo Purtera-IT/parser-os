@@ -15,7 +15,7 @@ mkdir -p "$C3/train" "$C3/out" "$HF_HOME"
 # Run C (2026-10-14): no new deals to label, so two validation and two holdout
 # deals train; 010043 checks the run and 010038 / 010387 stay the test.
 TRAIN="000002 010042 010050 010082 010115 000123 010144 010003 010353 010127 000061 010045 010224 010087 010149 010172 010194"
-VALIDATION="010043"
+VALIDATION="${VALIDATION:-010043}"   # several deals: space separated; VALID_FILE names their files
 HOLDOUT="010038 010387"
 files() { for d in "$@"; do echo "$C3/train/$d.json"; done; }
 # Less fragmentation across the varied page and part sizes.
