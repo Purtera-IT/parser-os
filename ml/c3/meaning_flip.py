@@ -46,6 +46,7 @@ HELD OUT, on purpose:
 """
 from __future__ import annotations
 
+import os
 import random
 import re
 from dataclasses import dataclass, field
@@ -65,6 +66,8 @@ WORK_TYPES = frozenset({"task", "work_scope_item", "scope_item", "deliverable"})
 SCOPE_TYPES = WORK_TYPES | {"dependency", "requirement", "assumption", "exclusion", "service_line",
                             "acceptance_criterion"}
 FAMILIES = ("sup_to_cust", "sup_to_us", "addr_street", "excl_wrap", "adm_to_talk", "adm_add_fact")
+#: C3_FLIP_SKIP="addr_street,...": families left out of training (off by default; every family trains).
+SKIP = frozenset(x.strip() for x in os.environ.get("C3_FLIP_SKIP", "").split(",") if x.strip())
 
 # ---------------------------------------------------------------- inserted text (disjoint from the gate's)
 #: Our side, singular so "is / will / to" stay grammatical.
@@ -311,7 +314,7 @@ def plan_flips(texts: Sequence[str], gold: Mapping[str, Sequence[str | None]], r
     """At most ``cap`` edits per family, drawn by ``rng``; each line edited once, never next to another
     edited line (its neighbours are read as written)."""
     cands = candidates(texts, gold, rng)
-    fams = list(FAMILIES)
+    fams = [f for f in FAMILIES if f not in SKIP]
     rng.shuffle(fams)
     used: set[int] = set()
     flips: list[Flip] = []
