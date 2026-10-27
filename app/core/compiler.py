@@ -16,6 +16,7 @@ from app.core.cache import (
     load_cached_artifact_result,
     save_cached_artifact_result,
 )
+from app.core.c3_type_base import C3HeadsUnavailable  # SOWSMITH_C3_FALLBACK=never fails the compile
 from app.core.candidate_adjudicator import adjudicate_candidates
 from app.core.candidates import summarize_candidate_outcomes
 from app.core.entity_extraction import enrich_atoms as enrich_entity_keys
@@ -2175,6 +2176,8 @@ def compile_project(
                         )
                     _djs_dropped = len(_dropped_djs)
                 warnings.extend(_djs_notes)
+        except C3HeadsUnavailable:
+            raise
         except Exception as exc:
             warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
@@ -2201,6 +2204,8 @@ def compile_project(
         _auth_n = _c3_auth.apply_authority(atoms)
         if _auth_n:
             warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
+    except C3HeadsUnavailable:
+        raise
     except Exception as exc:
         warnings.append(f"WARNING: C3 type authority failed: {type(exc).__name__}: {exc}")
 
@@ -2217,6 +2222,8 @@ def compile_project(
                 )
             else:
                 promoted = classify_atoms(atoms)
+        except C3HeadsUnavailable:
+            raise
         except Exception as exc:
             warnings.append(f"WARNING: typed_atom_classifier failed: {type(exc).__name__}: {exc}")
         if promoted:
@@ -3672,6 +3679,8 @@ def compile_project(
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")
+    except C3HeadsUnavailable:
+        raise
     except Exception as exc:
         warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
 
@@ -3703,6 +3712,8 @@ def compile_project(
                 if _q:
                     _c3_brief["quote"] = _q
                     warnings.append(f"INFO: quote heads: {_q.get('job_type')} {len(_q.get('lines') or [])} line(s)")
+        except C3HeadsUnavailable:
+            raise
         except Exception as exc:
             warnings.append(f"WARNING: quote heads failed: {type(exc).__name__}: {exc}")
 
