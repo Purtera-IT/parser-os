@@ -37,6 +37,12 @@ The terms here, each a named part of ``c3_loss`` (weight 0 turns it off):
                      WHY stay. The masked line must give its saved answers,
                      match its clean reading (KL, detached) and still find
                      its own WHY (``why_contrast`` on the masked state).
+                     ``keyword_dropout_broad`` sends that share of lines
+                     through a broader field-label mask (every key removed,
+                     or renamed from names generated per step).
+``layout_why``       (layout_why.py) the same for table rows re-laid out
+                     per step in many layouts the swap gate does not hold
+                     out: same answers, same reading, same WHY.
 
 The swap gate (~/c3-local/runE/swap_gate.py) measures the same property on
 held-out deals with perturbations these terms never train (entity swaps).
@@ -93,15 +99,41 @@ def _field(m: re.Match, rng: random.Random, k: list[int]) -> str:
     return f"{lead}f{k[0]}:{space}"
 
 
-def mask_surface(text: str, rng: random.Random | None = None, word_drop: float = 0.1) -> str | None:
+def _broad_fields(t: str, rng: random.Random) -> str:
+    """Field labels, broadly: every key removed (a third of the time), or each key renamed with a name generated
+    this step (layout_why.synonym: paraphrases, respellings, neutral column names; never a swap-gate word) or
+    removed."""
+    from .layout_why import synonym  # noqa: PLC0415
+
+    if rng.random() < 1 / 3:
+        return _FIELD.sub(lambda m: m.group(1), t)
+    k = [0]
+
+    def one(m: re.Match) -> str:
+        k[0] += 1
+        if rng.random() < 0.2:
+            return m.group(1)
+        return f"{m.group(1)}{synonym(m.group(2).strip(), rng, k[0])}:{m.group(3)}"
+
+    return _FIELD.sub(one, t)
+
+
+def mask_surface(text: str, rng: random.Random | None = None, word_drop: float = 0.1,
+                 broad: float = 0.0) -> str | None:
     """The line with its surface cues masked or paraphrased, or None when it
     has none to mask. Numbers, names and the rest of the wording stay, so the
     label and the WHY still hold. No word decides an answer here: the list
-    names what the answer must *not* rest on."""
+    names what the answer must *not* rest on.
+
+    ``broad``: share of lines whose field labels go through ``_broad_fields`` (all keys removed, or renamed from
+    a much larger generated set) instead of FIELD_SYNONYMS. 0 (default) draws exactly as before."""
     rng = rng or random
     t = str(text or "")
     k = [0]
-    out = _FIELD.sub(lambda m: _field(m, rng, k), t)
+    if broad and rng.random() < broad:
+        out = _broad_fields(t, rng)
+    else:
+        out = _FIELD.sub(lambda m: _field(m, rng, k), t)
     out = _EXT.sub(lambda m: "" if rng.random() < 0.5 else ".file", out)
 
     def word(m: re.Match) -> str:
@@ -312,12 +344,13 @@ def keyword_dropout_loss(model: C3Model, out: C3Output, batch: Batch, w, *,
     rng = rng or random
     zero = out.r.new_zeros(())
     p, cap = float(getattr(w, "keyword_dropout_p", 0.5)), int(getattr(w, "keyword_dropout_cap", 256))
+    broad = float(getattr(w, "keyword_dropout_broad", 0.0))
     texts, numbers = list(batch.texts), list(batch.numbers)
     lines = []
     for i, on in enumerate(batch.labeled):
         if not on or rng.random() >= p:
             continue
-        t = mask_surface(batch.texts[i], rng)
+        t = mask_surface(batch.texts[i], rng, broad=broad)
         if t is None:
             continue
         texts[i], numbers[i] = t, number_tokens(t)
@@ -369,6 +402,10 @@ def why_carry_losses(model: C3Model, out: C3Output, batch: Batch, desc: dict[str
         parts["why_alone"] = why_alone_loss(model, out, batch, desc)
     if getattr(w, "keyword_dropout", 0.0):
         parts["keyword_dropout"] = keyword_dropout_loss(model, out, batch, w, rng=rng, desc=desc)
+    if getattr(w, "layout_why", 0.0):
+        from .layout_why import layout_why_loss  # noqa: PLC0415
+
+        parts["layout_why"] = layout_why_loss(model, out, batch, w, rng=rng, desc=desc)
     return parts
 
 

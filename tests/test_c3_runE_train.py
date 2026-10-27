@@ -147,3 +147,27 @@ def test_the_pick_is_a_macro_over_the_gated_heads_held_to_the_live_floors(tmp_pa
     assert out["at"] == "lines" and Path(f"{ck}.best").resolve() == (tmp_path / "e.pt.lines").resolve()
     (tmp_path / "e.pt.lines").unlink()
     assert pick(str(ck), str(tmp_path / "init.pt"), str(tmp_path / "floors.json"))["at"] == "start"
+
+
+def test_an_opt_in_term_is_on_in_every_stage_and_ramps(monkeypatch):
+    """layout_why is 0 by default (LossWeights), so gold_weights never turns it on: --loss-weight does, in every
+    stage, and its ramp grows from 0 like the others."""
+    schema = load_schema()
+    train = _train(schema)
+    seen = []
+    real = loop._student_step
+
+    def watch(model, opt, batch, weights, *a, **k):
+        seen.append((weights.layout_why, weights.keyword_dropout_broad))
+        return real(model, opt, batch, weights, *a, **k)
+
+    monkeypatch.setattr(loop, "_student_step", watch)
+    run_base([train], [], schema, budget=replace(BUDGET, lines=3, links=2, open_links=0),
+             score_holdout=False, fit_parts=0,
+             loss_weight={"layout_why": 0.3, "keyword_dropout_broad": 0.5}, ramp={"layout_why": 2})
+    assert [round(w, 4) for w, _ in seen] == [0.15, 0.3, 0.3, 0.3, 0.3]
+    assert {b for _, b in seen} == {0.5}
+    seen.clear()
+    run_base([train], [], schema, budget=replace(BUDGET, lines=2, links=0, open_links=0),
+             score_holdout=False, fit_parts=0)
+    assert {w for w, _ in seen} == {0.0}

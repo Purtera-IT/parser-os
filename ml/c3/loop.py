@@ -256,6 +256,11 @@ def frequent_heads(counts: dict[str, int], minimum: int = MIN_MARKS) -> set[str]
     return {key for key, n in counts.items() if n >= minimum and not key.startswith("rel:")}
 
 
+#: LossWeights fields that are 0 by default (so a run that does not name them is unchanged) and on in every stage
+#: once --loss-weight names them: layout_why.py's generated layouts and the broad keyword mask.
+OPT_IN_TERMS = frozenset({"layout_why", "keyword_dropout_broad"})
+
+
 def gold_weights(stage: str) -> tuple[LossWeights, tuple[str, ...] | None]:
     """Cumulative saved-mark weights. Later stages keep the earlier lessons.
 
@@ -1439,8 +1444,10 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         if head_weight:
             weights = replace(weights, head=dict(head_weight))
         if loss_weight:
-            # Only terms the stage already trains: a 0 in gold_weights stays 0.
-            weights = replace(weights, **{k: v for k, v in loss_weight.items() if getattr(weights, k)})
+            # Only terms the stage already trains: a 0 in gold_weights stays 0. The opt-in terms (0 by default,
+            # never gated by stage) are the exception: --loss-weight turns them on in every stage.
+            weights = replace(weights, **{k: v for k, v in loss_weight.items()
+                                          if getattr(weights, k) or k in OPT_IN_TERMS})
         use_teacher = stage in lesson_stages
         lesson, allowed = _lesson(stage, seen) if use_teacher else (None, None)
         steps = budget.steps(stage)
@@ -1542,7 +1549,7 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
             print(f"stage {stage} terms " + " ".join(f"{k}={m:.3f}" for k, m in top), flush=True)
             # A term the stage weights on that never moved the total: no data for it here.
             silent = sorted({k for k in shares if getattr(weights, k, 0) and abs(means.get(k, 0.0)) <= 1e-8}
-                            | {k for k in ("layout_lock", "why_contrast", "why_swap", "why_alone", "keyword_dropout",
+                            | {k for k in ("layout_lock", "layout_why", "why_contrast", "why_swap", "why_alone", "keyword_dropout",
                                          "entity_swap", "meaning_flip", "link_why_contrast", "link_why_alone")
                                if getattr(weights, k, 0) and k not in shares})
             if silent:

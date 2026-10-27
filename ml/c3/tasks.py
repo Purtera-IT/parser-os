@@ -26,12 +26,12 @@ DIRECT_LOSSES = frozenset({"heads", "numbers", "literals"})
 LOSS_TERMS = frozenset("""absence adversary card_alone card_contrast changes citations claims
 clause_use co_why_alone co_why_contrast coherence conduct deal_numbers derived_cards
 described_alone entities entity_swap explanation_only governs heads hindsight judgment_rationale
-judgment_why_alone judgments keyword_dropout layout_lock link_why_alone link_why_contrast
+judgment_why_alone judgments keyword_dropout layout_lock layout_why link_why_alone link_why_contrast
 literals meaning_flip near_misses negatives node_pointers number_why_alone numbers pointers policy_l1
 relations residual rule_links table_kind variance why_align why_alone why_contrast why_echo
 why_sufficiency why_swap""".split())
 LOSS_CONFIG_FIELDS = frozenset("""card_cap company_r_grad described_alone_p free_h_out head
-keyword_dropout_cap keyword_dropout_p link_why_hard_negative near_miss_margin space
+keyword_dropout_broad keyword_dropout_cap keyword_dropout_p layout_why_cap layout_why_p link_why_hard_negative near_miss_margin space
 why_hard_negative why_swap_cap""".split())
 
 

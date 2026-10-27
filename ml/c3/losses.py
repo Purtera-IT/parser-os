@@ -119,6 +119,12 @@ class LossWeights:
     keyword_dropout: float = 0.5   # surface cues masked: same answers, same reading, same WHY
     keyword_dropout_p: float = 0.5 # share of labeled lines masked per step (not a part)
     keyword_dropout_cap: float = 256  # masked lines per part (not a part)
+    keyword_dropout_broad: float = 0.0  # share of masked lines with every key removed or renamed broadly (not a part)
+    # Table rows in fresh layouts generated per step (layout_why.py; never a swap-gate family): the saved answers,
+    # the clean reading and the line's own WHY. One more forward; 0 (default) is off.
+    layout_why: float = 0.0
+    layout_why_p: float = 0.3     # share of labeled table rows re-laid out per step (not a part)
+    layout_why_cap: float = 128   # re-laid-out rows per part (not a part)
     # A link's note shapes the relation, teacher-free (link_why.py). On from
     # the links stage (loop.gold_weights), like relations.
     link_why_contrast: float = 0.3      # edge pair representation toward its distinct note

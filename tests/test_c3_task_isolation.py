@@ -365,7 +365,7 @@ def test_complete_loss_census_and_all_staged_objectives_cannot_reactivate(monkey
     from ml.c3.tasks import LOSS_TERMS, LOSS_CONFIG_FIELDS, validate_loss_census
     from ml.c3.loop import gold_weights, STAGES
     validate_loss_census(LossWeights)
-    assert len(LOSS_TERMS) == 48 and len(LOSS_CONFIG_FIELDS) == 12
+    assert len(LOSS_TERMS) == 49 and len(LOSS_CONFIG_FIELDS) == 15
     class Unknown:
         __dataclass_fields__ = {**LossWeights.__dataclass_fields__, 'new_forecast_objective':None}
     with pytest.raises(ValueError): validate_loss_census(Unknown)

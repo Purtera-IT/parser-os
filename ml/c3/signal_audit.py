@@ -378,7 +378,7 @@ def batch_diff(a: Batch, b: Batch) -> list[str]:
 
 #: LossWeights fields that are settings of a term, not a term's weight.
 NOT_A_TERM = frozenset({"why_hard_negative", "why_swap_cap", "keyword_dropout_p",
-                        "keyword_dropout_cap", "near_miss_margin", "link_why_hard_negative",
+                        "keyword_dropout_cap", "keyword_dropout_broad", "layout_why_p", "layout_why_cap", "near_miss_margin", "link_why_hard_negative",
                         "described_alone_p", "card_cap", "free_h_out", "company_r_grad",
                         "space", "head"})
 #: Terms that need a bank or a teacher this audit does not build.
@@ -386,7 +386,7 @@ NEVER_ON = frozenset({"clause_use"})
 
 
 def _term_functions() -> dict[str, Callable]:
-    from . import consequence, link_why, losses, why2, why_carry  # noqa: PLC0415
+    from . import consequence, layout_why, link_why, losses, why2, why_carry  # noqa: PLC0415
 
     def get(mod, name):
         return getattr(mod, name, None)
@@ -409,6 +409,7 @@ def _term_functions() -> dict[str, Callable]:
         "why_contrast": get(why_carry, "why_contrast_loss"), "why_swap": get(why_carry, "why_swap_loss"),
         "why_alone": get(why_carry, "why_alone_loss"),
         "keyword_dropout": get(why_carry, "keyword_dropout_loss"),
+        "layout_why": get(layout_why, "layout_why_loss"),
         "link_why_contrast": get(link_why, "link_why_contrast_loss"),
         "link_why_alone": get(link_why, "link_why_alone_loss"),
         "described_alone": get(why2, "described_alone_loss"), "card_alone": get(why2, "card_alone_loss"),
