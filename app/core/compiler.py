@@ -2129,8 +2129,11 @@ def compile_project(
         _c3_deal.set_deal(None)
         if _c3_deal.enabled() or _c3_deal.document_job_enabled():
             _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
+            from app.core.orbitbrief_envelope import _load_manifest_crm
+
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
-                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")})
+                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")},
+                              stage_timeline=(_load_manifest_crm(project_dir) or {}).get("stage_timeline"))
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
