@@ -1,4 +1,4 @@
-"""quoted_depth: a line in quoted reply history is an input fact (quoted:1 / quoted:2+),
+"""quoted_depth: a line in quoted reply history is an input fact (quoted:1, one tag for every depth),
 under the C3_CONTEXT_TAGS input contract; copy_of (the parser's duplicate_of) feeds copy_flags."""
 from dataclasses import replace
 from types import SimpleNamespace
@@ -23,14 +23,14 @@ def test_quoted_depth_rule_and_tags():
     assert quoted_depth(True, 2) == 2
     assert quoted_depth(None, 3, SimpleNamespace(value="quoted_old_email")) == 3
     assert quoted_depth(None, None, "AuthorityClass.quoted_old_email") == 1
-    assert quoted_tags(0) == [] and quoted_tags(1) == ["quoted:1"] and quoted_tags(5) == ["quoted:2+"]
+    assert quoted_tags(0) == [] and quoted_tags(1) == ["quoted:1"] and quoted_tags(5) == ["quoted:1"]
 
 
 def test_quoted_tag_in_context_tags():
     from ml.c3.data import DealExample, context_tags
     deal = DealExample.from_dict({"deal_id": "x", "atoms": _rows()})
     by = dict(zip([a.key for a in deal.atoms], context_tags(deal.atoms)))
-    assert by == {"a": [], "b": ["quoted:1"], "c": ["quoted:2+"], "row_d": []}
+    assert by == {"a": [], "b": ["quoted:1"], "c": ["quoted:1"], "row_d": []}
 
 
 def test_copy_of_names_an_atom_id():
@@ -115,7 +115,7 @@ def test_serving_rows_give_the_training_tags():
     deal_t = DealExample.from_dict({"deal_id": "x", "atoms": train})
     assert tags_s == dict(zip([a.atom_id for a in deal_t.atoms], context_tags(deal_t.atoms)))
     assert copy_s == dict(zip([a.atom_id for a in deal_t.atoms], copy_flags(deal_t.atoms)))
-    assert tags_s["atm_1"] == ["quoted:1"] and tags_s["atm_2"] == ["quoted:2+"] and copy_s["atm_3"] == "repeat"
+    assert tags_s["atm_1"] == ["quoted:1"] and tags_s["atm_2"] == ["quoted:1"] and copy_s["atm_3"] == "repeat"
     # deal_payload hands the remote server the same fields back.
     back = {r["atom_id"]: r for r in tb.deal_payload(deal_s)["atoms"]}
     assert back["atm_2"]["quoted_depth"] == 3 and back["atm_3"]["copy_of"] == "atm_0"

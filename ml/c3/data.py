@@ -156,7 +156,7 @@ class Atom:
     table_header: tuple[str, ...] = ()
     #: Extraction fact (C3_CONTEXT_TAGS): depth in quoted reply history, 0 for
     #: the message's own text (c3_record.context.quoted_depth). Hashed as
-    #: quoted:1 / quoted:2+ with the context tags by a base trained on them.
+    #: quoted:1 with the context tags by a base trained on them.
     quoted_depth: int = 0
     #: Row weight for a line that carries no label of its own (a dropped
     #: copy); a labeled row takes its weight_tier instead.
