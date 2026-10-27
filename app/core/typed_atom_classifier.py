@@ -825,6 +825,10 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 except Exception:
                     pass
         except Exception as exc:
+            # SOWSMITH_C3_FALLBACK=never: the heads could not answer, and the
+            # lines must not go to the LLM in their place -- fail the compile.
+            if type(exc).__name__ == "C3HeadsUnavailable":
+                raise
             # The layer abstains (every atom goes on to the LLM as before),
             # but never silently: the compile result says why.
             try:

@@ -53,6 +53,13 @@ def set_stage_item(item: str) -> None:
     _HB_ITEM[0] = str(item or "")[:200]
 
 
+def stage_item() -> str:
+    """What the running stage last said it is working on ("" when nothing),
+    e.g. "waiting for C3 heads (...)" under SOWSMITH_C3_FALLBACK=never. Read
+    from another thread, like ``stage_progress``."""
+    return _HB_ITEM[0]
+
+
 # How far through its own work the current stage is.
 #
 # WHY A NUMBER AND NOT JUST A NAME. `set_stage_item` above makes a wedged stage

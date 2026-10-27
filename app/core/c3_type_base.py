@@ -32,6 +32,25 @@ default.
     SOWSMITH_C3_SHADOW_WAIT_S  longest the stage waits for a shadow read
                              after the LLM is done (20); past it the shadow
                              is dropped, so shadow never holds a compile
+    SOWSMITH_C3_FALLBACK     llm (default) | never. ``llm`` is everything
+                             above: an unreachable, warming, over-budget or
+                             failing heads service reads as no answer and
+                             every atom goes to the LLM. ``never``: no answer
+                             ever depends on the service's load. Every heads
+                             call (type read, document read, re-read, quote)
+                             waits for the service -- retrying with backoff
+                             (SOWSMITH_C3_RETRY_S 5 doubling to
+                             SOWSMITH_C3_RETRY_MAX_S 60) and reading with a
+                             generous timeout (SOWSMITH_C3_NEVER_READ_S,
+                             at least 600 and the budget) -- and past
+                             SOWSMITH_C3_WAIT_MAX_S (1800) or on a request the
+                             service refuses (4xx but 408/429) raises
+                             ``C3HeadsUnavailable``, which fails the compile.
+                             The local model likewise raises on a failed load
+                             or a deadline overrun. Content handoffs (a line
+                             the heads abstain on, a type not taken, unsure
+                             below the bar) still go to the LLM. Shadow reads
+                             keep the ``llm`` behaviour: they decide nothing.
 
 ``shadow`` reads the deal and reports what the layer would have done, beside
 what the compile then did, as one ``c3_type_shadow`` event; it changes
@@ -695,6 +714,125 @@ def _request(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str
         return json.loads(resp.read())
 
 
+# ------------------------------------------- SOWSMITH_C3_FALLBACK=never
+
+class C3HeadsUnavailable(RuntimeError):
+    """The heads could not answer and ``SOWSMITH_C3_FALLBACK=never`` forbids
+    handing their lines to the LLM instead: the compile fails, saying why.
+    Every stage that catches its own errors re-raises this one."""
+
+
+def fallback_mode() -> str:
+    """``llm`` (default: service trouble sends every atom to the LLM) or
+    ``never`` (wait for the heads; past the ceiling, fail the compile)."""
+    v = os.environ.get("SOWSMITH_C3_FALLBACK", "").strip().lower()
+    return "never" if v == "never" else "llm"
+
+
+#: Set in the shadow read's own thread: shadow decides nothing, so it keeps
+#: the ``llm`` behaviour (abstain on trouble) in either mode.
+_SHADOW = threading.local()
+
+
+def _never() -> bool:
+    return fallback_mode() == "never" and not getattr(_SHADOW, "on", False)
+
+
+#: Answers worth waiting through: the request timed out (408), was rate
+#: limited (429), or the service is starting, overloaded or failing (5xx).
+#: Any other 4xx is the request's own fault and is not retried.
+_RETRY_4XX = (408, 429)
+_sleep = time.sleep  # tests replace it
+
+
+class _NotReady(Exception):
+    """/health answered but the heads are still loading."""
+
+
+def _retryable(exc: BaseException) -> tuple[bool, str]:
+    """(worth retrying, reason) for one failed attempt."""
+    import socket
+    import urllib.error
+
+    if isinstance(exc, urllib.error.HTTPError):
+        code = int(exc.code or 0)
+        return (code >= 500 or code in _RETRY_4XX), f"HTTP {code}"
+    if isinstance(exc, _NotReady):
+        return True, f"warming: {exc}"
+    if isinstance(exc, (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError)):
+        return True, f"{type(exc).__name__}: {exc}"
+    return False, f"{type(exc).__name__}: {exc}"
+
+
+def _say_waiting(text: str) -> None:
+    """Name the wait on the running stage (the compile heartbeat's ``item``),
+    so a held compile reads as waiting for the heads, not as wedged."""
+    try:
+        from app.core import telemetry
+
+        telemetry.set_stage_item(text)
+    except Exception:
+        pass
+
+
+def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, Any], what: str
+                    ) -> dict[str, Any]:
+    """``never`` mode: ask /health, then ``path``, until the service answers.
+
+    Retries unreachable / warming / 408 / 429 / 5xx / timeouts with backoff,
+    reading with a generous timeout, until ``SOWSMITH_C3_WAIT_MAX_S``; then,
+    or at once on any other failure, raises ``C3HeadsUnavailable``. Never
+    returns an empty answer for service trouble."""
+    ceiling = _env_float("SOWSMITH_C3_WAIT_MAX_S", 1800.0)
+    delay = max(0.0, _env_float("SOWSMITH_C3_RETRY_S", 5.0))
+    delay_max = max(delay, _env_float("SOWSMITH_C3_RETRY_MAX_S", 60.0))
+    connect = _env_float("SOWSMITH_C3_CONNECT_S", 5.0)
+    read_s = max(_env_float("SOWSMITH_C3_BUDGET_S", 90.0) + 10.0,
+                 _env_float("SOWSMITH_C3_NEVER_READ_S", 600.0))
+    started = time.monotonic()
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            health = _request("/health", None, timeout=connect)
+            if not health.get("ready"):
+                raise _NotReady(str(health.get("error") or "still loading")[:200])
+            got = _request(path, body, timeout=read_s)
+            if attempt > 1:
+                log.info("C3 heads answered %s after %d attempts (%.0f s)", what, attempt,
+                         time.monotonic() - started)
+                _say_waiting("")
+            status.pop("waiting", None)
+            return got
+        except Exception as exc:
+            retry, reason = _retryable(exc)
+            waited = time.monotonic() - started
+            if not retry:
+                status.update(state="read_failed", reason=reason[:300], remote=True)
+                _say_waiting("")
+                raise C3HeadsUnavailable(
+                    f"C3 heads refused the {what} ({reason}); SOWSMITH_C3_FALLBACK=never "
+                    "does not hand the lines to the LLM") from exc
+            if waited >= ceiling:
+                status.update(state="unavailable", reason=reason[:300], remote=True,
+                              waiting={"attempts": attempt, "waited_s": round(waited, 1)})
+                _say_waiting("")
+                raise C3HeadsUnavailable(
+                    f"C3 heads unavailable for the {what} after {waited:.0f} s and {attempt} attempts "
+                    f"(last: {reason}); SOWSMITH_C3_FALLBACK=never fails the compile instead of "
+                    "handing the lines to the LLM") from exc
+            pause = min(delay, max(0.0, ceiling - waited))
+            status.update(state="waiting", reason=reason[:300], remote=True,
+                          waiting={"attempts": attempt, "waited_s": round(waited, 1),
+                                   "ceiling_s": ceiling})
+            log.warning("C3 heads not answering the %s (%s); attempt %d, waited %.0f of %.0f s, "
+                        "retrying in %.0f s", what, reason, attempt, waited, ceiling, pause)
+            _say_waiting(f"waiting for C3 heads ({what}): {reason[:80]}; "
+                         f"{waited:.0f}/{ceiling:.0f} s, attempt {attempt}")
+            _sleep(pause)
+            delay = min(delay * 2 if delay else delay_max, delay_max)
+
+
 def quote_enabled() -> bool:
     """Deal Kit quote heads (POST /v1/quote on the C3 server). Off unless SOWSMITH_C3_QUOTE is on."""
     return os.environ.get("SOWSMITH_C3_QUOTE", "").strip().lower() in ("1", "on", "true", "yes")
@@ -724,6 +862,8 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
                                                for k, v in (brief.get("sections") or {}).items()},
                                   "job_details": brief.get("job_details") or []}}}
+    if _never():
+        return _wait_for_heads("/v1/quote", body, {}, "quote read")
     try:
         return _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60")))
     except Exception as exc:  # noqa: BLE001 - best effort, like every other C3 call
@@ -779,6 +919,12 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
         _STATUS.update(state="read", reason="shared", remote=True, lines=len(rows), read_ms=0.0)
         return {i: (str(shared[k][0]), float(shared[k][1] or 0.0)) for i, k in zip(ids, keys)
                 if shared[k] and shared[k][0] is not None}
+    if _never():
+        payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
+        got = _wait_for_heads("/read", _brief_body({"deal": payload, "budget_s": budget}),
+                              _STATUS, "type read")
+        _keep_full(got)
+        return _remote_types(got, rows, keys, ids, started)
     # Ask /health first, with a short timeout: a service that can't be
     # reached (or is still loading) costs the compile seconds, not the whole
     # read budget. 2026-10-15: a URL with no route to the Mac timed out the
@@ -814,6 +960,11 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
         log.warning("C3 base service read failed (%s); every atom goes to the LLM",
                     _STATUS["reason"])
         return {}
+    return _remote_types(got, rows, keys, ids, started)
+
+
+def _remote_types(got: dict[str, Any], rows: list[dict[str, Any]], keys: list[str], ids: list[int],
+                  started: float) -> dict[int, tuple[str, float]]:
     _STATUS.update(state="read", reason="", remote=True, lines=len(rows),
                    read_ms=round((time.monotonic() - started) * 1000, 1),
                    service_read_ms=got.get("read_ms"))
@@ -833,6 +984,9 @@ def _local(deal: Any, keys: list[str], ids: list[int]) -> dict[int, tuple[str, f
 
     loaded = get_model()
     if loaded is None:
+        if _never():
+            raise C3HeadsUnavailable(f"C3 heads model not loaded ({_STATUS.get('reason') or _STATUS.get('state')}); "
+                                     "SOWSMITH_C3_FALLBACK=never fails the compile")
         return {}
     model, schema, device = loaded
     started = time.monotonic()
@@ -843,11 +997,17 @@ def _local(deal: Any, keys: list[str], ids: list[int]) -> dict[int, tuple[str, f
     except TimeoutError as exc:
         _STATUS.update(state="over_budget", reason=str(exc)[:300], lines=len(ids),
                        read_ms=round((time.monotonic() - started) * 1000, 1))
+        if _never():
+            raise C3HeadsUnavailable(f"C3 type read passed its {budget:g} s budget ({exc}); "
+                                     "SOWSMITH_C3_FALLBACK=never fails the compile") from exc
         log.warning("C3 type base read stopped (%s); every atom goes to the LLM", exc)
         return {}
     except Exception as exc:
         _STATUS.update(state="read_failed", reason=f"{type(exc).__name__}: {exc}"[:300],
                        lines=len(ids), read_ms=round((time.monotonic() - started) * 1000, 1))
+        if _never():
+            raise C3HeadsUnavailable(f"C3 type read failed ({type(exc).__name__}: {exc}); "
+                                     "SOWSMITH_C3_FALLBACK=never fails the compile") from exc
         raise
     _STATUS.update(state="read", reason="", lines=len(ids),
                    read_ms=round((time.monotonic() - started) * 1000, 1))
@@ -889,6 +1049,7 @@ class Job:
         self._done = threading.Event()
 
         def _go():
+            _SHADOW.on = True  # shadow decides nothing: abstain on trouble, never wait or raise
             try:
                 self._out = run()
             except Exception as exc:
@@ -1387,7 +1548,15 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     deal_id, rows, _keys = _rows(atoms, artifact_sha256)
     try:
-        if _url():
+        if _url() and _never():
+            payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
+            body = _brief_body({"deal": payload, "budget_s": budget, "document_heads": list(keys)})
+            got = _wait_for_heads("/read", body, _DOC_STATUS, "document read")
+            raw = got.get("documents") or {}
+            if "types" in _DEAL:
+                _DEAL["types"].update(_aliased(got.get("types")))
+            _keep_full(got)
+        elif _url():
             try:
                 health = _request("/health", None, timeout=_env_float("SOWSMITH_C3_CONNECT_S", 5.0))
             except Exception as exc:
@@ -1410,6 +1579,9 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             loaded = get_model()
             if loaded is None:
                 _DOC_STATUS.update(state="no_model", reason="", read_ms=0.0)
+                if _never():
+                    raise C3HeadsUnavailable("C3 heads model not loaded for the document read; "
+                                             "SOWSMITH_C3_FALLBACK=never fails the compile")
                 return {}
             model, schema, device = loaded
             deal, _ = _build(atoms, artifact_sha256)
@@ -1417,7 +1589,15 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
                             deadline=started + budget, heads=("col:label_type",), document_heads=keys)
             raw = {d: {k: [v["answer"], v.get("p")] for k, v in h.items()}
                    for d, h in (doc.get("documents") or {}).items()}
+    except C3HeadsUnavailable:
+        raise
     except Exception as exc:
+        if _never():
+            _DOC_STATUS.update(state="over_budget" if isinstance(exc, TimeoutError) else "read_failed",
+                               reason=f"{type(exc).__name__}: {exc}"[:300],
+                               read_ms=round((time.monotonic() - started) * 1000, 1))
+            raise C3HeadsUnavailable(f"C3 document read failed ({type(exc).__name__}: {exc}); "
+                                     "SOWSMITH_C3_FALLBACK=never fails the compile") from exc
         code = exc.code if isinstance(exc, urllib.error.HTTPError) else None
         _DOC_STATUS.update(state={504: "over_budget", 503: "warming"}.get(code, "read_failed"),
                            reason=(f"HTTP {code}" if code else type(exc).__name__)[:300],

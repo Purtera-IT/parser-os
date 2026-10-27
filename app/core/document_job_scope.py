@@ -631,7 +631,9 @@ def judge_documents(
             from app.core import c3_type_base as _c3
 
             c3_docs = _c3.documents(list(atoms))
-        except Exception:
+        except Exception as exc:
+            if type(exc).__name__ == "C3HeadsUnavailable":  # SOWSMITH_C3_FALLBACK=never
+                raise
             c3_docs = {}
 
     # SAY HOW FAR THROUGH THIS IS. The unit is the DOCUMENT BUNDLE, because
