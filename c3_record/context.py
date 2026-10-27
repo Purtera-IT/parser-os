@@ -121,12 +121,14 @@ def quoted_depth(quoted: Any = False, message_index: Any = None, authority_class
 
 
 def quoted_tags(depth: Any) -> list[str]:
-    """``quoted:1`` / ``quoted:2+`` for a line in quoted history, else none."""
+    """``quoted:1`` for a line in quoted history, else none. One tag for every depth: the training views
+    only know quoted or not (the envelopes carry a flag, not a depth), so a deeper quote served as
+    ``quoted:2+`` would be a tag the model never saw."""
     try:
         d = int(depth or 0)
     except (TypeError, ValueError):
         d = 0
-    return [] if d <= 0 else ["quoted:1"] if d == 1 else ["quoted:2+"]
+    return [] if d <= 0 else ["quoted:1"]
 
 
 def context_tags(section: Any = "", sheet: Any = "", table_header: Iterable[Any] = (),

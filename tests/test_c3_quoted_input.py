@@ -20,8 +20,8 @@ def test_quoted_depth_rule_and_tags():
     assert quoted_depth(True, 0) == 1 and quoted_depth(True, None) == 1
     assert quoted_depth(True, 2) == 2
     assert quoted_depth(None, 3, SimpleNamespace(value="quoted_old_email")) == 3
-    assert quoted_tags(0) == [] and quoted_tags(1) == ["quoted:1"] and quoted_tags(4) == ["quoted:2+"]
-    assert context_tags("", "", (), "email", 2) == ["quoted:2+"]
+    assert quoted_tags(0) == [] and quoted_tags(1) == ["quoted:1"] and quoted_tags(4) == ["quoted:1"]
+    assert context_tags("", "", (), "email", 2) == ["quoted:1"]
 
 
 def test_serving_rows_carry_quoted_depth_and_copy_of():
@@ -39,7 +39,7 @@ def test_serving_rows_carry_quoted_depth_and_copy_of():
     assert served["atm_3"]["copy_of"] == "atm_0"
     tags = {k: context_tags(r.get("section", ""), r.get("sheet", ""), r.get("table_header") or (),
                             r.get("doc_kind", ""), r.get("quoted_depth", 0)) for k, r in served.items()}
-    assert tags["atm_0"] == [] and tags["atm_1"] == ["quoted:1"] and tags["atm_2"] == ["quoted:2+"]
+    assert tags["atm_0"] == [] and tags["atm_1"] == ["quoted:1"] and tags["atm_2"] == ["quoted:1"]
     # deal_payload hands the remote server the same fields back.
     deal = SimpleNamespace(deal_id="x", company="purtera", atoms=[SimpleNamespace(**{
         "key": r["key"], "text": r["text"], "entered_at": r["entered_at"], "doc_id": r["doc_id"],
