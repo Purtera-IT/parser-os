@@ -76,6 +76,9 @@ SIDES = frozenset({"ours", "theirs", "partner", "vendor"})
 GEOMETRY_KEYS = ("bbox", "table_row", "table_col", "row_span", "col_span")
 #: A table row's place (c3_record.context.table_fields; build.py's (d)); table_header follows from them.
 TABLE_KEYS = ("table_id", "table_row_index", "sheet")
+#: Extraction facts of a line, sent as given when set: its depth in quoted reply
+#: history (c3_record.context.quoted_depth) and the line it copies (the parser's duplicate_of).
+LINE_FACT_KEYS = ("quoted_depth", "copy_of")
 #: "<table id> r<row>"; a row the parser stamped as a float ("r3.0") is the same row.
 _TABLE_REF = re.compile(r"^(.*?)\s+r(\d+)(?:\.0+)?$")
 
@@ -165,6 +168,7 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         row.update({k: ln[k] for k in GEOMETRY_KEYS if ln.get(k) not in (None, "", [])})
         # Where the line sits (c3_record.context): its table and sheet, as the training build stamps them.
         row.update({k: ln[k] for k in TABLE_KEYS if ln.get(k) not in (None, "", [])})
+        row.update({k: ln[k] for k in LINE_FACT_KEYS if ln.get(k)})
         rows.append(row)
     annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
                      "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin"),

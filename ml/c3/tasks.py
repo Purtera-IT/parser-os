@@ -176,12 +176,12 @@ def project_blob(blob, atoms):
 
 def atom_input_digest(atom):
     from dataclasses import asdict
-    # copy_of (C3_COPY_OF), sheet and table_header (C3_CONTEXT_TAGS) join the
+    # copy_of (C3_COPY_OF), sheet, table_header and quoted_depth (C3_CONTEXT_TAGS) join the
     # digest only when a row carries one, so a profile materialized before
     # them keeps its digest.
     return digest({k: v for k, v in asdict(atom).items()
                    if k not in {"label", "row_weight", "loss_weight"}
-                   and not (k in ("copy_of", "sheet", "table_header") and not v)})
+                   and not (k in ("copy_of", "sheet", "table_header", "quoted_depth") and not v)})
 
 
 def supervision_digest(batch):

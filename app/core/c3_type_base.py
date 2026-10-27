@@ -515,7 +515,7 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
                       "section": _section(a), "order": float(i), "speaker_role": role,
                       "speaker_side": side, "atom_id": aid, **_sender_inputs(a), **_geometry(a),
-                      **_table_fields(a, d)})
+                      **_table_fields(a, d), **_line_facts(a)})
     rank = _reading_rank(atoms, docs)
     if rank is not None:
         for ln, r in zip(lines, rank):
@@ -761,6 +761,34 @@ def _table_fields(atom: Any, doc_id: str) -> dict[str, Any]:
 
         return table_fields(doc_id, _atom_table_ref(atom), _ref(atom, "filename"))
     except Exception:  # noqa: BLE001 - no table fields is a line read without them, never a failed read
+        return {}
+
+
+def _line_facts(atom: Any) -> dict[str, Any]:
+    """``quoted_depth`` (c3_record.context.quoted_depth: the locator's or the
+    message's ``quoted`` / ``authority_class == quoted_old_email``, deepened by
+    the message's place in the thread) and ``copy_of`` (``value.duplicate_of``,
+    the atom id of the line this one copies), as the training views write them.
+    Set only when present, so a line without them reads as before."""
+    try:
+        from c3_record.context import quoted_depth
+
+        v, loc = _value(atom), _locator(atom)
+        et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+        msg = et.get("message") if isinstance(et.get("message"), dict) else {}
+        quoted = next((q for q in (loc.get("quoted"), v.get("quoted"), msg.get("quoted")) if q is not None), False)
+        index = next((i for i in (loc.get("message_index"), v.get("message_index"), msg.get("index"))
+                      if i not in (None, "")), None)
+        out: dict[str, Any] = {}
+        depth = quoted_depth(quoted, index, getattr(atom, "authority_class", ""))
+        if depth:
+            out["quoted_depth"] = depth
+        dup = v.get("duplicate_of")
+        dup = dup.get("atom_id") if isinstance(dup, dict) else dup
+        if isinstance(dup, str) and dup.strip():
+            out["copy_of"] = dup.strip()
+        return out
+    except Exception:  # noqa: BLE001 - a line read without them, never a failed read
         return {}
 
 
@@ -1268,7 +1296,10 @@ def deal_payload(deal: Any) -> dict[str, Any]:
          **_table_row(a),
          # Sheet and table header (c3_record.context), as the training build writes them.
          **({"sheet": a.sheet} if getattr(a, "sheet", "") else {}),
-         **({"table_header": list(a.table_header)} if getattr(a, "table_header", ()) else {})}
+         **({"table_header": list(a.table_header)} if getattr(a, "table_header", ()) else {}),
+         # Quoted-history depth and the line it copies, as the training views write them.
+         **({"quoted_depth": int(a.quoted_depth)} if getattr(a, "quoted_depth", 0) else {}),
+         **({"copy_of": a.copy_of} if getattr(a, "copy_of", "") else {})}
         for a in deal.atoms]}
 
 

@@ -110,7 +110,7 @@ class C3Config:
     #: Hash ``copy:repeat`` for a line that repeats another line of the deal
     #: (data.copy_flags, C3_COPY_OF=1). Off for a checkpoint trained without it.
     copy_tag: bool = False
-    #: Hash the line's context tags (hdr:/sheet:/sec:, c3_record.context,
+    #: Hash the line's context tags (hdr:/sheet:/sec:/quoted:, c3_record.context,
     #: C3_CONTEXT_TAGS=1). Off for a checkpoint trained without them.
     context_tags: bool = False
     ema: float = 0.996

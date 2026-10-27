@@ -154,6 +154,10 @@ class Atom:
     #: Inputs only, hashed as hdr:/sheet:/sec: tags by a base trained on them.
     sheet: str = ""
     table_header: tuple[str, ...] = ()
+    #: Extraction fact (C3_CONTEXT_TAGS): depth in quoted reply history, 0 for
+    #: the message's own text (c3_record.context.quoted_depth). Hashed as
+    #: quoted:1 / quoted:2+ with the context tags by a base trained on them.
+    quoted_depth: int = 0
     #: Row weight for a line that carries no label of its own (a dropped
     #: copy); a labeled row takes its weight_tier instead.
     row_weight: float | None = None
@@ -243,6 +247,7 @@ class DealExample:
                       copy_of=str(a.get("copy_of") or ""),
                       sheet=str(a.get("sheet") or ""),
                       table_header=tuple(str(h) for h in a.get("table_header") or ()),
+                      quoted_depth=_int0(a.get("quoted_depth")),
                       row_weight=(float(a["row_weight"]) if a.get("row_weight") is not None else None),
                       loss_weight=(float(a["loss_weight"]) if a.get("loss_weight") is not None else 1.0),
                       layout_rewrites=tuple(str(t) for t in a.get("layout_rewrites") or () if str(t).strip()))
@@ -1612,6 +1617,13 @@ def copy_input_enabled() -> bool:
     return os.environ.get("C3_COPY_OF", "0") == "1"
 
 
+def _int0(v: Any) -> int:
+    try:
+        return max(0, int(v or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def context_input_enabled() -> bool:
     """C3_CONTEXT_TAGS=1: a base trains with the line's table header, sheet
     and section heading as inputs (C3Config.context_tags). Off (default),
@@ -1625,7 +1637,7 @@ def context_tags(atoms: list[Atom]) -> list[list[str]]:
     of extraction, the same rule for a training row and a served one."""
     from c3_record.context import context_tags as tags_of  # noqa: PLC0415
 
-    return [tags_of(a.section, a.sheet, a.table_header, a.doc_kind) for a in atoms]
+    return [tags_of(a.section, a.sheet, a.table_header, a.doc_kind, a.quoted_depth) for a in atoms]
 
 
 def copy_labels_enabled() -> bool:
