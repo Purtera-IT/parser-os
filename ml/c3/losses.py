@@ -25,8 +25,8 @@ _AUX_TURN = itertools.count()
 
 
 def _answer_weights(spec: str) -> dict[str, dict[str, float]]:
-    """C3_ANSWER_WEIGHTS="jdg:facility=city_office:4,keep_name:4;jdg:site_role=x:2": in that judgment head's
-    cross-entropy a rare answer counts that many times (class weights); unlisted answers weigh 1."""
+    """C3_ANSWER_WEIGHTS="jdg:facility=city_office:4,keep_name:4;read:labor_hours=present:3": in that head's
+    cross-entropy (line heads and judgments) a rare answer counts that many times; unlisted answers weigh 1."""
     out: dict[str, dict[str, float]] = {}
     for part in filter(None, (x.strip() for x in spec.split(";"))):
         key, _, answers = part.partition("=")
@@ -173,6 +173,17 @@ def weighted_ce(logits: torch.Tensor, y: torch.Tensor, rw: torch.Tensor, absolut
     return (ce * rw * m).sum() / (rw * m).sum().clamp(min=1e-6)
 
 
+def _rows_by_answer(opp, out: C3Output, batch: Batch, rw: torch.Tensor) -> torch.Tensor:
+    """``rw`` with each row scaled by its answer's C3_ANSWER_WEIGHTS weight (single-answer heads only)."""
+    if opp.key in batch.multi_targets:
+        return rw
+    cw = _class_weight(opp, out.logits[opp.key].shape[-1], rw.device)
+    if cw is None:
+        return rw
+    y = torch.tensor(batch.targets[opp.key], device=rw.device)
+    return rw * torch.where(y == IGNORE, torch.ones_like(rw), cw[y.clamp(min=0)])
+
+
 def answer_loss(logits: torch.Tensor, batch: Batch, key: str, rw: torch.Tensor,
                 keep: torch.Tensor | None = None, absolute: bool = False) -> torch.Tensor:
     """Saved sets use independent sigmoid answers; unknown rows teach nothing.
@@ -265,7 +276,7 @@ def head_losses(model: C3Model, out: C3Output, batch: Batch, w: LossWeights,
             if not share:
                 continue
             ce = ce + (batch.head_loss_scale.get(opp.key, 1.0) * share * w.space.get(opp.space, 1.0)
-                       * answer_loss(out.logits[opp.key], batch, opp.key, rw))
+                       * answer_loss(out.logits[opp.key], batch, opp.key, _rows_by_answer(opp, out, batch, rw)))
             # The view/deal head scale must not renormalize itself away or
             # increase the other heads. Zero remains an excluded head.
             terms += w.head.get(opp.key, 1.0)

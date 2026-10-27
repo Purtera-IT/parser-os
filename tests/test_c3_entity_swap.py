@@ -221,3 +221,19 @@ def test_aux_rotate_alternates_swap_and_flip_at_twice_the_weight(monkeypatch):
     calls.clear()
     _, p3 = c3_loss(model, batch, w)
     assert calls == ["swap", "flip"] and p3["entity_swap"] == 1.0 and p3["meaning_flip"] == 1.0
+
+
+def test_answer_weights_scale_rows_of_the_listed_answer(monkeypatch):
+    # C3_ANSWER_WEIGHTS: a listed answer's rows count that many times in its line head; other rows and heads unchanged.
+    schema, batch = _batch()
+    opp = schema.by_key()["col:label_type"]
+    y = [v for v in batch.targets["col:label_type"] if v != losses.IGNORE]
+    common = max(set(y), key=y.count)
+    monkeypatch.setattr(losses, "_ANSWER_WEIGHTS", {"col:label_type": {opp.answers[common].value: 3.0}})
+    model = C3Model(schema, SMALL)
+    out = model(batch.inputs(), company=batch.company)
+    rw = torch.ones(len(batch))
+    scaled = losses._rows_by_answer(opp, out, batch, rw)
+    for i, t in enumerate(batch.targets["col:label_type"]):
+        assert float(scaled[i]) == (3.0 if t == common else 1.0)
+    assert torch.equal(losses._rows_by_answer(schema.by_key()["col:supplier"], out, batch, rw), rw)
