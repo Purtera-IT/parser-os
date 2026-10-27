@@ -1072,6 +1072,19 @@ def configure_training_copy_tag(model: C3Model, *, resumed: bool = False) -> Non
         model.encoder.cfg = model.cfg
 
 
+def configure_training_context_tags(model: C3Model, *, resumed: bool = False) -> None:
+    """C3_CONTEXT_TAGS=1 trains the base with the hdr:/sheet:/sec: inputs
+    (c3_record.context); a resumed run keeps its checkpoint's input contract."""
+    from .data import context_input_enabled
+    saved = bool(getattr(model.cfg, "context_tags", False))
+    wanted = context_input_enabled()
+    if resumed and wanted != saved:
+        raise ValueError("context_tags differs from the resumed checkpoint; start a new run")
+    if wanted != saved:
+        model.cfg = replace(model.cfg, context_tags=wanted)
+        model.encoder.cfg = model.cfg
+
+
 def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = None,
              budget: Budget | None = None, cfg: C3Config = SMALL, lr: float = 3e-3,
              seed: int = 0, warmup_passes: float = 0.0,
@@ -1285,6 +1298,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     configure_training_copy_tag(model, resumed=state is not None)
     if model.cfg.copy_tag:
         print("copy_tag=True", flush=True)
+    configure_training_context_tags(model, resumed=state is not None)
+    if model.cfg.context_tags:
+        print("context_tags=True", flush=True)
     # The fit check reads a fixed sample of training parts: a base that cannot
     # type the lines it trained on is under-fit, whatever validation says.
     fit_pool = (sorted(random.Random(seed + 1).sample(train, fit_parts), key=lambda b: b.deal_id)

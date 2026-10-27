@@ -110,6 +110,9 @@ class C3Config:
     #: Hash ``copy:repeat`` for a line that repeats another line of the deal
     #: (data.copy_flags, C3_COPY_OF=1). Off for a checkpoint trained without it.
     copy_tag: bool = False
+    #: Hash the line's context tags (hdr:/sheet:/sec:, c3_record.context,
+    #: C3_CONTEXT_TAGS=1). Off for a checkpoint trained without them.
+    context_tags: bool = False
     ema: float = 0.996
     #: v5 explanation bank on by default in c3_loss (reader votes, compiled
     #: operators, clause slots). Off: v6 reads explanations with the
@@ -211,6 +214,10 @@ class DealEncoder(nn.Module):
             for i, v in enumerate((inp.get("copy") or [])[:n_tags]):
                 if v:
                     tags[i].append(f"copy:{v}")
+        if getattr(self.cfg, "context_tags", False):
+            # Table header, sheet, heading: extraction facts, never blanked by tag dropout.
+            for i, v in enumerate((inp.get("ctx_tags") or [])[:n_tags]):
+                tags[i].extend(v or ())
         t = torch.tensor(inp["times"], dtype=torch.float32, device=dev)
         days = (t - t.min()).clamp(min=0) / 86400.0
         rank = torch.arange(len(t), device=dev, dtype=torch.float32) / max(1, len(t) - 1)

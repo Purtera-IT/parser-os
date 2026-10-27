@@ -149,6 +149,11 @@ class Atom:
     #: or a quoted-history fold's survivor). '' when the row names none. An
     #: input fact only; whether a repeat is learned stays the heads' decision.
     copy_of: str = ""
+    #: Extraction facts (C3_CONTEXT_TAGS, c3_record.context): the sheet a
+    #: spreadsheet row is on and the header cells of a table row's table.
+    #: Inputs only, hashed as hdr:/sheet:/sec: tags by a base trained on them.
+    sheet: str = ""
+    table_header: tuple[str, ...] = ()
     #: Row weight for a line that carries no label of its own (a dropped
     #: copy); a labeled row takes its weight_tier instead.
     row_weight: float | None = None
@@ -236,6 +241,8 @@ class DealExample:
                       history_only=bool(a.get("history_only")),
                       dropped_copy=bool(a.get("dropped_copy")),
                       copy_of=str(a.get("copy_of") or ""),
+                      sheet=str(a.get("sheet") or ""),
+                      table_header=tuple(str(h) for h in a.get("table_header") or ()),
                       row_weight=(float(a["row_weight"]) if a.get("row_weight") is not None else None),
                       loss_weight=(float(a["loss_weight"]) if a.get("loss_weight") is not None else 1.0),
                       layout_rewrites=tuple(str(t) for t in a.get("layout_rewrites") or () if str(t).strip()))
@@ -753,12 +760,16 @@ class Batch:
     #: word for word (``copy_flags``), else ''. Read only by a base trained
     #: on it (C3Config.copy_tag).
     copy: list[str] = field(default_factory=list)
+    #: Input: each line's context tags (c3_record.context.context_tags:
+    #: hdr:, sheet:, sec:). Read only by a base trained on them
+    #: (C3Config.context_tags).
+    ctx_tags: list[list[str]] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
                 "role": self.role, "side": self.side, "times": self.times,
                 "org": self.org, "direction": self.direction, "stage": self.stage, "view": self.view,
-                "copy": self.copy, "same_doc": self.same_doc, "same_section": self.same_section,
+                "copy": self.copy, "ctx_tags": self.ctx_tags, "same_doc": self.same_doc, "same_section": self.same_section,
                 "context": self.context, "pixels": self.pixels, "geometry": self.geometry}
 
     def oneshot(self) -> dict[str, Any]:
@@ -1601,6 +1612,22 @@ def copy_input_enabled() -> bool:
     return os.environ.get("C3_COPY_OF", "0") == "1"
 
 
+def context_input_enabled() -> bool:
+    """C3_CONTEXT_TAGS=1: a base trains with the line's table header, sheet
+    and section heading as inputs (C3Config.context_tags). Off (default),
+    training is unchanged."""
+    import os
+    return os.environ.get("C3_CONTEXT_TAGS", "0") == "1"
+
+
+def context_tags(atoms: list[Atom]) -> list[list[str]]:
+    """Each line's context tags (``c3_record.context.context_tags``): facts
+    of extraction, the same rule for a training row and a served one."""
+    from c3_record.context import context_tags as tags_of  # noqa: PLC0415
+
+    return [tags_of(a.section, a.sheet, a.table_header, a.doc_kind) for a in atoms]
+
+
 def copy_labels_enabled() -> bool:
     """C3_COPY_LABELS=1: a repeat's admission follows one policy
     (``_as_repeat``). Off (default), labels are unchanged."""
@@ -2066,6 +2093,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         side=[a.speaker_side for a in atoms], times=[a.entered_at for a in atoms],
         org=[a.speaker_org for a in atoms], direction=[a.doc_direction for a in atoms],
         stage=[a.stage_at for a in atoms], view=[a.view for a in atoms], copy=copy,
+        ctx_tags=context_tags(atoms),
         same_doc=_pair_mask([a.doc_id or None for a in atoms]),
         same_section=_pair_mask([(a.doc_id, a.section) if a.section else None for a in atoms]),
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,

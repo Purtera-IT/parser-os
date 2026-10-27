@@ -74,6 +74,8 @@ SIDES = frozenset({"ours", "theirs", "partner", "vendor"})
 
 #: Where a line sits in its table, as the model reads it (``ml.c3.data._geometry``).
 GEOMETRY_KEYS = ("bbox", "table_row", "table_col", "row_span", "col_span")
+#: A table row's place (c3_record.context.table_fields; build.py's (d)); table_header follows from them.
+TABLE_KEYS = ("table_id", "table_row_index", "sheet")
 #: "<table id> r<row>"; a row the parser stamped as a float ("r3.0") is the same row.
 _TABLE_REF = re.compile(r"^(.*?)\s+r(\d+)(?:\.0+)?$")
 
@@ -161,6 +163,8 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         said = ln.get("said_by") or ({"side": side, "role": role} if side else None)
         row.update({k: ln.get(k) for k in SENDER_INPUTS if ln.get(k)}, said_by=said)
         row.update({k: ln[k] for k in GEOMETRY_KEYS if ln.get(k) not in (None, "", [])})
+        # Where the line sits (c3_record.context): its table and sheet, as the training build stamps them.
+        row.update({k: ln[k] for k in TABLE_KEYS if ln.get(k) not in (None, "", [])})
         rows.append(row)
     annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
                      "arrival": times.get(str(d.get("doc_id"))), "origin": d.get("origin"),
