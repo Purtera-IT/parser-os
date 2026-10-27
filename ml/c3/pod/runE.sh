@@ -381,7 +381,7 @@ weights=(
   why_contrast="$WHY_CONTRAST" why_hard_negative=4
   why_alone="$WHY_ALONE"
   why_swap="$WHY_SWAP" why_swap_cap=64
-  keyword_dropout="$KEYWORD_DROPOUT" keyword_dropout_p=0.3 keyword_dropout_cap=256
+  keyword_dropout="$KEYWORD_DROPOUT" keyword_dropout_p="${KEYWORD_DROPOUT_P:-0.3}" keyword_dropout_cap="${KEYWORD_DROPOUT_CAP:-256}"
   layout_lock="$LAYOUT_LOCK"
   entity_swap="$ENTITY_SWAP"
   meaning_flip="$MEANING_FLIP"
