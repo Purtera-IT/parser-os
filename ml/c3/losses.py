@@ -6,6 +6,9 @@ entry in the returned dict, so an ablation is "set its weight to 0".
 """
 from __future__ import annotations
 
+import itertools
+import os
+
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -16,6 +19,9 @@ from .data import IGNORE, Batch, FlipTarget
 from .explain import ExplanationBank
 from .model import CLAIM_SLOTS, C3Model, C3Output, log_gauss_mixture
 from .schema import NUMBER
+
+_AUX_ROTATE = os.environ.get("C3_AUX_ROTATE") == "1"
+_AUX_TURN = itertools.count()
 
 
 @dataclass
@@ -861,10 +867,14 @@ def c3_loss(model: C3Model, batch: Batch, w: LossWeights | None = None,
     parts["near_misses"] = near_miss_loss(out, batch, w.near_miss_margin)
     if w.layout_lock and batch.layout_rewrites:
         parts["layout_lock"] = layout_lock_loss(model, out, batch, w, desc=desc)
-    if w.entity_swap:
-        parts["entity_swap"] = entity_swap_loss(model, out, batch, w, desc=desc)
-    if w.meaning_flip:
-        parts["meaning_flip"] = meaning_flip_loss(model, out, batch, w, desc=desc)
+    # C3_AUX_ROTATE=1: entity_swap and meaning_flip take turns, one per step at twice its weight, so a step builds
+    # one edited copy instead of two (4 graphs, not 5: room for longer windows) with the same weight on average.
+    rotate = _AUX_ROTATE and w.entity_swap and w.meaning_flip
+    turn = next(_AUX_TURN) % 2 if rotate else None
+    if w.entity_swap and turn != 1:
+        parts["entity_swap"] = entity_swap_loss(model, out, batch, w, desc=desc) * (2 if rotate else 1)
+    if w.meaning_flip and turn != 0:
+        parts["meaning_flip"] = meaning_flip_loss(model, out, batch, w, desc=desc) * (2 if rotate else 1)
     from .why_carry import why_carry_losses  # noqa: PLC0415 (cycle)
 
     parts.update(why_carry_losses(model, out, batch, desc, w))

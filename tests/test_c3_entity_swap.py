@@ -197,3 +197,27 @@ def test_runE_sets_entity_swap_ramps_it_and_counts_its_graph():
     assert 'entity_swap="$ENTITY_SWAP"' in text
     assert re.search(r"for t in [^\n]*\bentity_swap\b", text)
     assert '[[ "$ENTITY_SWAP" != 0 ]] && graphs=$((graphs + 1))' in text
+
+
+def test_aux_rotate_alternates_swap_and_flip_at_twice_the_weight(monkeypatch):
+    # C3_AUX_ROTATE=1: one edited copy per step, entity_swap then meaning_flip, each at twice its weight.
+    schema, batch = _batch()
+    torch.manual_seed(0)
+    state = {k: v.clone() for k, v in C3Model(schema, SMALL).state_dict().items()}
+    w = LossWeights(entity_swap=0.3, meaning_flip=0.3)
+    calls = []
+    monkeypatch.setattr(losses, "entity_swap_loss", lambda *a, **k: calls.append("swap") or torch.tensor(1.0))
+    monkeypatch.setattr(losses, "meaning_flip_loss", lambda *a, **k: calls.append("flip") or torch.tensor(1.0))
+    monkeypatch.setattr(losses, "_AUX_ROTATE", True)
+    monkeypatch.setattr(losses, "_AUX_TURN", __import__("itertools").count())
+    model = C3Model(schema, SMALL)
+    model.load_state_dict(state)
+    _, p1 = c3_loss(model, batch, w)
+    _, p2 = c3_loss(model, batch, w)
+    assert calls == ["swap", "flip"]
+    assert p1["entity_swap"] == 2.0 and "meaning_flip" not in p1
+    assert p2["meaning_flip"] == 2.0 and "entity_swap" not in p2
+    monkeypatch.setattr(losses, "_AUX_ROTATE", False)
+    calls.clear()
+    _, p3 = c3_loss(model, batch, w)
+    assert calls == ["swap", "flip"] and p3["entity_swap"] == 1.0 and p3["meaning_flip"] == 1.0

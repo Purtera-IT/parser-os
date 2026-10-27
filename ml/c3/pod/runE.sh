@@ -436,6 +436,8 @@ graphs=1
 [[ "$KEYWORD_DROPOUT" != 0 ]] && graphs=$((graphs + 1))
 [[ "$ENTITY_SWAP" != 0 ]] && graphs=$((graphs + 1))
 [[ "$MEANING_FLIP" != 0 ]] && graphs=$((graphs + 1))
+# C3_AUX_ROTATE=1 (losses.py): entity_swap and meaning_flip take turns, one edited copy per step.
+[[ "${C3_AUX_ROTATE:-0}" == 1 && "$ENTITY_SWAP" != 0 && "$MEANING_FLIP" != 0 ]] && graphs=$((graphs - 1))
 if [[ -z "${ATOMS:-}" ]]; then
   if [[ "$TINY" == 1 ]]; then ATOMS=512
   else
