@@ -381,6 +381,20 @@ def _speaker(atom: Any) -> tuple[str, str]:
     return speaker(by.get("role") or by.get("role_guess"), by.get("side"))
 
 
+def _table_fields(atom: Any, doc_id: str) -> dict[str, Any]:
+    """``table_id`` / ``table_row_index`` / ``sheet`` for a table-row line
+    (``c3_record.context.table_fields``), from the atom's table ref and the
+    file's name, as the training build reads the page's ``tableRef`` and
+    ``filename``."""
+    try:
+        from app.core.typed_atom_classifier import _atom_table_ref
+        from c3_record.context import table_fields
+
+        return table_fields(doc_id, _atom_table_ref(atom), _ref(atom, "filename"))
+    except Exception:  # noqa: BLE001 - no table fields is a line read without them, never a failed read
+        return {}
+
+
 def _sender_inputs(atom: Any) -> dict[str, Any]:
     """What ``c3_record.sender`` reads off one line, as the labeling page
     exports it (atom-labeling.js): ``saidBy`` / ``saidTo`` (``value.said_by``
@@ -520,7 +534,8 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         role, side = _speaker(a)
         lines.append({"key": key, "text": str(getattr(a, "raw_text", "") or ""), "doc_id": d,
                       "section": _section(a), "order": float(i), "speaker_role": role,
-                      "speaker_side": side, "atom_id": aid, **_sender_inputs(a)})
+                      "speaker_side": side, "atom_id": aid, **_sender_inputs(a),
+                      **_table_fields(a, d)})
     rank = _reading_rank(atoms, docs)
     if rank is not None:
         for ln, r in zip(lines, rank):
@@ -532,6 +547,11 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
     rows = build_rows(lines, docs + list(extra.values()), latest_fallback=0.0, timeline=_DEAL.get("stage_timeline"))
     _STATUS["rows"] = {"documents": len(docs), "documents_from_atoms": len(extra),
                        "times": len({r["entered_at"] for r in rows})}
+    # Table headers over the read's own rows, as the training build stamps them
+    # (c3_record.context: the hdr:/sheet:/sec: inputs of a base trained with C3_CONTEXT_TAGS).
+    from c3_record.context import table_headers
+
+    table_headers(rows)
     deal_id = next((str(getattr(a, "project_id", "") or "") for a in atoms
                     if getattr(a, "project_id", None)), "") or "live"
     return deal_id, rows, keys
@@ -914,7 +934,10 @@ def deal_payload(deal: Any) -> dict[str, Any]:
          "speaker_role": a.speaker_role, "speaker_side": a.speaker_side, "atom_id": a.atom_id,
          # Sender and stage (c3_record.sender), as the training export writes them.
          "speaker_org": getattr(a, "speaker_org", ""), "doc_direction": getattr(a, "doc_direction", ""),
-         "stage_at": getattr(a, "stage_at", "")}
+         "stage_at": getattr(a, "stage_at", ""),
+         # Sheet and table header (c3_record.context), as the training build writes them.
+         **({"sheet": a.sheet} if getattr(a, "sheet", "") else {}),
+         **({"table_header": list(a.table_header)} if getattr(a, "table_header", ()) else {})}
         for a in deal.atoms]}
 
 

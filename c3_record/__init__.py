@@ -61,6 +61,8 @@ EVENT_KINDS = ("meeting", "note", "email")
 ROLES = frozenset({"internal", "reseller", "vendor", "unknown"})
 SIDES = frozenset({"ours", "theirs", "partner", "vendor"})
 
+#: A table row's place (c3_record.context.table_fields; build.py's (d)); table_header follows from them.
+TABLE_KEYS = ("table_id", "table_row_index", "sheet")
 #: The sender and stage fields every row carries (``c3_record.sender.annotate``).
 SENDER_FIELDS = ("speaker_side", "speaker_role", "speaker_org", "doc_direction", "stage_at")
 
@@ -122,6 +124,8 @@ def build_rows(lines: Iterable[dict[str, Any]], documents: Iterable[dict[str, An
         # given outright stands as the line's own.
         said = ln.get("said_by") or ({"side": side, "role": role} if side else None)
         row.update({k: ln.get(k) for k in SENDER_INPUTS if ln.get(k)}, said_by=said)
+        # Where the line sits (c3_record.context): its table and sheet, as the training build stamps them.
+        row.update({k: ln[k] for k in TABLE_KEYS if ln.get(k) not in (None, "", [])})
         rows.append(row)
     try:
         annotate(rows, [{"doc_id": str(d.get("doc_id") or ""), "kind": kinds.get(str(d.get("doc_id")), ""),
