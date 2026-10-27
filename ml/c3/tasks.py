@@ -176,8 +176,11 @@ def project_blob(blob, atoms):
 
 def atom_input_digest(atom):
     from dataclasses import asdict
+    # copy_of (C3_COPY_OF) joins the digest only when a row names one, so a
+    # profile materialized before it keeps its digest.
     return digest({k: v for k, v in asdict(atom).items()
-                   if k not in {"label", "row_weight", "loss_weight"}})
+                   if k not in {"label", "row_weight", "loss_weight"}
+                   and not (k == "copy_of" and not v)})
 
 
 def supervision_digest(batch):

@@ -144,6 +144,11 @@ class Atom:
     #: earlier line, or a line it set aside. It carries that card's verdict
     #: and nothing else, so the line that survived keeps its own label.
     dropped_copy: bool = False
+    #: Extraction fact (C3_COPY_OF): the key or atom id of the line this one
+    #: repeats word for word (the parser's ``cross_doc_copy`` ``duplicate_of``,
+    #: or a quoted-history fold's survivor). '' when the row names none. An
+    #: input fact only; whether a repeat is learned stays the heads' decision.
+    copy_of: str = ""
     #: Row weight for a line that carries no label of its own (a dropped
     #: copy); a labeled row takes its weight_tier instead.
     row_weight: float | None = None
@@ -230,6 +235,7 @@ class DealExample:
                       geometry_present=_geometry_present(a),
                       history_only=bool(a.get("history_only")),
                       dropped_copy=bool(a.get("dropped_copy")),
+                      copy_of=str(a.get("copy_of") or ""),
                       row_weight=(float(a["row_weight"]) if a.get("row_weight") is not None else None),
                       loss_weight=(float(a["loss_weight"]) if a.get("loss_weight") is not None else 1.0),
                       layout_rewrites=tuple(str(t) for t in a.get("layout_rewrites") or () if str(t).strip()))
@@ -743,12 +749,16 @@ class Batch:
     stage: list[str] = field(default_factory=list)
     #: Input: the read each line is in (c3_record.view), per line.
     view: list[str] = field(default_factory=list)
+    #: Input: ``repeat`` for a line that repeats another line of the deal
+    #: word for word (``copy_flags``), else ''. Read only by a base trained
+    #: on it (C3Config.copy_tag).
+    copy: list[str] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
                 "role": self.role, "side": self.side, "times": self.times,
                 "org": self.org, "direction": self.direction, "stage": self.stage, "view": self.view,
-                "same_doc": self.same_doc, "same_section": self.same_section,
+                "copy": self.copy, "same_doc": self.same_doc, "same_section": self.same_section,
                 "context": self.context, "pixels": self.pixels, "geometry": self.geometry}
 
     def oneshot(self) -> dict[str, Any]:
@@ -1584,6 +1594,55 @@ def _history_atom(atom: Atom) -> Atom:
     })
 
 
+def copy_input_enabled() -> bool:
+    """C3_COPY_OF=1: a base trains with the repeat fact as an input
+    (C3Config.copy_tag). Off (default), training is unchanged."""
+    import os
+    return os.environ.get("C3_COPY_OF", "0") == "1"
+
+
+def copy_labels_enabled() -> bool:
+    """C3_COPY_LABELS=1: a repeat's admission follows one policy
+    (``_as_repeat``). Off (default), labels are unchanged."""
+    import os
+    return os.environ.get("C3_COPY_LABELS", "0") == "1"
+
+
+#: The value the ``copy`` input column carries on a repeated line.
+REPEAT = "repeat"
+
+
+def copy_flags(atoms: list[Atom]) -> list[str]:
+    """Which lines repeat another line of the deal: a fact of extraction, not
+    a decision. A line is a repeat when its row names the line it copies
+    (``copy_of``, the parser's ``duplicate_of``) and that line is in the deal,
+    or when its words (``_norm_text``) are those of a line before it in the
+    deal's order. The first occurrence is never a repeat; ``atoms`` must be
+    in deal order (``DealExample.from_dict`` sorts them)."""
+    names = {n for a in atoms for n in (a.key, a.atom_id) if n}
+    seen: set[str] = set()
+    out: list[str] = []
+    for a in atoms:
+        words = _norm_text(a.text)
+        named = bool(a.copy_of) and a.copy_of in names and a.copy_of not in (a.key, a.atom_id)
+        out.append(REPEAT if named or (words and words in seen) else "")
+        if words:
+            seen.add(words)
+    return out
+
+
+def _as_repeat(label: dict[str, Any]) -> dict[str, Any]:
+    """A repeat carrying a company reject, under C3_COPY_LABELS: admission
+    drop like every other repeat (the line it repeats carries the fact).
+    Today it is taught keep (``_derived``: a company reject keeps its type's
+    admission) while a plain repeat is taught drop: the same words with
+    opposite answers. Its co_action stays: the decision matches its
+    original's, so the same words keep the same company answer."""
+    out = dict(label)
+    out["admission"] = "drop"
+    return out
+
+
 def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = False,
               max_atoms: int | None = 4096,
               elsewhere: Iterable[tuple[str, str]] = ()) -> Batch:
@@ -1617,6 +1676,14 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
              else dataclasses.replace(a, label=_derived(a.label, universal_reads, is_deal_kit(a.doc_kind)))
              if a.label else a
              for a in deal.atoms]
+    copy = copy_flags(atoms)
+    if copy_labels_enabled():
+        # A repeat follows one admission policy (_as_repeat). policy_reject
+        # reads the saved card.
+        atoms = [dataclasses.replace(a, label=_as_repeat(a.label))
+                 if flag and a.label and not a.history_only and policy_reject(deal.atoms[i].label)
+                 else a
+                 for i, (a, flag) in enumerate(zip(atoms, copy))]
     n = len(atoms)
     index = {a.key: i for i, a in enumerate(atoms)}
     company = deal.company or "purtera"
@@ -1998,7 +2065,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         doc_kind=[a.doc_kind for a in atoms], role=[a.speaker_role for a in atoms],
         side=[a.speaker_side for a in atoms], times=[a.entered_at for a in atoms],
         org=[a.speaker_org for a in atoms], direction=[a.doc_direction for a in atoms],
-        stage=[a.stage_at for a in atoms], view=[a.view for a in atoms],
+        stage=[a.stage_at for a in atoms], view=[a.view for a in atoms], copy=copy,
         same_doc=_pair_mask([a.doc_id or None for a in atoms]),
         same_section=_pair_mask([(a.doc_id, a.section) if a.section else None for a in atoms]),
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,

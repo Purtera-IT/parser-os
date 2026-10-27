@@ -107,6 +107,9 @@ class C3Config:
     #: Hash the line's ``view:<quoting|planning>`` tag (c3_record.view) with the other tags. Off for a
     #: checkpoint trained without it, so an older base reads as it was trained.
     view_tag: bool = False
+    #: Hash ``copy:repeat`` for a line that repeats another line of the deal
+    #: (data.copy_flags, C3_COPY_OF=1). Off for a checkpoint trained without it.
+    copy_tag: bool = False
     ema: float = 0.996
     #: v5 explanation bank on by default in c3_loss (reader votes, compiled
     #: operators, clause slots). Off: v6 reads explanations with the
@@ -203,6 +206,11 @@ class DealEncoder(nn.Module):
             # Tag dropout: a blanked line keeps only its document kind.
             drop = (torch.rand(n_tags) < self.cfg.tag_dropout).tolist()
             tags = [t[:1] if d else t for t, d in zip(tags, drop)]
+        if getattr(self.cfg, "copy_tag", False):
+            # The repeat fact is extraction, not the sender: tag dropout never blanks it.
+            for i, v in enumerate((inp.get("copy") or [])[:n_tags]):
+                if v:
+                    tags[i].append(f"copy:{v}")
         t = torch.tensor(inp["times"], dtype=torch.float32, device=dev)
         days = (t - t.min()).clamp(min=0) / 86400.0
         rank = torch.arange(len(t), device=dev, dtype=torch.float32) / max(1, len(t) - 1)

@@ -1059,6 +1059,19 @@ def configure_training_view_tag(model: C3Model, parts: list[Batch], enabled: boo
     model.encoder.cfg = model.cfg
 
 
+def configure_training_copy_tag(model: C3Model, *, resumed: bool = False) -> None:
+    """C3_COPY_OF=1 trains the base with the copy:repeat input (data.copy_flags);
+    a resumed run keeps its checkpoint's input contract."""
+    from .data import copy_input_enabled
+    saved = bool(getattr(model.cfg, "copy_tag", False))
+    wanted = copy_input_enabled()
+    if resumed and wanted != saved:
+        raise ValueError("copy_tag differs from the resumed checkpoint; start a new run")
+    if wanted != saved:
+        model.cfg = replace(model.cfg, copy_tag=wanted)
+        model.encoder.cfg = model.cfg
+
+
 def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = None,
              budget: Budget | None = None, cfg: C3Config = SMALL, lr: float = 3e-3,
              seed: int = 0, warmup_passes: float = 0.0,
@@ -1269,6 +1282,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
         print(f"resume: no {resume_path or '<checkpoint>.resume.pt'}; starting fresh", flush=True)
     configure_training_view_tag(model, train + validation, view_tag, resumed=state is not None)
     print(f"view_tag={model.cfg.view_tag}", flush=True)
+    configure_training_copy_tag(model, resumed=state is not None)
+    if model.cfg.copy_tag:
+        print("copy_tag=True", flush=True)
     # The fit check reads a fixed sample of training parts: a base that cannot
     # type the lines it trained on is under-fit, whatever validation says.
     fit_pool = (sorted(random.Random(seed + 1).sample(train, fit_parts), key=lambda b: b.deal_id)
