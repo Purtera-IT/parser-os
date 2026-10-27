@@ -43,6 +43,7 @@ from typing import Any, Iterable
 
 import torch
 
+from .canon import canonical_row, enabled as canon_enabled
 from .notes import drop_meta, judgment_note, mask_verdict, sentences, split_note, without_opener
 from .schema import (ABSENT, BINARY, CLASS, DEAL, GROUP, LINE, NUMBER, PAIR, PRESENCE,
                      RELATION, Schema)
@@ -1989,9 +1990,11 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
     alike = look_alikes([a.text for a in atoms], targets,
                         [a.label is not None and not excluded(a.label) for a in atoms], schema,
                         linked=edges.get("near_miss", []))
+    # C3_CANON_ROWS=1: every layout of a table row reads as the training form (canon.py); off, texts are as given.
+    read_texts = [canonical_row(a.text) for a in atoms] if canon_enabled() else [a.text for a in atoms]
     batch = Batch(
         deal_id=deal.deal_id, company=company, company_policy=deal.company_policy,
-        texts=[a.text for a in atoms], numbers=[number_tokens(a.text) for a in atoms],
+        texts=read_texts, numbers=[number_tokens(t) for t in read_texts],
         doc_kind=[a.doc_kind for a in atoms], role=[a.speaker_role for a in atoms],
         side=[a.speaker_side for a in atoms], times=[a.entered_at for a in atoms],
         org=[a.speaker_org for a in atoms], direction=[a.doc_direction for a in atoms],
