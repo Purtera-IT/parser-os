@@ -40,7 +40,7 @@ HEIGHT=re.compile(r"\b(?:scissor|boom|aerial|man|personnel)[- ]?lifts?\b|\blifts
                   r"|\b(?:ceilings?|heights?|mount(?:ed|ing)?(?: height)?|high|tall)\b[^.\n]{0,25}?\b\d{2}\s*(?:-\s*\d{2}\s*)?(?:ft|feet|foot|')"
                   r"|\b\d{2}\s*(?:-\s*\d{2}\s*)?(?:ft|feet|foot|')\s*(?:ceilings?|high|tall|clear(?:ance)?|height)\b",re.I)
 # After-hours work: the work's own schedule, not a weekend or a night someone mentions in passing.
-AFTER=re.compile(r"\bafter[- ]hours\b|\boff[- ]hours\b|\bovernight (?:work|install|cutover|shift|window)s?\b|\bnight (?:shift|work|window)s?\b"
+AFTER=re.compile(r"\bafter[- ]hours\b|\boff[- ]hours\b|\bovernight\b(?!\s+(?:shipping|ship|delivery|express|air|mail))|\bnight (?:shift|work|window)s?\b"
                  r"|\b(?:work|install(?:ation)?|cutover|onsite|on-site)\b[^.\n]{0,30}?\b(?:on|over|during) (?:the )?weekends?\b"
                  r"|\b(?:nights|evenings) and weekends\b|\boutside (?:of )?(?:normal )?business hours\b",re.I)
 NOISE=re.compile(r'net\s*\d+|warranty|licen|within \d+ (?:hours|days)|notice|24-48|24\s*/\s*7|quotes? (?:delivered|in)|business days|window',re.I)

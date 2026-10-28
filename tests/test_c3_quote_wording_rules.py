@@ -11,7 +11,7 @@ def test_height_reads_lifts_and_mounting_heights_not_cable_lengths():
 
 def test_after_hours_reads_the_work_schedule_not_small_talk():
     for t in ("install after hours only", "work must be done over the weekend", "night shift cutover",
-              "outside business hours", "Nights and weekends"):
+              "outside business hours", "Nights and weekends", "Mount 3 cameras overnight"):
         assert AFTER.search(t), t
-    for t in ("hope you had a good Memorial Day weekend", "see you next weekend", "last night's game"):
+    for t in ("hope you had a good Memorial Day weekend", "see you next weekend", "last night's game", "we can send it overnight shipping"):
         assert not AFTER.search(t), t
