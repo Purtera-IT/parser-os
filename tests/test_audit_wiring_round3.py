@@ -68,3 +68,42 @@ def test_a_workbook_the_customer_sent_is_their_paper(monkeypatch):
     c3_type_base.set_deal(None)
     docs = c3_type_base.deal_documents(calc, {"art_calc": {"filename": "Their Budget.xlsx"}})
     assert docs[0]["kind"] == "file" and "kind_by" not in docs[0]
+
+
+# ---- 5. the quote's after-hours / lift wording reads the job's work, not its pricing or exclusions
+
+def test_pricing_terms_rate_rows_and_exclusions_leave_the_quotes_work_set(monkeypatch):
+    seen = {}
+    monkeypatch.setenv("SOWSMITH_C3_QUOTE", "on")
+    monkeypatch.setenv("SOWSMITH_C3_URL", "http://c3")
+    monkeypatch.setattr(c3_type_base, "_DEAL", {"reads": {}, "deal": {}, "view": "planning"})
+
+    def fake(path, body, timeout):
+        seen.update(body=body)
+        return {"job_type": "cabling", "lines": []}
+
+    monkeypatch.setattr(c3_type_base, "_request", fake)
+    S = NS
+    atoms = [
+        S(id="w1", atom_type="task", raw_text="Validate the new circuit during business hours", value={}, source_refs=[]),
+        S(id="p1", atom_type="pricing_assumption", raw_text="After hours work will be billed at a 50% uplift.",
+          value={}, source_refs=[]),
+        S(id="r1", atom_type="service_line", raw_text="After Hours | $238.64 per hour", value={}, source_refs=[]),
+        S(id="x1", atom_type="exclusion", raw_text="Lift rental or other specialty access equipment.", value={},
+          source_refs=[]),
+        S(id="o1", atom_type="scope_item", raw_text="Ceiling work above 12 feet", value={},
+          source_refs=[S(locator={"section_path": ["SOW", "Out of Scope services include"]})]),
+    ]
+    brief = {"deal": {}, "sections": {"scope_of_work": [{"id": a.id} for a in atoms]},
+             "job_details": [{"text": "After Hours | $238.64 per hour", "cites": ["r1"]},
+                             {"text": "Validate the new circuit", "cites": ["w1"]}]}
+    q = c3_type_base.quote(atoms, brief, deal_id="d1")
+    sent = seen["body"]["deal"]["c3_brief"]
+    assert sent["sections"]["scope_of_work"] == [{"id": "w1"}]
+    assert [j["cites"] for j in sent["job_details"]] == [["w1"]]
+    assert set(sent["not_work"]) == {"p1", "r1", "x1", "o1"}
+    # Every line still rides to the server; only the work set changes, and the quote says so.
+    assert {r["id"] for r in seen["body"]["deal"]["atoms"]} == {a.id for a in atoms}
+    assert q["not_work"]["count"] == 4 and q["not_work"]["ids"] == ["o1", "p1", "r1", "x1"]
+    # The day-type and access heads ride along when the read answers them.
+    assert {"read:work_window", "read:access_need"} <= set(c3_type_base.QUOTE_LINE_HEADS)
