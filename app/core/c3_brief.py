@@ -72,6 +72,10 @@ SUPPLIER_BAR = 0.6
 KEEP_HEAD = os.environ.get("SOWSMITH_C3_KEEP_HEAD", "col:admission").strip() or "col:admission"
 #: The type head's small_talk at or above this is final: no other head keeps the line.
 SMALL_TALK_BAR = float(os.environ.get("SOWSMITH_C3_SMALL_TALK_BAR", "0.8"))
+#: Admission keep at or above this goes in the body, between MAYBE_BAR and it "also mentioned".
+#: Its keeps of the audit's labeled real lines sat at 0.53-0.98 (most 0.7-0.93) on 2026-10-28;
+#: KEEP_BAR (0.9) was calibrated for co_action and sent most of them to "also mentioned".
+ADMISSION_BODY_BAR = float(os.environ.get("SOWSMITH_C3_ADMISSION_BODY_BAR", "0.7"))
 #: co_action reject / ignore at or above this drops a line admission kept (a company action).
 COMPANY_DROP_BAR = 0.5
 MAX_FACTS_PER_SECTION = 25
@@ -436,7 +440,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                                  "p": round(p, 3), "admission": round(pa, 3)})
                 why["head:company_" + act] += 1
                 continue
-            if keep_act == "keep" and pa >= KEEP_BAR:
+            if keep_act == "keep" and pa >= ADMISSION_BODY_BAR:
                 kept.append((a, pa, "base:col:admission"))
                 why["admission:keep"] += 1
             elif keep_act == "keep" and pa >= MAYBE_BAR:
