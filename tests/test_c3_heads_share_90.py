@@ -111,3 +111,53 @@ def test_never_admission_needs_the_admission_keep_head(types):
     atoms = [_atom(1, "raw_utterance", "uh, yeah")]
     b = _build(atoms, {"a1": {"read:co_action": ["reject", 0.99]}})
     assert b["decided_by"]["keep"] == {"rule:never": 1}
+
+
+# ---------------------------------------------------------------- our own paper in a quoting read
+
+
+@pytest.fixture
+def quoting(types, monkeypatch):
+    monkeypatch.setitem(c3_type_base._DEAL, "view", "quoting")
+    monkeypatch.setitem(c3_type_base._DEAL, "view_ours", {"a1", "a3"})
+    monkeypatch.delenv("SOWSMITH_C3_OURS_OUT", raising=False)
+    return types
+
+
+def _quoting_atoms():
+    return [_atom(1, "scope_item", "Our quote: install 12 cameras."), _atom(2, "scope_item", "Please quote 12 cameras."),
+            _atom(3, "deal_metadata", "Quote #1234 valid 30 days")]
+
+
+def test_ours_left_out_of_a_quoting_brief_visibly(quoting):
+    b = _build(_quoting_atoms(), {})            # no reads: every line would be kept by rule:type
+    assert [x["id"] for v in b["sections"].values() for x in v] == ["a2"]
+    assert b["left_out"]["ours_in_quoting_view"] == ["a1", "a3"]
+    assert b["left_out"]["by_reason"]["ours_in_quoting_view"] == 2
+    assert {"a1", "a3"} <= set(b["left_out"]["ids"]), "the quote reads left_out.ids: it does not count them"
+    assert b["decided_by"]["keep"]["view:ours_in_quoting_view"] == 2
+
+
+def test_ours_left_out_even_when_a_head_would_keep(quoting):
+    b = _build(_quoting_atoms(), {"a1": {"col:admission": ["keep", 0.99]}, "a2": {"col:admission": ["keep", 0.99]}})
+    assert [x["id"] for v in b["sections"].values() for x in v] == ["a2"]
+
+
+@pytest.mark.parametrize("how", ["planning", "off"])
+def test_ours_out_only_in_a_quoting_read_and_with_the_setting(quoting, monkeypatch, how):
+    if how == "planning":
+        monkeypatch.setitem(c3_type_base._DEAL, "view", "planning")
+    else:
+        monkeypatch.setenv("SOWSMITH_C3_OURS_OUT", "off")
+    b = _build(_quoting_atoms(), {})
+    assert sorted(x["id"] for v in b["sections"].values() for x in v) == ["a1", "a2", "a3"]
+    assert b["left_out"]["ours_in_quoting_view"] == []
+
+
+def test_quote_site_roster_skips_ours(quoting, monkeypatch):
+    monkeypatch.setattr("app.core.c3_brief._deal_kit", lambda a: False)
+    atoms = [_atom(1, "physical_site", "Ship to: our warehouse"), _atom(2, "physical_site", "Site: 10 Main St")]
+    for a in atoms:
+        a.entity_keys = [f"site:{a.id}"]
+        a.review_flags = []
+    assert [s["site"] for s in c3_type_base.quote_sites(atoms)] == ["site:a2"]

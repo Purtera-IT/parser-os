@@ -748,6 +748,7 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         # A deal with no time anywhere (training refuses one): no cut can be placed, so the read is every
         # line, as before views.
         _STATUS["view"] = {"view": v, "undated": True, "inputs": len(rows), "out": 0}
+        _DEAL.pop("view_ours", None)
         for r in rows:
             r["view"] = v
         return rows
@@ -783,6 +784,13 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
         keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
     _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
+    if v == cview.QUOTING:
+        # Our own paper (our quote, our SOW, our pricing replies): outside the quoting read by design,
+        # and outside the brief and the quote too (ours_in_quoting_view).
+        _DEAL["view_ours"] = {str(x["atom_id"]) for x in lines
+                              if x["label_key"] in P.ours_atoms or (P.doc.get(x["doc_id"]) or {}).get("ours")}
+    else:
+        _DEAL.pop("view_ours", None)
     kept = [rows[i] for i in keep]
     cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
     _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
@@ -990,6 +998,23 @@ def _keep_full(got: dict[str, Any]) -> None:
             _DEAL["question_bar"] = float(got["question_bar"])
         _DEAL["links"].extend(got.get("links") or [])
         _DEAL["deal"].update(got.get("deal") or {})
+
+
+def ours_out_enabled() -> bool:
+    """``SOWSMITH_C3_OURS_OUT`` (default on): see ``ours_in_quoting_view``."""
+    return os.environ.get("SOWSMITH_C3_OURS_OUT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def ours_in_quoting_view() -> set[str]:
+    """Atom ids of our own lines in a quoting read (``c3_record.provenance``: our documents and our
+    authored lines, ``P.ours_atoms`` / ``P.doc[..]["ours"]``). The quoting view leaves them out of the
+    heads' read by design -- a quote is made from what the customer and partner sent before we priced
+    -- so the brief and the quote leave them out too, visibly, instead of keeping them by the type rule
+    (19 dev deals 2026-10-28: 27 of our lines on 3053ca21 and 53 on c065bfc4 reached the quoting brief's
+    body by rule:type). Empty in a planning read, an undated deal, or with the setting off."""
+    if not ours_out_enabled() or view_name() != "quoting":
+        return set()
+    return set(_DEAL.get("view_ours") or ())
 
 
 def full_read() -> dict[str, Any]:
@@ -1537,9 +1562,12 @@ def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
     from app.core.c3_brief import _deal_kit
 
     roster: dict[str, dict[str, Any]] = {}
+    ours = ours_in_quoting_view()
     for a in atoms:
         aid, text, kind = _text_type(a)
         if kind != "physical_site" or _deal_kit(a) or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
+            continue
+        if aid in ours:
             continue
         role = line_reading(aid, "jdg:site_role")
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
@@ -1579,6 +1607,7 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     from app.core.c3_brief import _deal_kit
 
     left_out = {str(i) for i in ((brief.get("left_out") or {}).get("ids") or [])}
+    ours = ours_in_quoting_view()
     # A line the keep head only half kept ("also mentioned") is not priced from: it goes to the
     # quote marked, and counted out like a left-out line.
     also = {str(x.get("id")) for x in brief.get("also_mentioned") or [] if isinstance(x, dict)} | {
@@ -1595,7 +1624,9 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             row["reads"] = reads
         if _deal_kit(a):
             row["deal_kit"] = True
-        if aid in left_out:
+        if aid in ours:
+            row["ours_in_quoting_view"] = True
+        if aid in left_out or aid in ours:
             row["left_out"] = True
         elif aid in also:
             row["left_out"] = True
@@ -1612,7 +1643,7 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                      "heads": {"asked": asked, "view": view_name(), "deal": deal_reads},
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
                                                for k, v in (brief.get("sections") or {}).items()},
-                                  "left_out": sorted(left_out | also),
+                                  "left_out": sorted(left_out | also | ours),
                                   "also_mentioned": sorted(also),
                                   "job_details": brief.get("job_details") or []}}}
     if _never():
