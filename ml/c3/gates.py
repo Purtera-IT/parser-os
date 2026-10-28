@@ -196,6 +196,10 @@ def save_checkpoint(path: str | Path, model: C3Model, *, step: int, schema_sha25
     if getattr(getattr(model, "cfg", None), "context_tags", False):
         # The hdr:/sheet:/sec: input tags (c3_record.context): serve hashes them only for a base trained on them.
         payload["context_tags"] = True
+    if getattr(getattr(model, "cfg", None), "planning_heads", False):
+        # The planning-heads contract (c3_record.view): serve answers those heads in the planning view only
+        # for a base trained on them there.
+        payload["planning_heads"] = True
     if max_atoms:
         # The training window, for the record (the pick scores at serve's window).
         payload["max_atoms"] = int(max_atoms)
@@ -236,6 +240,7 @@ def load_checkpoint(path: str | Path, model: C3Model, *, schema_sha256: str,
         model.cfg.view_tag = bool(payload.get("view_tag"))
         model.cfg.copy_tag = bool(payload.get("copy_tag"))
         model.cfg.context_tags = bool(payload.get("context_tags"))
+        model.cfg.planning_heads = bool(payload.get("planning_heads"))
     if payload.get("graph") and hasattr(model, "enable_graph"):
         # Built before the weights load, as the free heads are below.
         model.enable_graph(payload["graph"])

@@ -1085,6 +1085,39 @@ def configure_training_context_tags(model: C3Model, *, resumed: bool = False) ->
         model.encoder.cfg = model.cfg
 
 
+def configure_training_planning_heads(model: C3Model, parts: list[Batch], *, resumed: bool = False) -> None:
+    """C3_PLANNING_HEADS=1 trains the SOW / quote / primary-service heads in the planning view too
+    (c3_record.view.PLANNING_HEADS; data.DealExample lifts the stored mask) and records it in the checkpoint
+    (model.cfg.planning_heads), so serve answers them there. A resumed run keeps its checkpoint's contract.
+    With the contract on, no planning-view part may still mask a planning head (the lift did not reach it);
+    off, a planning-view part that trains one is reported (a file built under the contract), not refused."""
+    from c3_record import view as cview  # noqa: PLC0415
+    saved = bool(getattr(model.cfg, "planning_heads", False))
+    wanted = cview.planning_heads_enabled()
+    if resumed and wanted != saved:
+        raise ValueError("planning_heads differs from the resumed checkpoint; start a new run")
+    keys = [o.key for o in model.schema.opportunities if cview.is_planning_head(o.key)]
+    bad, trains = [], 0
+    for b in parts:
+        if getattr(b, "task_profile", None) is not None or not len(b):
+            continue
+        if not b.view or any(cview.name(v) != cview.PLANNING for v in b.view):
+            continue
+        masked = [k for k in keys if b.head_scale.get(k, 1.0) == 0]
+        if wanted and masked:
+            bad.append(f"{b.deal_id} masks {masked[0]}")
+        trains += len(masked) != len(keys)
+    if trains and not wanted:
+        print(f"planning_heads off: {trains} planning-view parts train a planning head "
+              "(served masked in the planning view)", flush=True)
+    if bad:
+        raise ValueError("planning-view parts disagree with C3_PLANNING_HEADS=%d: %s"
+                         % (int(wanted), ", ".join(bad[:5])))
+    if wanted != saved:
+        model.cfg = replace(model.cfg, planning_heads=wanted)
+        model.encoder.cfg = model.cfg
+
+
 def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = None,
              budget: Budget | None = None, cfg: C3Config = SMALL, lr: float = 3e-3,
              seed: int = 0, warmup_passes: float = 0.0,
@@ -1301,6 +1334,9 @@ def run_base(train: list[Batch], holdout: list[Batch], schema: Schema | None = N
     configure_training_context_tags(model, resumed=state is not None)
     if model.cfg.context_tags:
         print("context_tags=True", flush=True)
+    configure_training_planning_heads(model, train + validation, resumed=state is not None)
+    if model.cfg.planning_heads:
+        print("planning_heads=True", flush=True)
     # The fit check reads a fixed sample of training parts: a base that cannot
     # type the lines it trained on is under-fit, whatever validation says.
     fit_pool = (sorted(random.Random(seed + 1).sample(train, fit_parts), key=lambda b: b.deal_id)

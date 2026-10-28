@@ -113,6 +113,10 @@ class C3Config:
     #: Hash the line's context tags (hdr:/sheet:/sec:/quoted:, c3_record.context,
     #: C3_CONTEXT_TAGS=1). Off for a checkpoint trained without them.
     context_tags: bool = False
+    #: The planning-heads contract (c3_record.view.PLANNING_HEADS, C3_PLANNING_HEADS=1): the SOW / quote /
+    #: primary-service heads trained in the planning view too, so serve answers them there. Off for a
+    #: checkpoint trained without it (they stay masked in the planning view, as trained).
+    planning_heads: bool = False
     ema: float = 0.996
     #: v5 explanation bank on by default in c3_loss (reader votes, compiled
     #: operators, clause slots). Off: v6 reads explanations with the

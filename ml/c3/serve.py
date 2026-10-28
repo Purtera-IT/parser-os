@@ -107,6 +107,15 @@ def _prewarm_questions(model, device: str) -> None:
         log.info("question catalog not encoded at start: %s", type(exc).__name__)
 
 
+def planning_heads_served(model: Any) -> bool:
+    """Whether serve answers the planning heads (c3_record.view.PLANNING_HEADS) in the planning view: only
+    for a checkpoint trained under the contract (``model.cfg.planning_heads``), and never with
+    SOWSMITH_C3_PLANNING_HEADS=0 (the kill switch)."""
+    if os.environ.get("SOWSMITH_C3_PLANNING_HEADS", "").strip().lower() in ("0", "false", "off", "no"):
+        return False
+    return bool(getattr(getattr(model, "cfg", None), "planning_heads", False))
+
+
 class Base:
     """The loaded model and one read at a time. ``load`` and ``read`` are
     seams for tests; by default they are the live layer's own."""
@@ -153,10 +162,14 @@ class Base:
 
         model, schema, device = self.model  # type: ignore[misc]
         v = cview.name(view)
+        # The planning-heads contract is the checkpoint's own (gates.load_checkpoint): a base trained on the
+        # SOW / quote / primary-service heads in the planning view answers them there; any other base masks
+        # them as trained, whatever the caller asked. SOWSMITH_C3_PLANNING_HEADS=0 masks them anyway.
+        ph = planning_heads_served(model)
         if v:
-            line_heads = tuple(cview.heads(v, line_heads))
-            document_heads = tuple(cview.heads(v, document_heads))
-            table_heads = tuple(cview.heads(v, table_heads))
+            line_heads = tuple(cview.heads(v, line_heads, planning_heads=ph))
+            document_heads = tuple(cview.heads(v, document_heads, planning_heads=ph))
+            table_heads = tuple(cview.heads(v, table_heads, planning_heads=ph))
             payload = dict(payload, atoms=[a if not isinstance(a, dict) or a.get("view") else dict(a, view=v)
                                            for a in payload.get("atoms") or []])
         deal = DealExample.from_dict(payload)
@@ -200,13 +213,15 @@ class Base:
                     reads.setdefault(key, {})[head] = [[str(a) for a in r["answers"]],
                                                        {n: round(float(p), 4) for n, p in zip(names, r.get("p") or [])}]
         out: dict[str, Any] = {"types": types, "read_ms": read_ms, "lines": len(deal.atoms)}
+        if v:
+            out["planning_heads"] = ph
         if line_heads:
             out["reads"] = reads
         if full:
             out["links"] = [{"src": l["src"], "dst": l["dst"], "relation": l["relation"],
                              "p": round(float(l.get("p") or 0.0), 4)} for l in (doc.get("links") or [])]
             answered = doc.get("deal") or {}
-            asked = set(cview.heads(v, list(answered))) if v else set(answered)
+            asked = set(cview.heads(v, list(answered), planning_heads=ph)) if v else set(answered)
             out["deal"] = {k: ([str(a["answer"]), round(float(a.get("p") or 0.0), 4)] if "answer" in a
                                else [a.get("value"), None]) for k, a in answered.items() if k in asked}
         if document_heads:
