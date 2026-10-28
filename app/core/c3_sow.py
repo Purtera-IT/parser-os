@@ -1477,7 +1477,12 @@ def _route_family(family: str, fs: list[dict[str, Any]]) -> str:
         family = "smart_hands_general"
     if family in ("smart_hands_general", "other"):
         blob = " ".join(f["text"] for f in fs).lower()
-        for fam_, pat in (("low_voltage_cabling", r"\bcat ?6a?\b|\bcat ?5e?\b|cable runs?|\bdrops?\b.{0,30}\b(cable|run|data)|terminat"),
+        # "terminat" alone matched the contract's TERMINATION clauses ("either party may terminate"), the
+        # only cabling hits on 010362 and 010395 (circuit validation, remote hands), and routed both to
+        # cabling standards their own SOWs exclude. Termination counts only next to cable words.
+        for fam_, pat in (("low_voltage_cabling", r"\bcat ?6a?\b|\bcat ?5e?\b|cable runs?|\bdrops?\b.{0,30}\b(cable|run|data)"
+                                                  r"|\bterminat\w*\b.{0,30}\b(cables?|cabling|drops?|jacks?|patch|runs?|fiber|copper)\b"
+                                                  r"|\b(cables?|cabling|drops?|jacks?|fiber|copper)\b.{0,30}\bterminat"),
                           ("cameras_security", r"\bcameras?\b.{0,40}\b(install|mount)|verkada|axis camera"),
                           ("network_switch_refresh", r"\bswitch(es)?\b.{0,40}\b(replace|refresh|swap)|replace .{0,20}switch"),
                           ("decommission_packing", r"\bdecommission|dismantl|pack(ing)? up|box(ing)? up"),
