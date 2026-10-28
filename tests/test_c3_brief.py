@@ -549,3 +549,34 @@ def test_an_untrusted_section_head_is_recorded_where_the_rule_places_the_line(mo
     assert items["a2"]["section_head"] == ["assumptions", 0.7]
     part = b["decided_by"]["parts"]["read:sow_section"]
     assert part["by"] == "rule" and part["head_answered"] == 2 and part["head_agrees"] == 1
+
+
+def test_one_question_per_fact():
+    qs = [{"question": "What are the exact street addresses and floor levels for each site?", "cites": ["a1"]},
+          {"question": "Can you give the street address and floor for every site?", "cites": ["a2"]},
+          {"question": "Is a lift needed for the rafters?", "cites": ["a3"]},
+          {"question": "Will a scissor lift be required?", "cites": ["a3"]},
+          {"question": "Who receives the Palo Alto pair at each store?", "cites": ["a4"]}]
+    out = c3_brief._one_per_fact(qs)
+    assert [q["cites"] for q in out] == [["a1"], ["a3"], ["a4"]]
+
+
+def test_the_writer_is_told_who_asked_and_what_the_roster_answers(monkeypatch):
+    seen = {}
+
+    def fake(prompt, model, tokens):
+        seen.setdefault("prompts", []).append(prompt)
+        return ('{"summary": "x [a1]", "sections": {}, "open_questions": [], "pricing_questions": ['
+                '{"question": "What union rules apply?", "cites": []},'
+                '{"question": "Who stages the APs in the lobby?", "cites": ["a1"]}]}')
+
+    monkeypatch.setattr(c3_brief, "_complete", fake)
+    brief = {"service": {"value": "wireless"}, "conflicts": [], "deal": {},
+             "sections": {"scope_of_work": [{"id": "a1", "text": "Mount 12 APs in the lobby"}]},
+             "questions": [{"id": "a9", "text": "Where else do you have presence?", "owner": "project_manager",
+                            "asked_by": "theirs"}],
+             "roster_facts": "145 sites are listed"}
+    w = c3_brief.write(brief)
+    assert "(asked by the customer/partner) Where else" in seen["prompts"][0]
+    assert "SITE ROSTER (from the heads): 145 sites are listed" in seen["prompts"][0]
+    assert [q["question"] for q in w["open_questions"]] == ["Who stages the APs in the lobby?"]  # uncited dropped

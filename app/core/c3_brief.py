@@ -827,7 +827,8 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             owner = r(aid, "read:needed_by")[0] if use["read:needed_by"] else "_absent"
             questions.append({"id": aid, "text": a.raw_text[:300], "wants": hit[0], "by": hit[1],
                               "family": "deal_ask", "layer": "base",
-                              "owner": owner if owner != "_absent" else "project_manager"})
+                              "owner": owner if owner != "_absent" else "project_manager",
+                              **({"asked_by": side} if (side := _asked_by(a)) else {})})
             seen_q.add(aid)
     for pk in packets or ():
         fam = str(getattr(getattr(pk, "family", ""), "value", getattr(pk, "family", "")))
@@ -963,6 +964,28 @@ def _customer_furnished(sections: dict[str, list[dict[str, Any]]], by_id: dict[s
     return len(moved)
 
 
+def _asked_by(atom: Any) -> str:
+    """``ours`` / ``theirs`` (customer, partner, vendor): who asked a deal question, from the line's own speaker."""
+    try:
+        from app.core.c3_type_base import _speaker
+
+        side = _speaker(atom)[1]
+    except Exception:  # noqa: BLE001
+        return ""
+    return "ours" if side == "ours" else "theirs" if side in ("theirs", "partner", "vendor") else ""
+
+
+def _roster_facts(atoms: list[Any], brief: dict[str, Any]) -> str:
+    """One line the writer and the answered-check read: how many sites the heads' roster holds and a few of its
+    own lines, so a roster with addresses answers "what are the street addresses" (010447 asked it twice)."""
+    kept = [k for k in ((brief.get("site_keys") or {}).get("kept") or []) if str(k).startswith("site:")]
+    if len(kept) < 2:
+        return ""
+    slt = brief.get("site_line_types") or {}
+    eg = [a.raw_text[:140] for a in atoms if slt.get(str(a.id)) == "physical_site"][:3]
+    return f"{len(kept)} sites are listed" + (": e.g. " + " | ".join(eg) if eg else "")
+
+
 #: Columns of ``line_decisions.rows``.
 LINE_DECISION_COLS = ("id", "outcome", "by", "p", "col:admission", "read:co_action", "document_job")
 
@@ -1092,14 +1115,12 @@ _PROMPT = (
     "or deadline the facts give, in the third person; never restate a fact Scope already gave. customer_furnished: equipment the customer already bought or "
     "supplies; it is not this job's price: say what was bought, how many, and its total by the label the "
     "fact gives (GRAND TOTAL), never whether that total includes tax.\n"
-    "PRICING QUESTIONS: up to 10 questions a PM must ask before pricing THIS job that the facts leave open: "
-    "specific to its work, site, counts, access, materials, who supplies what, and timing. Consider, and ask only "
-    "when the facts leave it open: the street address and floor; union or prevailing-wage labor; mounting "
-    "height and lift or ladder; who supplies, receives and stages the equipment; whether PurTera connects, "
-    "configures and tests or only mounts; removal and disposal of old equipment; one trip or several; site "
-    "hours, escort and access. Never ask what ANY "
-    "fact given here (overview, sections or also kept) already answers, never ask contract boilerplate; cite "
-    "the facts each question comes from.\n"
+    "PRICING QUESTIONS: up to 6 questions a PM must ask before pricing THIS job that its own facts leave open. "
+    "Each asks ONE thing, comes from a specific fact of this deal and cites it (a question with no fact behind it "
+    "is not asked), and names what that fact is about (the 98\" display in the lobby, the 145 store sites), "
+    "never a generic checklist item. Never ask what ANY fact given here (overview, sections, also kept, or the "
+    "SITE ROSTER line) already answers -- a roster that lists the sites with their addresses answers where the "
+    "sites are -- and never ask contract boilerplate.\n"
     "RULES: every sentence cites the [ids] of the facts it uses and says nothing that is not in them, except a "
     "total that follows by plain arithmetic from cited facts (89 APs x 2 drops = 178 drops), shown as the sum. Never "
     "combine two facts into a claim neither states (a note that payments exclude tax does not make a grand total "
@@ -1119,9 +1140,10 @@ _PROMPT = (
     "summary and job_details, and only when they add a date, a "
     "deadline, a contact, a count, what is being asked for, or a change to the scope such as work added): %s\n"
     "OPEN QUESTIONS (asked in the deal; return under open_questions only those a PM must still get answered to "
-    "price the job, reworded plainly; drop nudges and chasers such as 'have you had a chance to review', 'any "
-    "update', questions the account asks PurTera (turnaround, availability; PurTera answers those), and notes or "
-    "labels copied from a spreadsheet): %s\nCONFLICTS: %s"
+    "price the job, reworded plainly, one question each; drop nudges and chasers such as 'have you had a chance "
+    "to review', 'any update', every question marked (asked by the customer/partner) that asks PurTera about "
+    "itself (where it has presence, what its software does, turnaround, availability; PurTera answers those, "
+    "the customer is not asked them), and notes or labels copied from a spreadsheet): %s\nCONFLICTS: %s"
 )
 
 _ASK_PROMPT = (
@@ -1308,6 +1330,8 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     also_items = list(brief.get("also_mentioned") or [])[:30] + list(brief.get("figures") or [])
     also = [f"[{x['id']}] " + (f"({x['when']}) " if x.get("when") else "") + _dated(x["text"], x.get("when"))
             for x in also_items]
+    if brief.get("roster_facts"):
+        also.append("[site_roster] SITE ROSTER (from the heads): " + brief["roster_facts"])
     if also_items:
         own.setdefault("job_details", set()).update(x["id"] for x in also_items)
     # An overview line can carry the job's details (010038's follow-up email:
@@ -1317,8 +1341,9 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     cs = [x["ids"] for x in brief["conflicts"][:15]]
     known = {x["id"] for k, v in heads.items() if k != "job_details" for x in v} | {q["id"] for q in brief["questions"]}
     catalog = [q for q in brief["questions"] if q["id"].startswith("q:")]
-    qs = [f"[{q['id']}] (owner: {q['owner']}) {q['text']}" for q in brief["questions"]
-          if not q["id"].startswith("q:")][:30]
+    qs = [f"[{q['id']}] (owner: {q['owner']})" + (" (asked by the customer/partner)" if q.get("asked_by") == "theirs"
+          else " (asked by PurTera)" if q.get("asked_by") == "ours" else "") + f" {q['text']}"
+          for q in brief["questions"] if not q["id"].startswith("q:")][:30]
     lines_seen = {e["id"] for q in catalog for e in q.get("evidence") or []}
     service = _service_for_writer(brief)
     batches = [catalog[i:i + ASK_BATCH] for i in range(0, len(catalog), ASK_BATCH)]
@@ -1413,12 +1438,14 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
             cites = [c for c in _cites_of({"cites": q.get("cites"), "text": q.get("question")}) if c in known]
             pricing.append({"question": strip_cites(str(q["question"])), "owner": "project_manager",
                             "cites": cites, "kind": "pricing"})
+    pricing = [q for q in pricing if q["cites"]]  # a question with no line of this deal behind it is a template ask
+    open_qs = _one_per_fact(pricing[:6] + [q for q in (doc.get("open_questions") or []) if isinstance(q, dict)])
     out.update(summary=str(summary or ""), sections=doc.get("sections") or {},
                # Pricing questions first: what the PM must ask to price. The
                # deal's own asks after, only those the writer kept as still
                # open ("Have you had a chance to review this proposal?" is a
                # nudge, not a question to price from).
-               open_questions=pricing[:10] + list(doc.get("open_questions") or []), uncited_dropped=dropped,
+               open_questions=open_qs, uncited_dropped=dropped,
                # The deal's own and its pricing questions come first; the head's
                # catalog questions after them, the most likely few (all of them
                # stay for labeling).
@@ -1629,6 +1656,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
                                        for k in (getattr(a, "entity_keys", None) or []))}
     if c3_type_base._DEAL.get("site_keys"):
         brief["site_keys"] = c3_type_base._DEAL["site_keys"]
+    brief["roster_facts"] = _roster_facts(atoms, brief)
     brief["contacts"] = contacts(contact_lines(atoms))
     # Only lines the heads kept in the body: picked by wording alone it put
     # back lines co_action dropped -- 9 of 15 on 010038, among them "concrete"
@@ -1855,6 +1883,38 @@ def _cover_missing_facts(brief: dict[str, Any]) -> int:
     return len(add)
 
 
+_Q_STOP = frozenset("a an the of to for and or is are be will what which who how where when does do any each at in on "
+                    "this that there their it its with by from site sites location locations can you your we our "
+                    "give provide please confirm every all exact".split())
+
+
+def _q_words(q: dict[str, Any]) -> set[str]:
+    def stem(w: str) -> str:
+        if w.endswith("ss"):
+            return w
+        return w[:-2] if w.endswith("sses") or (w.endswith("es") and len(w) > 5) else w[:-1] if w.endswith("s") and len(w) > 3 else w
+
+    return {stem(w) for w in re.findall(r"[a-z0-9]+", strip_cites(str(q.get("question") or "")).lower())
+            if w not in _Q_STOP and stem(w) not in _Q_STOP}
+
+
+def _one_per_fact(qs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One question per fact: a question that cites the same lines as an earlier one, or asks nearly the same
+    words (two lift questions on 000118; 010447 asked for street addresses twice), is dropped."""
+    out: list[dict[str, Any]] = []
+    for q in qs:
+        w, c = _q_words(q), frozenset(q.get("cites") or [])
+        dup = False
+        for k in out:
+            kw, kc = _q_words(k), frozenset(k.get("cites") or [])
+            if (c and c == kc) or (w and kw and len(w & kw) / len(w | kw) >= 0.5):
+                dup = True
+                break
+        if not dup:
+            out.append(q)
+    return out
+
+
 def _drop_questions_the_facts_answer(brief: dict[str, Any]) -> int:
     """The writer's pricing questions checked against every fact it was given:
     on 010038, 9 of 12 asked what the deal's own lines already said (ladders on
@@ -1869,6 +1929,8 @@ def _drop_questions_the_facts_answer(brief: dict[str, Any]) -> int:
         lines += [x["text"] for x in v]
     lines += [x["text"] for x in (brief.get("also_mentioned") or [])[:30]]
     lines += [x["text"] for x in brief.get("figures") or []]
+    if brief.get("roster_facts"):
+        lines.append("SITE ROSTER (from the heads): " + brief["roster_facts"])
     facts = "\n".join(f"- {t[:300]}" for t in dict.fromkeys(lines))[:24000]
     raw = _complete(_FACTS_ANSWER_PROMPT % (facts, json.dumps({f"p{i}": q["question"] for i, q in pricing})),
                     None, 400)
