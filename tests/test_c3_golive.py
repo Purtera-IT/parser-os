@@ -276,7 +276,9 @@ def test_the_quote_snapshot_holds_what_quote_reads():
     brief["sections"]["scope"].append({"id": "a2"})
     assert snap == {"deal": {"deal_name": "D"}, "left_out": {"ids": []},
                     "sections": {"scope": [{"id": "a1", "text": "x"}]},
-                    "job_details": [{"cites": ["a1"], "text": "x"}]}
+                    "job_details": [{"cites": ["a1"], "text": "x"}],
+                    # "also mentioned" travels too: the quote counts those lines out
+                    "also_mentioned": [], "also_mentioned_more_ids": []}
 
 
 def test_brief_calls_on_built_before_the_writer(monkeypatch):

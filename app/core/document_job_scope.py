@@ -768,6 +768,10 @@ def judge_documents(
             "correction_id": getattr(d, "correction_id", None),
             "drawing_spared": drawing_spared,
             "c3_verdict": c3_verdict, "c3_confidence": round(c3_p, 3),
+            # The head said other_job surely and the share rule (too many conversations for strays)
+            # kept it: said, never silent.
+            "share_rule_spared": bool(mode == "on" and c3_verdict == "other_job" and c3_p >= c3_aside()
+                                      and not aside_ok),
             "content_spared": content_spared, "content_match": matched,
             "reason": reason,
             "atom_ids": [str(getattr(a, "id", "") or "") for d_ in docs for a in d_] if other else [],

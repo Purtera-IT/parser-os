@@ -1645,6 +1645,9 @@ def build_site_readiness(
         # otherwise fall back to address strings as the slug,
         # producing keys like "site:address_1180_peachtree_st_..."
         # which is just another ghost site.
+        if atom_type == "physical_site" and "site_not_backed_by_heads" in (getattr(atom, "review_flags", None) or []):
+            # site_keys_follow_heads dropped its keys (no site line backs them): no row from its id.
+            continue
         if atom_type == "physical_site":
             val = getattr(atom, "value", None) or {}
             sid = ""

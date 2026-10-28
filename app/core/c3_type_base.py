@@ -914,7 +914,7 @@ def document_job_enabled() -> bool:
 
 #: The line readings brief v2 (``c3_brief``) uses, asked for in the compile's
 #: one read of the deal when ``SOWSMITH_C3_BRIEF`` is on.
-BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
+BRIEF_LINE_HEADS = ("col:admission", "read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
                     "read:scope_facet", "col:wants", "read:intake_gap", "read:needed_by",
                     "read:blocked_on", "read:superseded", "read:task_owner_role",
                     # Site role for site_geo_fallback (line_reading): on the labeled
@@ -1517,7 +1517,9 @@ def quote_snapshot(brief: dict[str, Any]) -> dict[str, Any]:
             "left_out": {"ids": list((brief.get("left_out") or {}).get("ids") or [])},
             "sections": {k: [dict(x) if isinstance(x, dict) else x for x in (v or [])]
                          for k, v in (brief.get("sections") or {}).items()},
-            "job_details": list(brief.get("job_details") or [])}
+            "job_details": list(brief.get("job_details") or []),
+            "also_mentioned": [{"id": x.get("id")} for x in brief.get("also_mentioned") or [] if isinstance(x, dict)],
+            "also_mentioned_more_ids": list(brief.get("also_mentioned_more_ids") or [])}
 
 
 def _raw_reading(atom_id: str, head: str) -> list[Any] | None:
@@ -1537,7 +1539,7 @@ def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
     roster: dict[str, dict[str, Any]] = {}
     for a in atoms:
         aid, text, kind = _text_type(a)
-        if kind != "physical_site" or _deal_kit(a):
+        if kind != "physical_site" or _deal_kit(a) or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             continue
         role = line_reading(aid, "jdg:site_role")
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
@@ -1577,6 +1579,10 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     from app.core.c3_brief import _deal_kit
 
     left_out = {str(i) for i in ((brief.get("left_out") or {}).get("ids") or [])}
+    # A line the keep head only half kept ("also mentioned") is not priced from: it goes to the
+    # quote marked, and counted out like a left-out line.
+    also = {str(x.get("id")) for x in brief.get("also_mentioned") or [] if isinstance(x, dict)} | {
+        str(i) for i in brief.get("also_mentioned_more_ids") or []}
     asked = bool(_DEAL.get("reads"))
     rows = []
     for a in atoms:
@@ -1591,6 +1597,9 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             row["deal_kit"] = True
         if aid in left_out:
             row["left_out"] = True
+        elif aid in also:
+            row["left_out"] = True
+            row["also_mentioned"] = True
         rows.append(row)
     if not rows:
         # Nothing to price: a deal with no evidence lines never gets an invented job.
@@ -1603,7 +1612,8 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                      "heads": {"asked": asked, "view": view_name(), "deal": deal_reads},
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
                                                for k, v in (brief.get("sections") or {}).items()},
-                                  "left_out": sorted(left_out),
+                                  "left_out": sorted(left_out | also),
+                                  "also_mentioned": sorted(also),
                                   "job_details": brief.get("job_details") or []}}}
     if _never():
         return _wait_for_heads("/v1/quote", body, {}, "quote read")

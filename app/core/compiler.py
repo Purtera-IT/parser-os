@@ -2184,6 +2184,18 @@ def compile_project(
                 # so a brief built from the wrong job can be read back to the
                 # judgement that let it in.
                 _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
+                # And to the brief (c3_brief.document_gate), so the envelope shows what decided
+                # which documents feed it.
+                try:
+                    from app.core import c3_type_base as _c3_djs
+
+                    _c3_djs._DEAL["document_job"] = [
+                        {k: _v.get(k) for k in ("filenames", "verdict", "model_verdict", "confidence", "source",
+                                                 "c3_verdict", "c3_confidence", "drawing_spared", "content_spared",
+                                                 "share_rule_spared", "reason", "atoms")}
+                        for _v in _djs_verdicts]
+                except Exception:
+                    pass
                 if _dropped_djs:
                     # Each set-aside conversation carries ITS reason (who said
                     # other_job, how sure, about which title) onto every atom it
@@ -3748,6 +3760,18 @@ def compile_project(
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")
+        # Site keys follow the heads: split addresses joined, the heads' site
+        # lines keyed, keys no site line backs dropped (listed in the brief).
+        from app.core.site_keys_follow_heads import settle as _settle_sites
+
+        _sk = _settle_sites(atoms, _c3_final._DEAL.get("types") or {})
+        _c3_final._DEAL["site_keys"] = _sk
+        if _sk.get("dropped") or _sk.get("address_lines_joined") or _sk.get("keys_minted_from_head"):
+            warnings.append(
+                f"INFO: site keys follow the heads: {len(_sk.get('dropped') or [])} key(s) no site line backs "
+                f"dropped ({sum(d['lines'] for d in _sk.get('dropped') or [])} line(s)), "
+                f"{_sk.get('address_lines_joined', 0)} split address line(s) joined, "
+                f"{_sk.get('keys_minted_from_head', 0)} head site line(s) keyed")
     except C3HeadsUnavailable:
         raise
     except Exception as exc:
