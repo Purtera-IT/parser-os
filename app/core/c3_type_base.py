@@ -960,8 +960,10 @@ QUOTE_LINE_HEADS = ("read:labor_hours", "read:hours_stated", "read:crew_size", "
                     # The day-type and access heads (run O): when the read answers them the quote
                     # reads the head, not the after-hours / lift wording rules.
                     "read:work_window", "read:access_need")
-#: Deal-size answers the quote reads (the read's ``deal`` block).
-QUOTE_DEAL_HEADS = ("jdg:billing_type", "jdg:travel_scope", "deal:declared_site_count")
+#: Deal-size answers the quote reads (the read's ``deal`` block). ``deal:primary_service`` (served in the
+#: planning view since run O) goes too, so the quote's job family can follow the service head instead of
+#: the nearest-description embedding alone (serve must read it; until it does, it is only carried).
+QUOTE_DEAL_HEADS = ("jdg:billing_type", "jdg:travel_scope", "deal:declared_site_count", "deal:primary_service")
 
 
 def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:

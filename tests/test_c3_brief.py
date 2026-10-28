@@ -533,3 +533,19 @@ def test_a_kept_line_moved_after_the_keep_loop_says_where_it_went():
     assert got["z1"] == ("kept_unplaced", "none:base:col:admission")
     placed = {x["id"] for v in brief["sections"].values() for x in v} | {"m1"}
     assert all(r[0] in placed for r in brief["line_decisions"]["rows"] if r[1] in ("kept", "also"))
+
+
+def test_an_untrusted_section_head_is_recorded_where_the_rule_places_the_line(monkeypatch):
+    """Run O answers read:sow_section in the planning view; the registry does not trust it, so the rule
+    places the line, and the line still carries the head's answer (the evidence a promotion needs)."""
+    monkeypatch.setenv("SOWSMITH_C3_BRIEF_TRUST", "read:co_action")
+    atoms = [_atom(1, "scope_item", "Install 4 cameras"), _atom(2, "exclusion", "Lifts are not included")]
+    reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.9]},
+             "a2": {"read:co_action": ["keep", 0.99], "read:sow_section": ["assumptions", 0.7]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    items = {x["id"]: x for v in b["sections"].values() for x in v}
+    assert {i["section_by"] for i in items.values()} == {"rule:type"}
+    assert items["a1"]["section_head"] == ["scope_of_work", 0.9]
+    assert items["a2"]["section_head"] == ["assumptions", 0.7]
+    part = b["decided_by"]["parts"]["read:sow_section"]
+    assert part["by"] == "rule" and part["head_answered"] == 2 and part["head_agrees"] == 1

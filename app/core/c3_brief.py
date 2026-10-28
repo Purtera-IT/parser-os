@@ -663,6 +663,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         log.info("c3_brief: jdg:sow_section %s judged %d/%d facts in %.1fs", judge_mode, len(judged), len(kept),
                  time.monotonic() - t0)
     sections: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    sec_head_n = [0, 0]  # kept lines the section head answered, and how many it placed where the brief did
     for a, p, by in kept:
         aid = str(a.id)
         v = judged.get(aid)
@@ -718,12 +719,24 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 "type_by": "head" if typed_by_head else "rule"}
         if fill:
             item["section_fill"] = fill
+        # The section head's own answer, kept on every line it read even when the registry does not
+        # let it place the line (run O answers it in the planning view; the registry still says weak).
+        # Without it nothing records where the head and the rule disagree, the evidence a planning-view
+        # promotion of read:sow_section needs.
+        hs, hp = r(aid, "read:sow_section") if have_reads else ("_absent", 0.0)
+        if hs != "_absent":
+            item["section_head"] = [hs, round(hp, 3)]
+            sec_head_n[0] += 1
+            sec_head_n[1] += hs == sec
         if _doc_id(a) in unsure_doc:
             item["unsure_document"] = unsure_doc[_doc_id(a)]
         if v is not None:
             item["judge"] = {"section": v.section, "owner": v.owner, "p": round(float(v.section_conf), 3)}
         sections[sec].append(item)
     _customer_furnished(sections, by_id, r if have_reads else None)
+    if sec_head_n[0]:
+        parts["read:sow_section"]["head_answered"] = sec_head_n[0]
+        parts["read:sow_section"]["head_agrees"] = sec_head_n[1]
     for sec in sections:
         sections[sec].sort(key=lambda x: -(x["keep_p"] or 0.5))
 
