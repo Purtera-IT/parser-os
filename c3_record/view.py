@@ -5,7 +5,16 @@ quoting    the customer's and partner's lines that arrived before our first SOW 
            documents are never inputs. Quote, SOW and universal heads are asked; PM heads are not.
 planning   every line before the planning end (``planning_end``: our first kickoff or scheduling message
            after the deal is won), our signed SOW and quote included. PM and universal heads are asked;
-           quote and SOW heads are not (they would read the answer off our own SOW).
+           quote and SOW heads are not (they would read the answer off our own SOW) -- except, under the
+           planning-heads contract (``PLANNING_HEADS``, run O), the SOW placement heads, the quote heads the
+           worker's quote reads and the deal's primary service: a planning compile HAS our SOW and quote, so
+           reading the answer off them is the right reading there, and the planning brief and quote need it.
+
+The planning-heads contract is one switch for both sides: a base trains them in the planning view only when
+``C3_PLANNING_HEADS=1`` at training (data.DealExample unmasks them, loop records ``planning_heads`` in the
+checkpoint), and serve answers them in the planning view only for a checkpoint that carries it (serve.py
+passes ``planning_heads=model.cfg.planning_heads``). A caller with no model at hand (the worker choosing which
+heads to ask) reads ``C3_PLANNING_HEADS``; serve still drops what its checkpoint was not trained on.
 
 Every line carries ``view:<quoting|planning>`` (``tag``) and a ``stage_at`` clamped to what the view
 can hold (``clamp_stage``), on both sides.
@@ -41,6 +50,18 @@ PM_HEADS = ("read:task_owner_role", "read:triggered_task", "read:trigger_event",
             "jdg:task_tier", "jdg:task_tier:reason")
 #: PM heads train at this weight in the quoting view (they are not served there).
 PM_IN_QUOTE_VIEW = 0.25
+#: Quote / SOW / deal heads trained AND served in the planning view under the planning-heads contract
+#: (C3_PLANNING_HEADS=1 at training, ``planning_heads`` in the checkpoint at serve). The SOW placement heads
+#: (the planning brief's sections), the quote heads the worker's quote reads (c3_type_base.QUOTE_LINE_HEADS /
+#: QUOTE_DEAL_HEADS) and the deal's primary service. A family key (``PLANNING_HEAD_FAMILIES``) covers its
+#: ``<key>:<field>`` sub-heads (``jdg:hours`` -> ``jdg:hours:qty``, ``jdg:hours:per``, ``jdg:hours:reason``).
+PLANNING_HEADS = ("read:sow_section", "read:sow_coverage", "read:sow_fill",
+                  "read:labor_hours", "read:hours_stated", "read:crew_size", "read:tech_level", "read:rate",
+                  "read:rate_for", "read:billing_type", "read:co_hours_estimate", "read:co_crew_rule",
+                  "jdg:billing_type", "jdg:commercial", "jdg:travel_scope", "jdg:hours",
+                  "deal:primary_service")
+PLANNING_HEAD_FAMILIES = ("jdg:billing_type", "jdg:commercial", "jdg:travel_scope", "jdg:hours")
+_ON = ("1", "true", "on", "yes")
 
 
 def name(view: Any) -> str:
@@ -61,22 +82,52 @@ def is_pm_head(key: str) -> bool:
     return key in PM_HEADS
 
 
-def head_scale(view: Any, keys: Iterable[str]) -> dict[str, float]:
+def is_planning_head(key: str) -> bool:
+    """A quote / SOW / deal head the planning-heads contract trains and serves in the planning view."""
+    return key in PLANNING_HEADS or key.startswith(tuple(f + ":" for f in PLANNING_HEAD_FAMILIES))
+
+
+def planning_heads_enabled(flag: Any = None) -> bool:
+    """The planning-heads contract: ``flag`` when given (serve: the checkpoint's own), else
+    ``C3_PLANNING_HEADS`` (training, and a caller with no model at hand). Off by default, so every base
+    trained before it reads and trains exactly as it did."""
+    if flag is not None:
+        return bool(flag)
+    import os
+    return os.environ.get("C3_PLANNING_HEADS", "0").strip().lower() in _ON
+
+
+def _masked_in_planning(key: str, planning_heads: bool) -> bool:
+    return is_quote_head(key) and not (planning_heads and is_planning_head(key))
+
+
+def head_scale(view: Any, keys: Iterable[str], *, planning_heads: Any = None) -> dict[str, float]:
     """Training's loss scale per head key in a view (a key not listed counts 1)."""
     keys = list(keys)
     if name(view) == QUOTING:
         return {k: PM_IN_QUOTE_VIEW for k in keys if is_pm_head(k)}
-    return {k: 0.0 for k in keys if is_quote_head(k)}
+    on = planning_heads_enabled(planning_heads)
+    return {k: 0.0 for k in keys if _masked_in_planning(k, on)}
 
 
-def heads(view: Any, keys: Iterable[str]) -> list[str]:
-    """The heads a read in this view asks: quoting drops the PM heads, planning the quote and SOW heads;
-    no view asks everything."""
+def train_scale(view: Any, stored: dict[str, float], *, planning_heads: Any = None) -> dict[str, float]:
+    """A training file's stored ``head_scale`` under the planning-heads contract: in the planning view a
+    planning head the builder masked (0, the old contract) trains at 1; every other entry, and every
+    quoting-view file, stays exactly as stored. Off: ``stored`` unchanged."""
+    if name(view) != PLANNING or not planning_heads_enabled(planning_heads):
+        return dict(stored)
+    return {k: v for k, v in stored.items() if not (v == 0 and is_planning_head(k))}
+
+
+def heads(view: Any, keys: Iterable[str], *, planning_heads: Any = None) -> list[str]:
+    """The heads a read in this view asks: quoting drops the PM heads, planning the quote and SOW heads
+    (but for the planning heads under the planning-heads contract); no view asks everything."""
     v = name(view)
     if v == QUOTING:
         return [k for k in keys if not is_pm_head(k)]
     if v == PLANNING:
-        return [k for k in keys if not is_quote_head(k)]
+        on = planning_heads_enabled(planning_heads)
+        return [k for k in keys if not _masked_in_planning(k, on)]
     return list(keys)
 
 
@@ -187,5 +238,6 @@ def planning_inputs(rows: list[dict[str, Any]], end: float, *, exclude: Iterable
 
 
 __all__ = ["QUOTING", "PLANNING", "VIEWS", "QUOTE_HEADS", "QUOTE_PREFIXES", "PM_HEADS", "PM_IN_QUOTE_VIEW",
+           "PLANNING_HEADS", "PLANNING_HEAD_FAMILIES", "is_planning_head", "planning_heads_enabled", "train_scale",
            "name", "of_run", "is_quote_head", "is_pm_head", "head_scale", "heads", "runs_quote", "tag",
            "clamp_stage", "stamp", "KICKOFF", "planning_end", "planning_inputs"]
