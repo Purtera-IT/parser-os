@@ -1037,9 +1037,16 @@ class DocxParser(BaseParser):
                 _uniq = _row_texts_once(row_cells)
                 if len(_uniq) >= 4 and len(_uniq) % 2 == 0:
                     _pairs = [(_uniq[i], _uniq[i + 1]) for i in range(0, len(_uniq), 2)]
+                    # Only when every value sits beside a label: a cell merged
+                    # across columns leaves blanks in the grid ("TOTAL | '' |
+                    # '' | $191,000.83"), which pair as (TOTAL, '') and ('',
+                    # $191,000.83) -- not a form row. Read as one, it dropped
+                    # both and the empty row atom aborted the whole document
+                    # (010245 SOW v3/v4, 010355's three revised ROMs).
                     if all(lbl and len(lbl) <= 40 and not re.search(r"\d", lbl) for lbl, _v in _pairs if lbl) \
+                            and all(lbl for lbl, v in _pairs if v) \
                             and any(not v for lbl, v in _pairs if lbl) and any(v for _l, v in _pairs):
-                        row_text = " | ".join(f"{lbl} | {v}" for lbl, v in _pairs if lbl and v)
+                        row_text = " | ".join(f"{lbl} | {v}" for lbl, v in _pairs if lbl and v) or row_text
                 # One value alone on its row ("Chase Smith", the rest blank)
                 # says nothing without its column's name: "Name: Chase Smith".
                 if row_idx > 0:
@@ -1169,6 +1176,13 @@ class DocxParser(BaseParser):
                             review_flags=[CHATTER_FLAG, "table_header"],
                             parser_version=self.parser_version,
                         ))
+                # A row whose text came out empty is skipped, never emitted:
+                # one empty atom fails validation and the whole document is
+                # lost with it.
+                if not row_text.strip():
+                    row_text = " | ".join(t for t in cell_texts if t.strip())
+                if not row_text.strip():
+                    continue
                 # v49.2: emit a raw_table_row atom alongside the legacy
                 # row blob. The centralized _enrich_table_atoms() in
                 # entity_extraction will classify all raw_table_row
