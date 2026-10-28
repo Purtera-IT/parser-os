@@ -34,8 +34,15 @@ QTYX=re.compile(r"(?:qty|quantity|qty\.)\s*[:=]?\s*(\d{1,4})\b|col_\d+:\s*(\d{1,
 PART=re.compile(r'[A-Z]{2,}\d{2,}|#\d+|\d+[A-Z]{2,}|model',re.I)
 EFF=re.compile(r"(?:approximately|approx\.?|about|around|roughly|duration:?)\s*(\d{1,2})(?:\s*(?:-|to)\s*(\d{1,2}))?\s*hours?|(\d{1,2})(?:\s*(?:-|to)\s*(\d{1,2}))?\s*hours?\s*(?:per|each|a)\s*(?:property|site|location|shift|day|tech|technician)|(?:a|one)\s+(?:guy|tech|technician)\s+for\s+(\d{1,2})(?:\s*-\s*(\d{1,2}))?\s*hours?",re.I)
 TECHS=re.compile(r"\b(\d|one|two|three|four)\s*(?:\(\d\)\s*)?(?:onsite\s+|field\s+|dedicated\s+)?(?:techs?|technicians?|engineers?|installers?)\b",re.I)
-HEIGHT=re.compile(r'\b(lift|scissor|boom|roof|mast|\d{2}\s*(?:-\s*\d{2}\s*)?(?:ft|feet|foot|\'))\b',re.I)
-AFTER=re.compile(r'\bafter[- ]hours\b|\bovernight\b|\bweekends?\b|\bnights?\b',re.I)
+# Height / lift access: a lift named as equipment, or a height stated as a ceiling/mounting height.
+# A bare length ("200 foot run", "MDF to the Roof") is cable, not access.
+HEIGHT=re.compile(r"\b(?:scissor|boom|aerial|man|personnel)[- ]?lifts?\b|\blifts?\s+(?:rental|access|required|needed|is required)\b|\bbucket truck\b"
+                  r"|\b(?:ceilings?|heights?|mount(?:ed|ing)?(?: height)?|high|tall)\b[^.\n]{0,25}?\b\d{2}\s*(?:-\s*\d{2}\s*)?(?:ft|feet|foot|')"
+                  r"|\b\d{2}\s*(?:-\s*\d{2}\s*)?(?:ft|feet|foot|')\s*(?:ceilings?|high|tall|clear(?:ance)?|height)\b",re.I)
+# After-hours work: the work's own schedule, not a weekend or a night someone mentions in passing.
+AFTER=re.compile(r"\bafter[- ]hours\b|\boff[- ]hours\b|\bovernight\b(?!\s+(?:shipping|ship|delivery|express|air|mail))|\bnight (?:shift|work|window)s?\b"
+                 r"|\b(?:work|install(?:ation)?|cutover|onsite|on-site)\b[^.\n]{0,30}?\b(?:on|over|during) (?:the )?weekends?\b"
+                 r"|\b(?:nights|evenings) and weekends\b|\boutside (?:of )?(?:normal )?business hours\b",re.I)
 NOISE=re.compile(r'net\s*\d+|warranty|licen|within \d+ (?:hours|days)|notice|24-48|24\s*/\s*7|quotes? (?:delivered|in)|business days|window',re.I)
 HB=(2,4,6,8,10,12,16,24,32,40,48,64,80,120,200,400,600)
 SKIP_TYPES={'small_talk','stakeholder','deal_metadata'}

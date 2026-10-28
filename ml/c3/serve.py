@@ -98,6 +98,34 @@ def _free_gpu() -> None:
         pass
 
 
+def _make_room(lines: int) -> bool:
+    """Before a read big enough to need the whole T4, unload the quote's
+    embedding model from Ollama (it otherwise sits on the GPU for its
+    keep_alive and a full-size window no longer fits). The quote reloads it on
+    its next call. Above ``C3_UNLOAD_EMBED_LINES`` lines (default 4000; 0 = never).
+    Returns whether it asked Ollama to unload."""
+    above = int(os.environ.get("C3_UNLOAD_EMBED_LINES", "4000") or 0)
+    model = os.environ.get("C3_EMBED_MODEL", "")
+    if not above or lines <= above or not model:
+        return False
+    try:
+        import urllib.request
+        base = (os.environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
+        loaded = json.loads(urllib.request.urlopen(base + "/api/ps", timeout=5).read() or b"{}")
+        if not any((m.get("name") or m.get("model")) == model for m in loaded.get("models") or []):
+            return False  # not on the GPU: nothing to unload (and no load just to unload it)
+        # An embed call with keep_alive 0 unloads the model once it answers.
+        body = json.dumps({"model": model, "input": ["x"], "keep_alive": 0}).encode()
+        urllib.request.urlopen(urllib.request.Request(base + "/api/embed", data=body,
+                                                      headers={"Content-Type": "application/json"}), timeout=60).read()
+        log.info("unloaded %s from the GPU before a %d-line read", model, lines)
+    except Exception as exc:  # the read still runs; a smaller window is its own fallback
+        log.warning("could not unload %s before a %d-line read: %s", model, lines, exc)
+        return False
+    _free_gpu()
+    return True
+
+
 def _windows(top: int, floor: int) -> list[int]:
     """8192 -> [8192, 4096, 2048] for floor 2048."""
     out = [max(1, top)]
@@ -302,6 +330,7 @@ class Base:
             kwargs["table_heads"] = tuple(table_heads)
         arrived = time.monotonic()
         self._acquire(deadline, gone)
+        _make_room(len(deal.atoms))
         try:
             started = time.monotonic()
             wait_ms = round((started - arrived) * 1000, 1)
