@@ -44,6 +44,47 @@ SECTION_ORDER = ("scope_of_work", "customer_responsibilities", "customer_furnish
 _SUPPLIER = {"us": "Provider", "customer": "Customer", "partner": "reseller"}
 SUPPLIER_BAR = float(os.environ.get("SOWSMITH_C3_SOW_SUPPLIER_BAR", "0.85"))
 UNSURE_BAR = float(os.environ.get("SOWSMITH_C3_SOW_UNSURE_BAR", "0.6"))
+
+
+def _ask(fails: list | None, call: str, prompt: str, model: str | None, max_tokens: int,
+         effort: str | None = None) -> dict[str, Any] | None:
+    """One writer or judge call, parsed. An empty or unparseable answer after
+    every retry (c3_brief._complete) is a failure recorded on the SOW
+    (``llm_failures``), never an answer of "nothing": a throttled burst made
+    quietly worse SOWs that looked like normal ones."""
+    raw = _complete(prompt, model, max_tokens, effort) if effort is not None else _complete(prompt, model, max_tokens)
+    got = _json_of(raw)
+    if not isinstance(got, dict):
+        if fails is not None:
+            fails.append({"call": call, "tries": max(1, int(os.environ.get("SOWSMITH_C3_LLM_TRIES", "4")))})
+        return None
+    return got
+
+
+def heads_decide() -> bool:
+    """``SOWSMITH_C3_SOW_HEADS_DECIDE`` (default on): the promoted heads decide
+    keep, supplier, party, job family and sites, and a rule only stands in
+    where the head left a line unanswered (owner rule). Off restores the
+    rule path, for a dev rollback without a redeploy."""
+    return os.environ.get("SOWSMITH_C3_SOW_HEADS_DECIDE", "on").strip().lower() not in ("0", "false", "no", "off")
+
+
+#: read:task_owner_role at or above this decides who does a line (scope vs
+#: customer responsibilities); the head is promoted at .77 on unseen deals.
+OWNER_BAR = float(os.environ.get("SOWSMITH_C3_SOW_OWNER_BAR", "0.75"))
+#: The owner head's answers as the SOW's two parties: our people do it, or the
+#: customer does. partner / seller / other decide nothing here.
+_OWNER_PARTY = {"technician": "provider", "project_manager": "provider", "project_coordinator": "provider",
+                "solutions_architect": "provider", "customer": "customer"}
+#: deal:primary_service at or above this picks the job family (c3_brief.SERVICE_BAR).
+SERVICE_BAR = 0.6
+#: deal:primary_service -> the SOW job family whose standards apply. A service
+#: with no family here leaves the family to the writer and the router, marked.
+_SERVICE_FAMILY = {"audio_visual": "av_conference_room", "low_voltage_cabling": "low_voltage_cabling",
+                   "wireless": "wireless_ap", "security_camera": "cameras_security",
+                   "camera_vms_operations": "cameras_security", "datacenter": "data_center",
+                   "imac": "imac_deskside", "itad": "decommission_packing",
+                   "staff_augmentation": "smart_hands_general", "msp": "smart_hands_general"}
 #: A fact line's length in the prompt. 010083's answers ride inline after
 #: each question ("...? [Betty] We will have a Webex bridge open...") and ran
 #: past a 400-character cut.
@@ -578,13 +619,25 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": x.get("under") or "",
-                        "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or ""})
+                        "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or "",
+                        "owner": x.get("owner")})
+    # The lines the keep head (co_action, or the base type head) left out are
+    # out: no regex, type label or parser type brings them back (owner rule:
+    # the promoted heads decide). Lines no head read stay open to the bridges
+    # below, and each one they admit is counted (rule_admits).
+    decide = heads_decide()
+    vetoed: set[str] = set()
+    if decide:
+        vetoed = {str(i) for i in ((brief.get("left_out") or {}).get("head_dropped") or [])}
+        vetoed |= {str(x["id"]) for x in brief.get("label_next") or []
+                   if x.get("head") == "read:co_action" and x.get("base_says") == "reject"}
+        seen |= vetoed
     # A line the keep head rejected at a coin flip has not been decided: the
     # SOW is where a dropped cable run becomes an unpriced one (010043's
     # "IDF to Front door 146ft", reject 0.53), so the writer sees it, marked.
-    unsure = [{"id": x["id"], "text": x["text"]} for x in brief.get("label_next") or []
-              if x.get("head") == "read:co_action" and x.get("base_says") == "reject"
-              and float(x.get("p") or 1) < UNSURE_BAR]
+    unsure = [] if decide else [{"id": x["id"], "text": x["text"]} for x in brief.get("label_next") or []
+                                if x.get("head") == "read:co_action" and x.get("base_says") == "reject"
+                                and float(x.get("p") or 1) < UNSURE_BAR]
     # And a line the keep head chose to keep below the brief's bar (010171's
     # Logitech Sight request, keep 0.39): the head said keep; the SOW sees it.
     unsure += [{"id": x["id"], "text": x["text"]} for x in brief.get("kept_unsure") or []]
@@ -663,7 +716,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": "",
-                        "text": str(x["text"]), "supplier": x.get("supplier")})
+                        "text": str(x["text"]), "supplier": x.get("supplier"), "owner": x.get("owner")})
     # A line the type head or the parser rejected is never a fact, wherever
     # the brief filed it; nor is a form's absence note (010082: a signature's
     # "New Unit Opening" (small_talk, confidence 0) reached the summary, and
@@ -706,7 +759,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             f["text"] = full[f["id"]]
         f["text"] = _withhold(f["text"])
     _lead_ins(out, envelope.get("atoms") or [])
-    _list_siblings(out, envelope.get("atoms") or [])
+    _list_siblings(out, envelope.get("atoms") or [], vetoed)
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
     seen_text: set[str] = set()
     uniq = []
@@ -765,10 +818,29 @@ _TYPE_ROLE = {"dependency": "type head: a prerequisite or condition",
               "milestone_phase": "type head: a dated milestone of this job"}
 
 
-def _fact_line(f: dict[str, Any]) -> str:
+def _head_supplier(f: dict[str, Any]) -> str | None:
+    """col:supplier's sure answer on a fact (us / customer / partner), else None.
+    With the heads deciding it holds on every line the head answered, not
+    only BOM rows."""
     sup = f.get("supplier")
-    who = (f" supplied-by:{_SUPPLIER.get(sup[0], sup[0])}" if sup and float(sup[1] or 0) >= SUPPLIER_BAR
-           and sup[0] in _SUPPLIER and f.get("type") in _ITEM_TYPES else "")
+    if not (sup and sup[0] in _SUPPLIER and float(sup[1] or 0) >= SUPPLIER_BAR):
+        return None
+    return sup[0] if heads_decide() or f.get("type") in _ITEM_TYPES else None
+
+
+def _head_owner(f: dict[str, Any]) -> str | None:
+    """read:task_owner_role's sure answer as a party (provider / customer), else None."""
+    own = f.get("owner")
+    if not heads_decide() or not (own and float(own[1] or 0) >= OWNER_BAR):
+        return None
+    return _OWNER_PARTY.get(str(own[0]))
+
+
+def _fact_line(f: dict[str, Any]) -> str:
+    sup = _head_supplier(f)
+    who = f" supplied-by:{_SUPPLIER[sup]}" if sup else ""
+    party = _head_owner(f)
+    who += {"provider": " done-by:Provider", "customer": " done-by:Customer"}.get(party or "", "")
     role = _TYPE_ROLE.get(f.get("type") or "")
     return (f"[{f['id']}] ({f['section']}" + (f", {role}" if role else "") + (", from a photo" if f.get("pictured") else "")
             + (", quoted earlier email" if f.get("quoted") else "") + (", a question" if f.get("asked") else "")
@@ -779,7 +851,7 @@ def _fact_line(f: dict[str, Any]) -> str:
 _MEASURED = re.compile(r"(?i)^\s*(.{2,40}?)\s*[:\-–]?\s*(?:approx(?:imately)?\.?\s*)?(\d[\d,.]*)\s*(ft|feet|foot|'|m|meters?|units?|x)\b")
 
 
-def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> int:
+def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]], vetoed: set[str] | frozenset[str] = frozenset()) -> int:
     """A line of the same measured list as a kept line shares its fate. Of
     010043's "IDF to side door 154ft / IDF to back door 88ft / IDF to Front
     door 146ft", the keep head kept one and rejected two at a coin flip, so the
@@ -811,7 +883,7 @@ def _list_siblings(out: list[dict[str, Any]], atoms: list[dict[str, Any]]) -> in
             n += 1
     have = {f["id"] for f in out}
     for a in atoms:
-        if a.get("id") in have:
+        if a.get("id") in have or str(a.get("id")) in vetoed:  # a sibling the keep head dropped stays dropped
             continue
         t = str(a.get("text") or "")
         if not shape(t):
@@ -1249,10 +1321,53 @@ def _slot_back(content: dict[str, Any], before: list[Any], rule: str) -> None:
                 {"section": "method_steps", "text": std["text"], "reason": f"restored: rule {rule} removed the deal step in its slot"})
 
 
+_SUPPLY_LISTS = ("provider_materials", "customer_materials", "equipment_in_scope", "provider_tools")
+#: The lists that say who does a line: our work, or the customer's.
+_PARTY_LISTS = {"scope": "provider", "arrival_protocol": "provider", "customer_responsibilities": "customer"}
+
+
+def _head_placed(content: dict[str, Any]) -> list[tuple[str, dict[str, Any], str]]:
+    """Every line a promoted head placed, with the list it sits in: a supply
+    item col:supplier assigned, a duty read:task_owner_role assigned."""
+    out = []
+    for k in _SUPPLY_LISTS:
+        out += [("sup", x, k) for x in content.get(k) or [] if isinstance(x, dict) and x.get("by") == "col:supplier"]
+    for k in _PARTY_LISTS:
+        out += [("own", x, k) for x in content.get(k) or [] if isinstance(x, dict) and x.get("owner_by") == "read:task_owner_role"]
+    return out
+
+
+def _hold_heads(content: dict[str, Any], rule: str, placed: list[tuple[str, dict[str, Any], str]]) -> list[dict[str, Any]]:
+    """A rule never moves a line a promoted head placed: a supply item to
+    another party's list, or a duty to the other party. Removing it is a keep
+    call (rules stand in for sow_keep) and stands; moving it is undone and
+    recorded."""
+    out = []
+    for kind, x, k in placed:
+        lists = _SUPPLY_LISTS if kind == "sup" else tuple(_PARTY_LISTS)
+        where = next((k2 for k2 in lists for y in content.get(k2) or [] if y is x), None)
+        if where is None and x.get("cites"):  # a rule rebuilt the line: the same cites
+            hit = next(((k2, y) for k2 in lists for y in content.get(k2) or []
+                        if isinstance(y, dict) and y.get("cites") == x["cites"]), None)
+            if hit:
+                where, x = hit
+        if where is None or where == k or (kind == "own" and _PARTY_LISTS[where] == _PARTY_LISTS[k]):
+            continue
+        content[where] = [y for y in content[where] if y is not x]
+        content.setdefault(k, []).append(x)
+        out.append({"rule": rule, "head": "sow_supplier" if kind == "sup" else "sow_party",
+                    "atom_ids": list(x.get("cites") or []), "value": k, "was": where, "text": str(x.get("text") or "")[:300],
+                    "ledger": "head_lock", "why": f"rule {rule} moved a line the head placed in {k}; the head stands"})
+    return out
+
+
 def _traced(content: dict[str, Any], rule: str, fn, *args, **kwargs):
     before = _snap(content)
     lists_before = {k: list(content.get(k) or []) for k in _LIST_SECTION}
+    placed = _head_placed(content) if heads_decide() else []
     result = fn(*args, **kwargs)
+    if placed:
+        content.setdefault("rule_decisions", []).extend(_hold_heads(content, rule, placed))
     _slot_back(content, lists_before.get("scope") or [], rule)
     merged_back = _merged_back(content, lists_before, rule)
     _std_gone(content, f"rule {rule}")
@@ -1389,6 +1504,19 @@ def _route_family(family: str, fs: list[dict[str, Any]]) -> str:
     return family
 
 
+def _family(brief: dict[str, Any], writer_says: str, fs: list[dict[str, Any]]) -> tuple[str, str]:
+    """The job family and who decided it: deal:primary_service when the head
+    answered at SERVICE_BAR with a family for that service; otherwise the
+    writer's call through the keyword router, marked as the rule it is."""
+    svc = brief.get("service") or {}
+    by = str(svc.get("by") or "")
+    fam = _SERVICE_FAMILY.get(str(svc.get("value") or ""))
+    if heads_decide() and fam and by.startswith(("base:", "purtera:")) and not svc.get("unsure") \
+            and float(svc.get("p") or 0) >= SERVICE_BAR:
+        return fam, by
+    return _route_family(writer_says, fs), "rule:route_family"
+
+
 def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
           model: str | None = None) -> dict[str, Any]:
     """The SOW content for one deal: four focused calls (header, tasks, who
@@ -1415,8 +1543,9 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     base = _BASE % (json.dumps(crm_rec), json.dumps(site_info), json.dumps(contacts),
                     "\n".join(_fact_line(f) for f in fs))
     effort = os.environ.get("SOWSMITH_C3_SOW_EFFORT", "medium")
-    got: dict[str, Any] = dict(_json_of(_complete(base + _PARTS["header"], model, 3500, effort)) or {})
-    family = _route_family(str(got.get("job_family") or "other"), fs)
+    fails: list[dict[str, Any]] = []
+    got: dict[str, Any] = dict(_ask(fails, "header", base + _PARTS["header"], model, 3500, effort) or {})
+    family, family_by = _family(brief, str(got.get("job_family") or "other"), fs)
     got["job_family"] = family
     deal_no = (re.match(r"\s*(\d{6})", str(crm_rec.get("deal_name") or "")) or [None, ""])[1]
     std = standard_items(family, deal_no, [f["text"][:300] for f in fs
@@ -1429,18 +1558,25 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     pick = lambda *secs: json.dumps({**{k: std.get(k, []) for k in secs},
                                      **{f"purtera_standard_{k}": fixed[k] for k in secs if fixed.get(k)}})
     with ThreadPoolExecutor(max_workers=2) as pool:
-        f_scope = pool.submit(_complete, base + _PARTS["scope"] % pick("method_steps", "deliverables"), model, 4000,
-                              effort)
-        f_supply = pool.submit(_complete, base + _PARTS["supply"] % pick("tools", "customer_responsibilities"),
+        f_scope = pool.submit(_ask, fails, "scope", base + _PARTS["scope"] % pick("method_steps", "deliverables"), model,
+                              4000, effort)
+        f_supply = pool.submit(_ask, fails, "supply", base + _PARTS["supply"] % pick("tools", "customer_responsibilities"),
                                model, 3000, effort)
         for fut in (f_scope, f_supply):
-            got.update({k: v for k, v in (_json_of(fut.result()) or {}).items() if k != "job_family"})
+            got.update({k: v for k, v in (fut.result() or {}).items() if k != "job_family"})
     draft = {k: [str((x or {}).get("text") if isinstance(x, dict) else x) for x in got.get(k) or []]
              for k in ("overview", "scope", "provider_materials", "customer_materials", "customer_responsibilities")}
-    got.update(_json_of(_complete(base + _PARTS["bounds"] % (pick("assumptions", "exclusions"),
-                                                              json.dumps(draft)[:10000]), model, 3000, effort)) or {})
+    got.update(_ask(fails, "bounds", base + _PARTS["bounds"] % (pick("assumptions", "exclusions"),
+                                                                json.dumps(draft)[:10000]), model, 3000, effort) or {})
     got["job_family"] = family
     content = _normalise(got)
+    # Visible on the SOW: which calls came back empty after every retry, and
+    # whether the draft is usable at all (no scope = failed, not "short").
+    content["llm_failures"] = fails
+    content["job_family_by"] = family_by
+    content["rule_admits"] = {k: n for k, n in __import__("collections").Counter(
+        f["section"] for f in fs if f["section"] in ("typed_only", "answered_question", "unsure")
+        or f.get("type") == "program_model").items()}
     content["overview"] = content["overview"][:4]
     pool_text = " ".join(f["text"] for f in fs).lower()
     content["scope_lead"] = _lead(str(content.get("scope_lead") or ""), pool_text)
@@ -1450,9 +1586,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     if re.fullmatch(r"(?i)\s*(the )?provider will perform the following( services| tasks| work)?\s*:?\s*", content["scope_lead"]):
         content["scope_lead"] = ""
     lines = {f["id"]: (f"[under: {f['under']}] " if f["under"] else "") + f["text"]
-             + (f" [supplier head: {_SUPPLIER.get(f['supplier'][0], f['supplier'][0])}]"
-                if f.get("supplier") and float(f["supplier"][1] or 0) >= SUPPLIER_BAR
-                and f.get("type") in _ITEM_TYPES else "") for f in fs}
+             + (f" [supplier head: {_SUPPLIER[_head_supplier(f)]}]" if _head_supplier(f) else "") for f in fs}
     _traced(content, "rejected_source", _rejected_source, content, envelope)
     content["added"] = _cover(content, fs, model)
     content["added"] += _must_include(content, fs, model)
@@ -1607,6 +1741,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
         if isinstance(x, dict) and yr.isdigit() and re.match(r"(?i)\s*requested (start|completion) date: [A-Za-z, ]+\d{1,2}\s*$", str(x.get("text"))):
             x["text"] = str(x["text"]).rstrip() + f", {yr}"
     content["moved_by_supplier_head"] = _follow_supplier(content, fs)
+    content["moved_by_owner_head"] = _traced(content, "owner_head", _follow_owner, content, fs)
     _ship_list_siblings(content, envelope, fs)
     sup_of = {f["id"]: f.get("supplier") for f in fs}
     cust = lambda c: bool(sup_of.get(c)) and sup_of[c][0] == "customer" and float(sup_of[c][1] or 0) >= SUPPLIER_BAR
@@ -1631,7 +1766,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _traced(content, "supply_grounded", _supply_grounded, content, lines)
     art_of = {str(a.get("id")): str(a.get("artifact_id") or "") for a in envelope.get("atoms") or []}
     content["unassigned"] = _traced(content, "party_check", _party_check, content, lines, art_of)
-    _provider_half(content, fs)
+    _traced(content, "provider_half", _provider_half, content, fs)
     _dedupe_items(content)
     content["withheld"] = _scrub(content)
     # A number that names a document ("785 POS Termainal Refresh RFP.doc") is a
@@ -1659,6 +1794,12 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     fact_docs = {str(a.get("artifact_id")) for a in envelope.get("atoms") or [] if str(a.get("id")) in fact_ids}
     no_gate = ("physical_site", "contact", "person", "signature", "small_talk", "email_header", "deal_metadata",
                "open_question", "action_item", "answered_question")
+    # Never a line the heads dropped: a dropped line does not switch a
+    # standard on (owner rule).
+    if heads_decide():
+        rejected |= {str(i) for i in ((brief.get("left_out") or {}).get("head_dropped") or [])}
+        rejected |= {str(x["id"]) for x in brief.get("label_next") or []
+                     if x.get("head") == "read:co_action" and x.get("base_says") == "reject"}
     gate_atoms = [str(a.get("text") or "") for a in envelope.get("atoms") or []
                   if not (a.get("structured") or {}).get("quoted") and str(a.get("id")) not in rejected
                   and str(a.get("artifact_id")) in fact_docs and "?" not in str(a.get("text") or "")
@@ -3411,10 +3552,11 @@ def _must_include(content: dict[str, Any], fs: list[dict[str, Any]], model: str 
     if not missing:
         return 0
     draft = json.dumps({k: [x["text"] for x in content.get(k) or []] for k in LISTS})[:12000]
-    raw = _complete(_MUST_PROMPT % (json.dumps(list(LISTS)), draft, "\n".join(_fact_line(f) for f in missing[:60])),
-                    model, 3000, os.environ.get("SOWSMITH_C3_SOW_EFFORT", "medium"))
+    got = _ask(content.setdefault("llm_failures", []), "must_include",
+               _MUST_PROMPT % (json.dumps(list(LISTS)), draft, "\n".join(_fact_line(f) for f in missing[:60])),
+               model, 3000, os.environ.get("SOWSMITH_C3_SOW_EFFORT", "medium"))
     n = 0
-    for a in (_json_of(raw) or {}).get("add") or []:
+    for a in (got or {}).get("add") or []:
         k = str((a or {}).get("list") or "")
         item = _item(a)
         if k in LISTS and item and item["cites"]:
@@ -3442,10 +3584,12 @@ def _cover(content: dict[str, Any], fs: list[dict[str, Any]], model: str | None)
     draft = json.dumps({k: [x["text"] for x in content.get(k) or []] for k in LISTS})[:12000]
     batches = [unused[i:i + COVER_BATCH] for i in range(0, len(unused), COVER_BATCH)]
 
+    fails = content.setdefault("llm_failures", [])
+
     def one(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        raw = _complete(_COVER_PROMPT % (json.dumps(list(LISTS)), draft,
-                                         "\n".join(_fact_line(f) for f in batch)), model, 3000)
-        return list((_json_of(raw) or {}).get("add") or [])
+        got = _ask(fails, "cover", _COVER_PROMPT % (json.dumps(list(LISTS)), draft,
+                                                    "\n".join(_fact_line(f) for f in batch)), model, 3000)
+        return list((got or {}).get("add") or [])
 
     with ThreadPoolExecutor(max_workers=max(1, len(batches))) as pool:
         adds = [a for got in pool.map(one, batches) for a in got]
@@ -3561,7 +3705,9 @@ def _party_check(content: dict[str, Any], lines: dict[str, str], art: dict[str, 
     body = "\n".join(f"{i}. [{('Provider' if k == 'provider_materials' else 'Customer')}] {x['text']}\n"
                      + "\n".join(f"   [{c}] {lines.get(c, '')[:300]}" for c in x["cites"])
                      for i, (k, x) in enumerate(items))
-    got = _json_of(_complete(_PARTY_PROMPT % body, sow_model(), 800)) or {}
+    got = _ask(content.setdefault("llm_failures", []), "party_check", _PARTY_PROMPT % body, sow_model(), 800)
+    if got is None:
+        return 0  # no answer is not "no party stated": nothing moves to Equipment in Scope
     ok = {int(i) for i in got.get("stated") or [] if str(i).isdigit()}
     art = art or {}
     docs_ok = {(k, art.get(c)) for i, (k, x) in enumerate(items) if i in ok for c in x.get("cites") or [] if art.get(c)}
@@ -3623,6 +3769,40 @@ def _dedupe_items(content: dict[str, Any]) -> None:
         content[k] = keep
 
 
+def _follow_owner(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
+    """read:task_owner_role decides who does a line: a scope line whose cited
+    facts the head reads, sure, as the customer's goes to customer
+    responsibilities, and a customer duty it reads as ours goes to the scope.
+    Each line the head answered is tagged, so no later wording rule (WHO,
+    first person, duty party) can move it (_hold_heads). Lines it left
+    unanswered stay with the writer and the rules."""
+    if not heads_decide():
+        return 0
+    party = {f["id"]: _head_owner(f) for f in fs}
+    p_of = {f["id"]: float((f.get("owner") or [None, 0])[1] or 0) for f in fs}
+    own_of = {f["id"]: str((f.get("owner") or [""])[0]) for f in fs}
+    target = {"provider": "scope", "customer": "customer_responsibilities"}
+    moved = 0
+    for k in ("scope", "customer_responsibilities"):
+        keep = []
+        for x in content.get(k) or []:
+            cites = (x.get("cites") or []) if isinstance(x, dict) else []
+            said = {party.get(c) for c in cites}
+            if not cites or x.get("kind") == "heading" or x.get("standard") or len(said) != 1 or None in said:
+                keep.append(x)
+                continue
+            who = said.pop()
+            x["owner_by"] = "read:task_owner_role"
+            x["owner"] = [own_of[cites[0]], round(min(p_of.get(c, 0) for c in cites), 3)]
+            if target[who] != k:
+                content.setdefault(target[who], []).append(x)
+                moved += 1
+            else:
+                keep.append(x)
+        content[k] = keep
+    return moved
+
+
 def _follow_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
     """The supplier head decides which party's list a supply item sits in: an
     item whose cited lines the head reads, sure, as the other party's moves
@@ -3632,8 +3812,10 @@ def _follow_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
     # deals it equals a constant guess overall (0.659), so it decides only on
     # BOM rows, the lines it was trained on; on 010082's sentences it read the
     # backboard Provider brings as the customer's.
-    sup = {f["id"]: f["supplier"][0] for f in fs
-           if f.get("supplier") and float(f["supplier"][1] or 0) >= SUPPLIER_BAR and f.get("type") in _ITEM_TYPES}
+    # With the heads deciding (heads_decide) the head's sure answer holds on
+    # every line it answered; a rule may stand in only where it abstained.
+    sup = {f["id"]: _head_supplier(f) for f in fs if _head_supplier(f)}
+    p_of = {f["id"]: float((f.get("supplier") or [None, 0])[1] or 0) for f in fs}
     side = {"us": "provider_materials", "partner": "provider_materials", "customer": "customer_materials"}
     moved = 0
     # An item line the head assigns is listed whatever the writer did: the
@@ -3646,13 +3828,21 @@ def _follow_supplier(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
             continue
         content.setdefault(side[sup[f["id"]]], []).append(
             {"text": f["text"].strip().rstrip("."), "cites": [f["id"]], "kind": "fact", "by": "col:supplier"})
-    for k in ("provider_materials", "customer_materials"):
+    for k in ("provider_materials", "customer_materials") + (("equipment_in_scope",) if heads_decide() else ()):
         keep = []
         for x in content.get(k) or []:
+            if k == "equipment_in_scope" and not any(sup.get(c) in side for c in x.get("cites") or []):
+                keep.append(x)  # no head answer: the neutral list stands
+                continue
             x["text"] = _SUPPLY_VERB.sub("", x["text"]).strip()
             x["text"] = x["text"][:1].upper() + x["text"][1:]
             votes = [side[sup[c]] for c in x["cites"] if sup.get(c) in side]
             target = max(set(votes), key=votes.count) if votes else k
+            if votes and heads_decide():
+                # Head-placed: no later rule moves it (_traced's supplier lock).
+                ans = next(sup[c] for c in x["cites"] if sup.get(c) in side and side[sup[c]] == target)
+                x["by"] = "col:supplier"
+                x["supplier"] = [ans, round(max(p_of.get(c, 0) for c in x["cites"] if sup.get(c) == ans), 3)]
             if target != k:
                 content.setdefault(target, []).append(x)
                 moved += 1
@@ -3955,7 +4145,23 @@ def _apply_standards(content: dict[str, Any], family: str, facts_text: list[str]
                 verb = lambda u: _stem((re.findall(r"[a-z]+", u.lower()) or [""])[0])
                 return not re.search(r"\d", t) and any(verb(str(it["text"])) == verb(t) and _said(t, [it], max(share, 0.55)) for it in std)
             return _said(t, std, max(share, 0.55))
-        items[:] = [x for x in items if not covered(x) and not (isinstance(x, dict) and x.get("standard"))]
+        # A deal line that says what a standard says is the deal's fact and
+        # keeps its place and its cites; the standard it repeats is the one
+        # left out (owner rule: a template never replaces a deal line). A
+        # writer line nothing cites is still replaced by the standard.
+        deal_twins = [x for x in items if isinstance(x, dict) and x.get("cites") and covered(x)] if heads_decide() else []
+        if deal_twins:
+            kept_std = []
+            for it in std:
+                twin = next((d for d in deal_twins if _said(str(d.get("text")), [it], 0.55)
+                             or _said(str(it["text"]), [d], 0.55)), None)
+                if twin is None:
+                    kept_std.append(it)
+                else:
+                    suppressed(sec, it["text"], "a cited deal line says it; the deal line stays")
+            std = kept_std
+        items[:] = [x for x in items if (not covered(x) or any(x is d for d in deal_twins))
+                    and not (isinstance(x, dict) and x.get("standard"))]
         if lst == "scope":
             # A counted deal step is the standard step with the deal's numbers:
             # keep it, not both (010373: install/mount/cable/trash written twice).
@@ -10093,7 +10299,11 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
             # 010264's clock install step and 010326's check-in step (pass Z).
             to_verify += [(k, i, x) for i, x in enumerate(keep) if x["kind"] == "fact" or (
                 x["kind"] == "method" and x["cites"] and k in ("customer_responsibilities", "assumptions"))]
-    ok = _verified([x for _, _, x in to_verify], lines)
+    _VERIFY_FAILS.fails = content.setdefault("llm_failures", [])
+    try:
+        ok = _verified([x for _, _, x in to_verify], lines)
+    finally:
+        _VERIFY_FAILS.fails = None
     bad = {id(x) for _, _, x in to_verify} - {id(x) for x in ok}
     # A scope line rejected for one trailing clause keeps its main claim
     # (010217: Training Room 250's whole install line went over "after
@@ -10178,13 +10388,37 @@ def _unsupported_specifics(text: str, pool: str) -> bool:
     return False
 
 
-def _verified(items: list[dict[str, Any]], lines: dict[str, str]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for start in range(0, len(items), 40):
-        batch = items[start:start + 40]
+VERIFY_BATCH = 40
+#: Where check() wants _verified's failed calls recorded (this thread's draft).
+_VERIFY_FAILS = __import__("threading").local()
+
+
+def _verified(items: list[dict[str, Any]], lines: dict[str, str], fails: list | None = None) -> list[dict[str, Any]]:
+    """The items the judge (or a lexical test) finds stated by their cited
+    lines. The batches are independent and run in parallel, the same calls in
+    one round. A batch whose judge call failed after every retry keeps its
+    items and is recorded (``fails``): no answer is not "unsupported"."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    batches = [items[i:i + VERIFY_BATCH] for i in range(0, len(items), VERIFY_BATCH)]
+    if fails is None:
+        fails = getattr(_VERIFY_FAILS, "fails", None)
+
+    def judge(batch: list[dict[str, Any]]) -> dict[str, Any] | None:
         body = "\n".join(f"{i}. {x['text']}\n" + "\n".join(f"   [{c}] {lines.get(c, '')[:300]}" for c in x["cites"])
                          for i, x in enumerate(batch))
-        got = _json_of(_complete(_VERIFY_PROMPT % body, sow_model(), 1200)) or {}
+        return _ask(fails, "verify", _VERIFY_PROMPT % body, sow_model(), 1200)
+
+    if len(batches) > 1:
+        with ThreadPoolExecutor(max_workers=len(batches)) as pool:
+            answers = list(pool.map(judge, batches))
+    else:
+        answers = [judge(b) for b in batches]
+    out: list[dict[str, Any]] = []
+    for batch, got in zip(batches, answers):
+        if got is None:
+            out.extend(batch)
+            continue
         okn = {int(i) for i in got.get("supported") or [] if str(i).isdigit()}
         for i, x in enumerate(batch):
             # A bullet whose content words its own cited lines state is kept even
@@ -10548,7 +10782,10 @@ def _coverage_score(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
     # A draft missing a section a PM always reads loses outright to one that has it.
     missing = sum(1 for k in ("overview", "scope", "customer_responsibilities", "assumptions", "out_of_scope")
                   if not content.get(k))
-    return len(cited & body) - dropped - 25 * missing
+    # A draft whose header or scope call failed never wins over one that wrote.
+    failed = 1000 if {str(f.get("call")) for f in content.get("llm_failures") or [] if isinstance(f, dict)} \
+        & set(_ESSENTIAL_CALLS) else 0
+    return len(cited & body) - dropped - 25 * missing - failed
 
 
 def _best_of(envelope: dict[str, Any], pm_handoff: dict[str, Any]) -> dict[str, Any]:
@@ -10566,6 +10803,9 @@ def _best_of(envelope: dict[str, Any], pm_handoff: dict[str, Any]) -> dict[str, 
     scored = sorted(((_coverage_score(d, fs), i) for i, d in enumerate(drafts)), reverse=True)
     best = drafts[scored[0][1]]
     best["drafts_scored"] = [sc for sc, _ in scored]
+    # The losing drafts' failures stay visible: best-of hid a failed run.
+    best["llm_failures_other_drafts"] = [f for i, d in enumerate(drafts) if i != scored[0][1]
+                                         for f in d.get("llm_failures") or []]
     return best
 
 
@@ -11357,8 +11597,20 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
              for s in (envelope.get("site_readiness") or {}).get("sites") or []]
     offices = _reseller_streets(envelope)
     sites = [x for x in sites if str(x.get("address") or "").strip() or str(x.get("name") or "").strip()]  # 010116: one blank roster row
-    sites = [x for x in sites if not any(o in re.sub(r"\W+", " ", x["address"].lower()) for o in offices)]
+    # The site heads' roster (site_readiness) is the site table. A rule that
+    # would drop or replace a roster row only flags it for the PM; the regex
+    # and writer fallbacks run only when the roster is empty, marked.
+    roster_rules = not (heads_decide() and sites)
+    site_flags: list[dict[str, str]] = []
+    site_source = "heads:site_readiness" if sites else ""
+    office_rows = [x for x in sites if any(o in re.sub(r"\W+", " ", x["address"].lower()) for o in offices)]
+    if roster_rules:
+        sites = [x for x in sites if not any(x is o for o in office_rows)]
+    else:
+        site_flags += [{"site": x.get("name") or x.get("address"), "flag": "reseller_office",
+                        "why": "the address is the reseller's office street"} for x in office_rows]
     if not sites:
+        site_source = "rule:customer_site_address"
         # Every resolved site was an office: the address a message names as the
         # customer's site is the site (010373: "The customer's site address will
         # be 530 Fifth Avenue, New York, NY 10036").
@@ -11371,6 +11623,7 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                           "name": f"{street}, {city}, {st} {z}"}]
                 break
     if not sites:
+        site_source = "rule:location_form_line"
         # A form or sheet row naming the location (010116: "Location | 1221
         # Brickell Ave, Miami, Florida", no ZIP, no site row).
         doc_lines = [ln for d in envelope.get("documents") or [] for pg in ((d.get("structured") or {}).get("pages") or [])
@@ -11386,18 +11639,30 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     # Roster rows named by a trunk or circuit id ("SIP-6522-0134...") are not
     # sites; the writer's own location list with names and addresses is
     # (010326: 18 garbled rows against 30 clean locations).
-    if any(re.match(r"(?i)\s*(sip|ckt|circuit|trunk)[-_ ]?\d", str(x.get("name") or "")) for x in sites):
-        sites = [x for x in sites if not re.match(r"(?i)\s*(sip|ckt|circuit|trunk)[-_ ]?\d", str(x.get("name") or ""))]
+    trunk_rows = [x for x in sites if re.match(r"(?i)\s*(sip|ckt|circuit|trunk)[-_ ]?\d", str(x.get("name") or ""))]
+    if trunk_rows and roster_rules:
+        sites = [x for x in sites if not any(x is t for t in trunk_rows)]
+    elif trunk_rows:
+        site_flags += [{"site": x.get("name"), "flag": "trunk_id_name", "why": "named by a trunk or circuit id"} for x in trunk_rows]
     # On a many-site deal a signature address is a head office, not a site
     # (010209: Ralph Lauren's Nutley, NJ signature beside "30 locations").
     stated0 = int(((envelope.get("site_count_reconciliation") or {}).get("stated")) or 0)
     if stated0 >= 5 and sites:
         chrome_all = " ".join(str(c.get("text") or "") for c in envelope.get("suppressed_chrome") or [] if isinstance(c, dict)).lower()
-        sites = [x for x in sites if not (str(x.get("address") or "").strip()
-                 and chrome_all.count(re.sub(r"\s+", " ", str(x.get("address")).split(",")[0].lower()).strip()) >= 2)]
+        chrome_rows = [x for x in sites if str(x.get("address") or "").strip()
+                       and chrome_all.count(re.sub(r"\s+", " ", str(x.get("address")).split(",")[0].lower()).strip()) >= 2]
+        if roster_rules:
+            sites = [x for x in sites if not any(x is r_ for r_ in chrome_rows)]
+        else:
+            site_flags += [{"site": x.get("name") or x.get("address"), "flag": "signature_address",
+                            "why": "the address recurs in signatures on a many-site deal"} for x in chrome_rows]
     table = location_table(envelope)
-    if len(table) > len(sites):
+    if len(table) > len(sites) and (roster_rules or not sites):
         sites = table
+        site_source = "rule:location_table"
+    elif len(table) > len(sites):
+        site_flags.append({"site": "", "flag": "location_table_longer",
+                           "why": f"a location table holds {len(table)} rows; the roster {len(sites)}"})
     from_sheet = None if table else sheet_site_count(envelope)
     c = _best_of(envelope, {"sites": sites, "site_count": from_sheet})
     rec = envelope.get("site_count_reconciliation") or {}
@@ -11415,7 +11680,11 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     # city but no street: 010279's 111 store rows were cut to the six sites a
     # set-aside SmartHands call mentioned.
     if len(sites) >= 10 and len(addressed) < 0.5 * len(sites) and not (table and sites is table):
-        sites = addressed or sites[:max(1, int(stated or 1))]
+        if roster_rules:
+            sites = addressed or sites[:max(1, int(stated or 1))]
+        else:
+            site_flags.append({"site": "", "flag": "few_addressed",
+                               "why": f"{len(addressed)} of {len(sites)} roster rows carry a street address"})
     if table:
         # A count the documents state that the table nearly bears out (010279:
         # "113" stores, 98 rows read whole) beats both the rows and a count
@@ -11530,7 +11799,15 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     # The deal's own per-site count list, when one adds up, is the site table
     # and the site count, with each site's device count (010326: 30 rows, 317).
     counted = count_table(envelope, " ".join(str(x.get("text")) for x in c.get("scope") or [] if isinstance(x, dict)))
+    if counted and not roster_rules:
+        if len(counted) != len(c["sites"]):
+            site_flags.append({"site": "", "flag": "count_table_differs",
+                               "why": f"a per-site count list holds {len(counted)} rows; the roster {len(c['sites'])}"})
+        c["site_summary"] = {**c.get("site_summary", {}), "unit": counted[0]["unit"],
+                             "unit_total": sum(r["count"] for r in counted)}
+        counted = []
     if counted:
+        site_source = "rule:count_table"
         c["sites"] = counted
         c["site_summary"] = {**c.get("site_summary", {}), "stated": len(counted), "resolved": len(counted), "from_table": True,
                              "unit": counted[0]["unit"], "unit_total": sum(r["count"] for r in counted)}
@@ -11549,7 +11826,17 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         if m:
             name, street, city, st, z = (g.strip() for g in m.groups())
             parsed.append({"name": name, "address": f"{street}, {city}, {st} {z}", "street": street, "city": city, "state": st, "postal_code": z})
-    if not counted and len(parsed) >= 6 and len(parsed) > len(c["sites"]) and len(parsed) >= 0.4 * len(c.get("locations") or []):
+    if not roster_rules:
+        # The writer's cited locations never replace the heads' roster: one the
+        # roster does not hold is a flag for the PM.
+        have = " ".join(re.sub(r"\W+", " ", f"{r.get('address')} {r.get('name')}".lower()) for r in c["sites"])
+        for p_ in parsed:
+            key = " ".join(re.sub(r"\W+", " ", p_["street"].lower()).split()[:3])
+            if key and key not in have:
+                site_flags.append({"site": p_["address"], "flag": "writer_location_not_in_roster",
+                                   "why": "the writer cited a location the site heads did not resolve"})
+    elif not counted and len(parsed) >= 6 and len(parsed) > len(c["sites"]) and len(parsed) >= 0.4 * len(c.get("locations") or []):
+        site_source = "writer:locations"
         # Name-only rows ("Lakefront Substation.") are sites too (010326).
         named = [{"name": str(x.get("text") if isinstance(x, dict) else x).strip().rstrip(".").split(" — ")[0], "address": "",
                   "street": "", "city": "", "state": "", "postal_code": ""}
@@ -11558,7 +11845,8 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
                  and 1 <= len(str(x.get("text") if isinstance(x, dict) else x).split()) <= 6]
         c["sites"] = parsed + [n for n in named if n["name"] and not any(n["name"].lower() == p_["name"].lower() for p_ in parsed)]
     locs = [str(x.get("text") or "") for x in c.get("locations") or [] if isinstance(x, dict) and x.get("cites")]
-    if locs and len(c["sites"]) <= 5 and not table:
+    if locs and len(c["sites"]) <= 5 and not table and roster_rules:
+        site_source = "writer:locations"
         rows = []
         roster = list(c["sites"])
         for t in locs:
@@ -11922,9 +12210,53 @@ def for_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     _untraced_ledger(c)
     c.pop("_unknown_cites", None)
     _decisions_match_output(c)
+    _tag_origin(c)
+    c["site_source"] = site_source if c.get("sites") else "none"
+    c["site_flags"] = site_flags
+    c["draft_status"] = _draft_status(c)
     c["as_of"] = (envelope.get("run_scope") or {}).get("as_of")
     c["version"] = "c3_sow_v1"
     return c
+
+
+def _tag_origin(c: dict[str, Any]) -> None:
+    """Every SOW line says where it comes from, so the Studio can show
+    template content apart from deal facts: ``DEAL`` a line citing the deal's
+    facts; ``TEMPLATE`` PurTera standard handling (purtera_standards.json,
+    ``template_source: standards``) or the writer's uncited method line
+    (``template_source: writer``). A template line is never a deal fact."""
+    counts = {"DEAL": 0, "TEMPLATE": 0}
+    for k in LISTS:
+        for x in c.get(k) or []:
+            if not isinstance(x, dict) or x.get("kind") == "heading":
+                continue
+            if x.get("standard"):
+                x["origin"], x["template_source"] = "TEMPLATE", "standards"
+            elif x.get("cites"):
+                x["origin"] = "DEAL"
+            else:
+                x["origin"], x["template_source"] = "TEMPLATE", "writer"
+            counts[x["origin"]] += 1
+    for d in c.get("deliverables") or []:
+        if isinstance(d, dict) and d.get("standard"):
+            d["origin"], d["template_source"] = "TEMPLATE", "standards"
+    c["origin_counts"] = counts
+
+
+#: Calls without whose answer the draft is not a SOW.
+_ESSENTIAL_CALLS = ("header", "scope")
+
+
+def _draft_status(c: dict[str, Any]) -> str:
+    """failed: the header or scope call came back empty after every retry;
+    degraded: another call did (its step ran on no answer and is recorded in
+    llm_failures); ok otherwise."""
+    calls = {str(f.get("call")) for f in c.get("llm_failures") or [] if isinstance(f, dict)}
+    if calls & set(_ESSENTIAL_CALLS):
+        c["failed_because"] = "LLM call(s) " + ", ".join(sorted(calls & set(_ESSENTIAL_CALLS))) + \
+            " returned nothing usable after every retry"
+        return "failed"
+    return "degraded" if calls else "ok"
 
 
 def _name_contradicted(name: str, c: dict[str, Any]) -> bool:

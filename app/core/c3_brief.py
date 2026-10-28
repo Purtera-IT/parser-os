@@ -507,6 +507,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 conflicts.append({"ids": [good[0], bad[0]], "about": pk.anchor_key, "by": "rule:packet"})
 
     label_tasks.sort(key=lambda x: abs(x["p"] - 0.45))
+    unsure_ids = {k["id"] for k in kept_unsure}
     brief = {
         "version": 2,
         "service": service,
@@ -516,7 +517,13 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "questions": questions,
         "conflicts": conflicts[:40],
         "kept_unsure": sorted(kept_unsure, key=lambda x: -x["p"])[:120],
-        "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12))},
+        "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12)),
+                     # The lines a head (not a rule) left out, by id: the SOW
+                     # may not bring them back (c3_sow.facts). A keep below
+                     # the bar is not one of them (kept_unsure).
+                     "head_dropped": sorted(x["id"] for x in left_out
+                                            if str(x.get("by") or "").startswith(("base:", "purtera:"))
+                                            and x["id"] not in unsure_ids)},
         "decided_by": {
             "heads_used": sorted(k for k, v in use.items() if v),
             "fell_back": sorted(k for k, v in use.items() if not v),
@@ -1126,6 +1133,11 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             r = c3_type_base.line_reading(str(x["id"]), "col:supplier")
             if r:
                 x["supplier"] = [r[0], round(r[1], 3)]
+            # And who does it (read:task_owner_role): the SOW's party for a
+            # duty follows it where the head answered (c3_sow._follow_owner).
+            o = c3_type_base.line_reading(str(x["id"]), "read:task_owner_role")
+            if o:
+                x["owner"] = [o[0], round(o[1], 3)]
     # Lines a vision pass read off the job's own figures and photos. The heads
     # never saw such lines in training and file them as parser-derived; until
     # they are labeled, the writer gets them as what they are (010038's floor

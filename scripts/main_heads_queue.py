@@ -1,4 +1,6 @@
-"""The corrections queue for the C3 super heads' MAIN heads (not the SOW heads).
+"""The corrections queue for the C3 super heads' MAIN heads, and the PM's SowSmith
+corrections to the heads the SOW follows (sow_section, sow_party, sow_supplier,
+sow_keep).
 
     python scripts/main_heads_queue.py --corrections ~/c3-local/main_heads_loop/export/<day>/corrections.jsonl \\
         --envelopes ~/c3-local/main_heads_loop/export/<day>/envelopes --out ~/c3-local/main_heads_loop/runs/<day>/queue
@@ -55,7 +57,20 @@ MAIN_HEADS: dict[str, tuple[str, str]] = {
     "site_role": ("jdg:site_role", "line"),
     "facility": ("jdg:facility", "line"),
     "conflict": ("jdg:conflict", "pair"),         # a "supports" verdict also trains rel:supports
+    # A PM's SowSmith edit (Studio edit log -> POST /feedback/correction). PM
+    # corrections are approved labels (owner policy 2026-10-27), so these
+    # train like the main heads' corrections.
+    "sow_section": ("read:sow_section", "line"),
+    "sow_party": ("read:task_owner_role", "line"),
+    "sow_supplier": ("col:supplier", "line"),
+    # A PM delete is "not in this SOW", which is co_action reject only when the
+    # PM's reason says the line is not a fact of the job (sow_keep_verdict).
+    "sow_keep": ("read:co_action", "line"),
 }
+#: A PM's reason on a SowSmith delete that says the line is not a job fact
+#: (labels_from_sow.NOT_A_JOB_FACT, said in words).
+_NOT_A_JOB_FACT = re.compile(r"(?i)\bnot (a |part of the |part of this )?(job|deal) fact\b|\bnot (part of )?(this|the) job\b|"
+                             r"\bnot_job_fact\b|\bnoise\b|\bsmall talk\b|\bsignature\b|\bmarketing\b")
 #: Main heads with no PM correction route yet: nothing to queue.
 NO_ROUTE = {
     "read:address_level": "no HEAD_REGISTRY head stores it; it is labeled only on the atom card",
@@ -79,6 +94,23 @@ def by_person(created_by: Any) -> bool:
     if not v or _DRAFT.search(v):
         return False
     return v.lower() == "pm" or "@" in v or bool(_UUID.match(v))
+
+
+def reason_of(instruction: str) -> str:
+    """The PM's own reason, from "PM <label>: <was> → <now> — <reason>"."""
+    parts = str(instruction or "").split(" — ", 1)
+    return parts[1].strip() if len(parts) > 1 else ""
+
+
+def sow_keep_verdict(verdict: str, reason: str) -> str | None:
+    """A sow_keep correction as read:co_action: keep stays keep; a delete is a
+    reject only when the PM's reason says the line is not a job fact (a
+    duplicate or a line a template covers says nothing about the line)."""
+    if verdict == "keep":
+        return "keep"
+    if verdict == "drop" and _NOT_A_JOB_FACT.search(reason or ""):
+        return "reject"
+    return None
 
 
 def was_of(instruction: str) -> str:
@@ -199,6 +231,12 @@ def head_said(key: str, paths: list[dict[str, Any]]) -> Any:
         return "keep" if p.get("admitted") else "drop"
     if key == "col:supplier":
         return (p.get("supplier") or [None])[0]
+    if key == "read:sow_section":
+        return p.get("section")
+    if key == "read:task_owner_role":
+        return (p.get("owner") or [None])[0]
+    if key == "read:co_action":
+        return None if not p or p.get("missing") else ("reject" if p.get("brief") == ["left_out"] else "keep")
     if key in ("jdg:site_role", "jdg:facility"):
         return p.get("sites") or None
     if key == "jdg:site":
@@ -227,7 +265,11 @@ def queue_rows(corr: dict[str, Any], envs: dict[str, Envelope]) -> list[dict[str
         "status": "person" if person else "draft",
         "at": float(corr.get("updated_at") or corr.get("created_at") or 0),
         "compile_id": rel.get("compile_id") or "", "label_key": rel.get("label_key") or "",
+        "reason": reason_of(corr.get("instruction") or ""), "line_id": rel.get("atom_id") or corr.get("complaint_id") or "",
     }
+    if head == "sow_keep":
+        base["pm_verdict"] = base["verdict"]
+        base["verdict"] = sow_keep_verdict(base["verdict"], base["reason"]) or ""
     if head == "conflict" and base["verdict"] == "supports":
         base["also"] = ["rel:supports"]
     out = []
@@ -238,6 +280,8 @@ def queue_rows(corr: dict[str, Any], envs: dict[str, Envelope]) -> list[dict[str
                    deal="", atoms=[], resolved=None, path=[], said=None, skip=None)
         if corr.get("status", "active") != "active":
             row["skip"] = "disabled"
+        elif head == "sow_keep" and not base["verdict"]:
+            row["skip"] = "delete_not_a_fact_call"  # removed from this SOW, not "not a job fact"
         elif _PROBE.search(ex) or str(rel.get("atom_id") or "") == "routing_probe":
             row["skip"] = "probe"
         out.append(row)

@@ -6,7 +6,7 @@
 #
 # 1 Collect   envelopes carry c3_sow.rule_decisions; reviews.jsonl = SowSmith
 #             "Export labels" (PM reviews + PM edits)
-# 2 Labels    ml.c3.labels_from_sow → gold (PM) + silver (rules) records
+# 2 Labels    ml.c3.labels_from_sow → PM corrections only (rule decisions are report-only)
 # 3 Refit     ml.c3.slot_fit per head on train deals, held-out deals pick the epoch
 # 4 Verify    ml.c3.rule_retire scores the refit against every rule's decisions
 #             on the held-out deals → report (ready = >=95% over >=30)
