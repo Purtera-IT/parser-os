@@ -65,6 +65,17 @@ NEGATED=re.compile(r"\b(?:no|not|never|without|excluding|except|n't|none|nor)\b(
 #: Text read off a picture (OCR / vision): room numbers on a floor plan are not counts of anything.
 PICTURE_TEXT=re.compile(r"^\s*\[(?:OCR|Image|Figure|vision)",re.I)
 LEVEL_ON_LINE=re.compile(r"\b(?:l|level|lvl|tier)\s*-?\s*([1-4])\b",re.I)
+#: The super heads' service (deal:primary_service, ml/c3/values.py DEAL_SERVICE_DESC) -> this bundle's job family.
+#: The heads state what the job is; the quote fills the form for it. A service with no clear family here
+#: (_absent, other, professional_services, ...) leaves the family to the description embedding, marked.
+SERVICE_FAMILY={'audio_visual':'av','paging_mass_notification':'av','low_voltage_cabling':'cabling','das':'cabling',
+                'wireless':'ap','security_camera':'camera','camera_vms_operations':'camera','electrical':'power',
+                'rack_and_stack':'rack','datacenter':'rack','network_maintenance':'rack','imac':'device','hardware':'device',
+                'telecom':'device','security_access':'device','building_management_systems':'device','fire_safety':'device',
+                'staff_augmentation':'program','msp':'program','audit':'survey'}
+#: Lines that state no term of the deal: never a billing vote (000118: two small_talk and two open_question lines
+#: among the eight t_and_m votes).
+NO_BILLING_TYPES=SKIP_TYPES|{'open_question','answered_question','question'}
 
 def _snap(h): return min(HB,key=lambda x:abs(math.log(x)-math.log(max(h,1))))
 
@@ -133,6 +144,7 @@ class QuoteHeads:
             if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by=f'heads:{k}',atom_ids=[])
         votes={}
         for a in atoms:
+            if a.get('type') in NO_BILLING_TYPES: continue
             for h in BILLING_LINE_HEADS:
                 r=self._sure(a,h)
                 if r: votes.setdefault(r[0],[]).append((a.get('id'),float(r[1]),h))
@@ -238,7 +250,13 @@ class QuoteHeads:
         scope=name+'. '+' '.join((a.get('text') or '')[:250] for a in work[:10])
         ej,en=self._embed([scope,name or scope])
         sims=[0.7*sum(x*y for x,y in zip(ej,d))+0.3*sum(x*y for x,y in zip(en,d)) for d in self.D]
-        fam=self.fams[max(range(len(sims)),key=lambda i:sims[i])]; F=self.b['families'][fam]
+        fam=self.fams[max(range(len(sims)),key=lambda i:sims[i])]; fam_p=max(sims); fam_by='fallback:embedding_family'
+        # The job is what the super heads say it is: the service head's answer picks the family when it has one
+        # here (000118: service imac, the embedding said cabling). The embedding is only the recorded fallback.
+        sv=((p.get('heads') or {}).get('deal') or {}).get('deal:primary_service')
+        if sv and sv[0] not in (None,'_absent') and SERVICE_FAMILY.get(str(sv[0])) in self.b['families']:
+            fam=SERVICE_FAMILY[str(sv[0])]; fam_p=float(sv[1] or 0); fam_by='heads:deal:primary_service'
+        F=self.b['families'][fam]
         seller,account=self._profile(p); prof=seller or (account if account and account['kits']>=2 else None)
         st_t,st_h=self._stated(work); q=self._quantity(p,work,cited)
         readable=self._readable(p); asked=self._heads_asked(p)
@@ -311,7 +329,8 @@ class QuoteHeads:
         by_id={a.get('id'):a for a in readable}
         lead=(used.get('hours') or used.get('techs') or {}).get('atom_id')
         source_text=((by_id.get(lead) or {}).get('text') or '')[:300] if lead else (q['text'] if q else ((work[0].get('text') or '')[:300] if work else ''))
-        return dict(version=self.version,job_type=fam,job_type_p=round(max(sims),3),
+        return dict(version=self.version,job_type=fam,job_type_p=round(fam_p,3),job_type_by=fam_by,
+            service=(dict(answer=str(sv[0]),p=round(float(sv[1] or 0),3)) if sv and sv[0] not in (None,'_absent') else None),
             heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,site_count=p.get('site_count') or 0,after_hours=after,
             sites=dict(count=p.get('site_count') or 0,by=(site_by if 'sites' in p else 'none (not sent)'),
                        said=said or None,rule_atom_ids=dict(after_hours=after_ids,height=height_ids),

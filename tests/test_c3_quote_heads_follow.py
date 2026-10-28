@@ -160,3 +160,25 @@ def test_output_shape_matches_the_platform_contract(qh):
     # no after-hours wording: "reg" is a marked default, never silent
     plain = qh.quote(_deal([{"id": "b", "type": "task", "text": "Mount cameras"}]), word=False)["lines"][0]
     assert (plain["day_type"], plain["by"]["day_type"], plain["after_hours"]) == ("reg", "fallback:default", False)
+
+
+def test_the_service_head_picks_the_job_family(qh):
+    atoms = [{"id": "a1", "type": "task", "text": "Install cameras across the warehouse"}]
+    out = qh.quote(_deal(atoms, heads={"asked": True, "deal": {"deal:primary_service": ["audio_visual", 0.31]}}), word=False)
+    assert out["job_type"] == "av" and out["job_type_by"] == "heads:deal:primary_service" and out["job_type_p"] == 0.31
+    out = qh.quote(_deal(atoms, heads={"asked": True, "deal": {"deal:primary_service": ["_absent", 0.9]}}), word=False)
+    assert out["job_type"] == "camera" and out["job_type_by"] == "fallback:embedding_family"
+    # a service with no family in this bundle (wireless -> ap is not in the test bundle) stays the embedding's
+    out = qh.quote(_deal(atoms, heads={"asked": True, "deal": {"deal:primary_service": ["wireless", 0.9]}}), word=False)
+    assert out["job_type_by"] == "fallback:embedding_family"
+
+
+def test_chatter_and_questions_cast_no_billing_vote(qh):
+    atoms = [{"id": "a1", "type": "small_talk", "text": "we did this for CDW last year",
+              "reads": {"read:billing_type": ["t_and_m", 0.99]}},
+             {"id": "a2", "type": "open_question", "text": "how do you usually bill these?",
+              "reads": {"read:billing_type": ["t_and_m", 0.99]}},
+             {"id": "a3", "type": "payment_term", "text": "Fixed fee per site, invoiced on completion",
+              "reads": {"read:billing_type": ["fixed", 0.9]}}]
+    out = qh.quote(_deal(atoms, heads={"asked": True}), word=False)
+    assert out["billing"]["answer"] == "fixed" and out["billing"]["atom_ids"] == ["a3"]
