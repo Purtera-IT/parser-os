@@ -1141,9 +1141,10 @@ _PROMPT = (
     "deadline, a contact, a count, what is being asked for, or a change to the scope such as work added): %s\n"
     "OPEN QUESTIONS (asked in the deal; return under open_questions only those a PM must still get answered to "
     "price the job, reworded plainly, one question each; drop nudges and chasers such as 'have you had a chance "
-    "to review', 'any update', every question marked (asked by the customer/partner) that asks PurTera about "
-    "itself (where it has presence, what its software does, turnaround, availability; PurTera answers those, "
-    "the customer is not asked them), and notes or labels copied from a spreadsheet): %s\nCONFLICTS: %s"
+    "to review', 'any update', every question that asks PurTera about itself -- where it has presence, what its "
+    "software or platform does, its turnaround or availability -- whoever asked it and however it is marked "
+    "(PurTera answers those; the customer is not asked them), and notes or labels copied from a spreadsheet): "
+    "%s\nCONFLICTS: %s"
 )
 
 _ASK_PROMPT = (
