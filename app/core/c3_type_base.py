@@ -907,6 +907,17 @@ BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "rea
                     "col:supplier")
 
 
+#: The line readings the Deal Kit quote heads (POST /v1/quote, ml/c3/quote_heads.py) decide hours,
+#: crew, level, rate, billing and travel from, asked in the same read when ``SOWSMITH_C3_QUOTE`` is on.
+#: The view drops them from a planning read (they would read the answer off our own SOW), so a
+#: planning compile's quote says so (``heads_asked`` false) instead of looking head-decided.
+QUOTE_LINE_HEADS = ("read:labor_hours", "read:hours_stated", "read:crew_size", "read:tech_level",
+                    "read:rate_for", "read:billing_type", "jdg:commercial", "read:co_hours_estimate",
+                    "read:co_crew_rule", "col:supplier")
+#: Deal-size answers the quote reads (the read's ``deal`` block).
+QUOTE_DEAL_HEADS = ("jdg:billing_type", "jdg:travel_scope", "deal:declared_site_count")
+
+
 def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
     """This compile's base reading of one line, or None when the line was not
     read (created after the read) or the head was not asked."""
@@ -940,7 +951,12 @@ def _brief_body(body: dict[str, Any]) -> dict[str, Any]:
     if view_name():
         body["view"] = view_name()
     if brief_enabled():
-        body.update(line_heads=brief_line_heads(), full=True)
+        line_heads = brief_line_heads()
+        if quote_enabled():
+            from c3_record.view import heads as _view_heads
+
+            line_heads = list(dict.fromkeys(line_heads + _view_heads(view_name(), QUOTE_LINE_HEADS)))
+        body.update(line_heads=line_heads, full=True)
         qs = brief_questions()
         if qs:
             body["questions"] = qs
@@ -1477,38 +1493,103 @@ def quote_parallel() -> bool:
 def quote_snapshot(brief: dict[str, Any]) -> dict[str, Any]:
     """What ``quote`` reads of the brief, copied, so a thread can send it while the writer works."""
     return {"deal": dict(brief.get("deal") or {}),
+            "left_out": {"ids": list((brief.get("left_out") or {}).get("ids") or [])},
             "sections": {k: [dict(x) if isinstance(x, dict) else x for x in (v or [])]
                          for k, v in (brief.get("sections") or {}).items()},
             "job_details": list(brief.get("job_details") or [])}
 
 
+def _raw_reading(atom_id: str, head: str) -> list[Any] | None:
+    """The read's raw entry for one line and head: ``[answer, p]`` or, when the server sends a number
+    head's value, ``[answer, p, value]``."""
+    v = ((_DEAL.get("reads") or {}).get(str(atom_id)) or {}).get(head)
+    return list(v) if isinstance(v, (list, tuple)) and v and v[0] is not None else None
+
+
+def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
+    """The heads' site roster for the quote: one entry per site key on a line the heads typed
+    ``physical_site`` (the compile's final types, after the C3 authority pass), never a Deal Kit line,
+    and not a line ``jdg:site_role`` surely reads as somebody else's address. Each carries the atom
+    ids it came from, so the kit can cite them."""
+    from app.core.c3_brief import _deal_kit
+
+    roster: dict[str, dict[str, Any]] = {}
+    for a in atoms:
+        aid, text, kind = _text_type(a)
+        if kind != "physical_site" or _deal_kit(a):
+            continue
+        role = line_reading(aid, "jdg:site_role")
+        if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
+            continue
+        keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")] or [f"site-line:{aid}"]
+        for k in keys[:1]:
+            e = roster.setdefault(k, {"site": k, "text": text[:200], "atom_ids": [], "by": "heads:physical_site"})
+            if aid not in e["atom_ids"]:
+                e["atom_ids"].append(aid)
+    return list(roster.values())
+
+
+def _degraded(reason: str, deal_id: str) -> dict[str, Any]:
+    """A quote that could not be made, said out loud: the brief and the Deal Kit prefill show it
+    instead of reading {} as "the heads proposed nothing"."""
+    log.warning("quote heads degraded for %s: %s", deal_id or "?", reason)
+    return {"error": reason[:300], "by": "none", "degraded": True, "lines": []}
+
+
 def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[str, Any]:
     """The quote heads' labor proposal for this deal: task line, job type, techs, hours per tech,
-    rate line and price, each with its reason. Sends the final atoms and the brief's sections and
-    job details; returns {} on any failure so a compile never waits on it."""
-    if not quote_enabled() or not _url():
+    rate line and price, each with its reason and ``by``.
+
+    Sends the final atoms with the heads' readings of each (hours, crew, level, rate, billing,
+    supplier: ``QUOTE_LINE_HEADS``) and the deal answers (``QUOTE_DEAL_HEADS``), which atoms are
+    old Deal Kit lines or were left out of the brief, and the heads' site roster and count.
+    Off (``SOWSMITH_C3_QUOTE`` unset) it returns {}. Any failure under ``SOWSMITH_C3_FALLBACK=never``
+    raises ``C3HeadsUnavailable``; on the default path it returns a ``degraded`` record (never {})."""
+    if not quote_enabled():
         return {}
+    if not _url():
+        if _never():
+            raise C3HeadsUnavailable("quote heads: SOWSMITH_C3_QUOTE is on but no C3 service URL is set; "
+                                     "SOWSMITH_C3_FALLBACK=never fails the compile")
+        return _degraded("no C3 service URL", deal_id)
     deal = brief.get("deal") or {}
+    from app.core.c3_brief import _deal_kit
+
+    left_out = {str(i) for i in ((brief.get("left_out") or {}).get("ids") or [])}
+    asked = bool(_DEAL.get("reads"))
     rows = []
     for a in atoms:
         aid, text, kind = _text_type(a)
-        if text.strip():
-            rows.append({"id": aid, "text": text[:4000], "type": kind})
+        if not text.strip():
+            continue
+        row: dict[str, Any] = {"id": aid, "text": text[:4000], "type": kind}
+        reads = {h: r for h in QUOTE_LINE_HEADS if (r := _raw_reading(aid, h))}
+        if reads:
+            row["reads"] = reads
+        if _deal_kit(a):
+            row["deal_kit"] = True
+        if aid in left_out:
+            row["left_out"] = True
+        rows.append(row)
     if not rows:
         # Nothing to price: a deal with no evidence lines never gets an invented job.
-        return {}
+        return _degraded("no evidence lines to price", deal_id)
+    sites = quote_sites(atoms)
+    deal_reads = {k: list(v) for k in QUOTE_DEAL_HEADS
+                  if isinstance((v := (_DEAL.get("deal") or {}).get(k)), (list, tuple))}
     body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
-                     "atoms": rows, "site_count": 0,
+                     "atoms": rows, "site_count": len(sites), "sites": sites,
+                     "heads": {"asked": asked, "view": view_name(), "deal": deal_reads},
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
                                                for k, v in (brief.get("sections") or {}).items()},
+                                  "left_out": sorted(left_out),
                                   "job_details": brief.get("job_details") or []}}}
     if _never():
         return _wait_for_heads("/v1/quote", body, {}, "quote read")
     try:
         return _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60")))
-    except Exception as exc:  # noqa: BLE001 - best effort, like every other C3 call
-        log.warning("quote heads unavailable: %s", type(exc).__name__)
-        return {}
+    except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
+        return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
 
 
 def warm() -> None:

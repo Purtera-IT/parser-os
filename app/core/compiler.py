@@ -3857,13 +3857,23 @@ def compile_project(
                     # Ends the stage: without it the heartbeat reported c3_quote running for minutes
                     # after the compile finished.
                     telemetry.end_stage(_qstage, output_count=len((_q or {}).get("lines") or []))
-                if _q:
+                if _q and (_q.get("degraded") or _q.get("error")):
+                    # Visible, never {}: the PM handoff and the Deal Kit prefill show the quote failed
+                    # instead of reading an empty proposal as the heads' answer.
+                    _c3_brief["quote"] = {**_q, "degraded": True, "by": "none"}
+                    warnings.append(f"WARNING: quote heads degraded: {_q.get('error')}")
+                elif _q:
                     _c3_brief["quote"] = _q
                     warnings.append(f"INFO: quote heads: {_q.get('job_type')} {len(_q.get('lines') or [])} line(s)")
         except C3HeadsUnavailable:
             raise
         except Exception as exc:
+            _c3_brief["quote"] = {"error": f"{type(exc).__name__}: {exc}"[:300], "by": "none", "degraded": True,
+                                  "lines": []}
             warnings.append(f"WARNING: quote heads failed: {type(exc).__name__}: {exc}")
+    if _c3_brief is not None:
+        # The left-out ids only feed the quote's filter; the envelope keeps the counts.
+        (_c3_brief.get("left_out") or {}).pop("ids", None)
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.

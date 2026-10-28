@@ -96,10 +96,11 @@ def test_default_document_read_still_hands_back_to_the_judge(kind, monkeypatch, 
     assert len(calls) == len(FAILURES[kind]) and _env == []
 
 
-def test_default_quote_still_returns_nothing_on_trouble(monkeypatch):
+def test_default_quote_records_a_visible_degraded_flag_on_trouble(monkeypatch):
     monkeypatch.setenv("SOWSMITH_C3_QUOTE", "on")
     _script(monkeypatch, _http(504))
-    assert c3.quote(_atoms(), {}) == {}
+    q = c3.quote(_atoms(), {})
+    assert q["degraded"] is True and q["by"] == "none" and q["lines"] == [] and "unavailable" in q["error"]
 
 
 def test_an_unknown_value_is_the_default(monkeypatch):

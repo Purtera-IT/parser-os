@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.training_log import TEACHER_STORE, TrainingRow, log_rows
+from app.core.training_log import TEACHER_RULE, TrainingRow, log_rows, rule_rows_enabled
 
 QUOTE_DELIVERY_RELATION = "quote_delivery_model"
 CONFIG_ONLY = "config_only"
@@ -117,14 +117,17 @@ def annotate_quote_context(atoms: list[Any], *, project_id: str = "") -> tuple[l
     """
     decision = decide_quote_delivery_model(atoms)
     text = _corpus_text(atoms)
-    if decision.route_trainable and text:
+    # A rule's own output is not a label (owner rule): logged only under
+    # SOWSMITH_LOG_RULE_ROWS, as teacher=rule, which retrain_all skips.
+    logged = bool(decision.route_trainable and text and rule_rows_enabled())
+    if logged:
         log_rows([
             TrainingRow(
                 relation=QUOTE_DELIVERY_RELATION,
                 label=decision.delivery_model,
                 raw_text=text[:4000],
                 label_kind="judgment",
-                teacher=TEACHER_STORE,
+                teacher=TEACHER_RULE,
                 confidence=decision.confidence,
                 deal_id=project_id,
                 project_id=project_id,
@@ -152,7 +155,7 @@ def annotate_quote_context(atoms: list[Any], *, project_id: str = "") -> tuple[l
             flags.append(flag)
         if decision.source == "neural_head" and "quote_context_neural_head" not in flags:
             flags.append("quote_context_neural_head")
-        elif decision.route_trainable and "quote_context_training_row" not in flags:
+        elif logged and "quote_context_training_row" not in flags:
             flags.append("quote_context_training_row")
         atom.review_flags = flags
         n += 1

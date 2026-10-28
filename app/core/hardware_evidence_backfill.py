@@ -12,7 +12,7 @@ from typing import Any
 
 from app.core.ids import stable_id
 from app.core.schemas import AtomType
-from app.core.training_log import TEACHER_STORE, TrainingRow, log_rows
+from app.core.training_log import TEACHER_RULE, TrainingRow, log_rows, rule_rows_enabled
 from app.parsers.email_parser import _glued_trailing_order_qty
 
 HARDWARE_EVIDENCE_RELATION = "hardware_evidence_line"
@@ -731,7 +731,7 @@ def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tu
                 label=f"{sku}|{qty}",
                 raw_text=corpus[:4000],
                 label_kind="judgment",
-                teacher=TEACHER_STORE,
+                teacher=TEACHER_RULE,
                 confidence=0.72,
                 deal_id=project_id,
                 project_id=project_id,
@@ -739,7 +739,9 @@ def backfill_hardware_bom_lines(atoms: list[Any], *, project_id: str = "") -> tu
             )
         )
 
-    if rows:
+    # The SKU table's own output is not a label (owner rule): logged only under
+    # SOWSMITH_LOG_RULE_ROWS, as teacher=rule, which retrain_all skips.
+    if rows and rule_rows_enabled():
         log_rows(rows)
     return atoms, minted
 

@@ -517,7 +517,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "questions": questions,
         "conflicts": conflicts[:40],
         "kept_unsure": sorted(kept_unsure, key=lambda x: -x["p"])[:120],
+        # ids: the quote heads must not count off a line the heads left out (or an old Deal Kit line).
         "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12)),
+                     "ids": [str(x["id"]) for x in left_out],
                      # The lines a head (not a rule) left out, by id: the SOW
                      # may not bring them back (c3_sow.facts). A keep below
                      # the bar is not one of them (kept_unsure).
