@@ -1,6 +1,6 @@
 {
  "version": 2,
- "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z",
+ "evidence": null,
  "heads": [
   {
    "key": "col:label_type",
@@ -46,24 +46,24 @@
    ],
    "fallback": "the typing LLM for unsure lines",
    "holdout": {
-    "exact": 0.536,
+    "exact": 0.537,
     "n": 3516,
     "guess": 0.155,
     "live": 0.447,
     "verdict": "better",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 89587,
-   "label_deals": 23,
+   "labels": 109618,
+   "label_deals": 113,
    "label_mix": {
-    "stakeholder": 22087,
-    "_keep": 13634,
-    "small_talk": 12675,
-    "task": 4414
+    "_keep": 30061,
+    "stakeholder": 17765,
+    "small_talk": 12954,
+    "physical_site": 4666
    },
-   "labeling_task": "keep labeling as you go; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "keep labeling as you go"
   },
   {
    "key": "jdg:document_job",
@@ -81,13 +81,13 @@
    ],
    "fallback": "the judge LLM for conversations the base does not keep",
    "holdout": {
-    "exact": 0.875,
+    "exact": 0.891,
     "n": 64,
     "guess": 0.899,
     "live": 0.75,
-    "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 929,
@@ -122,22 +122,22 @@
    ],
    "fallback": "deal_chatter rules",
    "holdout": {
-    "exact": 0.743,
+    "exact": 0.737,
     "n": 779,
     "guess": 0.212,
     "live": 0.569,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 26309,
-   "label_deals": 18,
+   "labels": 26725,
+   "label_deals": 39,
    "label_mix": {
     "greeting_thanks": 6994,
-    "signoff_wrapper": 5230,
-    "banter_reassurance": 4028,
-    "automated_wrapper": 3900
+    "signoff_wrapper": 5236,
+    "banter_reassurance": 4222,
+    "automated_wrapper": 3956
    },
    "labeling_task": "keep labeling as you go"
   },
@@ -160,24 +160,68 @@
    ],
    "fallback": "lessons",
    "holdout": {
-    "exact": 0.696,
+    "exact": 0.711,
     "n": 2739,
     "guess": 0.461,
     "live": 0.572,
     "verdict": "better",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 58992,
-   "label_deals": 18,
+   "labels": 55658,
+   "label_deals": 41,
    "label_mix": {
-    "us": 26921,
-    "customer": 14319,
-    "partner": 11676,
-    "third_party": 5483
+    "us": 25421,
+    "customer": 15060,
+    "partner": 10656,
+    "third_party": 3928
    },
-   "labeling_task": "keep labeling as you go; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "keep labeling as you go"
+  },
+  {
+   "key": "read:scope_facet",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "summary",
+    "work_step",
+    "schedule",
+    "tooling",
+    "materials",
+    "staffing",
+    "testing",
+    "documentation",
+    "responsibility",
+    "exclusion",
+    "other"
+   ],
+   "status": "ready",
+   "replaces": [
+    "orbit: work steps vs schedule vs materials grouping"
+   ],
+   "fallback": "group by line type",
+   "holdout": {
+    "exact": 0.58,
+    "n": 457,
+    "guess": 0.479,
+    "live": 0.532,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 6047,
+   "label_deals": 17,
+   "label_mix": {
+    "work_step": 2733,
+    "other": 782,
+    "responsibility": 605,
+    "documentation": 345
+   },
+   "labeling_task": "keep labeling as you go"
   },
   {
    "key": "jdg:site",
@@ -196,19 +240,19 @@
    ],
    "fallback": "lessons + LLM",
    "holdout": {
-    "exact": 0.962,
+    "exact": 0.984,
     "n": 182,
     "guess": 1.0,
     "live": 0.374,
     "verdict": "better",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 316,
-   "label_deals": 11,
+   "labels": 771,
+   "label_deals": 76,
    "label_mix": {},
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:blocked_on",
@@ -233,8 +277,8 @@
     "guess": 0.784,
     "live": 0.807,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 1789,
@@ -276,24 +320,24 @@
    ],
    "fallback": "section by line type",
    "holdout": {
-    "exact": 0.376,
+    "exact": 0.52,
     "n": 811,
     "guess": 0.253,
     "live": 0.629,
     "verdict": "worse",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 14604,
-   "label_deals": 16,
+   "labels": 18221,
+   "label_deals": 39,
    "label_mix": {
-    "scope_of_work": 4528,
-    "assumptions": 2582,
-    "fees": 1429,
-    "overview": 1302
+    "scope_of_work": 5039,
+    "_absent": 4909,
+    "assumptions": 1988,
+    "customer_responsibilities": 1075
    },
-   "labeling_task": "worse than live on the held-out grade (0.376 vs 0.629): label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.52 vs 0.629): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:task_owner_role",
@@ -318,20 +362,20 @@
    ],
    "fallback": "LLM",
    "holdout": {
-    "exact": 0.776,
+    "exact": 0.769,
     "n": 295,
     "guess": 0.742,
     "live": 0.576,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 3487,
+   "labels": 3486,
    "label_deals": 18,
    "label_mix": {
     "technician": 1603,
-    "seller": 920,
+    "seller": 919,
     "project_manager": 312,
     "partner": 180
    },
@@ -355,8 +399,8 @@
     "guess": 0.985,
     "live": 0.986,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 1222,
@@ -382,8 +426,8 @@
     "guess": 0.996,
     "live": 0.995,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 1310,
@@ -409,19 +453,19 @@
    ],
    "fallback": "rule-based conflicts",
    "holdout": {
-    "exact": 0.556,
+    "exact": 0.519,
     "n": 349,
     "guess": 0.799,
     "live": 0.556,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 1102,
    "label_deals": 12,
    "label_mix": {},
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.519 vs 0.556): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "jdg:facility",
@@ -440,19 +484,19 @@
    ],
    "fallback": "lessons",
    "holdout": {
-    "exact": 0.279,
+    "exact": 0.264,
     "n": 140,
     "guess": 0.721,
     "live": 0.571,
     "verdict": "worse",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 165,
-   "label_deals": 15,
+   "labels": 586,
+   "label_deals": 66,
    "label_mix": {},
-   "labeling_task": "worse than live on the held-out grade (0.279 vs 0.571): label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.264 vs 0.571): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "jdg:site_role",
@@ -475,8 +519,8 @@
     "guess": 0.985,
     "live": 0.912,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 158,
@@ -505,58 +549,14 @@
     "guess": 0.991,
     "live": 0.982,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 1592,
    "label_deals": 17,
    "label_mix": {},
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
-  },
-  {
-   "key": "read:scope_facet",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "summary",
-    "work_step",
-    "schedule",
-    "tooling",
-    "materials",
-    "staffing",
-    "testing",
-    "documentation",
-    "responsibility",
-    "exclusion",
-    "other"
-   ],
-   "status": "weak",
-   "replaces": [
-    "orbit: work steps vs schedule vs materials grouping"
-   ],
-   "fallback": "group by line type",
-   "holdout": {
-    "exact": 0.554,
-    "n": 457,
-    "guess": 0.479,
-    "live": 0.532,
-    "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
-   },
-   "validation": null,
-   "labels": 6047,
-   "label_deals": 17,
-   "label_mix": {
-    "work_step": 2733,
-    "other": 782,
-    "responsibility": 605,
-    "documentation": 345
-   },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
   },
   {
    "key": "read:sow_coverage",
@@ -577,24 +577,24 @@
    ],
    "fallback": "no coverage flag",
    "holdout": {
-    "exact": 0.239,
+    "exact": 0.365,
     "n": 1267,
     "guess": 0.418,
     "live": 0.353,
-    "verdict": "worse",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 10388,
-   "label_deals": 18,
+   "labels": 10412,
+   "label_deals": 19,
    "label_mix": {
-    "in_sow": 7318,
-    "sow_only": 1774,
+    "in_sow": 7345,
+    "sow_only": 1771,
     "missing_from_sow": 664,
     "differs": 501
    },
-   "labeling_task": "worse than live on the held-out grade (0.239 vs 0.353): label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:sow_fill",
@@ -613,23 +613,23 @@
    ],
    "fallback": "treat as filled",
    "holdout": {
-    "exact": 0.567,
+    "exact": 0.525,
     "n": 434,
     "guess": 0.509,
     "live": 0.578,
     "verdict": "worse",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 7689,
+   "labels": 7671,
    "label_deals": 14,
    "label_mix": {
-    "filled": 5212,
-    "template_applies": 1300,
-    "template": 1177
+    "filled": 5197,
+    "template_applies": 1299,
+    "template": 1175
    },
-   "labeling_task": "worse than live on the held-out grade (0.567 vs 0.578): label disagreements: where it is wrong, correct it (it is near guess level)"
+   "labeling_task": "worse than live on the held-out grade (0.525 vs 0.578): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "rel:same_as",
@@ -643,13 +643,13 @@
    ],
    "fallback": "embedding dedup",
    "holdout": {
-    "exact": 0.713,
+    "exact": 0.694,
     "n": 3467,
     "guess": 0.755,
     "live": 0.467,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 87904,
@@ -673,22 +673,22 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.891,
+    "exact": 0.896,
     "n": 3100,
     "guess": 0.991,
     "live": 0.848,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 63138,
-   "label_deals": 18,
+   "labels": 60152,
+   "label_deals": 48,
    "label_mix": {
-    "deal": 40749,
-    "partner": 10429,
-    "internal": 9059,
-    "account": 2901
+    "deal": 40451,
+    "partner": 9381,
+    "internal": 7562,
+    "account": 2758
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -722,12 +722,12 @@
     "guess": 0.879,
     "live": 0.421,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 195,
-   "label_deals": 8,
+   "labels": 706,
+   "label_deals": 90,
    "label_mix": {},
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -751,24 +751,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.651,
+    "exact": 0.466,
     "n": 395,
     "guess": 0.633,
     "live": 0.375,
-    "verdict": "better",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 1356,
-   "label_deals": 17,
+   "labels": 1369,
+   "label_deals": 20,
    "label_mix": {
-    "city_only": 1045,
+    "city_only": 1055,
     "full": 188,
     "street_only": 38,
     "street_no_zip": 35
    },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:deal_stage",
@@ -786,20 +786,20 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.802,
+    "exact": 0.804,
     "n": 3675,
     "guess": 0.81,
     "live": 0.764,
     "verdict": "same",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 88526,
+   "labels": 98635,
    "label_deals": 18,
    "label_mix": {
-    "quoting": 82492,
-    "planning": 6034
+    "quoting": 92587,
+    "planning": 6048
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -821,17 +821,17 @@
     "guess": 1.0,
     "live": 1.0,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 87097,
+   "labels": 97206,
    "label_deals": 18,
    "label_mix": {
-    "email": 54435,
-    "sow_draft": 8000,
-    "call_transcript": 4871,
-    "rfp": 4394
+    "email": 64529,
+    "sow_draft": 7994,
+    "call_transcript": 4864,
+    "rfp": 4390
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -848,13 +848,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.973,
+    "exact": 0.986,
     "n": 146,
     "guess": 1.0,
     "live": 1.0,
-    "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 860,
@@ -865,7 +865,7 @@
     "100": 116,
     "_absent": 99
    },
-   "labeling_task": "worse than live on the held-out grade (0.973 vs 1.0): label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.986 vs 1.0): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:hours_stated",
@@ -881,13 +881,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.009,
+    "exact": 0.0,
     "n": 108,
     "guess": 1.0,
     "live": 0.454,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 403,
@@ -898,7 +898,7 @@
     "True": 83,
     "45 minutes to 1 hour 15 minute": 2
    },
-   "labeling_task": "worse than live on the held-out grade (0.009 vs 0.454): label disagreements: where it is wrong, correct it (it is near guess level)"
+   "labeling_task": "worse than live on the held-out grade (0.0 vs 0.454): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:labor_hours",
@@ -913,24 +913,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.04,
+    "exact": 0.134,
     "n": 149,
     "guess": 0.933,
     "live": 0.933,
-    "verdict": "worse",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 322,
-   "label_deals": 85,
+   "labels": 1125,
+   "label_deals": 141,
    "label_mix": {
-    "_absent": 152,
-    "4": 24,
-    "2": 24,
-    "8": 11
+    "_absent": 536,
+    "4": 71,
+    "2": 57,
+    "8": 32
    },
-   "labeling_task": "worse than live on the held-out grade (0.04 vs 0.933): label disagreements: where it is wrong, correct it (it is near guess level)"
+   "labeling_task": "worse than live on the held-out grade (0.134 vs 0.933): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:location",
@@ -950,17 +950,17 @@
     "guess": 0.951,
     "live": 0.951,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 243,
-   "label_deals": 104,
+   "labels": 760,
+   "label_deals": 126,
    "label_mix": {
-    "_absent": 32,
-    "6125 Tyvola Centre Drive, Char": 8,
-    "1030 Delta Blvd, Atlanta, GA 3": 6,
-    "Highland Park, Michigan": 4
+    "_absent": 114,
+    "PurTera LLC 11720 Amber Park D": 13,
+    "Alpharetta, GA 30009": 12,
+    "6125 Tyvola Centre Drive, Char": 8
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -980,13 +980,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.963,
+    "exact": 0.954,
     "n": 108,
     "guess": 0.963,
     "live": 0.963,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 948,
@@ -997,7 +997,7 @@
     "mid_metro": 110,
     "['major_metro']": 102
    },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+   "labeling_task": "worse than live on the held-out grade (0.954 vs 0.963): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:region",
@@ -1012,22 +1012,22 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.974,
+    "exact": 0.97,
     "n": 230,
     "guess": 0.97,
     "live": 0.97,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 206,
-   "label_deals": 78,
+   "labels": 571,
+   "label_deals": 96,
    "label_mix": {
-    "_absent": 37,
+    "_absent": 141,
+    "Atlanta, GA": 30,
     "Auvergne-Rhone-Alpes, France": 25,
-    "Atlanta, GA": 22,
-    "Jackson, MS": 14
+    "New York, NY": 15
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -1049,8 +1049,8 @@
     "guess": 1.0,
     "live": 1.0,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 1062,
@@ -1077,20 +1077,20 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.709,
+    "exact": 0.691,
     "n": 3675,
     "guess": 0.657,
     "live": 0.55,
     "verdict": "same",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 85369,
+   "labels": 95480,
    "label_deals": 18,
    "label_mix": {
-    "False": 46126,
-    "True": 39243
+    "False": 51408,
+    "True": 44072
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -1115,22 +1115,22 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.523,
+    "exact": 0.567,
     "n": 3675,
     "guess": 0.507,
     "live": 0.311,
     "verdict": "better",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 88526,
+   "labels": 98635,
    "label_deals": 18,
    "label_mix": {
-    "quoted": 25783,
-    "contracting": 25052,
-    "intake": 18947,
-    "scoping": 12898
+    "contracting": 29774,
+    "quoted": 29570,
+    "intake": 19335,
+    "scoping": 14097
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
@@ -1149,8 +1149,8 @@
     "guess": 0.999,
     "live": 0.999,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 119,
@@ -1173,8 +1173,8 @@
     "guess": 0.836,
     "live": 0.802,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 7892,
@@ -1197,8 +1197,8 @@
     "guess": 0.965,
     "live": 0.965,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 988,
@@ -1216,13 +1216,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.9,
+    "exact": 0.899,
     "n": 3665,
     "guess": 0.899,
     "live": 0.835,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 6784,
@@ -1245,14 +1245,69 @@
     "guess": 0.875,
     "live": 0.767,
     "verdict": "better",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 25843,
    "label_deals": 17,
    "label_mix": {},
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "deal:primary_service",
+   "layer": "base",
+   "size": "deal",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "audio_visual",
+    "low_voltage_cabling",
+    "wireless",
+    "staff_augmentation",
+    "security_camera",
+    "camera_vms_operations",
+    "security_access",
+    "fire_safety",
+    "paging_mass_notification",
+    "das",
+    "electrical",
+    "telecom",
+    "network_maintenance",
+    "building_management_systems",
+    "datacenter",
+    "rack_and_stack",
+    "hardware",
+    "imac",
+    "itad",
+    "data_migration",
+    "msp",
+    "alm",
+    "audit",
+    "professional_services",
+    "other"
+   ],
+   "status": "unproven",
+   "replaces": [
+    "orbit: pack_prior LLM",
+    "orbit: scope_router LLM",
+    "orbit: planner pack status"
+   ],
+   "fallback": "parser pack routing (domain pack)",
+   "holdout": {
+    "exact": 0.0,
+    "n": 4,
+    "guess": 0.143,
+    "live": 0.0,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 121,
+   "label_deals": 51,
+   "label_mix": {},
+   "labeling_task": "label it on the next unseen deal so it can be scored"
   },
   {
    "key": "jdg:gap",
@@ -1297,17 +1352,17 @@
     "guess": 0.571,
     "live": 0.571,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 240,
-   "label_deals": 65,
+   "labels": 596,
+   "label_deals": 74,
    "label_mix": {
-    "_absent": 49,
+    "_absent": 171,
     "5-10 business days from SOW ex": 14,
-    "2 weeks for travel": 9,
-    "minimum one week before dispat": 9
+    "1 business day before visit: 1": 12,
+    "2 weeks for travel": 9
    },
    "labeling_task": "label it on the next unseen deal so it can be scored"
   },
@@ -1325,19 +1380,19 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.455,
+    "exact": 0.364,
     "n": 22,
     "guess": 0.591,
     "live": 0.545,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 241,
-   "label_deals": 60,
+   "labels": 642,
+   "label_deals": 62,
    "label_mix": {},
-   "labeling_task": "worse than live on the held-out grade (0.455 vs 0.545): label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.364 vs 0.545): label it on the next unseen deal so it can be scored"
   },
   {
    "key": "jdg:roster",
@@ -1353,17 +1408,17 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.684,
+    "exact": 0.895,
     "n": 19,
     "guess": 0.667,
     "live": 0.316,
     "verdict": "not measurable",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 328,
-   "label_deals": 70,
+   "labels": 728,
+   "label_deals": 86,
    "label_mix": {},
    "labeling_task": "label it on the next unseen deal so it can be scored"
   },
@@ -1386,19 +1441,19 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.348,
+    "exact": 0.087,
     "n": 23,
     "guess": 0.625,
     "live": 0.652,
     "verdict": "worse",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 334,
-   "label_deals": 49,
+   "labels": 939,
+   "label_deals": 52,
    "label_mix": {},
-   "labeling_task": "worse than live on the held-out grade (0.348 vs 0.652): label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.087 vs 0.652): label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:billing_type",
@@ -1416,22 +1471,22 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.257,
+    "exact": 0.371,
     "n": 35,
     "guess": 0.457,
     "live": 0.171,
-    "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 323,
-   "label_deals": 107,
+   "labels": 893,
+   "label_deals": 126,
    "label_mix": {
-    "t_and_m": 116,
-    "fixed": 86,
-    "_absent": 45,
-    "per_site": 40
+    "t_and_m": 250,
+    "fixed": 236,
+    "_absent": 168,
+    "per_site": 124
    },
    "labeling_task": "label it on the next unseen deal so it can be scored"
   },
@@ -1477,8 +1532,8 @@
     "guess": 0.591,
     "live": 0.409,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 256,
@@ -1505,13 +1560,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.556,
+    "exact": 0.222,
     "n": 9,
     "guess": 0.827,
     "live": 0.444,
     "verdict": "not measurable",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 687,
@@ -1522,7 +1577,7 @@
     "conversation": 68,
     "confirm CDW rebuilds auto atte": 4
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "worse than live on the held-out grade (0.222 vs 0.444): label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:commitment",
@@ -1537,24 +1592,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.65,
+    "exact": 0.675,
     "n": 40,
     "guess": 0.625,
     "live": 0.625,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 862,
+   "labels": 861,
    "label_deals": 16,
    "label_mix": {
     "finalize and send the project ": 182,
-    "_absent": 115,
     "send the make/model/volume lis": 115,
+    "_absent": 114,
     "send the hourly rate": 42
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:crew_size",
@@ -1574,17 +1629,17 @@
     "guess": 0.63,
     "live": 0.63,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 306,
-   "label_deals": 16,
+   "labels": 316,
+   "label_deals": 21,
    "label_mix": {
     "11": 158,
     "_absent": 90,
-    "2": 34,
-    "1": 18
+    "2": 35,
+    "1": 26
    },
    "labeling_task": "label it on the next unseen deal so it can be scored"
   },
@@ -1602,10 +1657,10 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 122,
+   "labels": 120,
    "label_deals": 10,
    "label_mix": {
-    "_absent": 107,
+    "_absent": 105,
     "SOW: within 5-10 business days": 6,
     "The provider's project coordin": 5,
     "issue a survey-only SOW; quote": 1
@@ -1631,10 +1686,10 @@
     "live": 0.571,
     "verdict": "same",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 381,
+   "labels": 383,
    "label_deals": 15,
    "label_mix": {
     "project coordinator at the res": 83,
@@ -1658,13 +1713,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.353,
+    "exact": 0.294,
     "n": 17,
     "guess": 0.471,
     "live": 0.412,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 299,
@@ -1675,7 +1730,7 @@
     "one day, a few hours": 14,
     "small (reseller says too small": 2
    },
-   "labeling_task": "worse than live on the held-out grade (0.353 vs 0.412): label it on the next unseen deal so it can be scored"
+   "labeling_task": "worse than live on the held-out grade (0.294 vs 0.412): label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:material",
@@ -1695,17 +1750,17 @@
     "guess": 0.5,
     "live": 0.5,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 130,
-   "label_deals": 64,
+   "labels": 439,
+   "label_deals": 76,
    "label_mix": {
-    "_absent": 41,
-    "1.5 in EMT": 4,
-    "plywood backboard": 4,
-    "conduit": 4
+    "_absent": 148,
+    "plywood backboard": 12,
+    "conduit": 12,
+    "copper and fiber patch cables": 9
    },
    "labeling_task": "label it on the next unseen deal so it can be scored"
   },
@@ -1722,13 +1777,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.68,
+    "exact": 0.72,
     "n": 25,
     "guess": 0.68,
     "live": 0.68,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 677,
@@ -1760,8 +1815,8 @@
     "guess": 0.655,
     "live": 0.621,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 192,
@@ -1790,8 +1845,8 @@
     "guess": 0.618,
     "live": 0.647,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 408,
@@ -1817,24 +1872,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.561,
+    "exact": 0.78,
     "n": 41,
     "guess": 0.78,
     "live": 0.78,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 243,
-   "label_deals": 72,
+   "labels": 602,
+   "label_deals": 84,
    "label_mix": {
-    "_absent": 55,
-    "$115.00 per hour": 23,
-    "$655.00 per item": 12,
-    "$370.00 per item": 10
+    "_absent": 205,
+    "$115.00 per hour": 49,
+    "50% increase of Stated Rate": 15,
+    "$655.00 per item": 12
    },
-   "labeling_task": "worse than live on the held-out grade (0.561 vs 0.78): label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:rate_for",
@@ -1849,24 +1904,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.512,
+    "exact": 0.537,
     "n": 41,
     "guess": 0.78,
     "live": 0.78,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 208,
-   "label_deals": 70,
+   "labels": 553,
+   "label_deals": 82,
    "label_mix": {
-    "_absent": 58,
+    "_absent": 214,
+    "after hours, 5:00 PM to 8:00 A": 18,
     "travel time": 7,
-    "Engineer": 6,
-    "after hours, 5:00 PM to 8:00 A": 6
+    "holidays": 7
    },
-   "labeling_task": "worse than live on the held-out grade (0.512 vs 0.78): label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.537 vs 0.78): label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:remote_miles",
@@ -1881,19 +1936,19 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.5,
+    "exact": 0.625,
     "n": 8,
     "guess": 1.0,
     "live": 0.0,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 315,
-   "label_deals": 43,
+   "labels": 449,
+   "label_deals": 44,
    "label_mix": {
-    "_absent": 183,
+    "_absent": 305,
     "0": 67,
     "79": 34,
     "about 165 miles straight-line ": 14
@@ -1913,24 +1968,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.25,
+    "exact": 0.0,
     "n": 8,
     "guess": 0.205,
     "live": 0.0,
     "verdict": "not measurable",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 238,
-   "label_deals": 88,
+   "labels": 759,
+   "label_deals": 103,
    "label_mix": {
-    "tech_toolkit": 59,
-    "_absent": 31,
-    "commercial": 25,
-    "personnel": 25
+    "tech_toolkit": 141,
+    "_absent": 105,
+    "commercial": 87,
+    "personnel": 75
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:start_date",
@@ -1950,8 +2005,8 @@
     "guess": 0.696,
     "live": 0.304,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 356,
@@ -1962,7 +2017,7 @@
     "August 24, 2026": 40,
     "October 12, 2026": 28
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:tech_level",
@@ -1982,19 +2037,19 @@
     "guess": 0.524,
     "live": 0.524,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 194,
-   "label_deals": 54,
+   "labels": 399,
+   "label_deals": 57,
    "label_mix": {
-    "_absent": 138,
-    "Field Technician": 6,
-    "Low Voltage Tech": 4,
-    "EUC technician": 3
+    "_absent": 220,
+    "Field Technician": 18,
+    "Low Voltage Tech": 12,
+    "1 Lead and 1 Helper (helper ne": 6
    },
-   "labeling_task": "worse than live on the held-out grade (0.476 vs 0.524): label it on the next unseen deal so it can be scored; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "worse than live on the held-out grade (0.476 vs 0.524): label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:trigger_event",
@@ -2015,8 +2070,8 @@
     "guess": 0.524,
     "live": 0.238,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 151,
@@ -2042,13 +2097,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.476,
+    "exact": 0.524,
     "n": 21,
     "guess": 0.667,
     "live": 0.667,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 374,
@@ -2059,7 +2114,7 @@
     "equipment delivery confirmed": 79,
     "book the install date": 20
    },
-   "labeling_task": "worse than live on the held-out grade (0.476 vs 0.667): label it on the next unseen deal so it can be scored"
+   "labeling_task": "worse than live on the held-out grade (0.524 vs 0.667): label it on the next unseen deal so it can be scored"
   },
   {
    "key": "read:unreliable_part",
@@ -2103,8 +2158,8 @@
     "guess": 0.646,
     "live": 0.646,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 230,
@@ -2156,13 +2211,13 @@
     "live": 0.618,
     "verdict": "same",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 1277,
+   "labels": 1273,
    "label_deals": 13,
    "label_mix": {
-    "True": 1276,
+    "True": 1272,
     "true": 1
    },
    "labeling_task": "label the OTHER answer too (it learned 'always True')"
@@ -2186,24 +2241,24 @@
    ],
    "fallback": "parser open_question lines",
    "holdout": {
-    "exact": 0.989,
+    "exact": 0.987,
     "n": 3130,
     "guess": 0.994,
     "live": 0.989,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 64564,
-   "label_deals": 18,
+   "labels": 61478,
+   "label_deals": 45,
    "label_mix": {
-    "nothing": 63637,
+    "nothing": 60551,
     "confirm-with-customer": 468,
     "chase-artifact": 199,
     "chase-conversation": 159
    },
-   "labeling_task": "label the OTHER answer too (it learned 'always nothing')"
+   "labeling_task": "worse than live on the held-out grade (0.987 vs 0.989): label the OTHER answer too (it learned 'always nothing')"
   },
   {
    "key": "read:deal_summary",
@@ -2224,8 +2279,8 @@
     "guess": 0.714,
     "live": 0.286,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 19,
@@ -2251,24 +2306,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.379,
+    "exact": 0.34,
     "n": 103,
     "guess": 0.573,
     "live": 0.427,
     "verdict": "worse",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 5652,
+   "labels": 5648,
    "label_deals": 12,
    "label_mix": {
-    "stated": 5590,
+    "stated": 5586,
     "template": 40,
     "inferred": 14,
     "not_derivable": 8
    },
-   "labeling_task": "worse than live on the held-out grade (0.379 vs 0.427): label the OTHER answer too (it learned 'always stated')"
+   "labeling_task": "worse than live on the held-out grade (0.34 vs 0.427): label the OTHER answer too (it learned 'always stated')"
   },
   {
    "key": "read:list_header",
@@ -2289,14 +2344,14 @@
     "guess": 1.0,
     "live": 1.0,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 1716,
+   "labels": 1715,
    "label_deals": 16,
    "label_mix": {
-    "True": 1716
+    "True": 1715
    },
    "labeling_task": "label the OTHER answer too (it learned 'always True')"
   },
@@ -2349,8 +2404,8 @@
     "guess": 1.0,
     "live": 1.0,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 4021,
@@ -2373,13 +2428,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.6,
+    "exact": 0.65,
     "n": 20,
     "guess": 0.55,
     "live": 0.55,
-    "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 32,
@@ -2387,7 +2442,7 @@
    "label_mix": {
     "Findlay, OH is its own micropo": 32
    },
-   "labeling_task": "label the OTHER answer too (it learned 'always Findlay, OH is its own micropo'); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label the OTHER answer too (it learned 'always Findlay, OH is its own micropo')"
   },
   {
    "key": "read:train_for",
@@ -2403,78 +2458,23 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.997,
+    "exact": 0.998,
     "n": 3485,
     "guess": 1.0,
     "live": 1.0,
     "verdict": "worse",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 59000,
+   "labels": 69187,
    "label_deals": 18,
    "label_mix": {
-    "['quote_parser', 'delivery_par": 58976,
-    "['quote_parser']": 15,
+    "['quote_parser', 'delivery_par": 69164,
+    "['quote_parser']": 14,
     "['delivery_parser']": 9
    },
-   "labeling_task": "worse than live on the held-out grade (0.997 vs 1.0): label the OTHER answer too (it learned 'always ['quote_parser', 'delivery_par')"
-  },
-  {
-   "key": "deal:primary_service",
-   "layer": "base",
-   "size": "deal",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "audio_visual",
-    "low_voltage_cabling",
-    "wireless",
-    "staff_augmentation",
-    "security_camera",
-    "camera_vms_operations",
-    "security_access",
-    "fire_safety",
-    "paging_mass_notification",
-    "das",
-    "electrical",
-    "telecom",
-    "network_maintenance",
-    "building_management_systems",
-    "datacenter",
-    "rack_and_stack",
-    "hardware",
-    "imac",
-    "itad",
-    "data_migration",
-    "msp",
-    "alm",
-    "audit",
-    "professional_services",
-    "other"
-   ],
-   "status": "thin",
-   "replaces": [
-    "orbit: pack_prior LLM",
-    "orbit: scope_router LLM",
-    "orbit: planner pack status"
-   ],
-   "fallback": "parser pack routing (domain pack)",
-   "holdout": {
-    "exact": 0.0,
-    "n": 4,
-    "guess": 0.143,
-    "live": 0.0,
-    "verdict": "not measurable",
-    "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
-   },
-   "validation": null,
-   "labels": 54,
-   "label_deals": 16,
-   "label_mix": {},
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
+   "labeling_task": "worse than live on the held-out grade (0.998 vs 1.0): label the OTHER answer too (it learned 'always ['quote_parser', 'delivery_par')"
   },
   {
    "key": "jdg:billing_type",
@@ -2495,17 +2495,17 @@
    ],
    "fallback": "rules",
    "holdout": {
-    "exact": 0.5,
+    "exact": 0.25,
     "n": 4,
     "guess": 0.429,
     "live": 0.25,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 34,
-   "label_deals": 18,
+   "labels": 46,
+   "label_deals": 24,
    "label_mix": {},
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -2529,7 +2529,7 @@
     "live": 0.667,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 34,
@@ -2583,7 +2583,7 @@
     "live": 1.0,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 34,
@@ -2605,13 +2605,13 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.667,
+    "exact": 0.333,
     "n": 3,
     "guess": 0.667,
     "live": 0.333,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 34,
@@ -2639,7 +2639,7 @@
     "live": 0.667,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 34,
@@ -2690,10 +2690,10 @@
     "live": 0.316,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 50,
+   "labels": 49,
    "label_deals": 7,
    "label_mix": {
     "smart-hands work at CheckOut o": 15,
@@ -2721,8 +2721,8 @@
     "guess": 0.629,
     "live": 0.629,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 17,
@@ -2777,8 +2777,8 @@
     "guess": 0.625,
     "live": 0.625,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 24,
@@ -2853,8 +2853,8 @@
     "guess": 0.998,
     "live": 0.998,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 93,
@@ -2878,19 +2878,19 @@
    ],
    "fallback": "lessons",
    "holdout": {
-    "exact": 0.726,
+    "exact": 0.725,
     "n": 3518,
     "guess": 0.53,
     "live": 0.53,
     "verdict": "better",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 0,
    "label_deals": 0,
    "label_mix": {},
-   "labeling_task": "start labeling it; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "start labeling it"
   },
   {
    "key": "jdg:question_answered",
@@ -2936,19 +2936,19 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.322,
+    "exact": 0.214,
     "n": 3675,
     "guess": 0.736,
     "live": 0.187,
-    "verdict": "better",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 0,
    "label_deals": 0,
    "label_mix": {},
-   "labeling_task": "start labeling it; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "start labeling it"
   },
   {
    "key": "jdg:term",
@@ -3209,23 +3209,23 @@
    ],
    "fallback": "the parser's own type filter (small_talk, chatter)",
    "holdout": {
-    "exact": 0.917,
+    "exact": 0.918,
     "n": 1810,
     "guess": 0.812,
     "live": 0.686,
     "verdict": "better",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 41435,
-   "label_deals": 18,
+   "labels": 52341,
+   "label_deals": 46,
    "label_mix": {
-    "reject": 26964,
-    "keep": 12883,
-    "ignore": 1588
+    "reject": 37517,
+    "keep": 13186,
+    "ignore": 1638
    },
-   "labeling_task": "keep labeling as you go; fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "keep labeling as you go"
   },
   {
    "key": "read:co_reason",
@@ -3259,22 +3259,22 @@
    ],
    "fallback": "no reason shown",
    "holdout": {
-    "exact": 0.783,
+    "exact": 0.792,
     "n": 341,
     "guess": 0.557,
     "live": 0.736,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 28552,
-   "label_deals": 17,
+   "labels": 39099,
+   "label_deals": 27,
    "label_mix": {
-    "contact_from_crm": 20905,
-    "parser_derived": 1582,
-    "date_only_logistics": 1449,
-    "partner_internal_process": 1386
+    "contact_from_crm": 31128,
+    "parser_derived": 1632,
+    "seller_promise": 1512,
+    "date_only_logistics": 1449
    },
    "labeling_task": "keep labeling as you go"
   },
@@ -3303,8 +3303,8 @@
     "guess": 1.0,
     "live": 0.0,
     "verdict": "same",
-    "swap": false,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 596,
@@ -3315,7 +3315,7 @@
     "['delivery', 'project_manager'": 23,
     "['atlas']": 16
    },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level); fails the swap gate (answers move under name / keyword / layout swaps)"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:co_hours_estimate",
@@ -3364,8 +3364,8 @@
     "guess": 1.0,
     "live": 1.0,
     "verdict": "same",
-    "swap": true,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 792,
@@ -3390,10 +3390,10 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 26668,
+   "labels": 32747,
    "label_deals": 1,
    "label_mix": {
-    "decision_pending": 26668
+    "decision_pending": 32747
    },
    "labeling_task": "label the OTHER answer too (it learned 'always decision_pending')"
   },
@@ -3445,7 +3445,7 @@
     "live": 0.667,
     "verdict": "not measurable",
     "swap": null,
-    "evidence": "test A (N2pick_ablA) heldout7 vs live, eval_live_20261026T203304Z"
+    "evidence": "graded heldout7"
    },
    "validation": null,
    "labels": 34,
