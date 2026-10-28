@@ -112,6 +112,18 @@ def _readings(out, rows: list[int], schema: Schema,
             v = torch.expm1(values[idx.to(values.device)].float().cpu()).tolist()
             for r, x in enumerate(v):
                 reads[r].setdefault(key, {})["value"] = round(x, 3)
+    return gate_numbers(reads)
+
+
+def gate_numbers(reads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A number only where the head's own line answer says the line carries one: a number head is trained only on
+    lines with a target, so on a line it reads ``_absent`` its value is untrained (read:co_hours_estimate gave
+    4,336 h on 010095 and 1,498 h on 000051, both on lines it read ``_absent``; on its ``present`` lines the
+    values were 0.6-221 h and 1-9 h). The raw value stays visible as ``value_absent`` for audits."""
+    for row in reads:
+        for r in row.values():
+            if isinstance(r, dict) and "value" in r and r.get("answer") in ("_absent", "false", "none"):
+                r["value_absent"] = r.pop("value")
     return reads
 
 
