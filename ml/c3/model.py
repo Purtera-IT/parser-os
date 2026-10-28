@@ -160,8 +160,18 @@ class GraphBlock(nn.Module):
         q, k, v = self.qkv(self.ln1(x)).view(n, 3, self.h, d // self.h).permute(1, 2, 0, 3)
         # [heads, N, N] in the attention's own precision: at 8,192 lines a
         # float32 bias alone is 4 GB a layer.
-        bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec).to(q.dtype)
-        bias = bias.masked_fill(~allowed, float("-inf"))
+        if q.dtype in (torch.float16, torch.bfloat16) and not self.training and not torch.is_grad_enabled():
+            # A read: build the bias directly in the half dtype, in place, so the
+            # [heads, N, N] float32 products (4 GiB each at 8,192 lines, 16 heads)
+            # never exist. The masks are 0/1, so each product is exact; only the
+            # doc+sec sum rounds once in half instead of once after float32.
+            bias = self.w_doc.to(q.dtype).view(-1, 1, 1) * same_doc.to(q.dtype)
+            bias.addcmul_(self.w_sec.to(q.dtype).view(-1, 1, 1), same_sec.to(q.dtype))
+            bias.masked_fill_(~allowed, float("-inf"))
+        else:
+            # Training (and any float32 or autograd pass): unchanged numerics.
+            bias = (self.w_doc.view(-1, 1, 1) * same_doc + self.w_sec.view(-1, 1, 1) * same_sec).to(q.dtype)
+            bias = bias.masked_fill(~allowed, float("-inf"))
         a = F.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         x = x + self.drop(self.out(a.transpose(0, 1).reshape(n, d)))
         return x + self.drop(self.mlp(self.ln2(x)))
