@@ -588,3 +588,11 @@ def test_a_question_about_purtera_itself_is_not_asked_of_the_customer():
     assert rx.search("Can PurTera's platform give customer access by project size?")
     assert not rx.search("Who supplies the APs PurTera mounts in the lobby?")
     assert not rx.search("What access will PurTera need to the IDF?")
+
+
+def test_a_question_to_the_customer_about_what_purtera_supplies_stays():
+    rx = c3_brief._ABOUT_US
+    assert not rx.search("Is PurTera expected to provide lifts or other special equipment?")
+    assert not rx.search("Will PurTera supply the patch cables?")
+    assert rx.search("Can the software be customized and access provided to the customer?")
+    assert rx.search("Where else does PurTera have presence or capabilities to support this project?")

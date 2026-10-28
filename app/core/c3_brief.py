@@ -1889,8 +1889,10 @@ def _cover_missing_facts(brief: dict[str, Any]) -> int:
 
 
 #: An open question whose subject is PurTera ("Where else does PurTera have presence", "Can PurTera's platform ...").
-_ABOUT_US = re.compile(r"\b(?:does|do|can|could|will|would|is|are|where|how|what)\b[^?]{0,40}\bpurtera(?:'s|\s+it)?\b"
-                       r"(?![^?]{0,15}\b(?:need|require|receive|be given|get)\b)", re.I)
+_ABOUT_US = re.compile(r"\b(?:does|do|can|could|will|would|is|are|where|how|what)\b[^?]{0,40}\bpurtera(?:'s)?\b"
+                       r"(?!\s+(?:be\s+)?(?:expected|responsible|required|asked|needed|to\s)|[^?]{0,20}\b(?:need|require|receive|"
+                       r"be given|get|provide|supply|bring|furnish|install|mount)\b)"
+                       r"|\bcan\s+(?:the|your|its)\s+(?:software|platform|portal|app)\b", re.I)
 
 _Q_STOP = frozenset("a an the of to for and or is are be will what which who how where when does do any each at in on "
                     "this that there their it its with by from site sites location locations can you your we our "
