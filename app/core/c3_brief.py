@@ -1247,9 +1247,17 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     # filter (site_identity.filter_roster): a site only ever mentioned in lines
     # the base does not read as a site is a mention, not a job site.
     _types = c3_type_base._DEAL.get("types") or {}
+    # Only lines that name a site in their own words: a key copied onto every
+    # line of a note or SOW by document provenance (or the single-site anchor)
+    # made the From/To/signature lines "site lines" (010316, 010227).
+    from app.core.site_keys_follow_heads import _copied
+
     brief["site_line_types"] = {
         str(a.id): _types[str(a.id)] for a in atoms
-        if str(a.id) in _types and any(str(k).startswith("site:") for k in (getattr(a, "entity_keys", None) or []))}
+        if str(a.id) in _types and any(str(k).startswith("site:") and not _copied(a, str(k))
+                                       for k in (getattr(a, "entity_keys", None) or []))}
+    if c3_type_base._DEAL.get("site_keys"):
+        brief["site_keys"] = c3_type_base._DEAL["site_keys"]
     brief["contacts"] = contacts(atoms)
     # Only lines the heads kept (body or "also mentioned"): picked by wording
     # alone it put back lines co_action dropped -- 9 of 15 on 010038, among
