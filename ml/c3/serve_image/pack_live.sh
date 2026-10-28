@@ -13,7 +13,7 @@ for f in checkpoint.pt MANIFEST.json question_refit.pt quote_heads_bundle.json; 
   [[ -f "$SRC/c3_base/$f" ]] && cp "$SRC/c3_base/$f" "$WORK/c3_base/"
 done
 cp -R "$SRC/c3_base/encoder" "$WORK/c3_base/encoder"
-(cd "$SRC/code" && find ml c3_record -name '*.py' -o -name '*.json' | grep -v __pycache__ | tar -cf - -T -) | tar -xf - -C "$WORK/c3_base/code"
+(cd "$SRC/code" && { find ml c3_record -name '*.py' -o -name '*.json'; find app/core -maxdepth 1 -name '*.json'; } | grep -v __pycache__ | tar -cf - -T -) | tar -xf - -C "$WORK/c3_base/code"
 python3 - "$WORK/c3_base" <<'PY'
 import hashlib,json,os,sys,subprocess
 d=sys.argv[1]; src=os.path.expanduser(os.environ.get('C3_SERVE','~/c3-serve'))
