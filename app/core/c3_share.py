@@ -6,7 +6,7 @@ records (the atoms' ``c3_label``, the brief's ``by`` / ``section_by`` / ``parts`
 share of decisions the heads made can be read off any result.json, old or new:
 
     line_type   head: the base typed it (authority / assign / fill) or said the parser type stands
-                (keep); override: a later rule changed a head-typed line; llm: lines typing sent to
+                (keep; on lines typing never saw, ``value.c3_confirm``); override: a later rule changed a head-typed line; llm: lines typing sent to
                 the typing LLM; rule: the parser's own type, no head reading
     keep        the brief's keep / leave-out decision per line (``decided_by.keep``)
     section     the brief section each kept line went to (``section_by``)
@@ -58,6 +58,11 @@ def line_types(atoms: list[Any], typing: dict[str, Any] | None) -> Counter:
                 c["head"] += 1
             else:
                 c["override"] += 1
+        elif isinstance(v, dict) and isinstance(v.get("c3_confirm"), dict) \
+                and v["c3_confirm"].get("type") == _type(a):
+            # The base read the line and confirmed the parser's type (c3_type_base.record_confirms):
+            # the same decision typing records as act "keep". A rule that re-typed it since is a rule's.
+            c["head"] += 1
         else:
             c["rule"] += 1
     t = typing or {}
@@ -77,7 +82,8 @@ def sites(atoms: list[Any]) -> tuple[Counter, Counter]:
         v = _get(a, "value") or {}
         v = v if isinstance(v, dict) else {}
         lab = v.get("c3_label")
-        site["head" if isinstance(lab, dict) and lab.get("act") else "rule"] += 1
+        confirmed = isinstance(v.get("c3_confirm"), dict) and v["c3_confirm"].get("type") == "physical_site"
+        site["head" if (isinstance(lab, dict) and lab.get("act")) or confirmed else "rule"] += 1
         src = (v.get("vendor_role_proposal") or {}).get("source") or (v.get("_decision") or {}).get("source")
         if v.get("geo_mention_source"):
             src = v.get("geo_mention_source")

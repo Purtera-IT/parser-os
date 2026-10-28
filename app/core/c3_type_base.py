@@ -2427,6 +2427,64 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
     return n
 
 
+def record_confirm_enabled() -> bool:
+    """``SOWSMITH_C3_RECORD_CONFIRM`` (default on): see ``record_confirms``."""
+    return os.environ.get("SOWSMITH_C3_RECORD_CONFIRM", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def record_confirms(atoms: list[Any]) -> int:
+    """Record, on every line the base read and left untyped, that its reading
+    confirmed the parser's type: ``value.c3_confirm = {"type", "p", "said"}``
+    where the read said ``_keep`` (the parser's type stands) or the line's own
+    type, at or above the authority bar. Run after the final authority pass.
+
+    Typing records the same answer as ``c3_label`` act ``keep`` on the lines it
+    sends; ``apply_authority`` skips ``_keep`` (``_AUTHORITY_SKIP``), so on the
+    lines typing never sees the base's confirmation was lost and the line was
+    counted as the parser's rule (19 dev deals 2026-10-28: 747 lines read
+    ``_keep`` >= 0.5 and 101 read their own type, of 1,739 "rule" lines).
+
+    It is a record, not a decision: the type does not change, and a separate
+    key (not ``c3_label``) so nothing that reads a label changes behaviour
+    (``orbitbrief_core._head_says_site`` treats a labeled line differently from
+    an unlabeled one). ``c3_share`` counts a line whose confirmed type is still
+    its type as the head's. Returns lines recorded."""
+    if not record_confirm_enabled():
+        return 0
+    readings = _DEAL.get("types") or {}
+    if not readings:
+        return 0
+    sha = _DEAL.get("sha")
+    n = 0
+    for a in atoms:
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict):
+            continue
+        lab = v.get("c3_label")
+        if isinstance(lab, dict) and lab.get("act"):
+            continue
+        got = readings.get(str(getattr(a, "id", "") or ""))
+        if not got or got[0] is None:
+            continue
+        try:
+            if skipped(a, sha):
+                continue
+        except Exception:
+            pass
+        ans, p = str(got[0]), float(got[1] or 0.0)
+        t = getattr(a, "atom_type", None)
+        now = str(getattr(t, "value", t) or "")
+        if ans not in ("_keep", now) or not now or p < _authority_bar(ans):
+            continue
+        try:
+            a.value = {**v, "c3_confirm": {"type": now, "p": round(p, 3), "said": ans}}
+            n += 1
+        except Exception:
+            continue
+    _STATUS["confirmed"] = n
+    return n
+
+
 # ------------------------------------------------------- document judgments
 
 #: The base's answer to "is this document about this deal's job"

@@ -3757,6 +3757,9 @@ def compile_project(
         _fa = _c3_final.apply_authority(atoms, final=True)
         if _fa:
             warnings.append(f"INFO: C3 base restored {_fa} line(s) a rule had re-typed (authority)")
+        _cf = _c3_final.record_confirms(atoms)
+        if _cf:
+            warnings.append(f"INFO: C3 base confirmed the parser's type on {_cf} line(s) typing never saw")
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")

@@ -78,6 +78,17 @@ SMALL_TALK_BAR = float(os.environ.get("SOWSMITH_C3_SMALL_TALK_BAR", "0.8"))
 ADMISSION_BODY_BAR = float(os.environ.get("SOWSMITH_C3_ADMISSION_BODY_BAR", "0.7"))
 #: co_action reject / ignore at or above this drops a line admission kept (a company action).
 COMPANY_DROP_BAR = 0.5
+#: Lines of a NEVER type (raw_utterance, small_talk, entity ...): the keep head decides first, the
+#: type rule only where it abstains. SOWSMITH_C3_NEVER_ADMISSION=off restores rule-first.
+#: Held-out test A (7 deals, 311 labeled NEVER-type lines, 2026-10-28): admission drop at >= 0.5
+#: is right 0.929, the rule's drop on the same lines the same 0.929 (both say drop), so its drops
+#: change no outcome. Its keeps lose to the rule below 0.95 (0.37 vs 0.63 at >= 0.5) and win only
+#: at >= 0.99 (10 of 11 right vs 1 of 11, 8 of them one deal, drafted gold): keep is off by default
+#: (SOWSMITH_C3_NEVER_KEEP_BAR 1.01) until more labels back it.
+NEVER_ADMISSION = os.environ.get("SOWSMITH_C3_NEVER_ADMISSION", "on").strip().lower() not in (
+    "0", "false", "no", "off")
+NEVER_DROP_BAR = float(os.environ.get("SOWSMITH_C3_NEVER_DROP_BAR", "0.5"))
+NEVER_KEEP_BAR = float(os.environ.get("SOWSMITH_C3_NEVER_KEEP_BAR", "1.01"))
 MAX_FACTS_PER_SECTION = 25
 #: "Also mentioned" lines carried with their text (the rest are listed by id).
 ALSO_MENTIONED_SHOWN = int(os.environ.get("SOWSMITH_C3_ALSO_MENTIONED_SHOWN", "300"))
@@ -480,7 +491,16 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # keep decision: when the keep head keeps the line it stays. 010426's
         # only date, "the three weeks after Thanksgiving", read small_talk 0.80
         # / keep 0.64 and was dropped outright.
-        if status == "rejected" or (t in NEVER and not (t == "small_talk" and keep_act == "keep" and keep_p >= MAYBE_BAR)):
+        never_admitted = False
+        if NEVER_ADMISSION and status != "rejected" and t in NEVER and keep_key == "col:admission":
+            if adm == "drop" and pa >= NEVER_DROP_BAR:
+                left_out.append({"id": aid, "reason": "not_admitted", "by": "base:col:admission",
+                                 "p": round(pa, 3)})
+                why["admission:drop_never_type"] += 1
+                continue
+            never_admitted = adm == "keep" and pa >= NEVER_KEEP_BAR
+        if status == "rejected" or (t in NEVER and not never_admitted
+                                    and not (t == "small_talk" and keep_act == "keep" and keep_p >= MAYBE_BAR)):
             left_out.append({"id": aid, "reason": "rejected" if status == "rejected" else f"type {t}",
                              "by": "rule:type"})
             why["rule:never"] += 1
