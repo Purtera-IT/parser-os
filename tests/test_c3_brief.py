@@ -505,3 +505,31 @@ def test_a_parser_typed_exclusion_is_no_duty_for_the_owner_head(monkeypatch):
     reads = {"a1": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.9]}}
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
     assert [x["id"] for x in b["sections"]["out_of_scope"]] == ["a1"]
+
+
+def test_a_kept_line_moved_after_the_keep_loop_says_where_it_went():
+    """010362: 92 lines read "kept" in line_decisions but were moved to
+    ``superseded`` after the keep loop, so the ledger and the brief disagreed."""
+    from types import SimpleNamespace as N
+
+    from app.core.c3_brief import _drop_superseded, reconcile_line_decisions
+
+    atoms = [N(id="d1", artifact_id="draft"), N(id="s1", artifact_id="signed"), N(id="m1", artifact_id="signed")]
+    docs = [{"doc_id": "draft", "kind": "sow_draft", "filename": "Install v1.docx"},
+            {"doc_id": "signed", "kind": "signed_sow", "filename": "SOW signed.pdf"}]
+    brief = {"sections": {"fees": [{"id": "d1", "text": "$7,890"}, {"id": "s1", "text": "$9,150"}]},
+             "also_mentioned": [{"id": "m1"}],
+             "line_decisions": {"cols": ["id", "outcome", "by", "p", "col:admission", "read:co_action"],
+                                "rows": [["d1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["s1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["m1", "also", "base:col:admission", 0.6, None, None],
+                                         ["z1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["n1", "not_admitted", "base:col:admission", 0.2, None, None]]}}
+    assert _drop_superseded(brief, atoms, docs) == 1
+    assert reconcile_line_decisions(brief) == 2
+    got = {r[0]: (r[1], r[2]) for r in brief["line_decisions"]["rows"]}
+    assert got["d1"] == ("superseded", "rule:superseded")
+    assert got["s1"][0] == "kept" and got["m1"][0] == "also" and got["n1"][0] == "not_admitted"
+    assert got["z1"] == ("kept_unplaced", "none:base:col:admission")
+    placed = {x["id"] for v in brief["sections"].values() for x in v} | {"m1"}
+    assert all(r[0] in placed for r in brief["line_decisions"]["rows"] if r[1] in ("kept", "also"))

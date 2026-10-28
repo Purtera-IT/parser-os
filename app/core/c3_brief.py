@@ -933,6 +933,38 @@ def _line_decisions(kept: list[tuple[Any, Any, str]], maybe: list[tuple[Any, flo
     return {"cols": list(LINE_DECISION_COLS), "rows": rows}
 
 
+def reconcile_line_decisions(brief: dict[str, Any]) -> int:
+    """Make the ledger say where each kept line ended up. ``line_decisions``
+    is written by the keep loop; a later step can still move a kept line out
+    of the body (``_drop_superseded`` moves an older SOW version's clauses to
+    ``superseded``). On 010362 92 lines read "kept" and sat in no section and
+    not in also-mentioned, with no reason. A kept or also line found in
+    ``superseded`` now reads ``superseded`` (by ``rule:superseded``); one found
+    nowhere reads ``kept_unplaced``. Returns rows changed."""
+    ld = brief.get("line_decisions") or {}
+    rows = ld.get("rows") or []
+    if not rows:
+        return 0
+    placed = {str(x.get("id")) for v in (brief.get("sections") or {}).values() for x in v if isinstance(x, dict)}
+    placed |= {str(x.get("id")) for x in brief.get("also_mentioned") or [] if isinstance(x, dict)}
+    placed |= {str(i) for i in brief.get("also_mentioned_more_ids") or []}
+    stale = {str(x.get("id")): x for x in brief.get("superseded") or [] if isinstance(x, dict)}
+    n = 0
+    for row in rows:
+        if row[1] not in ("kept", "also") or str(row[0]) in placed:
+            continue
+        old = stale.get(str(row[0]))
+        if old is not None:
+            row[1], row[2] = "superseded", "rule:superseded"
+        else:
+            row[1], row[2] = "kept_unplaced", "none:" + str(row[2] or "")
+        n += 1
+    if n:
+        ld.setdefault("moved_after_keep", 0)
+        ld["moved_after_keep"] += n
+    return n
+
+
 def _by_view_reason(left_out: list[dict[str, Any]]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for x in left_out:
@@ -1519,6 +1551,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         _drop_superseded(brief, atoms, c3_type_base._DEAL.get("documents") or [])
     except Exception as exc:  # pragma: no cover - never lose the brief over this
         log.info("C3 brief superseded check skipped: %s", type(exc).__name__)
+    reconcile_line_decisions(brief)
     # The base's line type for every line that names a site, for the roster
     # filter (site_identity.filter_roster): a site only ever mentioned in lines
     # the base does not read as a site is a mention, not a job site.
