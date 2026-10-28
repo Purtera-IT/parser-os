@@ -212,10 +212,36 @@ _CALLS_LOCK = _threading.Lock()
 
 def charge(kind: str, seconds: float, n: int = 1) -> None:
     """Add ``n`` calls of ``kind`` ("llm" | "embed") taking ``seconds``."""
+    caller = _caller() if kind == "llm" else ""
     with _CALLS_LOCK:
         row = CALLS_BY_STAGE.setdefault(CURRENT_STAGE, {"llm_calls": 0, "llm_s": 0.0, "embed_calls": 0, "embed_s": 0.0})
         row[f"{kind}_calls"] += n
         row[f"{kind}_s"] = round(row[f"{kind}_s"] + seconds, 2)
+        if caller:
+            # Which module asked: a call outside every stage block is charged to
+            # "setup", and only this says what it was.
+            by = row.setdefault("llm_by", {})
+            by[caller] = by.get(caller, 0) + n
+
+
+_NOT_CALLERS = ("app.core.telemetry", "app.core.llm_client", "app.core.decide", "app.core.semantic_role",
+                "app.core.ollama_host", "app.core.model_gates", "app.core.multi_entity_llm", "app.core.site_llm_verify")
+
+
+def _caller() -> str:
+    """The first app module up the stack that is not LLM plumbing ('' when none)."""
+    import sys as _sys
+
+    f = _sys._getframe(2)
+    first = ""
+    while f is not None:
+        mod = str(f.f_globals.get("__name__") or "")
+        if mod.startswith("app.") and not first:
+            first = mod
+        if mod.startswith("app.") and not mod.startswith(_NOT_CALLERS):
+            return mod.rsplit(".", 1)[-1] + ":" + f.f_code.co_name
+        f = f.f_back
+    return first.rsplit(".", 1)[-1] if first else ""
 
 
 def note_call(kind: str, seconds: float, outcome: str) -> None:

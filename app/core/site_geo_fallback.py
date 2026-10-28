@@ -184,6 +184,38 @@ def _base_site_role(atom_id: str):
     return SimpleNamespace(verdict=got[0], confidence=got[1], source="c3", reason="c3 base site_role")
 
 
+def _head_site_role(atom_id: Any):
+    """The heads' jdg:site_role reading of a line at any confidence, decide()-shaped (source ``c3``),
+    or None when the line was not read."""
+    from types import SimpleNamespace
+
+    try:
+        from app.core.c3_type_base import line_reading
+
+        got = line_reading(str(atom_id or ""), "jdg:site_role")
+    except Exception:
+        return None
+    if not got or got[0] not in _SITE_ROLE_CANDIDATES:
+        return None
+    return SimpleNamespace(verdict=got[0], confidence=got[1], source="c3", reason="c3 base site_role")
+
+
+def _head_geo_mention(atom_id: Any):
+    """The heads' jdg:geo_mention reading of the line that names a place, decide()-shaped (source
+    ``c3``), or None when the line was not read."""
+    from types import SimpleNamespace
+
+    try:
+        from app.core.c3_type_base import line_reading
+
+        got = line_reading(str(atom_id or ""), "jdg:geo_mention")
+    except Exception:
+        return None
+    if not got or got[0] not in _MENTION_CANDIDATES:
+        return None
+    return SimpleNamespace(verdict=got[0], confidence=got[1], source="c3", correction_id=None)
+
+
 def _stamp_decision(atom: Any, decision: Any) -> None:
     """Record WHY a site was demoted, on the atom itself (provenance, invariant
     I). Captures which tier decided (``store``/``llm``) and, when a learned
@@ -366,6 +398,23 @@ def suppress_vendor_sites(
             if base is not None:
                 decision = base
         pending.append((a, addr, context, decision))
+    # With the C3 heads on, the LLM does not judge whose address a site is:
+    # the heads' jdg:site_role reading of the line decides at any confidence
+    # (a vendor reading only proposes, exactly as the LLM's did), and a line
+    # with no reading keeps its site. SOWSMITH_LLM_WITH_HEADS=site_role restores.
+    try:
+        from app.core.c3_type_base import heads_decide as _heads_decide
+
+        _heads_on = _heads_decide("site_role")
+    except Exception:
+        _heads_on = False
+    if _heads_on:
+        for i, (a, addr, context, d) in enumerate(pending):
+            if d.verdict is None:
+                got = _head_site_role(getattr(a, "id", None))
+                if got is not None:
+                    pending[i] = (a, addr, context, got)
+        llm_budget = 0
     asks = [i for i, (_, _, _, d) in enumerate(pending) if d.verdict is None][:llm_budget]
 
     def _ask(i):
@@ -1087,6 +1136,18 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
             lst = by_doc.setdefault(_artifact_of(atoms[j]), [])
             if lab not in lst:
                 lst.append(lab)
+    # With the C3 heads on, the heads' jdg:geo_mention reading of the line
+    # that names the place decides; with no reading the store may, the LLM
+    # never. SOWSMITH_LLM_WITH_HEADS=geo_mention restores.
+    try:
+        from app.core.c3_type_base import heads_decide as _heads_decide
+
+        _heads_on = _heads_decide("geo_mention")
+    except Exception:
+        _heads_on = False
+    if _heads_on:
+        llm_budget = 0
+
     def _ask(label: str, instruction: str, context: str):
         nonlocal llm_budget
         d = decide(_MENTION_RELATION, label, list(_MENTION_CANDIDATES), instruction=instruction,
@@ -1169,7 +1230,8 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
             d = None
         else:
             try:
-                d = _ask(label, _MENTION_INSTRUCTION, context)
+                d = (_head_geo_mention(getattr(atoms[i], "id", None)) if _heads_on else None) \
+                    or _ask(label, _MENTION_INSTRUCTION, context)
             except Exception:
                 continue
             verdict = getattr(d, "verdict", None)

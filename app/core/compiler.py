@@ -4122,6 +4122,15 @@ def compile_project(
                 _tel_calls.CALLS_BY_STAGE.items(), key=lambda kv: -(kv[1].get("llm_s", 0) + kv[1].get("embed_s", 0))))
         except Exception:
             pass
+        # Who decided what: heads vs rules vs the LLM, per kind of decision (c3_share).
+        try:
+            from app.core import c3_share as _c3_share
+
+            if _c3_brief is not None or (result.compile_capabilities.get("deflect_counts") or {}).get("c3"):
+                result.compile_capabilities["c3_decisions"] = _c3_share.summarize(
+                    list(result.atoms or []), _c3_brief, result.compile_capabilities)
+        except Exception as exc:
+            result.compile_capabilities["c3_decisions"] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
     except Exception:
         result.compile_capabilities = None
 

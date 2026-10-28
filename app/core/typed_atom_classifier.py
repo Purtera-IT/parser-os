@@ -751,6 +751,17 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                         return "fill", answer, p, _AT(answer)
                     except ValueError:
                         return None
+                # Any other parser type the base is sure of (scope_item, risk,
+                # assumption, decision, open_question, action_item ...): the
+                # typing LLM's taxonomy has no name for it, so sending the line
+                # there only let the LLM override a sure head (live 10-28: 15
+                # lines on 000002, 7 scope_item lines on 010447). Assigned as
+                # the base said; SOWSMITH_LLM_WITH_HEADS=typing_untaken restores.
+                if _c3.heads_decide("typing_untaken"):
+                    try:
+                        return "assign", answer, p, _AT(answer)
+                    except ValueError:
+                        return None
                 return None
 
             if _c3_mode == "shadow":
