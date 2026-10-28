@@ -83,6 +83,20 @@ NON_TRAINING_RELATIONS = frozenset({
 })
 
 
+def non_training_relations() -> frozenset[str]:
+    """``NON_TRAINING_RELATIONS`` plus the rule-taught relations
+    (``training_log.RULE_TAUGHT_RELATIONS``). Their rows were a regex's own
+    output logged as teacher=store, so a "champion" trained on them decided as
+    ``neural_head`` while only repeating the regex. They stay out of the
+    retrain unless ``SOWSMITH_RETRAIN_RULE_RELATIONS`` is on (default off).
+    Champions already in the registry are not touched here."""
+    from app.core.training_log import RULE_TAUGHT_RELATIONS
+
+    if os.environ.get("SOWSMITH_RETRAIN_RULE_RELATIONS", "").strip().lower() in ("1", "true", "yes", "on"):
+        return NON_TRAINING_RELATIONS
+    return NON_TRAINING_RELATIONS | RULE_TAUGHT_RELATIONS
+
+
 def _cap_train_rows(rows: list, limit: int = MAX_TRAIN_ROWS) -> list:
     """Bound a relation's train set, keeping EVERY human-written row.
 
@@ -356,10 +370,11 @@ def retrain_all(
         pass
     if relations is None:
         relations = sorted(
-            {r.relation for r in log.rows()} - NON_TRAINING_RELATIONS
+            {r.relation for r in log.rows()} - non_training_relations()
         )
     else:
-        relations = [r for r in relations if r not in NON_TRAINING_RELATIONS]
+        _skip = non_training_relations()
+        relations = [r for r in relations if r not in _skip]
     results: list[RetrainResult] = []
     serving_reports: dict[str, RelationReport] = {}
     for rel in relations:
