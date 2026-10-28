@@ -845,6 +845,20 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                         _ans = _c3_answer.get(id(a))
                         _mark_c3(a, _name, _ans[1] if _ans else None, "assign")
                         head_deflected += 1
+                # A line set aside before the brief (our kit or calculator, or out of a quoting read) is
+                # never typed by the LLM: it keeps its parser type and the count says why.
+                if os.environ.get("SOWSMITH_C3_SET_ASIDE_NO_LLM", "1").strip().lower() not in ("0", "false", "no", "off"):
+                    _kept_out: dict[str, int] = {}
+                    _rest = []
+                    for a in survivors:
+                        _r = _c3.set_aside(a, artifact_sha256)
+                        if _r:
+                            _kept_out[_r] = _kept_out.get(_r, 0) + 1
+                        else:
+                            _rest.append(a)
+                    if _kept_out:
+                        _why["set_aside_not_typed"] = _kept_out
+                    survivors = _rest
                 promotable = survivors
                 try:
                     _c3.note_typing(_why)

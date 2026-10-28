@@ -365,6 +365,19 @@ def doc_kind(atom: Any, artifact_sha256: dict[str, str] | None = None) -> str:
     return _event_kind(atom) or _file_kind(atom, artifact_sha256)
 
 
+def set_aside(atom: Any, artifact_sha256: dict[str, str] | None = None) -> str:
+    """Why a line the heads did not type never needs a type: our estimating calculator
+    (``estimating_calc``: the brief cuts every such line by rule), or, in a quoting read, a line outside
+    the view (``out_of_view``: left out of the brief and quote). '' otherwise. Typing them with the LLM
+    was the cost of 010245's compile (289 calls, 1,174 LLM-s for lines cut later). Deal Kit lines stay
+    typed: the kit is read as structure downstream (test_a_deal_kit_line_is_never_acted_on)."""
+    if doc_kind(atom, artifact_sha256) == "estimating_calc":
+        return "estimating_calc"
+    if view_name() == "quoting" and str(getattr(atom, "id", "") or "") in (_DEAL.get("view_out") or set()):
+        return "out_of_view"
+    return ""
+
+
 def skipped(atom: Any, artifact_sha256: dict[str, str] | None = None) -> bool:
     # c3_record, not ml.c3.data: the worker ships without ml/, and this runs
     # on every sure reading (an ImportError here disabled the whole layer).
@@ -2060,7 +2073,10 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
     if keys and shared and all(k in shared for k in keys if k not in out_of_view):
         # This compile already read the deal (document_job_scope, on the same
         # record): its lines only dropped since, so the readings stand.
-        _STATUS.update(state="read", reason="shared", remote=True, lines=len(rows), read_ms=0.0)
+        # The read itself ran in document_job_scope; its time is that read's (it was recorded as 0, so no
+        # compile ever showed what the heads read cost).
+        _STATUS.update(state="read", reason="shared", remote=True, lines=len(rows),
+                       read_ms=float(_DOC_STATUS.get("read_ms") or 0.0), read_reused_from="document_job_scope")
         return {i: (str(shared[k][0]), float(shared[k][1] or 0.0)) for i, k in zip(ids, keys)
                 if shared.get(k) and shared[k][0] is not None}
     if _never():

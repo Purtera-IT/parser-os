@@ -72,3 +72,27 @@ def test_a_planning_compile_quotes_only_from_lines_before_our_first_pricing(monk
     assert rows["po1"]["left_out"] and rows["po1"]["out_of_view"] == "after_cut"
     monkeypatch.setenv("SOWSMITH_C3_QUOTE_PREQUOTE_ONLY", "off")
     assert c3_type_base.out_of_quote() == {}
+
+
+def test_set_aside_lines_are_never_typed_by_the_llm(monkeypatch):
+    kinds = {"k1": "deal_kit", "c1": "estimating_calc", "e1": "email", "o1": "email"}
+    monkeypatch.setattr(c3_type_base, "doc_kind", lambda a, sha=None: kinds[a.id])
+    monkeypatch.setattr(c3_type_base, "_DEAL", {"view_out": {"o1"}})
+    monkeypatch.setattr(c3_type_base, "view_name", lambda: "quoting")
+    a = {i: NS(id=i) for i in kinds}
+    assert c3_type_base.set_aside(a["k1"]) == ""  # the kit stays typed (read as structure downstream)
+    assert c3_type_base.set_aside(a["c1"]) == "estimating_calc"
+    assert c3_type_base.set_aside(a["o1"]) == "out_of_view"
+    assert c3_type_base.set_aside(a["e1"]) == ""
+    # a planning read keeps its out-of-view lines typed (the planning brief may use them)
+    monkeypatch.setattr(c3_type_base, "view_name", lambda: "planning")
+    assert c3_type_base.set_aside(a["o1"]) == ""
+
+
+def test_a_shared_read_reports_the_document_reads_time(monkeypatch):
+    monkeypatch.setattr(c3_type_base, "_DOC_STATUS", {"state": "read", "read_ms": 4321.0})
+    monkeypatch.setattr(c3_type_base, "_DEAL", {"types": {"a1": ["task", 0.9]}})
+    monkeypatch.setattr(c3_type_base, "_STATUS", {"state": "off"})
+    out = c3_type_base._remote("d", [{}], ["a1"], [0])
+    assert out == {0: ("task", 0.9)}
+    assert c3_type_base._STATUS["read_ms"] == 4321.0 and c3_type_base._STATUS["read_reused_from"] == "document_job_scope"
