@@ -85,7 +85,14 @@ def _head(atom: Any, types: dict[str, Any]) -> tuple[str, float] | None:
         return str(r[0]), float(r[1] or 0.0)
     lab = _value(atom).get("c3_label")
     if isinstance(lab, dict) and lab.get("type"):
-        return str(lab["type"]), float(lab.get("p") if lab.get("p") is not None else 1.0)
+        if lab.get("p") is not None:
+            return str(lab["type"]), float(lab["p"])
+        # A fill label (the head typed it, the LLM filled values) recorded no p before 10-28: the
+        # head's own reading carries it.
+        says = _value(atom).get("c3_base_says")
+        if isinstance(says, dict) and says.get("type") == lab["type"] and says.get("p") is not None:
+            return str(lab["type"]), float(says["p"])
+        return str(lab["type"]), 1.0
     return None
 
 

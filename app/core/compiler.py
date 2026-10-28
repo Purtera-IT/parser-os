@@ -2192,7 +2192,7 @@ def compile_project(
                     _c3_djs._DEAL["document_job"] = [
                         {k: _v.get(k) for k in ("filenames", "verdict", "model_verdict", "confidence", "source",
                                                  "c3_verdict", "c3_confidence", "drawing_spared", "content_spared",
-                                                 "share_rule_spared", "reason", "atoms")}
+                                                 "share_rule_spared", "reason", "atoms", "c3_bar", "c3_docs")}
                         for _v in _djs_verdicts]
                 except Exception:
                     pass

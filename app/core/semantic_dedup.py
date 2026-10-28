@@ -671,6 +671,7 @@ def _zip_from_site_id_slug(site_id: str) -> str:
 
 
 from app.core.address_parse import US_STATE_NAMES as _US_STATE_NAMES
+from app.core.address_parse import US_STATES as _US_STATES
 
 _STATE_NAME_OF: dict[str, str] = {code: name for name, code in _US_STATE_NAMES.items()}
 _FUNCTION_WORDS = frozenset({"a", "an", "the", "in", "at", "of", "on", "for", "and", "to"})
@@ -984,12 +985,50 @@ def _names_a_place_the_site_does_not(atom: Any, winner: Any) -> bool:
     return len(extra) >= 2 and not (extra & _ADDRESS_WORDS)
 
 
+_STREET_IN_TEXT_RE = re.compile(r"\b(\d{1,6})\s+([A-Za-z][A-Za-z.'-]{2,})")
+_TOWN_IN_TEXT_RE = re.compile(r"(?:^|[:;|]\s*|\b)([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,2}),\s*([A-Z]{2})\b")
+
+
+def _site_blob(site: Any) -> str:
+    v = getattr(site, "value", None)
+    v = v if isinstance(v, dict) else {}
+    parts = [str(getattr(site, "raw_text", "") or "")] + [str(v.get(f) or "") for f in (
+        "street_address", "address", "city", "name", "facility_name")]
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", p.lower()) for p in parts)
+
+
+def _place_no_site_states(atom: Any, sites: list[Any]) -> str:
+    """A street ("900 Springfield Pike") or a town ("Decatur, IL") this line names in its own words
+    that no site in ``sites`` names. Such a line is not a copy of any of them, whatever details it
+    lacks: it was folded into the best-ranked site (010317, wave 4: a second street in the same city
+    folded into the first, a town in another state into the origin site), and the deal lost a place.
+    Returns the place, or ''."""
+    raw = str(getattr(atom, "raw_text", "") or "")
+    blobs = [f" {_site_blob(s)} " for s in sites]
+    m = _STREET_IN_TEXT_RE.search(raw)
+    if m and m.group(2).lower() not in _FUNCTION_WORDS:
+        num, word = m.group(1), m.group(2).lower().strip(".'-")
+        if not any(f" {num} " in b and f" {word} " in b for b in blobs):
+            return f"{num} {m.group(2)}"
+    for m in _TOWN_IN_TEXT_RE.finditer(raw):
+        state = m.group(2)
+        if state not in _US_STATES:
+            continue
+        town = re.sub(r"[^a-z0-9]+", " ", m.group(1).lower()).strip()
+        if town and not any(f" {town} " in b for b in blobs):
+            return f"{m.group(1)}, {state}"
+    return ""
+
+
 def _covered_by_a_site(atom: Any, sites: list[Any]) -> bool:
     """Does some site in ``sites`` state every ZIP, phone, email and
     instruction ``atom`` does, so dropping ``atom`` loses nothing?
 
-    The covering site is recorded as the dropped atom's survivor."""
+    The covering site is recorded as the dropped atom's survivor. A line
+    naming a place no site names is covered by none (``_place_no_site_states``)."""
     others = [s for s in sites if s is not atom]
+    if _place_no_site_states(atom, others):
+        return False
     if not _fold.detail_only_the_loser_states(_NO_DETAIL, atom):
         if others:
             note_folded_into(atom, max(others, key=lambda s: _physical_site_quality(s, _physical_site_id(s))))

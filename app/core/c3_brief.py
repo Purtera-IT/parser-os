@@ -176,13 +176,23 @@ def document_gate() -> list[dict[str, Any]]:
         job = None
         if v:
             src = str(v.get("source") or "")
+            # This document's own reading (the conversation's verdict is its documents' worst case:
+            # one other_job reading used to show on every document of the thread, 010340's 0.896 x 7).
+            own = (v.get("c3_docs") or {}).get(fn)
             job = {"verdict": v.get("verdict"),
                    "by": ("pm_lesson" if src == "store" else "head:jdg:document_job" if src == "c3"
+                          else "head:jdg:document_job (below its bar)" if src == "c3_below_bar"
                           else "model_judge" if v.get("model_verdict") and src not in ("fallback", "") else "none"),
-                   "head": [v.get("c3_verdict"), v.get("c3_confidence")] if v.get("c3_verdict") else None,
+                   "head": list(own) if own else ([v.get("c3_verdict"), v.get("c3_confidence")]
+                                                   if v.get("c3_verdict") else None),
+                   "conversation_head": [v.get("c3_verdict"), v.get("c3_confidence")] if v.get("c3_verdict") else None,
+                   "bar": v.get("c3_bar"),
                    "confidence": v.get("confidence"), "kept_by_rule": spared or None, "reason": v.get("reason") or None}
         after = admissibility_gate() and stage.get("admissible_for") == "neither"
-        out.append({"artifact_id": str(d.get("artifact_id") or ""), "filename": fn, "document_job": job,
+        # The deal record's documents (c3_type_base.deal_documents) carry their artifact id as ``doc_id``;
+        # read as "artifact_id" alone every row had "" and ``build`` barred nothing (wave 4: 010222's
+        # 11 after-decision documents and 000083's 3 still fed the brief and the quote).
+        out.append({"artifact_id": str(d.get("artifact_id") or d.get("doc_id") or ""), "filename": fn, "document_job": job,
                     "deal_stage": {"stage_at_arrival": stage.get("stage_at_arrival"),
                                    "admissible_for": stage.get("admissible_for"), "why": stage.get("why")} if stage else None,
                     "feeds": not ((job or {}).get("verdict") == "other_job" or after),
@@ -449,9 +459,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
     out_of_view = out_of_quoting_view()
     docs = document_gate()
     barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]}
+    from app.core.c3_type_base import _doc_id
+
     for a in atoms:
         aid, t = str(a.id), _type(a)
-        art = str(getattr(a, "artifact_id", "") or "")
+        art = _doc_id(a)
         if art in barred:
             # The document does not feed this deal's brief or quote (another job, or arrived after the
             # deal was decided); its lines stay in the compile for the heads and are listed here.
@@ -801,6 +813,10 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                           "read:co_action" if use["read:co_action"] else "rule:type"),
         },
         "label_next": label_tasks[:MAX_LABEL_TASKS],
+        # Every line's keep decision, compactly: who decided (a head, a rule, the view, the document
+        # gate), at what p, and the keep heads' own readings, so an audit or a PM tool can tell an
+        # admission drop from a co_action company drop from a rule (wave 4: only counts were kept).
+        "line_decisions": _line_decisions(kept, maybe, left_out, reads, kept_by_now),
         # What decided which documents feed the brief and the quote, per document.
         "documents": docs,
         "assemble_ms": round((time.monotonic() - started) * 1000, 1),
@@ -852,6 +868,31 @@ def _customer_furnished(sections: dict[str, list[dict[str, Any]]], by_id: dict[s
     for _, it in moved:
         sections["customer_furnished"].append({**it, "section_by": "base:col:supplier"})
     return len(moved)
+
+
+#: Columns of ``line_decisions.rows``.
+LINE_DECISION_COLS = ("id", "outcome", "by", "p", "col:admission", "read:co_action")
+
+
+def _reading(reads: dict[str, dict[str, list]], aid: str, head: str) -> str | None:
+    """``"answer:p"`` of one head on one line, or None when the read did not answer it."""
+    ans, p = _answer((reads.get(aid) or {}).get(head))
+    return None if ans == "_absent" and not p else f"{ans}:{p:.3f}"
+
+
+def _line_decisions(kept: list[tuple[Any, Any, str]], maybe: list[tuple[Any, float]],
+                    left_out: list[dict[str, Any]], reads: dict[str, dict[str, list]],
+                    kept_by: dict[str, str] | None = None) -> dict[str, Any]:
+    """``{"cols": LINE_DECISION_COLS, "rows": [...]}``: one row per line the keep loop decided.
+    ``outcome`` is ``kept`` (the body), ``also`` (kept below the body bar) or the left-out reason."""
+    def row(aid: str, outcome: str, by: str, p: Any) -> list[Any]:
+        return [aid, outcome, by, None if p is None else round(float(p), 3),
+                _reading(reads, aid, "col:admission"), _reading(reads, aid, "read:co_action")]
+
+    rows = [row(str(a.id), "kept", by, p) for a, p, by in kept]
+    rows += [row(str(a.id), "also", (kept_by or {}).get(str(a.id)) or "", p) for a, p in maybe]
+    rows += [row(str(x["id"]), str(x.get("reason") or ""), str(x.get("by") or ""), x.get("p")) for x in left_out]
+    return {"cols": list(LINE_DECISION_COLS), "rows": rows}
 
 
 def _by_view_reason(left_out: list[dict[str, Any]]) -> dict[str, list[str]]:
