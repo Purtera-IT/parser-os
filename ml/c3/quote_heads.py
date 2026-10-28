@@ -23,7 +23,8 @@ from __future__ import annotations
 import json,math,os,re,urllib.request
 from typing import Any
 
-NUM={'a':1,'an':1,'single':1,'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10,'twelve':12,'twenty':20}
+NUM={'a':1,'an':1,'single':1,'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10,
+     'eleven':11,'twelve':12,'fourteen':14,'fifteen':15,'sixteen':16,'twenty':20,'thirty':30,'forty':40}
 UNITS={'tv':r'tvs?|televisions?|displays?|monitors?|screens?','camera':r'cameras?|cams?','ap':r'aps?|access points?|waps?',
  'room':r'(conference |meeting |board ?)?rooms?','drop':r'drops?|cable runs?','battery':r'batter(y|ies)|cartridges?|battery packs?','ups':r'ups(es)?|smart-ups|ups units?',
  'server':r'servers?|blades?','rack':r'racks?|cabinets?','switch':r'switch(es)?','phone':r'phones?|handsets?','workstation':r'workstations?|desks?|pcs?|laptops?|computers?',
@@ -48,14 +49,20 @@ HB=(2,4,6,8,10,12,16,24,32,40,48,64,80,120,200,400,600)
 SKIP_TYPES={'small_talk','stakeholder','deal_metadata'}
 #: A head reading at or above this decides (SOWSMITH_C3_QUOTE_SURE).
 SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SURE','0.8') or 0.8)
-#: Hours heads, in the order they decide: the kit's own hours estimate, then hours the documents state.
-HOURS_HEADS=('read:co_hours_estimate','read:hours_stated','read:labor_hours')
-CREW_HEADS=('read:crew_size','read:co_crew_rule')
+#: Heads that read hours / crew the DOCUMENTS state, in the order they decide. read:co_hours_estimate ("our estimate
+#: where the text states no hours") and read:co_crew_rule ("our crew rule, not the text") are not text readers: used
+#: as line locators with a number off the line they outranked surer reads and fired on 56-98% of lines (run 8).
+HOURS_HEADS=('read:hours_stated','read:labor_hours')
+CREW_HEADS=('read:crew_size',)
 BILLING_LINE_HEADS=('read:billing_type','jdg:commercial')
 #: Heads that score below live; an answer from one is used but marked (AUDIT_dealkit_heads item 12).
 CAVEATS={'read:labor_hours':'read:labor_hours scores below live (0.03-0.04 held-out): check these hours'}
-HOURS_ON_LINE=re.compile(r"(\d{1,3}(?:\.\d)?)(?:\s*(?:-|to)\s*(\d{1,3}(?:\.\d)?))?\s*(?:hours?|hrs?|h)\b",re.I)
-CREW_ON_LINE=re.compile(r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\(\d+\)\s*)?(?:onsite\s+|field\s+|dedicated\s+)?(?:techs?|technicians?|engineers?|installers?|people|resources?|guys)\b",re.I)
+#: A number as SOWs write it: "4", "4.5", "four", "four (4)". The written word and its digits both count once.
+_N=r"(\d{1,3}(?:\.\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fourteen|fifteen|sixteen|twenty|thirty|forty)(?:\s*\(\d{1,3}\))?"
+#: "4 hours", "four (4) hours", "12 to 16 labor hours", "12 and 16 hours", "6-8 onsite hours".
+HOURS_ON_LINE=re.compile(r"\b"+_N+r"(?:\s*(?:-|to|and|or)\s*"+_N+r")?\s*(?:(?:labor|labour|man|onsite|on-site|working|billable)\s+)?(?:hours?|hrs?|h)\b",re.I)
+#: "2 techs", "one (1) qualified onsite L2 network technician", "~10 smart hands", "6 - 7 Customer Engineer personnel".
+CREW_ON_LINE=re.compile(r"\b"+_N+r"(?:\s*(?:-|to|or)\s*"+_N+r")?\s+(?:[\w-]+\s+){0,4}?(?:techs?|technicians?|engineers?|installers?|people|personnels?|resources?|guys|smart\s+hands)\b",re.I)
 SITES_SAID=re.compile(r"\b(\d{1,4})[ \t]+(?:[\w-]+[ \t]+){0,2}?(?:sites?|locations?|stores?|hotels?|offices?|branches)\b(?![- ]to[- ])",re.I)
 #: "5 tanks per site", "10 Site-to-Site tunnels": a count OF something at each site, not a count of sites.
 PER_UNIT=re.compile(r"\b(?:per|each|every)\b",re.I)
@@ -76,6 +83,9 @@ SERVICE_FAMILY={'audio_visual':'av','paging_mass_notification':'av','low_voltage
 #: Lines that state no term of the deal: never a billing vote (000118: two small_talk and two open_question lines
 #: among the eight t_and_m votes).
 NO_BILLING_TYPES=SKIP_TYPES|{'open_question','answered_question','question'}
+#: read:work_window answers that make the day type overtime, and read:access_need answers that flag height.
+AFTER_WINDOWS={'after_hours','overnight','weekend','holiday'}
+HEIGHT_ACCESS={'lift','ladder'}
 #: The service head picks the family at or above this (SOWSMITH_C3_QUOTE_SERVICE_SURE; the brief's SERVICE_BAR).
 #: Run O's service head is unsure everywhere (0.15-0.58) and right on 6 of 16 run 8 deals against the embedding's
 #: 8, so below the bar its answer is recorded, not used; once a retrain makes it sure it decides.
@@ -127,7 +137,10 @@ class QuoteHeads:
                 if not r: continue
                 v=r[2] if len(r)>2 and isinstance(r[2],(int,float)) and r[2]>0 else None
                 if v is None:
-                    for m in rx.finditer(a.get('text') or ''):
+                    t=a.get('text') or ''
+                    for m in rx.finditer(t):
+                        # "Access One engineer": a capitalised number word right after a capitalised word is a name.
+                        if m.group(1)=='One' and re.search(r"[A-Z][\w&.-]*\s+$",t[:m.start()]): continue
                         g=[x for x in m.groups() if x]; n=[float(NUM.get(x.lower(),x)) for x in g]
                         v=sum(n)/len(n); break
                 if v is None or not 0<v<=cap: continue
@@ -171,6 +184,17 @@ class QuoteHeads:
                 v=int(m.group(1))
                 if v<=2000 and not SIZE.match(t[m.start(1):m.end(1)+7]): n=max(n,v)
         return n
+    @staticmethod
+    def _set_head(lines,head):
+        """(id, answers, p) for each line where a set-valued head is sure of at least one answer."""
+        out=[]
+        for a in lines:
+            r=(a.get('reads') or {}).get(head)
+            if not r or not isinstance(r[0],(list,tuple)): continue
+            ps=r[1] if len(r)>1 and isinstance(r[1],dict) else {}
+            ans={str(x) for x in r[0] if float(ps.get(x) or 0)>=SURE and x!='_absent'}
+            if ans: out.append((a.get('id'),ans,max(float(ps.get(x) or 0) for x in ans)))
+        return out
     @staticmethod
     def _said(lines,rx):
         """Ids of the lines whose wording matches ``rx`` and does not negate it."""
@@ -284,7 +308,10 @@ class QuoteHeads:
         elif n and F.get('per_unit_crew_hours') and fam in self.b['count_scaled_families'] and n<=(300 if fam in ('ap','camera','power') else 60):
             hpt=max(min(F['median_hours_per_tech'],8),n*F['per_unit_crew_hours']/techs); why_h=f'{n} {q["unit"]}s at the usual time each for {fam} jobs'; by_h='fallback:family_per_unit_x_regex_count'
         else: hpt=F['median_hours_per_tech']; why_h=f'typical for {fam} jobs'; by_h='fallback:family_median'
-        if not by_h.startswith('heads:') and asked: caveats.append('hours not stated on any line the heads read: '+by_h)
+        if not by_h.startswith('heads:') and asked:
+            read_no_number=[a.get('id') for a in readable if any(self._sure(a,h) for h in HOURS_HEADS)]
+            caveats.append(('a head read hours on '+', '.join(map(str,read_no_number[:3]))+' but no number could be taken: '
+                            if read_no_number else 'hours not stated on any line the heads read: ')+by_h)
         hpt=_snap(hpt)
         # rate line and price
         rp=seller or (account if account and account['rate_line_share']>=0.6 else None)
@@ -299,14 +326,21 @@ class QuoteHeads:
             rate_line=new; by_r='heads:read:tech_level'; used['level']=dict(head='read:tech_level',atom_id=lv[1],p=round(lv[2],3))
         billing=self._billing(p,readable); travel=self._travel(p)
         flags=[]
-        # No day-type or height head yet: these are wording rules, read only on the work lines the heads
-        # kept in the brief body (never chatter: 010095 priced overtime off World Cup talk), never when
-        # the wording negates them ("no lift requirements", 010228), and marked rule:* with their lines.
-        after_ids=self._said(work,AFTER); height_ids=self._said(work,HEIGHT)
+        # Day type and lift: the heads first (read:work_window, read:access_need, set-valued), read on the work lines
+        # the heads kept in the brief body; the wording rules only where no head is sure, marked rule:* with their
+        # lines, read on the same lines and never when the wording negates them ("no lift requirements", 010228).
+        win=self._set_head(work,'read:work_window'); acc=self._set_head(work,'read:access_need')
+        after_ids=[i for i,ans,_ in win if ans & AFTER_WINDOWS]; height_ids=[i for i,ans,_ in acc if ans & HEIGHT_ACCESS]
+        if after_ids: by_d='heads:read:work_window'
+        elif win: by_d='heads:read:work_window'  # sure on business hours only
+        else:
+            after_ids=self._said(work,AFTER); by_d='rule:after_hours_text' if after_ids else 'fallback:default'
+        by_h_flag='heads:read:access_need' if acc else 'rule:height_text'
+        if not acc: height_ids=self._said(work,HEIGHT)
         after=bool(after_ids)
-        if after: flags.append('after-hours work mentioned (rule:after_hours_text)')
-        day_type,by_d=('ot','rule:after_hours_text') if after else ('reg','fallback:default')
-        if height_ids: flags.append('height / lift access mentioned (rule:height_text)')
+        if after: flags.append(f'after-hours work mentioned ({by_d})')
+        day_type='ot' if after else 'reg'
+        if height_ids: flags.append(f'height / lift access mentioned ({by_h_flag})')
         roster=int(p.get('site_count') or 0)
         if roster>=2: flags.append(f"{roster} places in the documents: check the site list")
         # Site count: the heads' roster when there is one; with none, the deal head that reads a
