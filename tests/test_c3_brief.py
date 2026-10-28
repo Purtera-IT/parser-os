@@ -18,6 +18,15 @@ def test_registry_layers_and_trust():
     assert not heads.trusted("col:wants")  # one-sided labels: not trusted
 
 
+def test_no_trusted_head_lost_to_live_on_the_grade():
+    """Test A's registry: a head the held-out grade measured worse than the service's never decides."""
+    for key, h in heads.registry().items():
+        ev = h.get("holdout") or {}
+        if h["status"] == "ready" and ev.get("live") is not None:
+            assert ev["exact"] >= ev["live"] and ev.get("verdict") != "worse", key
+    assert not heads.trusted("read:sow_section")  # test A 0.376 vs live 0.629 on heldout7
+
+
 def test_no_read_falls_back_to_rules():
     atoms = [_atom(1, "scope_item", "Install 4 cameras"), _atom(2, "small_talk", "thanks!"),
              _atom(3, "open_question", "Who owns the lift?")]
@@ -29,7 +38,9 @@ def test_no_read_falls_back_to_rules():
     assert b["decided_by"]["heads_used"] == []
 
 
-def test_trusted_heads_decide_and_say_so():
+def test_trusted_heads_decide_and_say_so(monkeypatch):
+    # The mechanism, not the shipped registry: test A's read:sow_section is not trusted (worse than live).
+    monkeypatch.setenv("SOWSMITH_C3_BRIEF_TRUST", "read:co_action,read:co_reason,read:sow_section")
     atoms = [_atom(1, "scope_item"), _atom(2, "scope_item"), _atom(3, "task")]
     reads = {"a1": {"read:co_action": ["keep", 0.9], "read:sow_section": ["deliverables", 0.8]},
              "a2": {"read:co_action": ["reject", 0.7], "read:co_reason": ["hw_price_not_ours", 0.6]},
