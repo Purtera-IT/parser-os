@@ -53,6 +53,13 @@ def set_stage_item(item: str) -> None:
     _HB_ITEM[0] = str(item or "")[:200]
 
 
+def stage_item() -> str:
+    """What the running stage last said it is working on ("" when nothing),
+    e.g. "waiting for C3 heads (...)" under SOWSMITH_C3_FALLBACK=never. Read
+    from another thread, like ``stage_progress``."""
+    return _HB_ITEM[0]
+
+
 # How far through its own work the current stage is.
 #
 # WHY A NUMBER AND NOT JUST A NAME. `set_stage_item` above makes a wedged stage
@@ -176,6 +183,16 @@ def charge(kind: str, seconds: float, n: int = 1) -> None:
         row = CALLS_BY_STAGE.setdefault(CURRENT_STAGE, {"llm_calls": 0, "llm_s": 0.0, "embed_calls": 0, "embed_s": 0.0})
         row[f"{kind}_calls"] += n
         row[f"{kind}_s"] = round(row[f"{kind}_s"] + seconds, 2)
+
+
+def note_call(kind: str, seconds: float, outcome: str) -> None:
+    """One ``kind`` call ("vision" | "ocr") into this compile's trace: ``{kind}_calls``,
+    ``{kind}_s`` and a count per outcome (``{kind}_ok`` / ``_empty`` / ``_error``)."""
+    with _CALLS_LOCK:
+        row = CALLS_BY_STAGE.setdefault(CURRENT_STAGE, {"llm_calls": 0, "llm_s": 0.0, "embed_calls": 0, "embed_s": 0.0})
+        row[f"{kind}_calls"] = row.get(f"{kind}_calls", 0) + 1
+        row[f"{kind}_s"] = round(row.get(f"{kind}_s", 0.0) + seconds, 2)
+        row[f"{kind}_{outcome}"] = row.get(f"{kind}_{outcome}", 0) + 1
 
 
 class CompileTelemetry:

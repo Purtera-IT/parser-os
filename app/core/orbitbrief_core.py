@@ -261,6 +261,7 @@ def build_pm_dashboard(
             _noise = (
                 "[image extracted" in _lt
                 or "awaiting ocr" in _lt
+                or _lt.startswith(("[image read:", "[image skipped:"))
                 or (len(_lt) < 25 and ("thought" in _lt or _lt.startswith(("hey ", "hi ", "thanks"))))
             )
             # Purtera asking Purtera is the WORK of getting to a fact, not a

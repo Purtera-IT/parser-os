@@ -3818,7 +3818,13 @@ class DocxParser(BaseParser):
                     parser_version=self.parser_version,
                 ))
                 if kind == "image_marker":
-                    atoms.extend(self._image_fact_atoms(zf, name, rel, filename, artifact_id, project_id))
+                    facts = self._image_fact_atoms(zf, name, rel, filename, artifact_id, project_id)
+                    atoms.extend(facts)
+                    outcome = getattr(self, "_last_image_outcome", None)
+                    if outcome:
+                        from app.parsers.binary_markers import mark_marker_outcome
+
+                        mark_marker_outcome(atoms[-1 - len(facts)], outcome)
         return atoms
 
     def _image_fact_atoms(self, zf: Any, name: str, rel: str, filename: str, artifact_id: str,
@@ -3827,10 +3833,12 @@ class DocxParser(BaseParser):
         010038's floor plans hold the only AP, TV and printer counts."""
         from app.core import image_describe
 
+        self._last_image_outcome = None  # the marker's status line (binary_markers.mark_marker_outcome)
         if not image_describe.enabled():
             return []
         done = getattr(self, "_described_images", 0)
         if done >= image_describe.MAX_PER_FILE:
+            self._last_image_outcome = "skipped: over the image cap"
             return []
         try:
             data = zf.read(name)
@@ -3844,7 +3852,7 @@ class DocxParser(BaseParser):
             except Exception:
                 ctx = ""
             self._doc_text_for_images = ctx
-        facts = image_describe.describe(data, filename, ctx)
+        facts, self._last_image_outcome = image_describe.describe_outcome(data, filename, ctx)
         self._described_images = done + 1
         out: list[EvidenceAtom] = []
         for i, fact in enumerate(facts):

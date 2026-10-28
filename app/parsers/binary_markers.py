@@ -41,6 +41,39 @@ _OOXML_BINARY_DIRS: tuple[tuple[str, str, str], ...] = (
     ("drawings/", "drawing_marker", "drawing / shape"),
 )
 
+# Parts under drawings/ that are not pictures: relationship files and the legacy VML
+# comment shapes (vmlDrawing*.vml). A marker for them asks for an OCR that has nothing to read.
+_NOT_A_PICTURE = re.compile(r"(?:^|/)_rels/|vmlDrawing", re.IGNORECASE)
+
+_AWAITING = re.compile(r"^\s*\[[^\]]*awaiting OCR[^\]]*\]")
+_MARKER_NOUN = {"image_marker": "Image", "chart_marker": "Chart", "drawing_marker": "Drawing",
+                "embedded_object_marker": "Embedded object"}
+
+
+def mark_marker_outcome(atom: object, outcome: str) -> bool:
+    """Rewrite a marker's "[... awaiting OCR / vision ...]" lead to what happened to it, e.g.
+    ``read: 3 facts`` -> "[Image read: 3 facts]" or ``skipped: logo`` -> "[Image skipped: logo]".
+    The rest of the line (region, file, expected content) stays; ``value.image_status`` records the
+    outcome. A reader reports what it did; the heads decide what the line is. Returns True when the
+    text changed. Never raises."""
+    try:
+        text = str(getattr(atom, "raw_text", "") or "")
+        val = getattr(atom, "value", None)
+        kind = str(val.get("kind") or "") if isinstance(val, dict) else ""
+        noun = _MARKER_NOUN.get(kind, "Image")
+        new = _AWAITING.sub(f"[{noun} {outcome}]", text, count=1)
+        if isinstance(val, dict):
+            val["image_status"] = outcome
+        if new == text:
+            return False
+        atom.raw_text = new
+        if hasattr(atom, "normalized_text"):
+            atom.normalized_text = normalize_text(new)
+        return True
+    except Exception:
+        return False
+
+
 # ODF binary locations.
 _ODF_BINARY_DIRS: tuple[tuple[str, str, str], ...] = (
     ("Pictures/", "image_marker", "image"),
@@ -210,6 +243,8 @@ def emit_zip_binary_markers(
             if matched is None:
                 continue
             kind, label = matched
+            if kind == "drawing_marker" and _NOT_A_PICTURE.search(rel):
+                continue
             try:
                 size = zf.getinfo(name).file_size
             except KeyError:  # pragma: no cover

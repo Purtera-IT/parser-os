@@ -58,29 +58,37 @@ MAX_FACTS = 10
 
 def describe(image_bytes: bytes, filename: str, context: str = "") -> list[str]:
     """Fact lines for one image, or [] (not meaningful, too small, or any failure)."""
+    return describe_outcome(image_bytes, filename, context)[0]
+
+
+def describe_outcome(image_bytes: bytes, filename: str, context: str = "") -> tuple[list[str], str | None]:
+    """(fact lines, what happened): ``read: N facts``, ``skipped: <why>``, or None when the call
+    failed or came back empty (the image was not read; its marker keeps saying so)."""
     if not image_bytes or len(image_bytes) < MIN_BYTES:
-        return []
+        return [], "skipped: too small"
     try:
         from app.core import pdf_image_vision
 
         raw = pdf_image_vision._vlm(image_bytes, PROMPT.format(filename=filename, context=(context or "")[:2500]), model=None, max_tokens=700)
     except Exception as exc:  # pragma: no cover - a failed call costs the image, never the parse
         log.info("image_describe failed: %s", type(exc).__name__)
-        return []
+        return [], None
     m = re.search(r"\{.*\}", raw or "", re.S)
     try:
         got: dict[str, Any] = json.loads(m.group(0)) if m else {}
     except Exception:
-        return []
+        return [], None
+    if not got:
+        return [], None
     if not got.get("meaningful"):
-        return []
+        return [], "skipped: " + (str(got.get("kind") or "").strip().lower() or "not meaningful")
     facts = [re.sub(r"\s+", " ", str(f)).strip() for f in got.get("facts") or [] if str(f).strip()]
     legend = bool(_LEGEND.search(context or ""))
     # A plan or diagram is read only through the document's legend: without
     # one the model described 010043's floor plan as "indoor offices with drop
     # ceilings", against the photos of exterior brick.
     if str(got.get("kind") or "").lower() in ("plan", "diagram") and not legend:
-        return []
+        return [], "skipped: plan without a legend"
     keep = []
     for f in facts:
         if not 6 <= len(f) <= 300:
@@ -93,11 +101,12 @@ def describe(image_bytes: bytes, filename: str, context: str = "") -> list[str]:
         if not legend and re.search(r"(?i)\b(marked|symbol|square|circle|triangle|diamond|hexagon|icon)s?\b", f):
             continue
         keep.append(f)
-    return keep[:MAX_FACTS]
+    keep = keep[:MAX_FACTS]
+    return keep, f"read: {len(keep)} fact{'s' if len(keep) != 1 else ''}"
 
 
 #: A legend line in the document's text: "Red Hexagons are Aruba APs".
 _LEGEND = re.compile(r"(?i)\b(red|blue|green|yellow|orange|black|white|purple|pink|grey|gray)\s+\w+\s+(is|are)\b")
 
 
-__all__ = ["enabled", "describe", "MAX_PER_FILE"]
+__all__ = ["enabled", "describe", "describe_outcome", "MAX_PER_FILE"]

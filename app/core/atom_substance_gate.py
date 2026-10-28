@@ -1486,6 +1486,16 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Run all drops. Returns (kept, dropped). ``dropped`` is the union across
     passes; the compiler routes it into the retained-suppression ledger."""
     all_dropped: list[Any] = []
+    # A line the C3 base decided (c3_type_base.base_decided) is the heads' call, not a rule's: each
+    # drop leaves it in place and counts what it would have done (SOWSMITH_C3_RULES_YIELD).
+    try:
+        from app.core.c3_type_base import yield_split as _yield
+    except Exception:  # pragma: no cover - the gate never depends on the C3 layer
+        def _yield(_rule, fn):
+            return fn
+
+    def _guarded(pass_fn, current):
+        return _yield(getattr(pass_fn, "__name__", "substance_gate"), pass_fn)(current)
 
     def _run(pass_fn, current):
         """Run one drop pass. Advisory passes keep the words and lose the claim.
@@ -1496,7 +1506,7 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         demoted out of scope and flagged, and the labeller's verdict on them is
         what `line_admission` is trained on.
         """
-        surviving, removed = pass_fn(current)
+        surviving, removed = _guarded(pass_fn, current)
         if pass_fn in _ADVISORY_PASSES:
             for atom in removed:
                 _demote_out_of_scope(atom)
@@ -1509,15 +1519,15 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     kept = _run(drop_contact_chrome, kept)
     kept = _run(drop_section_headers, kept)
     kept = _run(drop_email_non_scope, kept)
-    kept, d = drop_transcript_conversational(kept)
+    kept, d = _guarded(drop_transcript_conversational, kept)
     all_dropped.extend(d)
-    kept, d = demote_transcript_smalltalk(kept)
+    kept, d = _guarded(demote_transcript_smalltalk, kept)
     all_dropped.extend(d)
-    kept, d = drop_risk_fragments(kept)
+    kept, d = _guarded(drop_risk_fragments, kept)
     all_dropped.extend(d)
     kept, d = collapse_ambiguous_user_quantities(kept)
     all_dropped.extend(d)
-    kept, d = drop_unreadable_text(kept)
+    kept, d = _guarded(drop_unreadable_text, kept)
     all_dropped.extend(d)
     # A drawing is a drawing wherever it was written: a note field, an email
     # sentence, a wrapped Outlook link. Find it before anything decides the

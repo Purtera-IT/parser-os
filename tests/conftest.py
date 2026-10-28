@@ -36,6 +36,15 @@ def _offline_llm_by_default(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _legacy_paths_on_in_tests(monkeypatch) -> None:
+    """The schematic pre-pass and the lessons-store lookups are off by default in production
+    (go-live: retired / 0 hits); the suite keeps exercising them unless a test turns them off."""
+    monkeypatch.setenv("SOWSMITH_SCHEMATIC_PREPASS", "1")
+    monkeypatch.setenv("SOWSMITH_LESSON_LOOKUP", "1")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _strict_compile_invariants(monkeypatch) -> None:
     """A compile-wide invariant (no two atoms share an id) raises in tests.
 
