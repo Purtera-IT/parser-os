@@ -83,10 +83,11 @@ NO_BILLING_TYPES=SKIP_TYPES|{'open_question','answered_question','question'}
 #: read:work_window answers that make the day type overtime, and read:access_need answers that flag height.
 AFTER_WINDOWS={'after_hours','overnight','weekend','holiday'}
 HEIGHT_ACCESS={'lift','ladder'}
-#: The service head picks the family at or above this (SOWSMITH_C3_QUOTE_SERVICE_SURE; the brief's SERVICE_BAR).
+#: The service head picks the family at or above this (SOWSMITH_C3_QUOTE_SERVICE_SURE). Above the brief's 0.6:
+#: replayed, 010308 read telecom 0.653 on a cabling job.
 #: Run O's service head is unsure everywhere (0.15-0.58) and right on 6 of 16 run 8 deals against the embedding's
 #: 8, so below the bar its answer is recorded, not used; once a retrain makes it sure it decides.
-SERVICE_SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SERVICE_SURE','0.6') or 0.6)
+SERVICE_SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SERVICE_SURE','0.7') or 0.7)
 
 def _snap(h): return min(HB,key=lambda x:abs(math.log(x)-math.log(max(h,1))))
 
