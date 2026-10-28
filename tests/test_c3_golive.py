@@ -274,7 +274,8 @@ def test_the_quote_snapshot_holds_what_quote_reads():
              "job_details": [{"cites": ["a1"], "text": "x"}], "written": {"sections": {}}}
     snap = c3.quote_snapshot(brief)
     brief["sections"]["scope"].append({"id": "a2"})
-    assert snap == {"deal": {"deal_name": "D"}, "sections": {"scope": [{"id": "a1", "text": "x"}]},
+    assert snap == {"deal": {"deal_name": "D"}, "left_out": {"ids": []},
+                    "sections": {"scope": [{"id": "a1", "text": "x"}]},
                     "job_details": [{"cites": ["a1"], "text": "x"}]}
 
 

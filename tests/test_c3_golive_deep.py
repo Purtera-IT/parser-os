@@ -72,7 +72,9 @@ def test_an_empty_compile_is_failed_and_never_priced(monkeypatch, tmp_path):
     result = compile_project(project_dir=d, use_cache=False)
     assert result.compile_capabilities["compile_state"] == "failed"
     assert any("0 evidence atoms" in w for w in result.warnings)
-    assert c3.quote([N(id="a", raw_text="  ", atom_type="task")], {"sections": {}}) == {}
+    # Nothing priced, and said so (never a silent {}).
+    q = c3.quote([N(id="a", raw_text="  ", atom_type="task")], {"sections": {}})
+    assert q["degraded"] is True and q["lines"] == [] and q["by"] == "none"
 
 
 # ------------------------------------------------------------- (3) parser yield

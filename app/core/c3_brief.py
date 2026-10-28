@@ -516,7 +516,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "questions": questions,
         "conflicts": conflicts[:40],
         "kept_unsure": sorted(kept_unsure, key=lambda x: -x["p"])[:120],
-        "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12))},
+        # ids: the quote heads must not count off a line the heads left out (or an old Deal Kit line).
+        "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12)),
+                     "ids": [str(x["id"]) for x in left_out]},
         "decided_by": {
             "heads_used": sorted(k for k, v in use.items() if v),
             "fell_back": sorted(k for k, v in use.items() if not v),

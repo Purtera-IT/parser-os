@@ -49,10 +49,28 @@ from app.core.delexicalize import delexicalize
 TEACHER_LLM = "llm"      # silver: the big model's output
 TEACHER_PM = "pm"        # gold: a human correction (natural language)
 TEACHER_STORE = "store"  # the kNN store fired (already-learned)
+TEACHER_RULE = "rule"    # a regex / rule wrote it: NOT a label (see rule_rows_enabled)
+
+#: Relations whose only rows were a rule's own output (quote_context_head's
+#: delivery-model regex, site_facility_head's naming fallback, the
+#: hardware_evidence_backfill SKU table). They were logged as teacher=store and
+#: retrain_all trained a registry "champion" on them, which then decided with
+#: source "neural_head": the regex wearing a head's name. Owner rule: heads
+#: decide, a rule's output is never a label.
+RULE_TAUGHT_RELATIONS = frozenset({"quote_delivery_model", "site_facility_label", "hardware_evidence_line"})
+
+
+def rule_rows_enabled() -> bool:
+    """``SOWSMITH_LOG_RULE_ROWS`` (default off): log rule output to the
+    training log at all. On, the rows carry ``teacher=rule`` (never ``store``)
+    and retrain_all still skips them unless ``SOWSMITH_RETRAIN_RULE_RELATIONS``
+    is on, so the log can be inspected without the rule becoming a head."""
+    return os.environ.get("SOWSMITH_LOG_RULE_ROWS", "").strip().lower() in ("1", "true", "yes", "on")
+
 
 # Default training-row weights by teacher. PM gold dominates LLM silver so the
 # head can't be drowned by abundant (and occasionally wrong) teacher labels.
-_DEFAULT_WEIGHT = {TEACHER_PM: 5.0, TEACHER_LLM: 1.0, TEACHER_STORE: 2.0}
+_DEFAULT_WEIGHT = {TEACHER_PM: 5.0, TEACHER_LLM: 1.0, TEACHER_STORE: 2.0, TEACHER_RULE: 0.0}
 
 # Fraction of deals routed to the held-out split (by deal-id hash).
 _HOLDOUT_FRACTION = 0.2
