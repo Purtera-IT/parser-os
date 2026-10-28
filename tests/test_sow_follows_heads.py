@@ -212,6 +212,18 @@ def test_owner_head_places_duties_and_locks_them():
     assert content["assumptions"] == [duty]  # a section move is not a party call: the rule stands in for sow_section
 
 
+
+def test_owner_head_never_moves_a_head_typed_customer_duty():
+    """010362 / 010395: a customer duty the type head read (dependency) went to our scope."""
+    fs = [{"id": A1, "text": "x", "owner": ["technician", 0.9], "type": "dependency", "type_by": "head"},
+          {"id": A2, "text": "y", "owner": ["technician", 0.9], "type": "dependency", "type_by": "rule"}]
+    content = {"scope": [], "customer_responsibilities": [
+        {"text": "Customer ensures the circuit is live", "cites": [A1], "kind": "fact"},
+        {"text": "Patch the new switch", "cites": [A2], "kind": "fact"}]}
+    assert m._follow_owner(content, fs) == 1
+    assert [x["cites"] for x in content["customer_responsibilities"]] == [[A1]]
+    assert [x["cites"] for x in content["scope"]] == [[A2]]
+
 # ── 5. Family ─────────────────────────────────────────────────────────────────
 
 def test_family_follows_the_service_head_and_marks_the_router_fallback():

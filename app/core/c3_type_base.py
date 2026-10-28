@@ -68,6 +68,7 @@ import json
 import logging
 import os
 import re
+from collections import Counter
 import sys
 import threading
 import time
@@ -347,6 +348,11 @@ def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
     ``estimating_calc`` / ``site_list`` by the file's name; else ``file``."""
     from c3_record import file_kind
 
+    # A document deal_documents read as our estimating calc by its own lines
+    # (c3_record.estimating_calc_by_content): every reader of the kind agrees.
+    by_content = (_DEAL.get("content_kinds") or {}).get(_doc_id(atom))
+    if by_content:
+        return by_content
     sha = (artifact_sha256 or {}).get(_doc_id(atom))
     return file_kind(_ref(atom, "filename"), _lifecycle(sha).get("type"))
 
@@ -950,7 +956,10 @@ BRIEF_LINE_HEADS = ("col:admission", "read:co_action", "read:co_reason", "read:s
 #: planning compile's quote says so (``heads_asked`` false) instead of looking head-decided.
 QUOTE_LINE_HEADS = ("read:labor_hours", "read:hours_stated", "read:crew_size", "read:tech_level",
                     "read:rate_for", "read:billing_type", "jdg:commercial", "read:co_hours_estimate",
-                    "read:co_crew_rule", "col:supplier")
+                    "read:co_crew_rule", "col:supplier",
+                    # The day-type and access heads (run O): when the read answers them the quote
+                    # reads the head, not the after-hours / lift wording rules.
+                    "read:work_window", "read:access_need")
 #: Deal-size answers the quote reads (the read's ``deal`` block).
 QUOTE_DEAL_HEADS = ("jdg:billing_type", "jdg:travel_scope", "deal:declared_site_count")
 
@@ -1062,6 +1071,8 @@ def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, 
     _DEAL.clear()
     _FAILURES.clear()
     _STATUS.pop("rules_yielded", None)
+    _DEAL.update(content_kinds={str(d.get("doc_id")): str(d.get("kind")) for d in documents or []
+                                if isinstance(d, dict) and d.get("kind_by") == "content"})
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
                  reads={}, links=[], deal={}, questions=[], also=[], tables={},
                  stage_timeline=stage_timeline if isinstance(stage_timeline, dict) else None)
@@ -1152,6 +1163,11 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             # arrived with the note at 23:32:57.777, as the page had it).
             sent = _delivered_at(sha[d])
         kind = event.get(d) or (_file_kind(first[d], sha) if d in first else "file")
+        kind_by = None
+        if kind == "file" and own.get(d) and _our_calc_by_content(own[d], name):
+            # Our estimating calc named neither "Deal Kit" nor "estimating calc"
+            # (010245's "Pricing Sheet ADJ" workbooks): cut like one, visibly.
+            kind, kind_by = "estimating_calc", "content"
         # The lifecycle's role sentence, the page's docRole: whose paper it is
         # (c3_record.sender.is_ours reads it for the stage).
         role = str(_lifecycle(sha.get(d)).get("role") or "")
@@ -1162,8 +1178,12 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
         # arrival of the document before it (c3_record.document_times), as in training -- not the
         # lifecycle's own delivered_at guess (010050's 2022 predictive survey, 207 lines a day apart).
         sent = origin.get("sent_at") if origin else sent
+        if kind_by and str((origin or {}).get("direction") or "").lower() in _INBOUND_DIRECTIONS:
+            # A workbook the customer or a partner sent us is their paper, whatever it computes.
+            kind, kind_by = "file", None
         docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
-                     "filename": name, "pos": pos, "role": role, "origin": origin})
+                     "filename": name, "pos": pos, "role": role, "origin": origin,
+                     **({"kind_by": kind_by} if kind_by else {})})
     from c3_record import EVENT_KINDS
 
     def arrival(doc):
@@ -1179,6 +1199,16 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
         keyed.append(((prev if prev is not None else float("-inf")), doc["pos"], doc))
     keyed.sort(key=lambda x: (x[0], x[1]))
     return [doc for _, _, doc in keyed]
+
+
+_INBOUND_DIRECTIONS = frozenset({"inbound", "customer_inbound", "partner_inbound", "vendor_inbound"})
+
+
+def _our_calc_by_content(own: list[Any], filename: str) -> bool:
+    from c3_record import estimating_calc_by_content
+
+    sheet = any(_locator(a).get("sheet") for a in own[:50]) or None
+    return estimating_calc_by_content((getattr(a, "raw_text", "") for a in own), filename, spreadsheet=sheet)
 
 
 def _as_envelope_documents(prov: dict[str, dict[str, Any]], own: dict[str, list[Any]],
@@ -1778,6 +1808,12 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             row["reads"] = reads
         if _deal_kit(a):
             row["deal_kit"] = True
+        if _parser_made(a):
+            # A line the parser wrote, not one a document has: "Customer documents declare 50
+            # locations; 15 identified ..." (declared_scope, 010382) was read as the deal saying
+            # 50 sites. It is no statement for the quote to read.
+            row["parser_made"] = True
+            row["left_out"] = True
         if aid in out:
             row["out_of_view"] = out[aid]
         if aid in left_out or aid in out:
@@ -1789,6 +1825,18 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     if not rows:
         # Nothing to price: a deal with no evidence lines never gets an invented job.
         return _degraded("no evidence lines to price", deal_id)
+    # The quote's work lines are the brief body's (scope_of_work and the job details); its
+    # after-hours / lift wording rules read only those. A pricing term, a rate-card row or an
+    # exclusion is not the job's own schedule or height: "After hours work ... billed at a 50%
+    # uplift" (010362), "After Hours | $238.64 per hour" (010395) and "Lift rental ... excluded"
+    # (010245) set day_type ot and the lift flag. They stay in the brief; they leave the quote's
+    # work set, listed (``not_work``).
+    by_id = {str(getattr(a, "id", "") or ""): a for a in atoms}
+    secs = brief.get("sections") or {}
+    work_ids = [str(x.get("id")) for x in secs.get("scope_of_work") or [] if isinstance(x, dict)]
+    jd_ids = [str(c) for j in brief.get("job_details") or [] if isinstance(j, dict) for c in j.get("cites") or []]
+    not_work = {i: why for i in dict.fromkeys(work_ids + jd_ids)
+                if i in by_id and (why := not_quote_work(by_id[i]))}
     sites = quote_sites(atoms, left_out=left_out | also)
     seen_only = sites_seen_only_out_of_view(atoms, sites)
     deal_reads = {k: list(v) for k in QUOTE_DEAL_HEADS
@@ -1796,20 +1844,81 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
                      "atoms": rows, "site_count": len(sites), "sites": sites,
                      "heads": {"asked": asked, "view": view_name(), "deal": deal_reads},
-                     "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
+                     "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)
+                                                   and not (k == "scope_of_work" and str(x.get("id")) in not_work)]
                                                for k, v in (brief.get("sections") or {}).items()},
                                   "left_out": sorted(left_out | also | set(out)),
                                   "also_mentioned": sorted(also),
-                                  "job_details": brief.get("job_details") or []}}}
+                                  "job_details": [j for j in brief.get("job_details") or [] if isinstance(j, dict)
+                                                  and not any(str(c) in not_work for c in j.get("cites") or [])],
+                                  "not_work": not_work}}}
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
     if _never():
-        return _with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only)
+        return _with_not_work(_with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only),
+                              not_work)
     try:
-        return _with_seen_only(_request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))),
-                               seen_only)
+        return _with_not_work(_with_seen_only(_request("/v1/quote", body,
+                                                       timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))),
+                                              seen_only), not_work)
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
+
+
+#: Line types that state a price, a term or an exclusion, never the job's own work.
+_NOT_WORK_TYPES = frozenset({"pricing_assumption", "payment_term", "commercial_total", "rate_card", "expense",
+                             "site_budget", "license_subscription", "exclusion", "change_order_rule",
+                             "contract_term"})
+#: A rate-card row: a price per hour / day / visit ("After Hours | $238.64 per hour").
+_RATE_ROW = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?\s*(?:/\s?|per\s+)(?:hr|hour|day|visit|dispatch|tech)\b"
+                       r"|\b(?:uplift|surcharge|premium)\b|\brates?\b[^.]{0,40}\b(?:apply|applies|billed|charged)\b", re.I)
+#: A heading that lists what is not ours to do, or our prices.
+_NOT_WORK_HEADING = re.compile(r"\b(?:out[\s-]+of[\s-]+scope|exclusions?|not\s+included|pricing|price\s+table|rates?|"
+                               r"fees?|payment|commercial)\b", re.I)
+
+
+def not_quote_work(atom: Any) -> str:
+    """Why a brief-body line is not the job's work for the quote (its type, a rate row, an
+    out-of-scope or pricing heading), else ''. The type is the heads' where they read it."""
+    t = str(getattr(getattr(atom, "atom_type", ""), "value", getattr(atom, "atom_type", "")) or "")
+    base = _value(atom).get("c3_base_type")
+    if isinstance(base, dict) and base.get("type") == "rate_card":
+        t = "rate_card"
+    if t in _NOT_WORK_TYPES:
+        return f"type {t}"
+    text = str(getattr(atom, "raw_text", "") or "")
+    if _RATE_ROW.search(text):
+        return "rate or price term"
+    path = _locator(atom).get("section_path") or []
+    under = " > ".join(str(x) for x in path) if isinstance(path, list) else str(path)
+    if under and _NOT_WORK_HEADING.search(under):
+        return f"under {under[:80]}"
+    return ""
+
+
+def _parser_made(atom: Any) -> bool:
+    """A line the parser composed (a declared-scope gap note, a sheet rollup, a derived or picture
+    reading), not one a document says."""
+    flags = set(getattr(atom, "review_flags", None) or [])
+    if "declared_scope" in flags or any(str(f).startswith("derived_") for f in flags):
+        return True
+    if str(_value(atom).get("kind") or "") == "sheet_rollup":
+        return True
+    try:
+        from app.core.c3_brief import _derived
+
+        return bool(_derived(atom))
+    except Exception:
+        return False
+
+
+def _with_not_work(q: Any, not_work: dict[str, str]) -> Any:
+    """The quote says which brief-body lines it did not read as work, and why."""
+    if not_work and isinstance(q, dict) and not q.get("degraded"):
+        q["not_work"] = {"count": len(not_work), "ids": sorted(not_work),
+                         "why": dict(sorted(Counter(w.split(" ", 1)[0] if w.startswith(("type", "under")) else w
+                                                    for w in not_work.values()).items()))}
+    return q
 
 
 def _with_seen_only(q: Any, seen_only: dict[str, list[dict[str, Any]]]) -> Any:

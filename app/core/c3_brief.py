@@ -188,16 +188,31 @@ def document_gate() -> list[dict[str, Any]]:
                    "conversation_head": [v.get("c3_verdict"), v.get("c3_confidence")] if v.get("c3_verdict") else None,
                    "bar": v.get("c3_bar"),
                    "confidence": v.get("confidence"), "kept_by_rule": spared or None, "reason": v.get("reason") or None}
+        if job is not None:
+            hp = (job.get("head") or [None, None])[1]
+            bar = job.get("bar")
+            # The head answered under its bar (this_deal 0.57-0.965 on 010355 / 010382 / 010395 /
+            # 010396): the document still feeds, marked unsure, never silently as sure.
+            if hp is not None and bar is not None and float(hp) < float(bar) and job.get("verdict") != "other_job":
+                job["unsure"] = True
         after = admissibility_gate() and stage.get("admissible_for") == "neither"
+        kind = str(d.get("kind") or "")
+        workbook = kind in ("deal_kit", "estimating_calc") or "dealkit" in kind.replace("_", "")
         # The deal record's documents (c3_type_base.deal_documents) carry their artifact id as ``doc_id``;
         # read as "artifact_id" alone every row had "" and ``build`` barred nothing (wave 4: 010222's
         # 11 after-decision documents and 000083's 3 still fed the brief and the quote).
         out.append({"artifact_id": str(d.get("artifact_id") or d.get("doc_id") or ""), "filename": fn, "document_job": job,
                     "deal_stage": {"stage_at_arrival": stage.get("stage_at_arrival"),
                                    "admissible_for": stage.get("admissible_for"), "why": stage.get("why")} if stage else None,
-                    "feeds": not ((job or {}).get("verdict") == "other_job" or after),
+                    "feeds": not ((job or {}).get("verdict") == "other_job" or after or workbook),
                     "why_not": ("document_job other_job" if (job or {}).get("verdict") == "other_job"
-                                else f"deal_stage: {stage.get('why')}" if after else None)})
+                                else f"deal_stage: {stage.get('why')}" if after
+                                else f"our pricing workbook: {kind}" + (" (by its content)" if d.get("kind_by") == "content"
+                                                                        else "") if workbook else None),
+                    **({"kind": kind, "kind_by": d.get("kind_by") or "name_or_lifecycle"} if workbook else {}),
+                    **({"unsure": {"p": round(float(job["head"][1]), 3), "bar": job.get("bar"),
+                                   "why": "document_job read this deal below its bar: its lines feed, marked unsure"}}
+                       if job is not None and job.get("unsure") else {})})
     return out
 
 
@@ -246,6 +261,22 @@ def _type(atom: Any) -> str:
     return str(getattr(t, "value", t) or "")
 
 
+def type_by_head(atom: Any) -> bool:
+    """The line's current type is the type head's: typing labelled it
+    (``c3_label``, act keep or the same type) or the base confirmed the
+    parser's type (``c3_confirm``). The same test ``c3_share.line_types``
+    counts as the head's."""
+    v = getattr(atom, "value", None)
+    if not isinstance(v, dict):
+        return False
+    t = _type(atom)
+    lab = v.get("c3_label")
+    if isinstance(lab, dict) and lab.get("act"):
+        return lab["act"] == "keep" or not lab.get("type") or lab.get("type") == t
+    conf = v.get("c3_confirm")
+    return isinstance(conf, dict) and conf.get("type") == t
+
+
 def _deal_kit(atom: Any) -> bool:
     try:
         from app.core.c3_type_base import _DEAL, skipped
@@ -253,6 +284,25 @@ def _deal_kit(atom: Any) -> bool:
         return skipped(atom, _DEAL.get("sha"))
     except Exception:
         return False
+
+
+def _kit_reason(atom: Any) -> str:
+    """Why a pricing-workbook line is out: ``old_manual_deal_kit`` for a Deal
+    Kit, else ``our_estimating_calc`` (by name or lifecycle) or
+    ``our_estimating_calc_by_content`` (c3_record.estimating_calc_by_content)."""
+    try:
+        from c3_record import is_deal_kit
+
+        from app.core.c3_type_base import _DEAL, _doc_id, doc_kind
+
+        kind = doc_kind(atom, _DEAL.get("sha"))
+        if is_deal_kit(kind):
+            return "old_manual_deal_kit"
+        if (_DEAL.get("content_kinds") or {}).get(_doc_id(atom)):
+            return "our_estimating_calc_by_content"
+        return "our_estimating_calc"
+    except Exception:
+        return "old_manual_deal_kit"
 
 
 def _base_type(atom_id: str) -> tuple[str, float]:
@@ -458,7 +508,10 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
 
     out_of_view = out_of_quoting_view()
     docs = document_gate()
-    barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]}
+    # A pricing workbook's lines are cut line by line below (_deal_kit), with their own reason.
+    unsure_doc = {d["artifact_id"]: d["unsure"]["p"] for d in docs if d.get("unsure") and d["feeds"]}
+    barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]
+              and not str(d["why_not"] or "").startswith("our pricing workbook")}
     from app.core.c3_type_base import _doc_id
 
     for a in atoms:
@@ -477,8 +530,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             # The base is never shown a Deal Kit or estimating sheet (it is
             # what the kit model is trained to produce), so its reading of one
             # means nothing: 45 of 135 false keeps on 010043 were kit lines.
-            left_out.append({"id": aid, "reason": "old_manual_deal_kit", "by": "rule:document"})
-            why["rule:deal_kit"] += 1
+            kind_reason = _kit_reason(a)
+            left_out.append({"id": aid, "reason": kind_reason, "by": "rule:document"})
+            why["rule:deal_kit" if kind_reason == "old_manual_deal_kit" else "rule:" + kind_reason] += 1
             continue
         if aid in out_of_view:
             # A line the quoting read leaves out (our own paper, after the cut, a pricing workbook ...):
@@ -628,20 +682,44 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # The same for a task the section head filed as out of scope or an
         # assumption: "Remove the Printer from the OLD site" (010038) read
         # out_of_scope 0.54 and technician 0.84; it is our requested task.
-        if sec in ("out_of_scope", "assumptions") and have_reads:
+        #
+        # The owner head arbitrates between HEADS only. A section the rule
+        # derived from a type the type head read (labelled or confirmed) is
+        # the type head's placement: an exclusion read 0.96-0.99, a pricing
+        # term 0.99 or a customer duty keeps its section whatever the owner
+        # head says (010362, 010395, 010355, 010245 had them all moved to
+        # scope_of_work: against a rule placement ``po > ps`` was ``po > 0``).
+        # Where no head typed or placed a DUTY (customer_responsibilities),
+        # the owner head may fill, sure (OWNER_BAR), and the item says so
+        # (``section_fill``). An exclusion or an assumption is no duty: who
+        # "does" "Lifts are excluded" is not a question (010355: technician
+        # 0.82 on two parser-typed ROM exclusions), so a rule placement there
+        # is only ever moved against the section head.
+        typed_by_head = type_by_head(a)
+        placed_by_head = sec_by != "rule:type"
+        fill = None
+        if sec in ("out_of_scope", "assumptions", "customer_responsibilities") and have_reads \
+                and (placed_by_head or (not typed_by_head and sec == "customer_responsibilities")):
             own, po = r(aid, "read:task_owner_role")
-            if own == "technician" and po > ps:
-                sec, sec_by = "scope_of_work", "base:read:task_owner_role"
-        if sec == "customer_responsibilities" and have_reads:
-            own, po = r(aid, "read:task_owner_role")
-            # Also when the owner head is surer than the section head: "Mount
-            # the Aruba APs" (010038) read technician 0.70, customer
-            # responsibility 0.65, and the brief gave our work to the customer.
-            if own == "technician" and (po >= OWNER_BAR or po > ps):
-                sec, sec_by = "scope_of_work", "base:read:task_owner_role"
+            if own == "technician":
+                if placed_by_head:
+                    # "Mount the Aruba APs" (010038) read technician 0.70,
+                    # customer responsibility 0.65, and the brief gave our work
+                    # to the customer.
+                    move = po > ps or (sec == "customer_responsibilities" and po >= OWNER_BAR)
+                else:
+                    move = po >= OWNER_BAR
+                    fill = "no head typed or placed this line; the owner head filled it" if move else None
+                if move:
+                    sec, sec_by = "scope_of_work", "base:read:task_owner_role"
         item = {"id": aid, "text": a.raw_text[:400], "type": _type(a), "when": _when_of(a),
                 "under": _heading_of(a),
-                "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by}
+                "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by,
+                "type_by": "head" if typed_by_head else "rule"}
+        if fill:
+            item["section_fill"] = fill
+        if _doc_id(a) in unsure_doc:
+            item["unsure_document"] = unsure_doc[_doc_id(a)]
         if v is not None:
             item["judge"] = {"section": v.section, "owner": v.owner, "p": round(float(v.section_conf), 3)}
         sections[sec].append(item)
@@ -816,7 +894,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # Every line's keep decision, compactly: who decided (a head, a rule, the view, the document
         # gate), at what p, and the keep heads' own readings, so an audit or a PM tool can tell an
         # admission drop from a co_action company drop from a rule (wave 4: only counts were kept).
-        "line_decisions": _line_decisions(kept, maybe, left_out, reads, kept_by_now),
+        "line_decisions": _line_decisions(kept, maybe, left_out, reads, kept_by_now,
+                                          {i: unsure_doc[d] for i, d in ((str(a.id), _doc_id(a)) for a in atoms)
+                                           if d in unsure_doc}),
         # What decided which documents feed the brief and the quote, per document.
         "documents": docs,
         "assemble_ms": round((time.monotonic() - started) * 1000, 1),
@@ -871,7 +951,7 @@ def _customer_furnished(sections: dict[str, list[dict[str, Any]]], by_id: dict[s
 
 
 #: Columns of ``line_decisions.rows``.
-LINE_DECISION_COLS = ("id", "outcome", "by", "p", "col:admission", "read:co_action")
+LINE_DECISION_COLS = ("id", "outcome", "by", "p", "col:admission", "read:co_action", "document_job")
 
 
 def _reading(reads: dict[str, dict[str, list]], aid: str, head: str) -> str | None:
@@ -882,17 +962,56 @@ def _reading(reads: dict[str, dict[str, list]], aid: str, head: str) -> str | No
 
 def _line_decisions(kept: list[tuple[Any, Any, str]], maybe: list[tuple[Any, float]],
                     left_out: list[dict[str, Any]], reads: dict[str, dict[str, list]],
-                    kept_by: dict[str, str] | None = None) -> dict[str, Any]:
+                    kept_by: dict[str, str] | None = None,
+                    unsure_doc: dict[str, float] | None = None) -> dict[str, Any]:
     """``{"cols": LINE_DECISION_COLS, "rows": [...]}``: one row per line the keep loop decided.
-    ``outcome`` is ``kept`` (the body), ``also`` (kept below the body bar) or the left-out reason."""
+    ``outcome`` is ``kept`` (the body), ``also`` (kept below the body bar) or the left-out reason.
+    ``document_job``: ``"unsure:<p>"`` when the line's document feeds on a document_job reading
+    below its bar (``unsure_doc``: atom id -> that p), else None."""
+    unsure_doc = unsure_doc or {}
+
     def row(aid: str, outcome: str, by: str, p: Any) -> list[Any]:
+        u = unsure_doc.get(aid)
         return [aid, outcome, by, None if p is None else round(float(p), 3),
-                _reading(reads, aid, "col:admission"), _reading(reads, aid, "read:co_action")]
+                _reading(reads, aid, "col:admission"), _reading(reads, aid, "read:co_action"),
+                None if u is None else f"unsure:{float(u):.3f}"]
 
     rows = [row(str(a.id), "kept", by, p) for a, p, by in kept]
     rows += [row(str(a.id), "also", (kept_by or {}).get(str(a.id)) or "", p) for a, p in maybe]
     rows += [row(str(x["id"]), str(x.get("reason") or ""), str(x.get("by") or ""), x.get("p")) for x in left_out]
     return {"cols": list(LINE_DECISION_COLS), "rows": rows}
+
+
+def reconcile_line_decisions(brief: dict[str, Any]) -> int:
+    """Make the ledger say where each kept line ended up. ``line_decisions``
+    is written by the keep loop; a later step can still move a kept line out
+    of the body (``_drop_superseded`` moves an older SOW version's clauses to
+    ``superseded``). On 010362 92 lines read "kept" and sat in no section and
+    not in also-mentioned, with no reason. A kept or also line found in
+    ``superseded`` now reads ``superseded`` (by ``rule:superseded``); one found
+    nowhere reads ``kept_unplaced``. Returns rows changed."""
+    ld = brief.get("line_decisions") or {}
+    rows = ld.get("rows") or []
+    if not rows:
+        return 0
+    placed = {str(x.get("id")) for v in (brief.get("sections") or {}).values() for x in v if isinstance(x, dict)}
+    placed |= {str(x.get("id")) for x in brief.get("also_mentioned") or [] if isinstance(x, dict)}
+    placed |= {str(i) for i in brief.get("also_mentioned_more_ids") or []}
+    stale = {str(x.get("id")): x for x in brief.get("superseded") or [] if isinstance(x, dict)}
+    n = 0
+    for row in rows:
+        if row[1] not in ("kept", "also") or str(row[0]) in placed:
+            continue
+        old = stale.get(str(row[0]))
+        if old is not None:
+            row[1], row[2] = "superseded", "rule:superseded"
+        else:
+            row[1], row[2] = "kept_unplaced", "none:" + str(row[2] or "")
+        n += 1
+    if n:
+        ld.setdefault("moved_after_keep", 0)
+        ld["moved_after_keep"] += n
+    return n
 
 
 def _by_view_reason(left_out: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -1481,6 +1600,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         _drop_superseded(brief, atoms, c3_type_base._DEAL.get("documents") or [])
     except Exception as exc:  # pragma: no cover - never lose the brief over this
         log.info("C3 brief superseded check skipped: %s", type(exc).__name__)
+    reconcile_line_decisions(brief)
     # The base's line type for every line that names a site, for the roster
     # filter (site_identity.filter_roster): a site only ever mentioned in lines
     # the base does not read as a site is a mention, not a job site.

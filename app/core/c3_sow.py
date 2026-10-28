@@ -620,7 +620,7 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
             seen.add(x["id"])
             out.append({"id": x["id"], "section": sec, "when": x.get("when") or "", "under": x.get("under") or "",
                         "text": str(x["text"]), "supplier": x.get("supplier"), "type": x.get("type") or "",
-                        "owner": x.get("owner")})
+                        "owner": x.get("owner"), "type_by": x.get("type_by") or ""})
     # The lines the keep head (co_action, or the base type head) left out are
     # out: no regex, type label or parser type brings them back (owner rule:
     # the promoted heads decide). Lines no head read stay open to the bridges
@@ -3778,6 +3778,10 @@ def _dedupe_items(content: dict[str, Any]) -> None:
         content[k] = keep
 
 
+_OWNER_HOLDS_TYPES = frozenset({"exclusion", "assumption", "pricing_assumption", "dependency",
+                                "customer_instruction", "site_access_restriction"})
+
+
 def _follow_owner(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
     """read:task_owner_role decides who does a line: a scope line whose cited
     facts the head reads, sure, as the customer's goes to customer
@@ -3787,7 +3791,11 @@ def _follow_owner(content: dict[str, Any], fs: list[dict[str, Any]]) -> int:
     unanswered stay with the writer and the rules."""
     if not heads_decide():
         return 0
-    party = {f["id"]: _head_owner(f) for f in fs}
+    # A line the type head read as a customer duty, an exclusion or an
+    # assumption is not a task the owner head can hand to us: the type head's
+    # reading holds (010362 / 010395 customer duties and exclusions moved).
+    party = {f["id"]: (None if f.get("type_by") == "head" and f.get("type") in _OWNER_HOLDS_TYPES
+                       else _head_owner(f)) for f in fs}
     p_of = {f["id"]: float((f.get("owner") or [None, 0])[1] or 0) for f in fs}
     own_of = {f["id"]: str((f.get("owner") or [""])[0]) for f in fs}
     target = {"provider": "scope", "customer": "customer_responsibilities"}

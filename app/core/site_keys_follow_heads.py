@@ -117,6 +117,37 @@ def _roster_row(atom: Any) -> bool:
                for r in (getattr(atom, "source_refs", None) or []))
 
 
+#: A key whose words are only numbers or a row/item code: "site:34" (a calculator row "34: Hubbell
+#: HJU6W ..."), "site:item_22", "site:290_9420" (a Deal Kit lift-sheet DEPT/CLASS code), "site:27"
+#: ("27, 28." -- drawing division numbers). A number names a place only where the line says what it
+#: numbers (Store 34, Site 27, Building 4) or the line is an address.
+_CODE_SLUG = re.compile(r"^(?:(?:item|row|line|no|col|class|dept|ref|id)_?)?\d+(?:_\d+)*[a-z]?$")
+_NUMBERED_PLACE = re.compile(r"\b(?:site|store|location|loc|building|bldg|facility|branch|clinic|campus|"
+                             r"hospital|school|office|warehouse|plant|property|unit|restaurant|hotel)\s*#?\s*\d", re.I)
+
+
+def is_place_key(key: str, text: str) -> bool:
+    """A site key that can name a place: words, or a number the line calls a site / store /
+    building, or a number on an address line. A row number or a code alone is not a place."""
+    slug = str(key)[len(_PREFIX):] if str(key).startswith(_PREFIX) else str(key)
+    if not _CODE_SLUG.match(slug.lower()):
+        return True
+    t = str(text or "")
+    return bool(_NUMBERED_PLACE.search(t) or (_STREET_LINE.match(t) and _STREET_SUFFIX.search(t))
+                or _CITY_LINE.match(_LABEL.sub("", t).strip()))
+
+
+def _workbook_line(atom: Any) -> bool:
+    """A line of our own pricing workbook (Deal Kit or estimating calc, by name, lifecycle or
+    content): the base never reads one, so its site lines back no key."""
+    try:
+        from app.core.c3_type_base import _DEAL, skipped
+
+        return bool(skipped(atom, _DEAL.get("sha")))
+    except Exception:
+        return False
+
+
 def _ref(atom: Any) -> Any:
     refs = getattr(atom, "source_refs", None) or []
     return refs[0] if refs else None
@@ -268,7 +299,7 @@ def _mint_for_head_sites(atoms: list[Any], types: dict[str, Any]) -> int:
             # state-coverage table 48 sites.
             continue
         slug = key[len(_PREFIX):] if key else slug_of_line(_text(a))
-        if not slug:
+        if not slug or (not key and not is_place_key(_PREFIX + slug, _text(a))):
             continue
         a.entity_keys = _keys(a) + [_PREFIX + slug]
         v = _value(a)
@@ -288,11 +319,15 @@ def _backed(atoms: list[Any], types: dict[str, Any], floor: float) -> set[str]:
         if not keys:
             continue
         own = [k for k in keys if not _copied(a, k)]
+        if not own or _workbook_line(a):
+            continue
+        roster = _roster_row(a)
+        own = [k for k in own if roster or is_place_key(k, _text(a))]
         if not own:
             continue
         h = _head(a, types)
         head_site = bool(h and h[0] == "physical_site" and h[1] >= floor)
-        if head_site or _roster_row(a):
+        if head_site or roster:
             out.update(own)
         elif _type_of(a) == "physical_site" and not _inferred(a) and not (
                 h and h[0] not in ("physical_site", "_keep") and h[1] >= floor):
@@ -345,4 +380,4 @@ def settle(atoms: list[Any], types: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-__all__ = ["NOT_BACKED", "settle", "slug_of_line"]
+__all__ = ["NOT_BACKED", "is_place_key", "settle", "slug_of_line"]

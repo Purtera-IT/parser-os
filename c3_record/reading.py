@@ -70,6 +70,39 @@ def file_kind(filename: Any, lifecycle_type: Any = None) -> str:
     return "file"
 
 
+#: Our own estimating calculator by what it says: a spreadsheet that lays out
+#: internal economics -- a margin (GM, gross margin, margin %, markup) next to
+#: a cost build. A customer's or a vendor's price sheet states prices, never
+#: our margin. 010245's five "Pricing Sheet ADJ" workbooks ("LABOR GM",
+#: "UNIT: COST", "materials inflated by 10% for bidding") were named neither
+#: "Deal Kit" nor "estimating calc" and fed 1,846 of 2,402 brief lines.
+_SHEET_FILE = re.compile(r"\.(xlsx|xlsm|xls|xlsb|ods|csv)$", re.I)
+_MARGIN_WORDS = re.compile(r"\bGM\b|\bgross\s+margin|\bmargin\s*%|%\s*margin|\bmark-?up\b|\bGP\s*%", re.I)
+_COST_WORDS = re.compile(r"\b(?:unit|total|labor|labour|material|extended|our)\s+cost\b|\bcost\s*(?:\||:|$)|"
+                         r"\bcost\s+(?:per|each|ea)\b", re.I)
+#: Lines of each kind a workbook must have: one stray "markup" in a vendor
+#: quote is no calculator.
+CALC_CONTENT_MIN = 3
+
+
+def estimating_calc_by_content(texts: Iterable[Any], filename: Any = "", *, spreadsheet: bool | None = None) -> bool:
+    """True when a spreadsheet's own lines show it is our estimating calc
+    (``file_kind`` would say ``estimating_calc`` had it been named one): at
+    least ``CALC_CONTENT_MIN`` lines naming a margin and as many naming a cost.
+    ``spreadsheet``: the caller's own reading of the file type; else the name."""
+    sheet = spreadsheet if spreadsheet is not None else bool(_SHEET_FILE.search(str(filename or "").strip()))
+    if not sheet:
+        return False
+    margin = cost = 0
+    for t in texts:
+        s = str(t or "")
+        margin += bool(_MARGIN_WORDS.search(s))
+        cost += bool(_COST_WORDS.search(s))
+        if margin >= CALC_CONTENT_MIN and cost >= CALC_CONTENT_MIN:
+            return True
+    return False
+
+
 def document_kind(event_kind: Any, lifecycle_type: Any = None, filename: Any = "") -> str:
     """``email`` / ``note`` / ``meeting`` when the document is that event,
     else ``file_kind``."""
