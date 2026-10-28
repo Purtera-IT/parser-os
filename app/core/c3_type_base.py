@@ -748,6 +748,7 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         # A deal with no time anywhere (training refuses one): no cut can be placed, so the read is every
         # line, as before views.
         _STATUS["view"] = {"view": v, "undated": True, "inputs": len(rows), "out": 0}
+        _DEAL.pop("view_out_why", None)
         for r in rows:
             r["view"] = v
         return rows
@@ -783,6 +784,25 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
         keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
     _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
+    if v == cview.QUOTING:
+        # Every line the quoting read leaves out, with the view's reason: outside the brief and the quote
+        # too (out_of_quoting_view).
+        inside = set(keep)
+        dks = set(dk)
+        why: dict[str, str] = {}
+        for i, x in enumerate(lines):
+            if i in inside:
+                continue
+            pa = P.atom.get(x["label_key"]) or {}
+            why[str(x["atom_id"])] = (
+                "deal_kit" if x["label_key"] in dks
+                else "other_job" if x.get("doc_id") in P.other_job
+                else "ours" if x["label_key"] in P.ours_atoms or (P.doc.get(x["doc_id"]) or {}).get("ours")
+                else "undated" if (pa.get("at") or 0) <= 0
+                else "after_cut")
+        _DEAL["view_out_why"] = why
+    else:
+        _DEAL.pop("view_out_why", None)
     kept = [rows[i] for i in keep]
     cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
     _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
@@ -914,7 +934,7 @@ def document_job_enabled() -> bool:
 
 #: The line readings brief v2 (``c3_brief``) uses, asked for in the compile's
 #: one read of the deal when ``SOWSMITH_C3_BRIEF`` is on.
-BRIEF_LINE_HEADS = ("read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
+BRIEF_LINE_HEADS = ("col:admission", "read:co_action", "read:co_reason", "read:sow_section", "read:noise_class",
                     "read:scope_facet", "col:wants", "read:intake_gap", "read:needed_by",
                     "read:blocked_on", "read:superseded", "read:task_owner_role",
                     # Site role for site_geo_fallback (line_reading): on the labeled
@@ -990,6 +1010,42 @@ def _keep_full(got: dict[str, Any]) -> None:
             _DEAL["question_bar"] = float(got["question_bar"])
         _DEAL["links"].extend(got.get("links") or [])
         _DEAL["deal"].update(got.get("deal") or {})
+
+
+def _on(name: str) -> bool:
+    return os.environ.get(name, "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def ours_out_enabled() -> bool:
+    """``SOWSMITH_C3_OURS_OUT`` (default on): our own lines, see ``out_of_quoting_view``."""
+    return _on("SOWSMITH_C3_OURS_OUT")
+
+
+def out_of_view_out_enabled() -> bool:
+    """``SOWSMITH_C3_OUT_OF_VIEW_OUT`` (default on): every other reason, see ``out_of_quoting_view``."""
+    return _on("SOWSMITH_C3_OUT_OF_VIEW_OUT")
+
+
+def out_of_quoting_view() -> dict[str, str]:
+    """``{atom_id: why}`` for every line a quoting read leaves out of the heads' read
+    (``_view_rows``, ``c3_record.provenance.quoting_inputs``): ``ours`` (our documents and our
+    authored lines), ``after_cut`` (arrived after our first pricing or the run's as_of), ``deal_kit``
+    (a pricing workbook), ``other_job``, ``undated``. A quote is made from what the customer and
+    partner sent before we priced, so the brief, its contacts and figures and the quote leave these
+    out too, visibly, instead of keeping them by the type rule (19 dev deals 2026-10-28: 28 of our
+    lines on 3053ca21 and 46 on c065bfc4, plus 8 after-cut lines on c065bfc4, reached the quoting
+    brief's body by rule:type). ``ours`` follows ``SOWSMITH_C3_OURS_OUT``, the rest
+    ``SOWSMITH_C3_OUT_OF_VIEW_OUT``. Empty in a planning read or an undated deal."""
+    if view_name() != "quoting":
+        return {}
+    ours_on, rest_on = ours_out_enabled(), out_of_view_out_enabled()
+    return {str(k): str(w) for k, w in (_DEAL.get("view_out_why") or {}).items()
+            if (ours_on if w == "ours" else rest_on)}
+
+
+def ours_in_quoting_view() -> set[str]:
+    """Atom ids of our own lines a quoting read leaves out (``out_of_quoting_view`` why ``ours``)."""
+    return {k for k, w in out_of_quoting_view().items() if w == "ours"}
 
 
 def full_read() -> dict[str, Any]:
@@ -1323,7 +1379,19 @@ def _note_window(got: dict[str, Any], n: int) -> None:
                 lines, used, oom)
 
 
+def _empty_read(path: str, body: dict[str, Any] | None) -> bool:
+    """A read with no lines: the view left none of the deal's lines in it (a quoting read of a deal
+    whose only document is ours or after the cut). There is nothing to ask; the service answers such
+    a read with HTTP 500 (an empty tensor), which the never-mode wait retried for 30 minutes and the
+    worker stopped at 25 (010332, 2026-10-28 06:07-06:32Z: 82 attempts)."""
+    return path == "/read" and body is not None and _read_lines(body) == 0
+
+
 def _request(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
+    if _empty_read(path, body):
+        log.info("C3 heads: the read has no lines in this view; nothing asked")
+        _STATUS["empty_read"] = True
+        return {}
     if path == "/read" and body is not None:
         n = _read_lines(body)
         _note_lines(n)
@@ -1412,6 +1480,30 @@ def _retryable(exc: BaseException) -> tuple[bool, str]:
     return False, f"{type(exc).__name__}: {exc}"
 
 
+#: How many identical HTTP 500s from a ready service end the wait (the read itself fails).
+_SAME_500_LIMIT = 3
+
+
+def _error_body(exc: BaseException) -> str:
+    """An HTTP 500's response body (the service's error), '' for anything else."""
+    import urllib.error
+
+    if not isinstance(exc, urllib.error.HTTPError) or int(exc.code or 0) != 500:
+        return ""
+    cached = getattr(exc, "_c3_body", None)
+    if cached is None:
+        try:
+            cached = (exc.read() or b"").decode("utf-8", "replace")[:2000]
+        except Exception:
+            cached = ""
+        cached = cached or "HTTP 500"
+        try:
+            exc._c3_body = cached
+        except Exception:
+            pass
+    return cached
+
+
 def _say_waiting(text: str) -> None:
     """Name the wait on the running stage (the compile heartbeat's ``item``),
     so a held compile reads as waiting for the heads, not as wedged."""
@@ -1441,15 +1533,20 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
     connect = _env_float("SOWSMITH_C3_CONNECT_S", 5.0)
     read_s = max(_env_float("SOWSMITH_C3_BUDGET_S", 90.0) + 10.0,
                  _env_float("SOWSMITH_C3_NEVER_READ_S", 600.0))
+    if _empty_read(path, body):
+        return _request(path, body, timeout=0.0)
     started = time.monotonic()
     since = datetime.now(timezone.utc).isoformat()
     attempt = 0
+    last_error, same = "", 0
     while True:
         attempt += 1
+        ready = False
         try:
             health = _request("/health", None, timeout=connect)
             if not health.get("ready"):
                 raise _NotReady(str(health.get("error") or "still loading")[:200])
+            ready = True
             got = _request(path, body, timeout=read_s)
             if attempt > 1:
                 log.info("C3 heads answered %s after %d attempts (%.0f s)", what, attempt,
@@ -1461,6 +1558,14 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
         except Exception as exc:
             retry, reason = _retryable(exc)
             waited = time.monotonic() - started
+            # The service is up (/health ready) and failed this read the same way three times running:
+            # it is this read that fails, not a service warming up, and waiting cannot change it.
+            err = _error_body(exc) if ready else ""
+            same = same + 1 if err and err == last_error else (1 if err else 0)
+            last_error = err
+            if retry and same >= _SAME_500_LIMIT:
+                retry, reason = False, (f"{reason}: the same error {same} times with the service ready "
+                                        f"({err[:160]})")
             if not retry:
                 status.update(state="read_failed", reason=reason[:300], remote=True)
                 _say_waiting("")
@@ -1517,7 +1622,9 @@ def quote_snapshot(brief: dict[str, Any]) -> dict[str, Any]:
             "left_out": {"ids": list((brief.get("left_out") or {}).get("ids") or [])},
             "sections": {k: [dict(x) if isinstance(x, dict) else x for x in (v or [])]
                          for k, v in (brief.get("sections") or {}).items()},
-            "job_details": list(brief.get("job_details") or [])}
+            "job_details": list(brief.get("job_details") or []),
+            "also_mentioned": [{"id": x.get("id")} for x in brief.get("also_mentioned") or [] if isinstance(x, dict)],
+            "also_mentioned_more_ids": list(brief.get("also_mentioned_more_ids") or [])}
 
 
 def _raw_reading(atom_id: str, head: str) -> list[Any] | None:
@@ -1527,27 +1634,104 @@ def _raw_reading(atom_id: str, head: str) -> list[Any] | None:
     return list(v) if isinstance(v, (list, tuple)) and v and v[0] is not None else None
 
 
-def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
-    """The heads' site roster for the quote: one entry per site key on a line the heads typed
+def quote_heads_asked() -> bool:
+    """Whether this compile's read asked the quote heads (hours, crew, level, rate, billing). A
+    planning read does not (``c3_record.view`` masks every quote head there: they would read the
+    answer off our own SOW), so its quote is the family fallback throughout. Until 10-28 ``asked``
+    was "the read answered anything", true on every planning compile, and the quote said "no billing
+    head sure" where the billing head was never asked (wave 4: 010093, 010222, 010317)."""
+    if not _DEAL.get("reads"):
+        return False
+    try:
+        from c3_record.view import heads as _view_heads, is_quote_head
+    except Exception:  # pragma: no cover
+        return True
+    return any(is_quote_head(h) for h in _view_heads(view_name(), QUOTE_LINE_HEADS))
+
+
+def quote_sites(atoms: list[Any], *, outside: bool = False,
+                left_out: set[str] | frozenset[str] | None = None) -> list[dict[str, Any]]:
+    """The heads' site roster for the quote: one entry per site on a line the heads typed
     ``physical_site`` (the compile's final types, after the C3 authority pass), never a Deal Kit line,
     and not a line ``jdg:site_role`` surely reads as somebody else's address. Each carries the atom
-    ids it came from, so the kit can cite them."""
+    ids it came from, so the kit can cite them.
+
+    When the heads read the deal, the roster is the one ``site_keys_follow_heads.settle`` left: a
+    site line with no backed key is no site (it used to count as ``site-line:<id>``, so a table field
+    "RU: 13", a "site.address.city: <town>" fragment and an OCR string were quote sites), and keys
+    one line carries together (a "City, ST ZIP" key and the full street key) are one site, not two. ``left_out``: lines the brief left out (a barred document, a keep head's drop,
+    kept only as "also mentioned"); they name no quote site, as they price nothing."""
     from app.core.c3_brief import _deal_kit
 
-    roster: dict[str, dict[str, Any]] = {}
+    settled = (_DEAL.get("site_keys") or {}).get("by") == "heads:physical_site"
+    out = out_of_quoting_view()
+    skip = set() if outside else {str(i) for i in (left_out or ())}
+    lines: list[tuple[str, str, list[str]]] = []
     for a in atoms:
         aid, text, kind = _text_type(a)
-        if kind != "physical_site" or _deal_kit(a):
+        if kind != "physical_site" or _deal_kit(a) or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
+            continue
+        # A line outside the quoting read never counts (``outside``: only those, for seen-only sites).
+        if (aid in out) != outside:
+            continue
+        if aid in skip:
             continue
         role = line_reading(aid, "jdg:site_role")
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
             continue
-        keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")] or [f"site-line:{aid}"]
-        for k in keys[:1]:
-            e = roster.setdefault(k, {"site": k, "text": text[:200], "atom_ids": [], "by": "heads:physical_site"})
-            if aid not in e["atom_ids"]:
-                e["atom_ids"].append(aid)
+        keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")]
+        if not keys:
+            if settled:
+                continue
+            keys = [f"site-line:{aid}"]
+        lines.append((aid, text, keys))
+    # Keys that share a line are one site.
+    parent: dict[str, str] = {}
+
+    def root(k: str) -> str:
+        while parent.setdefault(k, k) != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    for _aid, _text, keys in lines:
+        for k in keys[1:]:
+            ra, rb = root(keys[0]), root(k)
+            if ra != rb:
+                parent[rb] = ra
+    roster: dict[str, dict[str, Any]] = {}
+    for aid, text, keys in lines:
+        r = root(keys[0])
+        e = roster.get(r)
+        if e is None:
+            e = roster[r] = {"site": keys[0], "text": text[:200], "atom_ids": [],
+                             "by": "heads:physical_site",
+                             "keys": []}
+            if outside:
+                e.setdefault("why", out[aid])
+        for k in keys:
+            if k not in e["keys"]:
+                e["keys"].append(k)
+        if aid not in e["atom_ids"]:
+            e["atom_ids"].append(aid)
+    for e in roster.values():
+        if len(e["keys"]) <= 1:
+            e.pop("keys")
     return list(roster.values())
+
+
+def sites_seen_only_out_of_view(atoms: list[Any], sites: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """The sites only lines outside a quoting read name (a site key no in-view site line carries): not
+    counted in the quote, listed so a PM can see them. ``seen_only_in_ours``: named only in our own
+    paper (3053ca21: one site key on one line of our own document); ``seen_only_out_of_view``: only in
+    lines left out for another reason (after the cut ...), each with its ``why``."""
+    have = {k for s in sites for k in (s.get("keys") or [s["site"]])}
+    ours, other = [], []
+    for e in quote_sites(atoms, outside=True):
+        if have & set(e.get("keys") or [e["site"]]):
+            continue
+        (ours if e.get("why") == "ours" else other).append(e)
+    return {k: v for k, v in (("seen_only_in_ours", ours), ("seen_only_out_of_view", other)) if v}
 
 
 def _degraded(reason: str, deal_id: str) -> dict[str, Any]:
@@ -1577,7 +1761,12 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     from app.core.c3_brief import _deal_kit
 
     left_out = {str(i) for i in ((brief.get("left_out") or {}).get("ids") or [])}
-    asked = bool(_DEAL.get("reads"))
+    out = out_of_quoting_view()
+    # A line the keep head only half kept ("also mentioned") is not priced from: it goes to the
+    # quote marked, and counted out like a left-out line.
+    also = {str(x.get("id")) for x in brief.get("also_mentioned") or [] if isinstance(x, dict)} | {
+        str(i) for i in brief.get("also_mentioned_more_ids") or []}
+    asked = quote_heads_asked()
     rows = []
     for a in atoms:
         aid, text, kind = _text_type(a)
@@ -1589,13 +1778,19 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             row["reads"] = reads
         if _deal_kit(a):
             row["deal_kit"] = True
-        if aid in left_out:
+        if aid in out:
+            row["out_of_view"] = out[aid]
+        if aid in left_out or aid in out:
             row["left_out"] = True
+        elif aid in also:
+            row["left_out"] = True
+            row["also_mentioned"] = True
         rows.append(row)
     if not rows:
         # Nothing to price: a deal with no evidence lines never gets an invented job.
         return _degraded("no evidence lines to price", deal_id)
-    sites = quote_sites(atoms)
+    sites = quote_sites(atoms, left_out=left_out | also)
+    seen_only = sites_seen_only_out_of_view(atoms, sites)
     deal_reads = {k: list(v) for k in QUOTE_DEAL_HEADS
                   if isinstance((v := (_DEAL.get("deal") or {}).get(k)), (list, tuple))}
     body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
@@ -1603,14 +1798,29 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                      "heads": {"asked": asked, "view": view_name(), "deal": deal_reads},
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
                                                for k, v in (brief.get("sections") or {}).items()},
-                                  "left_out": sorted(left_out),
+                                  "left_out": sorted(left_out | also | set(out)),
+                                  "also_mentioned": sorted(also),
                                   "job_details": brief.get("job_details") or []}}}
+    if seen_only:
+        body["deal"]["sites_seen_only_out_of_view"] = seen_only
     if _never():
-        return _wait_for_heads("/v1/quote", body, {}, "quote read")
+        return _with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only)
     try:
-        return _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60")))
+        return _with_seen_only(_request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))),
+                               seen_only)
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
+
+
+def _with_seen_only(q: Any, seen_only: dict[str, list[dict[str, Any]]]) -> Any:
+    """The quote's ``sites`` record also lists the sites only out-of-view lines name (not counted)."""
+    if seen_only and isinstance(q, dict):
+        sites = q.get("sites")
+        if isinstance(sites, dict):
+            q["sites"] = {**sites, **seen_only}
+        elif sites is None:
+            q["sites"] = dict(seen_only)
+    return q
 
 
 def warm() -> None:
@@ -2237,6 +2447,13 @@ def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
     filled = 0
     if fills:
         filled, back = _fill_values(fills)
+        from app.core.typed_atom_classifier import _with_head_p
+
+        _back_ids = {id(a) for a in back}
+        for a, (_t, ans) in fills:
+            says = (getattr(a, "value", None) or {}).get("c3_base_says") or {}
+            if id(a) not in _back_ids and says.get("p") is not None:
+                _with_head_p(a, (ans, float(says["p"])))
         # A failed fill call keeps the base's type with no values: the base decided what the line is.
         if back:
             by_id = {id(a): (t, ans) for a, (t, ans) in fills}
@@ -2414,6 +2631,64 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
                 pass
         n += 1
     _STATUS["authority_final" if final else "authority"] = n
+    return n
+
+
+def record_confirm_enabled() -> bool:
+    """``SOWSMITH_C3_RECORD_CONFIRM`` (default on): see ``record_confirms``."""
+    return os.environ.get("SOWSMITH_C3_RECORD_CONFIRM", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def record_confirms(atoms: list[Any]) -> int:
+    """Record, on every line the base read and left untyped, that its reading
+    confirmed the parser's type: ``value.c3_confirm = {"type", "p", "said"}``
+    where the read said ``_keep`` (the parser's type stands) or the line's own
+    type, at or above the authority bar. Run after the final authority pass.
+
+    Typing records the same answer as ``c3_label`` act ``keep`` on the lines it
+    sends; ``apply_authority`` skips ``_keep`` (``_AUTHORITY_SKIP``), so on the
+    lines typing never sees the base's confirmation was lost and the line was
+    counted as the parser's rule (19 dev deals 2026-10-28: 747 lines read
+    ``_keep`` >= 0.5 and 101 read their own type, of 1,739 "rule" lines).
+
+    It is a record, not a decision: the type does not change, and a separate
+    key (not ``c3_label``) so nothing that reads a label changes behaviour
+    (``orbitbrief_core._head_says_site`` treats a labeled line differently from
+    an unlabeled one). ``c3_share`` counts a line whose confirmed type is still
+    its type as the head's. Returns lines recorded."""
+    if not record_confirm_enabled():
+        return 0
+    readings = _DEAL.get("types") or {}
+    if not readings:
+        return 0
+    sha = _DEAL.get("sha")
+    n = 0
+    for a in atoms:
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict):
+            continue
+        lab = v.get("c3_label")
+        if isinstance(lab, dict) and lab.get("act"):
+            continue
+        got = readings.get(str(getattr(a, "id", "") or ""))
+        if not got or got[0] is None:
+            continue
+        try:
+            if skipped(a, sha):
+                continue
+        except Exception:
+            pass
+        ans, p = str(got[0]), float(got[1] or 0.0)
+        t = getattr(a, "atom_type", None)
+        now = str(getattr(t, "value", t) or "")
+        if ans not in ("_keep", now) or not now or p < _authority_bar(ans):
+            continue
+        try:
+            a.value = {**v, "c3_confirm": {"type": now, "p": round(p, 3), "said": ans}}
+            n += 1
+        except Exception:
+            continue
+    _STATUS["confirmed"] = n
     return n
 
 

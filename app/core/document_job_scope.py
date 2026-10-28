@@ -692,7 +692,12 @@ def judge_documents(
             if getattr(d, "verdict", None) is None:
                 d = _C3Decision(c3_p, "other_job")
         if d is None and (not model_enabled() or not deal_line):
+            # Nothing else judges this conversation, so it is kept. That keep is not the head saying
+            # this_deal: when the head said other_job under its set-aside bar (010340: 0.896 < 0.98),
+            # the record says so instead of reading "this_deal by the head" at the head's other_job p.
             d = _C3Decision(c3_p or 0.0)
+            if c3_verdict == "other_job":
+                d.source = "c3_below_bar"
         if d is None:
             try:
                 # Judgments only: a person's or a Deal Kit's verdict decides; the
@@ -754,6 +759,9 @@ def judge_documents(
             other = False
         n_atoms = sum(len(d_) for d_ in docs)
         reason = ""
+        if source == "c3_below_bar":
+            reason = (f"kept: the head read other_job {c3_p:.2f}, under its set-aside bar {c3_aside():.2f}, "
+                      "and no other judge was asked")
         if other:
             reason = (
                 f"{source} verdict other_job {conf:.2f}: '{subject[:80]}' read as a different job "
@@ -768,6 +776,14 @@ def judge_documents(
             "correction_id": getattr(d, "correction_id", None),
             "drawing_spared": drawing_spared,
             "c3_verdict": c3_verdict, "c3_confidence": round(c3_p, 3),
+            # The bar the head's other_job must reach to set a conversation aside, and each document's
+            # own reading (filename -> [answer, p]): what the head said, per document, visibly.
+            "c3_bar": c3_aside() if mode == "on" else None,
+            "c3_docs": _doc_readings(docs, filenames, c3_docs),
+            # The head said other_job surely and the share rule (too many conversations for strays)
+            # kept it: said, never silent.
+            "share_rule_spared": bool(mode == "on" and c3_verdict == "other_job" and c3_p >= c3_aside()
+                                      and not aside_ok),
             "content_spared": content_spared, "content_match": matched,
             "reason": reason,
             "atom_ids": [str(getattr(a, "id", "") or "") for d_ in docs for a in d_] if other else [],
@@ -792,6 +808,20 @@ def judge_documents(
     return kept, dropped, verdicts
 
 
+def _doc_readings(docs: list[list[Any]], filenames: list[str],
+                  verdicts: dict[str, dict[str, tuple[str, float]]]) -> dict[str, list[Any]]:
+    """``{filename: [answer, p]}``: the head's own reading of each document of one conversation."""
+    from app.core.c3_type_base import DOCUMENT_JOB_KEY, _doc_id
+
+    out: dict[str, list[Any]] = {}
+    for doc_atoms, fn in zip(docs, filenames):
+        got = next(((verdicts.get(_doc_id(a)) or {}).get(DOCUMENT_JOB_KEY) for a in doc_atoms
+                    if (verdicts.get(_doc_id(a)) or {}).get(DOCUMENT_JOB_KEY)), None)
+        if got:
+            out[str(fn)] = [got[0], round(float(got[1] or 0.0), 3)]
+    return out
+
+
 def verdict_note(v: dict[str, Any]) -> str:
     """One trace line per conversation, kept or set aside."""
     what = f"{v['bundle'][:80]} ({v['atoms']} atoms, {len(v.get('filenames') or [v['filename']])} document(s))"
@@ -805,6 +835,8 @@ def verdict_note(v: dict[str, Any]) -> str:
         return (f"INFO: document_job_scope kept {what}; {how} "
                 f"— a drawing is titled by the building, not the job, so a "
                 f"model verdict does not remove it")
+    if v.get("source") == "c3_below_bar":
+        return f"INFO: document_job_scope kept {what}; {v.get('reason')}"
     return f"INFO: document_job_scope kept {what}; {how}"
 
 

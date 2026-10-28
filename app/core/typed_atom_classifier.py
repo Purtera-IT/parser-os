@@ -825,6 +825,12 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     _dfl["c3"] += 1
                 if fills:
                     filled, back = _fill_values(fills)
+                    # The head decided a filled line's type: its p goes on the label like an
+                    # assignment's (wave 4 read "fill, p None" as an LLM-typed site).
+                    _back_ids = {id(a) for a in back}
+                    for a, _ftuple in fills:
+                        if id(a) not in _back_ids:
+                            _with_head_p(a, _c3_answer.get(id(a)))
                     head_deflected += filled
                     _dfl["c3_fill"] += filled
                     _why["filled"] = filled
@@ -1203,6 +1209,14 @@ OUTPUT — strict JSON, one line per atom, in the form:
 If a field is not present in the atom text, omit it from value. Do not invent values. Do not echo example fields.
 
 /no_think"""
+
+
+def _with_head_p(atom: Any, answer: tuple[str, float] | None) -> None:
+    """Put the head's p on a ``fill`` label (the LLM only filled the values; the head chose the type)."""
+    v = getattr(atom, "value", None)
+    lab = v.get("c3_label") if isinstance(v, dict) else None
+    if answer and isinstance(lab, dict) and lab.get("act") == "fill" and lab.get("p") is None:
+        lab["p"] = round(float(answer[1] or 0.0), 3)
 
 
 def _mark_c3(atom: Any, answer: str, p: float | None, act: str) -> None:
