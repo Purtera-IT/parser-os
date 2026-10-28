@@ -3419,9 +3419,16 @@ def _ship_list_siblings(content: dict[str, Any], envelope: dict[str, Any], fs: l
     pos = {str(a.get("id")): (str(a.get("artifact_id") or ""), line_of(a)) for a in atoms}
     anchors = [pos.get(c) for x in cm if isinstance(x, dict) for c in x.get("cites") or [] if pos.get(c)]
     near = lambda art, ln: any(art == aa and (ln is None or oo is None or abs(int(ln) - int(oo)) <= 6) for aa, oo in anchors)
+    # A sibling the supplier head surely reads as ours or the partner's is not
+    # the customer's ship-out item: the head decides, the list rule only fills
+    # in where it abstained (010309: "Coiled sensor cable attached to the
+    # Sensor Interface Box", col:supplier us 0.93, became customer-provided).
+    not_theirs = {f["id"] for f in fs if _head_supplier(f) not in (None, "customer")}
     for a in atoms:
         t = str(a.get("text") or "").strip()
         art, ln = str(a.get("artifact_id") or ""), line_of(a)
+        if str(a.get("id")) in not_theirs:
+            continue
         if not t or len(t) > 60 or re.search(r"[.!?]\s|\b(will|we|you|please)\b", t, re.I) \
                 or re.match(r"(?i)(reuse|re-use|install|use|unpack|notify|power|request|mount|remove|connect|test|confirm|provide)\b", t):
             continue  # an item, never a task line beside the list
@@ -3430,6 +3437,8 @@ def _ship_list_siblings(content: dict[str, Any], envelope: dict[str, Any], fs: l
                 and re.search(r"(?i)\b(printer|reader|pin ?pad|scanner|cash drawer|tablet|terminal|stand|hub|cords? for|cables?)\b", t):
             cm.append({"text": t, "cites": [str(a.get("id"))], "kind": "fact"})
     for f in fs:
+        if f["id"] in not_theirs:
+            continue
         if re.search(r"(?i)we'?d ship( out)?|we (will|'ll) (ship|provide)|customer (will )?provide|provided by (the )?customer|ship(ping)? out", f.get("under") or "") \
                 and _ITEM_LINE.match(f["text"].strip()) and not _said(f["text"], cm, 0.6):
             cm.append({"text": f["text"].strip().rstrip("."), "cites": [f["id"]], "kind": "fact"})
@@ -5669,6 +5678,9 @@ _SOURCE_NEG = re.compile(r"(?i)\b(not|no|none|never|neither|nor|without|exclud\w
                          r"won'?t|dont|wont|cant|cannot|doesnt|isnt|arent|n/a|optional|separate(ly)?|instead)\b|n't\b|"
                          r"\b(customer|client|they|their|we|i|in-?house|internal(ly)?|reseller|vendor|others?)\b.{0,40}\b(will|to|handles?|provides?|does|owns?|manages?)\b|"
                          r"\b(by|from) (the )?(customer|client|others|their|reseller|vendor)|handled by|responsib")
+#: A heading that files the lines under it as exclusions ("OUT OF SCOPE",
+#: "Exclusions", "Not Included").
+_EXCLUSION_HEADING = re.compile(r"(?i)\b(out[- ]of[- ]scope|exclusions?|excluded|not included|not in scope)\b")
 #: A source that names work: a service, a task.
 _SERVICE_WORDS = re.compile(r"(?i)\b(support|maintenance|maintain|troubleshoot\w*|install\w*|patch\w*|upgrades?|repair\w*|"
                             r"configur\w*|monitor\w*|management|coordinat\w*|response|services?|deploy\w*|replace\w*|"
@@ -5709,6 +5721,16 @@ def _source_polarity(content: dict[str, Any], fs: list[dict[str, Any]], envelope
         types = {str(a.get("atom_type") or ""), str((by.get(c) or {}).get("type") or ""),
                  str((st.get("c3_label") or {}).get("was") or "")} | {str(t) for t in st.get("alt_atom_types") or []}
         return bool(types & _SERVICE_TYPES or (by.get(c) or {}).get("section") == "scope_of_work") and bool(_SERVICE_WORDS.search(src(c)))
+    def negated_by_place(c: str) -> bool:
+        """The source is an exclusion by what the type head reads it as, or by
+        the heading it sits under, worded negatively or not (010253: "Trenching,
+        excavation, concrete work, welding ..." under OUT OF SCOPE, typed
+        exclusion at 1.0, was reversed into "Provide trenching ...")."""
+        f = by.get(c) or {}
+        a = atoms.get(c) or {}
+        if "exclusion" in (str(f.get("type") or ""), str(a.get("atom_type") or "")):
+            return True
+        return bool(_EXCLUSION_HEADING.search(str(f.get("under") or "")))
     sc = content.setdefault("scope", [])
     for k in ("assumptions", "customer_responsibilities", "out_of_scope", "overview"):
         for x in list(content.get(k) or []):
@@ -5723,7 +5745,7 @@ def _source_polarity(content: dict[str, Any], fs: list[dict[str, Any]], envelope
             # its source names work, so a bare exclusion is never dropped here.
             listed_only = k == "out_of_scope" and not _LINE_NEG.search(t)
             if (not listed_only and not _LINE_NEG.search(t)) or not all(src(c) for c in cites) \
-                    or any(_SOURCE_NEG.search(src(c)) for c in cites):
+                    or any(_SOURCE_NEG.search(src(c)) or negated_by_place(c) for c in cites):
                 continue
             # Its source naming a service in plain words is enough: the request
             # bullet above was typed deal_metadata and placed under assumptions.
