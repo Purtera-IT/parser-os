@@ -107,3 +107,13 @@ def _reset(monkeypatch):
     monkeypatch.delenv("SOWSMITH_LLM_WITH_HEADS", raising=False)
     semantic_role.reset_reachability()
     yield
+
+
+def test_registry_never_readies_a_head_worse_than_live(tmp_path):
+    from ml.c3 import heads_registry as hr
+
+    better = {"exact": 0.9, "n": 500, "guess": 0.5, "live": 0.7, "verdict": "better", "swap": True}
+    worse = {"exact": 0.7, "n": 500, "guess": 0.4, "live": 0.8, "verdict": "worse", "swap": True}
+    assert not hr._worse_than_live(better) and hr._worse_than_live(worse)
+    assert hr._worse_than_live({**better, "exact": 0.69, "verdict": "same"})
+    assert not hr._worse_than_live({"exact": 0.9, "n": 500, "guess": 0.5})  # training-log evidence: no live
