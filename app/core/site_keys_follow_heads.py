@@ -213,6 +213,30 @@ def _street_head(text: str) -> str:
     return m.group(1) if m else ""
 
 
+def _fold_street_copies(atoms: list[Any], types: dict[str, Any]) -> int:
+    """A site line that is only a street ("55 Main Rd") written whole inside another keyed site line
+    (the roster row "facility: Northgate | address: 55 Main Rd | city: ...") is that site: one key,
+    not two (010309: 3 sites sent to the quote as 6)."""
+    rows = [(a, _norm(_text(a)), _site_keys(a)[0]) for a in atoms
+            if _is_site_line(a, types) and _site_keys(a) and _part(_text(a)) != "street"]
+    n = 0
+    for a in atoms:
+        if not _is_site_line(a, types) or _part(_text(a)) != "street":
+            continue
+        me = _norm(_text(a))
+        if not me or not _street_head(_text(a)):
+            continue
+        owners = {k for b, t, k in rows if b is not a and re.search(r"(?:^| )" + re.escape(me) + r"(?: |$)", t)}
+        if len(owners) != 1:
+            continue
+        key = next(iter(owners))
+        if _site_keys(a) != [key]:
+            a.entity_keys = [k for k in _keys(a) if not k.startswith(_PREFIX)] + [key]
+            a.review_flags = list(getattr(a, "review_flags", None) or []) + ["street_copy_of_site"]
+            n += 1
+    return n
+
+
 def _mint_for_head_sites(atoms: list[Any], types: dict[str, Any]) -> int:
     # A second copy of a keyed site line (the same words, or the same street
     # start) is that site: "Customer Address: 117 Main Way, Town, Washington"
@@ -282,6 +306,7 @@ def settle(atoms: list[Any], types: dict[str, Any] | None) -> dict[str, Any]:
     except Exception:  # pragma: no cover
         floor = 0.5
     joined = _join_split_addresses(atoms, types)
+    joined += _fold_street_copies(atoms, types)
     minted = _mint_for_head_sites(atoms, types)
     backed = _backed(atoms, types, float(floor))
     dropped: dict[str, int] = {}

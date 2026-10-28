@@ -140,3 +140,13 @@ def test_an_unbacked_site_line_makes_no_roster_row_and_no_quote_site():
     assert not any("pecan" in str(k) or "shi_hq" in str(k) for k in keys), keys
     assert any("dock" in str(k) for k in keys), keys
     assert [q["site"] for q in quote_sites([sig, job])] == ["site:12_dock_street"]
+
+
+def test_a_street_line_inside_a_roster_row_is_that_site():
+    row = _atom("r", "facility: Northgate | address: 55 Main Rd | city: Springfield", "physical_site",
+                ["site:northgate"], flags=["note_site_roster_v1"])
+    street = _atom("s", "55 Main Rd", "physical_site", ["site:55_main_rd"])
+    other = _atom("o", "70 Oak Rd", "physical_site", ["site:70_oak_rd"])
+    settle([row, street, other], {"r": ["physical_site", 0.99], "s": ["physical_site", 0.8], "o": ["physical_site", 0.8]})
+    assert _site_keys(street) == ["site:northgate"]
+    assert _site_keys(other) == ["site:70_oak_rd"]
