@@ -45,7 +45,9 @@ from .schema import load_schema
 DRAFT_LABELER = "main-heads-loop (assistant)"
 APPROVED_DRAFT = "[owner-approved draft]"
 #: Queue head -> how it is stored on the record.
-LABEL_FIELD = {"type": "label_type"}
+LABEL_FIELD = {"type": "label_type", "sow_supplier": "supplier"}
+#: SowSmith heads stored as reads on the line's label row (labels_from_sow._target).
+READS_SET = {"sow_section": "sow_section", "sow_party": "task_owner_role", "sow_keep": "co_action"}
 JUDGMENT_HEADS = {"admission", "bom_owner", "site", "site_role", "facility", "conflict"}
 #: Dense attention budget the refit reads with (slot_fit --max-atoms).
 MAX_ATOMS = 8192
@@ -139,7 +141,7 @@ def deal_record(env: dict[str, Any], deal: str, rows: list[dict[str, Any]], appr
         prov = {"correction_id": r["correction_id"], "source": "pm_correction"}
         if not trains:
             prov.update(why_author="machine_draft", drafted_by=r.get("author") or "")
-        if r["head"] in LABEL_FIELD:
+        if r["head"] in LABEL_FIELD or r["head"] in READS_SET:
             aid = r["atoms"][0]
             # A person's row and a draft row for one line stay separate rows:
             # select_labels keeps the person's and skips the draft.
@@ -147,7 +149,10 @@ def deal_record(env: dict[str, Any], deal: str, rows: list[dict[str, Any]], appr
             lb = labels.setdefault(slot, {"label_key": aid, "atom_id": aid, "labeler": lab,
                                           "weight_tier": "ordinary", **({} if trains else
                                                                        {"why_author": "machine_draft"})})
-            lb[LABEL_FIELD[r["head"]]] = r["verdict"]
+            if r["head"] in READS_SET:
+                lb.setdefault("reads_set", {})[READS_SET[r["head"]]] = r["verdict"]
+            else:
+                lb[LABEL_FIELD[r["head"]]] = r["verdict"]
             lb.setdefault("corrections", []).append(r["correction_id"])
         elif r["head"] in JUDGMENT_HEADS:
             a = r["atoms"]
