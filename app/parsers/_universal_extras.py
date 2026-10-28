@@ -93,6 +93,26 @@ def _make_atom(
 # ────────────────────────────── MSG (Outlook) ──────────────────────────────
 
 
+def _msg_html_body_text(msg: Any) -> str:
+    """The text of an Outlook message's HTML body ('' when it has none)."""
+    try:
+        raw = msg.htmlBody
+    except Exception:
+        return ""
+    if not raw:
+        return ""
+    if isinstance(raw, bytes):
+        try:
+            html = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            html = raw.decode("cp1252", errors="replace")
+    else:
+        html = str(raw)
+    from app.parsers.email_body import email_content_to_text
+
+    return email_content_to_text(html, is_html=True).strip()
+
+
 class MsgParser(BaseParser):
     """Parse Outlook ``.msg`` native email files.
 
@@ -144,6 +164,15 @@ class MsgParser(BaseParser):
                 sender = (msg.sender or "").strip()
                 date = str(msg.date or "")
                 body = (msg.body or "").strip()
+                body_from_html = False
+                if not body:
+                    # An HTML-only message: ``body`` is None and the whole
+                    # request sits in ``htmlBody`` (live 010124: an RFQ read
+                    # as 2 atoms, header + sender name). Read it the way the
+                    # .eml path reads an HTML part.
+                    html_text = _msg_html_body_text(msg)
+                    if html_text:
+                        body, body_from_html = html_text, True
                 attachments = [att.longFilename or att.shortFilename or "(unnamed)" for att in (msg.attachments or [])]
             header_text = f"From: {sender} | Subject: {subject} | Date: {date}"
             # The FOURTH container found carrying the header defect. The .eml
@@ -167,7 +196,10 @@ class MsgParser(BaseParser):
             mark_synthetic(atoms[-1])  # composed "From: | Subject: | Date:" -- not in the file
             from app.core.sentences import split_sentences
 
-            for para_idx, para in enumerate(re.split(r"\n\s*\n", body)):
+            # An HTML body comes back one block per line (no blank lines
+            # between paragraphs), so each line is a paragraph there.
+            paras = body.splitlines() if body_from_html else re.split(r"\n\s*\n", body)
+            for para_idx, para in enumerate(paras):
                 para = para.strip()
                 if not para or len(para) < 4:
                     continue
@@ -183,7 +215,8 @@ class MsgParser(BaseParser):
                     atoms.append(_make_atom(
                         project_id=project_id, artifact_id=artifact_id, filename=path.name,
                         artifact_type=ArtifactType.msg, text=piece[:1200],
-                        locator={"kind": "msg_body", "paragraph": para_idx},
+                        locator={"kind": "msg_body", "paragraph": para_idx,
+                                 **({"body_part": "html"} if body_from_html else {})},
                         extraction_method="extract_msg",
                         parser_version=self.parser_version,
                     ))

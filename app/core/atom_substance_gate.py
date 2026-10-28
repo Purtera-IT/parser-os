@@ -926,6 +926,21 @@ def _speech_or_stated_fact(atom: Any, text: str) -> bool:
 _ROUTING_HEADER_KINDS = frozenset({"email_header", "quoted_message_header", "hubspot_note_meta"})
 
 
+_SCANNED_TYPES = frozenset({"pdf", "image"})
+
+
+def _scanned(atom: Any) -> bool:
+    """The line came off a scan, a picture or a PDF page (where OCR debris lives)."""
+    for ref in getattr(atom, "source_refs", None) or []:
+        at = getattr(ref, "artifact_type", None)
+        if str(getattr(at, "value", at) or "") in _SCANNED_TYPES:
+            return True
+        m = str(getattr(ref, "extraction_method", "") or "").lower()
+        if "ocr" in m or "vision" in m or "image" in m:
+            return True
+    return False
+
+
 def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Drop atoms whose text is OCR debris rather than words (see text_quality).
 
@@ -949,6 +964,14 @@ def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         # dictionary words, so it scored as debris and every email lost the
         # header that names its sender and date (live 010087).
         if str(_atom_value(atom).get("kind") or "") in _ROUTING_HEADER_KINDS:
+            kept.append(atom)
+            continue
+        # Debris is what a scan or a picture yields. A line somebody typed (a
+        # CRM note, an email, a transcript, a document's text layer other than
+        # a PDF) is words whatever a dictionary thinks: 010238's
+        # "ecu health, novant, duke, wakemed." -- the four health systems the
+        # job is for -- was dropped here before the heads could read it.
+        if not _scanned(atom):
             kept.append(atom)
             continue
         text = _atom_text(atom)

@@ -6,6 +6,21 @@ labeling it needs. Re-run after every retrain or labeling round:
         --validation runC.pt.validation.json --labels 'train/*.json' 010043.json \\
         --out c3_record/heads.json
 
+Test A onward the holdout evidence is the graded checkpoint (``--graded``), not a training log:
+
+    python -m ml.c3.heads_registry \
+        --graded tables_<NAME>/per_deal_tables.json --gate gate_score.json \
+        --items golden/<NAME>/items.json heldout/<NAME>/items.json \
+        --labels '<train dirs>/*.json' --out c3_record/heads.json
+
+The scored set (``--graded-set``, default heldout7) gives each head's accuracy (``exact``) and live's
+on the same items (``live``); the majority answer of the same gold is ``guess``; the swap gate's pass is
+``swap`` (recorded, and named in the labeling task; it does not change the status). A head the grade
+measures worse than live is never ``ready`` (it is ``weak``): new evidence can never hand a decision
+to a head that lost to the one in service.
+A head the grade does not score keeps the training log's evidence when one is given (``evidence``
+says which).
+
 Layers: ``base`` heads say what a line IS and are the same for any company;
 ``purtera`` heads say what PURTERA does with it, and another company refits
 only that layer. Status is computed, never hand-set:
@@ -100,10 +115,10 @@ TODO = {
 }
 
 
-def _facts(holdout_log: str, validation: str, label_files: list[str]):
-    log = Path(holdout_log).read_text(encoding="utf-8")
-    hold = log[log.rfind("\nholdout\n"):]
-    val = json.loads(Path(validation).read_text(encoding="utf-8"))
+def _facts(holdout_log: str | None, validation: str | None, label_files: list[str]):
+    log = Path(holdout_log).read_text(encoding="utf-8") if holdout_log else ""
+    hold = log[log.rfind("\nholdout\n"):] if log else ""
+    val = json.loads(Path(validation).read_text(encoding="utf-8")) if validation else {}
     vl = val.get("open_links") or val.get("lines") or {}
     cnt, deals, mix = collections.Counter(), collections.defaultdict(set), collections.defaultdict(collections.Counter)
     for f in label_files:
@@ -131,16 +146,62 @@ def _facts(holdout_log: str, validation: str, label_files: list[str]):
     return hold, vl, cnt, deals, mix
 
 
-def build(holdout_log: str, validation: str, label_files: list[str]) -> list[dict]:
+def graded(tables: str, gate: str | None = None, items: list[str] = (), *, set_name: str = "heldout7",
+           pair: str = "X:live", source: str = "") -> dict[str, dict]:
+    """Per head, the graded checkpoint's held-out evidence: ``exact`` (its accuracy), ``live`` (the
+    service's on the same items), ``n``, ``verdict`` (paired bootstrap), ``guess`` (majority share of the
+    same gold answers in ``items``) and ``swap`` (the swap gate's pass, None when not gated)."""
+    t = json.loads(Path(tables).read_text(encoding="utf-8"))["pairs"][pair]
+    heads = t["sets"][set_name]["heads"]
+    deals = set(t["sets"][set_name].get("deals") or [])
+    gold: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for f in items:
+        d = json.loads(Path(f).read_text(encoding="utf-8"))
+        for dn, deal in (d.get("deals") or {}).items():
+            if deals and dn not in deals:
+                continue
+            for item, row in ((deal.get("kinds") or {}).get("clean") or {}).items():
+                g = row[1] if isinstance(row, (list, tuple)) and len(row) > 1 else None
+                if g is None or item.startswith(("num|", "glink|")):
+                    continue
+                gold[item.split("|")[1]][str(g)] += 1
+    swap: dict[str, bool] = {}
+    if gate:
+        for r in (json.loads(Path(gate).read_text(encoding="utf-8")).get("swap") or {}).get("rows") or []:
+            if r.get("gated"):
+                swap[r["head"]] = bool(r.get("pass"))
+    out = {}
+    for k, r in heads.items():
+        g = gold.get(k)
+        out[k] = {"exact": round(float(r["cand"]), 3), "n": int(r["n"]),
+                  "guess": round(g.most_common(1)[0][1] / sum(g.values()), 3) if g else None,
+                  "live": round(float(r["live"]), 3), "verdict": r.get("verdict"), "swap": swap.get(k),
+                  "evidence": source or f"graded {set_name}"}
+    return out
+
+
+def _worse_than_live(h: dict | None) -> bool:
+    """The grade measured this head worse than the service's on the same held-out items (paired
+    verdict "worse", or lower accuracy at all)."""
+    if not h or h.get("live") is None:
+        return False
+    return h.get("verdict") == "worse" or h["exact"] < h["live"]
+
+
+def build(holdout_log: str | None, validation: str | None, label_files: list[str],
+          grade: dict[str, dict] | None = None) -> list[dict]:
     schema = load_schema()
     hold, vl, cnt, deals, mix = _facts(holdout_log, validation, label_files)
+    grade = grade or {}
     out = []
     for o in schema.opportunities:
         if o.key.endswith(":reason") and o.key != "read:co_reason":
             continue
         m = re.search(rf"\n\s+{re.escape(o.key)} exact=([\d.]+) n=(\d+)(?: majority=([\d.]+))?", hold)
         h = {"exact": float(m.group(1)), "n": int(m.group(2)),
-             "guess": float(m.group(3)) if m and m.group(3) else None} if m else None
+             "guess": float(m.group(3)) if m and m.group(3) else None, "evidence": "holdout log"} if m else None
+        if o.key in grade:
+            h = dict(grade[o.key])
         n, nd, top = cnt.get(o.key, 0), len(deals.get(o.key, ())), mix.get(o.key)
         share = (top.most_common(1)[0][1] / max(1, sum(top.values()))) if top else 0.0
         stage = STAGES.get(o.key, {})
@@ -152,14 +213,19 @@ def build(holdout_log: str, validation: str, label_files: list[str]) -> list[dic
             status = "one_sided"
         elif n < 100 or nd < 5:
             status = "thin"
-        elif h and h["n"] >= 50 and ((h["guess"] is not None and h["exact"] >= h["guess"] + 0.10)
-                                     or (h["guess"] is None and h["exact"] >= 0.85 and o.kind != "relation")):
+        elif h and h["n"] >= 50 and not _worse_than_live(h) and (
+                (h["guess"] is not None and h["exact"] >= h["guess"] + 0.10)
+                or (h["guess"] is None and h["exact"] >= 0.85 and o.kind != "relation")):
             status = "ready"
         elif h and h["n"] >= 50 and not (o.kind == "relation" and h["guess"] is None):
             status = "weak"
         else:
             status = "unproven"
         todo = TODO[status].format(top=top.most_common(1)[0][0] if top else "")
+        if h and _worse_than_live(h):
+            todo = f"worse than live on the held-out grade ({h['exact']} vs {h['live']}): " + todo
+        if h and h.get("swap") is False:
+            todo += "; fails the swap gate (answers move under name / keyword / layout swaps)"
         out.append({
             "key": o.key, "layer": "base" if o.universal else "purtera",
             "size": o.size, "kind": o.kind, "answers": [a.value for a in o.answers][:30],
@@ -176,14 +242,23 @@ def build(holdout_log: str, validation: str, label_files: list[str]) -> list[dic
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--holdout-log", required=True)
-    p.add_argument("--validation", required=True)
+    p.add_argument("--holdout-log", help="a training holdout log (Run C and before)")
+    p.add_argument("--validation")
+    p.add_argument("--graded", help="per_deal_tables.json of a graded checkpoint (test A onward)")
+    p.add_argument("--graded-set", default="heldout7")
+    p.add_argument("--gate", help="gate_score.json (its swap rows)")
+    p.add_argument("--items", nargs="*", default=[], help="the graded items.json files (gold, for the guess)")
+    p.add_argument("--source", default="", help="what the graded evidence is, e.g. 'test A N2pick_ablA heldout7'")
     p.add_argument("--labels", nargs="+", required=True, help="training-format deal files (globs ok)")
     p.add_argument("--out", required=True)
     a = p.parse_args()
+    if not (a.holdout_log or a.graded):
+        p.error("give --holdout-log or --graded")
     files = sorted({f for g in a.labels for f in glob.glob(g)} | {f for f in a.labels if Path(f).is_file()})
-    reg = build(a.holdout_log, a.validation, files)
-    Path(a.out).write_text(json.dumps({"version": 1, "heads": reg}, indent=1), encoding="utf-8")
+    grade = graded(a.graded, a.gate, a.items, set_name=a.graded_set, source=a.source) if a.graded else None
+    reg = build(a.holdout_log, a.validation, files, grade)
+    Path(a.out).write_text(json.dumps({"version": 2 if grade else 1, "evidence": a.source or a.holdout_log,
+                                       "heads": reg}, indent=1), encoding="utf-8")
     c = collections.Counter((h["layer"], h["status"]) for h in reg)
     print(json.dumps({f"{k[0]}:{k[1]}": v for k, v in sorted(c.items())}, indent=1))
 

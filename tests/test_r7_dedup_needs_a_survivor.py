@@ -74,11 +74,22 @@ def test_the_same_row_still_folds_and_its_document_keeps_a_copy():
 
 def test_prose_metadata_still_collapses_on_its_key():
     a = _row("art_a", V1, row=0)
-    b = _row("art_a", V2, row=1)
+    b = _row("art_a", V1, row=1)
     for x in (a, b):
         x.value = {"field_name": "SOW VERSION", "value": "v.1"}
         x.source_refs[0].locator = {"page": 1, "line": 3}
     assert len(semantic_dedup_atoms([a, b])) == 1
+
+
+def test_lines_stating_other_values_never_fold_on_a_shared_key():
+    """Audit 2026-10-28: a key shared by lines that state different numbers ("v.2 ... 07/16" under
+    the key of "v.1 ... 07/09") is not a copy; both stand."""
+    a = _row("art_a", V1, row=0)
+    b = _row("art_a", V2, row=1)
+    for x in (a, b):
+        x.value = {"field_name": "SOW VERSION", "value": "v.1"}
+        x.source_refs[0].locator = {"page": 1, "line": 3}
+    assert len(semantic_dedup_atoms([a, b])) == 2
 
 
 # ---------------------------------------------------------------------------
