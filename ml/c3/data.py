@@ -270,7 +270,9 @@ class DealExample:
             deal_loss_scale=_deal_loss_scale(d.get("deal_loss_scale", 1.0)),
             balance_version=d.get("balance_version"), balance_config=d.get("balance_config"),
             view=str(d.get("view") or ""),
-            head_scale={str(k): float(v) for k, v in (d.get("head_scale") or {}).items()},
+            # The planning-heads contract (c3_record.view.train_scale, C3_PLANNING_HEADS=1): the planning
+            # view's stored mask on the SOW / quote / primary-service heads lifts; off, exactly as stored.
+            head_scale=_view_train_scale(d.get("view"), {str(k): float(v) for k, v in (d.get("head_scale") or {}).items()}),
             source_supervision=d.get("source_supervision") or {
                 "judgments": d.get("judgments") or [],
                 "deal_answers": d.get("deal_answers") or [],
@@ -1608,6 +1610,14 @@ def _history_atom(atom: Atom) -> Atom:
         "origin": "labeler",
         "reads_set": {MISS_CAUSE: cause},
     })
+
+
+def _view_train_scale(view: Any, stored: dict[str, float]) -> dict[str, float]:
+    """c3_record.view.train_scale on a loaded file's head_scale (identity unless C3_PLANNING_HEADS=1)."""
+    if not stored:
+        return stored
+    from c3_record.view import train_scale  # noqa: PLC0415
+    return train_scale(view, stored)
 
 
 def copy_input_enabled() -> bool:

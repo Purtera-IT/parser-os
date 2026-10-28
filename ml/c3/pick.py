@@ -35,8 +35,15 @@ from pathlib import Path
 PICK_HEADS = ("col:admission", "col:supplier", "col:about", "col:label_type",
               "read:sow_section", "read:sow_coverage", "read:co_action",
               "read:site", "jdg:site", "jdg:site_role", "jdg:facility",
-              "jdg:task_tier", "jdg:hours:per", "jdg:hours:qty", "read:co_hours_estimate")
+              "jdg:task_tier", "jdg:hours:per", "jdg:hours:qty", "read:co_hours_estimate",
+              # Run O (planning-heads contract): the deal's primary service, one card per validation view.
+              "deal:primary_service")
 MIN_N = 20
+#: A head measured on fewer rows by nature (one deal card per validation view file) joins the composite
+#: at its own minimum; it is never floored (floors keep MIN_N).
+PICK_MIN_N = {"deal:primary_service": 2}
+#: Composite weight per head (1 if not listed): a handful of deal cards moves the pick at most this much.
+PICK_WEIGHTS = {"deal:primary_service": 0.5}
 Z = 2.0
 TOL_MIN = 0.005
 GAP = 0.05
@@ -60,15 +67,22 @@ def composite_heads(checks: dict[str, dict], heads=PICK_HEADS, min_n: int = MIN_
     """Heads measured (n >= min_n) in every check row."""
     rows = list(checks.values())
     return [k for k in heads
-            if rows and all(row.get(col(k)) is not None and row.get(col(k) + "_n", 0) >= min_n for row in rows)]
+            if rows and all(row.get(col(k)) is not None
+                            and row.get(col(k) + "_n", 0) >= min(min_n, PICK_MIN_N.get(k, min_n)) for row in rows)]
+
+
+def composite(row: dict, heads: list[str]) -> float:
+    """The weighted mean (PICK_WEIGHTS, else 1) of the heads' validation exact on one check row."""
+    got = [(PICK_WEIGHTS.get(k, 1.0), row[col(k)]) for k in heads if row.get(col(k)) is not None]
+    den = sum(w for w, _ in got)
+    return sum(w * v for w, v in got) / den if den else 0.0
 
 
 def judge(row: dict, floors: dict, heads: list[str], start: dict | None = None, *,
           min_n: int = MIN_N, z: float = Z, tol_min: float = TOL_MIN,
           gap: float = GAP) -> tuple[bool, float, list[str]]:
     """(passes, composite, reasons it failed)."""
-    vals = [row[col(k)] for k in heads if row.get(col(k)) is not None]
-    comp = sum(vals) / len(vals) if vals else 0.0
+    comp = composite(row, heads)
     bad = []
     for k in heads:
         f = floors.get(k)

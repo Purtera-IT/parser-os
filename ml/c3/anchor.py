@@ -22,7 +22,11 @@ set in pod/runE.sh (rationale in ~/c3-local/runE/loss_plan.md, "Trunk anchor"):
   step (eval mode, the run's own texts and graph flags), and kept on the CPU
   (``<checkpoint>.anchor.pt`` so a resume reads the same targets). Labeled rows
   are left to the gold terms. A head INIT does not have (``--allow-new-heads``)
-  has no INIT prediction to keep and is refused.
+  has no INIT prediction to keep and is refused. Under the planning-heads
+  contract (C3_PLANNING_HEADS=1, c3_record.view.PLANNING_HEADS) a planning
+  head is not anchored on a planning-view part: INIT never trained it there
+  (masked), so its reading there is no behaviour to keep; the same head stays
+  anchored on the quoting-view parts.
 """
 from __future__ import annotations
 
@@ -93,7 +97,10 @@ class TrunkAnchor:
                 if getattr(b, "task_profile", None) is not None:
                     continue
                 rows_by = {}
+                free_here = _planning_free(b)
                 for key in self.heads:
+                    if free_here(key):
+                        continue
                     gold = b.targets.get(key)
                     n = len(b)
                     free = [i for i in range(n) if gold is None or gold[i] < 0]
@@ -155,6 +162,15 @@ class TrunkAnchor:
                 return False
             self.init = {n: t.to(device) if device is not None else t for n, t in blob["init"].items()}
         return True
+
+
+def _planning_free(b):
+    """key -> True when the planning-heads contract trains ``key`` on this planning-view part (no anchor)."""
+    from c3_record import view as cview  # noqa: PLC0415
+    views = list(getattr(b, "view", None) or [])
+    if not cview.planning_heads_enabled() or not views or any(cview.name(v) != cview.PLANNING for v in views):
+        return lambda key: False
+    return cview.is_planning_head
 
 
 def _part_key(b) -> str:
