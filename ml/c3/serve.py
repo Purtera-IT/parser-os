@@ -495,6 +495,9 @@ def handler(base: Base, token: str = "") -> type[BaseHTTPRequestHandler]:
             qh = _quote_heads()
             if qh is None:
                 return self._send(503, {"error": "quote heads not loaded"})
+            if not _embed_ready():
+                # start.sh pulls the embedding model beside the server: warming, retried.
+                return self._send(503, {"error": "quote embedding model loading"})
             started = time.monotonic()
             try:
                 out = qh.quote(deal, word=bool(body.get("word", True)))
@@ -536,6 +539,13 @@ def load_or_exit(base: Base, exit: Callable[[int], Any] = os._exit) -> None:
         exit(3)
 
 
+def _embed_ready() -> bool:
+    """The quote heads' embedding model is pulled and loaded (start.sh touches
+    ``C3_EMBED_READY_FILE``); always true when the variable is unset."""
+    marker = os.environ.get("C3_EMBED_READY_FILE", "").strip()
+    return not marker or os.path.exists(marker)
+
+
 def main() -> None:
     # Before torch is imported (the load thread): fewer fragmentation OOMs on long deals.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -547,6 +557,8 @@ def main() -> None:
     base = Base()
     # Answer /health at once and load behind it, so a cold start is visible.
     threading.Thread(target=load_or_exit, args=(base,), daemon=True).start()
+    # The quote heads' bundle too, so the first quote does not read it.
+    threading.Thread(target=_quote_heads, daemon=True).start()
     server = ThreadingHTTPServer((args.host, args.port),
                                  handler(base, os.environ.get("SOWSMITH_C3_TOKEN", "").strip()))
     log.info("C3 base service on %s:%d", args.host, args.port)

@@ -203,3 +203,34 @@ def test_a_read_goes_through_a_path_prefix(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: seen.append(req.full_url) or _Resp())
     c3._request("/health", None, timeout=1)
     assert seen == ["https://relay.example/c3/health"]
+
+
+def test_a_quote_waits_for_the_embedding_model_start_sh_loads_beside_the_server(service, monkeypatch, tmp_path):
+    """start.sh serves /read at once and pulls the quote heads' embedding model
+    beside it; until its marker exists a quote is 503 (warming, retried by the
+    worker), never an answer computed without the model."""
+    class _QH:
+        version = "t"
+
+        def quote(self, deal, word=True):
+            return {"job_type": "av", "lines": []}
+
+    marker = tmp_path / ".embed_ready"
+    monkeypatch.setenv("C3_EMBED_READY_FILE", str(marker))
+    monkeypatch.setattr(serve, "_QH", [_QH()])
+    url = service()
+    body = json.dumps({"deal": {"atoms": []}}).encode()
+
+    def _post():
+        req = urllib.request.Request(url + "/v1/quote", data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    with pytest.raises(urllib.error.HTTPError) as err:
+        _post()
+    assert err.value.code == 503
+    assert _get(url + "/health")["ready"] is True, "reads are served while the model loads"
+    marker.touch()
+    assert _post()["job_type"] == "av"
+    monkeypatch.delenv("C3_EMBED_READY_FILE")
+    assert serve._embed_ready() is True, "no marker configured: nothing to wait for"
