@@ -1808,6 +1808,12 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             row["reads"] = reads
         if _deal_kit(a):
             row["deal_kit"] = True
+        if _parser_made(a):
+            # A line the parser wrote, not one a document has: "Customer documents declare 50
+            # locations; 15 identified ..." (declared_scope, 010382) was read as the deal saying
+            # 50 sites. It is no statement for the quote to read.
+            row["parser_made"] = True
+            row["left_out"] = True
         if aid in out:
             row["out_of_view"] = out[aid]
         if aid in left_out or aid in out:
@@ -1888,6 +1894,22 @@ def not_quote_work(atom: Any) -> str:
     if under and _NOT_WORK_HEADING.search(under):
         return f"under {under[:80]}"
     return ""
+
+
+def _parser_made(atom: Any) -> bool:
+    """A line the parser composed (a declared-scope gap note, a sheet rollup, a derived or picture
+    reading), not one a document says."""
+    flags = set(getattr(atom, "review_flags", None) or [])
+    if "declared_scope" in flags or any(str(f).startswith("derived_") for f in flags):
+        return True
+    if str(_value(atom).get("kind") or "") == "sheet_rollup":
+        return True
+    try:
+        from app.core.c3_brief import _derived
+
+        return bool(_derived(atom))
+    except Exception:
+        return False
 
 
 def _with_not_work(q: Any, not_work: dict[str, str]) -> Any:

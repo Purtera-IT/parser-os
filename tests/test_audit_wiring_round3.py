@@ -107,3 +107,49 @@ def test_pricing_terms_rate_rows_and_exclusions_leave_the_quotes_work_set(monkey
     assert q["not_work"]["count"] == 4 and q["not_work"]["ids"] == ["o1", "p1", "r1", "x1"]
     # The day-type and access heads ride along when the read answers them.
     assert {"read:work_window", "read:access_need"} <= set(c3_type_base.QUOTE_LINE_HEADS)
+
+
+# ---- 6. a site key must be a place; kit lines and parser-made lines name no quote site
+
+def _site(aid, text, keys, art="art_doc", filename="sow.docx"):
+    return NS(id=aid, raw_text=text, atom_type="physical_site", entity_keys=list(keys), artifact_id=art,
+              review_flags=[], value={}, decision_provenance=None,
+              source_refs=[NS(artifact_type="docx", filename=filename, locator={}, extraction_method="docx")])
+
+
+def test_row_numbers_codes_and_kit_rows_are_no_site_keys():
+    from app.core.site_keys_follow_heads import settle
+
+    row = _site("r", "34: Hubbell HJU6W CAT 6,8 POS,UNIV, White 0 0", ["site:34"])
+    code = _site("k", "DEPT/CLASS: 290-9420 | Description: 10ft Step Ladder", ["site:290_9420"],
+                 art="art_kit", filename="010999 Deal Kit.xlsx")
+    div = _site("d", "27, 28.", ["site:27"])
+    store = _site("s", "Store #34 - Austin", ["site:34_austin"])
+    unkeyed_row = _site("u", "12: Patch cords", [])
+    addr = _site("a", "1200 Harbor Road", ["site:1200"])
+    types = {x.id: ["physical_site", 0.92] for x in (row, code, div, store, unkeyed_row, addr)}
+    c3_type_base.set_deal(None)
+    rec = settle([row, code, div, store, unkeyed_row, addr], types)
+    assert sorted(rec["kept"]) == ["site:1200", "site:34_austin"]
+    assert {d["site"] for d in rec["dropped"]} == {"site:34", "site:290_9420", "site:27"}
+    assert unkeyed_row.entity_keys == [], "a row number is never minted as a site key"
+    c3_type_base._DEAL["site_keys"] = rec  # as the brief stores it
+    sites = c3_type_base.quote_sites([row, code, div, store, unkeyed_row, addr])
+    c3_type_base.set_deal(None)
+    assert sorted(s["site"] for s in sites) == ["site:1200", "site:34_austin"]
+
+
+def test_a_parser_made_line_is_no_statement_for_the_quote(monkeypatch):
+    seen = {}
+    monkeypatch.setenv("SOWSMITH_C3_QUOTE", "on")
+    monkeypatch.setenv("SOWSMITH_C3_URL", "http://c3")
+    monkeypatch.setattr(c3_type_base, "_DEAL", {"reads": {}, "deal": {}, "view": "planning"})
+    monkeypatch.setattr(c3_type_base, "_request", lambda p, b, timeout: seen.update(body=b) or {"lines": []})
+    atoms = [NS(id="gap", atom_type="open_question", review_flags=["declared_scope"], value={}, source_refs=[],
+                raw_text="Customer documents declare 50 locations; 15 identified in the parsed files."),
+             NS(id="w1", atom_type="task", review_flags=[], value={}, source_refs=[],
+                raw_text="Survey the one office and rack the firewall")]
+    c3_type_base.quote(atoms, {"deal": {}, "sections": {"scope_of_work": [{"id": "w1"}, {"id": "gap"}]}})
+    rows = {r["id"]: r for r in seen["body"]["deal"]["atoms"]}
+    assert rows["gap"]["parser_made"] and rows["gap"]["left_out"]
+    assert not rows["w1"].get("left_out")
