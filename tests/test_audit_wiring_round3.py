@@ -153,3 +153,31 @@ def test_a_parser_made_line_is_no_statement_for_the_quote(monkeypatch):
     rows = {r["id"]: r for r in seen["body"]["deal"]["atoms"]}
     assert rows["gap"]["parser_made"] and rows["gap"]["left_out"]
     assert not rows["w1"].get("left_out")
+
+
+# ---- 7. a document the document_job head read below its bar feeds, marked unsure
+
+def test_a_below_bar_document_feeds_and_its_lines_say_so(monkeypatch):
+    monkeypatch.setitem(c3_type_base._DEAL, "types", {})
+    monkeypatch.setitem(c3_type_base._DEAL, "stage_timeline", None)
+    monkeypatch.setitem(c3_type_base._DEAL, "documents", [
+        {"doc_id": "art_call", "filename": "partner-call.json", "kind": "meeting"},
+        {"doc_id": "art_sow", "filename": "job SOW.docx", "kind": "file"}])
+    monkeypatch.setitem(c3_type_base._DEAL, "document_job", [
+        {"filenames": ["partner-call.json"], "verdict": "this_deal", "source": "c3", "c3_verdict": "this_deal",
+         "c3_confidence": 0.946, "c3_bar": 0.98, "c3_docs": {"partner-call.json": ["this_deal", 0.946]}},
+        {"filenames": ["job SOW.docx"], "verdict": "this_deal", "source": "c3", "c3_verdict": "this_deal",
+         "c3_confidence": 0.995, "c3_bar": 0.98, "c3_docs": {"job SOW.docx": ["this_deal", 0.995]}}])
+    atoms = [_line(1, "art_call", "We could do remote hands across the region.", artifact_type="transcript"),
+             _line(2, "art_sow", "Provide one L2 technician per dispatch.", artifact_type="docx")]
+    reads = {a.id: {"col:admission": ["keep", 0.95]} for a in atoms}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    docs = {d["artifact_id"]: d for d in b["documents"]}
+    assert docs["art_call"]["feeds"] is True and docs["art_call"]["unsure"]["p"] == 0.946
+    assert docs["art_call"]["document_job"]["unsure"] is True
+    assert "unsure" not in docs["art_sow"]
+    items = {x["id"]: x for v in b["sections"].values() for x in v}
+    assert items["a1"]["unsure_document"] == 0.946 and "unsure_document" not in items["a2"]
+    ld = b["line_decisions"]
+    rows = {r[0]: dict(zip(ld["cols"], r)) for r in ld["rows"]}
+    assert rows["a1"]["document_job"] == "unsure:0.946" and rows["a2"]["document_job"] is None

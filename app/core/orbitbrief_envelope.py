@@ -1684,6 +1684,8 @@ def build_orbitbrief_envelope(
                 _d["feeds_brief"] = bool(_g.get("feeds"))
                 if _g.get("why_not"):
                     _d["feeds_brief_why_not"] = _g["why_not"]
+                if _g.get("unsure"):
+                    _d["feeds_brief_unsure"] = _g["unsure"]
     except Exception:  # pragma: no cover - never fail the envelope
         pass
     _annotate_quoted_message_scope(envelope, documents, stage_timeline)

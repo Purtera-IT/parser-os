@@ -188,6 +188,13 @@ def document_gate() -> list[dict[str, Any]]:
                    "conversation_head": [v.get("c3_verdict"), v.get("c3_confidence")] if v.get("c3_verdict") else None,
                    "bar": v.get("c3_bar"),
                    "confidence": v.get("confidence"), "kept_by_rule": spared or None, "reason": v.get("reason") or None}
+        if job is not None:
+            hp = (job.get("head") or [None, None])[1]
+            bar = job.get("bar")
+            # The head answered under its bar (this_deal 0.57-0.965 on 010355 / 010382 / 010395 /
+            # 010396): the document still feeds, marked unsure, never silently as sure.
+            if hp is not None and bar is not None and float(hp) < float(bar) and job.get("verdict") != "other_job":
+                job["unsure"] = True
         after = admissibility_gate() and stage.get("admissible_for") == "neither"
         kind = str(d.get("kind") or "")
         workbook = kind in ("deal_kit", "estimating_calc") or "dealkit" in kind.replace("_", "")
@@ -202,7 +209,10 @@ def document_gate() -> list[dict[str, Any]]:
                                 else f"deal_stage: {stage.get('why')}" if after
                                 else f"our pricing workbook: {kind}" + (" (by its content)" if d.get("kind_by") == "content"
                                                                         else "") if workbook else None),
-                    **({"kind": kind, "kind_by": d.get("kind_by") or "name_or_lifecycle"} if workbook else {})})
+                    **({"kind": kind, "kind_by": d.get("kind_by") or "name_or_lifecycle"} if workbook else {}),
+                    **({"unsure": {"p": round(float(job["head"][1]), 3), "bar": job.get("bar"),
+                                   "why": "document_job read this deal below its bar: its lines feed, marked unsure"}}
+                       if job is not None and job.get("unsure") else {})})
     return out
 
 
@@ -499,6 +509,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
     out_of_view = out_of_quoting_view()
     docs = document_gate()
     # A pricing workbook's lines are cut line by line below (_deal_kit), with their own reason.
+    unsure_doc = {d["artifact_id"]: d["unsure"]["p"] for d in docs if d.get("unsure") and d["feeds"]}
     barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]
               and not str(d["why_not"] or "").startswith("our pricing workbook")}
     from app.core.c3_type_base import _doc_id
@@ -707,6 +718,8 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 "type_by": "head" if typed_by_head else "rule"}
         if fill:
             item["section_fill"] = fill
+        if _doc_id(a) in unsure_doc:
+            item["unsure_document"] = unsure_doc[_doc_id(a)]
         if v is not None:
             item["judge"] = {"section": v.section, "owner": v.owner, "p": round(float(v.section_conf), 3)}
         sections[sec].append(item)
@@ -881,7 +894,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # Every line's keep decision, compactly: who decided (a head, a rule, the view, the document
         # gate), at what p, and the keep heads' own readings, so an audit or a PM tool can tell an
         # admission drop from a co_action company drop from a rule (wave 4: only counts were kept).
-        "line_decisions": _line_decisions(kept, maybe, left_out, reads, kept_by_now),
+        "line_decisions": _line_decisions(kept, maybe, left_out, reads, kept_by_now,
+                                          {i: unsure_doc[d] for i, d in ((str(a.id), _doc_id(a)) for a in atoms)
+                                           if d in unsure_doc}),
         # What decided which documents feed the brief and the quote, per document.
         "documents": docs,
         "assemble_ms": round((time.monotonic() - started) * 1000, 1),
@@ -936,7 +951,7 @@ def _customer_furnished(sections: dict[str, list[dict[str, Any]]], by_id: dict[s
 
 
 #: Columns of ``line_decisions.rows``.
-LINE_DECISION_COLS = ("id", "outcome", "by", "p", "col:admission", "read:co_action")
+LINE_DECISION_COLS = ("id", "outcome", "by", "p", "col:admission", "read:co_action", "document_job")
 
 
 def _reading(reads: dict[str, dict[str, list]], aid: str, head: str) -> str | None:
@@ -947,12 +962,19 @@ def _reading(reads: dict[str, dict[str, list]], aid: str, head: str) -> str | No
 
 def _line_decisions(kept: list[tuple[Any, Any, str]], maybe: list[tuple[Any, float]],
                     left_out: list[dict[str, Any]], reads: dict[str, dict[str, list]],
-                    kept_by: dict[str, str] | None = None) -> dict[str, Any]:
+                    kept_by: dict[str, str] | None = None,
+                    unsure_doc: dict[str, float] | None = None) -> dict[str, Any]:
     """``{"cols": LINE_DECISION_COLS, "rows": [...]}``: one row per line the keep loop decided.
-    ``outcome`` is ``kept`` (the body), ``also`` (kept below the body bar) or the left-out reason."""
+    ``outcome`` is ``kept`` (the body), ``also`` (kept below the body bar) or the left-out reason.
+    ``document_job``: ``"unsure:<p>"`` when the line's document feeds on a document_job reading
+    below its bar (``unsure_doc``: atom id -> that p), else None."""
+    unsure_doc = unsure_doc or {}
+
     def row(aid: str, outcome: str, by: str, p: Any) -> list[Any]:
+        u = unsure_doc.get(aid)
         return [aid, outcome, by, None if p is None else round(float(p), 3),
-                _reading(reads, aid, "col:admission"), _reading(reads, aid, "read:co_action")]
+                _reading(reads, aid, "col:admission"), _reading(reads, aid, "read:co_action"),
+                None if u is None else f"unsure:{float(u):.3f}"]
 
     rows = [row(str(a.id), "kept", by, p) for a, p, by in kept]
     rows += [row(str(a.id), "also", (kept_by or {}).get(str(a.id)) or "", p) for a, p in maybe]
