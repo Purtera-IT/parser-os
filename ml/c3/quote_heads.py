@@ -49,20 +49,17 @@ HB=(2,4,6,8,10,12,16,24,32,40,48,64,80,120,200,400,600)
 SKIP_TYPES={'small_talk','stakeholder','deal_metadata'}
 #: A head reading at or above this decides (SOWSMITH_C3_QUOTE_SURE).
 SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SURE','0.8') or 0.8)
-#: Heads that read hours / crew the DOCUMENTS state, in the order they decide. read:co_hours_estimate ("our estimate
-#: where the text states no hours") and read:co_crew_rule ("our crew rule, not the text") are not text readers: used
-#: as line locators with a number off the line they outranked surer reads and fired on 56-98% of lines (run 8).
-HOURS_HEADS=('read:hours_stated','read:labor_hours')
-CREW_HEADS=('read:crew_size',)
+#: Hours heads, in the order they decide: the kit's own hours estimate, then hours the documents state.
+#: HELD (branch claude/serve-quote-numbers-held): SOW-wording number readers and dropping the two "our estimate / our
+#: rule" heads. With the readers the heads' own line choice shows: run O reads "Standard working day is eight (8)
+#: hours" as labor hours at 0.999 (010362, 010231), so they wait for run P's hours / crew labels.
+HOURS_HEADS=('read:co_hours_estimate','read:hours_stated','read:labor_hours')
+CREW_HEADS=('read:crew_size','read:co_crew_rule')
 BILLING_LINE_HEADS=('read:billing_type','jdg:commercial')
 #: Heads that score below live; an answer from one is used but marked (AUDIT_dealkit_heads item 12).
 CAVEATS={'read:labor_hours':'read:labor_hours scores below live (0.03-0.04 held-out): check these hours'}
-#: A number as SOWs write it: "4", "4.5", "four", "four (4)". The written word and its digits both count once.
-_N=r"(\d{1,3}(?:\.\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fourteen|fifteen|sixteen|twenty|thirty|forty)(?:\s*\(\d{1,3}\))?"
-#: "4 hours", "four (4) hours", "12 to 16 labor hours", "12 and 16 hours", "6-8 onsite hours".
-HOURS_ON_LINE=re.compile(r"\b"+_N+r"(?:\s*(?:-|to|and|or)\s*"+_N+r")?\s*(?:(?:labor|labour|man|onsite|on-site|working|billable)\s+)?(?:hours?|hrs?|h)\b",re.I)
-#: "2 techs", "one (1) qualified onsite L2 network technician", "~10 smart hands", "6 - 7 Customer Engineer personnel".
-CREW_ON_LINE=re.compile(r"\b"+_N+r"(?:\s*(?:-|to|or)\s*"+_N+r")?\s+(?:[\w-]+\s+){0,4}?(?:techs?|technicians?|engineers?|installers?|people|personnels?|resources?|guys|smart\s+hands)\b",re.I)
+HOURS_ON_LINE=re.compile(r"(\d{1,3}(?:\.\d)?)(?:\s*(?:-|to)\s*(\d{1,3}(?:\.\d)?))?\s*(?:hours?|hrs?|h)\b",re.I)
+CREW_ON_LINE=re.compile(r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\(\d+\)\s*)?(?:onsite\s+|field\s+|dedicated\s+)?(?:techs?|technicians?|engineers?|installers?|people|resources?|guys)\b",re.I)
 SITES_SAID=re.compile(r"\b(\d{1,4})[ \t]+(?:[\w-]+[ \t]+){0,2}?(?:sites?|locations?|stores?|hotels?|offices?|branches)\b(?![- ]to[- ])",re.I)
 #: "5 tanks per site", "10 Site-to-Site tunnels": a count OF something at each site, not a count of sites.
 PER_UNIT=re.compile(r"\b(?:per|each|every)\b",re.I)

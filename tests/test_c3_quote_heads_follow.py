@@ -34,7 +34,7 @@ def test_sure_heads_decide_hours_crew_level_and_billing(qh):
     atoms = [
         {"id": "a1", "type": "task", "text": "Install cameras across the warehouse"},
         {"id": "a2", "type": "requirement", "text": "Plan on 20 hours each for the team",
-         "reads": {"read:hours_stated": ["true", 0.92]}},
+         "reads": {"read:co_hours_estimate": ["present", 0.92]}},
         {"id": "a3", "type": "requirement", "text": "send three technicians",
          "reads": {"read:crew_size": ["present", 0.9]}},
         {"id": "a4", "type": "requirement", "text": "Needs an L3 engineer for the NVR",
@@ -44,7 +44,7 @@ def test_sure_heads_decide_hours_crew_level_and_billing(qh):
     line = out["lines"][0]
     assert line["techs"] == 3 and line["by"]["techs"] == "heads:read:crew_size"
     # 20 h is past the regex's old 16 h cap; the head's line stands (snapped to the hours grid)
-    assert line["hours_per_tech"] == 24 and line["by"]["hours"] == "heads:read:hours_stated"
+    assert line["hours_per_tech"] == 24 and line["by"]["hours"] == "heads:read:co_hours_estimate"
     assert line["rate_line"] == "L3 Networking" and line["by"]["rate"] == "heads:read:tech_level"
     assert any("check the L3 Networking rate" in c for c in line["caveats"])
     assert out["billing"] == {"answer": "fixed", "p": 0.93, "by": "heads:jdg:billing_type", "atom_ids": []}
@@ -188,21 +188,11 @@ def test_chatter_and_questions_cast_no_billing_vote(qh):
     assert out["billing"]["answer"] == "fixed" and out["billing"]["atom_ids"] == ["a3"]
 
 
-def test_sow_wording_numbers_are_read_off_the_heads_line(qh):
-    atoms = [{"id": "a1", "type": "task", "text": "Billed at a minimum of four (4) hours per dispatch",
-              "reads": {"read:labor_hours": ["present", 0.99]}},
-             {"id": "a2", "type": "task", "text": "Access One engineer will meet one (1) qualified onsite L2 network technician",
+def test_a_company_named_one_is_no_crew(qh):
+    atoms = [{"id": "a1", "type": "task", "text": "Access One engineer will meet our technicians on site",
               "reads": {"read:crew_size": ["present", 0.9]}}]
     line = qh.quote(_deal(atoms, heads={"asked": True}), word=False)["lines"][0]
-    assert line["hours_per_tech"] == 4 and line["by"]["hours"] == "heads:read:labor_hours"
-    assert line["techs"] == 1 and line["by"]["techs"] == "heads:read:crew_size"  # not "Access One"
-
-
-def test_our_estimate_and_crew_rule_heads_are_not_text_readers(qh):
-    atoms = [{"id": "a1", "type": "task", "text": "Install cameras; we did 40 hours with 9 techs last year",
-              "reads": {"read:co_hours_estimate": ["present", 0.99], "read:co_crew_rule": ["present", 0.99]}}]
-    line = qh.quote(_deal(atoms, heads={"asked": True}), word=False)["lines"][0]
-    assert not line["by"]["hours"].startswith("heads:") and not line["by"]["techs"].startswith("heads:")
+    assert not line["by"]["techs"].startswith("heads:")
 
 
 def test_the_work_window_head_decides_the_day_type(qh):
