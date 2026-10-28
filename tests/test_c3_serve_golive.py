@@ -206,6 +206,7 @@ def test_an_oom_frees_memory_and_retries_with_half_windows(serving, monkeypatch)
     assert code == 200
     assert seen == [8192, 4096, 2048] and len(freed) == 2
     assert body["max_atoms"] == 2048 and body["oom_retries"] == 2 and body["types"]
+    assert body["max_atoms_top"] == 8192
 
 
 def test_a_first_try_read_reports_the_full_window(serving):

@@ -22,7 +22,8 @@ It loads the base once, on the GPU when there is one (the live layer's
   budget ran out while it waited, or whose client hung up, is dropped before
   it starts. On CUDA out-of-memory the cache is freed and the deal is read
   again with half-size windows (``C3_SERVE_MAX_ATOMS`` 8192 -> ... ->
-  ``C3_SERVE_MIN_ATOMS`` 2048); the answer says which (``max_atoms``).
+  ``C3_SERVE_MIN_ATOMS`` 2048); the answer says which (``max_atoms``, with
+  ``oom_retries`` and the full-size window ``max_atoms_top``).
 * ``GET /ready``: no auth, no body beyond ``{"ready": bool}``: 200 only when
   the model is loaded and Ollama (``OLLAMA_URL``) answers, else 503. For the
   platform's startup / readiness probes.
@@ -338,7 +339,10 @@ class Base:
                     reads.setdefault(key, {})[head] = [[str(a) for a in r["answers"]],
                                                        {n: round(float(p), 4) for n, p in zip(names, r.get("p") or [])}]
         out: dict[str, Any] = {"types": types, "read_ms": read_ms, "lines": len(deal.atoms),
-                               "max_atoms": tried[-1], "oom_retries": len(tried) - 1, "wait_ms": wait_ms}
+                               "max_atoms": tried[-1], "oom_retries": len(tried) - 1, "wait_ms": wait_ms,
+                               # The window a full-size read uses: a reply under it was read in
+                               # smaller pieces (degraded), which the compile must show.
+                               "max_atoms_top": self.max_atoms}
         if line_heads:
             out["reads"] = reads
         if full:
