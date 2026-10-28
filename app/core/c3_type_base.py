@@ -347,6 +347,11 @@ def _file_kind(atom: Any, artifact_sha256: dict[str, str] | None) -> str:
     ``estimating_calc`` / ``site_list`` by the file's name; else ``file``."""
     from c3_record import file_kind
 
+    # A document deal_documents read as our estimating calc by its own lines
+    # (c3_record.estimating_calc_by_content): every reader of the kind agrees.
+    by_content = (_DEAL.get("content_kinds") or {}).get(_doc_id(atom))
+    if by_content:
+        return by_content
     sha = (artifact_sha256 or {}).get(_doc_id(atom))
     return file_kind(_ref(atom, "filename"), _lifecycle(sha).get("type"))
 
@@ -1062,6 +1067,8 @@ def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, 
     _DEAL.clear()
     _FAILURES.clear()
     _STATUS.pop("rules_yielded", None)
+    _DEAL.update(content_kinds={str(d.get("doc_id")): str(d.get("kind")) for d in documents or []
+                                if isinstance(d, dict) and d.get("kind_by") == "content"})
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
                  reads={}, links=[], deal={}, questions=[], also=[], tables={},
                  stage_timeline=stage_timeline if isinstance(stage_timeline, dict) else None)
@@ -1152,6 +1159,11 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             # arrived with the note at 23:32:57.777, as the page had it).
             sent = _delivered_at(sha[d])
         kind = event.get(d) or (_file_kind(first[d], sha) if d in first else "file")
+        kind_by = None
+        if kind == "file" and own.get(d) and _our_calc_by_content(own[d], name):
+            # Our estimating calc named neither "Deal Kit" nor "estimating calc"
+            # (010245's "Pricing Sheet ADJ" workbooks): cut like one, visibly.
+            kind, kind_by = "estimating_calc", "content"
         # The lifecycle's role sentence, the page's docRole: whose paper it is
         # (c3_record.sender.is_ours reads it for the stage).
         role = str(_lifecycle(sha.get(d)).get("role") or "")
@@ -1162,8 +1174,12 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
         # arrival of the document before it (c3_record.document_times), as in training -- not the
         # lifecycle's own delivered_at guess (010050's 2022 predictive survey, 207 lines a day apart).
         sent = origin.get("sent_at") if origin else sent
+        if kind_by and str((origin or {}).get("direction") or "").lower() in _INBOUND_DIRECTIONS:
+            # A workbook the customer or a partner sent us is their paper, whatever it computes.
+            kind, kind_by = "file", None
         docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
-                     "filename": name, "pos": pos, "role": role, "origin": origin})
+                     "filename": name, "pos": pos, "role": role, "origin": origin,
+                     **({"kind_by": kind_by} if kind_by else {})})
     from c3_record import EVENT_KINDS
 
     def arrival(doc):
@@ -1179,6 +1195,16 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
         keyed.append(((prev if prev is not None else float("-inf")), doc["pos"], doc))
     keyed.sort(key=lambda x: (x[0], x[1]))
     return [doc for _, _, doc in keyed]
+
+
+_INBOUND_DIRECTIONS = frozenset({"inbound", "customer_inbound", "partner_inbound", "vendor_inbound"})
+
+
+def _our_calc_by_content(own: list[Any], filename: str) -> bool:
+    from c3_record import estimating_calc_by_content
+
+    sheet = any(_locator(a).get("sheet") for a in own[:50]) or None
+    return estimating_calc_by_content((getattr(a, "raw_text", "") for a in own), filename, spreadsheet=sheet)
 
 
 def _as_envelope_documents(prov: dict[str, dict[str, Any]], own: dict[str, list[Any]],

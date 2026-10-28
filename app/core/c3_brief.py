@@ -189,15 +189,20 @@ def document_gate() -> list[dict[str, Any]]:
                    "bar": v.get("c3_bar"),
                    "confidence": v.get("confidence"), "kept_by_rule": spared or None, "reason": v.get("reason") or None}
         after = admissibility_gate() and stage.get("admissible_for") == "neither"
+        kind = str(d.get("kind") or "")
+        workbook = kind in ("deal_kit", "estimating_calc") or "dealkit" in kind.replace("_", "")
         # The deal record's documents (c3_type_base.deal_documents) carry their artifact id as ``doc_id``;
         # read as "artifact_id" alone every row had "" and ``build`` barred nothing (wave 4: 010222's
         # 11 after-decision documents and 000083's 3 still fed the brief and the quote).
         out.append({"artifact_id": str(d.get("artifact_id") or d.get("doc_id") or ""), "filename": fn, "document_job": job,
                     "deal_stage": {"stage_at_arrival": stage.get("stage_at_arrival"),
                                    "admissible_for": stage.get("admissible_for"), "why": stage.get("why")} if stage else None,
-                    "feeds": not ((job or {}).get("verdict") == "other_job" or after),
+                    "feeds": not ((job or {}).get("verdict") == "other_job" or after or workbook),
                     "why_not": ("document_job other_job" if (job or {}).get("verdict") == "other_job"
-                                else f"deal_stage: {stage.get('why')}" if after else None)})
+                                else f"deal_stage: {stage.get('why')}" if after
+                                else f"our pricing workbook: {kind}" + (" (by its content)" if d.get("kind_by") == "content"
+                                                                        else "") if workbook else None),
+                    **({"kind": kind, "kind_by": d.get("kind_by") or "name_or_lifecycle"} if workbook else {})})
     return out
 
 
@@ -269,6 +274,25 @@ def _deal_kit(atom: Any) -> bool:
         return skipped(atom, _DEAL.get("sha"))
     except Exception:
         return False
+
+
+def _kit_reason(atom: Any) -> str:
+    """Why a pricing-workbook line is out: ``old_manual_deal_kit`` for a Deal
+    Kit, else ``our_estimating_calc`` (by name or lifecycle) or
+    ``our_estimating_calc_by_content`` (c3_record.estimating_calc_by_content)."""
+    try:
+        from c3_record import is_deal_kit
+
+        from app.core.c3_type_base import _DEAL, _doc_id, doc_kind
+
+        kind = doc_kind(atom, _DEAL.get("sha"))
+        if is_deal_kit(kind):
+            return "old_manual_deal_kit"
+        if (_DEAL.get("content_kinds") or {}).get(_doc_id(atom)):
+            return "our_estimating_calc_by_content"
+        return "our_estimating_calc"
+    except Exception:
+        return "old_manual_deal_kit"
 
 
 def _base_type(atom_id: str) -> tuple[str, float]:
@@ -474,7 +498,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
 
     out_of_view = out_of_quoting_view()
     docs = document_gate()
-    barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]}
+    # A pricing workbook's lines are cut line by line below (_deal_kit), with their own reason.
+    barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]
+              and not str(d["why_not"] or "").startswith("our pricing workbook")}
     from app.core.c3_type_base import _doc_id
 
     for a in atoms:
@@ -493,8 +519,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             # The base is never shown a Deal Kit or estimating sheet (it is
             # what the kit model is trained to produce), so its reading of one
             # means nothing: 45 of 135 false keeps on 010043 were kit lines.
-            left_out.append({"id": aid, "reason": "old_manual_deal_kit", "by": "rule:document"})
-            why["rule:deal_kit"] += 1
+            kind_reason = _kit_reason(a)
+            left_out.append({"id": aid, "reason": kind_reason, "by": "rule:document"})
+            why["rule:deal_kit" if kind_reason == "old_manual_deal_kit" else "rule:" + kind_reason] += 1
             continue
         if aid in out_of_view:
             # A line the quoting read leaves out (our own paper, after the cut, a pricing workbook ...):

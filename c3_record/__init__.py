@@ -60,7 +60,7 @@ import re
 from typing import Any, Iterable
 
 from .reading import (TRAINED_KINDS, document_arrivals, document_kind, document_rank,  # noqa: F401
-                      event_kind, file_kind, is_email_file, page_group, page_position, reading_order)
+                      estimating_calc_by_content, event_kind, file_kind, is_email_file, page_group, page_position, reading_order)
 from .sender import (SENDER_INPUTS, annotate, crm_marks, crm_stage_at, doc_direction, is_ours,  # noqa: F401
                      milestones, sender, stage_at)
 
