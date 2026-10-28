@@ -185,6 +185,16 @@ def charge(kind: str, seconds: float, n: int = 1) -> None:
         row[f"{kind}_s"] = round(row[f"{kind}_s"] + seconds, 2)
 
 
+def note_call(kind: str, seconds: float, outcome: str) -> None:
+    """One ``kind`` call ("vision" | "ocr") into this compile's trace: ``{kind}_calls``,
+    ``{kind}_s`` and a count per outcome (``{kind}_ok`` / ``_empty`` / ``_error``)."""
+    with _CALLS_LOCK:
+        row = CALLS_BY_STAGE.setdefault(CURRENT_STAGE, {"llm_calls": 0, "llm_s": 0.0, "embed_calls": 0, "embed_s": 0.0})
+        row[f"{kind}_calls"] = row.get(f"{kind}_calls", 0) + 1
+        row[f"{kind}_s"] = round(row.get(f"{kind}_s", 0.0) + seconds, 2)
+        row[f"{kind}_{outcome}"] = row.get(f"{kind}_{outcome}", 0) + 1
+
+
 class CompileTelemetry:
     def __init__(
         self,

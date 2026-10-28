@@ -94,7 +94,7 @@ for _section, _types in {
 #: Types that never belong in a brief whatever a head says.
 NEVER = frozenset({"small_talk", "raw_utterance", "raw_table_row", "dropped_sheet", "entity",
                    "schematic_detection_target_set", "schematic_symbol_detection", "schematic_line_run"})
-_PLACEHOLDER = re.compile(r"\s*\[(image|figure|table) awaiting", re.I)
+_PLACEHOLDER = re.compile(r"\s*\[(image|figure|table|chart|drawing|embedded object) (awaiting|read:|skipped:)", re.I)
 QUESTION_WANTS = ("chase-artifact", "chase-conversation", "confirm-with-customer", "decide-internally")
 
 

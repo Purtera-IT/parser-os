@@ -533,7 +533,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
             if isinstance(v, dict) and str(v.get("kind") or "").endswith("_marker"):
                 return True
             t = str(getattr(a, "raw_text", "") or "").lstrip()
-            return t.startswith("[") and "awaiting OCR" in t
+            return t.startswith("[") and ("awaiting OCR" in t or t.startswith(("[Image read:", "[Image skipped:")))
 
         def _is_bare_identity(a: Any) -> bool:
             # A line that is ONLY a person's name, an email, a phone, or a
