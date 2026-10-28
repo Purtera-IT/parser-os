@@ -113,3 +113,30 @@ def test_provenance_join_skips_conversations():
     assert n == 1
     assert _site_keys(hdr) == [] and _site_keys(note_line) == []
     assert _site_keys(sow_row) == ["site:springfield_ms"], "a per-site document still speaks for its rows"
+
+
+def test_a_signature_address_the_heads_read_as_a_person_is_no_site():
+    sig = _atom("s", "3800 Pecan Trail, Austin, TX 78700", "physical_site", ["site:3800_pecan_trail"],
+                artifact_type="email", filename="deal-hs-email-9.eml")
+    job = _atom("j", "Install at 12 Dock Street, Springfield, IL 62701", "physical_site", ["site:12_dock_street"])
+    rec = settle([sig, job], {"s": ["stakeholder", 0.99], "j": ["physical_site", 0.97]})
+    assert _site_keys(sig) == [] and _site_keys(job) == ["site:12_dock_street"]
+    assert [d["site"] for d in rec["dropped"]] == ["site:3800_pecan_trail"]
+
+
+def test_an_unbacked_site_line_makes_no_roster_row_and_no_quote_site():
+    from app.core.c3_type_base import quote_sites
+    from app.core.orbitbrief_core import build_site_readiness
+
+    sig = _atom("s", "3800 Pecan Trail, Austin, TX 78700", "physical_site", ["site:3800_pecan_trail"],
+                value={"id": "SHI-HQ", "site_id": "SHI-HQ", "name": "Reseller HQ"})
+    job = _atom("j", "Install at 12 Dock Street, Springfield, IL 62701", "physical_site", ["site:12_dock_street"],
+                value={"id": "dock-st", "site_id": "dock-st", "name": "12 Dock Street"})
+    for a in (sig, job):
+        a.project_id, a.review_status, a.confidence = "p", "auto_accepted", 0.9
+    settle([sig, job], {"s": ["stakeholder", 0.99], "j": ["physical_site", 0.97]})
+    rows = build_site_readiness(atoms=[sig, job], edges=[])
+    keys = {r.get("site") or r.get("site_key") for r in rows.get("sites") or []}
+    assert not any("pecan" in str(k) or "shi_hq" in str(k) for k in keys), keys
+    assert any("dock" in str(k) for k in keys), keys
+    assert [q["site"] for q in quote_sites([sig, job])] == ["site:12_dock_street"]

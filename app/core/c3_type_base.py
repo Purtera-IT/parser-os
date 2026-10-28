@@ -1537,7 +1537,7 @@ def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
     roster: dict[str, dict[str, Any]] = {}
     for a in atoms:
         aid, text, kind = _text_type(a)
-        if kind != "physical_site" or _deal_kit(a):
+        if kind != "physical_site" or _deal_kit(a) or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             continue
         role = line_reading(aid, "jdg:site_role")
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:

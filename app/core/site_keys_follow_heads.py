@@ -37,6 +37,8 @@ import re
 from typing import Any
 
 _PREFIX = "site:"
+#: Review flag on a site line whose keys no site line backs: no roster row, no quote site.
+NOT_BACKED = "site_not_backed_by_heads"
 
 #: Flags/values that mark a site line the parser inferred rather than read.
 _INFERRED_FLAGS = frozenset({
@@ -261,9 +263,11 @@ def _backed(atoms: list[Any], types: dict[str, Any], floor: float) -> set[str]:
         head_site = bool(h and h[0] == "physical_site" and h[1] >= floor)
         if head_site or _roster_row(a):
             out.update(own)
-        elif _type_of(a) == "physical_site" and not _inferred(a):
-            # Read off a document as a site and not re-typed by the heads: the roster's own filter
-            # (site_identity.filter_roster) judges it with the heads' reading.
+        elif _type_of(a) == "physical_site" and not _inferred(a) and not (
+                h and h[0] not in ("physical_site", "_keep") and h[1] >= floor):
+            # Read off a document as a site and not re-typed by the heads ("_keep": the parser's
+            # type stands). A line the heads read as something else (a signature's address read
+            # stakeholder 0.99: the reseller's HQ was 010307's only roster site) backs nothing.
             out.update(own)
     return out
 
@@ -289,6 +293,11 @@ def settle(atoms: list[Any], types: dict[str, Any] | None) -> dict[str, Any]:
         for k in bad:
             dropped[k] = dropped.get(k, 0) + 1
         a.entity_keys = [k for k in keys if k not in bad]
+        if _type_of(a) == "physical_site" and not _site_keys(a):
+            # The roster and the quote's site list must not rebuild it from the line's own id.
+            flags = list(getattr(a, "review_flags", None) or [])
+            if NOT_BACKED not in flags:
+                a.review_flags = flags + [NOT_BACKED]
         prov = getattr(a, "decision_provenance", None)
         if isinstance(prov, dict) and prov.get("source") == "document_scope" and prov.get("site_key") in bad:
             try:
@@ -304,4 +313,4 @@ def settle(atoms: list[Any], types: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-__all__ = ["settle", "slug_of_line"]
+__all__ = ["NOT_BACKED", "settle", "slug_of_line"]
