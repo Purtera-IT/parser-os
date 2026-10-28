@@ -102,7 +102,8 @@ def brief_parts(brief: dict[str, Any]) -> Counter:
 def keeps(brief: dict[str, Any]) -> Counter:
     c: Counter = Counter()
     for k, n in (((brief or {}).get("decided_by") or {}).get("keep") or {}).items():
-        c["head" if str(k).startswith(("head:", "base:")) else "rule"] += int(n or 0)
+        # admission:* (col:admission) and type_head:* (the type head's small_talk) are head decisions too.
+        c["head" if str(k).startswith(("head:", "base:", "admission:", "type_head:")) else "rule"] += int(n or 0)
     return c
 
 
