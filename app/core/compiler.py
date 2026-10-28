@@ -2184,6 +2184,18 @@ def compile_project(
                 # so a brief built from the wrong job can be read back to the
                 # judgement that let it in.
                 _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
+                # And to the brief (c3_brief.document_gate), so the envelope shows what decided
+                # which documents feed it.
+                try:
+                    from app.core import c3_type_base as _c3_djs
+
+                    _c3_djs._DEAL["document_job"] = [
+                        {k: _v.get(k) for k in ("filenames", "verdict", "model_verdict", "confidence", "source",
+                                                 "c3_verdict", "c3_confidence", "drawing_spared", "content_spared",
+                                                 "share_rule_spared", "reason", "atoms")}
+                        for _v in _djs_verdicts]
+                except Exception:
+                    pass
                 if _dropped_djs:
                     # Each set-aside conversation carries ITS reason (who said
                     # other_job, how sure, about which title) onto every atom it

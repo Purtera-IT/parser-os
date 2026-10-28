@@ -132,6 +132,54 @@ def _vision(atom: Any) -> bool:
     return False
 
 
+#: SOWSMITH_C3_ADMISSIBILITY_GATE (default on): lines from a document that arrived after the deal was
+#: decided lost / archived (deal_stage admissible_for "neither") are left out of the brief, visibly.
+def admissibility_gate() -> bool:
+    return os.environ.get("SOWSMITH_C3_ADMISSIBILITY_GATE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def document_gate() -> list[dict[str, Any]]:
+    """Every document of the deal with what decides whether it feeds the brief and the quote: the
+    document-job verdict (and who made it: a PM's lesson, the C3 head, the model judge, or nothing),
+    any rule that kept a document the head called another job, and its admissibility at the deal's
+    stage when it arrived (``deal_stage``, the CRM stage timeline). ``feeds`` is the outcome."""
+    try:
+        from app.core.c3_type_base import _DEAL
+        from app.core.document_lifecycle import deal_stage as _ds
+    except Exception:  # pragma: no cover
+        return []
+    verdict_of: dict[str, dict[str, Any]] = {}
+    for v in _DEAL.get("document_job") or []:
+        for fn in v.get("filenames") or []:
+            verdict_of[str(fn)] = v
+    timeline = _DEAL.get("stage_timeline")
+    out = []
+    for d in _DEAL.get("documents") or []:
+        if not isinstance(d, dict):
+            continue
+        fn = str(d.get("filename") or "")
+        v = verdict_of.get(fn) or {}
+        stage = _ds.annotate(d.get("lifecycle"), authored_at=d.get("authored_at"), direction=d.get("direction"),
+                             timeline=timeline) if timeline else {}
+        spared = [k for k in ("drawing_spared", "content_spared", "share_rule_spared") if v.get(k)]
+        job = None
+        if v:
+            src = str(v.get("source") or "")
+            job = {"verdict": v.get("verdict"),
+                   "by": ("pm_lesson" if src == "store" else "head:jdg:document_job" if src == "c3"
+                          else "model_judge" if v.get("model_verdict") and src not in ("fallback", "") else "none"),
+                   "head": [v.get("c3_verdict"), v.get("c3_confidence")] if v.get("c3_verdict") else None,
+                   "confidence": v.get("confidence"), "kept_by_rule": spared or None, "reason": v.get("reason") or None}
+        after = admissibility_gate() and stage.get("admissible_for") == "neither"
+        out.append({"artifact_id": str(d.get("artifact_id") or ""), "filename": fn, "document_job": job,
+                    "deal_stage": {"stage_at_arrival": stage.get("stage_at_arrival"),
+                                   "admissible_for": stage.get("admissible_for"), "why": stage.get("why")} if stage else None,
+                    "feeds": not ((job or {}).get("verdict") == "other_job" or after),
+                    "why_not": ("document_job other_job" if (job or {}).get("verdict") == "other_job"
+                                else f"deal_stage: {stage.get('why')}" if after else None)})
+    return out
+
+
 def _derived(atom: Any) -> bool:
     """A line the parser made up from other lines (or read off a picture), not one a document has.
     Picture readings go through this guard like every other parser-made line (010309: 24 readings of a
@@ -385,8 +433,19 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         return fallback, "rule"
 
     kept_unsure: list[dict[str, Any]] = []
+    docs = document_gate()
+    barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]}
     for a in atoms:
         aid, t = str(a.id), _type(a)
+        art = str(getattr(a, "artifact_id", "") or "")
+        if art in barred:
+            # The document does not feed this deal's brief or quote (another job, or arrived after the
+            # deal was decided); its lines stay in the compile for the heads and are listed here.
+            left_out.append({"id": aid, "reason": "after_decision" if barred[art].startswith("deal_stage")
+                             else "other_job", "by": "rule:deal_stage" if barred[art].startswith("deal_stage")
+                             else "document_job"})
+            why["document:" + ("after_decision" if barred[art].startswith("deal_stage") else "other_job")] += 1
+            continue
         status = str(getattr(getattr(a, "review_status", ""), "value", getattr(a, "review_status", "")))
         if _deal_kit(a):
             # The base is never shown a Deal Kit or estimating sheet (it is
@@ -709,6 +768,8 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                           "read:co_action" if use["read:co_action"] else "rule:type"),
         },
         "label_next": label_tasks[:MAX_LABEL_TASKS],
+        # What decided which documents feed the brief and the quote, per document.
+        "documents": docs,
         "assemble_ms": round((time.monotonic() - started) * 1000, 1),
         "evidence_ms": evidence_ms,
     }
