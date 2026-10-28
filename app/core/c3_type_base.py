@@ -40,7 +40,7 @@ default.
                              call (type read, document read, re-read, quote)
                              waits for the service -- retrying with backoff
                              (SOWSMITH_C3_RETRY_S 5 doubling to
-                             SOWSMITH_C3_RETRY_MAX_S 60) and reading with a
+                             SOWSMITH_C3_RETRY_MAX_S 10) and reading with a
                              generous timeout (SOWSMITH_C3_NEVER_READ_S,
                              at least 600 and the budget) -- and past
                              SOWSMITH_C3_WAIT_MAX_S (1800) or on a request the
@@ -1400,7 +1400,11 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
     returns an empty answer for service trouble."""
     ceiling = _env_float("SOWSMITH_C3_WAIT_MAX_S", 1800.0)
     delay = max(0.0, _env_float("SOWSMITH_C3_RETRY_S", 5.0))
-    delay_max = max(delay, _env_float("SOWSMITH_C3_RETRY_MAX_S", 60.0))
+    # The cap is how late a compile notices the heads came up: each attempt is a
+    # 5 s /health, so a short cap costs a few cheap probes. At 60 s, the 2026-10-28
+    # dev cold start had heads ready at 04:21:47 and both waiting compiles read at
+    # 04:23:02-06 -- 75 s spent asleep.
+    delay_max = max(delay, _env_float("SOWSMITH_C3_RETRY_MAX_S", 10.0))
     connect = _env_float("SOWSMITH_C3_CONNECT_S", 5.0)
     read_s = max(_env_float("SOWSMITH_C3_BUDGET_S", 90.0) + 10.0,
                  _env_float("SOWSMITH_C3_NEVER_READ_S", 600.0))

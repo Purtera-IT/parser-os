@@ -170,34 +170,75 @@ def _save_seen() -> None:
         pass
 
 
-def _iter_batches(cc, kind: str):
+#: Batches downloaded at once while merging. The merge applies them in listing
+#: order regardless (a later row for a key wins, exactly as one after another);
+#: only the network round trips overlap. 1,170 OCR batches one at a time were
+#: most of a cold container's ~3 minute merge (dev, 2026-10-28).
+_FETCH_AHEAD = max(1, int(os.environ.get("SOWSMITH_CACHE_SYNC_FETCH", "16") or 16))
+
+
+def _iter_batches(cc, kind: str, raw: bool = False):
+    """Each mirrored batch not merged yet, in listing order: its rows (or, with
+    ``raw``, its JSONL text). Downloads run up to ``_FETCH_AHEAD`` ahead."""
+    import collections
+    import concurrent.futures
+
     seen = _load_seen()
     merged_any = False
+    todo: list[tuple[str, str]] = []
     for b in cc.list_blobs(name_starts_with=f"{_PREFIX}{kind}/"):
         if not b.name.endswith(".jsonl"):
             continue
         tag = str(getattr(b, "etag", "") or getattr(b, "last_modified", "") or "")
         if tag and seen.get(b.name) == tag:
             continue
+        todo.append((b.name, tag))
+
+    def _fetch(name: str):
         try:
-            rows = jsonl_to_rows(cc.download_blob(b.name).readall().decode("utf-8", "replace"))
+            return cc.download_blob(name).readall().decode("utf-8", "replace")
         except Exception:
-            continue
-        yield rows
-        # Marked only after the caller merged the rows (the generator resumes
-        # here), so a batch that failed part way is fetched again next time.
-        if tag:
-            seen[b.name] = tag
-            merged_any = True
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_FETCH_AHEAD,
+                                               thread_name_prefix=f"cache-{kind}") as pool:
+        window: collections.deque = collections.deque()
+        it = iter(todo)
+        for item in it:
+            window.append((item, pool.submit(_fetch, item[0])))
+            if len(window) >= _FETCH_AHEAD:
+                break
+        while window:
+            (name, tag), fut = window.popleft()
+            nxt = next(it, None)
+            if nxt is not None:
+                window.append((nxt, pool.submit(_fetch, nxt[0])))
+            text = fut.result()
+            if text is None:
+                continue
+            yield text if raw else jsonl_to_rows(text)
+            # Marked only after the caller merged the rows (the generator resumes
+            # here), so a batch that failed part way is fetched again next time.
+            if tag:
+                seen[name] = tag
+                merged_any = True
     if merged_any:
         _save_seen()
 
 
+#: A mirrored row's key, read without parsing the row (rows_to_jsonl writes it first).
+_KEY_AT_START = __import__("re").compile(r'^\{"key": "([^"\\]+)"')
+
+
 def sync_ocr_into_cache() -> int:
-    """Merge every mirrored OCR batch into the local cache. Returns rows imported.
+    """Merge every mirrored OCR batch into the local cache. Returns rows written.
 
     Safe to run repeatedly: the key is ``sha256(version || image bytes)``, so a
-    re-import writes the same text for the same picture.
+    re-import writes the same text for the same picture. Each batch is written
+    in one transaction, in order, and a row identical to the one this merge
+    last wrote for its key is skipped: writing it again changes nothing. The
+    mirror held each picture's row ~1,000 times over (whole-cache re-exports),
+    and writing every copy with its own commit was most of the merge.
     """
     cc = _container_client()
     if cc is None:
@@ -210,29 +251,36 @@ def sync_ocr_into_cache() -> int:
     if cache is None:
         return 0
     n = 0
-    for rows in _iter_batches(cc, OCR):
-        for row in rows:
-            text = str(row.get("text") or "")
-            if not text.strip():
-                # A miss is a statement about the day, not the picture, and it
-                # is never stored -- so it is never restored either.
+    last: dict[str, str] = {}   # key -> the exact line this merge last wrote for it
+    for text in _iter_batches(cc, OCR, raw=True):
+        rows: list[dict] = []
+        wrote: dict[str, str] = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
                 continue
-            try:
-                cache.put_raw(
-                    key=str(row["key"]),
-                    text=text,
-                    backend=str(row.get("backend") or ""),
-                    confidence=float(row.get("confidence") or 0.0),
-                    extra=row.get("extra"),
-                )
-                n += 1
-            except Exception:
+            m = _KEY_AT_START.match(line)
+            if m and m.group(1) not in wrote and last.get(m.group(1)) == line:
                 continue
+            for row in jsonl_to_rows(line):
+                if not str(row.get("text") or "").strip():
+                    # A miss is a statement about the day, not the picture, and it
+                    # is never stored -- so it is never restored either.
+                    continue
+                wrote[str(row["key"])] = line
+                rows.append(row)
+        try:
+            n += cache.put_raw_many(rows)
+        except Exception:
+            continue
+        # Only what reached the cache can be skipped later.
+        last.update(wrote)
     return n
 
 
 def export_ocr_rows(limit: int = 5000) -> list[dict]:
-    """The local OCR cache as mirrorable rows."""
+    """The reads this process paid for, as mirrorable rows (never the restored
+    ones: re-uploading the whole cache every compile is what grew the mirror)."""
     try:
         from app.core.ocr_cache import get_cache
     except Exception:
@@ -241,15 +289,31 @@ def export_ocr_rows(limit: int = 5000) -> list[dict]:
     if cache is None:
         return []
     try:
-        return cache.export_rows(limit=limit)
+        return cache.export_fresh_rows(limit=limit)
     except Exception:
         return []
 
 
 def mirror_ocr(limit: int = 5000) -> bool:
-    """Upload what this container has read. Called at the end of a compile."""
+    """Upload what this container has read since its last upload. Called at the end of a compile."""
     rows = export_ocr_rows(limit=limit)
-    return upload_rows(OCR, rows) if rows else False
+    ok = upload_rows(OCR, rows) if rows else False
+    if ok:
+        _mark_mirrored("ocr_cache", rows)
+    return ok
+
+
+def _mark_mirrored(module: str, rows: list[dict]) -> None:
+    """Uploaded rows stop being fresh, so the next compile on this container
+    sends only what it adds (a warm worker re-sent every earlier compile's rows)."""
+    try:
+        import importlib
+
+        cache = importlib.import_module(f"app.core.{module}").get_cache()
+        if cache is not None:
+            cache.mark_mirrored([str(r.get("key")) for r in rows if r.get("key")])
+    except Exception:
+        pass
 
 
 # ---- embeddings -------------------------------------------------------------
@@ -369,7 +433,10 @@ def export_embed_rows(limit: int = 4000) -> list[dict]:
 def mirror_embed(limit: int = 4000) -> bool:
     """Upload what this compile embedded. Called at the end of a compile."""
     rows = export_embed_rows(limit=limit)
-    return upload_rows(EMBED, rows) if rows else False
+    ok = upload_rows(EMBED, rows) if rows else False
+    if ok:
+        _mark_mirrored("embedding_cache", rows)
+    return ok
 
 
 # ---- vision replies ----------------------------------------------------------

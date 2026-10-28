@@ -141,6 +141,11 @@ class EmbeddingCache:
                     out.append({"key": k, "dim": int(dim), "vec": bytes(blob)})
             return out
 
+    def mark_mirrored(self, keys: list[str]) -> None:
+        """These fresh vectors reached the mirror: the next compile does not send them again."""
+        with self._lock:
+            self._fresh.difference_update(keys)
+
     def put_raw_rows(self, rows: list[dict]) -> int:
         """Restore mirrored vectors by KEY. Returns how many landed.
 
