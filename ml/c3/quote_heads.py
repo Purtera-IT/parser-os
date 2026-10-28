@@ -76,6 +76,10 @@ SERVICE_FAMILY={'audio_visual':'av','paging_mass_notification':'av','low_voltage
 #: Lines that state no term of the deal: never a billing vote (000118: two small_talk and two open_question lines
 #: among the eight t_and_m votes).
 NO_BILLING_TYPES=SKIP_TYPES|{'open_question','answered_question','question'}
+#: The service head picks the family at or above this (SOWSMITH_C3_QUOTE_SERVICE_SURE; the brief's SERVICE_BAR).
+#: Run O's service head is unsure everywhere (0.15-0.58) and right on 6 of 16 run 8 deals against the embedding's
+#: 8, so below the bar its answer is recorded, not used; once a retrain makes it sure it decides.
+SERVICE_SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SERVICE_SURE','0.6') or 0.6)
 
 def _snap(h): return min(HB,key=lambda x:abs(math.log(x)-math.log(max(h,1))))
 
@@ -251,10 +255,11 @@ class QuoteHeads:
         ej,en=self._embed([scope,name or scope])
         sims=[0.7*sum(x*y for x,y in zip(ej,d))+0.3*sum(x*y for x,y in zip(en,d)) for d in self.D]
         fam=self.fams[max(range(len(sims)),key=lambda i:sims[i])]; fam_p=max(sims); fam_by='fallback:embedding_family'
-        # The job is what the super heads say it is: the service head's answer picks the family when it has one
-        # here (000118: service imac, the embedding said cabling). The embedding is only the recorded fallback.
+        # The job is what the super heads say it is: the service head's answer, when sure, picks the family
+        # (000118: service imac, the embedding said cabling). The embedding is the recorded fallback.
         sv=((p.get('heads') or {}).get('deal') or {}).get('deal:primary_service')
-        if sv and sv[0] not in (None,'_absent') and SERVICE_FAMILY.get(str(sv[0])) in self.b['families']:
+        if sv and sv[0] not in (None,'_absent') and SERVICE_FAMILY.get(str(sv[0])) in self.b['families'] \
+                and float(sv[1] or 0)>=SERVICE_SURE:
             fam=SERVICE_FAMILY[str(sv[0])]; fam_p=float(sv[1] or 0); fam_by='heads:deal:primary_service'
         F=self.b['families'][fam]
         seller,account=self._profile(p); prof=seller or (account if account and account['kits']>=2 else None)

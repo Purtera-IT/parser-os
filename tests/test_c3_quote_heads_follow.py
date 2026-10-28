@@ -164,8 +164,12 @@ def test_output_shape_matches_the_platform_contract(qh):
 
 def test_the_service_head_picks_the_job_family(qh):
     atoms = [{"id": "a1", "type": "task", "text": "Install cameras across the warehouse"}]
+    out = qh.quote(_deal(atoms, heads={"asked": True, "deal": {"deal:primary_service": ["audio_visual", 0.81]}}), word=False)
+    assert out["job_type"] == "av" and out["job_type_by"] == "heads:deal:primary_service" and out["job_type_p"] == 0.81
+    # unsure (run O: 0.15-0.58 everywhere): recorded, not used
     out = qh.quote(_deal(atoms, heads={"asked": True, "deal": {"deal:primary_service": ["audio_visual", 0.31]}}), word=False)
-    assert out["job_type"] == "av" and out["job_type_by"] == "heads:deal:primary_service" and out["job_type_p"] == 0.31
+    assert out["job_type"] == "camera" and out["job_type_by"] == "fallback:embedding_family"
+    assert out["service"] == {"answer": "audio_visual", "p": 0.31}
     out = qh.quote(_deal(atoms, heads={"asked": True, "deal": {"deal:primary_service": ["_absent", 0.9]}}), word=False)
     assert out["job_type"] == "camera" and out["job_type_by"] == "fallback:embedding_family"
     # a service with no family in this bundle (wireless -> ap is not in the test bundle) stays the embedding's
