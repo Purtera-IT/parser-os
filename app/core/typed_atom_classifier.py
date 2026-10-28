@@ -817,8 +817,17 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     head_deflected += filled
                     _dfl["c3_fill"] += filled
                     _why["filled"] = filled
-                    _why["fill_back_to_llm"] = len(back)
-                    survivors.extend(back)
+                    # A failed fill batch keeps the base's type with no values: the
+                    # base decided WHAT the line is, and a dead fill endpoint must
+                    # not hand that decision back to the typing LLM.
+                    _why["fill_failed_kept_type"] = len(back)
+                    _fill_type = {id(a): t for a, t in fills}
+                    for a in back:
+                        _ftype, _name = _fill_type[id(a)]
+                        a.atom_type = _ftype
+                        _ans = _c3_answer.get(id(a))
+                        _mark_c3(a, _name, _ans[1] if _ans else None, "assign")
+                        head_deflected += 1
                 promotable = survivors
                 try:
                     _c3.note_typing(_why)
@@ -828,6 +837,15 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
             # SOWSMITH_C3_FALLBACK=never: the heads could not answer, and the
             # lines must not go to the LLM in their place -- fail the compile.
             if type(exc).__name__ == "C3HeadsUnavailable":
+                raise
+            # Under never, no error in the layer may hand its lines to the LLM.
+            try:
+                from app.core import c3_type_base as _c3n
+
+                _never_mode = _c3n._never()
+            except Exception:
+                _never_mode = False
+            if _never_mode:
                 raise
             # The layer abstains (every atom goes on to the LLM as before),
             # but never silently: the compile result says why.

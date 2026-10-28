@@ -550,7 +550,13 @@ def _rows(atoms: list[Any], artifact_sha256: dict[str, str] | None = None,
         deal_id0 = next((str(getattr(a, "project_id", "") or "") for a in atoms if getattr(a, "project_id", None)),
                         "") or "live"
         kinds = doc_kind_reads(deal_id0, rows)
+        before_cut = [r["key"] for r in rows]
         rows = _view_rows(rows, docs + list(extra.values()), messages, said_to, kinds)
+        # The lines this view leaves out have no reading by design: the type stage's shared check and
+        # reread_if_new must not take them for lines the read missed (each miss was a full re-read).
+        _DEAL["view_out"] = set(before_cut) - {r["key"] for r in rows}
+    else:
+        _DEAL.pop("view_out", None)
     # Table headers over the read's own rows, as the training build stamps them after its view cut
     # (c3_record.context: the hdr:/sheet:/sec: inputs of a base trained with C3_CONTEXT_TAGS).
     from c3_record.context import table_headers
@@ -659,12 +665,16 @@ def doc_kind_reads(deal_id: str, rows: list[dict[str, Any]]) -> dict[str, str]:
         raw: dict[str, Any] = {}
         budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
         try:
-            if _url():
+            body = {"deal": {"deal_id": deal_id, "company": "purtera", "atoms": rows},
+                    "budget_s": budget, "document_heads": [DOC_KIND_KEY]}
+            if _url() and _never():
+                # SOWSMITH_C3_FALLBACK=never: the kind decides the view cut, so a kind the heads did
+                # not give moves the cut and the heads read other lines. Wait, or fail the compile.
+                raw = _wait_for_heads("/read", body, _STATUS, "doc-kind read").get("documents") or {}
+            elif _url():
                 health = _request("/health", None, timeout=_env_float("SOWSMITH_C3_CONNECT_S", 5.0))
                 if health.get("ready"):
-                    got = _request("/read", {"deal": {"deal_id": deal_id, "company": "purtera", "atoms": rows},
-                                             "budget_s": budget, "document_heads": [DOC_KIND_KEY]},
-                                   timeout=budget + 10.0)
+                    got = _request("/read", body, timeout=budget + 10.0)
                     raw = got.get("documents") or {}
             else:
                 loaded = get_model() if enabled() or document_job_enabled() else None
@@ -680,7 +690,13 @@ def doc_kind_reads(deal_id: str, rows: list[dict[str, Any]]) -> dict[str, str]:
                                     document_heads=(DOC_KIND_KEY,))
                     raw = {d: {k: [v["answer"], v.get("p")] for k, v in h.items()}
                            for d, h in (doc.get("documents") or {}).items()}
+        except C3HeadsUnavailable:
+            raise
         except Exception as exc:  # noqa: BLE001 - no kind read is the compile's own kinds, never a failed read
+            if _never():
+                raise C3HeadsUnavailable(
+                    f"C3 doc-kind read failed ({type(exc).__name__}: {exc}"[:300] + "); SOWSMITH_C3_FALLBACK=never "
+                    "does not let the compile's own kinds move the view cut") from exc
             log.warning("C3 document-kind read failed (%s); the compile's own kinds stand", type(exc).__name__)
             raw = {}
         bar = _env_float("SOWSMITH_C3_DOC_KIND_BAR", 0.8)
@@ -689,6 +705,7 @@ def doc_kind_reads(deal_id: str, rows: list[dict[str, Any]]) -> dict[str, str]:
             if v and v[0] is not None and float(v[1] or 0.0) >= bar and head_kind(v[0]):
                 out[str(d)] = head_kind(v[0])
     _DEAL["doc_kinds"], _DEAL["doc_kinds_key"] = dict(out), read_key(rows, DOC_KIND_KEY)
+    _DEAL["doc_kinds_docs"] = {str(r.get("doc_id") or "") for r in rows}
     _STATUS["doc_kinds"] = {"read": len(out)}
     return out
 
@@ -952,6 +969,7 @@ def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, 
     run's cutoff (manifest ``context.as_of``): a run with one is a quoting read, one without a planning
     read (``view_name``; ``SOWSMITH_C3_VIEW=0`` reads every line as before)."""
     _DEAL.clear()
+    _STATUS.pop("rules_yielded", None)
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
                  reads={}, links=[], deal={}, questions=[], also=[], tables={},
                  stage_timeline=stage_timeline if isinstance(stage_timeline, dict) else None)
@@ -1323,6 +1341,20 @@ def _text_type(atom: Any) -> tuple[str, str, str]:
     return (str(getattr(atom, "id", "") or ""), str(text or ""), str(getattr(kind, "value", kind) or ""))
 
 
+def quote_parallel() -> bool:
+    """``SOWSMITH_C3_QUOTE_PARALLEL`` (default on): the quote heads run beside the brief writer (the
+    quote reads the brief's sections, job details and deal, which are final before the writer runs)."""
+    return os.environ.get("SOWSMITH_C3_QUOTE_PARALLEL", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def quote_snapshot(brief: dict[str, Any]) -> dict[str, Any]:
+    """What ``quote`` reads of the brief, copied, so a thread can send it while the writer works."""
+    return {"deal": dict(brief.get("deal") or {}),
+            "sections": {k: [dict(x) if isinstance(x, dict) else x for x in (v or [])]
+                         for k, v in (brief.get("sections") or {}).items()},
+            "job_details": list(brief.get("job_details") or [])}
+
+
 def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[str, Any]:
     """The quote heads' labor proposal for this deal: task line, job type, techs, hours per tech,
     rate line and price, each with its reason. Sends the final atoms and the brief's sections and
@@ -1425,12 +1457,13 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
     budget = _env_float("SOWSMITH_C3_BUDGET_S", 90.0)
     started = time.monotonic()
     shared = _DEAL.get("types") or {}
-    if keys and all(k in shared for k in keys):
+    out_of_view = _DEAL.get("view_out") or set()
+    if keys and shared and all(k in shared for k in keys if k not in out_of_view):
         # This compile already read the deal (document_job_scope, on the same
         # record): its lines only dropped since, so the readings stand.
         _STATUS.update(state="read", reason="shared", remote=True, lines=len(rows), read_ms=0.0)
         return {i: (str(shared[k][0]), float(shared[k][1] or 0.0)) for i, k in zip(ids, keys)
-                if shared[k] and shared[k][0] is not None}
+                if shared.get(k) and shared[k][0] is not None}
     if _never():
         payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
         got = _wait_for_heads("/read", _brief_body({"deal": payload, "budget_s": budget}),
@@ -1790,6 +1823,96 @@ def base_decided(atom: Any) -> bool:
     return isinstance(lab, dict) and lab.get("act") in ("authority", "assign", "keep", "fill")
 
 
+def rules_yield_enabled() -> bool:
+    """``SOWSMITH_C3_RULES_YIELD`` (default on): a rule drop stage leaves a line the base decided
+    (``base_decided``) in the compile, and counts what it would have done (``_STATUS["rules_yielded"]``)."""
+    return os.environ.get("SOWSMITH_C3_RULES_YIELD", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _rule_exempt(rule: str) -> bool:
+    """``SOWSMITH_C3_RULES_YIELD_EXEMPT``: comma list of rule names that still drop base lines."""
+    raw = os.environ.get("SOWSMITH_C3_RULES_YIELD_EXEMPT", "")
+    return rule in {x.strip() for x in raw.split(",") if x.strip()}
+
+
+def note_rule_yield(rule: str, kept: int = 0, retyped: int = 0) -> None:
+    """Count, per rule, the base lines a rule would have dropped (kept) or re-typed (left to the
+    authority restore). Never silent: the compile's C3 status carries the counts."""
+    if not (kept or retyped):
+        return
+    got = _STATUS.setdefault("rules_yielded", {}).setdefault(rule, {"kept": 0, "retyped": 0})
+    got["kept"] += kept
+    got["retyped"] += retyped
+    log.info("C3 rule yield: %s would have dropped %d and re-typed %d base-decided line(s)", rule, kept, retyped)
+
+
+def rules_yielded() -> dict[str, dict[str, int]]:
+    return {k: dict(v) for k, v in (_STATUS.get("rules_yielded") or {}).items()}
+
+
+def _rule_yields_to(atom: Any) -> bool:
+    """A line a rule leaves alone: ``base_decided``, except an unsure keep (SOWSMITH_C3_UNSURE_KEEP marks
+    a line under the bar ``keep`` so the parser's type stands; the base decided nothing there)."""
+    if not base_decided(atom):
+        return False
+    lab = atom.value["c3_label"]
+    if lab.get("act") == "keep" and lab.get("p") is not None:
+        try:
+            return float(lab["p"]) >= sure_for(str(lab.get("type") or ""))
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _type_of(atom: Any) -> str:
+    t = getattr(atom, "atom_type", None)
+    return str(getattr(t, "value", t) or "")
+
+
+def yield_inplace(rule: str, fn: Any, atoms: list[Any], *args: Any, **kwargs: Any) -> Any:
+    """Run a rule that drops atoms from ``atoms`` in place; put back every line the base decided that
+    it removed (in its place), and count them. Identical to ``fn(atoms, ...)`` when no line is
+    base-decided, the yield is off, or the rule is exempt."""
+    heads = {id(a): (a, _type_of(a)) for a in atoms if _rule_yields_to(a)}
+    if not heads or not rules_yield_enabled() or _rule_exempt(rule):
+        return fn(atoms, *args, **kwargs)
+    before = list(atoms)
+    out = fn(atoms, *args, **kwargs)
+    present = {id(a) for a in atoms}
+    back = {i for i in heads if i not in present}
+    retyped = sum(1 for i, (a, t) in heads.items() if i in present and _type_of(a) != t)
+    if back:
+        new = [a for a in atoms if id(a) not in {id(b) for b in before}]
+        atoms[:] = [a for a in before if id(a) in present or id(a) in back] + new
+    note_rule_yield(rule, kept=len(back), retyped=retyped)
+    return out
+
+
+def yield_split(rule: str, fn: Any) -> Any:
+    """Wrap a ``(atoms) -> (kept, dropped)`` rule: a base-decided line it drops stays in ``kept``
+    (in its place) and leaves ``dropped``; counted like ``yield_inplace``."""
+
+    def run(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
+        heads = {id(a): _type_of(a) for a in atoms if _rule_yields_to(a)}
+        if not heads or not rules_yield_enabled() or _rule_exempt(rule):
+            return fn(atoms)
+        kept, dropped = fn(atoms)
+        back = {id(a) for a in dropped if id(a) in heads}
+        kept_ids = {id(a) for a in kept}
+        retyped = sum(1 for a in kept if id(a) in heads and _type_of(a) != heads[id(a)])
+        if back:
+            orig = {id(a) for a in atoms}
+            kept = [a for a in atoms if id(a) in kept_ids or id(a) in back] + \
+                   [a for a in kept if id(a) not in orig]
+            dropped = [a for a in dropped if id(a) not in back]
+        note_rule_yield(rule, kept=len(back), retyped=retyped)
+        return kept, dropped
+
+    run.__wrapped__ = fn
+    run.__name__ = getattr(fn, "__name__", rule)
+    return run
+
+
 def reread_if_new(atoms: list[Any]) -> int:
     """Read the deal again when lines were created after the base's read
     (signature splits, site backfills, geo mentions): 97 of 010038's labeled
@@ -1799,10 +1922,14 @@ def reread_if_new(atoms: list[Any]) -> int:
     if not authority_enabled() or "types" not in _DEAL:
         return 0
     seen = _DEAL.get("types") or {}
+    out_of_view = _DEAL.get("view_out") or set()
     sha = _DEAL.get("sha")
     new = 0
+    new_docs: set[str] = set()
     for a in atoms:
-        if str(getattr(a, "id", "") or "") in seen:
+        aid = str(getattr(a, "id", "") or "")
+        if aid in seen or aid in out_of_view:
+            # Read, or left out by the view on purpose: neither is a line the read missed.
             continue
         try:
             if skipped(a, sha):
@@ -1810,8 +1937,13 @@ def reread_if_new(atoms: list[Any]) -> int:
         except Exception:
             pass
         new += 1
+        new_docs.add(_doc_id(a))
     if not new:
         return 0
+    # Lines minted late (signature splits, site backfills) belong to documents already read: their kinds
+    # stand, so the re-read is one full read, not a doc-kind read and a full read.
+    if "doc_kinds" in _DEAL and new_docs <= set(_DEAL.get("doc_kinds_docs") or ()):
+        _DEAL["doc_kinds_key"] = None
     # A failed re-read must not cost the first read: keep it, and take the
     # new one only when it came back (010038 lost every base reading when a
     # re-read timed out, 2026-10-17).
@@ -1867,7 +1999,19 @@ def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
         assigned += 1
     filled = 0
     if fills:
-        filled, _back = _fill_values(fills)
+        filled, back = _fill_values(fills)
+        # A failed fill call keeps the base's type with no values: the base decided what the line is.
+        if back:
+            by_id = {id(a): (t, ans) for a, (t, ans) in fills}
+            for a in back:
+                t, ans = by_id[id(a)]
+                v = dict(getattr(a, "value", None) or {})
+                says = v.get("c3_base_says") if isinstance(v.get("c3_base_says"), dict) else {}
+                before = str(getattr(getattr(a, "atom_type", None), "value", getattr(a, "atom_type", "")) or "")
+                a.atom_type = t
+                a.value = {**v, "c3_label": {"type": ans, "p": round(float(says.get("p") or 0.0), 3),
+                                             "act": "authority", "was": before, "fill": "failed"}}
+                assigned += 1
     return assigned, filled
 
 
@@ -1927,14 +2071,18 @@ def own_site_keys(atoms: list[Any]) -> int:
     return n
 
 
-def apply_authority(atoms: list[Any], *, final: bool = False) -> int:
+def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None) -> int:
     """Give each line the base's type where it is sure. Before typing
     (``final=False``) and again at the end (``final=True``: a locked line a
-    rule re-typed goes back). Returns lines (re)typed."""
+    rule re-typed goes back). ``spare(atom)`` true leaves that line as it is
+    (the restore before entity_resolution spares the party-address veto).
+    Returns lines (re)typed."""
     from app.core.schemas import AtomType
 
     if not authority_enabled():
         return 0
+    if spare is not None:
+        atoms = [a for a in atoms if not spare(a)]
     n = 0
     if final:
         # A line typing gave the base's type (filled or assigned) is the

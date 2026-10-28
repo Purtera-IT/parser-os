@@ -1108,8 +1108,10 @@ def _crm_deal(project_dir: Any) -> dict[str, str]:
 
 
 def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None,
-        project_dir: Any = None) -> dict[str, Any]:
-    """Build (and, when switched on, write) the brief from this compile's read."""
+        project_dir: Any = None, on_built: Any = None) -> dict[str, Any]:
+    """Build (and, when switched on, write) the brief from this compile's read. ``on_built(brief)`` is
+    called once the sections, job details and deal are final and before the writer runs (the compile
+    starts the quote heads there, beside the writer's calls); its errors never cost the brief."""
     from app.core import c3_type_base
 
     brief = build(atoms, packets, service_fallback=service_fallback, readings=c3_type_base.full_read())
@@ -1164,6 +1166,11 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         # as they were, a grader read customer emails in the first person.
         brief.setdefault("sections", {})["job_details"] = [
             {"id": d["cites"][0], "text": d["text"]} for d in details]
+    if on_built is not None:
+        try:
+            on_built(brief)
+        except Exception as exc:  # pragma: no cover - the caller falls back to calling after the brief
+            log.info("C3 brief on_built hook failed: %s", type(exc).__name__)
     if writing_enabled():
         try:
             brief["written"] = write(brief)

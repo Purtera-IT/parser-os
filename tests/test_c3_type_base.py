@@ -561,7 +561,7 @@ def test_a_sure_value_carrying_type_is_the_bases_and_the_llm_only_fills_its_fiel
     assert c3.status()["typing"]["filled"] == 1
 
 
-def test_a_failed_fill_sends_the_line_back_to_the_full_llm(monkeypatch):
+def test_a_failed_fill_keeps_the_bases_type_and_never_reaches_the_full_llm(monkeypatch):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
     monkeypatch.setenv("SOWSMITH_C3_TYPES", "stakeholder")
     atoms = _atoms()
@@ -574,8 +574,12 @@ def test_a_failed_fill_sends_the_line_back_to_the_full_llm(monkeypatch):
 
     monkeypatch.setattr(tac, "_call_ollama", _fake)
     tac.classify_atoms(atoms)
-    assert any("a_heavy" in p for p in prompts if "TAXONOMY" in p)
-    assert c3.status()["typing"]["fill_back_to_llm"] == 1
+    # The base decided what the line is; a dead fill call costs its values, never its type.
+    assert not any("a_heavy" in p for p in prompts if "TAXONOMY" in p)
+    heavy = next(a for a in atoms if a.id == "a_heavy")
+    assert str(getattr(heavy.atom_type, "value", heavy.atom_type)) == "stakeholder"
+    assert heavy.value["c3_label"]["act"] == "assign" and c3.base_decided(heavy)
+    assert c3.status()["typing"]["fill_failed_kept_type"] == 1
 
 
 def test_the_typing_layer_runs_without_ml_code(monkeypatch, llm):

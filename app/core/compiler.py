@@ -2210,6 +2210,8 @@ def compile_project(
                 atoms, deal_name=_djs_v.deal_name_from_manifest(project_dir) or "",
                 crm=_c3_crm_v(project_dir) or {})
             _c3_view.set_other_job(_other)
+    except C3HeadsUnavailable:
+        raise
     except Exception as exc:
         warnings.append(f"WARNING: C3 view other-job set-aside failed: {type(exc).__name__}: {exc}")
 
@@ -3233,6 +3235,25 @@ def compile_project(
             warnings.append(f"INFO: recalibrated confidence on {recal_count} atoms")
         telemetry.end_stage(stage, output_count=recal_count, warnings=_stage_notes)
 
+    # The heads' types back on every line a rule re-typed since typing, BEFORE the roster, entities
+    # and packets are built from them (the restore at the end of the compile came after all three).
+    # The party-address veto is spared: on 010038 it was right where the site head was wrong.
+    try:
+        from app.core import c3_type_base as _c3_pre
+
+        _pre = _c3_pre.apply_authority(
+            atoms, final=True,
+            spare=lambda a: "party_address" in (getattr(a, "review_flags", None) or []))
+        if _pre:
+            warnings.append(f"INFO: C3 base restored {_pre} line(s) a rule had re-typed, before entity_resolution")
+        for _rule, _n in sorted(_c3_pre.rules_yielded().items()):
+            warnings.append(f"INFO: C3 rule yield: {_rule} left {_n['kept']} base-decided line(s) it would "
+                            f"have dropped; {_n['retyped']} re-typed")
+    except C3HeadsUnavailable:
+        raise
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 restore before entity_resolution failed: {type(exc).__name__}: {exc}")
+
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
@@ -3718,13 +3739,35 @@ def compile_project(
     # Brief v2: the super heads decide what the brief says, rules where a head
     # is not yet trusted (c3_brief.py). Off unless SOWSMITH_C3_BRIEF is on.
     _c3_brief = None
+    # The quote heads read the brief's sections, job details and deal, all final before the writer's
+    # LLM calls (~18-20 s); started there, the quote's /v1/quote runs beside the writer.
+    _quote_job: dict[str, Any] = {}
+
+    def _start_quote(_b: dict[str, Any]) -> None:
+        from app.core import c3_type_base as _c3q0
+
+        if not (_c3q0.quote_enabled() and _c3q0.quote_parallel()):
+            return
+        _snap, _qatoms = _c3q0.quote_snapshot(_b), list(atoms)
+
+        def _go() -> None:
+            try:
+                _quote_job["result"] = _c3q0.quote(_qatoms, _snap, deal_id=str(resolved_project_id or ""))
+            except BaseException as _qexc:  # re-raised on join (C3HeadsUnavailable fails the compile)
+                _quote_job["error"] = _qexc
+
+        import threading as _qthreading
+
+        _quote_job["thread"] = _qthreading.Thread(target=_go, name="c3-quote", daemon=True)
+        _quote_job["thread"].start()
+
     try:
         from app.core import c3_brief as _brief
 
         if _brief.enabled():
             with telemetry.stage("c3_brief", input_count=len(atoms)) as _bstage:
                 _c3_brief = _brief.run(atoms, packets, service_fallback=resolved_domain_pack.pack_id,
-                                        project_dir=project_dir)
+                                        project_dir=project_dir, on_built=_start_quote)
                 telemetry.end_stage(_bstage, output_count=len(_c3_brief.get("questions") or []))
             warnings.append(f"INFO: C3 brief built: heads {len(_c3_brief['decided_by']['heads_used'])}, "
                             f"fell back {len(_c3_brief['decided_by']['fell_back'])}")
@@ -3739,7 +3782,13 @@ def compile_project(
 
             if _c3q.quote_enabled():
                 with telemetry.stage("c3_quote", input_count=len(atoms)):
-                    _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
+                    if "thread" in _quote_job:
+                        _quote_job["thread"].join()
+                        if "error" in _quote_job:
+                            raise _quote_job["error"]
+                        _q = _quote_job.get("result") or {}
+                    else:
+                        _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
                 if _q:
                     _c3_brief["quote"] = _q
                     warnings.append(f"INFO: quote heads: {_q.get('job_type')} {len(_q.get('lines') or [])} line(s)")
