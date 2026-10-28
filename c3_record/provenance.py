@@ -13,6 +13,8 @@ A document (``docinfo[doc_id]``):
     carrier_at  that email's time (epoch seconds), else 0
     message     an email, CRM note, call or meeting
     filename    the source file's name
+    third_party the paper's party block names another provider and none of us (optional; serving reads it with
+                app.core.document_parties, training's views do not gather it yet)
 
 A line (``atoms``): ``label_key``, ``atom_id``, ``doc_id``, ``text``, ``entered_at`` (its document's
 arrival, epoch or ISO), ``doc_kind``, ``speaker_side``, ``section``. ``lines[atom_id]`` is the message
@@ -248,7 +250,7 @@ def decide(atoms: list[dict[str, Any]], docinfo: dict[str, dict[str, Any]], line
     for d in by_doc:
         docinfo.setdefault(d, {})
         for k, v in (("direction", ""), ("sender", ""), ("role", ""), ("kind", ""), ("carrier", None),
-                     ("carrier_at", 0.0), ("message", False), ("filename", "")):
+                     ("carrier_at", 0.0), ("message", False), ("filename", ""), ("third_party", False)):
             docinfo[d].setdefault(k, v)
     stamp = {d: min((t(a.get("entered_at")) for a in xs), default=0.0) for d, xs in by_doc.items()}
     to_of = to_of or {}
@@ -306,6 +308,11 @@ def decide(atoms: list[dict[str, Any]], docinfo: dict[str, dict[str, Any]], line
         role = i["role"].lower()
         named = [x.lower() for x in PROVIDER.findall(role)]
         other_author = bool(named) and not any(x.startswith(("pur", "sales")) for x in named) and "purtera" not in role
+        if i.get("third_party"):
+            # The paper's own party block names another provider and none of us (document_parties: an
+            # incumbent partner's signed PSOW, 010300). Its "SOW" heading made it our sow_draft, and its
+            # arrival cut the quoting view to 41 of 559 lines.
+            other_author = True
         priced = sum(1 for a in xs if PRICE.search(str(a.get("text") or ""))) >= 2
         paper = i["kind"] in PAPER
         if not paper and i["kind"] in ("", "file") and priced and not i["message"]:

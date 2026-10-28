@@ -68,7 +68,7 @@ import json
 import logging
 import os
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 import sys
 import threading
 import time
@@ -774,6 +774,8 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
               "text": r.get("text"), "entered_at": r.get("entered_at"), "doc_kind": r.get("doc_kind"),
               "speaker_side": r.get("speaker_side"), "section": r.get("section"), "order": r.get("order")}
              for r in rows]
+    for d, x in _third_party_papers(lines).items():
+        docinfo.setdefault(d, {})["third_party"] = x
     texts_of = {x["atom_id"]: (str(x["text"] or ""), messages[x["atom_id"]][4]) for x in lines
                 if x["atom_id"] in messages}
     other = dict(_DEAL.get("other_job") or {})
@@ -1090,6 +1092,27 @@ def _delivered_at(sha256: str) -> Any:
         if isinstance(d, dict) and d.get("ts"):
             return d["ts"]
     return None
+
+
+def _third_party_papers(lines: list[dict[str, Any]]) -> dict[str, str]:
+    """Documents whose own party block names another provider and none of us (doc id -> provider), read
+    the way the envelope's ``third_party_terms`` is (app.core.document_parties). A message is no paper."""
+    try:
+        from app.core.document_parties import _is_us, parties_for_document
+    except Exception:  # pragma: no cover
+        return {}
+    by_doc: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for x in lines:
+        if x.get("doc_id"):
+            by_doc[str(x["doc_id"])].append({"text": x.get("text") or "", "atom_type": x.get("doc_kind")})
+    out: dict[str, str] = {}
+    for d, xs in by_doc.items():
+        roles = parties_for_document(xs)["roles"]
+        provider = next((roles[r] for r in ("provider", "contractor", "subcontractor", "vendor", "supplier")
+                         if r in roles), None)
+        if provider and not any(_is_us(v) for v in roles.values()):
+            out[d] = provider
+    return out
 
 
 def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
