@@ -455,3 +455,53 @@ def test_the_writer_checks_run_side_by_side_and_end_as_one_after_another(monkeyp
     assert [q["question"] for q in w["open_questions"]] == ["Who has the lift?"]
     assert order.index("verify") < order.index("cover") and order.index("facts") < order.index("ask")
     assert len(threads) >= 2, "the two chains ran on one thread"
+
+
+def _typed(i, t, text, how="label"):
+    v = ({"c3_label": {"type": t, "p": 0.97, "act": "authority", "was": "task"}} if how == "label"
+         else {"c3_confirm": {"type": t, "p": 0.9, "said": "_keep"}} if how == "confirm" else {})
+    return NS(id=f"a{i}", atom_type=t, raw_text=text, review_status="approved", value=v)
+
+
+def test_a_head_typed_exclusion_keeps_its_section_against_the_owner_head(monkeypatch):
+    """010362: an exclusion (type head 0.96) and a pricing term (0.99) were moved to
+    scope_of_work by read:task_owner_role, because against a rule placement the
+    override compared the owner's p with 0."""
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "exclusion", "Firewall programming performed independently is out of scope"),
+             _typed(2, "pricing_assumption", "After hours work will be billed at a 50% uplift", "confirm"),
+             _typed(3, "dependency", "Customer ensures the circuit is active before the visit")]
+    reads = {f"a{i}": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.88]}
+             for i in (1, 2, 3)}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    secs = {x["id"]: s for s, xs in b["sections"].items() for x in xs}
+    assert secs["a1"] == c3_brief.SECTION_BY_TYPE["exclusion"]
+    assert secs["a2"] == c3_brief.SECTION_BY_TYPE["pricing_assumption"]
+    assert secs["a3"] == c3_brief.SECTION_BY_TYPE["dependency"]
+    assert all(x["type_by"] == "head" and x["section_by"] == "rule:type"
+               for xs in b["sections"].values() for x in xs)
+
+
+def test_the_owner_head_fills_only_where_no_head_typed_the_line_and_says_so(monkeypatch):
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "dependency", "Mount the APs at the new site", how=None),
+             _typed(2, "dependency", "Patch the new switch", how=None)]
+    reads = {"a1": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.86]},
+             "a2": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.51]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    filled = b["sections"]["scope_of_work"]
+    assert [x["id"] for x in filled] == ["a1"]
+    assert filled[0]["section_by"] == "base:read:task_owner_role" and filled[0]["type_by"] == "rule"
+    assert "owner head filled" in filled[0]["section_fill"]
+    # Below the owner bar the rule's placement stands.
+    assert [x["id"] for x in b["sections"][c3_brief.SECTION_BY_TYPE["dependency"]]] == ["a2"]
+
+
+def test_a_parser_typed_exclusion_is_no_duty_for_the_owner_head(monkeypatch):
+    """010355: "Lifts ... are excluded" (no type-head mark) read technician 0.82
+    by the owner head and was filed as our scope."""
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "exclusion", "Lifts and scaffolding are excluded", how=None)]
+    reads = {"a1": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.9]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert [x["id"] for x in b["sections"]["out_of_scope"]] == ["a1"]

@@ -246,6 +246,22 @@ def _type(atom: Any) -> str:
     return str(getattr(t, "value", t) or "")
 
 
+def type_by_head(atom: Any) -> bool:
+    """The line's current type is the type head's: typing labelled it
+    (``c3_label``, act keep or the same type) or the base confirmed the
+    parser's type (``c3_confirm``). The same test ``c3_share.line_types``
+    counts as the head's."""
+    v = getattr(atom, "value", None)
+    if not isinstance(v, dict):
+        return False
+    t = _type(atom)
+    lab = v.get("c3_label")
+    if isinstance(lab, dict) and lab.get("act"):
+        return lab["act"] == "keep" or not lab.get("type") or lab.get("type") == t
+    conf = v.get("c3_confirm")
+    return isinstance(conf, dict) and conf.get("type") == t
+
+
 def _deal_kit(atom: Any) -> bool:
     try:
         from app.core.c3_type_base import _DEAL, skipped
@@ -628,20 +644,42 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # The same for a task the section head filed as out of scope or an
         # assumption: "Remove the Printer from the OLD site" (010038) read
         # out_of_scope 0.54 and technician 0.84; it is our requested task.
-        if sec in ("out_of_scope", "assumptions") and have_reads:
+        #
+        # The owner head arbitrates between HEADS only. A section the rule
+        # derived from a type the type head read (labelled or confirmed) is
+        # the type head's placement: an exclusion read 0.96-0.99, a pricing
+        # term 0.99 or a customer duty keeps its section whatever the owner
+        # head says (010362, 010395, 010355, 010245 had them all moved to
+        # scope_of_work: against a rule placement ``po > ps`` was ``po > 0``).
+        # Where no head typed or placed a DUTY (customer_responsibilities),
+        # the owner head may fill, sure (OWNER_BAR), and the item says so
+        # (``section_fill``). An exclusion or an assumption is no duty: who
+        # "does" "Lifts are excluded" is not a question (010355: technician
+        # 0.82 on two parser-typed ROM exclusions), so a rule placement there
+        # is only ever moved against the section head.
+        typed_by_head = type_by_head(a)
+        placed_by_head = sec_by != "rule:type"
+        fill = None
+        if sec in ("out_of_scope", "assumptions", "customer_responsibilities") and have_reads \
+                and (placed_by_head or (not typed_by_head and sec == "customer_responsibilities")):
             own, po = r(aid, "read:task_owner_role")
-            if own == "technician" and po > ps:
-                sec, sec_by = "scope_of_work", "base:read:task_owner_role"
-        if sec == "customer_responsibilities" and have_reads:
-            own, po = r(aid, "read:task_owner_role")
-            # Also when the owner head is surer than the section head: "Mount
-            # the Aruba APs" (010038) read technician 0.70, customer
-            # responsibility 0.65, and the brief gave our work to the customer.
-            if own == "technician" and (po >= OWNER_BAR or po > ps):
-                sec, sec_by = "scope_of_work", "base:read:task_owner_role"
+            if own == "technician":
+                if placed_by_head:
+                    # "Mount the Aruba APs" (010038) read technician 0.70,
+                    # customer responsibility 0.65, and the brief gave our work
+                    # to the customer.
+                    move = po > ps or (sec == "customer_responsibilities" and po >= OWNER_BAR)
+                else:
+                    move = po >= OWNER_BAR
+                    fill = "no head typed or placed this line; the owner head filled it" if move else None
+                if move:
+                    sec, sec_by = "scope_of_work", "base:read:task_owner_role"
         item = {"id": aid, "text": a.raw_text[:400], "type": _type(a), "when": _when_of(a),
                 "under": _heading_of(a),
-                "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by}
+                "keep_p": None if p is None else round(p, 3), "by": by, "section_by": sec_by,
+                "type_by": "head" if typed_by_head else "rule"}
+        if fill:
+            item["section_fill"] = fill
         if v is not None:
             item["judge"] = {"section": v.section, "owner": v.owner, "p": round(float(v.section_conf), 3)}
         sections[sec].append(item)
