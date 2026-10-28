@@ -50,3 +50,25 @@ def test_our_own_sow_naming_us_as_provider_stays_ours():
     lines = [{"label_key": "s1", "atom_id": "s1", "doc_id": "sow", "text": "Provider: PurTera-IT LLC", "doc_kind": ""},
              {"label_key": "s2", "atom_id": "s2", "doc_id": "sow", "text": "Customer: Example Corp", "doc_kind": ""}]
     assert c3_type_base._third_party_papers(lines) == {}
+
+
+def test_a_planning_compile_quotes_only_from_lines_before_our_first_pricing(monkeypatch):
+    """Owner rule: the quote's facts come from the pre-quote record; our SOW, the PO and post-award mail
+    feed delivery (planning brief, SowSmith), never the quote."""
+    seen = {}
+    monkeypatch.setenv("SOWSMITH_C3_QUOTE", "on")
+    monkeypatch.setenv("SOWSMITH_C3_URL", "http://c3")
+    monkeypatch.setattr(c3_type_base, "_DEAL", {"reads": {}, "deal": {}, "view": "planning",
+                                                "quote_out_why": {"sow1": "ours", "po1": "after_cut"}})
+    monkeypatch.setattr(c3_type_base, "view_name", lambda: "planning")
+    monkeypatch.setattr(c3_type_base, "_request", lambda p, b, timeout: seen.update(body=b) or {"lines": []})
+    atoms = [NS(id=i, atom_type="task", review_flags=[], value={}, source_refs=[], raw_text=t)
+             for i, t in (("rq1", "Please quote 12 AP swaps at the clinic"), ("sow1", "Provider will install 12 APs; fixed fee $9,800"),
+                          ("po1", "PO 4471 issued for the AP install"))]
+    c3_type_base.quote(atoms, {"deal": {}, "sections": {"scope_of_work": [{"id": a.id} for a in atoms]}})
+    rows = {r["id"]: r for r in seen["body"]["deal"]["atoms"]}
+    assert not rows["rq1"].get("left_out")
+    assert rows["sow1"]["left_out"] and rows["sow1"]["out_of_view"] == "ours"
+    assert rows["po1"]["left_out"] and rows["po1"]["out_of_view"] == "after_cut"
+    monkeypatch.setenv("SOWSMITH_C3_QUOTE_PREQUOTE_ONLY", "off")
+    assert c3_type_base.out_of_quote() == {}

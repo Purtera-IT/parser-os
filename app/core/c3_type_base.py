@@ -792,10 +792,7 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
         keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
     _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
-    if v == cview.QUOTING:
-        # Every line the quoting read leaves out, with the view's reason: outside the brief and the quote
-        # too (out_of_quoting_view).
-        inside = set(keep)
+    def _out_why(inside: set[int]) -> dict[str, str]:
         dks = set(dk)
         why: dict[str, str] = {}
         for i, x in enumerate(lines):
@@ -808,9 +805,19 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
                 else "ours" if x["label_key"] in P.ours_atoms or (P.doc.get(x["doc_id"]) or {}).get("ours")
                 else "undated" if (pa.get("at") or 0) <= 0
                 else "after_cut")
-        _DEAL["view_out_why"] = why
+        return why
+
+    if v == cview.QUOTING:
+        # Every line the quoting read leaves out, with the view's reason: outside the brief and the quote
+        # too (out_of_quoting_view).
+        _DEAL["view_out_why"] = _out_why(set(keep))
+        _DEAL.pop("quote_out_why", None)
     else:
         _DEAL.pop("view_out_why", None)
+        # The quote is made from what existed before we quoted, whatever the compile's view: a planning
+        # compile reads our SOW, the PO and post-award mail for delivery, never for the quote (owner rule
+        # 2026-10-28; memory dealkit-cutoff-leakage). The same provenance cut as a quoting read.
+        _DEAL["quote_out_why"] = _out_why(set(prov.quoting_inputs(P, lines, exclude=dk, as_of=_DEAL.get("as_of"))))
     kept = [rows[i] for i in keep]
     cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
     _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
@@ -1037,6 +1044,22 @@ def ours_out_enabled() -> bool:
 def out_of_view_out_enabled() -> bool:
     """``SOWSMITH_C3_OUT_OF_VIEW_OUT`` (default on): every other reason, see ``out_of_quoting_view``."""
     return _on("SOWSMITH_C3_OUT_OF_VIEW_OUT")
+
+
+def prequote_only() -> bool:
+    """``SOWSMITH_C3_QUOTE_PREQUOTE_ONLY`` (default on): the quote reads only the lines before our first
+    pricing, on a planning compile too."""
+    return os.environ.get("SOWSMITH_C3_QUOTE_PREQUOTE_ONLY", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def out_of_quote() -> dict[str, str]:
+    """``{atom_id: why}`` for every line the quote may not read: a quoting read's own out-of-view lines, and
+    on a planning compile every line after the quoting cut (``ours``, ``after_cut``, ``deal_kit`` ...)."""
+    if view_name() == "quoting":
+        return out_of_quoting_view()
+    if not prequote_only():
+        return {}
+    return {str(k): str(w) for k, w in (_DEAL.get("quote_out_why") or {}).items()}
 
 
 def out_of_quoting_view() -> dict[str, str]:
@@ -1719,7 +1742,7 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     from app.core.c3_brief import _deal_kit
 
     settled = (_DEAL.get("site_keys") or {}).get("by") == "heads:physical_site"
-    out = out_of_quoting_view()
+    out = out_of_quote()
     skip = set() if outside else {str(i) for i in (left_out or ())}
     lines: list[tuple[str, str, list[str]]] = []
     for a in atoms:
@@ -1816,7 +1839,7 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     from app.core.c3_brief import _deal_kit
 
     left_out = {str(i) for i in ((brief.get("left_out") or {}).get("ids") or [])}
-    out = out_of_quoting_view()
+    out = out_of_quote()
     # A line the keep head only half kept ("also mentioned") is not priced from: it goes to the
     # quote marked, and counted out like a left-out line.
     also = {str(x.get("id")) for x in brief.get("also_mentioned") or [] if isinstance(x, dict)} | {
@@ -1862,7 +1885,7 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     jd_ids = [str(c) for j in brief.get("job_details") or [] if isinstance(j, dict) for c in j.get("cites") or []]
     not_work = {i: why for i in dict.fromkeys(work_ids + jd_ids)
                 if i in by_id and (why := not_quote_work(by_id[i]))}
-    sites = quote_sites(atoms, left_out=left_out | also)
+    sites = quote_sites(atoms, left_out=left_out | also | set(out))
     seen_only = sites_seen_only_out_of_view(atoms, sites)
     deal_reads = {k: list(v) for k in QUOTE_DEAL_HEADS
                   if isinstance((v := (_DEAL.get("deal") or {}).get(k)), (list, tuple))}
