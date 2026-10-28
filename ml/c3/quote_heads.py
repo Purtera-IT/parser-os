@@ -49,7 +49,14 @@ BILLING_LINE_HEADS=('read:billing_type','jdg:commercial')
 CAVEATS={'read:labor_hours':'read:labor_hours scores below live (0.03-0.04 held-out): check these hours'}
 HOURS_ON_LINE=re.compile(r"(\d{1,3}(?:\.\d)?)(?:\s*(?:-|to)\s*(\d{1,3}(?:\.\d)?))?\s*(?:hours?|hrs?|h)\b",re.I)
 CREW_ON_LINE=re.compile(r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\(\d+\)\s*)?(?:onsite\s+|field\s+|dedicated\s+)?(?:techs?|technicians?|engineers?|installers?|people|resources?|guys)\b",re.I)
-SITES_SAID=re.compile(r"\b(\d{1,4})\s+(?:[\w-]+\s+){0,2}?(?:sites?|locations?|stores?|hotels?|offices?|branches)\b",re.I)
+SITES_SAID=re.compile(r"\b(\d{1,4})[ \t]+(?:[\w-]+[ \t]+){0,2}?(?:sites?|locations?|stores?|hotels?|offices?|branches)\b(?![- ]to[- ])",re.I)
+#: "5 tanks per site", "10 Site-to-Site tunnels": a count OF something at each site, not a count of sites.
+PER_UNIT=re.compile(r"\b(?:per|each|every)\b",re.I)
+SITE_TO_SITE=re.compile(r"^[\s-]*to[\s-]",re.I)
+#: A word that negates a flag's wording a few words before it ("no lift requirements", "not after hours").
+NEGATED=re.compile(r"\b(?:no|not|never|without|excluding|except|n't|none|nor)\b(?:\W+\w+){0,3}\W*$",re.I)
+#: Text read off a picture (OCR / vision): room numbers on a floor plan are not counts of anything.
+PICTURE_TEXT=re.compile(r"^\s*\[(?:OCR|Image|Figure|vision)",re.I)
 LEVEL_ON_LINE=re.compile(r"\b(?:l|level|lvl|tier)\s*-?\s*([1-4])\b",re.I)
 
 def _snap(h): return min(HB,key=lambda x:abs(math.log(x)-math.log(max(h,1))))
@@ -135,10 +142,21 @@ class QuoteHeads:
         n=0
         for a in atoms:
             t=a.get('text') or ''
+            if PICTURE_TEXT.match(t): continue
             for m in SITES_SAID.finditer(t):
+                if PER_UNIT.search(m.group(0)): continue
                 v=int(m.group(1))
                 if v<=2000 and not SIZE.match(t[m.start(1):m.end(1)+7]): n=max(n,v)
         return n
+    @staticmethod
+    def _said(lines,rx):
+        """Ids of the lines whose wording matches ``rx`` and does not negate it."""
+        out=[]
+        for a in lines:
+            t=a.get('text') or ''
+            if PICTURE_TEXT.match(t): continue
+            if any(not NEGATED.search(t[max(0,m.start()-40):m.start()]) for m in rx.finditer(t)): out.append(a.get('id'))
+        return out
     def _work(self,p):
         brief=p.get('c3_brief') or {}; secs=brief.get('sections') or {}
         kept={x.get('id') for x in (secs.get('scope_of_work') or [])}
@@ -151,6 +169,7 @@ class QuoteHeads:
         return work,cited
     def _quantity(self,p,work,cited):
         name=(p.get('deal_name') or '').lower(); groups={}
+        roster=int(p.get('site_count') or 0)>0
         wid={a.get('id') for a in work}
         for a in self._readable(p):
             if (a.get('type') or a.get('atom_type')) in SKIP_TYPES: continue
@@ -159,6 +178,10 @@ class QuoteHeads:
             for u,rx in PAT.items():
                 for m in rx.finditer(t):
                     if SIZE.match(t[m.start(1):m.end(1)+7]): continue
+                    if u=='site':
+                        # The heads' roster says how many sites; the wording only when there is none.
+                        if roster: continue
+                        if PICTURE_TEXT.match(t) or SITE_TO_SITE.match(t[m.end():m.end()+6]) or PER_UNIT.search(m.group(0)): continue
                     n=m.group(1).lower()
                     if n in ('a','an') and u in ('site','user','device','room'): continue
                     n=NUM.get(n,n)
@@ -245,18 +268,30 @@ class QuoteHeads:
             if new!=rate_line: caveats.append(f'price {price} is for {rate_line}; check the {new} rate'); why_r=f'level stated on a line read:tech_level reads ({why_r} for the track)'
             rate_line=new; by_r='heads:read:tech_level'; used['level']=dict(head='read:tech_level',atom_id=lv[1],p=round(lv[2],3))
         billing=self._billing(p,readable); travel=self._travel(p)
-        alltext=' '.join(a.get('text') or '' for a in work)
         flags=[]
-        after=bool(AFTER.search(alltext))
-        if after: flags.append('after-hours work mentioned')
-        # No day-type head yet: after-hours wording is a rule, and "reg" otherwise is a marked default.
+        # No day-type or height head yet: these are wording rules, read only on the work lines the heads
+        # kept in the brief body (never chatter: 010095 priced overtime off World Cup talk), never when
+        # the wording negates them ("no lift requirements", 010228), and marked rule:* with their lines.
+        after_ids=self._said(work,AFTER); height_ids=self._said(work,HEIGHT)
+        after=bool(after_ids)
+        if after: flags.append('after-hours work mentioned (rule:after_hours_text)')
         day_type,by_d=('ot','rule:after_hours_text') if after else ('reg','fallback:default')
-        if HEIGHT.search(alltext): flags.append('height / lift access mentioned')
-        if (p.get('site_count') or 0)>=2: flags.append(f"{p['site_count']} places in the documents: check the site list")
-        # A larger site count in the wording is a flag beside the heads' roster, never a replacement for it.
-        said=self._sites_said(readable)
-        if said>=2 and said>(p.get('site_count') or 0):
-            flags.append(f"documents mention {said} sites, the heads list {p.get('site_count') or 0}")
+        if height_ids: flags.append('height / lift access mentioned (rule:height_text)')
+        roster=int(p.get('site_count') or 0)
+        if roster>=2: flags.append(f"{roster} places in the documents: check the site list")
+        # Site count: the heads' roster when there is one; with none, the deal head that reads a
+        # declared site count; the wording only when neither answers, and marked.
+        site_by='heads:physical_site' if roster else 'none'
+        said=0
+        if not roster:
+            r=((p.get('heads') or {}).get('deal') or {}).get('deal:declared_site_count')
+            if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE:
+                try: said=int(float(r[2] if len(r)>2 and isinstance(r[2],(int,float)) else r[0])); site_by='heads:deal:declared_site_count'
+                except (TypeError,ValueError): said=0
+            if not said:
+                said=self._sites_said(readable)
+                if said: site_by='rule:sites_said_text (no roster)'
+            if said>=2: flags.append(f"documents mention {said} sites ({site_by}); no site roster from the heads")
         if fam=='program': flags.append('ongoing or multi-site engagement: confirm the duration and site count')
         checked=(q['unit'],q['count']) if q and q['p']>=0.5 and q['unit'] not in ('site','user','device') and re.search(r'\b('+UNITS[q['unit']]+r')\b',scope,re.I) else None
         task=self._word(name,work,p.get('c3_brief') or {},checked,p.get('account')) if word else None
@@ -271,7 +306,8 @@ class QuoteHeads:
         source_text=((by_id.get(lead) or {}).get('text') or '')[:300] if lead else (q['text'] if q else ((work[0].get('text') or '')[:300] if work else ''))
         return dict(version=self.version,job_type=fam,job_type_p=round(max(sims),3),
             heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,site_count=p.get('site_count') or 0,after_hours=after,
-            sites=dict(count=p.get('site_count') or 0,by='heads:physical_site' if 'sites' in p else 'none (not sent)',
+            sites=dict(count=p.get('site_count') or 0,by=(site_by if 'sites' in p else 'none (not sent)'),
+                       said=said or None,rule_atom_ids=dict(after_hours=after_ids,height=height_ids),
                        atom_ids=[i for st in (p.get('sites') or []) for i in (st.get('atom_ids') or [])]),
             lines=[dict(site='job site',task=task or {'av':'Install AV equipment','camera':'Install cameras','ap':'Install access points','power':'Replace UPS / batteries','rack':'Rack and stack equipment','cabling':'Run network cabling','device':'Install and configure devices','survey':'Site survey and report','program':'Onsite support (staff augmentation)'}[fam],
                 techs=techs,hours_per_tech=hpt,crew_hours=hpt*techs,rate_line=rate_line,price=price,why_techs=why_t,why_hours=why_h,why_rate=why_r,

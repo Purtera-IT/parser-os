@@ -101,12 +101,43 @@ def test_quantity_never_reads_kit_or_left_out_lines(qh):
     assert out["quantity"] is None
 
 
-def test_heads_site_count_and_regex_count_disagree_is_a_flag_not_a_replacement(qh):
+def test_the_heads_roster_is_the_site_count_and_wording_counts_only_without_one(qh):
+    """Owner 2026-10-28: site count comes from the heads' roster when it exists; text heuristics only
+    when there is none, and marked."""
     atoms = [{"id": "a1", "type": "task", "text": "Install cameras at 12 stores"}]
     sites = [{"site": "site:a", "atom_ids": ["s1"]}, {"site": "site:b", "atom_ids": ["s2"]}, {"site": "site:c", "atom_ids": ["s3"]}]
     out = qh.quote(_deal(atoms, site_count=3, sites=sites), word=False)
-    assert out["sites"] == {"count": 3, "by": "heads:physical_site", "atom_ids": ["s1", "s2", "s3"]}
-    assert "documents mention 12 sites, the heads list 3" in out["flags"]
+    assert {k: out["sites"][k] for k in ("count", "by", "atom_ids")} == {
+        "count": 3, "by": "heads:physical_site", "atom_ids": ["s1", "s2", "s3"]}
+    assert not any("documents mention" in f for f in out["flags"])
+    out = qh.quote(_deal(atoms, site_count=0, sites=[]), word=False)
+    assert out["sites"]["by"] == "rule:sites_said_text (no roster)" and out["sites"]["said"] == 12
+    assert any("documents mention 12 sites (rule:sites_said_text (no roster))" in f for f in out["flags"])
+    # a declared-count deal head answers before the wording
+    out = qh.quote(_deal(atoms, site_count=0, sites=[], heads={"asked": True, "deal": {
+        "deal:declared_site_count": ["5", 0.9]}}), word=False)
+    assert out["sites"]["by"] == "heads:deal:declared_site_count" and out["sites"]["said"] == 5
+
+
+def test_per_site_counts_tunnels_and_floor_plans_are_not_site_counts(qh):
+    atoms = [{"id": "a1", "type": "task", "text": "Quote for 5 tanks per site, sensors on each"},
+             {"id": "a2", "type": "requirement", "text": "10 Site-to-Site IPsec VPN Tunnels"},
+             {"id": "a3", "type": "site_infrastructure", "text": "[OCR-recovered text] STOR\n202\nOFFICE\n225 OFFICES"}]
+    out = qh.quote(_deal(atoms, site_count=0, sites=[]), word=False)
+    assert not (out["quantity"] and out["quantity"]["unit"] == "site"), out["quantity"]
+    assert out["sites"]["said"] is None
+
+
+def test_after_hours_and_lift_flags_respect_negation_and_are_marked(qh):
+    atoms = [{"id": "a1", "type": "requirement", "text": "There are no lift requirements and no after-hours work"},
+             {"id": "a2", "type": "task", "text": "Install cameras"}]
+    out = qh.quote(_deal(atoms), word=False)
+    assert out["after_hours"] is False and not any("lift" in f for f in out["flags"])
+    atoms = [{"id": "a1", "type": "requirement", "text": "Work must be done after hours; a scissor lift is needed"}]
+    out = qh.quote(_deal(atoms), word=False)
+    assert out["lines"][0]["by"]["day_type"] == "rule:after_hours_text"
+    assert out["sites"]["rule_atom_ids"] == {"after_hours": ["a1"], "height": ["a1"]}
+    assert "height / lift access mentioned (rule:height_text)" in out["flags"]
 
 
 def test_output_shape_matches_the_platform_contract(qh):
