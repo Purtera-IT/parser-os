@@ -60,6 +60,39 @@ def stage_item() -> str:
     return _HB_ITEM[0]
 
 
+# What a PM must be told about THIS compile while it runs and after it ends.
+#
+# Keyed notices (``heads_warming``, ``heads_read_degraded``, ``large_deal``),
+# each a small JSON-able dict. The worker copies them into compile-progress.json
+# on every write, so the deal page can say "waking up the model" instead of
+# showing a stage that sits still for four minutes, and can say a big deal was
+# read in smaller pieces instead of letting it pass as a full-size read.
+# Read from another THREAD, like ``stage_progress``.
+_NOTICES: dict[str, dict] = {}
+_NOTICES_LOCK = threading.Lock()
+
+
+def set_compile_notice(key: str, value: dict | None) -> None:
+    """Set (or, with None, clear) one notice for the running compile."""
+    with _NOTICES_LOCK:
+        if value is None:
+            _NOTICES.pop(str(key), None)
+        else:
+            _NOTICES[str(key)] = dict(value)
+
+
+def compile_notices() -> dict[str, dict]:
+    """A copy of this compile's notices ({} when there is nothing to say)."""
+    with _NOTICES_LOCK:
+        return {k: dict(v) for k, v in _NOTICES.items()}
+
+
+def clear_compile_notices() -> None:
+    """A new compile starts with nothing to say."""
+    with _NOTICES_LOCK:
+        _NOTICES.clear()
+
+
 # How far through its own work the current stage is.
 #
 # WHY A NUMBER AND NOT JUST A NAME. `set_stage_item` above makes a wedged stage

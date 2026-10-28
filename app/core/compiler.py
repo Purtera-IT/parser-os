@@ -818,6 +818,9 @@ def compile_project(
     try:
         from app.core import c3_type_base
 
+        # This compile's notices for the deal page start empty (heads_warming,
+        # heads_read_degraded, large_deal: compile-progress.json via the worker).
+        c3_type_base.reset_notices()
         c3_type_base.warm()
     except Exception:  # pragma: no cover - never break a compile over this
         pass
@@ -3767,6 +3770,29 @@ def compile_project(
                               "failures": _c3_failures}, ensure_ascii=True), file=__import__("sys").stderr)
     except Exception as exc:
         warnings.append(f"WARNING: C3 failure check failed: {type(exc).__name__}: {exc}")
+    # A read the service had to cut into smaller windows (out of memory) answered the deal, but
+    # not at the size the heads were trained on: the PM must see it (compile_state degraded,
+    # c3_notices -> compile-progress.json). A big deal is said too, so the page can warn early.
+    _c3_notices: dict[str, Any] = {}
+    try:
+        from app.core import c3_type_base as _c3_note
+
+        _c3_notices = _c3_note.notices()
+        _deg = _c3_notices.get(_c3_note.HEADS_READ_DEGRADED)
+        if _deg:
+            warnings.append(
+                f"WARNING: C3 heads read {_deg.get('lines')} lines in {_deg.get('max_atoms')}-line windows "
+                f"(full size {_deg.get('max_atoms_top')}) after {_deg.get('oom_retries')} out-of-memory "
+                "retr(ies); some line answers may be less accurate")
+        _big = _c3_notices.get(_c3_note.LARGE_DEAL)
+        if _big:
+            warnings.append(f"INFO: large deal: the heads read {_big.get('lines')} lines "
+                            f"(over {_big.get('threshold')}); reading may be reduced")
+        if _c3_notices:
+            print(json.dumps({"event": "c3_heads_notices", "project_id": str(resolved_project_id or ""),
+                              "notices": _c3_notices}, ensure_ascii=True), file=__import__("sys").stderr)
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 notice check failed: {type(exc).__name__}: {exc}")
     # A compile with no evidence line (e.g. its only file failed to parse) is a failed compile, and
     # nothing downstream may price or brief a job from it.
     _evidence_n = sum(1 for _a in atoms if str(getattr(_a, "raw_text", "") or "").strip())
@@ -4062,13 +4088,23 @@ def compile_project(
         from app.core.ml_capabilities import build_compile_capabilities
 
         result.compile_capabilities = build_compile_capabilities()
-        # failed: no evidence atoms; degraded: a heads read fell back to the LLM. The worker reads
-        # this to record the compile's status instead of "done".
+        # failed: no evidence atoms; degraded: a heads read fell back to the LLM, or was read in
+        # smaller windows than full size. The worker reads this to record the compile's status
+        # instead of "done". Notices again here: a brief read after the check above counts too.
+        try:
+            from app.core import c3_type_base as _c3_note_end
+
+            _c3_notices = {**_c3_notices, **_c3_note_end.notices()}
+        except Exception:
+            pass
         result.compile_capabilities["compile_state"] = (
-            "failed" if not _evidence_n else "degraded" if _c3_failures else "ok")
+            "failed" if not _evidence_n
+            else "degraded" if (_c3_failures or _c3_notices.get("heads_read_degraded")) else "ok")
         result.compile_capabilities["c3_ok"] = not _c3_failures
         if _c3_failures:
             result.compile_capabilities["c3_failures"] = _c3_failures
+        if _c3_notices:
+            result.compile_capabilities["c3_notices"] = _c3_notices
         try:
             from app.core import telemetry as _tel_calls
 

@@ -1200,7 +1200,107 @@ def _url() -> str:
     return os.environ.get("SOWSMITH_C3_URL", "").strip().rstrip("/")
 
 
+# ------------------------------------------- notices the PM sees
+#
+# What the deal page must be told (telemetry.compile_notices -> the worker's
+# compile-progress.json): ``heads_warming`` while a compile waits on a service
+# that is starting, ``heads_read_degraded`` when a read came back in smaller
+# windows than the base was trained on (the service's out-of-memory retry; a
+# 4096 read changes 5-11% of a big deal's line answers), and ``large_deal``
+# for a read past SOWSMITH_C3_LARGE_DEAL_LINES lines (8000: the size a 16 GB
+# T4 risks running out of memory on). Never silent.
+
+HEADS_WARMING = "heads_warming"
+HEADS_READ_DEGRADED = "heads_read_degraded"
+LARGE_DEAL = "large_deal"
+
+
+def _notice(key: str, value: dict[str, Any] | None) -> None:
+    if getattr(_SHADOW, "on", False):
+        return  # a shadow read decides nothing; its trouble tells the PM nothing
+    try:
+        from app.core import telemetry
+
+        telemetry.set_compile_notice(key, value)
+    except Exception:
+        pass
+
+
+def _notices_now() -> dict[str, Any]:
+    try:
+        from app.core import telemetry
+
+        return telemetry.compile_notices()
+    except Exception:
+        return {}
+
+
+def reset_notices() -> None:
+    """At compile start: nothing to say yet."""
+    try:
+        from app.core import telemetry
+
+        telemetry.clear_compile_notices()
+    except Exception:
+        pass
+
+
+def notices() -> dict[str, Any]:
+    """This compile's deal-level notices for its result (``heads_read_degraded``,
+    ``large_deal``); a wait that ended is not one."""
+    return {k: v for k, v in _notices_now().items() if k != HEADS_WARMING}
+
+
+def large_deal_lines() -> int:
+    return int(_env_float("SOWSMITH_C3_LARGE_DEAL_LINES", 8000.0))
+
+
+def _read_lines(body: dict[str, Any] | None) -> int:
+    return len(((body or {}).get("deal") or {}).get("atoms") or [])
+
+
+def _note_lines(n: int) -> None:
+    bar = large_deal_lines()
+    if bar > 0 and n > bar:
+        prev = _notices_now().get(LARGE_DEAL) or {}
+        _notice(LARGE_DEAL, {"lines": max(n, int(prev.get("lines") or 0)), "threshold": bar})
+
+
+def _note_window(got: dict[str, Any], n: int) -> None:
+    """A read whose service retried out of memory, or read in windows smaller than the base was
+    trained on (MAX_ATOMS) while the deal was bigger than its window, is degraded."""
+    if not isinstance(got, dict):
+        return
+    try:
+        oom = int(got.get("oom_retries") or 0)
+        used = int(got.get("max_atoms") or 0)
+    except (TypeError, ValueError):
+        return
+    lines = int(got.get("lines") or n or 0)
+    if not (oom > 0 or (used and used < MAX_ATOMS and lines > used)):
+        return
+    prev = _notices_now().get(HEADS_READ_DEGRADED) or {}
+    worst = min(used, int(prev.get("max_atoms") or used)) if used else int(prev.get("max_atoms") or 0)
+    _notice(HEADS_READ_DEGRADED, {
+        "lines": max(lines, int(prev.get("lines") or 0)), "max_atoms": worst,
+        "max_atoms_top": int(got.get("max_atoms_top") or MAX_ATOMS),
+        "oom_retries": max(oom, int(prev.get("oom_retries") or 0)),
+        "reads": int(prev.get("reads") or 0) + 1})
+    log.warning("C3 heads read %d lines at max_atoms=%d after %d out-of-memory retries: degraded",
+                lines, used, oom)
+
+
 def _request(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
+    if path == "/read" and body is not None:
+        n = _read_lines(body)
+        _note_lines(n)
+        got = _request_raw(path, body, timeout)
+        _note_window(got, n)
+        return got
+    return _request_raw(path, body, timeout)
+
+
+def _request_raw(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str, Any]:
     import urllib.request
 
     req = urllib.request.Request(_url() + path, method="POST" if body is not None else "GET",
@@ -1305,6 +1405,7 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
     read_s = max(_env_float("SOWSMITH_C3_BUDGET_S", 90.0) + 10.0,
                  _env_float("SOWSMITH_C3_NEVER_READ_S", 600.0))
     started = time.monotonic()
+    since = datetime.now(timezone.utc).isoformat()
     attempt = 0
     while True:
         attempt += 1
@@ -1317,6 +1418,7 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
                 log.info("C3 heads answered %s after %d attempts (%.0f s)", what, attempt,
                          time.monotonic() - started)
                 _say_waiting("")
+                _notice(HEADS_WARMING, None)
             status.pop("waiting", None)
             return got
         except Exception as exc:
@@ -1325,6 +1427,7 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
             if not retry:
                 status.update(state="read_failed", reason=reason[:300], remote=True)
                 _say_waiting("")
+                _notice(HEADS_WARMING, None)
                 raise C3HeadsUnavailable(
                     f"C3 heads refused the {what} ({reason}); SOWSMITH_C3_FALLBACK=never "
                     "does not hand the lines to the LLM") from exc
@@ -1332,6 +1435,7 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
                 status.update(state="unavailable", reason=reason[:300], remote=True,
                               waiting={"attempts": attempt, "waited_s": round(waited, 1)})
                 _say_waiting("")
+                _notice(HEADS_WARMING, None)
                 raise C3HeadsUnavailable(
                     f"C3 heads unavailable for the {what} after {waited:.0f} s and {attempt} attempts "
                     f"(last: {reason}); SOWSMITH_C3_FALLBACK=never fails the compile instead of "
@@ -1344,6 +1448,10 @@ def _wait_for_heads(path: str, body: dict[str, Any] | None, status: dict[str, An
                         "retrying in %.0f s", what, reason, attempt, waited, ceiling, pause)
             _say_waiting(f"waiting for C3 heads ({what}): {reason[:80]}; "
                          f"{waited:.0f}/{ceiling:.0f} s, attempt {attempt}")
+            # The deal page's "waking up the model" (compile-progress.json notices): when the
+            # wait began, so the page counts the seconds itself between progress writes.
+            _notice(HEADS_WARMING, {"since": since, "waited_s": round(waited, 1), "attempts": attempt,
+                                    "ceiling_s": ceiling, "what": what, "reason": reason[:120]})
             _sleep(pause)
             delay = min(delay * 2 if delay else delay_max, delay_max)
 
