@@ -128,6 +128,16 @@ def test_never_backoff_stops_doubling_at_the_cap(monkeypatch, _env):
     down = urllib.error.URLError("down")
     _script(monkeypatch, *([down] * 6), READY, _read_answer(atoms))
     c3.classify(atoms)
+    assert _env == [5.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+
+
+def test_never_backoff_cap_is_configurable(monkeypatch, _env):
+    monkeypatch.setenv("SOWSMITH_C3_FALLBACK", "never")
+    monkeypatch.setenv("SOWSMITH_C3_RETRY_MAX_S", "60")
+    atoms = _atoms()
+    down = urllib.error.URLError("down")
+    _script(monkeypatch, *([down] * 6), READY, _read_answer(atoms))
+    c3.classify(atoms)
     assert _env == [5.0, 10.0, 20.0, 40.0, 60.0, 60.0]
 
 

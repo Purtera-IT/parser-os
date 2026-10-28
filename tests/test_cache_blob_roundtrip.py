@@ -156,3 +156,75 @@ def test_the_model_is_in_the_key_so_a_swap_cannot_return_a_stale_vector(embeds) 
     embeds.put_many("qwen3", [("same text", [1.0, 2.0])])
     # Different model, same text: a miss, not a wrong-dimension vector.
     assert embeds.get_many("azure-3-large", ["same text"]) == [None]
+
+
+# ---- what a compile uploads, and what a cold container merges (2026-10-28) ----
+#
+# mirror_ocr used to upload the WHOLE local cache after every compile, boot cache
+# included: dev's mirror reached 1,170 batches (641 MB) holding ~2.6k pictures
+# ~1,000 times over, and a cold container spent ~3 minutes merging them, one
+# commit per row, while its OCR lookups waited (parse_prefetch 200 s on 010447).
+
+
+def test_only_reads_this_process_paid_for_are_mirrored_and_only_once(cache, monkeypatch) -> None:
+    sent: list[list[dict]] = []
+    monkeypatch.setattr(cache_blob, "upload_rows", lambda kind, rows: sent.append(rows) or True)
+    cache.put_raw(key="restored", text="from the mirror", backend="stub", confidence=0.9)
+    assert cache_blob.mirror_ocr() is False, "a restored row is not this process's read"
+    cache.put(b"page-1", {"text": "PO 4471", "backend": "stub", "confidence": 0.9})
+    assert cache_blob.mirror_ocr() is True
+    assert [r["text"] for r in sent[-1]] == ["PO 4471"]
+    assert cache_blob.mirror_ocr() is False, "the next compile re-sent what was already up"
+    cache.put(b"page-2", {"text": "Qty 12", "backend": "stub", "confidence": 0.9})
+    cache_blob.mirror_ocr()
+    assert [r["text"] for r in sent[-1]] == ["Qty 12"]
+
+
+def test_a_failed_upload_keeps_the_rows_for_the_next_compile(cache, monkeypatch) -> None:
+    monkeypatch.setattr(cache_blob, "upload_rows", lambda kind, rows: False)
+    cache.put(b"page", {"text": "PO 4471", "backend": "stub", "confidence": 0.9})
+    assert cache_blob.mirror_ocr() is False
+    assert [r["text"] for r in cache.export_fresh_rows()] == ["PO 4471"]
+
+
+def test_the_merge_ends_where_one_put_raw_per_row_ends(cache, monkeypatch, tmp_path) -> None:
+    """Batched, de-duplicated and fetched ahead, the merge leaves exactly the
+    rows the old row-by-row merge left: the later batch wins a key, repeats
+    included (A, then B, then A again ends at A)."""
+    from types import SimpleNamespace
+
+    def line(key, text):
+        return cache_blob.rows_to_jsonl([{"key": key, "text": text, "backend": "stub",
+                                          "confidence": 0.9, "extra": None}])
+
+    batches = {
+        "_cache_rows/ocr/1.jsonl": "\n".join([line("k1", "A"), line("k2", "two"), line("k3", "  ")]),
+        "_cache_rows/ocr/2.jsonl": "\n".join([line("k1", "B"), line("k2", "two")]),
+        "_cache_rows/ocr/3.jsonl": "\n".join([line("k1", "A"), line("k2", "two"), line("k4", "four")]),
+    }
+
+    class _CC:
+        def list_blobs(self, name_starts_with=""):
+            return [SimpleNamespace(name=n, etag=f"e{n}") for n in batches if n.startswith(name_starts_with)]
+
+        def download_blob(self, name):
+            return SimpleNamespace(readall=lambda: batches[name].encode())
+
+    monkeypatch.setenv("SOWSMITH_EMBED_CACHE_DB", str(tmp_path / "e.db"))
+    monkeypatch.setattr(cache_blob, "_MERGED", {})
+    monkeypatch.setattr(cache_blob, "_container_client", lambda: _CC())
+    cache_blob.sync_ocr_into_cache()
+    got = dict(cache._conn.execute("SELECT key, text FROM ocr").fetchall())
+    assert got == {"k1": "A", "k2": "two", "k4": "four"}
+    assert cache.export_fresh_rows() == [], "a merged row is not this process's read"
+
+
+def test_a_mirrored_vector_is_sent_once(embeds, monkeypatch) -> None:
+    sent: list[list[dict]] = []
+    monkeypatch.setattr(cache_blob, "upload_rows", lambda kind, rows: sent.append(rows) or True)
+    embeds.put_many("m1", [("hello", [0.1, 0.2])])
+    assert cache_blob.mirror_embed() is True
+    assert cache_blob.mirror_embed() is False, "a warm worker re-sent every earlier compile's vectors"
+    embeds.put_many("m1", [("world", [0.3, 0.4])])
+    cache_blob.mirror_embed()
+    assert len(sent) == 2 and len(sent[-1]) == 1

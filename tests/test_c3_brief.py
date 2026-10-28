@@ -400,3 +400,47 @@ def test_the_rubric_judge_is_off_by_default(monkeypatch):
     reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.6]}}
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
     assert "judge" not in b["sections"]["scope_of_work"][0]
+
+
+def test_the_writer_checks_run_side_by_side_and_end_as_one_after_another(monkeypatch):
+    """verify -> cover beside facts-answer -> deal-answered (compile speed, 2026-10-28):
+    each chain keeps its order and neither reads what the other writes, so the brief
+    ends as it did when the four ran one after another."""
+    import threading
+
+    B = c3_brief
+    brief = {"service": {"value": "x"},
+             "sections": {"scope_of_work": [{"id": "atm_a1", "text": "Move the APs, ceiling is 12 ft"}]},
+             "figures": [{"id": "atm_f1", "text": "3 Aruba APs are marked."}],
+             "written": {"summary": "Move APs.",
+                         "sections": {"scope": [{"text": "Move the APs.", "cites": ["atm_a1"]},
+                                                {"text": "Invented.", "cites": ["atm_a1"]}]},
+                         "open_questions": [{"question": "What is the ceiling height?", "kind": "pricing"},
+                                            {"question": "Who has the lift?", "kind": "deal"}]}}
+    order: list[str] = []
+    threads: set[str] = set()
+
+    def fake(p, m, t):
+        threads.add(threading.current_thread().name)
+        if "numbered sentence" in p:
+            order.append("verify")
+            return '{"supported": [0]}'
+        if "does NOT already state" in p:
+            order.append("cover")
+            return '{"add": [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]}]}'
+        if '"p0"' in p:
+            order.append("facts")
+            return '{"answered": ["p0"]}'
+        order.append("ask")
+        return '{"answered": []}'
+
+    monkeypatch.setattr(B, "_complete", fake)
+    monkeypatch.setattr(B, "_attach_evidence", lambda probe, atoms: None)
+    B._check_written(brief, [])
+    w = brief["written"]
+    assert [x["text"] for x in w["sections"]["scope"]] == ["Move the APs."]
+    assert [x["text"] for x in w["sections"]["job_details"]] == ["There are 3 Aruba APs."]
+    assert [q["question"] for q in w["pricing_answered_in_deal"]] == ["What is the ceiling height?"]
+    assert [q["question"] for q in w["open_questions"]] == ["Who has the lift?"]
+    assert order.index("verify") < order.index("cover") and order.index("facts") < order.index("ask")
+    assert len(threads) >= 2, "the two chains ran on one thread"

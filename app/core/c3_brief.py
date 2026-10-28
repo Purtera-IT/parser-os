@@ -1191,22 +1191,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
         except Exception as exc:
             brief["written"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         w = brief.get("written")
-        try:
-            _verify_written(brief)
-        except Exception as exc:  # pragma: no cover
-            log.info("C3 brief verify pass skipped: %s", type(exc).__name__)
-        try:
-            _cover_missing_facts(brief)
-        except Exception as exc:  # pragma: no cover
-            log.info("C3 brief coverage pass skipped: %s", type(exc).__name__)
-        try:
-            _drop_questions_the_facts_answer(brief)
-        except Exception as exc:  # pragma: no cover
-            log.info("C3 brief pricing-question check skipped: %s", type(exc).__name__)
-        try:
-            _drop_answered_open_questions(brief, atoms)
-        except Exception as exc:  # pragma: no cover - a check never costs the brief
-            log.info("C3 brief open-question check skipped: %s", type(exc).__name__)
+        _check_written(brief, atoms)
         if isinstance(w, dict) and isinstance(w.get("sections"), dict):
             secs = w["sections"]
             written_details = w["sections"].get("job_details") or _write_job_details(brief, details)
@@ -1227,6 +1212,43 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
             if brief["contacts"]:
                 w["sections"]["contacts"] = [{"text": c["line"], "cites": c["cites"]} for c in brief["contacts"]]
     return brief
+
+
+def _check_written(brief: dict[str, Any], atoms: list[Any]) -> None:
+    """The writer's checks, as two chains that run side by side: the sentences
+    (verify, then cover what the verified brief left out) and the open questions
+    (the pricing ones the facts answer, then the ones the deal answers). Each
+    chain is in its old order; neither reads what the other writes (sentences
+    live in ``written.sections``, questions in ``written.open_questions``), so
+    the brief is the same as running all four one after another -- which put
+    four or more LLM round trips end to end on every compile."""
+
+    def _sentences() -> None:
+        try:
+            _verify_written(brief)
+        except Exception as exc:  # pragma: no cover
+            log.info("C3 brief verify pass skipped: %s", type(exc).__name__)
+        try:
+            _cover_missing_facts(brief)
+        except Exception as exc:  # pragma: no cover
+            log.info("C3 brief coverage pass skipped: %s", type(exc).__name__)
+
+    def _questions() -> None:
+        try:
+            _drop_questions_the_facts_answer(brief)
+        except Exception as exc:  # pragma: no cover
+            log.info("C3 brief pricing-question check skipped: %s", type(exc).__name__)
+        try:
+            _drop_answered_open_questions(brief, atoms)
+        except Exception as exc:  # pragma: no cover - a check never costs the brief
+            log.info("C3 brief open-question check skipped: %s", type(exc).__name__)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="c3-brief-check") as pool:
+        jobs = [pool.submit(_sentences), pool.submit(_questions)]
+        for job in jobs:
+            job.result()
 
 
 _DETAILS_PROMPT = (
@@ -1409,11 +1431,19 @@ def _drop_answered_open_questions(brief: dict[str, Any], atoms: list[Any]) -> in
     _attach_evidence(probe, atoms)
     service = _service_for_writer(brief)
     answered: dict[str, list[str]] = {}
-    for b in range(0, len(probe), ASK_BATCH):
-        batch = probe[b:b + ASK_BATCH]
-        raw = _complete(_ASK_PROMPT % (service, json.dumps(
+    batches = [probe[b:b + ASK_BATCH] for b in range(0, len(probe), ASK_BATCH)]
+
+    def _ask(batch: list[dict[str, Any]]) -> str:
+        return _complete(_ASK_PROMPT % (service, json.dumps(
             [{"id": q["id"], "q": q["text"], "lines": [f"[{e['id']}] {e['text']}" for e in q.get("evidence") or []]}
              for q in batch])), None, 600)
+
+    # The batches are independent calls: asked together, read back in batch order.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=max(1, len(batches)), thread_name_prefix="c3-brief-ask") as pool:
+        raws = list(pool.map(_ask, batches))
+    for batch, raw in zip(batches, raws):
         got = _json_of(raw) or {}
         seen = {e["id"] for q in batch for e in q.get("evidence") or []}
         for c in got.get("answered") or []:

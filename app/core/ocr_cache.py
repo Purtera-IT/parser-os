@@ -90,6 +90,13 @@ class OcrCache:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(_SCHEMA)
         self._conn.commit()
+        #: Keys this process READ (``put``), not restored (``put_raw``): the only
+        #: rows the blob mirror carries. Exporting the whole file instead made
+        #: every compile re-upload the boot cache, so dev's mirror held ~2.8M
+        #: rows for ~2.6k pictures (1,170 batches, 641 MB, 2026-10-28) and every
+        #: new container spent ~3 minutes merging them while its OCR lookups
+        #: waited (parse_prefetch 200 s on 010447).
+        self._fresh: set[str] = set()
 
     def get(self, image_bytes: bytes) -> dict[str, Any] | None:
         try:
@@ -133,12 +140,13 @@ class OcrCache:
         # the image; everything else the chain chose to return is kept.
         extra = {k: v for k, v in result.items()
                  if k not in {"text", "backend", "confidence", "notes"}}
+        key = _key(image_bytes)
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO ocr (key, text, backend, confidence, extra) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (
-                    _key(image_bytes),
+                    key,
                     result.get("text") or "",
                     str(result.get("backend") or ""),
                     float(result.get("confidence") or 0.0),
@@ -146,6 +154,30 @@ class OcrCache:
                 ),
             )
             self._conn.commit()
+            self._fresh.add(key)
+
+    def export_fresh_rows(self, limit: int = 5000) -> list[dict[str, Any]]:
+        """The reads this process paid for (``put``), as mirror rows. A restore
+        (``put_raw``) is never fresh, or the next compile would re-upload exactly
+        what it just downloaded."""
+        with self._lock:
+            keys = list(self._fresh)[:int(limit)]
+            rows: list[tuple] = []
+            for start in range(0, len(keys), 500):
+                chunk = keys[start:start + 500]
+                ph = ",".join("?" * len(chunk))
+                rows += self._conn.execute(
+                    f"SELECT key, text, backend, confidence, extra FROM ocr WHERE key IN ({ph})",
+                    chunk).fetchall()
+        return [
+            {"key": k, "text": t, "backend": b, "confidence": c, "extra": e}
+            for (k, t, b, c, e) in rows
+        ]
+
+    def mark_mirrored(self, keys: list[str]) -> None:
+        """These fresh rows reached the mirror: the next compile does not send them again."""
+        with self._lock:
+            self._fresh.difference_update(keys)
 
     def export_rows(self, limit: int = 5000) -> list[dict[str, Any]]:
         """This container's reads, as rows the blob mirror can carry.
@@ -188,6 +220,35 @@ class OcrCache:
                 (str(key), text, str(backend or ""), float(confidence or 0.0), extra),
             )
             self._conn.commit()
+
+    def put_raw_many(self, rows: list[dict[str, Any]]) -> int:
+        """``put_raw`` for a whole mirrored batch, in one transaction and in
+        order (a later row for the same key wins, as one ``put_raw`` after
+        another). Returns the rows written; an empty read is never stored."""
+        values: list[tuple] = []
+        for row in rows:
+            key, text = str(row.get("key") or ""), row.get("text") or ""
+            if not key or not str(text).strip():
+                continue
+            extra = row.get("extra")
+            if extra is not None and not isinstance(extra, str):
+                try:
+                    extra = json.dumps(extra, ensure_ascii=False)
+                except Exception:
+                    extra = None
+            try:
+                values.append((key, str(text), str(row.get("backend") or ""),
+                               float(row.get("confidence") or 0.0), extra))
+            except Exception:
+                continue
+        if not values:
+            return 0
+        with self._lock:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO ocr (key, text, backend, confidence, extra) "
+                "VALUES (?, ?, ?, ?, ?)", values)
+            self._conn.commit()
+        return len(values)
 
     def count(self) -> int:
         with self._lock:
