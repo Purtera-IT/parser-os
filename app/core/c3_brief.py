@@ -227,6 +227,72 @@ def _attach_evidence(questions: list[dict[str, Any]], atoms: list[Any]) -> None:
         q["evidence"] = ev
 
 
+def _answer(v: Any) -> tuple[str, float]:
+    """``(answer, p)`` from one read entry. A set-valued head (read:needed_by) is served as
+    ``[[answers over 0.5], {answer: p}]``: its surest answer, or ``_absent`` when none is over 0.5
+    (the entry used to be read as the string "['project_manager']")."""
+    if not v or v[0] is None:
+        return ("_absent", 0.0)
+    if isinstance(v[0], (list, tuple)):
+        ps = v[1] if len(v) > 1 and isinstance(v[1], dict) else {}
+        names = [str(x) for x in v[0]]
+        if not names:
+            return ("_absent", 0.0)
+        best = max(names, key=lambda n: float(ps.get(n) or 0.0))
+        return (best, float(ps.get(best) or 0.0))
+    return (str(v[0]), float(v[1] or 0.0))
+
+
+def _answered(reads: dict[str, dict[str, list]], links: list[dict[str, Any]], deal: dict[str, list]) -> dict[str, bool]:
+    """Which brief heads this compile's read actually answered on at least one line (or the deal)."""
+    got: set[str] = set()
+    for heads in (reads or {}).values():
+        got.update(k for k, v in (heads or {}).items() if v and v[0] is not None)
+    out = {k: k in got for k in ("read:co_action", "read:co_reason", "read:noise_class", "read:sow_section",
+                                 "col:wants", "read:intake_gap", "read:needed_by")}
+    sv = (deal or {}).get("deal:primary_service")
+    out["deal:primary_service"] = bool(sv) and sv[0] not in (None, "_absent")
+    out["rel:contradicts"] = any(ln.get("relation") == "contradicts" for ln in links or [])
+    return out
+
+
+#: Brief parts no head answers today: always a rule (or the CRM), said so in ``decided_by.no_head``.
+NO_HEAD_PARTS = {
+    "job_details": "rule: job_details() picks the lines to list by type (no head chooses them)",
+    "contacts": "rule: contacts() reads names, roles, emails and phones off signature and header lines",
+    "deal": "CRM record (deal and account name)",
+    "figures": "rule: priced lines by type",
+}
+
+
+def _part(key: str, used: bool, answered: bool, view: Any, have_reads: bool) -> dict[str, str]:
+    """How one brief part was decided, and why a head did not decide it."""
+    if used:
+        return {"by": "head", "why": "trusted head answered"}
+    if not have_reads:
+        return {"by": "rule", "why": "no base read this compile"}
+    try:
+        from c3_record.view import heads as _view_heads, name as _view_name
+
+        v = _view_name(view)
+        served = bool(_view_heads(v, [key])) if v else True
+    except Exception:
+        v, served = "", True
+    if not served:
+        return {"by": "rule", "why": f"not served in the {v} view (c3_record/view.py masks it, server side)"}
+    if not answered:
+        return {"by": "rule", "why": ("no contradicts link in the read" if key.startswith("rel:")
+                                      else "served, but no answer on any line")}
+    try:
+        from c3_record.heads import head as _head
+
+        h = _head(key) or {}
+    except Exception:
+        h = {}
+    return {"by": "rule", "why": f"registry status {h.get('status') or 'missing'} "
+                                 f"(c3_record/heads.json holdout {h.get('holdout')})"}
+
+
 def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | None = None,
           readings: dict[str, Any] | None = None) -> dict[str, Any]:
     """The structured brief: no LLM. ``readings`` is the compile's full read
@@ -240,14 +306,22 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
     by_id = {str(a.id): a for a in atoms}
 
     def r(atom_id: str, head: str) -> tuple[str, float]:
-        v = (reads.get(atom_id) or {}).get(head)
-        return (str(v[0]), float(v[1] or 0.0)) if v and v[0] is not None else ("_absent", 0.0)
+        return _answer((reads.get(atom_id) or {}).get(head))
 
     use = {k: have_reads and _trusted(k) for k in (
         "read:co_action", "read:co_reason", "read:noise_class", "read:sow_section", "col:wants",
         "read:intake_gap", "read:needed_by")}
     use["deal:primary_service"] = bool(deal) and _trusted("deal:primary_service")
     use["rel:contradicts"] = bool(links) and _trusted("rel:contradicts")
+    # A head the registry trusts still decides nothing when this read never
+    # answered it: the planning view does not serve the SOW / quote heads
+    # (read:sow_section, read:intake_gap, deal:*) and the quoting view not the
+    # PM heads (read:needed_by, read:task_owner_role). Until 10-28 those parts
+    # were counted as head-decided while every line fell to the rule.
+    answered = _answered(reads, links, deal)
+    for k in list(use):
+        use[k] = use[k] and answered.get(k, False)
+    parts = {k: _part(k, use[k], answered.get(k, False), readings.get("view"), have_reads) for k in use}
 
     # ---- keep / left out
     # co_action decides. noise_class and co_reason only say WHY a line was
@@ -397,6 +471,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
     if svc and svc[0] not in (None, "_absent") and (
             (use["deal:primary_service"] and float(svc[1] or 0) >= SERVICE_BAR) or no_rule):
         service = {"value": svc[0], "p": round(float(svc[1] or 0), 3), "by": _by("deal:primary_service")}
+        if not use["deal:primary_service"]:
+            # The pack rule names no service (default_pack), so the head's answer stands even
+            # untrusted: it decided this part, unsure, and is counted as the head's.
+            parts["deal:primary_service"] = {"by": "head", "why": "untrusted head answered; the rule names no "
+                                             "service (default_pack) - " + parts["deal:primary_service"]["why"]}
     else:
         service = {"value": service_fallback, "by": "rule:domain_pack",
                    "base_says": (deal.get("deal:primary_service") or [None])[0]}
@@ -525,8 +604,12 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                                             if str(x.get("by") or "").startswith(("base:", "purtera:"))
                                             and x["id"] not in unsure_ids)},
         "decided_by": {
-            "heads_used": sorted(k for k, v in use.items() if v),
-            "fell_back": sorted(k for k, v in use.items() if not v),
+            "heads_used": sorted(k for k, v in parts.items() if v["by"] == "head"),
+            "fell_back": sorted(k for k, v in parts.items() if v["by"] != "head"),
+            # Each part: who decided it and, for a rule, why no head did.
+            "parts": parts,
+            "no_head": dict(NO_HEAD_PARTS),
+            "view": readings.get("view") or "",
             "base_read": have_reads,
             "keep": dict(why),
         },

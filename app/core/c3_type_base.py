@@ -150,6 +150,23 @@ def enabled() -> bool:
     return mode() != "off"
 
 
+#: Stages whose old LLM decision path may run again beside the heads
+#: (``SOWSMITH_LLM_WITH_HEADS=typing_untaken,entity_dedup,site_catalog,site_role,geo_mention``).
+LLM_WITH_HEADS_STAGES = ("typing_untaken", "entity_dedup", "site_catalog", "site_role", "geo_mention")
+
+
+def heads_decide(stage: str) -> bool:
+    """True when the C3 heads are on (``SOWSMITH_C3_TYPE=on``) and ``stage``'s old LLM decision path is
+    not switched back on in ``SOWSMITH_LLM_WITH_HEADS``. The heads decide, the parser extracts, the LLM
+    only writes prose: with the heads on, a stage that used to ask the LLM what a line or a site is
+    takes the heads' answer (or the parser's own rule where no head answers) and makes no call.
+    With the heads off (prod today) every stage runs as before."""
+    if mode() != "on":
+        return False
+    back = {s.strip() for s in os.environ.get("SOWSMITH_LLM_WITH_HEADS", "").split(",") if s.strip()}
+    return stage not in back and "all" not in back
+
+
 def sure() -> float:
     try:
         return float(os.environ.get("SOWSMITH_C3_SURE", "0.7"))
