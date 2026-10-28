@@ -256,6 +256,7 @@ def get_model() -> tuple[Any, Any, str] | None:
                                reason=f"{type(exc).__name__}: {exc}"[:300])
                 log.warning("C3 type base not loaded (%s: %s); the layer abstains",
                             type(exc).__name__, exc)
+                note_failure("model load", _STATUS["state"], _STATUS["reason"])
             _STATUS["load_ms"] = round((time.monotonic() - started) * 1000, 1)
             _TRIED = True
     return _MODEL
@@ -698,6 +699,7 @@ def doc_kind_reads(deal_id: str, rows: list[dict[str, Any]]) -> dict[str, str]:
                     f"C3 doc-kind read failed ({type(exc).__name__}: {exc}"[:300] + "); SOWSMITH_C3_FALLBACK=never "
                     "does not let the compile's own kinds move the view cut") from exc
             log.warning("C3 document-kind read failed (%s); the compile's own kinds stand", type(exc).__name__)
+            note_failure("doc-kind read", "read_failed", f"{type(exc).__name__}: {exc}")
             raw = {}
         bar = _env_float("SOWSMITH_C3_DOC_KIND_BAR", 0.8)
         for d, heads in raw.items():
@@ -969,6 +971,7 @@ def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, 
     run's cutoff (manifest ``context.as_of``): a run with one is a quoting read, one without a planning
     read (``view_name``; ``SOWSMITH_C3_VIEW=0`` reads every line as before)."""
     _DEAL.clear()
+    _FAILURES.clear()
     _STATUS.pop("rules_yielded", None)
     _DEAL.update(documents=list(documents or []), sha=dict(artifact_sha256 or {}), types={}, docs={},
                  reads={}, links=[], deal={}, questions=[], also=[], tables={},
@@ -1212,6 +1215,22 @@ def _request(path: str, body: dict[str, Any] | None, timeout: float) -> dict[str
 
 # ------------------------------------------- SOWSMITH_C3_FALLBACK=never
 
+#: This compile's C3 failures on the default (llm) path: each is a read whose lines went to the
+#: LLM or the old judge instead of the heads. The compile turns them into a WARNING and a
+#: ``degraded`` compile state (compiler.py), never a silent "done".
+_FAILURES: list[dict[str, str]] = []
+
+
+def note_failure(where: str, state: str, reason: str) -> None:
+    if getattr(_SHADOW, "on", False):
+        return  # a shadow read decides nothing; its trouble degrades nothing
+    _FAILURES.append({"where": where, "state": str(state or ""), "reason": str(reason or "")[:300]})
+
+
+def failures() -> list[dict[str, str]]:
+    return [dict(f) for f in _FAILURES]
+
+
 class C3HeadsUnavailable(RuntimeError):
     """The heads could not answer and ``SOWSMITH_C3_FALLBACK=never`` forbids
     handing their lines to the LLM instead: the compile fails, saying why.
@@ -1367,6 +1386,9 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
         aid, text, kind = _text_type(a)
         if text.strip():
             rows.append({"id": aid, "text": text[:4000], "type": kind})
+    if not rows:
+        # Nothing to price: a deal with no evidence lines never gets an invented job.
+        return {}
     body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
                      "atoms": rows, "site_count": 0,
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
@@ -1483,11 +1505,13 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
                        read_ms=round((time.monotonic() - started) * 1000, 1))
         log.warning("C3 base service unreachable (%s); every atom goes to the LLM",
                     _STATUS["reason"])
+        note_failure("type read", "unreachable", _STATUS["reason"])
         return {}
     if not health.get("ready"):
         _STATUS.update(state="warming", remote=True, lines=len(rows),
                        reason=str(health.get("error") or "still loading")[:300],
                        read_ms=round((time.monotonic() - started) * 1000, 1))
+        note_failure("type read", "warming", _STATUS["reason"])
         return {}
     try:
         payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
@@ -1504,6 +1528,7 @@ def _remote(deal_id: str, rows: list[dict[str, Any]], keys: list[str], ids: list
                        read_ms=round((time.monotonic() - started) * 1000, 1))
         log.warning("C3 base service read failed (%s); every atom goes to the LLM",
                     _STATUS["reason"])
+        note_failure("type read", state, _STATUS["reason"])
         return {}
     return _remote_types(got, rows, keys, ids, started)
 
@@ -1546,6 +1571,7 @@ def _local(deal: Any, keys: list[str], ids: list[int]) -> dict[int, tuple[str, f
             raise C3HeadsUnavailable(f"C3 type read passed its {budget:g} s budget ({exc}); "
                                      "SOWSMITH_C3_FALLBACK=never fails the compile") from exc
         log.warning("C3 type base read stopped (%s); every atom goes to the LLM", exc)
+        note_failure("type read", "over_budget", str(exc))
         return {}
     except Exception as exc:
         _STATUS.update(state="read_failed", reason=f"{type(exc).__name__}: {exc}"[:300],
@@ -1553,6 +1579,7 @@ def _local(deal: Any, keys: list[str], ids: list[int]) -> dict[int, tuple[str, f
         if _never():
             raise C3HeadsUnavailable(f"C3 type read failed ({type(exc).__name__}: {exc}); "
                                      "SOWSMITH_C3_FALLBACK=never fails the compile") from exc
+        note_failure("type read", "read_failed", _STATUS["reason"])
         raise
     _STATUS.update(state="read", reason="", lines=len(ids),
                    read_ms=round((time.monotonic() - started) * 1000, 1))
@@ -2222,9 +2249,11 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             except Exception as exc:
                 _DOC_STATUS.update(state="unreachable", reason=f"{type(exc).__name__}"[:300],
                                    read_ms=round((time.monotonic() - started) * 1000, 1))
+                note_failure("document read", "unreachable", _DOC_STATUS["reason"])
                 return {}
             if not health.get("ready"):
                 _DOC_STATUS.update(state="warming", reason="", read_ms=0.0)
+                note_failure("document read", "warming", "")
                 return {}
             payload = {"deal_id": deal_id, "company": "purtera", "atoms": rows}
             body = _brief_body({"deal": payload, "budget_s": budget, "document_heads": list(keys)})
@@ -2263,6 +2292,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
                            reason=(f"HTTP {code}" if code else type(exc).__name__)[:300],
                            read_ms=round((time.monotonic() - started) * 1000, 1))
         log.warning("C3 document read failed (%s); the judge decides as before", _DOC_STATUS["reason"])
+        note_failure("document read", _DOC_STATUS["state"], _DOC_STATUS["reason"])
         return {}
     out: dict[str, dict[str, tuple[str, float]]] = {}
     for d, heads in raw.items():

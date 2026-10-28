@@ -380,8 +380,16 @@ def _prefetch_parses(
     with ThreadPoolExecutor(max_workers=min(workers, len(plan)),
                             thread_name_prefix="parse") as pool:
         futures = {pool.submit(_one, aid, p, path): aid for aid, p, path in plan}
+        _done = 0
         for fut in as_completed(futures):
             aid = futures[fut]
+            _done += 1
+            try:
+                from app.core import telemetry as _tel_p
+
+                _tel_p.set_stage_progress(_done, len(plan))
+            except Exception:
+                pass
             try:
                 out[aid] = fut.result()
             except Exception:  # noqa: BLE001 - the loop will retry inline and report
@@ -935,44 +943,48 @@ def compile_project(
     # just finds the parse already done. Anything missed here it computes
     # inline, so the worst case is the behaviour this replaced.
     _prefetched: dict[str, Any] = {}
+    # The prefetch IS the parse (38-550 s on dev; parse_artifacts then reads it in under 2 s): its
+    # own stage, so the trace times it and the heartbeat names it.
     if PARSE_WORKERS > 1 and len(artifacts) > 1:
-        _plan: list[tuple[str, Any, Any]] = []
-        for _art in artifacts:
-            try:
-                _rel = str(_art.relative_to(project_dir)).replace("\\", "/")
-                _aid = stable_id("art", resolved_project_id, _rel)
-                _p, _m, _ = choose_parser(_art, domain_pack=resolved_domain_pack)
-                if _p is None:
-                    continue
-                # Skip what the cache already holds. Without this a warm
-                # re-compile would parse every artifact concurrently and then
-                # throw all of it away, which is slower than the sequential
-                # path it replaced -- the prefetch has to respect the same
-                # cache the loop consults, or it is not an optimisation.
-                if use_cache:
-                    _pv = f"{_p.capability.parser_version}+code{_parser_code_fingerprint()}"
-                    if load_cached_artifact_result(
-                        artifact_id=_aid,
-                        sha256=compute_artifact_sha256(_art),
-                        parser_name=_m.parser_name,
-                        parser_version=_pv,
-                        domain_pack_id=resolved_domain_pack.pack_id,
-                        domain_pack_version=resolved_domain_pack.version,
-                    ) is not None:
+        with telemetry.stage("parse_prefetch", input_count=len(artifacts)) as _pstage:
+            _plan: list[tuple[str, Any, Any]] = []
+            for _art in artifacts:
+                try:
+                    _rel = str(_art.relative_to(project_dir)).replace("\\", "/")
+                    _aid = stable_id("art", resolved_project_id, _rel)
+                    _p, _m, _ = choose_parser(_art, domain_pack=resolved_domain_pack)
+                    if _p is None:
                         continue
-                _plan.append((_aid, _p, _art))
-            except Exception:  # noqa: BLE001 - planning must not break the compile
-                continue
-        if _plan:
-            try:
-                _prefetched = _prefetch_parses(
-                    _plan, project_id=resolved_project_id,
-                    domain_pack=resolved_domain_pack, workers=PARSE_WORKERS,
-                )
-            except Exception:  # noqa: BLE001 - fall back to the sequential path
-                logging.getLogger(__name__).warning(
-                    "parse prefetch unavailable; parsing inline", exc_info=True)
-                _prefetched = {}
+                    # Skip what the cache already holds. Without this a warm
+                    # re-compile would parse every artifact concurrently and then
+                    # throw all of it away, which is slower than the sequential
+                    # path it replaced -- the prefetch has to respect the same
+                    # cache the loop consults, or it is not an optimisation.
+                    if use_cache:
+                        _pv = f"{_p.capability.parser_version}+code{_parser_code_fingerprint()}"
+                        if load_cached_artifact_result(
+                            artifact_id=_aid,
+                            sha256=compute_artifact_sha256(_art),
+                            parser_name=_m.parser_name,
+                            parser_version=_pv,
+                            domain_pack_id=resolved_domain_pack.pack_id,
+                            domain_pack_version=resolved_domain_pack.version,
+                        ) is not None:
+                            continue
+                    _plan.append((_aid, _p, _art))
+                except Exception:  # noqa: BLE001 - planning must not break the compile
+                    continue
+            if _plan:
+                try:
+                    _prefetched = _prefetch_parses(
+                        _plan, project_id=resolved_project_id,
+                        domain_pack=resolved_domain_pack, workers=PARSE_WORKERS,
+                    )
+                except Exception:  # noqa: BLE001 - fall back to the sequential path
+                    logging.getLogger(__name__).warning(
+                        "parse prefetch unavailable; parsing inline", exc_info=True)
+                    _prefetched = {}
+            telemetry.end_stage(_pstage, output_count=len(_prefetched))
 
     with telemetry.stage("parse_artifacts", input_count=len(artifacts)) as stage:
         # The longest stage in 23% of compiles. It already NAMES the file it is
@@ -2109,7 +2121,9 @@ def compile_project(
     # admission 1,103 s, open questions 120 s, bom_owner 323 s; 655 s the night
     # before, when the store happened to be ready).
     try:
-        if True:
+        from app.core.decide import lesson_lookup_enabled as _lessons_on
+
+        if _lessons_on():
             from app.core.embedding_retrieval import embed_texts as _warm_embed
 
             _t_warm = time.perf_counter()
@@ -3736,6 +3750,29 @@ def compile_project(
     except Exception as exc:
         warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
 
+    # A heads read that failed on the default (llm) path sent its lines to the LLM: say so loudly,
+    # and mark the compile degraded (compile_capabilities.compile_state), never a silent "done".
+    # (SOWSMITH_C3_FALLBACK=never raises instead.)
+    _c3_failures: list[dict[str, str]] = []
+    try:
+        from app.core import c3_type_base as _c3_fail
+
+        _c3_failures = _c3_fail.failures()
+        for _f in _c3_failures:
+            warnings.append(f"WARNING: C3 heads unavailable: {_f['where']} {_f['state']}"
+                            f"{' (' + _f['reason'] + ')' if _f['reason'] else ''}; its lines went to the "
+                            "LLM / old judge instead of the heads")
+        if _c3_failures:
+            print(json.dumps({"event": "c3_heads_unavailable", "project_id": str(resolved_project_id or ""),
+                              "failures": _c3_failures}, ensure_ascii=True), file=__import__("sys").stderr)
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 failure check failed: {type(exc).__name__}: {exc}")
+    # A compile with no evidence line (e.g. its only file failed to parse) is a failed compile, and
+    # nothing downstream may price or brief a job from it.
+    _evidence_n = sum(1 for _a in atoms if str(getattr(_a, "raw_text", "") or "").strip())
+    if not _evidence_n:
+        warnings.append("ERROR: the compile produced 0 evidence atoms; recorded as failed")
+
     # Brief v2: the super heads decide what the brief says, rules where a head
     # is not yet trusted (c3_brief.py). Off unless SOWSMITH_C3_BRIEF is on.
     _c3_brief = None
@@ -3780,8 +3817,10 @@ def compile_project(
         try:
             from app.core import c3_type_base as _c3q
 
-            if _c3q.quote_enabled():
-                with telemetry.stage("c3_quote", input_count=len(atoms)):
+            if _c3q.quote_enabled() and not _evidence_n:
+                warnings.append("WARNING: quote heads skipped: the compile has no evidence atoms to price")
+            elif _c3q.quote_enabled():
+                with telemetry.stage("c3_quote", input_count=len(atoms)) as _qstage:
                     if "thread" in _quote_job:
                         _quote_job["thread"].join()
                         if "error" in _quote_job:
@@ -3789,6 +3828,9 @@ def compile_project(
                         _q = _quote_job.get("result") or {}
                     else:
                         _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
+                    # Ends the stage: without it the heartbeat reported c3_quote running for minutes
+                    # after the compile finished.
+                    telemetry.end_stage(_qstage, output_count=len((_q or {}).get("lines") or []))
                 if _q:
                     _c3_brief["quote"] = _q
                     warnings.append(f"INFO: quote heads: {_q.get('job_type')} {len(_q.get('lines') or [])} line(s)")
@@ -4020,6 +4062,13 @@ def compile_project(
         from app.core.ml_capabilities import build_compile_capabilities
 
         result.compile_capabilities = build_compile_capabilities()
+        # failed: no evidence atoms; degraded: a heads read fell back to the LLM. The worker reads
+        # this to record the compile's status instead of "done".
+        result.compile_capabilities["compile_state"] = (
+            "failed" if not _evidence_n else "degraded" if _c3_failures else "ok")
+        result.compile_capabilities["c3_ok"] = not _c3_failures
+        if _c3_failures:
+            result.compile_capabilities["c3_failures"] = _c3_failures
         try:
             from app.core import telemetry as _tel_calls
 

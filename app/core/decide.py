@@ -121,6 +121,12 @@ def set_store(store: FeedbackStore | None) -> None:
     _STORE = store
 
 
+def lesson_lookup_enabled() -> bool:
+    """``SOWSMITH_LESSON_LOOKUP`` (default off): decide() asks the lessons store first, and the
+    compile warms an embedding of every line for those lookups."""
+    return os.environ.get("SOWSMITH_LESSON_LOOKUP", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def get_store() -> FeedbackStore | None:
     return _STORE
 
@@ -236,8 +242,12 @@ def decide(
 
     _STATS["decisions"] += 1
 
-    # 1) STORE — a confident learned correction decides instantly (Phase 3).
-    store = _STORE
+    # 1) STORE — a confident learned correction decides instantly (Phase 3). Off unless
+    # SOWSMITH_LESSON_LOOKUP is on: ~23k lookups over 37 dev compiles hit 0 times, each one an
+    # embedding; the C3 heads decide these relations now. PM corrections are still captured.
+    store = _STORE if lesson_lookup_enabled() else None
+    if store is None and _STORE is not None:
+        _STATS["store_skipped"] = _STATS.get("store_skipped", 0) + 1
     if store is not None:
         try:
             kwargs = {"exclude_created_by": tuple(exclude_created_by)} if exclude_created_by else {}
