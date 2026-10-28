@@ -31,5 +31,7 @@ export SOWSMITH_C3_ENCODER="$DST/c3_base/encoder"
 [[ -f "$DST/c3_base/question_refit.pt" ]] && export SOWSMITH_C3_QUESTION_REFIT="$DST/c3_base/question_refit.pt"
 [[ -f "$DST/c3_base/quote_heads_bundle.json" ]] && export SOWSMITH_C3_QUOTE_HEADS="$DST/c3_base/quote_heads_bundle.json"
 export PYTHONPATH="$DST/c3_base/code:${PYTHONPATH:-}"
+# Fewer fragmentation OOMs on long deals (serve.py sets the same default if this is missing).
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 cd "$DST/c3_base/code"
 exec python -m ml.c3.serve --port "${PORT:-8765}"

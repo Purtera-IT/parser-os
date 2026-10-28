@@ -14,6 +14,7 @@ COPY start.sh /start.sh
 # (16 GB holds C3 + the embedding model, not a 14B wording model); the task line falls back.
 ENV PORT=8765 SOWSMITH_C3_DEVICE=cuda SOWSMITH_C3_MIN_FREE_MB=0 C3_HALF_DTYPE=fp16 \
     OLLAMA_URL=http://127.0.0.1:11434 OLLAMA_HOST=127.0.0.1:11434 SOWSMITH_C3_QUOTE_WORDING=off \
-    C3_EMBED_MODEL=qwen3-embedding:8b
+    C3_EMBED_MODEL=qwen3-embedding:8b \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 EXPOSE 8765
 CMD ["bash", "/start.sh"]
