@@ -63,7 +63,20 @@ BASE_TYPE_BAR = 0.5
 #: customer's own order (010043: the CDW order confirmation for the cameras the
 #: customer bought), not this job's fees.
 SUPPLIER_BAR = 0.6
+#: The head that decides whether a line is in the brief at all. col:admission
+#: (test A, 2026-10-28: held-out 0.726 vs live 0.530) answers "is this a fact
+#: of the deal"; read:co_action keeps only its company-action meaning (we
+#: drop / ignore a real fact). Before 10-28 co_action alone decided, and it
+#: was never taught that chatter is not kept: 412 parser-rejected chatter lines
+#: came back on 010394. SOWSMITH_C3_KEEP_HEAD=read:co_action restores that.
+KEEP_HEAD = os.environ.get("SOWSMITH_C3_KEEP_HEAD", "col:admission").strip() or "col:admission"
+#: The type head's small_talk at or above this is final: no other head keeps the line.
+SMALL_TALK_BAR = float(os.environ.get("SOWSMITH_C3_SMALL_TALK_BAR", "0.8"))
+#: co_action reject / ignore at or above this drops a line admission kept (a company action).
+COMPANY_DROP_BAR = 0.5
 MAX_FACTS_PER_SECTION = 25
+#: "Also mentioned" lines carried with their text (the rest are listed by id).
+ALSO_MENTIONED_SHOWN = int(os.environ.get("SOWSMITH_C3_ALSO_MENTIONED_SHOWN", "300"))
 MAX_LABEL_TASKS = 40
 
 #: Fallback section by line type, the order a SOW reads in.
@@ -98,8 +111,30 @@ _PLACEHOLDER = re.compile(r"\s*\[(image|figure|table|chart|drawing|embedded obje
 QUESTION_WANTS = ("chase-artifact", "chase-conversation", "confirm-with-customer", "decide-internally")
 
 
+#: Lines a vision model read off a picture (its description, a caption, OCR'd
+#: logo text): what the parser made of a picture, not a line a document has.
+_VISION_VIA = frozenset({"pdf_image_vision", "linked_picture_vision"})
+_VISION_METHODS = ("pdf_image_vision", "docx_image_vision", "linked_picture_vision")
+
+
+def _vision(atom: Any) -> bool:
+    v = getattr(atom, "value", None)
+    if isinstance(v, dict) and (v.get("via") in _VISION_VIA or v.get("kind") == "image_fact"):
+        return True
+    for ref in getattr(atom, "source_refs", None) or []:
+        m = getattr(ref, "extraction_method", None) or (ref.get("extraction_method") if isinstance(ref, dict) else "")
+        if str(m or "").startswith(_VISION_METHODS):
+            return True
+    return False
+
+
 def _derived(atom: Any) -> bool:
-    """A line the parser made up from other lines, not one a document has."""
+    """A line the parser made up from other lines (or read off a picture), not one a document has.
+    Picture readings go through this guard like every other parser-made line (010309: 24 readings of a
+    vendor's install guide, "The image shows ...", were kept in scope and out of scope); the brief
+    hands them to the writer as figures instead."""
+    if _vision(atom):
+        return True
     try:
         for ref in getattr(atom, "source_refs", None) or []:
             loc = getattr(ref, "locator", None) or (ref.get("locator") if isinstance(ref, dict) else None)
@@ -249,7 +284,7 @@ def _answered(reads: dict[str, dict[str, list]], links: list[dict[str, Any]], de
     for heads in (reads or {}).values():
         got.update(k for k, v in (heads or {}).items() if v and v[0] is not None)
     out = {k: k in got for k in ("read:co_action", "read:co_reason", "read:noise_class", "read:sow_section",
-                                 "col:wants", "read:intake_gap", "read:needed_by")}
+                                 "col:wants", "read:intake_gap", "read:needed_by", "col:admission")}
     sv = (deal or {}).get("deal:primary_service")
     out["deal:primary_service"] = bool(sv) and sv[0] not in (None, "_absent")
     out["rel:contradicts"] = any(ln.get("relation") == "contradicts" for ln in links or [])
@@ -321,6 +356,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
     answered = _answered(reads, links, deal)
     for k in list(use):
         use[k] = use[k] and answered.get(k, False)
+    # The keep head decides when this read answered it (the registry has no
+    # labeled bar for it yet; test A measured it, see KEEP_HEAD).
+    use["col:admission"] = have_reads and KEEP_HEAD == "col:admission" and answered.get("col:admission", False)
     parts = {k: _part(k, use[k], answered.get(k, False), readings.get("view"), have_reads) for k in use}
 
     # ---- keep / left out
@@ -358,15 +396,28 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # on 010038 two such lines became "a site survey is pending" on a job
         # already done. Labeled co_action ignore / parser_derived.
         if _derived(a):
-            left_out.append({"id": aid, "reason": "parser_derived", "by": "rule:derived"})
-            why["rule:derived"] += 1
+            pic = _vision(a)
+            left_out.append({"id": aid, "reason": "picture_reading" if pic else "parser_derived",
+                             "by": "rule:derived"})
+            why["rule:picture" if pic else "rule:derived"] += 1
             continue
         act, p = r(aid, "read:co_action") if use["read:co_action"] else ("_absent", 0.0)
-        # small_talk is a type, not a keep decision: when co_action keeps the
-        # line it stays (in the body at KEEP_BAR, else "also mentioned").
-        # 010426's only date, "the three weeks after Thanksgiving", read
-        # small_talk 0.80 / keep 0.64 and was dropped outright.
-        if status == "rejected" or (t in NEVER and not (t == "small_talk" and act == "keep" and p >= MAYBE_BAR)):
+        adm, pa = r(aid, "col:admission") if use["col:admission"] else ("_absent", 0.0)
+        # One head per decision. The type head's sure small_talk is the type
+        # head's answer: no keep head brings the line back (010394 "You're on
+        # mute, buddy." small_talk 0.99 was kept by co_action 0.957).
+        bt, pb = _base_type(aid)
+        if bt == "small_talk" and pb >= SMALL_TALK_BAR:
+            left_out.append({"id": aid, "reason": "small_talk", "by": "base:col:label_type", "p": round(pb, 3)})
+            why["type_head:small_talk"] += 1
+            continue
+        keep_act, keep_p, keep_key = (("keep" if adm == "keep" else "reject"), pa, "col:admission") \
+            if adm in ("keep", "drop") else (act, p, "read:co_action")
+        # small_talk the parser typed (the type head unsure) is a type, not a
+        # keep decision: when the keep head keeps the line it stays. 010426's
+        # only date, "the three weeks after Thanksgiving", read small_talk 0.80
+        # / keep 0.64 and was dropped outright.
+        if status == "rejected" or (t in NEVER and not (t == "small_talk" and keep_act == "keep" and keep_p >= MAYBE_BAR)):
             left_out.append({"id": aid, "reason": "rejected" if status == "rejected" else f"type {t}",
                              "by": "rule:type"})
             why["rule:never"] += 1
@@ -375,6 +426,31 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         if nb:
             left_out.append({"id": aid, "reason": f"base type {nb}", "by": "base:type"})
             why["base:type"] += 1
+            continue
+        if keep_key == "col:admission":
+            # Admission says it is a fact of the deal; co_action may still say
+            # the company drops or ignores it (its company-action meaning).
+            if keep_act == "keep" and act in ("reject", "ignore") and p >= COMPANY_DROP_BAR:
+                reason, rby = _reason(aid, act)
+                left_out.append({"id": aid, "reason": reason, "by": rby if rby != "rule" else _by("read:co_action"),
+                                 "p": round(p, 3), "admission": round(pa, 3)})
+                why["head:company_" + act] += 1
+                continue
+            if keep_act == "keep" and pa >= KEEP_BAR:
+                kept.append((a, pa, "base:col:admission"))
+                why["admission:keep"] += 1
+            elif keep_act == "keep" and pa >= MAYBE_BAR:
+                maybe.append((a, pa))
+                why["admission:maybe"] += 1
+            else:
+                left_out.append({"id": aid, "reason": "not_admitted", "by": "base:col:admission",
+                                 "p": round(pa, 3)})
+                why["admission:drop"] += 1
+                if keep_act == "keep":
+                    kept_unsure.append({"id": aid, "text": a.raw_text[:400], "p": round(pa, 3)})
+            if 0.3 <= pa < 0.7:
+                label_tasks.append({"id": aid, "head": "col:admission", "base_says": adm, "p": round(pa, 3),
+                                    "text": a.raw_text[:200]})
             continue
         if act != "_absent":
             if act == "keep" and p >= KEEP_BAR:
@@ -403,6 +479,13 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         else:
             left_out.append({"id": aid, "reason": f"type {t}", "by": "rule:type"})
             why["rule:drop"] += 1
+
+    # What the keep decision kept (body or "also mentioned") and who decided it.
+    kept_by_now = {str(a.id): by for a, _, by in kept}
+    kept_by_now.update({str(a.id): ("base:col:admission" if use["col:admission"] and r(str(a.id), "col:admission")[0]
+                                    in ("keep", "drop") else _by("read:co_action")) for a, _ in maybe})
+    kept_ids_now = set(kept_by_now)
+    no_keep_head = not (use["col:admission"] or use["read:co_action"])
 
     # ---- sections
     # jdg:sow_section (app/core/sow_rubric_judge.py): the placement rubric
@@ -539,10 +622,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                 hit = ("intake_gap", _by("read:intake_gap"))
         if not hit and _type(a) == "open_question":
             # Call chatter is typed open_question too ("can you meet us in
-            # Tampa?"): the line must also be one co_action keeps.
-            act, pa = r(aid, "read:co_action") if use["read:co_action"] else ("keep", 1.0)
-            if act == "keep" and pa >= MAYBE_BAR and not _deal_kit(a) and not _PLACEHOLDER.match(a.raw_text):
-                hit = ("open_question", "rule:type+" + _by("read:co_action") if use["read:co_action"] else "rule:type")
+            # Tampa?"): the line must also be one the keep head keeps.
+            if (aid in kept_ids_now or no_keep_head) and not _deal_kit(a) and not _PLACEHOLDER.match(a.raw_text):
+                hit = ("open_question", "rule:type+" + kept_by_now.get(aid, "rule:type"))
         # A question the base reads as already answered is not asked.
         if hit and _not_brief(a):
             hit = None
@@ -560,8 +642,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         if not ids or ids[0] in seen_q:
             continue
         a = by_id[ids[0]]
-        act, pa = r(ids[0], "read:co_action") if use["read:co_action"] else ("keep", 1.0)
-        if act != "keep" or pa < MAYBE_BAR or _deal_kit(a) or _PLACEHOLDER.match(a.raw_text) or _not_brief(a):
+        if (ids[0] not in kept_ids_now and not no_keep_head) or _deal_kit(a) or _PLACEHOLDER.match(a.raw_text) or _not_brief(a):
             continue
         seen_q.add(ids[0])
         # The packet's reason is boilerplate ("Open question from transcript
@@ -592,7 +673,12 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "service": service,
         "sections": dict(sections),
         "also_mentioned": [{"id": str(a.id), "text": a.raw_text[:200], "keep_p": round(p, 3), "when": _when_of(a)}
-                           for a, p in sorted(maybe, key=lambda x: -x[1])[:150]],
+                           for a, p in sorted(maybe, key=lambda x: -x[1])[:ALSO_MENTIONED_SHOWN]],
+        # Nothing the keep head kept vanishes: the cap above only bounds the
+        # text carried; every "also mentioned" line is counted and listed by id
+        # (010152: 591 lines, 441 cut without a trace).
+        "also_mentioned_total": len(maybe),
+        "also_mentioned_more_ids": [str(a.id) for a, _ in sorted(maybe, key=lambda x: -x[1])[ALSO_MENTIONED_SHOWN:]],
         "questions": questions,
         "conflicts": conflicts[:40],
         "kept_unsure": sorted(kept_unsure, key=lambda x: -x["p"])[:120],
@@ -614,6 +700,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             "view": readings.get("view") or "",
             "base_read": have_reads,
             "keep": dict(why),
+            # Which head decided whether a line is in the brief at all.
+            "keep_head": ("col:admission" if use["col:admission"] else
+                          "read:co_action" if use["read:co_action"] else "rule:type"),
         },
         "label_next": label_tasks[:MAX_LABEL_TASKS],
         "assemble_ms": round((time.monotonic() - started) * 1000, 1),
@@ -1232,7 +1321,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     for a in atoms:
         v = a.value if isinstance(getattr(a, "value", None), dict) else {}
         key = re.sub(r"\W+", " ", str(a.raw_text).lower()).strip()
-        if v.get("kind") == "image_fact" and str(a.id) not in kept_now and key not in seen_f:
+        if _vision(a) and str(a.id) not in kept_now and key not in seen_f:
             seen_f.add(key)
             figs.append({"id": str(a.id), "text": a.raw_text[:300], "when": _when_of(a)})
     brief["figures"] = figs[:24]
@@ -1259,11 +1348,13 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     if c3_type_base._DEAL.get("site_keys"):
         brief["site_keys"] = c3_type_base._DEAL["site_keys"]
     brief["contacts"] = contacts(atoms)
-    # Only lines the heads kept (body or "also mentioned"): picked by wording
-    # alone it put back lines co_action dropped -- 9 of 15 on 010038, among
-    # them "concrete" and the stale "if they have a scissor lift/ ladder".
-    kept_ids = {str(x["id"]) for v in (brief.get("sections") or {}).values() for x in v} | {
-        str(x["id"]) for x in brief.get("also_mentioned") or []}
+    # Only lines the heads kept in the body: picked by wording alone it put
+    # back lines co_action dropped -- 9 of 15 on 010038, among them "concrete"
+    # and the stale "if they have a scissor lift/ ladder". A line the keep
+    # head only half kept ("also mentioned") does not drive the job details or
+    # the quote either (010363: an optional site and "10 Site-to-Site IPsec
+    # VPN Tunnels" at keep 0.69 / 0.87 became the quote's job lines).
+    kept_ids = {str(x["id"]) for v in (brief.get("sections") or {}).values() for x in v}
     details = job_details(atoms, kept_ids)
     brief["job_details"] = details
     if details:
