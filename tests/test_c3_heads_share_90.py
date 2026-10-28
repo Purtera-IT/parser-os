@@ -119,23 +119,28 @@ def test_never_admission_needs_the_admission_keep_head(types):
 @pytest.fixture
 def quoting(types, monkeypatch):
     monkeypatch.setitem(c3_type_base._DEAL, "view", "quoting")
-    monkeypatch.setitem(c3_type_base._DEAL, "view_ours", {"a1", "a3"})
+    monkeypatch.setitem(c3_type_base._DEAL, "view_out_why", {"a1": "ours", "a3": "ours", "a4": "after_cut"})
     monkeypatch.delenv("SOWSMITH_C3_OURS_OUT", raising=False)
+    monkeypatch.delenv("SOWSMITH_C3_OUT_OF_VIEW_OUT", raising=False)
     return types
 
 
 def _quoting_atoms():
     return [_atom(1, "scope_item", "Our quote: install 12 cameras."), _atom(2, "scope_item", "Please quote 12 cameras."),
-            _atom(3, "deal_metadata", "Quote #1234 valid 30 days")]
+            _atom(3, "deal_metadata", "Quote #1234 valid 30 days"),
+            _atom(4, "scope_item", "PO attached, please schedule.")]
 
 
 def test_ours_left_out_of_a_quoting_brief_visibly(quoting):
     b = _build(_quoting_atoms(), {})            # no reads: every line would be kept by rule:type
     assert [x["id"] for v in b["sections"].values() for x in v] == ["a2"]
     assert b["left_out"]["ours_in_quoting_view"] == ["a1", "a3"]
-    assert b["left_out"]["by_reason"]["ours_in_quoting_view"] == 2
-    assert {"a1", "a3"} <= set(b["left_out"]["ids"]), "the quote reads left_out.ids: it does not count them"
-    assert b["decided_by"]["keep"]["view:ours_in_quoting_view"] == 2
+    assert b["left_out"]["out_of_view"] == {"ours": ["a1", "a3"], "after_cut": ["a4"]}
+    assert b["left_out"]["by_reason"]["out_of_view:ours"] == 2
+    assert b["left_out"]["by_reason"]["out_of_view:after_cut"] == 1
+    assert {"a1", "a3", "a4"} <= set(b["left_out"]["ids"]), "the quote reads left_out.ids: it does not count them"
+    assert b["decided_by"]["keep"]["view:out_of_view:ours"] == 2
+    assert b["decided_by"]["keep"]["view:out_of_view:after_cut"] == 1
 
 
 def test_ours_left_out_even_when_a_head_would_keep(quoting):
@@ -149,15 +154,46 @@ def test_ours_out_only_in_a_quoting_read_and_with_the_setting(quoting, monkeypat
         monkeypatch.setitem(c3_type_base._DEAL, "view", "planning")
     else:
         monkeypatch.setenv("SOWSMITH_C3_OURS_OUT", "off")
+        monkeypatch.setenv("SOWSMITH_C3_OUT_OF_VIEW_OUT", "off")
     b = _build(_quoting_atoms(), {})
-    assert sorted(x["id"] for v in b["sections"].values() for x in v) == ["a1", "a2", "a3"]
-    assert b["left_out"]["ours_in_quoting_view"] == []
+    assert sorted(x["id"] for v in b["sections"].values() for x in v) == ["a1", "a2", "a3", "a4"]
+    assert b["left_out"]["ours_in_quoting_view"] == [] and b["left_out"]["out_of_view"] == {}
 
 
-def test_quote_site_roster_skips_ours(quoting, monkeypatch):
-    monkeypatch.setattr("app.core.c3_brief._deal_kit", lambda a: False)
-    atoms = [_atom(1, "physical_site", "Ship to: our warehouse"), _atom(2, "physical_site", "Site: 10 Main St")]
+def test_settings_split_ours_from_the_other_reasons(quoting, monkeypatch):
+    monkeypatch.setenv("SOWSMITH_C3_OUT_OF_VIEW_OUT", "off")
+    assert c3_type_base.out_of_quoting_view() == {"a1": "ours", "a3": "ours"}
+    monkeypatch.setenv("SOWSMITH_C3_OUT_OF_VIEW_OUT", "on")
+    monkeypatch.setenv("SOWSMITH_C3_OURS_OUT", "off")
+    assert c3_type_base.out_of_quoting_view() == {"a4": "after_cut"}
+
+
+def _sites():
+    atoms = [_atom(1, "physical_site", "Ship to: our warehouse"), _atom(2, "physical_site", "Site: 10 Main St"),
+             _atom(3, "physical_site", "Site: 10 Main St"), _atom(4, "physical_site", "New site: 5 Elm St")]
+    keys = {"a1": "site:wh", "a2": "site:main", "a3": "site:main", "a4": "site:elm"}
     for a in atoms:
-        a.entity_keys = [f"site:{a.id}"]
+        a.entity_keys = [keys[a.id]]
         a.review_flags = []
-    assert [s["site"] for s in c3_type_base.quote_sites(atoms)] == ["site:a2"]
+    return atoms
+
+
+def test_quote_site_roster_skips_out_of_view_and_lists_seen_only(quoting, monkeypatch):
+    monkeypatch.setattr("app.core.c3_brief._deal_kit", lambda a: False)
+    atoms = _sites()
+    sites = c3_type_base.quote_sites(atoms)
+    assert [s["site"] for s in sites] == ["site:main"], "a3 (ours) names a counted site: no extra entry"
+    seen = c3_type_base.sites_seen_only_out_of_view(atoms, sites)
+    assert [s["site"] for s in seen["seen_only_in_ours"]] == ["site:wh"]
+    assert [(s["site"], s["why"]) for s in seen["seen_only_out_of_view"]] == [("site:elm", "after_cut")]
+    q = c3_type_base._with_seen_only({"sites": {"count": 1, "by": "heads:physical_site"}}, seen)
+    assert q["sites"]["count"] == 1 and q["sites"]["seen_only_in_ours"][0]["site"] == "site:wh"
+
+
+def test_contacts_skip_out_of_view_lines(quoting):
+    assert [a.id for a in c3_brief.contact_lines(_quoting_atoms())] == ["a2"]
+
+
+def test_contacts_read_every_line_in_a_planning_read(quoting, monkeypatch):
+    monkeypatch.setitem(c3_type_base._DEAL, "view", "planning")
+    assert [a.id for a in c3_brief.contact_lines(_quoting_atoms())] == ["a1", "a2", "a3", "a4"]

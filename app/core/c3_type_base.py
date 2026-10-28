@@ -748,7 +748,7 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         # A deal with no time anywhere (training refuses one): no cut can be placed, so the read is every
         # line, as before views.
         _STATUS["view"] = {"view": v, "undated": True, "inputs": len(rows), "out": 0}
-        _DEAL.pop("view_ours", None)
+        _DEAL.pop("view_out_why", None)
         for r in rows:
             r["view"] = v
         return rows
@@ -785,12 +785,24 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
     _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
     if v == cview.QUOTING:
-        # Our own paper (our quote, our SOW, our pricing replies): outside the quoting read by design,
-        # and outside the brief and the quote too (ours_in_quoting_view).
-        _DEAL["view_ours"] = {str(x["atom_id"]) for x in lines
-                              if x["label_key"] in P.ours_atoms or (P.doc.get(x["doc_id"]) or {}).get("ours")}
+        # Every line the quoting read leaves out, with the view's reason: outside the brief and the quote
+        # too (out_of_quoting_view).
+        inside = set(keep)
+        dks = set(dk)
+        why: dict[str, str] = {}
+        for i, x in enumerate(lines):
+            if i in inside:
+                continue
+            pa = P.atom.get(x["label_key"]) or {}
+            why[str(x["atom_id"])] = (
+                "deal_kit" if x["label_key"] in dks
+                else "other_job" if x.get("doc_id") in P.other_job
+                else "ours" if x["label_key"] in P.ours_atoms or (P.doc.get(x["doc_id"]) or {}).get("ours")
+                else "undated" if (pa.get("at") or 0) <= 0
+                else "after_cut")
+        _DEAL["view_out_why"] = why
     else:
-        _DEAL.pop("view_ours", None)
+        _DEAL.pop("view_out_why", None)
     kept = [rows[i] for i in keep]
     cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
     _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
@@ -1000,21 +1012,40 @@ def _keep_full(got: dict[str, Any]) -> None:
         _DEAL["deal"].update(got.get("deal") or {})
 
 
+def _on(name: str) -> bool:
+    return os.environ.get(name, "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def ours_out_enabled() -> bool:
-    """``SOWSMITH_C3_OURS_OUT`` (default on): see ``ours_in_quoting_view``."""
-    return os.environ.get("SOWSMITH_C3_OURS_OUT", "1").strip().lower() not in ("0", "false", "no", "off")
+    """``SOWSMITH_C3_OURS_OUT`` (default on): our own lines, see ``out_of_quoting_view``."""
+    return _on("SOWSMITH_C3_OURS_OUT")
+
+
+def out_of_view_out_enabled() -> bool:
+    """``SOWSMITH_C3_OUT_OF_VIEW_OUT`` (default on): every other reason, see ``out_of_quoting_view``."""
+    return _on("SOWSMITH_C3_OUT_OF_VIEW_OUT")
+
+
+def out_of_quoting_view() -> dict[str, str]:
+    """``{atom_id: why}`` for every line a quoting read leaves out of the heads' read
+    (``_view_rows``, ``c3_record.provenance.quoting_inputs``): ``ours`` (our documents and our
+    authored lines), ``after_cut`` (arrived after our first pricing or the run's as_of), ``deal_kit``
+    (a pricing workbook), ``other_job``, ``undated``. A quote is made from what the customer and
+    partner sent before we priced, so the brief, its contacts and figures and the quote leave these
+    out too, visibly, instead of keeping them by the type rule (19 dev deals 2026-10-28: 28 of our
+    lines on 3053ca21 and 46 on c065bfc4, plus 8 after-cut lines on c065bfc4, reached the quoting
+    brief's body by rule:type). ``ours`` follows ``SOWSMITH_C3_OURS_OUT``, the rest
+    ``SOWSMITH_C3_OUT_OF_VIEW_OUT``. Empty in a planning read or an undated deal."""
+    if view_name() != "quoting":
+        return {}
+    ours_on, rest_on = ours_out_enabled(), out_of_view_out_enabled()
+    return {str(k): str(w) for k, w in (_DEAL.get("view_out_why") or {}).items()
+            if (ours_on if w == "ours" else rest_on)}
 
 
 def ours_in_quoting_view() -> set[str]:
-    """Atom ids of our own lines in a quoting read (``c3_record.provenance``: our documents and our
-    authored lines, ``P.ours_atoms`` / ``P.doc[..]["ours"]``). The quoting view leaves them out of the
-    heads' read by design -- a quote is made from what the customer and partner sent before we priced
-    -- so the brief and the quote leave them out too, visibly, instead of keeping them by the type rule
-    (19 dev deals 2026-10-28: 27 of our lines on 3053ca21 and 53 on c065bfc4 reached the quoting brief's
-    body by rule:type). Empty in a planning read, an undated deal, or with the setting off."""
-    if not ours_out_enabled() or view_name() != "quoting":
-        return set()
-    return set(_DEAL.get("view_ours") or ())
+    """Atom ids of our own lines a quoting read leaves out (``out_of_quoting_view`` why ``ours``)."""
+    return {k for k, w in out_of_quoting_view().items() if w == "ours"}
 
 
 def full_read() -> dict[str, Any]:
@@ -1554,7 +1585,7 @@ def _raw_reading(atom_id: str, head: str) -> list[Any] | None:
     return list(v) if isinstance(v, (list, tuple)) and v and v[0] is not None else None
 
 
-def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
+def quote_sites(atoms: list[Any], *, outside: bool = False) -> list[dict[str, Any]]:
     """The heads' site roster for the quote: one entry per site key on a line the heads typed
     ``physical_site`` (the compile's final types, after the C3 authority pass), never a Deal Kit line,
     and not a line ``jdg:site_role`` surely reads as somebody else's address. Each carries the atom
@@ -1562,12 +1593,13 @@ def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
     from app.core.c3_brief import _deal_kit
 
     roster: dict[str, dict[str, Any]] = {}
-    ours = ours_in_quoting_view()
+    out = out_of_quoting_view()
     for a in atoms:
         aid, text, kind = _text_type(a)
         if kind != "physical_site" or _deal_kit(a) or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             continue
-        if aid in ours:
+        # A line outside the quoting read never counts (``outside``: only those, for seen-only sites).
+        if (aid in out) != outside:
             continue
         role = line_reading(aid, "jdg:site_role")
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
@@ -1575,9 +1607,25 @@ def quote_sites(atoms: list[Any]) -> list[dict[str, Any]]:
         keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")] or [f"site-line:{aid}"]
         for k in keys[:1]:
             e = roster.setdefault(k, {"site": k, "text": text[:200], "atom_ids": [], "by": "heads:physical_site"})
+            if outside:
+                e.setdefault("why", out[aid])
             if aid not in e["atom_ids"]:
                 e["atom_ids"].append(aid)
     return list(roster.values())
+
+
+def sites_seen_only_out_of_view(atoms: list[Any], sites: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """The sites only lines outside a quoting read name (a site key no in-view site line carries): not
+    counted in the quote, listed so a PM can see them. ``seen_only_in_ours``: named only in our own
+    paper (3053ca21: one site key on one line of our own document); ``seen_only_out_of_view``: only in
+    lines left out for another reason (after the cut ...), each with its ``why``."""
+    have = {s["site"] for s in sites}
+    ours, other = [], []
+    for e in quote_sites(atoms, outside=True):
+        if e["site"] in have:
+            continue
+        (ours if e.get("why") == "ours" else other).append(e)
+    return {k: v for k, v in (("seen_only_in_ours", ours), ("seen_only_out_of_view", other)) if v}
 
 
 def _degraded(reason: str, deal_id: str) -> dict[str, Any]:
@@ -1607,7 +1655,7 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     from app.core.c3_brief import _deal_kit
 
     left_out = {str(i) for i in ((brief.get("left_out") or {}).get("ids") or [])}
-    ours = ours_in_quoting_view()
+    out = out_of_quoting_view()
     # A line the keep head only half kept ("also mentioned") is not priced from: it goes to the
     # quote marked, and counted out like a left-out line.
     also = {str(x.get("id")) for x in brief.get("also_mentioned") or [] if isinstance(x, dict)} | {
@@ -1624,9 +1672,9 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             row["reads"] = reads
         if _deal_kit(a):
             row["deal_kit"] = True
-        if aid in ours:
-            row["ours_in_quoting_view"] = True
-        if aid in left_out or aid in ours:
+        if aid in out:
+            row["out_of_view"] = out[aid]
+        if aid in left_out or aid in out:
             row["left_out"] = True
         elif aid in also:
             row["left_out"] = True
@@ -1636,6 +1684,7 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
         # Nothing to price: a deal with no evidence lines never gets an invented job.
         return _degraded("no evidence lines to price", deal_id)
     sites = quote_sites(atoms)
+    seen_only = sites_seen_only_out_of_view(atoms, sites)
     deal_reads = {k: list(v) for k in QUOTE_DEAL_HEADS
                   if isinstance((v := (_DEAL.get("deal") or {}).get(k)), (list, tuple))}
     body = {"deal": {"deal_id": deal_id, "deal_name": deal.get("deal_name") or "", "account": deal.get("account_name") or "",
@@ -1643,15 +1692,29 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                      "heads": {"asked": asked, "view": view_name(), "deal": deal_reads},
                      "c3_brief": {"sections": {k: [{"id": x.get("id")} for x in (v or []) if isinstance(x, dict)]
                                                for k, v in (brief.get("sections") or {}).items()},
-                                  "left_out": sorted(left_out | also | ours),
+                                  "left_out": sorted(left_out | also | set(out)),
                                   "also_mentioned": sorted(also),
                                   "job_details": brief.get("job_details") or []}}}
+    if seen_only:
+        body["deal"]["sites_seen_only_out_of_view"] = seen_only
     if _never():
-        return _wait_for_heads("/v1/quote", body, {}, "quote read")
+        return _with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only)
     try:
-        return _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60")))
+        return _with_seen_only(_request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))),
+                               seen_only)
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
+
+
+def _with_seen_only(q: Any, seen_only: dict[str, list[dict[str, Any]]]) -> Any:
+    """The quote's ``sites`` record also lists the sites only out-of-view lines name (not counted)."""
+    if seen_only and isinstance(q, dict):
+        sites = q.get("sites")
+        if isinstance(sites, dict):
+            q["sites"] = {**sites, **seen_only}
+        elif sites is None:
+            q["sites"] = dict(seen_only)
+    return q
 
 
 def warm() -> None:

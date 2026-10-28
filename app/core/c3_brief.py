@@ -444,9 +444,9 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         return fallback, "rule"
 
     kept_unsure: list[dict[str, Any]] = []
-    from app.core.c3_type_base import ours_in_quoting_view
+    from app.core.c3_type_base import out_of_quoting_view
 
-    ours = ours_in_quoting_view()
+    out_of_view = out_of_quoting_view()
     docs = document_gate()
     barred = {d["artifact_id"]: d["why_not"] for d in docs if not d["feeds"] and d["artifact_id"]}
     for a in atoms:
@@ -468,11 +468,11 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
             left_out.append({"id": aid, "reason": "old_manual_deal_kit", "by": "rule:document"})
             why["rule:deal_kit"] += 1
             continue
-        if aid in ours:
-            # Our own paper in a quoting read (our quote, SOW or pricing reply): the view leaves it out of
-            # the heads' read by design, so it never reaches the brief by the type rule either.
-            left_out.append({"id": aid, "reason": "ours_in_quoting_view", "by": "view:quoting"})
-            why["view:ours_in_quoting_view"] += 1
+        if aid in out_of_view:
+            # A line the quoting read leaves out (our own paper, after the cut, a pricing workbook ...):
+            # the view keeps it from the heads by design, so it never reaches the brief by the type rule.
+            left_out.append({"id": aid, "reason": "out_of_view:" + out_of_view[aid], "by": "view:quoting"})
+            why["view:out_of_view:" + out_of_view[aid]] += 1
             continue
         # A line the parser wrote itself ("stage: awaiting site survey --
         # Derived from the step outstanding") says nothing a document says;
@@ -777,9 +777,10 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         # ids: the quote heads must not count off a line the heads left out (or an old Deal Kit line).
         "left_out": {"count": len(left_out), "by_reason": dict(Counter(x["reason"] for x in left_out).most_common(12)),
                      "ids": [str(x["id"]) for x in left_out],
-                     # Our own lines a quoting read leaves out (c3_type_base.ours_in_quoting_view).
-                     "ours_in_quoting_view": [str(x["id"]) for x in left_out
-                                              if x.get("reason") == "ours_in_quoting_view"],
+                     # The lines a quoting read leaves out, by the view's reason
+                     # (c3_type_base.out_of_quoting_view); ours_in_quoting_view: those of them ours.
+                     "out_of_view": _by_view_reason(left_out),
+                     "ours_in_quoting_view": _by_view_reason(left_out).get("ours", []),
                      # The lines a head (not a rule) left out, by id: the SOW
                      # may not bring them back (c3_sow.facts). A keep below
                      # the bar is not one of them (kept_unsure).
@@ -851,6 +852,15 @@ def _customer_furnished(sections: dict[str, list[dict[str, Any]]], by_id: dict[s
     for _, it in moved:
         sections["customer_furnished"].append({**it, "section_by": "base:col:supplier"})
     return len(moved)
+
+
+def _by_view_reason(left_out: list[dict[str, Any]]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for x in left_out:
+        r = str(x.get("reason") or "")
+        if r.startswith("out_of_view:"):
+            out.setdefault(r.split(":", 1)[1], []).append(str(x["id"]))
+    return out
 
 
 def _layer_of(by: str) -> str:
@@ -1414,7 +1424,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
     # they are labeled, the writer gets them as what they are (010038's floor
     # plans: 3 APs, 2 TVs, 1 NUC/TAP, 1 printer), and each is a label task.
     kept_now = {str(x["id"]) for v in (brief.get("sections") or {}).values() for x in v}
-    ours_now = set((brief.get("left_out") or {}).get("ours_in_quoting_view") or ())
+    ours_now = {i for ids in ((brief.get("left_out") or {}).get("out_of_view") or {}).values() for i in ids}
     figs, seen_f = [], set()
     for a in atoms:
         v = a.value if isinstance(getattr(a, "value", None), dict) else {}
@@ -1445,7 +1455,7 @@ def run(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | No
                                        for k in (getattr(a, "entity_keys", None) or []))}
     if c3_type_base._DEAL.get("site_keys"):
         brief["site_keys"] = c3_type_base._DEAL["site_keys"]
-    brief["contacts"] = contacts(atoms)
+    brief["contacts"] = contacts(contact_lines(atoms))
     # Only lines the heads kept in the body: picked by wording alone it put
     # back lines co_action dropped -- 9 of 15 on 010038, among them "concrete"
     # and the stale "if they have a scissor lift/ ladder". A line the keep
@@ -1827,6 +1837,16 @@ def _line_of(atom: Any) -> int | None:
         return int(loc.get("line_start")) if loc.get("line_start") is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def contact_lines(atoms: list[Any]) -> list[Any]:
+    """The lines contacts() reads: not those a quoting read leaves out (c3_type_base.out_of_quoting_view)
+    -- our own people's signatures on our quote, or someone who only wrote after the cut, are not the
+    deal's contacts at quoting time."""
+    from app.core.c3_type_base import out_of_quoting_view
+
+    out = out_of_quoting_view()
+    return [a for a in atoms if str(getattr(a, "id", "")) not in out] if out else list(atoms)
 
 
 def contacts(atoms: list[Any]) -> list[dict[str, Any]]:
