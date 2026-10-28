@@ -1441,12 +1441,16 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
                             "cites": cites, "kind": "pricing"})
     pricing = [q for q in pricing if q["cites"]]  # a question with no line of this deal behind it is a template ask
     open_qs = _one_per_fact(pricing[:6] + [q for q in (doc.get("open_questions") or []) if isinstance(q, dict)])
+    # A question about PurTera itself is the customer's to us, not ours to the customer: the writer kept "Where
+    # else does PurTera have presence ..." (000118) though told twice; its transcript lines carry no speaker.
+    about_us = [q for q in open_qs if _ABOUT_US.search(strip_cites(str(q.get("question") or "")))]
+    open_qs = [q for q in open_qs if q not in about_us]
     out.update(summary=str(summary or ""), sections=doc.get("sections") or {},
                # Pricing questions first: what the PM must ask to price. The
                # deal's own asks after, only those the writer kept as still
                # open ("Have you had a chance to review this proposal?" is a
                # nudge, not a question to price from).
-               open_questions=open_qs, uncited_dropped=dropped,
+               open_questions=open_qs, uncited_dropped=dropped, about_purtera_dropped=about_us,
                # The deal's own and its pricing questions come first; the head's
                # catalog questions after them, the most likely few (all of them
                # stay for labeling).
@@ -1883,6 +1887,10 @@ def _cover_missing_facts(brief: dict[str, Any]) -> int:
         w["covered_added"] = len(add[:8])
     return len(add)
 
+
+#: An open question whose subject is PurTera ("Where else does PurTera have presence", "Can PurTera's platform ...").
+_ABOUT_US = re.compile(r"\b(?:does|do|can|could|will|would|is|are|where|how|what)\b[^?]{0,40}\bpurtera(?:'s|\s+it)?\b"
+                       r"(?![^?]{0,15}\b(?:need|require|receive|be given|get)\b)", re.I)
 
 _Q_STOP = frozenset("a an the of to for and or is are be will what which who how where when does do any each at in on "
                     "this that there their it its with by from site sites location locations can you your we our "

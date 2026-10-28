@@ -580,3 +580,11 @@ def test_the_writer_is_told_who_asked_and_what_the_roster_answers(monkeypatch):
     assert "(asked by the customer/partner) Where else" in seen["prompts"][0]
     assert "SITE ROSTER (from the heads): 145 sites are listed" in seen["prompts"][0]
     assert [q["question"] for q in w["open_questions"]] == ["Who stages the APs in the lobby?"]  # uncited dropped
+
+
+def test_a_question_about_purtera_itself_is_not_asked_of_the_customer():
+    rx = c3_brief._ABOUT_US
+    assert rx.search("Where else does PurTera have presence beyond the eastern seaboard?")
+    assert rx.search("Can PurTera's platform give customer access by project size?")
+    assert not rx.search("Who supplies the APs PurTera mounts in the lobby?")
+    assert not rx.search("What access will PurTera need to the IDF?")
