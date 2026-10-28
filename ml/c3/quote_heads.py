@@ -116,7 +116,7 @@ class QuoteHeads:
         d=((p.get('heads') or {}).get('deal') or {})
         for k in ('jdg:billing_type',):
             r=d.get(k)
-            if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(value=r[0],p=round(float(r[1]),3),by=f'head:{k}',atom_ids=[])
+            if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by=f'heads:{k}',atom_ids=[])
         votes={}
         for a in atoms:
             for h in BILLING_LINE_HEADS:
@@ -124,12 +124,12 @@ class QuoteHeads:
                 if r: votes.setdefault(r[0],[]).append((a.get('id'),float(r[1]),h))
         if votes:
             v,ev=max(votes.items(),key=lambda kv:(len(kv[1]),max(x[1] for x in kv[1])))
-            return dict(value=v,p=round(max(x[1] for x in ev),3),by=f'head:{ev[0][2]}',atom_ids=[x[0] for x in ev][:8])
-        return dict(value=None,by='none (no billing head sure)' if self._heads_asked(p) else 'none (heads not asked)',atom_ids=[])
+            return dict(answer=v,p=round(max(x[1] for x in ev),3),by=f'heads:{ev[0][2]}',atom_ids=[x[0] for x in ev][:8])
+        return dict(answer=None,p=None,by='none',reason='no billing head sure' if self._heads_asked(p) else 'heads not asked',atom_ids=[])
     def _travel(self,p):
         r=((p.get('heads') or {}).get('deal') or {}).get('jdg:travel_scope')
-        if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(value=r[0],p=round(float(r[1]),3),by='head:jdg:travel_scope')
-        return dict(value=None,by='none (travel head unsure)' if self._heads_asked(p) else 'none (heads not asked)')
+        if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by='heads:jdg:travel_scope')
+        return dict(answer=None,p=None,by='none',reason='travel head unsure' if self._heads_asked(p) else 'heads not asked')
     @staticmethod
     def _sites_said(atoms):
         n=0
@@ -212,42 +212,45 @@ class QuoteHeads:
         seller,account=self._profile(p); prof=seller or (account if account and account['kits']>=2 else None)
         st_t,st_h=self._stated(work); q=self._quantity(p,work,cited)
         readable=self._readable(p); asked=self._heads_asked(p)
-        unsure='regex (head unsure)' if asked else 'regex (heads not asked)'
+        unsure='fallback:regex_head_unsure' if asked else 'fallback:regex_heads_not_asked'
         caveats=[]; used={}
         # techs: a sure crew head picks the line, the number comes off it; regex / profile / family only after
         hc=self._head_number(readable,CREW_HEADS,CREW_ON_LINE,20)
-        if hc: techs=int(round(hc[0])); why_t=f'stated on the line {hc[1]} reads as the crew'; by_t=f'head:{hc[1]}'; used['techs']=dict(head=hc[1],atom_id=hc[2],p=round(hc[3],3))
+        if hc: techs=int(round(hc[0])); why_t=f'stated on the line {hc[1]} reads as the crew'; by_t=f'heads:{hc[1]}'; used['techs']=dict(head=hc[1],atom_id=hc[2],p=round(hc[3],3))
         elif st_t: techs=min(st_t,4); why_t='stated in the documents'; by_t=unsure
-        elif prof and prof.get('usual_techs') and (prof.get('techs_share') or 0)>=0.75 and prof['kits']>=2: techs=prof['usual_techs']; why_t=f"{prof['key']} usually gets {prof['usual_techs']}"; by_t='account profile'
+        elif prof and prof.get('usual_techs') and (prof.get('techs_share') or 0)>=0.75 and prof['kits']>=2: techs=prof['usual_techs']; why_t=f"{prof['key']} usually gets {prof['usual_techs']}"; by_t='fallback:account_profile'
         else:
-            ut={int(k):v for k,v in F['usual_techs'].items()}; techs=max(ut,key=ut.get) if ut else 1; why_t=f'usual crew for {fam} jobs'; by_t='family usual'
+            ut={int(k):v for k,v in F['usual_techs'].items()}; techs=max(ut,key=ut.get) if ut else 1; why_t=f'usual crew for {fam} jobs'; by_t='fallback:family_usual'
         # hours per tech
         n=q['count'] if q and q['unit'] not in ('site','user') and q['p']>=0.5 else None
         hh=self._head_number(readable,HOURS_HEADS,HOURS_ON_LINE,2000)
         if hh:
-            hpt=hh[0]; why_h=f'stated on the line {hh[1]} reads as the hours'; by_h=f'head:{hh[1]}'; used['hours']=dict(head=hh[1],atom_id=hh[2],p=round(hh[3],3))
+            hpt=hh[0]; why_h=f'stated on the line {hh[1]} reads as the hours'; by_h=f'heads:{hh[1]}'; used['hours']=dict(head=hh[1],atom_id=hh[2],p=round(hh[3],3))
             if hh[1] in CAVEATS: caveats.append(CAVEATS[hh[1]])
         elif st_h: hpt=st_h; why_h='stated in the documents'; by_h=unsure
         elif n and F.get('per_unit_crew_hours') and fam in self.b['count_scaled_families'] and n<=(300 if fam in ('ap','camera','power') else 60):
-            hpt=max(min(F['median_hours_per_tech'],8),n*F['per_unit_crew_hours']/techs); why_h=f'{n} {q["unit"]}s at the usual time each for {fam} jobs'; by_h='family per-unit time x regex count'
-        else: hpt=F['median_hours_per_tech']; why_h=f'typical for {fam} jobs'; by_h='family median'
-        if not by_h.startswith('head:') and asked: caveats.append('hours not stated on any line the heads read: '+by_h)
+            hpt=max(min(F['median_hours_per_tech'],8),n*F['per_unit_crew_hours']/techs); why_h=f'{n} {q["unit"]}s at the usual time each for {fam} jobs'; by_h='fallback:family_per_unit_x_regex_count'
+        else: hpt=F['median_hours_per_tech']; why_h=f'typical for {fam} jobs'; by_h='fallback:family_median'
+        if not by_h.startswith('heads:') and asked: caveats.append('hours not stated on any line the heads read: '+by_h)
         hpt=_snap(hpt)
         # rate line and price
         rp=seller or (account if account and account['rate_line_share']>=0.6 else None)
         rate_line=rp['rate_line'] if rp else F['usual_rate_line']; price=rp['price'] if rp else F['usual_price']
         why_r=f"{rp['key']} profile ({rp['kits']} kits)" if rp else f'usual for {fam} jobs'
-        by_r='account profile' if rp else 'family usual'
+        by_r='fallback:account_profile' if rp else 'fallback:family_usual'
         lv=self._head_level(readable)
         if lv:
             m=re.match(r'L\d\s+(.*)',rate_line or '')
             new=f'L{lv[0]} '+(m.group(1) if m else (rate_line or '')).strip()
             if new!=rate_line: caveats.append(f'price {price} is for {rate_line}; check the {new} rate'); why_r=f'level stated on a line read:tech_level reads ({why_r} for the track)'
-            rate_line=new; by_r='head:read:tech_level'; used['level']=dict(head='read:tech_level',atom_id=lv[1],p=round(lv[2],3))
+            rate_line=new; by_r='heads:read:tech_level'; used['level']=dict(head='read:tech_level',atom_id=lv[1],p=round(lv[2],3))
         billing=self._billing(p,readable); travel=self._travel(p)
         alltext=' '.join(a.get('text') or '' for a in work)
         flags=[]
-        if AFTER.search(alltext): flags.append('after-hours work mentioned')
+        after=bool(AFTER.search(alltext))
+        if after: flags.append('after-hours work mentioned')
+        # No day-type head yet: after-hours wording is a rule, and "reg" otherwise is a marked default.
+        day_type,by_d=('ot','rule:after_hours_text') if after else ('reg','fallback:default')
         if HEIGHT.search(alltext): flags.append('height / lift access mentioned')
         if (p.get('site_count') or 0)>=2: flags.append(f"{p['site_count']} places in the documents: check the site list")
         # A larger site count in the wording is a flag beside the heads' roster, never a replacement for it.
@@ -262,13 +265,18 @@ class QuoteHeads:
         src=list(dict.fromkeys([c for j in ((p.get('c3_brief') or {}).get('job_details') or []) for c in (j.get('cites') or [])]
                                +[u['atom_id'] for u in used.values()]+([q['atom_id']] if q else [])))
         src=[x for x in src if x]
+        cites=[c for j in ((p.get('c3_brief') or {}).get('job_details') or []) for c in (j.get('cites') or [])]
+        by_id={a.get('id'):a for a in readable}
+        lead=(used.get('hours') or used.get('techs') or {}).get('atom_id')
+        source_text=((by_id.get(lead) or {}).get('text') or '')[:300] if lead else (q['text'] if q else ((work[0].get('text') or '')[:300] if work else ''))
         return dict(version=self.version,job_type=fam,job_type_p=round(max(sims),3),
-            heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,
+            heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,site_count=p.get('site_count') or 0,after_hours=after,
             sites=dict(count=p.get('site_count') or 0,by='heads:physical_site' if 'sites' in p else 'none (not sent)',
                        atom_ids=[i for st in (p.get('sites') or []) for i in (st.get('atom_ids') or [])]),
             lines=[dict(site='job site',task=task or {'av':'Install AV equipment','camera':'Install cameras','ap':'Install access points','power':'Replace UPS / batteries','rack':'Rack and stack equipment','cabling':'Run network cabling','device':'Install and configure devices','survey':'Site survey and report','program':'Onsite support (staff augmentation)'}[fam],
                 techs=techs,hours_per_tech=hpt,crew_hours=hpt*techs,rate_line=rate_line,price=price,why_techs=why_t,why_hours=why_h,why_rate=why_r,
-                by_techs=by_t,by_hours=by_h,by_rate=by_r,caveats=caveats,source_atom_ids=src,proposed_hours=verdict)],
+                by=dict(techs=by_t,hours=by_h,rate=by_r,day_type=by_d),day_type=day_type,after_hours=after,caveats=caveats,
+                atom_ids=src,cites=cites,source_text=source_text,proposed_hours=verdict)],
             quantity=({'unit':q['unit'],'count':q['count'],'p':round(q['p'],2),'text':q['text'],'atom_id':q['atom_id']} if q else None),flags=flags)
     def _word(self,name,work,brief,checked,account=None):
         jd=[(j.get('text') or '').strip() for j in (brief.get('job_details') or [])][:4]
