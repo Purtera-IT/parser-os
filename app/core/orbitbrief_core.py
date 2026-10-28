@@ -1037,6 +1037,14 @@ _SRL_REQUIRED_FIELDS: tuple[dict[str, Any], ...] = (
 )
 
 
+def _role_text(role: Any) -> str:
+    """A stakeholder's role as lowercase text. A head can answer a role as a
+    set (["project_manager", "site_contact"]), so a list reads as its parts."""
+    if isinstance(role, (list, tuple, set)):
+        return " ".join(str(r) for r in role if r).lower()
+    return str(role or "").lower()
+
+
 def build_srl_missing_checklist(
     *,
     atoms: list[EvidenceAtom],
@@ -1104,7 +1112,7 @@ def build_srl_missing_checklist(
             hits = [
                 a for a in stakeholders
                 if isinstance(a.value, dict)
-                and any(t in (a.value.get("role") or "").lower() for t in terms)
+                and any(t in _role_text(a.value.get("role")) for t in terms)
             ]
             satisfied = len(hits) > 0
             evidence = {"matching_role_count": len(hits)}
@@ -1645,6 +1653,9 @@ def build_site_readiness(
         # otherwise fall back to address strings as the slug,
         # producing keys like "site:address_1180_peachtree_st_..."
         # which is just another ghost site.
+        if atom_type == "physical_site" and "site_not_backed_by_heads" in (getattr(atom, "review_flags", None) or []):
+            # site_keys_follow_heads dropped its keys (no site line backs them): no row from its id.
+            continue
         if atom_type == "physical_site":
             val = getattr(atom, "value", None) or {}
             sid = ""

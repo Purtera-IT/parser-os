@@ -18,6 +18,15 @@ def test_registry_layers_and_trust():
     assert not heads.trusted("col:wants")  # one-sided labels: not trusted
 
 
+def test_no_trusted_head_lost_to_live_on_the_grade():
+    """Test A's registry: a head the held-out grade measured worse than the service's never decides."""
+    for key, h in heads.registry().items():
+        ev = h.get("holdout") or {}
+        if h["status"] == "ready" and ev.get("live") is not None:
+            assert ev["exact"] >= ev["live"] and ev.get("verdict") != "worse", key
+    assert not heads.trusted("read:sow_section")  # test A 0.376 vs live 0.629 on heldout7
+
+
 def test_no_read_falls_back_to_rules():
     atoms = [_atom(1, "scope_item", "Install 4 cameras"), _atom(2, "small_talk", "thanks!"),
              _atom(3, "open_question", "Who owns the lift?")]
@@ -29,7 +38,9 @@ def test_no_read_falls_back_to_rules():
     assert b["decided_by"]["heads_used"] == []
 
 
-def test_trusted_heads_decide_and_say_so():
+def test_trusted_heads_decide_and_say_so(monkeypatch):
+    # The mechanism, not the shipped registry: test A's read:sow_section is not trusted (worse than live).
+    monkeypatch.setenv("SOWSMITH_C3_BRIEF_TRUST", "read:co_action,read:co_reason,read:sow_section")
     atoms = [_atom(1, "scope_item"), _atom(2, "scope_item"), _atom(3, "task")]
     reads = {"a1": {"read:co_action": ["keep", 0.9], "read:sow_section": ["deliverables", 0.8]},
              "a2": {"read:co_action": ["reject", 0.7], "read:co_reason": ["hw_price_not_ours", 0.6]},
@@ -444,3 +455,81 @@ def test_the_writer_checks_run_side_by_side_and_end_as_one_after_another(monkeyp
     assert [q["question"] for q in w["open_questions"]] == ["Who has the lift?"]
     assert order.index("verify") < order.index("cover") and order.index("facts") < order.index("ask")
     assert len(threads) >= 2, "the two chains ran on one thread"
+
+
+def _typed(i, t, text, how="label"):
+    v = ({"c3_label": {"type": t, "p": 0.97, "act": "authority", "was": "task"}} if how == "label"
+         else {"c3_confirm": {"type": t, "p": 0.9, "said": "_keep"}} if how == "confirm" else {})
+    return NS(id=f"a{i}", atom_type=t, raw_text=text, review_status="approved", value=v)
+
+
+def test_a_head_typed_exclusion_keeps_its_section_against_the_owner_head(monkeypatch):
+    """010362: an exclusion (type head 0.96) and a pricing term (0.99) were moved to
+    scope_of_work by read:task_owner_role, because against a rule placement the
+    override compared the owner's p with 0."""
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "exclusion", "Firewall programming performed independently is out of scope"),
+             _typed(2, "pricing_assumption", "After hours work will be billed at a 50% uplift", "confirm"),
+             _typed(3, "dependency", "Customer ensures the circuit is active before the visit")]
+    reads = {f"a{i}": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.88]}
+             for i in (1, 2, 3)}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    secs = {x["id"]: s for s, xs in b["sections"].items() for x in xs}
+    assert secs["a1"] == c3_brief.SECTION_BY_TYPE["exclusion"]
+    assert secs["a2"] == c3_brief.SECTION_BY_TYPE["pricing_assumption"]
+    assert secs["a3"] == c3_brief.SECTION_BY_TYPE["dependency"]
+    assert all(x["type_by"] == "head" and x["section_by"] == "rule:type"
+               for xs in b["sections"].values() for x in xs)
+
+
+def test_the_owner_head_fills_only_where_no_head_typed_the_line_and_says_so(monkeypatch):
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "dependency", "Mount the APs at the new site", how=None),
+             _typed(2, "dependency", "Patch the new switch", how=None)]
+    reads = {"a1": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.86]},
+             "a2": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.51]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    filled = b["sections"]["scope_of_work"]
+    assert [x["id"] for x in filled] == ["a1"]
+    assert filled[0]["section_by"] == "base:read:task_owner_role" and filled[0]["type_by"] == "rule"
+    assert "owner head filled" in filled[0]["section_fill"]
+    # Below the owner bar the rule's placement stands.
+    assert [x["id"] for x in b["sections"][c3_brief.SECTION_BY_TYPE["dependency"]]] == ["a2"]
+
+
+def test_a_parser_typed_exclusion_is_no_duty_for_the_owner_head(monkeypatch):
+    """010355: "Lifts ... are excluded" (no type-head mark) read technician 0.82
+    by the owner head and was filed as our scope."""
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "exclusion", "Lifts and scaffolding are excluded", how=None)]
+    reads = {"a1": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.9]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert [x["id"] for x in b["sections"]["out_of_scope"]] == ["a1"]
+
+
+def test_a_kept_line_moved_after_the_keep_loop_says_where_it_went():
+    """010362: 92 lines read "kept" in line_decisions but were moved to
+    ``superseded`` after the keep loop, so the ledger and the brief disagreed."""
+    from types import SimpleNamespace as N
+
+    from app.core.c3_brief import _drop_superseded, reconcile_line_decisions
+
+    atoms = [N(id="d1", artifact_id="draft"), N(id="s1", artifact_id="signed"), N(id="m1", artifact_id="signed")]
+    docs = [{"doc_id": "draft", "kind": "sow_draft", "filename": "Install v1.docx"},
+            {"doc_id": "signed", "kind": "signed_sow", "filename": "SOW signed.pdf"}]
+    brief = {"sections": {"fees": [{"id": "d1", "text": "$7,890"}, {"id": "s1", "text": "$9,150"}]},
+             "also_mentioned": [{"id": "m1"}],
+             "line_decisions": {"cols": ["id", "outcome", "by", "p", "col:admission", "read:co_action"],
+                                "rows": [["d1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["s1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["m1", "also", "base:col:admission", 0.6, None, None],
+                                         ["z1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["n1", "not_admitted", "base:col:admission", 0.2, None, None]]}}
+    assert _drop_superseded(brief, atoms, docs) == 1
+    assert reconcile_line_decisions(brief) == 2
+    got = {r[0]: (r[1], r[2]) for r in brief["line_decisions"]["rows"]}
+    assert got["d1"] == ("superseded", "rule:superseded")
+    assert got["s1"][0] == "kept" and got["m1"][0] == "also" and got["n1"][0] == "not_admitted"
+    assert got["z1"] == ("kept_unplaced", "none:base:col:admission")
+    placed = {x["id"] for v in brief["sections"].values() for x in v} | {"m1"}
+    assert all(r[0] in placed for r in brief["line_decisions"]["rows"] if r[1] in ("kept", "also"))

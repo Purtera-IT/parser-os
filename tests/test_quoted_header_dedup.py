@@ -93,7 +93,11 @@ def test_an_ordinary_deal_metadata_atom_is_unaffected():
     """The branch this shares is the one that keys real metadata fields."""
     a = _Atom(value={"field_name": "po_number", "value": "4500123"})
     b = _Atom(value={"field_name": "po_number", "value": "4500999"})
-    assert _value_key(a) == _value_key(b) is not None
+    # A field and its value are the identity (audit 2026-10-28): two PO numbers are two facts,
+    # the same one stated twice is one.
+    assert _value_key(a) is not None and _value_key(b) is not None and _value_key(a) != _value_key(b)
+    assert _value_key(_Atom(value={"field_name": "po_number", "value": "4500123"})) == _value_key(a)
+    assert _value_key(_Atom(value={"field_name": "po_number"})) is None
     assert _value_key(_Atom(value={"kind": "something_else"})) is None
 
 

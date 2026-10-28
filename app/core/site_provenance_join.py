@@ -31,6 +31,7 @@ ten schools across every row is worse than leaving them unlinked.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 _SITE_PREFIX = "site:"
@@ -42,6 +43,25 @@ def _keys(atom: Any) -> list[str]:
 
 def _site_keys(atom: Any) -> set[str]:
     return {k for k in _keys(atom) if k.startswith(_SITE_PREFIX)}
+
+
+#: Containers that are conversations, not per-site documents. One address in
+#: an email signature or a note header does not make every line of that
+#: message about that place: 010316's From/To/signature lines and 010227's
+#: note header all carried the one address's key (audit 2026-10-28). A
+#: single-site deal's tasks still get its site from ``site_task_anchor``.
+_CONVERSATION_TYPES = frozenset({"email", "msg", "mbox", "transcript", "ics"})
+_CONVERSATION_FILE = re.compile(r"-hs-(?:note|email|meeting|call|task|communication)-|fireflies", re.I)
+
+
+def is_conversation(atom: Any) -> bool:
+    for ref in (getattr(atom, "source_refs", None) or [])[:1]:
+        at = getattr(ref, "artifact_type", None)
+        if str(getattr(at, "value", at) or "") in _CONVERSATION_TYPES:
+            return True
+        if _CONVERSATION_FILE.search(str(getattr(ref, "filename", "") or "")):
+            return True
+    return False
 
 
 def _atom_type(atom: Any) -> str:
@@ -61,7 +81,7 @@ def document_site_map(atoms: list[Any]) -> dict[str, str]:
         if not _atom_type(atom).endswith("physical_site"):
             continue
         art = str(getattr(atom, "artifact_id", "") or "")
-        if not art:
+        if not art or is_conversation(atom):
             continue
         by_artifact.setdefault(art, set()).update(_site_keys(atom))
     return {art: next(iter(keys)) for art, keys in by_artifact.items() if len(keys) == 1}

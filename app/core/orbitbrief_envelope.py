@@ -1672,6 +1672,22 @@ def build_orbitbrief_envelope(
     # Last, so it gates the corrected picture: a customer document that stopped
     # being called ours a moment ago must be readable by the models that had it.
     _annotate_reader_scope(documents, stage_timeline)
+    # What decided whether each document feeds the brief and the quote (c3_brief.document_gate):
+    # the document-job verdict and who made it, and whether it was barred. Visible per document.
+    try:
+        _gate = {str(g.get("filename")): g for g in
+                 ((getattr(compile_result, "c3_brief", None) or {}).get("documents") or []) if isinstance(g, dict)}
+        for _d in documents:
+            _g = _gate.get(str(_d.get("filename") or ""))
+            if _g:
+                _d["document_job"] = _g.get("document_job")
+                _d["feeds_brief"] = bool(_g.get("feeds"))
+                if _g.get("why_not"):
+                    _d["feeds_brief_why_not"] = _g["why_not"]
+                if _g.get("unsure"):
+                    _d["feeds_brief_unsure"] = _g["unsure"]
+    except Exception:  # pragma: no cover - never fail the envelope
+        pass
     _annotate_quoted_message_scope(envelope, documents, stage_timeline)
     _retype_produced_material_scope(envelope, documents)
     threads = _thread_index(documents)

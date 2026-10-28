@@ -556,7 +556,10 @@ def _split_list_value(value: str) -> list[str]:
         lines = [strip_list_marker(ln.strip())[1].strip(" .;") for ln in value.split("\n")]
         lines = [ln for ln in lines if ln]
         return [ln for ln in lines if len(re.sub(r"[^A-Za-z0-9]", "", ln)) >= 3]
-    parts = [p.strip(" .;") for p in re.split(r",\s*(?:and\s+)?|;\s*|\s+and\s+(?=[a-z])", value) if p.strip(" .;")]
+    # A comma inside a number ("$1,000-$2,000", "16,553.34") is a thousands separator, not a list
+    # break: cut there, "$1" / "000-$2" / "000 to reduce delays" were three items (010222, 010109).
+    parts = [p.strip(" .;") for p in re.split(r"(?:(?<!\d),|,(?!\d{3}(?!\d)))\s*(?:and\s+)?|;\s*|\s+and\s+(?=[a-z])", value)
+             if p.strip(" .;")]
     return [p for p in parts if len(re.sub(r"[^A-Za-z0-9]", "", p)) >= 3]
 
 

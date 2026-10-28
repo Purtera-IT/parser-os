@@ -643,8 +643,25 @@ def _extract_email_text(path: Path) -> str:
     # wrote -- after BeautifulSoup's own single decode for markup, before it
     # for plain text -- so every line split and char offset downstream is
     # computed on what the viewer shows.
-    if "<html" in content.lower() or "<table" in content.lower():
+    return email_content_to_text(content)
+
+
+def email_content_to_text(content: str, *, is_html: bool | None = None) -> str:
+    """One mail body (plain or HTML) as the lines the reader sees.
+
+    Shared by the .eml path and the .msg path: an Outlook .msg whose body is
+    HTML-only (``body`` empty, ``htmlBody`` set) must read the same as the
+    .eml of the same message -- the container must not change the evidence.
+    """
+    content = str(content or "")
+    if is_html is None:
+        is_html = "<html" in content.lower() or "<table" in content.lower()
+    if is_html:
         soup = BeautifulSoup(content, "html.parser")
+        # An Outlook HTML body opens with a <head> of <style>/<meta>: CSS is
+        # not something the sender wrote.
+        for tag in soup(["script", "style", "head", "title"]):
+            tag.decompose()
         # Inline markup first: a table cell's contents must be whole before the
         # table is flattened, or the cell is split and then joined by "|".
         _unwrap_inline_in_place(soup)
