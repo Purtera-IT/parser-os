@@ -59,7 +59,10 @@ _COUNTRY_RE = re.compile(r"^\s*(usa|us|u\.s\.a?\.?|united states( of america)?|c
 
 _FIELD_HEADER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Site identifier (most authoritative)
-    ("site_id", ("site id", "site #", "site no", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number")),
+    ("site_id", ("site id", "site #", "site no", "site code", "site key", "location id", "location code", "facility id", "facility code", "store #", "store id", "store number", "site number",
+                 # A store chain's list names each site by its store number under a bare "Store" header (Goodyear's
+                 # 496-store list, Harris Teeter's 113: 2026-10-29); without it the sheet had no id and was refused.
+                 "store no", "store num", "store code", "branch #", "branch id", "loc #", "location #")),
     # Street address — keep BEFORE facility_name so an "Address" or
     # "Street" header takes the address column even when a "Location"
     # header would also match facility_name's "location name".
@@ -476,6 +479,12 @@ def map_columns_to_fields(
         # _SYNONYM_RULES is pre-sorted longest-synonym-first, so the FIRST rule
         # that matches an available field is by construction the most specific
         # reading of this header.
+        # A bare "Store" header is the store number (Goodyear, Harris Teeter); "BevMo Store" (000123's row
+        # counter) and "Count of Store" (a pivot) are not, so only the exact word counts.
+        if header == "store" and "site_id" not in used_fields:
+            out[i] = "site_id"
+            used_fields.add("site_id")
+            continue
         for field_name, _synonym, matches in _SYNONYM_RULES:
             if field_name in used_fields:
                 continue
@@ -627,6 +636,12 @@ def looks_like_site_roster(
     if PLACE_TABLE_FIELDS <= fields_present and _has_many_distinct_places(columns, rows, col_map):
         return True
 
+    # Signal 2c: a site/store number with its place, a different place on row after row (Harris Teeter's
+    # "Store | Region | City | State | SCO | Terminals", 113 stores: 2026-10-29). An id with a place is a site list.
+    if "site_id" in fields_present and fields_present & {"city", "city_state", "state", "street_address", "zip"} \
+            and _has_many_distinct_places(columns, rows, col_map) and _ids_mostly_unique(columns, rows, col_map):
+        return True
+
     # Signal 3: row-shape — count rows whose leftmost non-empty cell
     # matches the site-ID shape. Accept when either
     #   - 3+ rows match (universal high-confidence), or
@@ -649,6 +664,22 @@ def looks_like_site_roster(
         return True
 
     return False
+
+
+def _ids_mostly_unique(columns: Sequence[str], rows: Sequence[Any], col_map: dict[int, str]) -> bool:
+    """A site list names each site once; a schedule or visit log repeats them (010358's Schedule tab: 233 rows over
+    101 sites). At least 90% of the filled id cells are distinct."""
+    idx = next((i for i, f in col_map.items() if f == "site_id"), None)
+    if idx is None or idx >= len(columns):
+        return False
+    col = columns[idx]
+    vals = []
+    for r in rows:
+        v = r.get(col) if isinstance(r, dict) else (r[idx] if idx < len(r) else None)
+        v = str(v or "").strip()
+        if v:
+            vals.append(v.lower())
+    return len(vals) >= 3 and len(set(vals)) >= 0.9 * len(vals)
 
 
 def _leftmost_nonempty_cell(row: Any, columns: Sequence[str]) -> str | None:

@@ -1106,6 +1106,40 @@ QUESTION_BANK = {
     "pb:site_hours_access": "site hours, escort and access",
 }
 
+#: The words that put a deal line on a bank question's topic. A bank question is asked because no line ANSWERS it;
+#: the lines on its topic still show a PM why it applies and where to look (owner 10-29: every question shows its
+#: evidence). They go in ``related`` (never ``cites``: a cite is a line the question rests on).
+_BANK_TOPIC = {
+    "pb:address_floor": r"\b(?:address|suite|floor|building|street|zip)\b",
+    "pb:union_labor": r"\b(?:union|prevailing|davis[- ]bacon|labor rates?|certified payroll)\b",
+    "pb:height_lift": r"\b(?:height|ceiling|lift|ladder|scissor|feet|ft)\b",
+    "pb:equipment_staging": r"\b(?:ship(?:ping|ped)?|deliver(?:y|ed)?|receiv\w*|stag\w*|equipment|hardware|supplies|kit)\b",
+    "pb:connect_configure": r"\b(?:connect\w*|configur\w*|test\w*|install\w*|mount\w*|survey\w*)\b",
+    "pb:removal_disposal": r"\b(?:remov\w*|dispos\w*|haul\w*|recycl\w*|old equipment|e-?waste|decommission\w*)\b",
+    "pb:trips": r"\b(?:trips?|visits?|phases?|return|weeks?|batch\w*|nights?)\b",
+    "pb:site_hours_access": r"\b(?:hours?|escort\w*|access|badg\w*|security|after[- ]hours|night|window)\b",
+}
+
+
+def _related_lines(bank_id: str, lines: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
+    """The deal's lines on a bank question's topic, most topic words first (ties: earlier line)."""
+    rx = _BANK_TOPIC.get(bank_id)
+    if not rx:
+        return []
+    pat = re.compile(rx, re.I)
+    scored, seen = [], set()
+    for i, x in enumerate(lines):
+        t = str(x.get("text") or "")
+        key = re.sub(r"\W+", " ", t.lower()).strip()
+        if not t or key in seen:
+            continue
+        hits = len(pat.findall(t))
+        if hits:
+            seen.add(key)
+            scored.append((-hits, i, {"id": x["id"], "text": t[:240], "why": "on this topic; no line answers it"}))
+    return [r for *_, r in sorted(scored)[:limit]]
+
+
 _PROMPT = (
     "Write the brief a project manager at PurTera prices a field-services job from. PurTera is the provider "
     "being asked to quote and do the work. The account in the CRM record is who asked PurTera for the quote (often a "
@@ -1469,6 +1503,10 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     deal_qs = [{**{k: v for k, v in q.items() if k != "why"}, "origin": "deal", **_why_of(q)}
                for q in (doc.get("open_questions") or []) if isinstance(q, dict)]
     open_qs = _one_per_fact(pricing[:6] + deal_qs)
+    topic_lines = [x for k, v in heads.items() for x in v if isinstance(x, dict) and x.get("id")]
+    for q in open_qs:
+        if q.get("origin") == "bank" and not q.get("cites") and q.get("bank_id"):
+            q["related"] = _related_lines(q["bank_id"], topic_lines)
     # A question about PurTera itself is the customer's to us, not ours to the customer: the writer kept "Where
     # else does PurTera have presence ..." (000118) though told twice; its transcript lines carry no speaker.
     about_us = [q for q in open_qs if _ABOUT_US.search(strip_cites(str(q.get("question") or "")))]

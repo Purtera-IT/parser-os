@@ -3001,7 +3001,10 @@ class XlsxParser(BaseParser):
             # neither is a generic table, not a site roster.
             # A table of places by City + Zip with a size per place is a site list too (010358).
             place_table = {"city", "zip"} <= mapped and bool(mapped & {"sqft", "occupancy"})
-            if not (mapped & ROSTER_SPECIFIC_FIELDS) and not (has_name and has_location) and not place_table:
+            # A store/site number with its place is a site list too: Goodyear's 496 stores (Store | Street Address |
+            # City | ST | Postal Code) and Harris Teeter's 113 (Store | Region | City | State) name no facility.
+            id_and_place = "site_id" in mapped and has_location
+            if not (mapped & ROSTER_SPECIFIC_FIELDS) and not (has_name and has_location) and not place_table and not id_and_place:
                 return []
             roster_rows = extract_site_roster(
                 columns=header_raw, rows=data_rows, surrounding_text=sheet_name or ""
@@ -3027,7 +3030,15 @@ class XlsxParser(BaseParser):
         for r in roster_rows:
             if _place(r):
                 place_count[_place(r)] = place_count.get(_place(r), 0) + 1
+        def _has_place(r: Any) -> bool:
+            return any(getattr(r, f, None) for f in ("street_address", "city", "state", "city_state", "zip", "facility_name"))
+
+        # A totals line under a list ("113 | | | | 71 | 942": Harris Teeter's store count, SCO and terminal sums)
+        # carries an id-shaped number but no place, where every other row has one: it is not a site.
+        placed_share = sum(1 for r in roster_rows if _has_place(r)) / max(1, len(roster_rows))
         for site_row in roster_rows:
+            if placed_share >= 0.8 and not _has_place(site_row):
+                continue
             sid = (site_row.site_id or "").strip()
             # An address identifies a site just as well as a name does; a
             # roster row with a blank display name is still a real location.
@@ -3062,7 +3073,13 @@ class XlsxParser(BaseParser):
             # A roster whose headers only gave us the id (010447: "Site No." plus
             # y/n work columns) keeps the row as the sheet wrote it. "site_id: dc5841"
             # alone reads to the base as metadata; the full row reads as a site.
-            if len(text_parts) <= 1 and 0 <= site_row.row_index < len(data_rows):
+            # A row with columns the canonical fields don't carry (City, ST, Postal Code, Region, Terminals, Tier,
+            # hours …) is written as the sheet wrote it, each cell under its header, after the id: the heads read the
+            # whole row (Goodyear's "Store | Street Address | City | ST | Postal Code" read "site_id: 0110 | address:
+            # 1100 S Green River Road", no town: 2026-10-29).
+            if 0 <= site_row.row_index < len(data_rows) and not getattr(site_row, "checkbox_fields", ()) \
+                    and len([v for v in dict(data_rows[site_row.row_index]).values()
+                             if v is not None and str(v).strip()]) > len(text_parts):
                 # Each cell keeps its column header ("Tier: Large | Floors: 4 | Bldg SqFt: 70505 | Total Hrs: 11.94"):
                 # the sheet's header row is never a line of its own here, so without it the heads read bare numbers
                 # and cannot tell square feet from hours (010358, 2026-10-29). A keyed row is also how the heads'
@@ -4737,6 +4754,24 @@ class XlsxParser(BaseParser):
         if not self._ROWS_AS_ATOMS:
             _hidx = header_index(rows)
             if is_bulk_export(rows, _hidx):
+                # A big site list is a roster first: every store is a site the quote must count (Goodyear's 496-row
+                # store list was read as a table summary and no store reached the heads: 2026-10-29).
+                big_roster = self._maybe_emit_site_roster_atoms(
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    filename=filename,
+                    sheet_name=sheet_name,
+                    rows=rows,
+                )
+                # ...but a schedule or visit log repeats its sites (010358's Schedule tab: 222 rows, each building
+                # twice, once per crew): only a list naming each place once is a roster here.
+                def _place_sig(a: Any) -> tuple:
+                    v = getattr(a, "value", None) or {}
+                    return tuple(str(v.get(k) or "").strip().lower() for k in ("street_address", "city", "zip", "sqft")) \
+                        + (re.sub(r"\s*\(row \d+\)$", "", str(v.get("site_id") or "")).lower(),)
+                if big_roster and len({_place_sig(a) for a in big_roster}) >= 0.9 * len(big_roster):
+                    return big_roster
                 reading = self._read_the_table(
                     project_id=project_id,
                     artifact_id=artifact_id,
