@@ -13,8 +13,10 @@ def qh(tmp_path, monkeypatch):
     monkeypatch.setenv("SOWSMITH_C3_QUOTE_WORDING", "off")
     fam = {"deals": 9, "median_hours_per_tech": 8.0, "per_unit_crew_hours": 4.0, "usual_techs": {"2": 5, "1": 4},
            "usual_rate_line": "L2 Networking", "usual_price": 100}
-    b = {"version": "t", "families": {"camera": dict(fam), "av": dict(fam)}, "descriptions": {"camera": "cams", "av": "tvs"},
-         "description_embeddings": [[1.0, 0.0], [0.0, 1.0]], "embed_model": "e", "wording_model": None,
+    survey = dict(fam, usual_rate_line="L1 Cabling", usual_price=115, usual_techs={"1": 3})
+    b = {"version": "t", "families": {"camera": dict(fam), "av": dict(fam), "survey": survey},
+         "descriptions": {"camera": "cams", "av": "tvs", "survey": "surveys"},
+         "description_embeddings": [[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]], "embed_model": "e", "wording_model": None,
          "quantity_weights": [0, 1, 1, 1, 1, 0, 0, 0, 0, 0], "profiles": {}, "count_scaled_families": ["camera"]}
     path = tmp_path / "b.json"
     path.write_text(json.dumps(b))
@@ -207,3 +209,84 @@ def test_the_work_window_head_decides_the_day_type(qh):
     # no head sure: the wording rule, marked
     out = qh.quote(_deal([{"id": "a1", "type": "task", "text": "Work after hours only"}], heads={"asked": True}), word=False)
     assert out["lines"][0]["by"]["day_type"] == "rule:after_hours_text"
+
+
+def _sites(*texts):
+    return [{"site": f"site:s{i}", "text": t, "atom_ids": [f"s{i}"]} for i, t in enumerate(texts)]
+
+
+def test_a_roster_across_areas_makes_travel_likely_only_when_the_travel_head_is_unsure(qh):
+    """010358: a 101-site WLAN survey across Houston, Austin, Tyler, ... got travel 'unsure'."""
+    atoms = [{"id": "a1", "type": "task", "text": "Install cameras"}]
+    sites = _sites("1200 Main St, Houston, TX 77002", "500 Congress Ave, Austin, TX 78701", "Tyler, TX 75701")
+    out = qh.quote(_deal(atoms, site_count=3, sites=sites, heads={"asked": True, "deal": {"jdg:travel_scope": ["none", 0.55]}}), word=False)
+    t = out["travel"]
+    assert t["answer"] == "travel" and t["by"] == "rule:roster_geography" and t["p"] is None
+    assert t["reason"].startswith("travel likely: sites in Houston, Austin, Tyler") and "not by distance" in t["reason"]
+    assert t["reason"].endswith("travel head unsure")
+    # a sure travel head is never overridden
+    out = qh.quote(_deal(atoms, site_count=3, sites=sites, heads={"asked": True, "deal": {"jdg:travel_scope": ["none", 0.9]}}), word=False)
+    assert out["travel"] == {"answer": "none", "p": 0.9, "by": "heads:jdg:travel_scope"}
+    # two states, read off the site keys alone
+    keyed = [{"site": "site:chicago_il_60675", "atom_ids": ["s1"]}, {"site": "site:new_york_ny_10014", "atom_ids": ["s2"]}]
+    assert qh.quote(_deal(atoms, site_count=2, sites=keyed), word=False)["travel"]["by"] == "rule:roster_geography"
+
+
+def test_one_area_or_no_places_leaves_travel_to_the_head(qh):
+    atoms = [{"id": "a1", "type": "task", "text": "Install cameras"}]
+    one_city = _sites("1200 Main St, Houston, TX 77002", "5000 Westheimer Rd, Houston, TX 77056")
+    out = qh.quote(_deal(atoms, site_count=2, sites=one_city, heads={"asked": True}), word=False)
+    assert out["travel"] == {"answer": None, "p": None, "by": "none", "reason": "travel head unsure"}
+    # one state, two cities, one ZIP3: compared by ZIP3, a suburb in the same ZIP3 is the same area
+    # (Dallas 752 / Richardson 750 would count as two: no distance table, so ZIP3 is the proxy)
+    suburb = _sites("Dallas, TX 75201", "University Park, TX 75205")
+    assert qh.quote(_deal(atoms, site_count=2, sites=suburb), word=False)["travel"]["by"] == "none"
+    # "Virginia Beach" is a city, not the state of Virginia; a sentence ending in a state is no place
+    assert qh._roster_places(_sites("INDUSTRIAL PARK VIRGINIA BEACH, VA 23452")) == [("Park Virginia Beach", "VA", "23452")]
+    assert qh._roster_places(_sites("The information contained herein, GA", "Bangalore, India")) == []
+
+
+def test_pc_hours_follow_max_curve_over_the_jobs_total_crew_hours(qh):
+    """Max (QUOTE_READINESS.md): 1 PC h up to about 10 h of work, 2 h at 16-24 h, 3-4 h at 36-48 h; big jobs by hand."""
+    def run(hours, techs, sites):
+        atoms = [{"id": "a1", "type": "task", "text": f"Install cameras, {hours} hours each with {techs} techs",
+                  "reads": {"read:hours_stated": ["true", 0.9, float(hours)], "read:crew_size": ["present", 0.9]}}]
+        return qh.quote(_deal(atoms, site_count=sites, sites=_sites(*["Houston, TX 77002"] * sites), heads={"asked": True}), word=False)
+    out = run(8, 1, 1)
+    assert out["pc_hours"] == {"hours": 1, "by": "rule:max_pc_curve", "total_crew_hours": 8, "reason": "8 crew hours of work"}
+    assert out["total"] == {"crew_hours": 8, "sites": 1, "by": "line"}
+    # the line is one site's work: three roster sites x 2 techs x 4 h = 24 crew hours -> 2 PC h
+    out = run(4, 2, 3)
+    assert out["total"] == {"crew_hours": 24, "sites": 3, "by": "rule:per_site_x_sites (heads:physical_site)"}
+    assert out["pc_hours"]["hours"] == 2
+    assert run(8, 2, 2)["pc_hours"]["hours"] == 3  # 32 h
+    big = run(8, 2, 4)  # 64 h: past the curve, set by hand
+    assert big["pc_hours"]["hours"] is None and big["pc_hours"]["by"] == "rule:max_pc_curve"
+    assert any(f.startswith("PC hours: 64 crew hours is past the PC curve") for f in big["flags"])
+
+
+def test_a_wireless_survey_takes_max_wifi_survey_line_not_the_cabling_one(qh):
+    """The survey family learned L1 Cabling from three cabling / site-assessment kits; every Wi-Fi survey kit
+    (010322, 010225, 010142) was priced on the L3 engineer / Wi-Fi survey line."""
+    audit = {"asked": True, "deal": {"deal:primary_service": ["audit", 0.9]}}
+    wlan = [{"id": "a1", "type": "scope_item", "text": "Perform a predictive and passive WLAN survey with Ekahau at each clinic"}]
+    out = qh.quote(_deal(wlan, deal_name="010358 - Houston clinics", heads=audit), word=False)
+    line = out["lines"][0]
+    assert out["job_type"] == "survey"
+    assert (line["rate_line"], line["by"]["rate"], line["price"]) == ("L3 Networking", "rule:survey_kind", 150)
+    assert "PS-L3-ENG-LABOR-ONSITE" in line["why_rate"] and "a1" in line["atom_ids"]
+    assert any(c.startswith("wireless survey: check the PS-L3-ENG-LABOR-ONSITE rate") for c in line["caveats"])
+    # a cabling survey, or a Wi-Fi survey someone else does, keeps the family's line
+    cable = [{"id": "a1", "type": "scope_item", "text": "Survey the cabling pathways and document each MDF/IDF"}]
+    assert qh.quote(_deal(cable, heads=audit), word=False)["lines"][0]["by"]["rate"] == "fallback:family_usual"
+    other = [{"id": "a1", "type": "scope_item", "text": "Wireless RF, predictive, or validation surveys are addressed under a separate SOW"},
+             {"id": "a2", "type": "scope_item", "text": "Assess the campus network and deploy Wi-Fi hardware"}]
+    assert qh.quote(_deal(other, heads=audit), word=False)["lines"][0]["rate_line"] == "L1 Cabling"
+    # the deal name alone says it ("WLAN survey")
+    out = qh.quote(_deal([{"id": "a1", "type": "scope_item", "text": "101 sites, report per site"}],
+                         deal_name="010358 - Houston WLAN survey", heads=audit), word=False)
+    assert out["lines"][0]["by"]["rate"] == "rule:survey_kind"
+    # a sure level head still decides the level
+    wlan.append({"id": "a2", "type": "requirement", "text": "An L2 tech is fine for the walk", "reads": {"read:tech_level": ["present", 0.95]}})
+    line = qh.quote(_deal(wlan, heads=audit), word=False)["lines"][0]
+    assert line["rate_line"] == "L2 Networking" and line["by"]["rate"] == "heads:read:tech_level"

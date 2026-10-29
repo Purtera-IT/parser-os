@@ -18,6 +18,10 @@ jdg:billing_type / jdg:travel_scope), a sure reading picks the line and the numb
 line. The EFF / TECHS regex and the family medians answer only when no head is sure, and every number
 says which (``by_*``: ``head:<key>`` | ``regex (head unsure)`` | ``regex (heads not asked)`` |
 ``family median`` ...). Old Deal Kit lines and lines the heads left out are never read.
+
+Rules fill what no head answers yet, each marked for a PM to confirm: travel from the heads' site roster when it
+spans more than one area (``rule:roster_geography``, state / city / ZIP3, no distance table), PC hours from Max's
+curve over the job's total crew hours (``rule:max_pc_curve``), and a wireless survey's rate line (``rule:survey_kind``).
 """
 from __future__ import annotations
 import json,math,os,re,urllib.request
@@ -88,6 +92,36 @@ HEIGHT_ACCESS={'lift','ladder'}
 #: Run O's service head is unsure everywhere (0.15-0.58) and right on 6 of 16 run 8 deals against the embedding's
 #: 8, so below the bar its answer is recorded, not used; once a retrain makes it sure it decides.
 SERVICE_SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SERVICE_SURE','0.7') or 0.7)
+#: Roster places: "Houston, TX 77002" / "Rapid City, South Dakota 57702" on a site line; "site:houston_tx_77002" as its key.
+STATES={'alabama':'AL','alaska':'AK','arizona':'AZ','arkansas':'AR','california':'CA','colorado':'CO','connecticut':'CT','delaware':'DE',
+        'florida':'FL','georgia':'GA','hawaii':'HI','idaho':'ID','illinois':'IL','indiana':'IN','iowa':'IA','kansas':'KS','kentucky':'KY',
+        'louisiana':'LA','maine':'ME','maryland':'MD','massachusetts':'MA','michigan':'MI','minnesota':'MN','mississippi':'MS','missouri':'MO',
+        'montana':'MT','nebraska':'NE','nevada':'NV','new hampshire':'NH','new jersey':'NJ','new mexico':'NM','new york':'NY',
+        'north carolina':'NC','north dakota':'ND','ohio':'OH','oklahoma':'OK','oregon':'OR','pennsylvania':'PA','rhode island':'RI',
+        'south carolina':'SC','south dakota':'SD','tennessee':'TN','texas':'TX','utah':'UT','vermont':'VT','virginia':'VA','washington':'WA',
+        'west virginia':'WV','wisconsin':'WI','wyoming':'WY','district of columbia':'DC'}
+ST_ABBR=set(STATES.values())
+PLACE=re.compile(r"(?:^|[,;:|\n]|\d\s)\s*([A-Za-z][A-Za-z .'-]{1,30}?),?\s+("+"|".join(sorted(STATES,key=len,reverse=True))+r"|(?-i:[A-Z]{2}))\b\.?,?(?:\s+(\d{5})(?:-\d{4})?)?(?=\s*(?:$|[,;|\n()–—-]|\d{5}|usa?\b|united states))",re.I)
+KEY_PLACE=re.compile(r"^site:(?:(?P<city>[a-z]+(?:_[a-z]+){0,2})_)?(?P<st>[a-z]{2})(?:_(?P<zip>\d{5}))?$")
+KEY_ZIP=re.compile(r"_([a-z]{2})_(\d{5})$")
+#: Street words: "720 West 20th Street, ..." leaves "Street" before the comma, never a city.
+NOT_CITY=re.compile(r"^(?:st|street|ave|avenue|rd|road|dr|drive|blvd|suite|ste|floor|fl|pkwy|parkway|way|ln|lane|ct|hwy|plaza|center|centre|square|[nsew]|north|south|east|west)\.?$",re.I)
+#: Words no city name has: a sentence ending in ", GA" ("The information contained ... GA") is no place.
+NOT_PLACE=re.compile(r"\b(?:the|in|of|for|and|to|at|is|are|install|information|contained|located|customer|site|office|please)\b",re.I)
+#: Max's PC-hours curve over the job's total crew hours (QUOTE_READINESS.md, 2026-10-19): 1 h up to about 10 h of work,
+#: 2 h at 16-24 h, 3-4 h at 36-48 h; past 48 h "big jobs are special" (his kits: 1 to 170 PC h), so no number is offered.
+#: Within 1 h of the kit on 34 of the 37 kits at or under 48 h.
+PC_CURVE=((12,1),(30,2),(48,3))
+#: A wireless survey on the deal's own work lines (not "Wi-Fi hardware deployment", 010235: an L2 Networking assessment).
+WIRELESS_SURVEY=re.compile(r"\b(?:wireless|wi-?fi|wlan|rf)\s+(?:site\s+|network\s+|coverage\s+)?(?:surveys?|assessments?|design|redesign|validation|heat ?maps?)\b"
+                           r"|\bekahau\b|\bheat ?maps?\b|\bpredictive\s+(?:wi-?fi\s+|wireless\s+)?(?:surveys?|design|models?)\b"
+                           r"|\b(?:passive|active)\s+(?:wi-?fi\s+|wireless\s+)?surveys?\b",re.I)
+#: A survey line that only says the wireless survey is someone else's ("addressed under a separate SOW", 010235).
+OUT_OF_SCOPE=re.compile(r"\b(?:separate(?:ly)?|excluded|exclusions?|not included|out of scope|by others)\b",re.I)
+#: The rate line Max used on every Wi-Fi survey kit: the L3 engineer line (PS-L3-ENG-LABOR-ONSITE: 010322 Longmont, 010225 India;
+#: a "Wifi Survey Tech" day rate, 1,400/day: 010142), never a cabling line. Cabling and site-assessment surveys stay the family's
+#: (010228 Cabling copper, 010235 L2 Networking, 010102 L1 Networking). 150/h is 010322's, the one hourly price among them.
+WIRELESS_SURVEY_LINE=dict(rate_line='L3 Networking',role='PS-L3-ENG-LABOR-ONSITE',price=150,kits=('010322','010225','010142'))
 
 def _snap(h): return min(HB,key=lambda x:abs(math.log(x)-math.log(max(h,1))))
 
@@ -170,7 +204,42 @@ class QuoteHeads:
     def _travel(self,p):
         r=((p.get('heads') or {}).get('deal') or {}).get('jdg:travel_scope')
         if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by='heads:jdg:travel_scope')
-        return dict(answer=None,p=None,by='none',reason='travel head unsure' if self._heads_asked(p) else 'heads not asked')
+        why='travel head unsure' if self._heads_asked(p) else 'heads not asked'
+        # The heads' own site roster: places in more than one area mean techs are unlikely to be local to all of them.
+        # No distance table ships with the quote, so areas are compared by state, city and ZIP3, never by miles.
+        places=self._roster_places(p.get('sites') or [])
+        states={s for _,s,_ in places if s}; cities=list(dict.fromkeys(c for c,_,_ in places if c)); zip3={z[:3] for _,_,z in places if z}
+        if len(states)>=2 or (len(cities)>=2 and (len(zip3)>=2 or not zip3)):
+            shown=', '.join(cities[:6])+(', …' if len(cities)>6 else '')
+            return dict(answer='travel',p=None,by='rule:roster_geography',
+                        reason=f"travel likely: sites in {shown or ', '.join(sorted(states))} ({len(cities)} cities, {len(states)} states, "
+                               f"{len(zip3)} ZIP3 areas; compared by state / city / ZIP3, not by distance); {why}",
+                        places=len(places))
+        return dict(answer=None,p=None,by='none',reason=why)
+    @staticmethod
+    def _roster_places(sites):
+        """(city, state, zip) per roster site that names a place: the site's own city/state fields when the
+        roster sends them, else the site line's "City, ST 12345", else its key ("site:houston_tx_77002")."""
+        out=[]
+        for s in sites:
+            city=(s.get('city') or '').strip(); st=(s.get('state') or '').strip(); z=str(s.get('zip') or '').strip()[:5]
+            st=STATES.get(st.lower(),st.upper()) if st else ''
+            if not (city and st):
+                for m in PLACE.finditer(s.get('text') or ''):
+                    c,a,zz=m.group(1).strip(' .'),m.group(2),m.group(3)
+                    a=STATES.get(a.lower(),a.upper())
+                    # "Suite 900 La Jolla": the words after the last number
+                    w=c.split(); w=w[max((i+1 for i,x in enumerate(w) if re.search(r'\d',x) or NOT_CITY.match(x)),default=0):][-3:]
+                    if a not in ST_ABBR or not w or NOT_PLACE.search(' '.join(w)): continue
+                    city=city or ' '.join(w).title(); st=st or a; z=z or (zz or ''); break
+            k=str(s.get('site') or '').lower(); m=KEY_PLACE.match(k) or None
+            if m and m.group('st').upper() in ST_ABBR:
+                st=st or m.group('st').upper(); z=z or (m.group('zip') or '')
+                city=city or (m.group('city') or '').replace('_',' ').title()
+            elif (m:=KEY_ZIP.search(k)) and m.group(1).upper() in ST_ABBR:
+                st=st or m.group(1).upper(); z=z or m.group(2)
+            if city or st: out.append((city.title() if city else '',st,z))
+        return out
     @staticmethod
     def _sites_said(atoms):
         n=0
@@ -316,6 +385,16 @@ class QuoteHeads:
         rate_line=rp['rate_line'] if rp else F['usual_rate_line']; price=rp['price'] if rp else F['usual_price']
         why_r=f"{rp['key']} profile ({rp['kits']} kits)" if rp else f'usual for {fam} jobs'
         by_r='fallback:account_profile' if rp else 'fallback:family_usual'
+        # A survey's kind picks its line: a wireless survey the deal's own work lines (or its name) state is priced on
+        # the L3 engineer line Max used for every Wi-Fi survey, not the family's cabling line. A sure level head still decides.
+        survey_ids=[]
+        if fam=='survey':
+            survey_ids=[i for i in self._said(work,WIRELESS_SURVEY) if not OUT_OF_SCOPE.search((next((a for a in work if a.get('id')==i),{}).get('text') or ''))]
+            if survey_ids or WIRELESS_SURVEY.search(name):
+                W=WIRELESS_SURVEY_LINE
+                rate_line=W['rate_line']; price=W['price']; by_r='rule:survey_kind'
+                why_r=f"wireless survey on the work lines: Max's Wi-Fi survey line ({W['role']}; kits {', '.join(W['kits'])})"
+                caveats.append(f"wireless survey: check the {W['role']} rate ({W['price']}/h on 010322; 010142 billed a 1,400/day survey tech)")
         lv=self._head_level(readable)
         if lv:
             m=re.match(r'L\d\s+(.*)',rate_line or '')
@@ -355,12 +434,21 @@ class QuoteHeads:
                 if said: site_by='rule:sites_said_text (no roster)'
             if said>=2: flags.append(f"documents mention {said} sites ({site_by}); no site roster from the heads")
         if fam=='program': flags.append('ongoing or multi-site engagement: confirm the duration and site count')
+        # The job's total: the line is one site's work, so a roster (or a sure declared count) of 2+ sites multiplies it.
+        if roster>=2: n_sites,total_by=roster,'rule:per_site_x_sites (heads:physical_site)'
+        elif site_by=='heads:deal:declared_site_count' and said>=2: n_sites,total_by=said,'rule:per_site_x_sites (heads:deal:declared_site_count)'
+        else: n_sites,total_by=1,'line'
+        total=hpt*techs*n_sites
+        pc=next((h for top,h in PC_CURVE if total<=top),None)
+        pc_hours=dict(hours=pc,by='rule:max_pc_curve',total_crew_hours=total,
+                      reason=(f'{total:g} crew hours of work' if pc else f'{total:g} crew hours: past the curve (48 h), Max sets big jobs by hand'))
+        if pc is None: flags.append(f'PC hours: {total:g} crew hours is past the PC curve; set them by hand (rule:max_pc_curve)')
         checked=(q['unit'],q['count']) if q and q['p']>=0.5 and q['unit'] not in ('site','user','device') and re.search(r'\b('+UNITS[q['unit']]+r')\b',scope,re.I) else None
         task=self._word(name,work,p.get('c3_brief') or {},checked,p.get('account')) if word else None
         verdict=f"hours={hpt*techs:g};per=job;qty=1;role={rate_line};techs={techs};hpt={hpt:g}"
         # the atoms each line came from, so a kit edit can become a label on the line that caused it
         src=list(dict.fromkeys([c for j in ((p.get('c3_brief') or {}).get('job_details') or []) for c in (j.get('cites') or [])]
-                               +[u['atom_id'] for u in used.values()]+([q['atom_id']] if q else [])))
+                               +[u['atom_id'] for u in used.values()]+([q['atom_id']] if q else [])+survey_ids))
         src=[x for x in src if x]
         cites=[c for j in ((p.get('c3_brief') or {}).get('job_details') or []) for c in (j.get('cites') or [])]
         by_id={a.get('id'):a for a in readable}
@@ -368,7 +456,8 @@ class QuoteHeads:
         source_text=((by_id.get(lead) or {}).get('text') or '')[:300] if lead else (q['text'] if q else ((work[0].get('text') or '')[:300] if work else ''))
         return dict(version=self.version,job_type=fam,job_type_p=round(fam_p,3),job_type_by=fam_by,
             service=(dict(answer=str(sv[0]),p=round(float(sv[1] or 0),3)) if sv and sv[0] not in (None,'_absent') else None),
-            heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,site_count=p.get('site_count') or 0,after_hours=after,
+            heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,pc_hours=pc_hours,
+            total=dict(crew_hours=total,sites=n_sites,by=total_by),site_count=p.get('site_count') or 0,after_hours=after,
             sites=dict(count=p.get('site_count') or 0,by=(site_by if 'sites' in p else 'none (not sent)'),
                        said=said or None,rule_atom_ids=dict(after_hours=after_ids,height=height_ids),
                        atom_ids=[i for st in (p.get('sites') or []) for i in (st.get('atom_ids') or [])]),
