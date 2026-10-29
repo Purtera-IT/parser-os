@@ -1093,6 +1093,19 @@ WRITER_SECTIONS: dict[str, tuple[str, ...]] = {
     "terms": ("terms", "change_control", "acceptance"),
 }
 
+#: The PM question bank: what a PM always considers before pricing a field job (owner 10-28: keep the set list; it
+#: is a bank the writer asks from when the facts leave an item open, each asked question saying it came from here).
+QUESTION_BANK = {
+    "pb:address_floor": "the street address and floor",
+    "pb:union_labor": "union or prevailing-wage labor",
+    "pb:height_lift": "mounting height and lift or ladder",
+    "pb:equipment_staging": "who supplies, receives and stages the equipment",
+    "pb:connect_configure": "whether PurTera connects, configures and tests or only mounts",
+    "pb:removal_disposal": "removal and disposal of old equipment",
+    "pb:trips": "one trip or several",
+    "pb:site_hours_access": "site hours, escort and access",
+}
+
 _PROMPT = (
     "Write the brief a project manager at PurTera prices a field-services job from. PurTera is the provider "
     "being asked to quote and do the work. The account in the CRM record is who asked PurTera for the quote (often a "
@@ -1115,12 +1128,14 @@ _PROMPT = (
     "or deadline the facts give, in the third person; never restate a fact Scope already gave. customer_furnished: equipment the customer already bought or "
     "supplies; it is not this job's price: say what was bought, how many, and its total by the label the "
     "fact gives (GRAND TOTAL), never whether that total includes tax.\n"
-    "PRICING QUESTIONS: up to 6 questions a PM must ask before pricing THIS job that its own facts leave open. "
-    "Each asks ONE thing, comes from a specific fact of this deal and cites it (a question with no fact behind it "
-    "is not asked), and names what that fact is about (the 98\" display in the lobby, the 145 store sites), "
-    "never a generic checklist item. Never ask what ANY fact given here (overview, sections, also kept, or the "
-    "SITE ROSTER line) already answers -- a roster that lists the sites with their addresses answers where the "
-    "sites are -- and never ask contract boilerplate.\n"
+    "PRICING QUESTIONS: up to 6 questions a PM must ask before pricing THIS job that its facts leave open, each "
+    "asking ONE thing. Two kinds: (a) a BANK question: one of the QUESTION BANK items below, asked only when "
+    "this job's facts leave it open, worded for this job, with its bank_id; it may cite no fact when only the "
+    "PM can know it (union labor); (b) a SUGGESTED question of your own, only when a specific fact of this deal "
+    "raises it: cite that fact and name what it is about (the 98\" display in the lobby), bank_id null. Never "
+    "ask what ANY fact given here (overview, sections, also kept, or the SITE ROSTER line) already answers -- "
+    "a roster that lists the sites with their addresses answers where the sites are -- and never ask contract "
+    "boilerplate.\nQUESTION BANK: " + "; ".join(f"{k}: {v}" for k, v in QUESTION_BANK.items()) + ".\n"
     "RULES: every sentence cites the [ids] of the facts it uses and says nothing that is not in them, except a "
     "total that follows by plain arithmetic from cited facts (89 APs x 2 drops = 178 drops), shown as the sum. Never "
     "combine two facts into a claim neither states (a note that payments exclude tax does not make a grand total "
@@ -1134,7 +1149,7 @@ _PROMPT = (
     "about the deal.\n"
     "Return JSON only: {\"summary\": str, \"sections\": {section: [{\"text\": str, \"cites\": [id]}]}, "
     "\"open_questions\": [{\"question\": str, \"owner\": str, \"why\": str, \"cites\": [id]}], "
-    "\"pricing_questions\": [{\"question\": str, \"why\": str, \"cites\": [id]}]}. "
+    "\"pricing_questions\": [{\"question\": str, \"bank_id\": str|null, \"why\": str, \"cites\": [id]}]}. "
     "WHY (every question): at most 15 words naming the decision in THIS job the answer settles, from the cited "
     "facts (\"Sets the after-hours rate and the SOW work window\", \"Decides crew size and the 40 ft lift "
     "rental\", \"Picks which of the two unit counts the quote prices\"); never generic (\"to plan the "
@@ -1441,11 +1456,17 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
     for q in doc.get("pricing_questions") or []:
         if isinstance(q, dict) and str(q.get("question") or "").strip():
             cites = [c for c in _cites_of({"cites": q.get("cites"), "text": q.get("question")}) if c in known]
+            bank = str(q.get("bank_id") or "").strip()
+            bank = bank if bank in QUESTION_BANK else ""
             pricing.append({"question": strip_cites(str(q["question"])), "owner": "project_manager",
-                            "cites": cites, "kind": "pricing", **_why_of(q)})
-    pricing = [q for q in pricing if q["cites"]]  # a question with no line of this deal behind it is a template ask
-    deal_qs = [{**{k: v for k, v in q.items() if k != "why"}, **_why_of(q)} for q in (doc.get("open_questions") or [])
-               if isinstance(q, dict)]
+                            "cites": cites, "kind": "pricing", "origin": "bank" if bank else "suggested",
+                            **({"bank_id": bank} if bank else {}), **_why_of(q)})
+    # A suggested question with no line of this deal behind it is a template ask; a bank question may stand
+    # uncited (only the PM can know union labor).
+    pricing = [q for q in pricing if q["cites"] or q.get("origin") == "bank"]
+    # The deal's own asks, reworded: they come from the deal's lines, not the bank and not the writer's invention.
+    deal_qs = [{**{k: v for k, v in q.items() if k != "why"}, "origin": "deal", **_why_of(q)}
+               for q in (doc.get("open_questions") or []) if isinstance(q, dict)]
     open_qs = _one_per_fact(pricing[:6] + deal_qs)
     # A question about PurTera itself is the customer's to us, not ours to the customer: the writer kept "Where
     # else does PurTera have presence ..." (000118) though told twice; its transcript lines carry no speaker.
@@ -1460,7 +1481,8 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
                # The deal's own and its pricing questions come first; the head's
                # catalog questions after them, the most likely few (all of them
                # stay for labeling).
-               catalog_questions=[q for q in asked if q.get("family") in SHOWN_FAMILIES][:CATALOG_SHOW],
+               catalog_questions=[{**q, "origin": "bank", "bank_id": q.get("id")} for q in asked
+                                  if q.get("family") in SHOWN_FAMILIES][:CATALOG_SHOW],
                catalog_questions_all=asked, answered_in_deal=answered, unchecked=len(unchecked),
                failed_ask_calls=failed)
     return out

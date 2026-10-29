@@ -614,3 +614,24 @@ def test_each_written_question_carries_its_why(monkeypatch):
     assert by_q["Is the 40 ft lift ours to rent?"] == "Decides crew size and the lift rental"
     assert by_q["Who stages the APs?"] is None  # generic why dropped, the question stays
     assert by_q["Which unit count governs? [a2]"] == "Picks which of the two unit counts the quote prices"
+
+
+def test_each_question_says_where_it_came_from(monkeypatch):
+    monkeypatch.setattr(c3_brief, "_complete", lambda p, m, t: (
+        '{"summary": "x [a1]", "sections": {}, "open_questions": [{"question": "Which count governs?", '
+        '"owner": "project_manager", "why": "Picks the unit count the quote prices", "cites": ["a2"]}], '
+        '"pricing_questions": [{"question": "Is union labor required at the store?", "bank_id": "pb:union_labor", '
+        '"why": "Sets the labor rate", "cites": []}, {"question": "Is the 98 inch display wall-mounted?", '
+        '"bank_id": null, "why": "Decides two techs and the mount kit", "cites": ["a1"]}, '
+        '{"question": "Any other needs?", "bank_id": "made_up", "why": "x y z", "cites": []}]}'))
+    brief = {"service": {"value": "audio_visual"}, "conflicts": [], "deal": {},
+             "sections": {"scope_of_work": [{"id": "a1", "text": "Install a 98 inch display"}],
+                          "assumptions": [{"id": "a2", "text": "173 units vs 4 units"}]},
+             "questions": [{"id": "a2", "text": "Which count?", "owner": "project_manager"}]}
+    qs = {q["question"]: q for q in c3_brief.write(brief)["open_questions"]}
+    assert qs["Is union labor required at the store?"]["origin"] == "bank"
+    assert qs["Is union labor required at the store?"]["bank_id"] == "pb:union_labor"  # uncited bank question stays
+    assert qs["Is the 98 inch display wall-mounted?"]["origin"] == "suggested" and "bank_id" not in qs["Is the 98 inch display wall-mounted?"]
+    assert "Any other needs?" not in qs  # an unknown bank id is a suggestion with no fact behind it
+    assert qs["Which count governs?"]["origin"] == "deal"
+    assert "pb:union_labor: union or prevailing-wage labor" in c3_brief._PROMPT
