@@ -57,6 +57,7 @@ import json as _json
 import re
 
 from app.core import fold_invariants as _fold
+from app.core import rule_ledger
 from typing import Any
 
 from app.core.site_evidence_conflict import normalize_address
@@ -1058,6 +1059,9 @@ def _demote_from_site(atom: Any) -> None:
             return
     except Exception:
         pass
+    rule_ledger.fire("semantic_dedup.site_demote", atom, rule_ledger.head_of(atom), "not:physical_site")
+    if rule_ledger.shadow("semantic_dedup.site_demote"):
+        return
     try:
         from app.core.schemas import AtomType
 
@@ -1139,6 +1143,13 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                         _demote_from_site(alias_atom)
                         kept_for_words.add(id(alias_atom))
             name_only_ids -= kept_for_words
+            for alias_atom in [a for a in physical if id(a) in name_only_ids]:
+                rule_ledger.fire("semantic_dedup.site_alias", alias_atom, rule_ledger.head_of(alias_atom),
+                                 "not:physical_site", "name-only alias of a located site")
+            if rule_ledger.shadow("semantic_dedup.site_alias"):
+                # Shadow: the aliases stay, as sites of their own, out of the grouping below like a kept line.
+                kept_for_words |= name_only_ids
+                name_only_ids = set()
             kept_lines |= kept_for_words
             # A kept line also stays out of the site-id grouping below. The base
             # may have typed it (locked: _demote_from_site leaves it a site), and
@@ -1289,6 +1300,9 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
         if not _covered_by_a_site(atom, [m for g in grouped.values() for m in g]):
             _demote_from_site(atom)
             dropped_ids.discard(id(atom))
+    # Log only (see rule_ledger.RULES): a ghost no kept site resolves is dropped.
+    for atom in [a for a in physical if id(a) in dropped_ids]:
+        rule_ledger.fire("semantic_dedup.site_ghost", atom, rule_ledger.head_of(atom), "not:physical_site")
 
     merged_physical: list[Any] = []
     consumed_ids: set[int] = set(dropped_ids)
@@ -1324,6 +1338,8 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
                 # second phone): the copy keeps its words, not its site claim.
                 _demote_from_site(loser)
                 continue
+            # Log only: a same-site merge, a pair judgment no head the parser reads answers.
+            rule_ledger.fire("semantic_dedup.site_merge", loser, None, "same_site", f"into {canon}")
             consumed_ids.add(id(loser))
         # v56: AFTER the merge loop, force entity_keys to a SINGLE
         # canonical site:<slug>. Doing this before the merge would have

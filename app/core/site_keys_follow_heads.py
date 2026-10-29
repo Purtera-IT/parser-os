@@ -36,6 +36,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core import rule_ledger
+
 _PREFIX = "site:"
 #: Review flag on a site line whose keys no site line backs: no roster row, no quote site.
 NOT_BACKED = "site_not_backed_by_heads"
@@ -231,6 +233,10 @@ def _join_split_addresses(atoms: list[Any], types: dict[str, Any]) -> int:
             n = 0
             for _, a in group:
                 if _site_keys(a) != [lead]:
+                    # A same-site judgment over lines: no head the parser reads answers it.
+                    rule_ledger.fire("site_keys.join_split_address", a, None, "same_site", lead)
+                    if rule_ledger.shadow("site_keys.join_split_address"):
+                        continue
                     a.entity_keys = [k for k in _keys(a) if not k.startswith(_PREFIX)] + [lead]
                     flags = list(getattr(a, "review_flags", None) or [])
                     if "address_lines_joined" not in flags:
@@ -278,6 +284,9 @@ def _fold_street_copies(atoms: list[Any], types: dict[str, Any]) -> int:
             continue
         key = next(iter(owners))
         if _site_keys(a) != [key]:
+            rule_ledger.fire("site_keys.street_copy", a, None, "same_site", key)
+            if rule_ledger.shadow("site_keys.street_copy"):
+                continue
             a.entity_keys = [k for k in _keys(a) if not k.startswith(_PREFIX)] + [key]
             a.review_flags = list(getattr(a, "review_flags", None) or []) + ["street_copy_of_site"]
             n += 1
@@ -309,6 +318,9 @@ def _mint_for_head_sites(atoms: list[Any], types: dict[str, Any]) -> int:
             continue
         slug = key[len(_PREFIX):] if key else slug_of_line(_text(a))
         if not slug or (not key and not is_place_key(_PREFIX + slug, _text(a))):
+            continue
+        rule_ledger.fire("site_keys.mint_from_head", a, h[0], "physical_site", _PREFIX + slug)
+        if rule_ledger.shadow("site_keys.mint_from_head"):
             continue
         a.entity_keys = _keys(a) + [_PREFIX + slug]
         v = _value(a)
@@ -365,6 +377,11 @@ def settle(atoms: list[Any], types: dict[str, Any] | None) -> dict[str, Any]:
         keys = _keys(a)
         bad = [k for k in keys if k.startswith(_PREFIX) and k not in backed]
         if not bad:
+            continue
+        h = _head(a, types)
+        head = (_type_of(a) if h[0] == "_keep" else h[0]) if h else None  # _keep: the parser's type stands
+        rule_ledger.fire("site_keys.drop_unbacked", a, head, "not:physical_site", ",".join(bad)[:120])
+        if rule_ledger.shadow("site_keys.drop_unbacked"):
             continue
         for k in bad:
             dropped[k] = dropped.get(k, 0) + 1

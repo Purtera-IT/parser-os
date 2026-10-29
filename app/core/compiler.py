@@ -821,6 +821,10 @@ def compile_project(
         # This compile's notices for the deal page start empty (heads_warming,
         # heads_read_degraded, large_deal: compile-progress.json via the worker).
         c3_type_base.reset_notices()
+        # The rule-fire ledger starts empty too (rule_ledger.py: every rule that overrides a head, per compile).
+        from app.core import rule_ledger as _rule_ledger
+
+        _rule_ledger.reset()
         c3_type_base.warm()
     except Exception:  # pragma: no cover - never break a compile over this
         pass
@@ -2568,6 +2572,16 @@ def compile_project(
                     atoms, project_id=resolved_project_id
                 )
                 if dropped_vendor:
+                    from app.core import rule_ledger as _rl_vendor
+
+                    _kept_ids = {id(_a) for _a in atoms}
+                    for _a in before_vendor_atoms:
+                        if id(_a) not in _kept_ids:
+                            _rl_vendor.fire("site_geo_fallback.vendor_suppress", _a, _rl_vendor.head_of(_a),
+                                            "not:physical_site", "vendor letterhead address")
+                    if _rl_vendor.shadow("site_geo_fallback.vendor_suppress"):
+                        atoms, dropped_vendor = before_vendor_atoms, 0
+                if dropped_vendor:
                     merge_suppressed(
                         suppressed_atoms,
                         capture_suppressed(
@@ -3910,6 +3924,18 @@ def compile_project(
         # The left-out ids only feed the quote's filter; the envelope keeps the counts.
         (_c3_brief.get("left_out") or {}).pop("ids", None)
 
+    # Every rule that overrode, merged, vetoed or filled a head decision this compile, with how often the head
+    # already agreed (rule_ledger.py). After the quote: its fallback picks are fires too.
+    try:
+        from app.core import rule_ledger as _rl_out
+
+        _rule_fires = _rl_out.fires()
+    except Exception as exc:  # never fail a compile over a report
+        _rule_fires = {}
+        warnings.append(f"WARNING: rule_ledger failed: {type(exc).__name__}: {exc}")
+    if _c3_brief is not None and isinstance(_c3_brief.get("decided_by"), dict):
+        _c3_brief["decided_by"]["rule_fires"] = _rule_fires
+
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.
     try:
@@ -3940,6 +3966,7 @@ def compile_project(
         suppressed_atoms=sorted(suppressed_atoms, key=lambda x: x.id),
         text_coverage=_coverage,
         ledger_audit=_ledger_audit,
+        rule_fires=_rule_fires,
         c3_brief=_c3_brief,
         entities=entities,
         edges=edges,

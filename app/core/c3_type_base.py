@@ -76,6 +76,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+from app.core import rule_ledger
+
 log = logging.getLogger(__name__)
 
 _TRUE = ("1", "true", "yes", "on")
@@ -197,11 +199,24 @@ def carries_extracted(atom: Any) -> bool:
     return any(str(k).startswith(_EXTRACTED_KEYS) for k in (getattr(atom, "entity_keys", None) or []))
 
 
-def overwrite_bar(atom: Any, answer: str, bar: float) -> float:
+def overwrite_bar(atom: Any, answer: str, bar: float, p: float | None = None) -> float:
     """The bar a base answer must clear to REPLACE the parser's type on this line: ``bar`` normally;
     ``SOWSMITH_C3_OVERWRITE_EXTRACTED_SURE`` (0.85) when the parser extracted values the new type would drop. Dev ran
     the type and authority bars at 0.5, and 010344's "200 AP's" (quantity 200, unit, item) became physical_site at
-    0.51 and minted site:200_ap_s; "20 Switch" (device:switch) became a site at 0.70."""
+    0.51 and minted site:200_ap_s; "20 Switch" (device:switch) became a site at 0.70.
+
+    ``p``: the head's certainty. Given, a refusal (``p`` clears ``bar`` but not the raised bar) is a rule fire in the
+    ledger, and in shadow mode the bar stays ``bar``."""
+    raised = _overwrite_bar(atom, answer, bar)
+    if p is None or raised <= bar or not (bar <= p < raised):
+        return raised
+    rid = "overwrite_bar.derived_finding" if raised == float("inf") else "overwrite_bar.extracted"
+    was = _type_of(atom) or None
+    rule_ledger.fire(rid, atom, answer, was or f"not:{answer}", f"{answer} at {p:.2f} refused (bar {raised:g})")
+    return bar if rule_ledger.shadow(rid) else raised
+
+
+def _overwrite_bar(atom: Any, answer: str, bar: float) -> float:
     t = getattr(atom, "atom_type", None)
     # Our own sheet reader's summary of a column ("City: HOUSTON (85), AUSTIN (25)… 27 distinct values over 222
     # rows") is not a line from the deal: it never becomes a site (010358, 2026-10-29: read as physical_site at
@@ -1799,6 +1814,11 @@ def _inside(small: list[str], big: list[str]) -> bool:
     return 0 < n < len(big) and any(big[i:i + n] == small for i in range(len(big) - n + 1))
 
 
+def _head_type(aid: str) -> str | None:
+    got = (_DEAL.get("types") or {}).get(str(aid))
+    return str(got[0]) if isinstance(got, (list, tuple)) and got and got[0] else None
+
+
 def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
     """One place, one quote site: an entry whose every key is a part of ONE other entry's key ("Basking Ridge, NJ"
     beside "... Basking Ridge, NJ 07920" on 010293; "6046 N Beltline Road" beside its full Irving address on 010282)
@@ -1819,6 +1839,16 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
         hosts = [o for o in roster if o != r and covers(o)]
         if not hosts:
             continue
+        # Ledger: a fold into one host is a same-site judgment no head the parser reads makes (jdg:site is not
+        # requested): no head answer. A mention of several is no site of its own: against the type head's read.
+        rid = "quote_sites.fold_contained" if len(hosts) == 1 else "quote_sites.fold_mention"
+        for aid in roster[r]["atom_ids"]:
+            if len(hosts) == 1:
+                rule_ledger.fire(rid, aid, None, "same_site", f"{r} -> {hosts[0]}")
+            else:
+                rule_ledger.fire(rid, aid, _head_type(aid), "not:physical_site", f"{r} inside {len(hosts)} sites")
+        if rule_ledger.shadow(rid):
+            continue
         mine = roster.pop(r)
         if len(hosts) == 1:
             host = roster[hosts[0]]
@@ -1831,7 +1861,7 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
 
 
 def quote_sites(atoms: list[Any], *, outside: bool = False,
-                left_out: set[str] | frozenset[str] | None = None) -> list[dict[str, Any]]:
+                left_out: set[str] | frozenset[str] | None = None, settled: bool = False) -> list[dict[str, Any]]:
     """The heads' site roster for the quote: one entry per site on a line the heads typed
     ``physical_site`` (the compile's final types, after the C3 authority pass), never a Deal Kit line,
     and not a line ``jdg:site_role`` surely reads as somebody else's address. Each carries the atom
@@ -1841,10 +1871,11 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     site line with no backed key is no site (it used to count as ``site-line:<id>``, so a table field
     "RU: 13", a "site.address.city: <town>" fragment and an OCR string were quote sites), and keys
     one line carries together (a "City, ST ZIP" key and the full street key) are one site, not two. ``left_out``: lines the brief left out (a barred document, a keep head's drop,
-    kept only as "also mentioned"); they name no quote site, as they price nothing."""
+    kept only as "also mentioned"); they name no quote site, as they price nothing. ``settled``: the heads settled
+    the keys (the envelope says so from the brief's ``site_keys`` when this process did not compile the deal)."""
     from app.core.c3_brief import _deal_kit
 
-    settled = (_DEAL.get("site_keys") or {}).get("by") == "heads:physical_site"
+    settled = settled or (_DEAL.get("site_keys") or {}).get("by") == "heads:physical_site"
     out = out_of_quote()
     skip = set() if outside else {str(i) for i in (left_out or ())}
     lines: list[tuple[str, str, list[str]]] = []
@@ -2007,12 +2038,12 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
     if _never():
-        return _pm_confirms(_with_site_row_hours(_with_not_work(_with_seen_only(
-            _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id))
+        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
+            _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id)))
     try:
-        return _pm_confirms(_with_site_row_hours(_with_not_work(_with_seen_only(
+        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
             _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
-            not_work), sites, by_id))
+            not_work), sites, by_id)))
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
 
@@ -2052,6 +2083,14 @@ def _with_site_row_hours(q: dict[str, Any], sites: list[dict[str, Any]], by_id: 
     # kit's total is the sheet's (1,130 h / 101 = 11.2 h a site), each site's own figure listed in ``site_hours``.
     total = round(sum(x["hours"] for x in per), 1)
     each = round(total / len(per), 2)
+    # Ledger: the head's hours are the line's when a head filled them (``by.hours`` heads:...), else none.
+    by_h = str((lines[0].get("by") or {}).get("hours") or "")
+    had = lines[0].get("crew_hours")
+    head = f"hours={float(had):.1f}" if by_h.startswith("heads:") and isinstance(had, (int, float)) else None
+    rule_ledger.fire("quote.site_row_hours", None, head, f"hours={each:.1f}",
+                     f"{each:g} h a site from '{col}' over {len(per)} of {len(sites)} sites (was {had} by {by_h or 'none'})")
+    if rule_ledger.shadow("quote.site_row_hours"):
+        return q
     line = dict(lines[0])
     techs = int(line.get("techs") or 1) or 1
     line.update(crew_hours=each, hours_per_tech=round(each / techs, 2),
@@ -2108,6 +2147,38 @@ def _parser_made(atom: Any) -> bool:
         return bool(_derived(atom))
     except Exception:
         return False
+
+
+def _note_quote_rules(q: Any) -> Any:
+    """Ledger: each quote field a rule or fallback filled (``by`` ``fallback:...`` / ``rule:...``) is a fire of
+    ``quote.<field>.<by>``. The serve picked it, so the parser can only log it; the head's answer is the one the
+    serve reports it used for that field (``heads.used``), else none."""
+    if not isinstance(q, dict) or q.get("degraded"):
+        return q
+    used = (q.get("heads") or {}).get("used") or {}
+
+    def note(field: str, by: Any, value: Any, aid: Any = None) -> None:
+        by = str(by or "")
+        if not by.startswith(("fallback:", "rule:")):
+            return
+        h = used.get(field) if isinstance(used, dict) else None
+        if isinstance(h, dict):
+            h = h.get("answer")
+        rule_ledger.fire(f"quote.{field}.{by}", aid, None if h is None else str(h), str(value), f"{field}={value}")
+
+    b = q.get("billing") or {}
+    note("billing", b.get("by"), b.get("answer"))
+    note("job_type", q.get("job_type_by") or ("fallback:embedding_family" if q.get("job_type") else ""), q.get("job_type"))
+    s = q.get("sites") or {}
+    note("sites", s.get("by"), s.get("count"))
+    for ln in q.get("lines") or []:
+        if not isinstance(ln, dict):
+            continue
+        vals = {"hours": ln.get("hours_per_tech"), "techs": ln.get("techs"), "rate": ln.get("rate_line"),
+                "day_type": ln.get("day_type")}
+        for f, by in (ln.get("by") or {}).items():
+            note(str(f), by, vals.get(str(f), ln.get(str(f))))
+    return q
 
 
 def _pm_confirms(q: Any) -> Any:
@@ -2781,7 +2852,7 @@ def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
         except Exception:
             pass
         ans, p = str(says["type"]), float(says.get("p") or 0.0)
-        if p < overwrite_bar(a, ans, _authority_bar(ans)) or ans in _AUTHORITY_SKIP:
+        if ans in _AUTHORITY_SKIP or p < overwrite_bar(a, ans, _authority_bar(ans), p):
             continue
         try:
             t = AtomType(ans)
@@ -2906,13 +2977,16 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
             if not isinstance(lab, dict) or lab.get("act") not in ("fill", "assign", "keep") or not lab.get("type"):
                 continue
             t = getattr(a, "atom_type", None)
-            if str(getattr(t, "value", t) or "") == lab["type"]:
+            was = str(getattr(t, "value", t) or "")
+            if was == lab["type"]:
                 continue
             try:
                 a.atom_type = _AT(lab["type"])
                 n += 1
             except ValueError:
                 continue
+            # Log only: the head's own act. Each fire is a line some rule upstream re-typed against the head.
+            rule_ledger.fire("authority_final.restore", a, lab["type"], was, f"{was} -> {lab['type']}")
     readings = _DEAL.get("types") or {}
     if not readings:
         return n
@@ -2970,6 +3044,8 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
             alt.append(before)
         v["alt_atom_types"] = alt
         v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
+        if final:
+            rule_ledger.fire("authority_final.restore", a, ans, before, f"{before} -> {ans} at {p:.2f}")
         if ans == "small_talk":
             v.setdefault("rejected_by", "c3")
         a.value = v

@@ -1175,6 +1175,8 @@ def build_orbitbrief_envelope(
         # Folds that hide content, found after the compile (report only):
         # counts plus examples with atom ids. See app/core/ledger_audit.py.
         "ledger_audit": dict(getattr(compile_result, "ledger_audit", None) or {}),
+        # Rules that overrode a head decision, with the head's agreement (app/core/rule_ledger.py).
+        "rule_fires": dict(getattr(compile_result, "rule_fires", None) or {}),
         "coverage": {
             "unrecovered_regions": unrecovered_regions,
             # Line-level: what the parser read, dropped, or never touched.
@@ -1283,7 +1285,26 @@ def build_orbitbrief_envelope(
     envelope["reconciliation"] = _build_reconciliation(atoms, edges)
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
-    envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+    # The site list is the heads' roster when the heads settled the deal's site keys: the same sites, under the
+    # same keys, as the quote (c3_type_base.quote_sites). Its old merges only log (rule ledger, site_readiness.*).
+    _heads_roster = None
+    try:
+        if ((getattr(compile_result, "c3_brief", None) or {}).get("site_keys") or {}).get("by") == "heads:physical_site":
+            from app.core import c3_type_base as _c3_roster
+
+            _heads_roster = _c3_roster.quote_sites(atoms, settled=True)
+    except Exception:  # never fail an envelope over the roster; the old site list stands
+        _heads_roster = None
+    from app.core import rule_ledger as _rl_env
+
+    _rl_env.take("site_readiness.")
+    envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges, heads_roster=_heads_roster)
+    _sr_fires = _rl_env.take("site_readiness.")
+    if _sr_fires:
+        envelope["rule_fires"] = {**(envelope.get("rule_fires") or {}), **_sr_fires}
+        _db = (envelope.get("c3_brief") or {}).get("decided_by")
+        if isinstance(_db, dict):
+            _db["rule_fires"] = {**(_db.get("rule_fires") or {}), **_sr_fires}
     # A deal whose only place is a town named in its scope ("a potential
     # monitor install in Philadelphia", 010426) had no site at all: the roster
     # takes site lines only. With nothing else, the place its lines name most

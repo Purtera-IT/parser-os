@@ -23,6 +23,7 @@ import os
 import re
 from typing import Any
 
+from app.core import rule_ledger
 from app.core.address_parse import (
     _CITY_STATE_ZIP_RE,
     US_STATE_NAMES,
@@ -776,9 +777,13 @@ def geo_fallback_sites(
                     parser_version="site_geo_fallback_v2",
                 )
             )
+            # Ledger: per source line (a line minting two addresses counts once), against its type head.
+            rule_ledger.fire("site_geo_fallback.address", atom, rule_ledger.head_of(atom), "physical_site", name)
             if len(out) >= _MAX_FALLBACK_SITES:
-                return out
-    return out
+                break
+        if len(out) >= _MAX_FALLBACK_SITES:
+            break
+    return [] if rule_ledger.shadow("site_geo_fallback.address") else out
 
 
 # ── A place named in the documents is a site candidate ──────────────────────
@@ -1328,7 +1333,9 @@ def geo_mention_sites(atoms: list[Any], *, project_id: str, trace: list[dict[str
                 parser_version="site_geo_mention_v1",
             )
         )
-    return out
+        rule_ledger.fire("site_geo_fallback.mention", atom, rule_ledger.head_of(atom), "physical_site",
+                         f"{label} ({source} {conf:.2f})")
+    return [] if rule_ledger.shadow("site_geo_fallback.mention") else out
 
 
 __all__ = ["enrich_site_geo", "geo_fallback_sites", "geo_mention_sites", "suppress_vendor_sites"]

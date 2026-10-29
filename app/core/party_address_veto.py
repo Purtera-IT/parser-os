@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core import rule_ledger
+
 
 def _type_str(atom: Any) -> str:
     t = getattr(atom, "atom_type", None)
@@ -89,11 +91,19 @@ def veto_party_page_sites(atoms: list[Any]) -> int:
             keys = list(getattr(a, "entity_keys", None) or [])
             kept = [k for k in keys if not str(k).startswith("site:")]
             if len(kept) != len(keys):
+                rid = "party_address_veto.signature_keys"
+                rule_ledger.fire(rid, a, rule_ledger.head_of(a), "not:physical_site", "site keys stripped")
+                if rule_ledger.shadow(rid):
+                    continue
                 try:
                     a.entity_keys = kept
                     n += 1
                 except Exception:
                     pass
+            continue
+        rid = "party_address_veto.signature_page"
+        rule_ledger.fire(rid, a, rule_ledger.head_of(a), "not:physical_site", "retyped deal_metadata")
+        if rule_ledger.shadow(rid):
             continue
         try:
             from app.core.schemas import AtomType
@@ -159,6 +169,11 @@ def follow_party_copies(atoms: list[Any], types: dict[str, Any] | None = None) -
         whole = _norm(raw)
         street = _street_of(a)
         if not ((street and street in blob) or (len(whole.split()) >= 2 and any(ch.isdigit() for ch in whole) and whole in blob)):
+            continue
+        # The heads' read of THIS copy (not the contact line's): it said physical_site, so the rule disagrees.
+        rid = "party_address_veto.follow_party_copies"
+        rule_ledger.fire(rid, a, rule_ledger.head_of(a), "stakeholder", "bare copy of a party address")
+        if rule_ledger.shadow(rid):
             continue
         try:
             from app.core.schemas import AtomType
