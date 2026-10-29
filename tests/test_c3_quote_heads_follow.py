@@ -314,3 +314,35 @@ def test_a_wireless_survey_takes_max_wifi_survey_line_not_the_cabling_one(qh):
     wlan.append({"id": "a2", "type": "requirement", "text": "An L2 tech is fine for the walk", "reads": {"read:tech_level": ["present", 0.95]}})
     line = qh.quote(_deal(wlan, heads=audit), word=False)["lines"][0]
     assert line["rate_line"] == "L2 Networking" and line["by"]["rate"] == "heads:read:tech_level"
+
+
+def test_number_picks_and_billing_skip_rows_the_heads_rule_out(qh):
+    """4-deal audit 2026-10-29: hours and crew came off chatter admission drops; billing counted site-list rows."""
+    atoms = [
+        {"id": "chat", "type": "scope_item", "text": "call it a day at 4 hours", "reads": {
+            "read:labor_hours": ["present", 0.99], "col:admission": ["drop", 0.9]}},
+        {"id": "row", "type": "physical_site", "text": "Store 12 | 6 hours", "reads": {"read:labor_hours": ["present", 0.99]}},
+        {"id": "sow", "type": "task", "text": "one technician for three (3) hours, 3 hours", "reads": {"read:labor_hours": ["present", 0.9]}},
+    ]
+    assert qh._head_number(atoms, ("read:labor_hours",), __import__("ml.c3.quote_heads", fromlist=["x"]).HOURS_ON_LINE, 2000)[2] == "sow"
+    votes = [{"id": f"r{i}", "type": "physical_site", "text": "row", "reads": {"read:billing_type": ["fixed", 0.99]}} for i in range(5)]
+    votes += [{"id": "t1", "type": "pricing_assumption", "text": "billed hourly", "reads": {"read:billing_type": ["t_and_m", 0.95]}},
+              {"id": "t2", "type": "pricing_assumption", "text": "fixed fee per site", "reads": {"read:billing_type": ["fixed", 0.9]}}]
+    b = qh._billing({"heads": {"asked": True, "deal": {"jdg:billing_type": ["fixed", 0.49]}}}, votes)
+    # the roster rows cast no vote; 1-1 is a split and the deal judgment breaks it
+    assert (b["answer"], b["by"]) == ("fixed", "heads:jdg:billing_type (breaks a split vote)")
+    assert b["votes"] == {"t_and_m": 1, "fixed": 1}
+
+
+def test_crew_never_comes_from_the_degenerate_crew_rule_head(qh):
+    atoms = [{"id": "a1", "type": "task", "text": "Access One engineer on site", "reads": {"read:co_crew_rule": ["present", 1.0]}}]
+    out = qh.quote(_deal(atoms, heads={"asked": True}), word=False)
+    assert out["lines"][0]["by"]["techs"] != "heads:read:co_crew_rule"
+
+
+def test_deal_scope_heads_fill_only_when_sure(qh):
+    atoms = [{"id": "a1", "type": "task", "text": "Install cameras"}]
+    out = qh.quote(_deal(atoms, heads={"asked": True, "deal": {"jdg:expenses_scope": ["none", 0.82], "jdg:hardware_scope": ["customer_furnished", 0.69]}}), word=False)
+    assert out["scope"]["expenses"] == {"answer": "none", "p": 0.82, "by": "heads:jdg:expenses_scope"}
+    assert out["scope"]["hardware"]["answer"] is None and out["scope"]["hardware"]["reason"] == "head unsure"
+    assert out["scope"]["materials"]["reason"] == "head not sent"

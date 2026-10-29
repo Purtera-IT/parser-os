@@ -58,7 +58,9 @@ SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SURE','0.8') or 0.8)
 #: rule" heads. With the readers the heads' own line choice shows: run O reads "Standard working day is eight (8)
 #: hours" as labor hours at 0.999 (010362, 010231), so they wait for run P's hours / crew labels.
 HOURS_HEADS=('read:co_hours_estimate','read:hours_stated','read:labor_hours')
-CREW_HEADS=('read:crew_size','read:co_crew_rule')
+#: read:co_crew_rule left out until it is refit: it reads "present" on ~95% of all lines (4-deal audit 2026-10-29), so a
+#: crew taken from it was regex luck on any line ("Access One engineer", 010362).
+CREW_HEADS=('read:crew_size',)
 BILLING_LINE_HEADS=('read:billing_type','jdg:commercial')
 #: Heads that score below live; an answer from one is used but marked (AUDIT_dealkit_heads item 12).
 CAVEATS={'read:labor_hours':'read:labor_hours scores below live (0.03-0.04 held-out): check these hours'}
@@ -83,7 +85,16 @@ SERVICE_FAMILY={'audio_visual':'av','paging_mass_notification':'av','low_voltage
                 'staff_augmentation':'program','msp':'program','audit':'survey'}
 #: Lines that state no term of the deal: never a billing vote (000118: two small_talk and two open_question lines
 #: among the eight t_and_m votes).
-NO_BILLING_TYPES=SKIP_TYPES|{'open_question','answered_question','question'}
+NO_BILLING_TYPES=SKIP_TYPES|{'open_question','answered_question','question','physical_site'}
+#: Lines that state no number of this job's hours or crew: a site-list row, a question, chatter (010447's top labor-hours
+#: lines were "call it a day" and "4 PM").
+NO_NUMBER_TYPES=NO_BILLING_TYPES
+#: The line heads that say a line is not this job's work, when the compile sends them: admission drops it, or the
+#: action head says it is not ours to do. A line they rule out never sets a number or casts a billing vote.
+OUT_ANSWERS={'col:admission':{'drop','reject','exclude'},'read:co_action':{'reject','none','not_ours','context'}}
+#: The deal's billing judgment breaks a split vote at or above this, under the 0.8 bar (010279: fixed 0.49 was right,
+#: the vote was another job's transcript). A split = the winner has under twice the runner-up's votes.
+BILLING_TIEBREAK=0.4
 #: read:work_window answers that make the day type overtime, and read:access_need answers that flag height.
 AFTER_WINDOWS={'after_hours','overnight','weekend','holiday'}
 HEIGHT_ACCESS={'lift','ladder'}
@@ -162,6 +173,13 @@ class QuoteHeads:
         h=p.get('heads')
         return bool(h.get('asked')) if isinstance(h,dict) else any(a.get('reads') for a in p.get('atoms') or [])
     @staticmethod
+    def _ruled_out(a):
+        """True when a line head the compile sent rules the line out of this job's work (OUT_ANSWERS), at the bar."""
+        for h,bad in OUT_ANSWERS.items():
+            r=(a.get('reads') or {}).get(h)
+            if r and str(r[0]) in bad and float(r[1] or 0)>=SURE: return True
+        return False
+    @staticmethod
     def _sure(a,head):
         r=(a.get('reads') or {}).get(head)
         if not r or r[0] in (None,'_absent','false','none') or float(r[1] or 0)<SURE: return None
@@ -172,6 +190,7 @@ class QuoteHeads:
         best=None
         for head in heads:
             for a in atoms:
+                if (a.get('type') or a.get('atom_type')) in NO_NUMBER_TYPES or self._ruled_out(a): continue
                 r=self._sure(a,head)
                 if not r: continue
                 v=r[2] if len(r)>2 and isinstance(r[2],(int,float)) and r[2]>0 else None
@@ -200,14 +219,33 @@ class QuoteHeads:
             if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by=f'heads:{k}',atom_ids=[])
         votes={}
         for a in atoms:
-            if a.get('type') in NO_BILLING_TYPES: continue
+            if (a.get('type') or a.get('atom_type')) in NO_BILLING_TYPES or self._ruled_out(a): continue
             for h in BILLING_LINE_HEADS:
                 r=self._sure(a,h)
                 if r: votes.setdefault(r[0],[]).append((a.get('id'),float(r[1]),h))
         if votes:
-            v,ev=max(votes.items(),key=lambda kv:(len(kv[1]),max(x[1] for x in kv[1])))
-            return dict(answer=v,p=round(max(x[1] for x in ev),3),by=f'heads:{ev[0][2]}',atom_ids=[x[0] for x in ev][:8])
+            ranked=sorted(votes.items(),key=lambda kv:(len(kv[1]),max(x[1] for x in kv[1])),reverse=True)
+            v,ev=ranked[0]
+            j=d.get('jdg:billing_type')
+            split=len(ranked)>1 and len(ev)<2*len(ranked[1][1])
+            if split and j and j[0] not in (None,'_absent') and j[1] is not None and float(j[1])>=BILLING_TIEBREAK and j[0]!=v:
+                ev=votes.get(j[0]) or []
+                return dict(answer=j[0],p=round(float(j[1]),3),by='heads:jdg:billing_type (breaks a split vote)',
+                            atom_ids=[x[0] for x in ev][:8],votes={k:len(x) for k,x in votes.items()})
+            return dict(answer=v,p=round(max(x[1] for x in ev),3),by=f'heads:{ev[0][2]}',atom_ids=[x[0] for x in ev][:8],
+                        votes={k:len(x) for k,x in votes.items()})
         return dict(answer=None,p=None,by='none',reason='no billing head sure' if self._heads_asked(p) else 'heads not asked',atom_ids=[])
+    def _deal_scope(self,p):
+        """What the deal heads say is in the quote beyond labor (jdg:expenses_scope / hardware_scope / materials_scope),
+        each with its p and by; unsure or unsent heads answer None, so the form leaves that field to a PM."""
+        d=((p.get('heads') or {}).get('deal') or {}); out={}
+        for k in ('expenses','hardware','materials'):
+            r=d.get(f'jdg:{k}_scope')
+            sure=bool(r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE)
+            out[k]=(dict(answer=r[0],p=round(float(r[1]),3),by=f'heads:jdg:{k}_scope') if sure else
+                    dict(answer=None,p=(round(float(r[1]),3) if r and r[1] is not None else None),by='none',
+                         reason=('head unsure' if r else 'head not sent')))
+        return out
     def _travel(self,p):
         r=((p.get('heads') or {}).get('deal') or {}).get('jdg:travel_scope')
         if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by='heads:jdg:travel_scope')
@@ -471,7 +509,7 @@ class QuoteHeads:
         source_text=((by_id.get(lead) or {}).get('text') or '')[:300] if lead else (q['text'] if q else ((work[0].get('text') or '')[:300] if work else ''))
         return dict(version=self.version,job_type=fam,job_type_p=round(fam_p,3),job_type_by=fam_by,
             service=(dict(answer=str(sv[0]),p=round(float(sv[1] or 0),3)) if sv and sv[0] not in (None,'_absent') else None),
-            heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,pc_hours=pc_hours,
+            heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,scope=self._deal_scope(p),pc_hours=pc_hours,
             total=dict(crew_hours=total,sites=n_sites,by=total_by),site_count=p.get('site_count') or 0,after_hours=after,
             sites=dict(count=p.get('site_count') or 0,by=(site_by if 'sites' in p else 'none (not sent)'),
                        said=said or None,rule_atom_ids=dict(after_hours=after_ids,height=height_ids),
