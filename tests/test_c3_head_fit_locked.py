@@ -108,3 +108,22 @@ def test_consistency_holds_unlabeled_lines(case):
 def test_margin():
     lp = torch.tensor([[0.0, -1.0, -3.0], [-2.0, -0.5, -0.1]])
     torch.testing.assert_close(head_fit._margin(lp, torch.tensor([0, 1])), torch.tensor([1.0, -0.4]))
+
+
+def test_guard_weights_hold_their_lines_harder(case):
+    model, b = case
+    c, _ = _rows(model, b, None)
+    lab = torch.arange(len(c['y'])) % 2 == 0
+    new = {KEY: {n: t[lab] for n, t in c.items()}}
+    with torch.no_grad():
+        new[KEY]['y'] = (head_fit.Lock(model, [KEY]).logits(model, KEY, new[KEY]).argmax(-1) + 1) % c['base'].shape[1]
+    moved = {}
+    for g in (1.0, 100.0):
+        cons = {KEY: {n: t[~lab] for n, t in c.items()}}
+        cons[KEY]['cw'] = torch.full((int((~lab).sum()),), g)
+        lock = head_fit.Lock(model, [KEY], rank=0)
+        head_fit.locked_fit(model, lock, new, cons, {}, {}, new_weight=1, cons_weight=1.0, hold_weight=1.0,
+                            epochs=4, steps=10, batch=256, lr=1e-2, check_every=4, max_flip=1.0)
+        with torch.no_grad():
+            moved[g] = float((lock.logits(model, KEY, cons[KEY]).log_softmax(-1) - cons[KEY]['teach']).abs().mean())
+    assert moved[100.0] < moved[1.0] / 5

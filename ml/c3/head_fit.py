@@ -598,7 +598,8 @@ def locked_fit(model, lock: Lock, new, cons, replay, va, *, new_weight=30.0, con
     a batch of consistency rows (KL(base || candidate), x cons_weight) and a batch of replay rows (cross-entropy
     on the saved label, x replay_weight), normalised by their total weight. ``hold_weight`` adds a flip hinge on the
     same consistency batch: the base's answer must stay ahead of every other answer by min(its base margin,
-    ``hold_margin``) (KL alone barely charges for flipping a near-tie line). ``cons`` / ``replay`` rows carry the
+    ``hold_margin``) (KL alone barely charges for flipping a near-tie line). A ``cw`` column on ``cons`` weighs
+    each line's KL and hinge (the driver's --guard-types: lines whose base answer is a guarded type). ``cons`` / ``replay`` rows carry the
     base log-probs in ``teach`` (computed here, at delta 0). Every ``check_every`` epochs: validation exact and the
     share of validation rows whose answer changed, the share of consistency rows that flipped, and the new-row fit.
     An epoch is eligible when no head's validation exact falls below the base's (minus ``tolerance``), no head
@@ -646,12 +647,14 @@ def locked_fit(model, lock: Lock, new, cons, replay, va, *, new_weight=30.0, con
                 if k in cons and cons_weight > 0:
                     i = _sample(cons[k], batch, gen)
                     lp = lock.logits(model, k, cons[k], i).log_softmax(-1)
-                    num = num + cons_weight * F.kl_div(lp, cons[k]["teach"][i], log_target=True,
-                                                       reduction="none").sum(-1).sum()
-                    den = den + cons_weight * len(i)
+                    cw = cons[k]["cw"][i] if "cw" in cons[k] else torch.ones(len(i))
+                    num = num + cons_weight * (cw * F.kl_div(lp, cons[k]["teach"][i], log_target=True,
+                                                             reduction="none").sum(-1)).sum()
+                    den = den + cons_weight * cw.sum()
                     if hold_weight > 0:
-                        num = num + hold_weight * F.relu(cons[k]["hold"][i] - _margin(lp, cons[k]["a0"][i])).sum()
-                        den = den + hold_weight * len(i)
+                        miss = F.relu(cons[k]["hold"][i] - _margin(lp, cons[k]["a0"][i]))
+                        num = num + hold_weight * (cw * miss).sum()
+                        den = den + hold_weight * cw.sum()
                 if k in replay and replay_weight > 0:
                     i = _sample(replay[k], batch, gen)
                     num = num + replay_weight * F.cross_entropy(lock.logits(model, k, replay[k], i),
