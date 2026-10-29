@@ -215,21 +215,25 @@ def _sites(*texts):
     return [{"site": f"site:s{i}", "text": t, "atom_ids": [f"s{i}"]} for i, t in enumerate(texts)]
 
 
-def test_a_roster_across_areas_makes_travel_likely_only_when_the_travel_head_is_unsure(qh):
-    """010358: a 101-site WLAN survey across Houston, Austin, Tyler, ... got travel 'unsure'."""
+def test_a_roster_across_areas_flags_travel_and_never_answers_it(qh):
+    """010358: a 101-site WLAN survey across Houston, Austin, Tyler, ... got travel 'unsure'. Roster geography was right
+    on 6 of 14 fires on the kits, so it is a flag for a PM, not the answer."""
     atoms = [{"id": "a1", "type": "task", "text": "Install cameras"}]
     sites = _sites("1200 Main St, Houston, TX 77002", "500 Congress Ave, Austin, TX 78701", "Tyler, TX 75701")
     out = qh.quote(_deal(atoms, site_count=3, sites=sites, heads={"asked": True, "deal": {"jdg:travel_scope": ["none", 0.55]}}), word=False)
     t = out["travel"]
-    assert t["answer"] == "travel" and t["by"] == "rule:roster_geography" and t["p"] is None
-    assert t["reason"].startswith("travel likely: sites in Houston, Austin, Tyler") and "not by distance" in t["reason"]
-    assert t["reason"].endswith("travel head unsure")
-    # a sure travel head is never overridden
+    assert (t["answer"], t["p"], t["by"], t["reason"]) == (None, None, "none", "travel head unsure")
+    assert t["check"]["rule"] == "rule:roster_geography" and t["check"]["decides"] is False
+    assert "not by distance" in t["check"]["note"]
+    assert "sites span Houston, Austin, Tyler: check travel (rule:roster_geography)" in out["flags"]
+    # a sure travel head answers, and no flag is raised
     out = qh.quote(_deal(atoms, site_count=3, sites=sites, heads={"asked": True, "deal": {"jdg:travel_scope": ["none", 0.9]}}), word=False)
     assert out["travel"] == {"answer": "none", "p": 0.9, "by": "heads:jdg:travel_scope"}
+    assert not any("check travel" in f for f in out["flags"])
     # two states, read off the site keys alone
     keyed = [{"site": "site:chicago_il_60675", "atom_ids": ["s1"]}, {"site": "site:new_york_ny_10014", "atom_ids": ["s2"]}]
-    assert qh.quote(_deal(atoms, site_count=2, sites=keyed), word=False)["travel"]["by"] == "rule:roster_geography"
+    out = qh.quote(_deal(atoms, site_count=2, sites=keyed), word=False)
+    assert out["travel"]["answer"] is None and out["travel"]["check"]["rule"] == "rule:roster_geography"
 
 
 def test_one_area_or_no_places_leaves_travel_to_the_head(qh):
@@ -240,7 +244,7 @@ def test_one_area_or_no_places_leaves_travel_to_the_head(qh):
     # one state, two cities, one ZIP3: compared by ZIP3, a suburb in the same ZIP3 is the same area
     # (Dallas 752 / Richardson 750 would count as two: no distance table, so ZIP3 is the proxy)
     suburb = _sites("Dallas, TX 75201", "University Park, TX 75205")
-    assert qh.quote(_deal(atoms, site_count=2, sites=suburb), word=False)["travel"]["by"] == "none"
+    assert "check" not in qh.quote(_deal(atoms, site_count=2, sites=suburb), word=False)["travel"]
     # "Virginia Beach" is a city, not the state of Virginia; a sentence ending in a state is no place
     assert qh._roster_places(_sites("INDUSTRIAL PARK VIRGINIA BEACH, VA 23452")) == [("Park Virginia Beach", "VA", "23452")]
     assert qh._roster_places(_sites("The information contained herein, GA", "Bangalore, India")) == []

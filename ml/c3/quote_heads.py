@@ -19,9 +19,9 @@ line. The EFF / TECHS regex and the family medians answer only when no head is s
 says which (``by_*``: ``head:<key>`` | ``regex (head unsure)`` | ``regex (heads not asked)`` |
 ``family median`` ...). Old Deal Kit lines and lines the heads left out are never read.
 
-Rules fill what no head answers yet, each marked for a PM to confirm: travel from the heads' site roster when it
-spans more than one area (``rule:roster_geography``, state / city / ZIP3, no distance table), PC hours from Max's
-curve over the job's total crew hours (``rule:max_pc_curve``), and a wireless survey's rate line (``rule:survey_kind``).
+Rules fill what no head answers yet, each marked for a PM to confirm: PC hours from Max's curve over the job's total
+crew hours (``rule:max_pc_curve``) and a wireless survey's rate line (``rule:survey_kind``). A roster that spans more
+than one area only flags travel (``rule:roster_geography``, state / city / ZIP3, no distance table); it sets no answer.
 """
 from __future__ import annotations
 import json,math,os,re,urllib.request
@@ -205,17 +205,18 @@ class QuoteHeads:
         r=((p.get('heads') or {}).get('deal') or {}).get('jdg:travel_scope')
         if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by='heads:jdg:travel_scope')
         why='travel head unsure' if self._heads_asked(p) else 'heads not asked'
-        # The heads' own site roster: places in more than one area mean techs are unlikely to be local to all of them.
+        out=dict(answer=None,p=None,by='none',reason=why)
+        # The heads' own site roster across more than one area is a flag for a PM, never the answer: replayed on 51
+        # kits it was right on 6 of its 14 fires (about the base rate), since Max's travel follows the tech's distance.
         # No distance table ships with the quote, so areas are compared by state, city and ZIP3, never by miles.
         places=self._roster_places(p.get('sites') or [])
         states={s for _,s,_ in places if s}; cities=list(dict.fromkeys(c for c,_,_ in places if c)); zip3={z[:3] for _,_,z in places if z}
         if len(states)>=2 or (len(cities)>=2 and (len(zip3)>=2 or not zip3)):
             shown=', '.join(cities[:6])+(', …' if len(cities)>6 else '')
-            return dict(answer='travel',p=None,by='rule:roster_geography',
-                        reason=f"travel likely: sites in {shown or ', '.join(sorted(states))} ({len(cities)} cities, {len(states)} states, "
-                               f"{len(zip3)} ZIP3 areas; compared by state / city / ZIP3, not by distance); {why}",
-                        places=len(places))
-        return dict(answer=None,p=None,by='none',reason=why)
+            out['check']=dict(rule='rule:roster_geography',decides=False,flag=f"sites span {shown or ', '.join(sorted(states))}: check travel (rule:roster_geography)",
+                              note=f"{len(places)} roster places: {len(cities)} cities, {len(states)} states, {len(zip3)} ZIP3 areas; "
+                                   "compared by state / city / ZIP3, not by distance; a flag only (6 of 14 right on the kits)")
+        return out
     @staticmethod
     def _roster_places(sites):
         """(city, state, zip) per roster site that names a place: the site's own city/state fields when the
@@ -402,7 +403,7 @@ class QuoteHeads:
             if new!=rate_line: caveats.append(f'price {price} is for {rate_line}; check the {new} rate'); why_r=f'level stated on a line read:tech_level reads ({why_r} for the track)'
             rate_line=new; by_r='heads:read:tech_level'; used['level']=dict(head='read:tech_level',atom_id=lv[1],p=round(lv[2],3))
         billing=self._billing(p,readable); travel=self._travel(p)
-        flags=[]
+        flags=[travel['check']['flag']] if travel.get('check') else []
         # Day type and lift: the heads first (read:work_window, read:access_need, set-valued), read on the work lines
         # the heads kept in the brief body; the wording rules only where no head is sure, marked rule:* with their
         # lines, read on the same lines and never when the wording negates them ("no lift requirements", 010228).
