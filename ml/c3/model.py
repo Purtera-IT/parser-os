@@ -117,6 +117,10 @@ class C3Config:
     #: primary-service heads trained in the planning view too, so serve answers them there. Off for a
     #: checkpoint trained without it (they stay masked in the planning view, as trained).
     planning_heads: bool = False
+    #: Read the line's signature / contact-block facts (data.signature_tags) through ``encoder.sig_in``, a
+    #: zero-initialized input added by ``C3Model.enable_sig_tags`` (a refit, refit_ctx.py). Off for a
+    #: checkpoint without it, which then has no sig_in either.
+    sig_tags: bool = False
     ema: float = 0.996
     #: v5 explanation bank on by default in c3_loss (reader votes, compiled
     #: operators, clause slots). Off: v6 reads explanations with the
@@ -236,9 +240,16 @@ class DealEncoder(nn.Module):
         # Table row / column / spans are counts (row 1..thousands): log-scaled
         # so one long sheet cannot swamp the input. 0 (not in a table) stays 0.
         geo = torch.cat([geo[:, :4], torch.log1p(geo[:, 4:].clamp(min=0))], -1)
-        return self.ln(self.lift(self.text(inp["texts"])) + self.tags(tags)
-                       + self.nums(inp["numbers"]) + self.time(time)
-                       + self.pixels(pix) + self.geometry(geo))
+        x = (self.lift(self.text(inp["texts"])) + self.tags(tags)
+             + self.nums(inp["numbers"]) + self.time(time)
+             + self.pixels(pix) + self.geometry(geo))
+        if getattr(self.cfg, "sig_tags", False) and getattr(self, "sig_in", None) is not None:
+            from .data import SIG_TAGS  # noqa: PLC0415
+
+            sig = torch.tensor([[float(t in (row or ())) for t in SIG_TAGS]
+                                for row in (inp.get("sig_tags") or [[]] * n)[:n]], device=dev)
+            x = x + self.sig_in(sig)
+        return self.ln(x)
 
     def forward(self, inp: dict[str, Any], *, hindsight: bool = False,
                 allowed: torch.Tensor | None = None) -> torch.Tensor:
@@ -430,6 +441,20 @@ class C3Model(nn.Module):
                                        nn.Linear(c.d // 2, max(2, len(companies))))
         # Cross-line reasoning flags (graph.py); the defaults read as before.
         self.graph: dict[str, Any] = dict(cross.GRAPH_DEFAULTS)
+
+    def enable_sig_tags(self) -> nn.Linear:
+        """The signature-fact input (data.signature_tags): one zero-initialized column per fact, so the model
+        reads exactly as before until a refit opens it. Only a model that calls this has the module (and saves
+        it, with the checkpoint's ``sig_tags`` flag)."""
+        from .data import SIG_TAGS  # noqa: PLC0415
+
+        if getattr(self.encoder, "sig_in", None) is None:
+            lin = nn.Linear(len(SIG_TAGS), self.cfg.d, bias=False)
+            nn.init.zeros_(lin.weight)
+            self.encoder.sig_in = lin.to(self.encoder.lift.weight.device)
+        self.cfg.sig_tags = True
+        self.encoder.cfg = self.cfg
+        return self.encoder.sig_in
 
     def enable_graph(self, flags: dict[str, Any] | None) -> dict[str, Any]:
         return cross.enable_graph(self, flags)

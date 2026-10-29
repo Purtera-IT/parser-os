@@ -771,12 +771,15 @@ class Batch:
     #: hdr:, sheet:, sec:). Read only by a base trained on them
     #: (C3Config.context_tags).
     ctx_tags: list[list[str]] = field(default_factory=list)
+    #: Input: each line's signature / contact-block facts (``signature_tags``).
+    #: Read only by a base refit on them (C3Config.sig_tags).
+    sig_tags: list[list[str]] = field(default_factory=list)
 
     def inputs(self) -> dict[str, Any]:
         return {"texts": self.texts, "numbers": self.numbers, "doc_kind": self.doc_kind,
                 "role": self.role, "side": self.side, "times": self.times,
                 "org": self.org, "direction": self.direction, "stage": self.stage, "view": self.view,
-                "copy": self.copy, "ctx_tags": self.ctx_tags, "same_doc": self.same_doc, "same_section": self.same_section,
+                "copy": self.copy, "ctx_tags": self.ctx_tags, "sig_tags": self.sig_tags, "same_doc": self.same_doc, "same_section": self.same_section,
                 "context": self.context, "pixels": self.pixels, "geometry": self.geometry}
 
     def oneshot(self) -> dict[str, Any]:
@@ -1650,6 +1653,59 @@ def context_tags(atoms: list[Atom]) -> list[list[str]]:
     return [tags_of(a.section, a.sheet, a.table_header, a.doc_kind, a.quoted_depth) for a in atoms]
 
 
+#: The signature / contact-block facts ``signature_tags`` can put on a line, in input-column order.
+SIG_TAGS = ("sig:after_close", "sig:before_from", "sig:contact", "sig:invite_loc", "sig:sender_org", "sig:elsewhere")
+_CLOSING = re.compile(r"^\s*(thanks|thank you|many thanks|best|best regards|kind regards|warm regards|regards|sincerely|"
+                      r"cheers|respectfully|thx)\b[\s,.!-]*(\w+\s*)?$", re.I)
+_FROM = re.compile(r"^\s*(from:|-+\s*original message|on .{4,80} wrote:\s*$|sent from my)", re.I)
+_CONTACT = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+|(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b|"
+                      r"\b(?:office|mobile|cell|phone|tel|fax|direct)\s*[:.]", re.I)
+_ADDRESS = re.compile(r"\b\d{2,6}\s+[A-Za-z0-9.]+(?:\s+[A-Za-z0-9.]+){0,4}\s+(?:st|street|ave|avenue|rd|road|blvd|"
+                      r"boulevard|dr|drive|pkwy|parkway|way|ln|lane|ct|court|pl|place|hwy|highway|cir|circle)\b|"
+                      r"\b[A-Za-z .'-]+,\s*[A-Z]{2}\.?\s+\d{5}(?:-\d{4})?\b", re.I)
+_LOCATION = re.compile(r"^\s*(location|where)\s*:", re.I)
+
+
+def signature_tags(atoms: list[Atom]) -> list[list[str]]:
+    """Each line's signature / contact-block facts, from the window's own lines (the same rule for a training
+    row and a served one): within 6 lines after a closing ("Thanks,", "Best,") in the same document; within 3
+    lines before a quoted-reply header ("From:", "On ... wrote:"); a phone / email / "Office:" on the line or
+    within 2 lines of it in the same document; a meeting's location field or an address in a meeting; the
+    speaker's own org name on the line; the same words on another line that carries one of the signature facts."""
+    n = len(atoms)
+    out: list[set[str]] = [set() for _ in range(n)]
+    by_doc: dict[Any, list[int]] = {}
+    for i, a in enumerate(atoms):
+        by_doc.setdefault(a.doc_id or f"#{i}", []).append(i)
+    for rows in by_doc.values():
+        rows = sorted(rows, key=lambda i: (atoms[i].order if atoms[i].order is not None else 0, i))
+        texts = [str(atoms[i].text or "") for i in rows]
+        for j, t in enumerate(texts):
+            if _CLOSING.match(t):
+                for i in rows[j + 1:j + 7]:
+                    out[i].add("sig:after_close")
+            if _FROM.match(t):
+                for i in rows[max(0, j - 3):j]:
+                    out[i].add("sig:before_from")
+            if _CONTACT.search(t):
+                for i in rows[max(0, j - 2):j + 3]:
+                    out[i].add("sig:contact")
+    for i, a in enumerate(atoms):
+        t = str(a.text or "")
+        if str(a.doc_kind or "").lower() == "meeting" and (_LOCATION.match(t) or _ADDRESS.search(t)):
+            out[i].add("sig:invite_loc")
+        org = _norm_text(a.speaker_org or "")
+        if len(org) >= 4 and org in _norm_text(t):
+            out[i].add("sig:sender_org")
+    marked = {"sig:after_close", "sig:before_from", "sig:contact"}
+    signed = {_norm_text(a.text) for i, a in enumerate(atoms) if out[i] & marked and _norm_text(a.text)}
+    for i, a in enumerate(atoms):
+        w = _norm_text(a.text)
+        if w and w in signed and not out[i] & marked:
+            out[i].add("sig:elsewhere")
+    return [sorted(s) for s in out]
+
+
 def copy_labels_enabled() -> bool:
     """C3_COPY_LABELS=1: a repeat's admission follows one policy
     (``_as_repeat``). Off (default), labels are unchanged."""
@@ -2115,7 +2171,7 @@ def featurize(deal: DealExample, schema: Schema, *, absent_is_negative: bool = F
         side=[a.speaker_side for a in atoms], times=[a.entered_at for a in atoms],
         org=[a.speaker_org for a in atoms], direction=[a.doc_direction for a in atoms],
         stage=[a.stage_at for a in atoms], view=[a.view for a in atoms], copy=copy,
-        ctx_tags=context_tags(atoms),
+        ctx_tags=context_tags(atoms), sig_tags=signature_tags(atoms),
         same_doc=_pair_mask([a.doc_id or None for a in atoms]),
         same_section=_pair_mask([(a.doc_id, a.section) if a.section else None for a in atoms]),
         context=context, targets=targets, numbers_target=numbers_target, edges=edges,

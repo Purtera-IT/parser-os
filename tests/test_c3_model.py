@@ -108,7 +108,7 @@ def test_programs_come_out_of_the_why_and_execute_exactly(deal):
 
 def test_inputs_carry_no_labels(schema, deal):
     batch = featurize(deal, schema)
-    assert set(batch.inputs()) == {"texts", "numbers", "doc_kind", "role", "side", "times", "org", "direction", "stage", "view", "copy", "ctx_tags",
+    assert set(batch.inputs()) == {"texts", "numbers", "doc_kind", "role", "side", "times", "org", "direction", "stage", "view", "copy", "ctx_tags", "sig_tags",
                                    "same_doc", "same_section", "context", "pixels", "geometry"}
     m = _model(schema)
     relabeled = copy.deepcopy(deal)
