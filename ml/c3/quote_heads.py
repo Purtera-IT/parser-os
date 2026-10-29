@@ -118,10 +118,14 @@ WIRELESS_SURVEY=re.compile(r"\b(?:wireless|wi-?fi|wlan|rf)\s+(?:site\s+|network\
                            r"|\b(?:passive|active)\s+(?:wi-?fi\s+|wireless\s+)?surveys?\b",re.I)
 #: A survey line that only says the wireless survey is someone else's ("addressed under a separate SOW", 010235).
 OUT_OF_SCOPE=re.compile(r"\b(?:separate(?:ly)?|excluded|exclusions?|not included|out of scope|by others)\b",re.I)
-#: The rate line Max used on every Wi-Fi survey kit: the L3 engineer line (PS-L3-ENG-LABOR-ONSITE: 010322 Longmont, 010225 India;
-#: a "Wifi Survey Tech" day rate, 1,400/day: 010142), never a cabling line. Cabling and site-assessment surveys stay the family's
-#: (010228 Cabling copper, 010235 L2 Networking, 010102 L1 Networking). 150/h is 010322's, the one hourly price among them.
-WIRELESS_SURVEY_LINE=dict(rate_line='L3 Networking',role='PS-L3-ENG-LABOR-ONSITE',price=150,kits=('010322','010225','010142'))
+#: A wireless survey's line follows Max's levels (L1 labor-heavy, L2 knowledge + labor, L3 usually remote): FIELD survey work
+#: (walking sites, collecting Ekahau/WLAN data) is L2; design, predictive modelling or remote analysis is the L3 engineer line.
+#: Owner, 2026-10-29: 010358 asked for "Lead Field Technician ... familiar with Ekahau and gathering WLAN survey data" and
+#: "we can handle the report building", which is L2 field work. Only 010322 among the good kits used the L3 engineer line
+#: (010225 and 010142 are broken kits), so L3 stays for design/remote work only.
+WIRELESS_DESIGN=re.compile(r"\b(?:predictive|design|redesign|remote(?:ly)?\s+(?:analy[sz]\w*|review)|report\s+writ\w*|heat ?map\s+reports?)\b",re.I)
+WIRELESS_SURVEY_LINE=dict(rate_line='L2 Networking',role='L2 field survey technician',price=115,kits=('owner 2026-10-29',))
+WIRELESS_DESIGN_LINE=dict(rate_line='L3 Networking',role='PS-L3-ENG-LABOR-ONSITE',price=150,kits=('010322',))
 
 def _snap(h): return min(HB,key=lambda x:abs(math.log(x)-math.log(max(h,1))))
 
@@ -392,10 +396,12 @@ class QuoteHeads:
         if fam=='survey':
             survey_ids=[i for i in self._said(work,WIRELESS_SURVEY) if not OUT_OF_SCOPE.search((next((a for a in work if a.get('id')==i),{}).get('text') or ''))]
             if survey_ids or WIRELESS_SURVEY.search(name):
-                W=WIRELESS_SURVEY_LINE
+                design=any(WIRELESS_DESIGN.search((next((a for a in work if a.get('id')==i),{}).get('text') or '')) for i in survey_ids)
+                W=WIRELESS_DESIGN_LINE if design else WIRELESS_SURVEY_LINE
                 rate_line=W['rate_line']; price=W['price']; by_r='rule:survey_kind'
-                why_r=f"wireless survey on the work lines: Max's Wi-Fi survey line ({W['role']}; kits {', '.join(W['kits'])})"
-                caveats.append(f"wireless survey: check the {W['role']} rate ({W['price']}/h on 010322; 010142 billed a 1,400/day survey tech)")
+                why_r=(f"wireless design / remote analysis on the work lines: the L3 engineer line ({W['role']}, kit 010322)" if design
+                       else "wireless FIELD survey on the work lines (collecting survey data on site): L2, by Max's levels")
+                caveats.append(f"wireless survey: check the {W['rate_line']} rate")
         lv=self._head_level(readable)
         if lv:
             m=re.match(r'L\d\s+(.*)',rate_line or '')

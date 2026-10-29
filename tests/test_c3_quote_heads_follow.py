@@ -270,16 +270,20 @@ def test_pc_hours_follow_max_curve_over_the_jobs_total_crew_hours(qh):
 
 
 def test_a_wireless_survey_takes_max_wifi_survey_line_not_the_cabling_one(qh):
-    """The survey family learned L1 Cabling from three cabling / site-assessment kits; every Wi-Fi survey kit
-    (010322, 010225, 010142) was priced on the L3 engineer / Wi-Fi survey line."""
+    """The survey family learned L1 Cabling from cabling / site-assessment kits. A wireless FIELD survey (collecting
+    Ekahau / WLAN data on site) is L2 by Max's levels (owner, 2026-10-29, 010358); design or predictive work is the
+    L3 engineer line (010322)."""
     audit = {"asked": True, "deal": {"deal:primary_service": ["audit", 0.9]}}
-    wlan = [{"id": "a1", "type": "scope_item", "text": "Perform a predictive and passive WLAN survey with Ekahau at each clinic"}]
-    out = qh.quote(_deal(wlan, deal_name="010358 - Houston clinics", heads=audit), word=False)
+    field = [{"id": "a1", "type": "scope_item", "text": "Walk each clinic and gather WLAN survey data with Ekahau; we handle report building"}]
+    out = qh.quote(_deal(field, deal_name="010358 - Houston clinics", heads=audit), word=False)
     line = out["lines"][0]
     assert out["job_type"] == "survey"
-    assert (line["rate_line"], line["by"]["rate"], line["price"]) == ("L3 Networking", "rule:survey_kind", 150)
-    assert "PS-L3-ENG-LABOR-ONSITE" in line["why_rate"] and "a1" in line["atom_ids"]
-    assert any(c.startswith("wireless survey: check the PS-L3-ENG-LABOR-ONSITE rate") for c in line["caveats"])
+    assert (line["rate_line"], line["by"]["rate"], line["price"]) == ("L2 Networking", "rule:survey_kind", 115)
+    assert "FIELD survey" in line["why_rate"] and "a1" in line["atom_ids"]
+    assert any(c.startswith("wireless survey: check the L2 Networking rate") for c in line["caveats"])
+    wlan = [{"id": "a1", "type": "scope_item", "text": "Perform a predictive and passive WLAN survey with Ekahau at each clinic"}]
+    line = qh.quote(_deal(wlan, deal_name="010358 - Houston clinics", heads=audit), word=False)["lines"][0]
+    assert (line["rate_line"], line["price"]) == ("L3 Networking", 150) and "PS-L3-ENG-LABOR-ONSITE" in line["why_rate"]
     # a cabling survey, or a Wi-Fi survey someone else does, keeps the family's line
     cable = [{"id": "a1", "type": "scope_item", "text": "Survey the cabling pathways and document each MDF/IDF"}]
     assert qh.quote(_deal(cable, heads=audit), word=False)["lines"][0]["by"]["rate"] == "fallback:family_usual"
