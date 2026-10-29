@@ -236,6 +236,22 @@ def test_a_roster_across_areas_flags_travel_and_never_answers_it(qh):
     assert out["travel"]["answer"] is None and out["travel"]["check"]["rule"] == "rule:roster_geography"
 
 
+def test_site_list_cells_with_no_state_still_give_places(qh):
+    """010358: the site sheet's rows are "City: HOUSTON | Zip: 77002" with no state column, so the roster gave no
+    place and the travel flag never fired across Houston, Austin and McAllen."""
+    rows = _sites("site_id: Houston 77002 | City: HOUSTON | Zip: 77002 | Region: Houston Core | Tier: Medium",
+                  "site_id: Austin 78705 | City: AUSTIN | Zip: 78705 | Tier: Small",
+                  "site_id: Mcallen 78503 | City: MCALLEN | Zip: 78503 | Tier: Small")
+    assert qh._roster_places(rows) == [("Houston", "", "77002"), ("Austin", "", "78705"), ("Mcallen", "", "78503")]
+    atoms = [{"id": "a1", "type": "task", "text": "Wireless site survey"}]
+    out = qh.quote(_deal(atoms, site_count=3, sites=rows, heads={"asked": True}), word=False)
+    assert out["travel"]["answer"] is None and out["travel"]["check"]["decides"] is False
+    assert "sites span Houston, Austin, Mcallen: check travel (rule:roster_geography)" in out["flags"]
+    # one city in one ZIP3 is still one area
+    same = _sites("City: HOUSTON | Zip: 77002", "City: HOUSTON | Zip: 77008")
+    assert "check" not in qh.quote(_deal(atoms, site_count=2, sites=same), word=False)["travel"]
+
+
 def test_one_area_or_no_places_leaves_travel_to_the_head(qh):
     atoms = [{"id": "a1", "type": "task", "text": "Install cameras"}]
     one_city = _sites("1200 Main St, Houston, TX 77002", "5000 Westheimer Rd, Houston, TX 77056")

@@ -104,6 +104,9 @@ ST_ABBR=set(STATES.values())
 PLACE=re.compile(r"(?:^|[,;:|\n]|\d\s)\s*([A-Za-z][A-Za-z .'-]{1,30}?),?\s+("+"|".join(sorted(STATES,key=len,reverse=True))+r"|(?-i:[A-Z]{2}))\b\.?,?(?:\s+(\d{5})(?:-\d{4})?)?(?=\s*(?:$|[,;|\n()–—-]|\d{5}|usa?\b|united states))",re.I)
 KEY_PLACE=re.compile(r"^site:(?:(?P<city>[a-z]+(?:_[a-z]+){0,2})_)?(?P<st>[a-z]{2})(?:_(?P<zip>\d{5}))?$")
 KEY_ZIP=re.compile(r"_([a-z]{2})_(\d{5})$")
+#: A site-list row's own labelled cells ("City: HOUSTON | Zip: 77002", 010358): the parser's columns, read as they are.
+#: 010358's sheet has no state column, so its 101 rows gave no place and the travel flag never fired.
+CELL=re.compile(r"(?:^|\|)\s*(city|town|state|st|province|zip|zip ?code|postal(?: ?code)?)\s*:\s*([^|]+?)\s*(?=\||$)",re.I)
 #: Street words: "720 West 20th Street, ..." leaves "Street" before the comma, never a city.
 NOT_CITY=re.compile(r"^(?:st|street|ave|avenue|rd|road|dr|drive|blvd|suite|ste|floor|fl|pkwy|parkway|way|ln|lane|ct|hwy|plaza|center|centre|square|[nsew]|north|south|east|west)\.?$",re.I)
 #: Words no city name has: a sentence ending in ", GA" ("The information contained ... GA") is no place.
@@ -228,6 +231,11 @@ class QuoteHeads:
         out=[]
         for s in sites:
             city=(s.get('city') or '').strip(); st=(s.get('state') or '').strip(); z=str(s.get('zip') or '').strip()[:5]
+            for m in CELL.finditer(s.get('text') or ''):
+                k,v=m.group(1).lower(),m.group(2).strip()
+                if k in ('city','town'): city=city or v
+                elif k in ('state','st','province'): st=st or v
+                elif re.match(r'\d{5}',v): z=z or v[:5]
             st=STATES.get(st.lower(),st.upper()) if st else ''
             if not (city and st):
                 for m in PLACE.finditer(s.get('text') or ''):
