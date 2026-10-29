@@ -43,9 +43,15 @@ RULES: dict[str, dict[str, Any]] = {
     "party_address_veto.signature_keys": {
         "stage": "downstream",
         "what": "a non-site line on a signature page loses its site: keys", "can_shadow": True},
+    # Replaced by repeat_address.follow_full_copy (upstream): shadow by default, so its fires show what the
+    # upstream rule missed.
     "party_address_veto.follow_party_copies": {
-        "stage": "downstream",
+        "stage": "downstream", "default": "shadow",
         "what": "a bare copy of a stakeholder/signatory address is retyped stakeholder", "can_shadow": True},
+    "repeat_address.follow_full_copy": {
+        "stage": "upstream",
+        "what": "a bare repeat of an address takes the heads' answer on its full-context copy, at the heads' read",
+        "can_shadow": True},
     "quote_sites.fold_contained": {
         "stage": "downstream",
         "what": "a quote site whose keys sit inside ONE other site's key is folded into it", "can_shadow": True},
@@ -208,7 +214,8 @@ def head_of(atom: Any) -> str | None:
     try:
         from app.core.c3_type_base import _DEAL
 
-        got = (_DEAL.get("types") or {}).get(aid)
+        # A line repeat_address gave its full-context copy's answer: the head's own read of THIS line.
+        got = (_DEAL.get("own_reads") or {}).get(aid) or (_DEAL.get("types") or {}).get(aid)
         if isinstance(got, (list, tuple)) and got and got[0]:
             got_type = str(got[0])
     except Exception:  # pragma: no cover - never break a rule over its ledger

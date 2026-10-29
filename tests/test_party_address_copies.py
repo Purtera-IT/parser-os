@@ -10,7 +10,8 @@ def _a(i, t, text, loc=None):
               source_refs=[NS(locator=loc or {})], artifact_id="art")
 
 
-def test_bare_copies_follow_the_contact_line():
+def test_bare_copies_follow_the_contact_line(monkeypatch):
+    monkeypatch.setenv("SOWSMITH_RULE_MODES", "party_address_veto.follow_party_copies:active")
     atoms = [
         _a("s1", "stakeholder", "Scott Morgan | 1361 N Glenville Dr | scott@traversa.net | 214-707-0631"),
         _a("s2", "stakeholder", "Richardson TX 75081"),

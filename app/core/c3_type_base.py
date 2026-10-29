@@ -2310,6 +2310,20 @@ def _aliased(types: dict[str, Any] | None) -> dict[str, Any]:
     return {k: ([BASE_ALIAS.get(str(v[0]), v[0]), *list(v[1:])] if v else v) for k, v in (types or {}).items()}
 
 
+def _heads_types(got: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The heads' type reads off a /read answer, where they first come in: a bare repeat of an address takes the
+    heads' answer on its full-context copy (``repeat_address``, upstream, in the rule ledger) before any stage
+    reads them."""
+    types = _aliased(got.get("types"))
+    try:
+        from app.core.repeat_address import follow_full_copies
+
+        follow_full_copies(types, rows, _DEAL)
+    except Exception as exc:  # noqa: BLE001 - the heads' own reads stand
+        log.warning("repeat_address skipped (%s)", type(exc).__name__)
+    return types
+
+
 def read_key(rows: list[dict[str, Any]], *extra: Any) -> str:
     """What one read of the deal saw: every row the base reads (its key, text, document, arrival, order,
     sender, stage and view) and what was asked. A reading is reused only for the same key: a later line
@@ -2393,7 +2407,7 @@ def _remote_types(got: dict[str, Any], rows: list[dict[str, Any]], keys: list[st
     _STATUS.update(state="read", reason="", remote=True, lines=len(rows),
                    read_ms=round((time.monotonic() - started) * 1000, 1),
                    service_read_ms=got.get("read_ms"))
-    types = _aliased(got.get("types"))
+    types = _heads_types(got, rows)
     if "types" in _DEAL:
         _DEAL["types"].update(types)
     out: dict[int, tuple[str, float]] = {}
@@ -2960,6 +2974,16 @@ def own_site_keys(atoms: list[Any]) -> int:
     return n
 
 
+def _from_copy(atom: Any) -> dict[str, Any]:
+    """``{"from_copy": <atom id>, "own": [type, p]}`` when this line took its full-context copy's answer at the
+    heads' read (``repeat_address``), so the line says where its type came from; else {}."""
+    aid = str(getattr(atom, "id", "") or "")
+    got = (_DEAL.get("follows_copy") or {}).get(aid)
+    if not got:
+        return {}
+    return {"from_copy": got.get("copy"), "own": (_DEAL.get("own_reads") or {}).get(aid)}
+
+
 def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None) -> int:
     """Give each line the base's type where it is sure. Before typing
     (``final=False``) and again at the end (``final=True``: a locked line a
@@ -3033,7 +3057,7 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
             continue
         if before == ans:
             if not final and not is_locked(a):
-                v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
+                v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before, **_from_copy(a)}
                 a.value = v
             continue
         # A value-carrying type only where the parser's own value is that kind
@@ -3057,7 +3081,7 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
         if before and before not in alt:
             alt.append(before)
         v["alt_atom_types"] = alt
-        v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
+        v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before, **_from_copy(a)}
         if final:
             rule_ledger.fire("authority_final.restore", a, ans, before, f"{before} -> {ans} at {p:.2f}")
         if ans == "small_talk":
@@ -3166,7 +3190,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _wait_for_heads("/read", body, _DOC_STATUS, "document read")
             raw = got.get("documents") or {}
             if "types" in _DEAL:
-                _DEAL["types"].update(_aliased(got.get("types")))
+                _DEAL["types"].update(_heads_types(got, rows))
             _keep_full(got)
         elif _url():
             try:
@@ -3185,7 +3209,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _request("/read", body, timeout=budget + 10.0)
             raw = got.get("documents") or {}
             if "types" in _DEAL:
-                _DEAL["types"].update(_aliased(got.get("types")))
+                _DEAL["types"].update(_heads_types(got, rows))
             _keep_full(got)
         else:
             from ml.c3.predict import read_deal
