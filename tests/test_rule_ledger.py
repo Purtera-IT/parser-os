@@ -328,3 +328,14 @@ def test_report_lists_downstream_rules_first(tmp_path, capsys):
     out = capsys.readouterr().out
     assert out.index("semantic_dedup.site_alias") < out.index("quote.hours.fallback:family_median")
     assert out.index("DOWNSTREAM") < out.index("UPSTREAM")
+
+
+def test_a_fire_leaves_the_rule_on_the_line():
+    from types import SimpleNamespace as NS
+    from app.core import rule_ledger as rl
+    rl.reset()
+    a = NS(id="atm_1", value={})
+    rl.fire("party_address_veto.follow_party_copies", a, "physical_site", "stakeholder", "copy of a contact line")
+    t = a.value["rule_trace"][0]
+    assert t["rule"] == "party_address_veto.follow_party_copies" and t["head"] == "physical_site" and t["did"] == "stakeholder"
+    assert t["agrees"] is False

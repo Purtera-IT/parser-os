@@ -253,6 +253,17 @@ def fire(rule_id: str, atom: Any, head_answer: Any, rule_answer: Any, note: str 
                     bucket.append(aid)
             if note and not rec["note"]:
                 rec["note"] = str(note)[:200]
+        # The line's own trail: which rule touched it, against what the heads said, so a PM can see the flow of a
+        # decision on the line itself (Scope's Evidence, the Sources reader), not only in the deal's tallies.
+        v = getattr(atom, "value", None) if atom is not None and not isinstance(atom, str) else None
+        if isinstance(v, dict):
+            trail = v.get("rule_trace") if isinstance(v.get("rule_trace"), list) else []
+            if len(trail) < 12:
+                trail.append({"rule": rule_id, "stage": stage(rule_id), "mode": mode(rule_id),
+                              "head": None if head_answer is None else str(head_answer),
+                              "did": None if rule_answer is None else str(rule_answer),
+                              "agrees": ok, "note": str(note)[:160] if note else ""})
+                v["rule_trace"] = trail
         return ok
     except Exception:  # pragma: no cover
         return None
