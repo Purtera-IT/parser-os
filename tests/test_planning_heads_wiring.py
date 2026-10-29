@@ -96,3 +96,13 @@ def test_a_shared_read_reports_the_document_reads_time(monkeypatch):
     out = c3_type_base._remote("d", [{}], ["a1"], [0])
     assert out == {0: ("task", 0.9)}
     assert c3_type_base._STATUS["read_ms"] == 4321.0 and c3_type_base._STATUS["read_reused_from"] == "document_job_scope"
+
+
+def test_a_date_is_not_a_place():
+    from app.core.site_keys_follow_heads import is_place_key
+
+    assert not is_place_key("site:august_17th", "Install on August 17th")
+    assert not is_place_key("site:17th_of_march", "the 17th of March")
+    assert not is_place_key("site:oct_3_2026", "Oct 3 2026")
+    assert is_place_key("site:augusta_hq", "Augusta HQ, 12 Main St")
+    assert is_place_key("site:may_street_depot", "May Street Depot")

@@ -126,10 +126,19 @@ _NUMBERED_PLACE = re.compile(r"\b(?:site|store|location|loc|building|bldg|facili
                              r"hospital|school|office|warehouse|plant|property|unit|restaurant|hotel)\s*#?\s*\d", re.I)
 
 
+#: A key that is a date: "site:august_17th" (010198: the heads' roster's only site, and the SOW's one location).
+_DATE_SLUG = re.compile(r"^(?:on_)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*_\d{1,2}(?:st|nd|rd|th)?"
+                        r"(?:_\d{2,4})?$|^\d{1,2}(?:st|nd|rd|th)?_(?:of_)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)"
+                        r"[a-z]*(?:_\d{2,4})?$")
+
+
 def is_place_key(key: str, text: str) -> bool:
     """A site key that can name a place: words, or a number the line calls a site / store /
-    building, or a number on an address line. A row number or a code alone is not a place."""
+    building, or a number on an address line. A row number or a code alone is not a place, and a
+    date ("August 17th") is not one either."""
     slug = str(key)[len(_PREFIX):] if str(key).startswith(_PREFIX) else str(key)
+    if _DATE_SLUG.match(slug.lower()):
+        return False
     if not _CODE_SLUG.match(slug.lower()):
         return True
     t = str(text or "")

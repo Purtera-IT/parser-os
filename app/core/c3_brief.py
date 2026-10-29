@@ -1463,6 +1463,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
                             **({"bank_id": bank} if bank else {}), **_why_of(q)})
     # A suggested question with no line of this deal behind it is a template ask; a bank question may stand
     # uncited (only the PM can know union labor).
+    pricing_uncited = [q for q in pricing if not (q["cites"] or q.get("origin") == "bank")]
     pricing = [q for q in pricing if q["cites"] or q.get("origin") == "bank"]
     # The deal's own asks, reworded: they come from the deal's lines, not the bank and not the writer's invention.
     deal_qs = [{**{k: v for k, v in q.items() if k != "why"}, "origin": "deal", **_why_of(q)}
@@ -1478,6 +1479,7 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
                # open ("Have you had a chance to review this proposal?" is a
                # nudge, not a question to price from).
                open_questions=open_qs, uncited_dropped=dropped, about_purtera_dropped=about_us,
+               pricing_suggested_uncited_dropped=pricing_uncited,
                # The deal's own and its pricing questions come first; the head's
                # catalog questions after them, the most likely few (all of them
                # stay for labeling).
