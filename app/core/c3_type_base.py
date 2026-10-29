@@ -1819,6 +1819,19 @@ def _head_type(aid: str) -> str | None:
     return str(got[0]) if isinstance(got, (list, tuple)) and got and got[0] else None
 
 
+_US_STATES = frozenset("al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc "
+                       "nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy dc".split())
+
+
+def _no_state(words: list[str], key: str) -> list[str]:
+    """A town key's words without a trailing state code ("houston, tx" -> houston), for a key with no ZIP: roster keys
+    built from a city + ZIP carry no state, so "Houston, TX" never sat inside "houston_77002" and stayed a site of its
+    own (010358's 102nd). Anything else: unchanged."""
+    if len(words) >= 2 and words[-1] in _US_STATES and not _ZIP_TAIL.search(key):
+        return words[:-1]
+    return words
+
+
 def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
     """One place, one quote site: an entry whose every key is a part of ONE other entry's key ("Basking Ridge, NJ"
     beside "... Basking Ridge, NJ 07920" on 010293; "6046 N Beltline Road" beside its full Irving address on 010282)
@@ -1832,7 +1845,8 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
         def covers(o: str) -> bool:
             # every key of r is a part of one of o's keys, or the same words as one that adds the ZIP
             # (a key with no ZIP of its own, against one that adds it: "Basking Ridge, NJ" / "... NJ 07920").
-            return all(any(_inside(w, ow) or (b == ob and not _ZIP_TAIL.search(k) and _ZIP_TAIL.search(ok))
+            return all(any(_inside(w, ow) or _inside(_no_state(w, k), ow)
+                           or (b == ob and not _ZIP_TAIL.search(k) and _ZIP_TAIL.search(ok))
                            for ow, ob, ok in zip(words[o], bare[o], roster[o]["keys"]))
                        for w, b, k in zip(words[r], bare[r], roster[r]["keys"]))
 

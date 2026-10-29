@@ -57,3 +57,10 @@ def test_quote_hours_from_the_site_rows():
     assert out["crew_hours"] == 7.77 and out["hours_per_tech"] == 3.88
     assert out["by"]["hours"] == "sheet:site_rows" and len(out["site_hours"]) == 3
     assert c3._with_site_row_hours(q, sites + [{"site": f"x{i}", "atom_ids": []} for i in range(5)], by_id) is q
+
+
+def test_a_town_with_its_state_inside_several_roster_sites_is_a_mention():
+    roster = {k: {"keys": [k], "atom_ids": [k]} for k in
+              ("site:houston_tx", "site:houston_77002", "site:houston_77054_row_32", "site:austin_78705")}
+    c3._fold_contained(roster)
+    assert "site:houston_tx" not in roster and len(roster) == 3
