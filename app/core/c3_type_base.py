@@ -2024,8 +2024,8 @@ def _with_site_row_hours(q: dict[str, Any], sites: list[dict[str, Any]], by_id: 
     """Hours the deal's own site list states per site replace a single stated figure.
 
     010358 (2026-10-29): the customer's survey sheet gives every one of 101 sites a "Total Hrs" (1,130 h in all);
-    the quote priced one "job site" at 2 techs x 8 h = 16 h, read off "capped 8 hrs/night". When at least half the
-    quote's sites carry a total-hours column on their roster row, the line's crew hours are that column's sum,
+    the quote said 2 techs x 8 h a site, read off "capped 8 hrs/night". When at least half the
+    quote's sites carry a total-hours column on their roster row, the line's crew hours are that column's average per site (the prefill applies a line at every site), each site's own figure
     listed per site (``site_hours``), and the reason says so. Techs, rate and billing are untouched."""
     lines = q.get("lines") if isinstance(q, dict) else None
     if not lines or not sites:
@@ -2048,13 +2048,16 @@ def _with_site_row_hours(q: dict[str, Any], sites: list[dict[str, Any]], by_id: 
             break
     if len(per) < 2 or len(per) * 2 < len(sites):
         return q
+    # The Deal Kit prefill applies a quote line at EVERY site, so the line is per site: the column's average, so the
+    # kit's total is the sheet's (1,130 h / 101 = 11.2 h a site), each site's own figure listed in ``site_hours``.
     total = round(sum(x["hours"] for x in per), 1)
+    each = round(total / len(per), 2)
     line = dict(lines[0])
     techs = int(line.get("techs") or 1) or 1
-    line.update(crew_hours=total, hours_per_tech=round(total / techs, 1),
-                why_hours=f"the site list gives hours per site: {len(per)} of {len(sites)} sites, {total:g} h in all "
-                          f"(column '{col}')",
-                proposed_hours=f"hours={total:g};per=site_list;qty={len(per)};role={line.get('rate_line')};techs={techs}")
+    line.update(crew_hours=each, hours_per_tech=round(each / techs, 2),
+                why_hours=f"the site list gives hours per site ('{col}'): {each:g} h a site on average, {total:g} h over "
+                          f"{len(per)} of {len(sites)} sites",
+                proposed_hours=f"hours={each:g};per=site;qty={len(per)};role={line.get('rate_line')};techs={techs}")
     line["by"] = {**(line.get("by") or {}), "hours": "sheet:site_rows"}
     line["site_hours"] = per
     return {**q, "lines": [line] + list(lines[1:])}

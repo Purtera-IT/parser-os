@@ -53,5 +53,7 @@ def test_quote_hours_from_the_site_rows():
     q = {"lines": [{"techs": 2, "hours_per_tech": 8, "crew_hours": 16, "rate_line": "L2", "by": {"hours": "heads:read:hours_stated"}}]}
     sites = [{"site": f"s{i}", "atom_ids": [f"a{i}"]} for i in range(3)]
     out = c3._with_site_row_hours(q, sites, by_id)["lines"][0]
-    assert out["crew_hours"] == 23.3 and out["by"]["hours"] == "sheet:site_rows" and len(out["site_hours"]) == 3
+    # per site: the prefill applies the line at each site, so the kit's total is the sheet's 23.3 h
+    assert out["crew_hours"] == 7.77 and out["hours_per_tech"] == 3.88
+    assert out["by"]["hours"] == "sheet:site_rows" and len(out["site_hours"]) == 3
     assert c3._with_site_row_hours(q, sites + [{"site": f"x{i}", "atom_ids": []} for i in range(5)], by_id) is q
