@@ -428,3 +428,302 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------- locked refit (opt-in)
+# A targeted refit that can only move what its labels ask for (refit owner, 2026-10-29):
+#   (a) frozen base: trunk, lattice and every other head stay as loaded; each target head's free row trains as
+#       base + delta (low-rank when rank > 0), so no other head's input or output can move;
+#   (b) consistency: every line of every training deal that is not a new label is held to the base's own answer
+#       distribution (KL, base predictions cached once);
+#   (c) replay: a fixed seeded sample of approved labels, at its own weight, every step;
+#   (d) accept: the heads whose saved weights differ from the base (only the targets may), and the lines whose
+#       answer flips on unseen deals, with before/after p.
+# head_fit's own fit_heads is untouched; overnight_1028/refit/targeted_locked.py (targeted_O.sh LOCKED=1) drives this.
+
+def line_rows(model, parts, keys, device):
+    """Per key: EVERY line of the parts (labeled or not): head input x / xr / h (float16), the base logits without
+    the existing free row (float32), target y (IGNORE when unlabeled), row weight w, and the line text. Company keys
+    read the conduct layer's line (x = conduct_x, xr / h empty), as company_refit does."""
+    by = model.schema.by_key()
+    grabbed: dict[str, torch.Tensor] = {}
+    rationale: dict[str, torch.Tensor] = {}
+    hooks = [head.register_forward_hook(lambda m, a, o, s=space: grabbed.__setitem__(s, a[0].detach()))
+             for space, head in model.heads.items()]
+    hooks += [head.register_forward_hook(lambda m, a, o, s=space: rationale.__setitem__(s, o.detach()))
+              for space, head in model.space_in.items()]
+    rows = {k: {n: [] for n in ("x", "xr", "h", "base", "y", "w")} for k in keys}
+    texts: dict[str, list[str]] = {k: [] for k in keys}
+    try:
+        for b in parts:
+            grabbed.clear()
+            rationale.clear()
+            with torch.no_grad(), _autocast(device):
+                out = model(b.oneshot(), company=b.company or None)
+            h = out.h.float().cpu()
+            w = torch.tensor(b.weights if len(b.weights) == len(b) else [1.0] * len(b))
+            for k in keys:
+                if k not in out.logits:
+                    continue
+                if k in b.multi_targets:
+                    raise ValueError(f"{k}: the locked refit takes single-answer heads only")
+                y = torch.tensor(b.targets.get(k) or [IGNORE] * len(b))
+                base = out.logits[k].float().cpu()
+                if k in out.free_logits:
+                    base = base - out.free_logits[k].float().cpu()
+                if by[k].universal:
+                    x, xr, hh = grabbed[by[k].space].cpu(), rationale[by[k].space].cpu(), h
+                else:
+                    x = out.conduct_x.float().cpu()
+                    xr, hh = x[:, :0], h[:, :0]
+                for n, t in (("x", x), ("xr", xr), ("h", hh)):
+                    rows[k][n].append(t.half())
+                rows[k]["base"].append(base)
+                rows[k]["y"].append(y)
+                rows[k]["w"].append(w)
+                texts[k] += list(b.texts)
+            if hasattr(model, "save_text_cache"):
+                model.save_text_cache()
+            del out, h
+    finally:
+        for hk in hooks:
+            hk.remove()
+    got = {k: {n: torch.cat(v) for n, v in r.items()} for k, r in rows.items() if r["y"]}
+    return got, {k: texts[k] for k in got}
+
+
+def cached_line_rows(model, paths, schema, max_atoms, keys, device, cache_of=None):
+    """line_rows per file, kept under ``cache_of(path)`` (a directory, or None for no cache). Returns
+    (rows per key, texts per key, file index per row per key)."""
+    out: dict[str, dict[str, list]] = {}
+    txt: dict[str, list[str]] = {}
+    src: dict[str, list[int]] = {}
+    for i, path in enumerate(paths):
+        d = Path(cache_of(path)) if cache_of else None
+        if d is not None and (d / "lines.pt").exists():
+            got, tx = torch.load(d / "lines.pt", map_location="cpu", weights_only=True)
+        else:
+            parts, _ = load_split([path], schema, max_atoms)
+            got, tx = line_rows(model, parts, keys, device)
+            del parts
+            gc.collect()
+            if d is not None:
+                _atomic_save((got, tx), d / "lines.pt")
+        for k, r in got.items():
+            for n, t in r.items():
+                out.setdefault(k, {}).setdefault(n, []).append(t)
+            txt.setdefault(k, []).extend(tx[k])
+            src.setdefault(k, []).extend([i] * len(r["y"]))
+        print(f"lines {i + 1}/{len(paths)} {Path(path).name} " + " ".join(f"{k}:{len(r['y'])}" for k, r in got.items()),
+              flush=True)
+    return ({k: {n: torch.cat(v) for n, v in r.items()} for k, r in out.items()}, txt,
+            {k: torch.tensor(v) for k, v in src.items()})
+
+
+class Lock:
+    """Frozen-base deltas on the target free rows. Every parameter of a target row is read as base + delta: a
+    weight matrix's delta is B @ A (B zero, so the start is exactly the base) when ``rank`` > 0, else a full
+    zero matrix; a bias's delta is a zero vector. Weight decay acts on the deltas, so it pulls toward the base,
+    never toward zero. Nothing else in the model has requires_grad."""
+
+    def __init__(self, model, keys, rank: int = 0, seed: int = 0):
+        for q in model.parameters():
+            q.requires_grad_(False)
+        g = torch.Generator().manual_seed(seed)
+        self.keys, self.rank = list(keys), rank
+        self.base = {k: {n: p.detach().clone() for n, p in model.free_heads[k].named_parameters()} for k in keys}
+        self.delta: dict[str, dict[str, list[torch.Tensor]]] = {}
+        for k in keys:
+            self.delta[k] = {}
+            for n, p in self.base[k].items():
+                if p.dim() == 2 and rank > 0:
+                    a = (torch.randn(rank, p.shape[1], generator=g) / p.shape[1] ** 0.5).requires_grad_()
+                    self.delta[k][n] = [torch.zeros(p.shape[0], rank, requires_grad=True), a]
+                else:
+                    self.delta[k][n] = [torch.zeros_like(p, requires_grad=True)]
+
+    def parameters(self):
+        return [t for k in self.keys for ts in self.delta[k].values() for t in ts]
+
+    def params(self, k):
+        return {n: p + (d[0] @ d[1] if len(d) == 2 else d[0]) for n, p, d in
+                ((n, self.base[k][n], self.delta[k][n]) for n in self.base[k])}
+
+    def logits(self, model, k, c, idx=None, params=None):
+        """base logits + this key's free row read at base + delta, or at ``params`` (head_fit._logits / company
+        row maths)."""
+        from torch.func import functional_call  # noqa: PLC0415
+
+        sel = (lambda t: t) if idx is None else (lambda t: t[idx])
+        row = model.free_heads[k]
+        x = sel(c["x"]).float()
+        if c["xr"].shape[-1] == 0:          # company row: reads the conduct line only
+            z = x
+        else:
+            xr, h = sel(c["xr"]).float(), sel(c["h"]).float()
+            if isinstance(row, free_rows.RFreeRow):
+                keep = row.h_keep.to(x.dtype)
+                x = xr + keep * (x - xr)
+            z = torch.cat([x, h], -1)
+        params = self.params(k) if params is None else params
+        return sel(c["base"]).float() + functional_call(row, params, (z,), strict=False)
+
+    def state(self):
+        with torch.no_grad():
+            return {k: {n: t.detach().clone() for n, t in self.params(k).items()} for k in self.keys}
+
+    def commit(self, model, state=None):
+        """Write base + delta (or a saved ``state``) into the model's free rows, for save_checkpoint."""
+        state = state or self.state()
+        with torch.no_grad():
+            for k, st in state.items():
+                for n, p in model.free_heads[k].named_parameters():
+                    p.copy_(st[n])
+
+
+def _margin(lp, a):
+    """How far answer ``a`` leads the best other answer (log-prob / logit units)."""
+    top = lp.gather(-1, a[:, None]).squeeze(-1)
+    return top - lp.scatter(-1, a[:, None], float("-inf")).max(-1).values
+
+
+def _sample(c, n, gen):
+    return torch.randperm(len(c["y"]), generator=gen)[:n]
+
+
+def locked_fit(model, lock: Lock, new, cons, replay, va, *, new_weight=30.0, cons_weight=1.0, replay_weight=1.0,
+               hold_weight=0.0, hold_margin=0.5, type_weight=5.0, epochs=40, steps=10, batch=2048, lr=1e-3,
+               weight_decay=1e-2, check_every=2, max_change=0.03, max_flip=0.01, tolerance=0.0, on_check=None):
+    """Train ``lock``'s deltas. Per key and step: new rows (cross-entropy x new_weight x row weight, all of them),
+    a batch of consistency rows (KL(base || candidate), x cons_weight) and a batch of replay rows (cross-entropy
+    on the saved label, x replay_weight), normalised by their total weight. ``hold_weight`` adds a flip hinge on the
+    same consistency batch: the base's answer must stay ahead of every other answer by min(its base margin,
+    ``hold_margin``) (KL alone barely charges for flipping a near-tie line). A ``cw`` column on ``cons`` weighs
+    each line's KL and hinge (the driver's --guard-types: lines whose base answer is a guarded type). ``cons`` / ``replay`` rows carry the
+    base log-probs in ``teach`` (computed here, at delta 0). Every ``check_every`` epochs: validation exact and the
+    share of validation rows whose answer changed, the share of consistency rows that flipped, and the new-row fit.
+    An epoch is eligible when no head's validation exact falls below the base's (minus ``tolerance``), no head
+    changes more than ``max_change`` of its validation rows and no more than ``max_flip`` of its consistency rows.
+    Returns (best eligible (epoch, fit) or None, its state, log); ``on_check(epoch, info)`` is called at checks."""
+    keys = lock.keys
+    with torch.no_grad():
+        for k in keys:
+            for c in (cons.get(k), replay.get(k)):
+                if c is not None:
+                    c["teach"] = lock.logits(model, k, c).log_softmax(-1)
+            if k in cons:
+                cons[k]["a0"] = cons[k]["teach"].argmax(-1)
+                cons[k]["hold"] = _margin(cons[k]["teach"], cons[k]["a0"]).clamp(max=hold_margin)
+            if k in va:
+                va[k]["start"] = lock.logits(model, k, va[k]).argmax(-1)
+    gen = torch.Generator().manual_seed(0)
+    opt = torch.optim.AdamW(lock.parameters(), lr=lr, weight_decay=weight_decay)
+
+    def check():
+        ex, ch, fl, nf = {}, {}, {}, {}
+        with torch.no_grad():
+            for k in keys:
+                if k in va:
+                    pred = lock.logits(model, k, va[k]).argmax(-1)
+                    ex[k] = float((pred == va[k]["y"]).float().mean())
+                    ch[k] = float((pred != va[k]["start"]).float().mean())
+                if k in cons:
+                    fl[k] = float((lock.logits(model, k, cons[k]).argmax(-1) != cons[k]["teach"].argmax(-1))
+                                  .float().mean())
+                nf[k] = float((lock.logits(model, k, new[k]).argmax(-1) == new[k]["y"]).float().mean())
+        return ex, ch, fl, nf
+
+    ex0, _, _, nf0 = check()
+    print("locked epoch 0 valid " + " ".join(f"{k}={v:.4f}" for k, v in ex0.items()) + " | new fit "
+          + " ".join(f"{k}={v:.3f}" for k, v in nf0.items()), flush=True)
+    best, best_state, log = None, None, []
+    for ep in range(1, epochs + 1):
+        for _ in range(steps):
+            loss = torch.zeros(())
+            for k in keys:
+                wn = new[k]["w"] * new_weight
+                num = (F.cross_entropy(lock.logits(model, k, new[k]), new[k]["y"], reduction="none") * wn).sum()
+                den = wn.sum()
+                if k in cons and cons_weight > 0:
+                    i = _sample(cons[k], batch, gen)
+                    lp = lock.logits(model, k, cons[k], i).log_softmax(-1)
+                    cw = cons[k]["cw"][i] if "cw" in cons[k] else torch.ones(len(i))
+                    num = num + cons_weight * (cw * F.kl_div(lp, cons[k]["teach"][i], log_target=True,
+                                                             reduction="none").sum(-1)).sum()
+                    den = den + cons_weight * cw.sum()
+                    if hold_weight > 0:
+                        miss = F.relu(cons[k]["hold"][i] - _margin(lp, cons[k]["a0"][i]))
+                        num = num + hold_weight * (cw * miss).sum()
+                        den = den + hold_weight * cw.sum()
+                if k in replay and replay_weight > 0:
+                    i = _sample(replay[k], batch, gen)
+                    num = num + replay_weight * F.cross_entropy(lock.logits(model, k, replay[k], i),
+                                                                replay[k]["y"][i], reduction="none").sum()
+                    den = den + replay_weight * len(i)
+                loss = loss + (type_weight if k == TYPE_KEY else 1.0) * num / den
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        if ep % check_every == 0 or ep == epochs:
+            ex, ch, fl, nf = check()
+            drop = [k for k in ex if ex[k] < ex0[k] - tolerance - 1e-9]
+            big = [k for k in ch if ch[k] > max_change]
+            flip = [k for k in fl if fl[k] > max_flip]
+            ok = not drop and not big and not flip
+            fit = sum(nf.values()) / len(nf)
+            last = float(loss.detach())
+            log.append(dict(epoch=ep, loss=last, valid=ex, change=ch, cons_flip=fl, newfit=nf, ok=ok))
+            print(f"locked epoch {ep} loss {last:.4f} valid " + " ".join(f"{k}={v:.4f}" for k, v in ex.items())
+                  + " | change " + " ".join(f"{k}={v:.3%}" for k, v in ch.items())
+                  + " | cons flip " + " ".join(f"{k}={v:.3%}" for k, v in fl.items())
+                  + " | new fit " + " ".join(f"{k}={v:.3f}" for k, v in nf.items())
+                  + ("" if ok else f" | NOT eligible drop={drop} change>{max_change}={big} flip>{max_flip}={flip}"),
+                  flush=True)
+            if on_check is not None:
+                on_check(ep, log[-1])
+            if ok and (best is None or fit > best[1] + 1e-9):
+                best, best_state = (ep, fit), lock.state()
+                print(f"locked best epoch {ep} new fit {fit:.3f}", flush=True)
+    return best, best_state, log
+
+
+def changed_heads(base_ck, cand_ck) -> dict[str, list[str]]:
+    """Every state tensor that differs between two checkpoints, grouped by head (free_heads.<key> -> <key>; any
+    other module path is reported under its first two components). A locked refit must change only its targets."""
+    def state(p):
+        with torch.serialization.safe_globals([torch.torch_version.TorchVersion]):
+            return torch.load(p, map_location="cpu", weights_only=True, mmap=True)["state"]
+    a, b = state(base_ck), state(cand_ck)
+    out: dict[str, list[str]] = {}
+    for n in sorted(set(a) | set(b)):
+        if n in a and n in b and a[n].shape == b[n].shape and torch.equal(a[n], b[n]):
+            continue
+        head = n[len("free_heads."):].rsplit(".", 1)[0] if n.startswith("free_heads.") else ".".join(n.split(".")[:2])
+        out.setdefault(head, []).append(n if n in a and n in b else f"{n} ({'added' if n in b else 'removed'})")
+    return out
+
+
+def flip_report(model, lock: Lock, rows, texts, src, files, answers, state=None, top=200):
+    """Lines of unseen deals whose answer flips between the base (delta 0) and ``state`` (default: the lock's
+    current deltas), per key: count, before -> after pairs, and the lines (file, text, before/after answer and p)."""
+    out = {}
+    for k in lock.keys:
+        if k not in rows:
+            continue
+        with torch.no_grad():
+            p0 = lock.logits(model, k, rows[k], params=lock.base[k]).softmax(-1)
+            p1 = lock.logits(model, k, rows[k], params=state[k] if state else None).softmax(-1)
+        a0, a1 = p0.argmax(-1), p1.argmax(-1)
+        idx = (a0 != a1).nonzero().flatten().tolist()
+        pairs: dict[str, int] = {}
+        lines = []
+        for i in idx:
+            b, c = answers[k][int(a0[i])], answers[k][int(a1[i])]
+            pairs[f"{b} -> {c}"] = pairs.get(f"{b} -> {c}", 0) + 1
+            lines.append(dict(file=Path(files[int(src[k][i])]).name, text=(texts[k][i] or "")[:200], before=b,
+                              p_before=round(float(p0[i, a0[i]]), 3), after=c, p_after=round(float(p1[i, a1[i]]), 3)))
+        lines.sort(key=lambda r: -r["p_after"])
+        out[k] = dict(lines_read=len(a0), flipped=len(idx), share=len(idx) / max(1, len(a0)),
+                      pairs=dict(sorted(pairs.items(), key=lambda kv: -kv[1])), lines=lines[:top])
+    return out
+
