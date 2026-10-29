@@ -1133,8 +1133,12 @@ _PROMPT = (
     "banners and notices (\"Learn why this is important\", \"You don't often get email from\"); they are not "
     "about the deal.\n"
     "Return JSON only: {\"summary\": str, \"sections\": {section: [{\"text\": str, \"cites\": [id]}]}, "
-    "\"open_questions\": [{\"question\": str, \"owner\": str, \"cites\": [id]}], "
-    "\"pricing_questions\": [{\"question\": str, \"cites\": [id]}]}.\n\n"
+    "\"open_questions\": [{\"question\": str, \"owner\": str, \"why\": str, \"cites\": [id]}], "
+    "\"pricing_questions\": [{\"question\": str, \"why\": str, \"cites\": [id]}]}. "
+    "WHY (every question): at most 15 words naming the decision in THIS job the answer settles, from the cited "
+    "facts (\"Sets the after-hours rate and the SOW work window\", \"Decides crew size and the 40 ft lift "
+    "rental\", \"Picks which of the two unit counts the quote prices\"); never generic (\"to plan the "
+    "project\", \"for scoping\").\n\n"
     "SERVICE: %s\nCRM RECORD: %s\nOVERVIEW FACTS (summary only): %s\nSECTIONS: %s\n"
     "ALSO KEPT (less sure, or read off the job's figures and photos by a vision pass; use them only in the "
     "summary and job_details, and only when they add a date, a "
@@ -1438,9 +1442,11 @@ def write(brief: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
         if isinstance(q, dict) and str(q.get("question") or "").strip():
             cites = [c for c in _cites_of({"cites": q.get("cites"), "text": q.get("question")}) if c in known]
             pricing.append({"question": strip_cites(str(q["question"])), "owner": "project_manager",
-                            "cites": cites, "kind": "pricing"})
+                            "cites": cites, "kind": "pricing", **_why_of(q)})
     pricing = [q for q in pricing if q["cites"]]  # a question with no line of this deal behind it is a template ask
-    open_qs = _one_per_fact(pricing[:6] + [q for q in (doc.get("open_questions") or []) if isinstance(q, dict)])
+    deal_qs = [{**{k: v for k, v in q.items() if k != "why"}, **_why_of(q)} for q in (doc.get("open_questions") or [])
+               if isinstance(q, dict)]
+    open_qs = _one_per_fact(pricing[:6] + deal_qs)
     # A question about PurTera itself is the customer's to us, not ours to the customer: the writer kept "Where
     # else does PurTera have presence ..." (000118) though told twice; its transcript lines carry no speaker.
     about_us = [q for q in open_qs if _ABOUT_US.search(strip_cites(str(q.get("question") or "")))]
@@ -1907,6 +1913,17 @@ def _q_words(q: dict[str, Any]) -> set[str]:
 
     return {stem(w) for w in re.findall(r"[a-z0-9]+", strip_cites(str(q.get("question") or "")).lower())
             if w not in _Q_STOP and stem(w) not in _Q_STOP}
+
+
+_GENERIC_WHY = re.compile(r"^\W*(?:to |for )?(?:plan(?:ning)?|scop(?:e|ing)|pric(?:e|ing)|quot(?:e|ing)|"
+                          r"logistics|clarif\w*|understand\w*|complete\w*)(?: (?:the )?(?:job|project|work|quote|scope|logistics))?\W*$", re.I)
+
+
+def _why_of(q: dict[str, Any]) -> dict[str, str]:
+    """The writer's ``why`` for a question: the decision its answer settles, cites stripped, at most 200 chars; a
+    generic one ("for scoping") is dropped so the page falls back rather than show filler."""
+    why = re.sub(r"\s+", " ", re.sub(r"\s*\[[^\]]{1,60}\]", "", strip_cites(str(q.get("why") or "")))).strip()[:200]
+    return {"why": why} if why and not _GENERIC_WHY.match(why) else {}
 
 
 def _one_per_fact(qs: list[dict[str, Any]]) -> list[dict[str, Any]]:

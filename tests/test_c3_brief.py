@@ -596,3 +596,21 @@ def test_a_question_to_the_customer_about_what_purtera_supplies_stays():
     assert not rx.search("Will PurTera supply the patch cables?")
     assert rx.search("Can the software be customized and access provided to the customer?")
     assert rx.search("Where else does PurTera have presence or capabilities to support this project?")
+
+
+def test_each_written_question_carries_its_why(monkeypatch):
+    monkeypatch.setattr(c3_brief, "_complete", lambda p, m, t: (
+        '{"summary": "x [a1]", "sections": {}, "open_questions": [{"question": "Which unit count governs? [a2]", '
+        '"owner": "project_manager", "why": "Picks which of the two unit counts the quote prices [a2]", "cites": ["a2"]}], '
+        '"pricing_questions": [{"question": "Is the 40 ft lift ours to rent?", "why": "Decides crew size and the lift rental", '
+        '"cites": ["a1"]}, {"question": "Who stages the APs?", "why": "for scoping", "cites": ["a3"]}]}'))
+    brief = {"service": {"value": "wireless"}, "conflicts": [], "deal": {},
+             "sections": {"scope_of_work": [{"id": "a1", "text": "Mount 12 APs at 40 ft"}],
+                          "assumptions": [{"id": "a2", "text": "173 units vs 4 units"}],
+                          "customer_responsibilities": [{"id": "a3", "text": "Customer receives the APs"}]},
+             "questions": [{"id": "a2", "text": "Which count?", "owner": "project_manager"}]}
+    qs = c3_brief.write(brief)["open_questions"]
+    by_q = {q["question"]: q.get("why") for q in qs}
+    assert by_q["Is the 40 ft lift ours to rent?"] == "Decides crew size and the lift rental"
+    assert by_q["Who stages the APs?"] is None  # generic why dropped, the question stays
+    assert by_q["Which unit count governs? [a2]"] == "Picks which of the two unit counts the quote prices"
