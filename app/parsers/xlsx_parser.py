@@ -3063,8 +3063,17 @@ class XlsxParser(BaseParser):
             # y/n work columns) keeps the row as the sheet wrote it. "site_id: dc5841"
             # alone reads to the base as metadata; the full row reads as a site.
             if len(text_parts) <= 1 and 0 <= site_row.row_index < len(data_rows):
-                cells = [str(v).strip() for v in dict(data_rows[site_row.row_index]).values()
-                         if v is not None and str(v).strip()]
+                # Each cell keeps its column header ("Tier: Large | Floors: 4 | Bldg SqFt: 70505 | Total Hrs: 11.94"):
+                # the sheet's header row is never a line of its own here, so without it the heads read bare numbers
+                # and cannot tell square feet from hours (010358, 2026-10-29). A keyed row is also how the heads'
+                # training stamps a table's headers (c3_record.context.table_headers: a row of Key: value cells).
+                cells = []
+                for k, v in dict(data_rows[site_row.row_index]).items():
+                    if v is None or not str(v).strip():
+                        continue
+                    head = str(k or "").strip()
+                    keyed = head and not re.match(r"^(unnamed|column)\b|^\d+$", head, re.I)
+                    cells.append(f"{head}: {str(v).strip()}" if keyed else str(v).strip())
                 if len(cells) > 1:
                     row_text = " | ".join(cells)
             if not (sid or site_row.facility_name or site_row.street_address) and canon_id:
