@@ -702,7 +702,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 """(act, answer, p, new type) for a reading the layer would act on, else None."""
                 if res is None or _c3.skipped(a, artifact_sha256):
                     return None
-                if res[1] < _c3.sure_for(res[0]):
+                if res[1] < _c3.overwrite_bar(a, res[0], _c3.sure_for(res[0])):
                     # Under the bar the parser's type stands, not the LLM's
                     # (SOWSMITH_C3_UNSURE_KEEP). Pre-quote, the base under 0.5
                     # was right less often than the parser on all three graded

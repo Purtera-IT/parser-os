@@ -106,3 +106,41 @@ def test_a_date_is_not_a_place():
     assert not is_place_key("site:oct_3_2026", "Oct 3 2026")
     assert is_place_key("site:augusta_hq", "Augusta HQ, 12 Main St")
     assert is_place_key("site:may_street_depot", "May Street Depot")
+
+
+def test_a_partial_address_key_is_the_same_quote_site():
+    roster = {
+        "site:basking_ridge_nj": {"site": "site:basking_ridge_nj", "keys": ["site:basking_ridge_nj"], "atom_ids": ["a1"]},
+        "site:basking_ridge_nj_07920": {"site": "site:basking_ridge_nj_07920", "keys": ["site:basking_ridge_nj_07920"], "atom_ids": ["a2"]},
+        "site:6046_n_beltline_road": {"site": "x", "keys": ["site:6046_n_beltline_road"], "atom_ids": ["a3"]},
+        "site:6046_n_beltline_road_irving_tx_75038": {"site": "y", "keys": ["site:6046_n_beltline_road_irving_tx_75038"], "atom_ids": ["a4"]},
+        "site:30_river_rd_essex_jct_vt_05453": {"site": "z", "keys": ["site:30_river_rd_essex_jct_vt_05453"], "atom_ids": ["a5"]},
+        "site:38_river_rd_essex_jct_vt_05453": {"site": "w", "keys": ["site:38_river_rd_essex_jct_vt_05453"], "atom_ids": ["a6"]},
+        "site:essex_jct": {"site": "v", "keys": ["site:essex_jct"], "atom_ids": ["a7"]},
+    }
+    c3_type_base._fold_contained(roster)
+    assert sorted(roster) == ["site:30_river_rd_essex_jct_vt_05453", "site:38_river_rd_essex_jct_vt_05453",
+                              "site:6046_n_beltline_road_irving_tx_75038", "site:basking_ridge_nj_07920"]
+    assert roster["site:basking_ridge_nj_07920"]["atom_ids"] == ["a2", "a1"]
+
+
+def test_the_quote_says_which_fields_a_pm_confirms():
+    q = {"billing": {"answer": "t_and_m", "p": 0.99, "by": "heads:read:billing_type"},
+         "job_type": "cabling", "job_type_by": "fallback:embedding_family",
+         "sites": {"count": 3, "by": "heads:physical_site"},
+         "lines": [{"by": {"techs": "heads:read:crew_size", "hours": "fallback:family_median", "rate": "fallback:account_profile"}}]}
+    out = c3_type_base._pm_confirms(q)["pm_confirms"]
+    assert "unproven" in out["billing"] and "embedding" in out["job_type"]
+    assert out["hours"].startswith("not from a head") and "crew_size" in out["techs"]
+    assert "sites" not in out  # the type head (live) read the roster
+    assert c3_type_base._pm_confirms({"degraded": True}) == {"degraded": True}
+
+
+def test_a_quantity_line_is_not_overwritten_into_a_site_by_an_unsure_read():
+    ap = NS(value={"quantity": 200, "unit": "each", "normalized_item": "access point"}, entity_keys=["quantity:200"],
+            atom_type="bom_line")
+    assert c3_type_base.overwrite_bar(ap, "physical_site", 0.5) == 0.85
+    assert c3_type_base.overwrite_bar(ap, "task", 0.5) == 0.5          # a task keeps its quantity
+    assert c3_type_base.overwrite_bar(ap, "bom_line", 0.5) == 0.5      # the same type
+    plain = NS(value={"text": "Our site is in Plano"}, entity_keys=[], atom_type="scope_item")
+    assert c3_type_base.overwrite_bar(plain, "physical_site", 0.5) == 0.5

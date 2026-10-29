@@ -175,6 +175,41 @@ def sure() -> float:
         return 0.7
 
 
+#: Parser-extracted values: a line carrying one has been read as something specific (a quantity, an item, a device,
+#: a part), and a base guess must be sure to overwrite it.
+_EXTRACTED_FIELDS = ("quantity", "unit", "normalized_item", "model", "sku", "part_number", "manufacturer", "email", "phone")
+_EXTRACTED_KEYS = ("quantity:", "device:", "part:", "model:", "sku:")
+#: Answers that keep the line's parser type rather than replace it.
+_KEEPS = frozenset({"_keep", "small_talk", "deal_state", "list_header"})
+#: New types that would throw the extracted values away (a quantity line read as a site mints a site key; read as a
+#: person or a remark it loses its count). Types that carry a quantity (task, scope_item, bom_line, dependency ...)
+#: keep it, so they are not held to the higher bar.
+_DROPS_VALUES = frozenset({"physical_site", "site_infrastructure", "commitment", "answered_question",
+                           "open_question", "deal_metadata"})
+
+
+def carries_extracted(atom: Any) -> bool:
+    """The parser extracted values on this line (``quantity`` / ``unit`` / ``normalized_item`` ..., or device /
+    quantity / part keys): what it read the line as is specific, not a generic placeholder."""
+    v = getattr(atom, "value", None)
+    if isinstance(v, dict) and any(v.get(f) not in (None, "", []) for f in _EXTRACTED_FIELDS):
+        return True
+    return any(str(k).startswith(_EXTRACTED_KEYS) for k in (getattr(atom, "entity_keys", None) or []))
+
+
+def overwrite_bar(atom: Any, answer: str, bar: float) -> float:
+    """The bar a base answer must clear to REPLACE the parser's type on this line: ``bar`` normally;
+    ``SOWSMITH_C3_OVERWRITE_EXTRACTED_SURE`` (0.85) when the parser extracted values the new type would drop. Dev ran
+    the type and authority bars at 0.5, and 010344's "200 AP's" (quantity 200, unit, item) became physical_site at
+    0.51 and minted site:200_ap_s; "20 Switch" (device:switch) became a site at 0.70."""
+    if answer in _KEEPS or answer not in _DROPS_VALUES:
+        return bar
+    t = getattr(atom, "atom_type", None)
+    if str(getattr(t, "value", t) or "") == answer or not carries_extracted(atom):
+        return bar
+    return max(bar, _env_float("SOWSMITH_C3_OVERWRITE_EXTRACTED_SURE", 0.85))
+
+
 def sure_for(answer: str) -> float:
     """The certainty an answer must reach to act: ``SOWSMITH_C3_SURE_BY_TYPE``
     (``type:p,...``) where set, else ``SOWSMITH_C3_SURE``. Each type's bar is
@@ -1740,6 +1775,48 @@ def quote_heads_asked() -> bool:
     return any(is_quote_head(h) for h in _view_heads(view_name(), QUOTE_LINE_HEADS))
 
 
+_ZIP_TAIL = re.compile(r"(?:_\d{5}(?:_\d{4})?)$")
+
+
+def _key_words(key: str) -> list[str]:
+    """A site key's words without its ``site:`` prefix and trailing ZIP (``basking_ridge_nj_07920`` -> basking, ridge, nj)."""
+    slug = str(key).split(":", 1)[-1]
+    return [w for w in _ZIP_TAIL.sub("", slug).split("_") if w]
+
+
+def _inside(small: list[str], big: list[str]) -> bool:
+    n = len(small)
+    return 0 < n < len(big) and any(big[i:i + n] == small for i in range(len(big) - n + 1))
+
+
+def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
+    """One place, one quote site: an entry whose every key is a part of ONE other entry's key ("Basking Ridge, NJ"
+    beside "... Basking Ridge, NJ 07920" on 010293; "6046 N Beltline Road" beside its full Irving address on 010282)
+    is that site; one that is part of several ("Essex Jct" beside two Essex Jct addresses) is a mention of them and
+    no site of its own. Same words up to the ZIP are the same site too."""
+    words = {r: [_key_words(k) for k in e["keys"]] for r, e in roster.items()}
+    for r in list(roster):
+        if r not in roster:
+            continue
+        def covers(o: str) -> bool:
+            # every key of r is a part of one of o's keys, or the same words as one that adds the ZIP
+            return all(any(_inside(w, ow) or (w == ow and len(k) < len(ok))
+                           for ow, ok in zip(words[o], roster[o]["keys"]))
+                       for w, k in zip(words[r], roster[r]["keys"]))
+
+        hosts = [o for o in roster if o != r and covers(o)]
+        if not hosts:
+            continue
+        mine = roster.pop(r)
+        if len(hosts) == 1:
+            host = roster[hosts[0]]
+            for k in mine["keys"]:
+                if k not in host["keys"]:
+                    host["keys"].append(k)
+            host["atom_ids"] += [a for a in mine["atom_ids"] if a not in host["atom_ids"]]
+            words[hosts[0]] = [_key_words(k) for k in host["keys"]]
+
+
 def quote_sites(atoms: list[Any], *, outside: bool = False,
                 left_out: set[str] | frozenset[str] | None = None) -> list[dict[str, Any]]:
     """The heads' site roster for the quote: one entry per site on a line the heads typed
@@ -1805,6 +1882,7 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
                 e["keys"].append(k)
         if aid not in e["atom_ids"]:
             e["atom_ids"].append(aid)
+    _fold_contained(roster)
     for e in roster.values():
         if len(e["keys"]) <= 1:
             e.pop("keys")
@@ -1916,12 +1994,12 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
     if _never():
-        return _with_not_work(_with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only),
-                              not_work)
+        return _pm_confirms(_with_not_work(_with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"),
+                                                           seen_only), not_work))
     try:
-        return _with_not_work(_with_seen_only(_request("/v1/quote", body,
-                                                       timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))),
-                                              seen_only), not_work)
+        return _pm_confirms(_with_not_work(_with_seen_only(_request("/v1/quote", body,
+                                                                    timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))),
+                                                           seen_only), not_work))
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
 
@@ -1971,6 +2049,46 @@ def _parser_made(atom: Any) -> bool:
         return bool(_derived(atom))
     except Exception:
         return False
+
+
+def _pm_confirms(q: Any) -> Any:
+    """Which quote fields a PM must confirm, and why: a field a rule or fallback filled, or one a head filled whose
+    registry status is not ``ready`` (c3_record/heads.json). 3 unseen dev deals (010344, 010293, 010282): billing wrong
+    on all three at 0.99 (read:billing_type is unproven), the embedding's job type wrong on two, hours a family
+    median on all. Nothing changes the values; the quote says which ones are the heads' word and which are not."""
+    if not isinstance(q, dict) or q.get("degraded"):
+        return q
+    try:
+        from c3_record.heads import head as _head
+    except Exception:  # pragma: no cover
+        _head = lambda k: None  # noqa: E731
+
+    def why(by: str) -> str:
+        by = str(by or "")
+        if not by or by.startswith(("fallback", "rule", "none")):
+            return f"not from a head ({by or 'none'})"
+        key = by.split(":", 1)[1] if by.startswith("heads:") else by
+        # The roster's sites are lines the type head read physical_site.
+        key = {"physical_site": "col:label_type", "deal:declared_site_count": "deal:declared_site_count"}.get(key, key)
+        status = ((_head(key) or {}).get("status")) or "unknown"
+        return "" if status in ("ready", "live") else f"{key} is {status} in the head registry"
+
+    out: dict[str, str] = {}
+    b = q.get("billing") or {}
+    if (w := why(b.get("by") if b.get("answer") else "none")):
+        out["billing"] = w
+    if q.get("job_type") and (w := why(q.get("job_type_by") or "fallback:embedding_family")):
+        out["job_type"] = w
+    for ln in q.get("lines") or []:
+        for f in ("hours", "techs", "rate"):
+            if f not in out and (w := why((ln.get("by") or {}).get(f))):
+                out[f] = w
+    s = q.get("sites") or {}
+    if (w := why(s.get("by") if s.get("count") else "none")):
+        out["sites"] = w
+    if out:
+        q["pm_confirms"] = out
+    return q
 
 
 def _with_not_work(q: Any, not_work: dict[str, str]) -> Any:
@@ -2604,7 +2722,7 @@ def settle_base_answers(atoms: list[Any]) -> tuple[int, int]:
         except Exception:
             pass
         ans, p = str(says["type"]), float(says.get("p") or 0.0)
-        if p < _authority_bar(ans) or ans in _AUTHORITY_SKIP:
+        if p < overwrite_bar(a, ans, _authority_bar(ans)) or ans in _AUTHORITY_SKIP:
             continue
         try:
             t = AtomType(ans)
