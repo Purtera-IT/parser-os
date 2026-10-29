@@ -3760,6 +3760,14 @@ def compile_project(
         _cf = _c3_final.record_confirms(atoms)
         if _cf:
             warnings.append(f"INFO: C3 base confirmed the parser's type on {_cf} line(s) typing never saw")
+        try:
+            from app.core.party_address_veto import follow_party_copies
+
+            _pc = follow_party_copies(atoms, _c3_final._DEAL.get("types"))
+            if _pc:
+                warnings.append(f"INFO: {len(_pc)} bare copy(ies) of a party's address follow its contact line (stakeholder, not a site)")
+        except Exception as exc:
+            warnings.append(f"WARNING: follow_party_copies failed: {type(exc).__name__}: {exc}")
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")

@@ -202,9 +202,14 @@ def overwrite_bar(atom: Any, answer: str, bar: float) -> float:
     ``SOWSMITH_C3_OVERWRITE_EXTRACTED_SURE`` (0.85) when the parser extracted values the new type would drop. Dev ran
     the type and authority bars at 0.5, and 010344's "200 AP's" (quantity 200, unit, item) became physical_site at
     0.51 and minted site:200_ap_s; "20 Switch" (device:switch) became a site at 0.70."""
+    t = getattr(atom, "atom_type", None)
+    # Our own sheet reader's summary of a column ("City: HOUSTON (85), AUSTIN (25)… 27 distinct values over 222
+    # rows") is not a line from the deal: it never becomes a site (010358, 2026-10-29: read as physical_site at
+    # 0.556 over dev's 0.5 bar, the deal's 102nd "site"). Owner-approved 2026-10-29.
+    if answer == "physical_site" and str(getattr(t, "value", t) or "") == "derived_finding":
+        return float("inf")
     if answer in _KEEPS or answer not in _DROPS_VALUES:
         return bar
-    t = getattr(atom, "atom_type", None)
     if str(getattr(t, "value", t) or "") == answer or not carries_extracted(atom):
         return bar
     return max(bar, _env_float("SOWSMITH_C3_OVERWRITE_EXTRACTED_SURE", 0.85))
@@ -1778,10 +1783,15 @@ def quote_heads_asked() -> bool:
 _ZIP_TAIL = re.compile(r"(?:_\d{5}(?:_\d{4})?)$")
 
 
-def _key_words(key: str) -> list[str]:
-    """A site key's words without its ``site:`` prefix and trailing ZIP (``basking_ridge_nj_07920`` -> basking, ridge, nj)."""
+def _key_words(key: str, *, zip_too: bool = True) -> list[str]:
+    """A site key's words without its ``site:`` prefix (``basking_ridge_nj_07920`` -> basking, ridge, nj, 07920);
+    ``zip_too=False`` drops a trailing ZIP. Containment compares WITH the ZIP: stripped, "site:houston_77030" was
+    the one word "houston", inside every other Houston key, so 37 of 010358's 101 roster sites were folded away
+    as "mentions" and the quote counted 66 (2026-10-29)."""
     slug = str(key).split(":", 1)[-1]
-    return [w for w in _ZIP_TAIL.sub("", slug).split("_") if w]
+    if not zip_too:
+        slug = _ZIP_TAIL.sub("", slug)
+    return [w for w in slug.split("_") if w]
 
 
 def _inside(small: list[str], big: list[str]) -> bool:
@@ -1795,14 +1805,16 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
     is that site; one that is part of several ("Essex Jct" beside two Essex Jct addresses) is a mention of them and
     no site of its own. Same words up to the ZIP are the same site too."""
     words = {r: [_key_words(k) for k in e["keys"]] for r, e in roster.items()}
+    bare = {r: [_key_words(k, zip_too=False) for k in e["keys"]] for r, e in roster.items()}
     for r in list(roster):
         if r not in roster:
             continue
         def covers(o: str) -> bool:
             # every key of r is a part of one of o's keys, or the same words as one that adds the ZIP
-            return all(any(_inside(w, ow) or (w == ow and len(k) < len(ok))
-                           for ow, ok in zip(words[o], roster[o]["keys"]))
-                       for w, k in zip(words[r], roster[r]["keys"]))
+            # (a key with no ZIP of its own, against one that adds it: "Basking Ridge, NJ" / "... NJ 07920").
+            return all(any(_inside(w, ow) or (b == ob and not _ZIP_TAIL.search(k) and _ZIP_TAIL.search(ok))
+                           for ow, ob, ok in zip(words[o], bare[o], roster[o]["keys"]))
+                       for w, b, k in zip(words[r], bare[r], roster[r]["keys"]))
 
         hosts = [o for o in roster if o != r and covers(o)]
         if not hosts:
@@ -1815,6 +1827,7 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
                     host["keys"].append(k)
             host["atom_ids"] += [a for a in mine["atom_ids"] if a not in host["atom_ids"]]
             words[hosts[0]] = [_key_words(k) for k in host["keys"]]
+            bare[hosts[0]] = [_key_words(k, zip_too=False) for k in host["keys"]]
 
 
 def quote_sites(atoms: list[Any], *, outside: bool = False,
@@ -1994,14 +2007,57 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
     if _never():
-        return _pm_confirms(_with_not_work(_with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"),
-                                                           seen_only), not_work))
+        return _pm_confirms(_with_site_row_hours(_with_not_work(_with_seen_only(
+            _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id))
     try:
-        return _pm_confirms(_with_not_work(_with_seen_only(_request("/v1/quote", body,
-                                                                    timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))),
-                                                           seen_only), not_work))
+        return _pm_confirms(_with_site_row_hours(_with_not_work(_with_seen_only(
+            _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
+            not_work), sites, by_id))
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
+
+
+_ROW_HOURS = re.compile(r"^\s*total\s*(?:hours|hrs?)\s*$", re.I)
+
+
+def _with_site_row_hours(q: dict[str, Any], sites: list[dict[str, Any]], by_id: dict[str, Any]) -> dict[str, Any]:
+    """Hours the deal's own site list states per site replace a single stated figure.
+
+    010358 (2026-10-29): the customer's survey sheet gives every one of 101 sites a "Total Hrs" (1,130 h in all);
+    the quote priced one "job site" at 2 techs x 8 h = 16 h, read off "capped 8 hrs/night". When at least half the
+    quote's sites carry a total-hours column on their roster row, the line's crew hours are that column's sum,
+    listed per site (``site_hours``), and the reason says so. Techs, rate and billing are untouched."""
+    lines = q.get("lines") if isinstance(q, dict) else None
+    if not lines or not sites:
+        return q
+    per: list[dict[str, Any]] = []
+    col = ""
+    for st in sites:
+        for aid in st.get("atom_ids") or []:
+            v = getattr(by_id.get(str(aid)), "value", None)
+            ex = v.get("extras") if isinstance(v, dict) and isinstance(v.get("extras"), dict) else {}
+            k = next((k for k in ex if _ROW_HOURS.match(str(k))), None)
+            if not k:
+                continue
+            try:
+                h = float(str(ex[k]).replace(",", ""))
+            except ValueError:
+                continue
+            per.append({"site": st.get("site"), "hours": round(h, 2), "atom_id": str(aid)})
+            col = str(k)
+            break
+    if len(per) < 2 or len(per) * 2 < len(sites):
+        return q
+    total = round(sum(x["hours"] for x in per), 1)
+    line = dict(lines[0])
+    techs = int(line.get("techs") or 1) or 1
+    line.update(crew_hours=total, hours_per_tech=round(total / techs, 1),
+                why_hours=f"the site list gives hours per site: {len(per)} of {len(sites)} sites, {total:g} h in all "
+                          f"(column '{col}')",
+                proposed_hours=f"hours={total:g};per=site_list;qty={len(per)};role={line.get('rate_line')};techs={techs}")
+    line["by"] = {**(line.get("by") or {}), "hours": "sheet:site_rows"}
+    line["site_hours"] = per
+    return {**q, "lines": [line] + list(lines[1:])}
 
 
 #: Line types that state a price, a term or an exclusion, never the job's own work.
