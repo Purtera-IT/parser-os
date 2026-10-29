@@ -3782,6 +3782,14 @@ def compile_project(
                 warnings.append(f"INFO: {len(_pc)} bare copy(ies) of a party's address follow its contact line (stakeholder, not a site)")
         except Exception as exc:
             warnings.append(f"WARNING: follow_party_copies failed: {type(exc).__name__}: {exc}")
+        try:
+            from app.core.pm_fact_reviews import apply_reviews, load_reviews
+
+            _pmf = apply_reviews(atoms, load_reviews(resolved_project_id), _c3_final._DEAL.get("types"))
+            if _pmf:
+                warnings.append(f"INFO: {len(_pmf)} line(s) take the PM's own fix (deal page reviews)")
+        except Exception as exc:
+            warnings.append(f"WARNING: pm fact reviews skipped: {type(exc).__name__}: {exc}")
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")

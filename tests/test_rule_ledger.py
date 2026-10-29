@@ -262,7 +262,8 @@ def test_report_sums_deals_and_suggests_a_stage(tmp_path):
 # ── stages, and the envelope's site list reading the heads' roster ───────────
 
 def test_every_rule_is_upstream_or_downstream():
-    assert {v["stage"] for v in rl.RULES.values()} == {"upstream", "downstream"}
+    # "pm": a PM's own fix on the deal page, above the heads and every rule (2026-10-29)
+    assert {v["stage"] for v in rl.RULES.values()} == {"upstream", "downstream", "pm"}
     assert rl.stage("party_address_veto.signature_page") == "downstream"
     assert rl.stage("overwrite_bar.extracted") == "upstream"
     assert rl.stage("quote.hours.fallback:family_median") == "upstream"

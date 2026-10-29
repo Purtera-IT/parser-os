@@ -96,6 +96,11 @@ RULES: dict[str, dict[str, Any]] = {
         "what": "a physical_site read as the vendor's letterhead address is suppressed", "can_shadow": True},
     # Log only: the head's own act (a locked line a rule re-typed goes back); each fire shows a rule upstream
     # that overrode the head.
+    # A PM's own fix on the deal page (Scope Evidence / Sources reader): the top authority, and an approved label.
+    "pm_fix.not_a_site": {"stage": "pm", "what": "a PM marked this line not a site, with a why", "can_shadow": False},
+    "pm_fix.address": {"stage": "pm", "what": "a PM gave this site's right address, with a why", "can_shadow": False},
+    "pm_fix.set_aside": {"stage": "pm", "what": "a PM set this line aside", "can_shadow": False},
+    "pm_fix.looks_right": {"stage": "pm", "what": "a PM confirmed the heads' answer on this line", "can_shadow": False},
     "authority_final.restore": {
         "stage": "upstream",
         "what": "apply_authority(final=True) puts back the head's type a rule changed", "can_shadow": False},
