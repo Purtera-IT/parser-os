@@ -2932,6 +2932,19 @@ def _load_manifest_run_cutoff(project_dir: Path) -> str | None:
         return None
 
 
+def _load_manifest_read(project_dir: Path) -> str | None:
+    """``context.read`` on the manifest sidecar: "delivery" for the project's delivery read, else None."""
+    path = Path(project_dir) / PARSER_MANIFEST_SIDECAR
+    if not path.is_file():
+        return None
+    try:
+        ctx = json.loads(path.read_text(encoding="utf-8")).get("context")
+        value = str((ctx or {}).get("read") or "").strip().lower() if isinstance(ctx, dict) else ""
+        return value or None
+    except (json.JSONDecodeError, OSError, TypeError, AttributeError):
+        return None
+
+
 def _load_manifest_crm(project_dir: Path) -> dict[str, Any] | None:
     """Read ``context.crm`` from the parser manifest sidecar when present."""
     path = Path(project_dir) / PARSER_MANIFEST_SIDECAR

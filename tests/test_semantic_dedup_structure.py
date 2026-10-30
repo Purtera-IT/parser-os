@@ -277,3 +277,39 @@ def test_multi_city_geo_fallbacks_still_survive() -> None:
     cities = {a.value.get("city") for a in phys}
     assert cities == {"Detroit", "Highland Park", "Santa Fe"}
     assert len(phys) == 3
+
+
+def _store_row(store: str, street: str, city: str) -> _Atom:
+    """A site-list row with no name column: the extractor gives it its street as name and facility."""
+    a = _Atom("physical_site", {
+        "kind": "physical_site", "id": store, "site_id": store, "name": street, "facility_name": street,
+        "address": street, "street_address": street, "city": city, "state": "CA",
+        "cells": {"Store": store, "Street Address": street, "City": city, "ST": "CA"}})
+    a.source_refs = [{"extraction_method": "xlsx_site_roster_v1", "locator": {"sheet": "Sheet1"}}]
+    return a
+
+
+def test_site_list_rows_without_a_name_column_are_not_ghosts() -> None:
+    """Live 010035: 403 of 496 store rows were dropped as hallucinated (name == address == facility)."""
+    from app.core.semantic_dedup import _dedupe_physical_site_atoms
+
+    rows = [_store_row("8623", "8425 Beverly Boulevard", "Los Angeles"),
+            _store_row("8533", "6616 Lonetree Boulevard", "Rocklin")]
+    out = _dedupe_physical_site_atoms(rows)
+    assert len(out) == 2
+    assert not any(a.value.get("_dropped_not_folded") for a in rows)
+
+
+def test_llm_ghost_with_one_string_everywhere_still_drops() -> None:
+    from app.core import rule_ledger
+    from app.core.semantic_dedup import _dedupe_physical_site_atoms
+
+    rule_ledger.reset()
+    ghost = _Atom("physical_site", {"kind": "physical_site", "site_id": "OPTBOT Atlanta HQ v5",
+                                    "name": "OPTBOT Atlanta HQ v5", "facility_name": "OPTBOT Atlanta HQ v5",
+                                    "address": "OPTBOT Atlanta HQ v5"})
+    real = _store_row("8623", "8425 Beverly Boulevard", "Los Angeles")
+    out = _dedupe_physical_site_atoms([ghost, real])
+    assert ghost not in out and real in out
+    assert ghost.value.get("_dropped_not_folded") == "hallucinated_site"
+    assert rule_ledger.fires()["semantic_dedup.hallucinated_site"]["fires"] == 1

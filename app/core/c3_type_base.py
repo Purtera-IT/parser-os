@@ -859,6 +859,16 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
                                                                                      "purchase_order")), default=None)
         end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
         keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
+        if delivery_read():
+            # The opposite of the quoting read (owner 2026-10-30): every dated line from the quoting cut
+            # (our first priced paper or message) on, with no end -- our quote and signed SOW, the PO,
+            # kickoff and delivery mail. Our pricing workbooks and another job's documents stay out, as in
+            # every read. A deal never quoted has no delivery lines yet.
+            end = float("inf")
+            dks, oth = set(dk), set(other)
+            keep = [i for i, x in enumerate(lines)
+                    if x["label_key"] not in dks and x.get("doc_id") not in oth
+                    and (w := epoch(x.get("entered_at")) or 0.0) > 0 and w >= P.cut]
     _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
     def _out_why(inside: set[int]) -> dict[str, str]:
         dks = set(dk)
@@ -1043,6 +1053,43 @@ QUOTE_LINE_HEADS = ("read:labor_hours", "read:hours_stated", "read:crew_size", "
 QUOTE_DEAL_HEADS = ("jdg:billing_type", "jdg:travel_scope", "deal:declared_site_count", "deal:primary_service")
 
 
+#: The delivery read (owner 2026-10-29/30): the project's Delivery sources page. Manifest ``context.read``
+#: = "delivery" (parser-os-worker ``compile_options.read``). It reads every line from the quoting cut on
+#: (the opposite of the quoting read) and asks the heads that decide delivery facts; their answers ride in
+#: ``c3_brief.delivery`` for the page to show.
+DELIVERY_READ = "delivery"
+#: Who does it, what it triggers, when, what blocks it, who chases, what supplies and which site: the PM
+#: heads (c3_record.view.PM_HEADS) plus the supply and site heads. The view drops any it does not serve.
+DELIVERY_LINE_HEADS = ("read:task_owner_role", "read:triggered_task", "read:trigger_event", "read:fires_task",
+                       "jdg:task_tier", "read:start_date", "read:needed_by", "read:lead_time", "read:cadence",
+                       "read:blocked_on", "read:chase", "read:needs_artifact", "read:commitment",
+                       "read:urgency", "read:delivery_field", "col:supplier", "jdg:site_role",
+                       "read:scope_facet", "col:admission", "read:noise_class")
+
+
+def delivery_read() -> bool:
+    return _DEAL.get("read") == DELIVERY_READ
+
+
+def delivery_payload() -> dict[str, Any]:
+    """Every delivery head's answer on every line it read, with the registry's trust in that head. Facts
+    only: nothing here re-decides an answer (owner rule: downstream never edits head facts)."""
+    from c3_record import heads as reg
+    from c3_record.view import heads as _view_heads
+
+    asked = _view_heads(view_name(), DELIVERY_LINE_HEADS)
+    lines: dict[str, dict[str, list[Any]]] = {}
+    for atom_id, got in (_DEAL.get("reads") or {}).items():
+        row = {h: [v[0], round(float(v[1] or 0.0), 4)] for h in asked
+               if (v := (got or {}).get(h)) and v[0] is not None}
+        if row:
+            lines[str(atom_id)] = row
+    trust = {h: str((reg.head(h) or {}).get("status") or "unregistered") for h in asked}
+    return {"read": DELIVERY_READ, "view": view_name(), "heads": asked, "trust": trust,
+            "trusted": [h for h in asked if reg.trusted(h)], "lines": lines,
+            "window": dict(_STATUS.get("view") or {})}
+
+
 def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
     """This compile's base reading of one line, or None when the line was not
     read (created after the read) or the head was not asked."""
@@ -1069,6 +1116,8 @@ def brief_line_heads() -> list[str]:
     head, a planning read no quote or SOW head."""
     from c3_record.view import heads
 
+    if delivery_read():
+        return heads(view_name(), tuple(dict.fromkeys(BRIEF_LINE_HEADS + DELIVERY_LINE_HEADS)))
     return heads(view_name(), BRIEF_LINE_HEADS)
 
 
@@ -1125,7 +1174,9 @@ def out_of_quote() -> dict[str, str]:
     on a planning compile every line after the quoting cut (``ours``, ``after_cut``, ``deal_kit`` ...)."""
     if view_name() == "quoting":
         return out_of_quoting_view()
-    if not prequote_only():
+    # The delivery read has no quoting cut (owner 2026-10-30); SOWSMITH_C3_QUOTE_PREQUOTE_ONLY stays the
+    # quoting side's switch.
+    if delivery_read() or not prequote_only():
         return {}
     return {str(k): str(w) for k, w in (_DEAL.get("quote_out_why") or {}).items()}
 
@@ -1158,7 +1209,7 @@ def full_read() -> dict[str, Any]:
 
 
 def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, str] | None = None,
-             stage_timeline: dict[str, Any] | None = None, as_of: Any = None) -> None:
+             stage_timeline: dict[str, Any] | None = None, as_of: Any = None, read: Any = None) -> None:
     """``stage_timeline``: the deal's ``crm.stage_timeline`` from the parser manifest (the envelope's,
     cut to the run's as_of date), which ``c3_record.build_rows`` reads for ``stage_at``. ``as_of``: the
     run's cutoff (manifest ``context.as_of``): a run with one is a quoting read, one without a planning
@@ -1175,6 +1226,10 @@ def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, 
         from c3_record.view import of_run
 
         _DEAL.update(view=of_run(as_of), as_of=as_of or None)
+    if str(read or "").strip().lower() == DELIVERY_READ:
+        # The delivery read is the planning view from the quoting cut on, with no end (owner 2026-10-30:
+        # delivery is the opposite of the pre-quote read). An as_of never reaches it (the worker strips it).
+        _DEAL.update(read=DELIVERY_READ, as_of=None, **({"view": "planning"} if views_enabled() else {}))
 
 
 def _delivered_at(sha256: str) -> Any:
@@ -2310,6 +2365,20 @@ def _aliased(types: dict[str, Any] | None) -> dict[str, Any]:
     return {k: ([BASE_ALIAS.get(str(v[0]), v[0]), *list(v[1:])] if v else v) for k, v in (types or {}).items()}
 
 
+def _heads_types(got: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The heads' type reads off a /read answer, where they first come in: a bare repeat of an address takes the
+    heads' answer on its full-context copy (``repeat_address``, upstream, in the rule ledger) before any stage
+    reads them."""
+    types = _aliased(got.get("types"))
+    try:
+        from app.core.repeat_address import follow_full_copies
+
+        follow_full_copies(types, rows, _DEAL)
+    except Exception as exc:  # noqa: BLE001 - the heads' own reads stand
+        log.warning("repeat_address skipped (%s)", type(exc).__name__)
+    return types
+
+
 def read_key(rows: list[dict[str, Any]], *extra: Any) -> str:
     """What one read of the deal saw: every row the base reads (its key, text, document, arrival, order,
     sender, stage and view) and what was asked. A reading is reused only for the same key: a later line
@@ -2393,7 +2462,7 @@ def _remote_types(got: dict[str, Any], rows: list[dict[str, Any]], keys: list[st
     _STATUS.update(state="read", reason="", remote=True, lines=len(rows),
                    read_ms=round((time.monotonic() - started) * 1000, 1),
                    service_read_ms=got.get("read_ms"))
-    types = _aliased(got.get("types"))
+    types = _heads_types(got, rows)
     if "types" in _DEAL:
         _DEAL["types"].update(types)
     out: dict[int, tuple[str, float]] = {}
@@ -2960,6 +3029,16 @@ def own_site_keys(atoms: list[Any]) -> int:
     return n
 
 
+def _from_copy(atom: Any) -> dict[str, Any]:
+    """``{"from_copy": <atom id>, "own": [type, p]}`` when this line took its full-context copy's answer at the
+    heads' read (``repeat_address``), so the line says where its type came from; else {}."""
+    aid = str(getattr(atom, "id", "") or "")
+    got = (_DEAL.get("follows_copy") or {}).get(aid)
+    if not got:
+        return {}
+    return {"from_copy": got.get("copy"), "own": (_DEAL.get("own_reads") or {}).get(aid)}
+
+
 def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None) -> int:
     """Give each line the base's type where it is sure. Before typing
     (``final=False``) and again at the end (``final=True``: a locked line a
@@ -3033,7 +3112,7 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
             continue
         if before == ans:
             if not final and not is_locked(a):
-                v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
+                v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before, **_from_copy(a)}
                 a.value = v
             continue
         # A value-carrying type only where the parser's own value is that kind
@@ -3057,7 +3136,7 @@ def apply_authority(atoms: list[Any], *, final: bool = False, spare: Any = None)
         if before and before not in alt:
             alt.append(before)
         v["alt_atom_types"] = alt
-        v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before}
+        v["c3_label"] = {"type": ans, "p": round(p, 3), "act": "authority", "was": before, **_from_copy(a)}
         if final:
             rule_ledger.fire("authority_final.restore", a, ans, before, f"{before} -> {ans} at {p:.2f}")
         if ans == "small_talk":
@@ -3166,7 +3245,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _wait_for_heads("/read", body, _DOC_STATUS, "document read")
             raw = got.get("documents") or {}
             if "types" in _DEAL:
-                _DEAL["types"].update(_aliased(got.get("types")))
+                _DEAL["types"].update(_heads_types(got, rows))
             _keep_full(got)
         elif _url():
             try:
@@ -3185,7 +3264,7 @@ def documents(atoms: list[Any], keys: tuple[str, ...] = (DOCUMENT_JOB_KEY,),
             got = _request("/read", body, timeout=budget + 10.0)
             raw = got.get("documents") or {}
             if "types" in _DEAL:
-                _DEAL["types"].update(_aliased(got.get("types")))
+                _DEAL["types"].update(_heads_types(got, rows))
             _keep_full(got)
         else:
             from ml.c3.predict import read_deal

@@ -623,6 +623,34 @@ def _is_hallucinated_physical_site_value(value: Any) -> bool:
     return False
 
 
+def _is_structured_roster_row(atom: Any) -> bool:
+    """A site-list row the parser read cell by cell (``xlsx_site_roster_v1`` with its own ``cells``).
+
+    Its name, facility and address can be one string because the sheet has no name column: live 010035, a
+    496-store list (Store | Street Address | City | ST | Postal Code) gave every row its street as name and
+    facility, and the hallucination guard dropped 403 of the rows. That shape is the extractor filling empty
+    fields, not an LLM ghost.
+    """
+    v = getattr(atom, "value", None)
+    if not isinstance(v, dict) or not isinstance(v.get("cells"), dict) or not v["cells"]:
+        return False
+    loc = getattr(atom, "locator", None)
+    loc = loc if isinstance(loc, dict) else {}
+    if loc.get("extraction") == "xlsx_site_roster_v1":
+        return True
+    for ref in getattr(atom, "source_refs", None) or []:
+        method = ref.get("extraction_method") if isinstance(ref, dict) else getattr(ref, "extraction_method", None)
+        if method == "xlsx_site_roster_v1":
+            return True
+    return False
+
+
+def _is_hallucinated_site_atom(atom: Any) -> bool:
+    """:func:`_is_hallucinated_physical_site_value`, except on a site-list row read cell by cell."""
+    return (_is_hallucinated_physical_site_value(getattr(atom, "value", None))
+            and not _is_structured_roster_row(atom))
+
+
 def _is_geo_fallback_physical_site(atom: Any) -> bool:
     """True for geo-fallback minted sites — never drop as roster ghosts."""
     flags = list(getattr(atom, "review_flags", None) or [])
@@ -1089,10 +1117,17 @@ def _dedupe_physical_site_atoms(atoms: list[Any]) -> list[Any]:
     # Atoms that don't smell hallucinated continue through the existing
     # canonical_for resolution + winner-merge logic unchanged.
     before_hallucination = len(physical)
+    ghosts = {id(a) for a in physical if _is_hallucinated_site_atom(a)}
     for a in physical:
-        if _is_hallucinated_physical_site_value(getattr(a, "value", None)):
+        if id(a) in ghosts:
+            rule_ledger.fire("semantic_dedup.hallucinated_site", a, rule_ledger.head_of(a), "not:physical_site",
+                             "name, address and facility are one string")
+    if rule_ledger.shadow("semantic_dedup.hallucinated_site"):
+        ghosts = set()
+    for a in physical:
+        if id(a) in ghosts:
             mark_dropped_not_folded(a, "hallucinated_site")
-    physical = [a for a in physical if not _is_hallucinated_physical_site_value(getattr(a, "value", None))]
+    physical = [a for a in physical if id(a) not in ghosts]
     if before_hallucination != len(physical):
         # Update the atoms list too so the new list reflects the drop.
         dropped_ids = {id(a) for a in atoms if _atom_type_value(a) == "physical_site"} - {id(a) for a in physical}

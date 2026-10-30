@@ -122,7 +122,10 @@ def test_follow_party_copies_shadow(monkeypatch):
     assert follow_party_copies(atoms, types) == []
     assert _type(atoms[1]) == "physical_site" and types["p1"][0] == "physical_site"
     assert rl.fires()["party_address_veto.follow_party_copies"]["disagree"] == 1
+    # Shadow by default now (repeat_address does it upstream); active only when asked.
     monkeypatch.delenv("SOWSMITH_RULE_MODES")
+    assert follow_party_copies(atoms, types) == []
+    monkeypatch.setenv("SOWSMITH_RULE_MODES", "party_address_veto.follow_party_copies:active")
     assert follow_party_copies(atoms, types) == ["p1"]
 
 
