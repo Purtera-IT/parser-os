@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import threading as _threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
@@ -83,6 +84,23 @@ def semantic_backend_available() -> bool:
 _PREWARM_MAX_CHARS = 400
 # Ceiling on one prewarm request so a 500-page dump can't build a giant payload.
 _PREWARM_MAX_TEXTS = int(os.environ.get("SOWSMITH_SEMANTIC_PREWARM_MAX", "4000"))
+
+
+_COLLECT = _threading.local()
+
+
+@contextmanager
+def collect_misses():
+    """Inside this block ``SemanticRule.fires`` records each line it would embed and answers from the
+    lexical fallback without touching the network. Run a parse step here, ``prewarm`` what it collected,
+    then run the step for real: every rule call is then a local hit. A dry pass is seconds; the one-text-
+    per-call misses it avoids were 1,137 round trips on 000043's SOW, nine minutes of serial network wait
+    (table cells: page lines alone never name them). The real pass decides everything, so nothing changes."""
+    _COLLECT.misses = found = []
+    try:
+        yield found
+    finally:
+        _COLLECT.misses = None
 
 
 def prewarm(texts: Iterable[str], *, max_chars: int = _PREWARM_MAX_CHARS) -> int:
@@ -368,6 +386,10 @@ class SemanticRule:
         from app.core.embedding_retrieval import cached_embedding, embed_texts
 
         cached = cached_embedding(text)
+        missed = getattr(_COLLECT, "misses", None)
+        if cached is None and missed is not None:
+            missed.append(text)
+            return self._lexical(text)
         if cached is None and not self._reachable():
             return self._lexical(text)
         try:
