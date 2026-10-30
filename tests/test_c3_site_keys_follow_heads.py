@@ -150,3 +150,48 @@ def test_a_street_line_inside_a_roster_row_is_that_site():
     settle([row, street, other], {"r": ["physical_site", 0.99], "s": ["physical_site", 0.8], "o": ["physical_site", 0.8]})
     assert _site_keys(street) == ["site:northgate"]
     assert _site_keys(other) == ["site:70_oak_rd"]
+
+
+def _site_line(id_, text, keys, value=None, locator=None):
+    from types import SimpleNamespace as N
+    return N(id=id_, atom_type="physical_site", raw_text=text, entity_keys=keys, value=value or {}, review_flags=[],
+             source_refs=[N(artifact_id="art_" + id_[0], locator=locator or {})])
+
+
+def _types(lines):
+    return {a.id: ["physical_site", 0.9] for a in lines}
+
+
+def test_one_store_under_three_keys_is_one_site_and_a_loose_key_does_not_chain():
+    from app.core.site_keys_follow_heads import _join_same_place, _site_keys
+
+    sched = [_site_line(f"a{i}", f"HC: {i} | Status: Open", [f"site:hc_{i}", "site:loose"]) for i in range(1, 7)]
+    sow = _site_line("b1", "facility", ["site:4860_south_hwy_27"], {"address": "4860 South Hwy 27", "zip": "42501"})
+    draft = _site_line("c1", "x", ["site:37"], {"address": "4860 South Hwy 27"},
+                       {"header_atom_id": "h", "cell_fragments": [{"col": 0, "text": "1"}, {"col": 1, "text": "42501"}]})
+    head = _site_line("h1", "HC | Zip", [])
+    head.id = "h"
+    head.atom_type = "header"
+    lines = sched + [sow, draft, head]
+    assert _join_same_place(lines, _types(lines)) >= 2
+    assert _site_keys(sow) == _site_keys(draft) and len(_site_keys(sow)) == 1
+    assert len({k for a in sched for k in _site_keys(a)}) == 6
+
+
+def test_numbers_that_repeat_are_not_ids_and_lines_with_no_place_stay_on_a_list_that_names_none():
+    from app.core.site_keys_follow_heads import NOT_BACKED, _join_same_place, _site_keys
+
+    rows = [_site_line(f"a{i}", f"Visits: 1 | City: X{i}", [f"site:x{i}"]) for i in range(8)]
+    assert _join_same_place(rows, _types(rows)) == 0
+    assert len({k for a in rows for k in _site_keys(a)}) == 8
+    assert all(NOT_BACKED not in a.review_flags for a in rows)
+
+
+def test_a_row_naming_no_place_stops_counting_on_a_deal_whose_rows_do():
+    from app.core.site_keys_follow_heads import NOT_BACKED, _join_same_place
+
+    rows = [_site_line(f"a{i}", f"HC: {i}", [f"site:hc_{i}"]) for i in range(1, 8)]
+    junk = _site_line("b1", "Device type", ["site:device_type"])
+    lines = rows + [junk]
+    _join_same_place(lines, _types(lines))
+    assert NOT_BACKED in junk.review_flags and NOT_BACKED not in rows[0].review_flags
