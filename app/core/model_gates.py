@@ -79,6 +79,19 @@ def models_disabled() -> bool:
     return _flag("SOWSMITH_NO_MODELS") or _flag("SOWSMITH_DISABLE_LLM")
 
 
+def no_local_models() -> bool:
+    """True when this process must never dial the local (tailnet) model host.
+
+    ``PARSER_OS_NO_LOCAL_MODELS`` is the one switch for "models stay on, but
+    only hosted ones": embeddings go to Azure, every Ollama preflight answers
+    False without opening a socket, and PDF images go to the hosted vision
+    route. Without it, a module whose Ollama env was removed still falls back
+    to the hardcoded tailnet address and pays a preflight timeout to learn the
+    box is gone.
+    """
+    return _flag("PARSER_OS_NO_LOCAL_MODELS")
+
+
 def llm_disabled() -> bool:
     """Deprecated alias for :func:`models_disabled`, kept for call sites that
     read better this way. Same answer."""
