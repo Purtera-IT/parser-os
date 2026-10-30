@@ -74,6 +74,13 @@ C3_LISTS_OF = {
     "deliverables": ["deliverables"],
 }
 
+#: A supply list's party, as col:supplier answers it; equipment_in_scope is neutral.
+SUPPLIER_OF_LIST = {"provider_materials": "us", "provider_tools": "us", "customer_materials": "customer"}
+#: Who does a line in a list, as read:task_owner_role answers it.
+PARTY_OF_LIST = {"scope": "technician", "arrival_protocol": "technician", "customer_responsibilities": "customer"}
+CANDIDATES = {"sow_supplier": ["us", "customer", "partner"], "sow_party": ["technician", "customer", "partner"],
+              "sow_keep": ["keep", "drop"]}
+
 _STOP = set("""a an the and or of to for in on at by with from as is are be been will shall
 must may can any all each per its it this that these those their our your into onto upon
 before after during than then so not no""".split())
@@ -329,6 +336,37 @@ def classify(edit: dict[str, Any], note: dict[str, Any] | None, env: dict[str, A
                 "proposal": {"job_family": job, "action": action, "section": to or frm, "text": text,
                              "was": draft_text if action == "reword" else None, "note": (note or {}).get("note")}}
 
+    # 0. A PM moving a supply item to the other party's list, or a duty
+    # between our scope and the customer's, answers col:supplier or
+    # read:task_owner_role on its cited line. The PM's move is the answer;
+    # where the head already said so, the writer or a rule misplaced it.
+    words = (note or {}).get("note") or ""
+    if kind == "move" and cites:
+        sup_to, sup_from = SUPPLIER_OF_LIST.get(to or ""), SUPPLIER_OF_LIST.get(frm or "")
+        if sup_to and sup_to != sup_from:
+            said = next(((t.get("supplier") or [None])[0] for t in atoms.values() if t.get("supplier")), None)
+            lab = _label("sow_supplier", cites[0], said or sup_from or "", sup_to, text,
+                         f"PM moved it to {to}" + (f'. PM: "{words}"' if words else ""))
+            if said == sup_to:
+                return {**out, "bucket": "writer", "confidence": "high", "label": None,
+                        "why": f"The supplier head already said {said}; the writer or a rule put it in {frm}."}
+            return {**out, "bucket": "head", "confidence": "high", "label": lab, "head_said": said, "why": lab["why"]}
+        pty_to, pty_from = PARTY_OF_LIST.get(to or ""), PARTY_OF_LIST.get(frm or "")
+        if pty_to and pty_from and pty_to != pty_from:
+            said = next(((t.get("owner") or [None])[0] for t in atoms.values() if t.get("owner")), None)
+            lab = _label("sow_party", cites[0], said or pty_from, pty_to, text,
+                         f"PM moved it to {to}" + (f'. PM: "{words}"' if words else ""))
+            extra = []
+            if SECTION_OF.get(frm or "") and SECTION_OF.get(to or "") and SECTION_OF[frm] != SECTION_OF[to]:
+                extra.append(_label("sow_section", cites[0], SECTION_OF[frm], SECTION_OF[to], text, lab["why"]))
+            placed = {t.get("section") for t in atoms.values() if t.get("section")}
+            if said == pty_to or (said is None and SECTION_OF.get(to or "") in placed):
+                who = f"The owner head already said {said}" if said else f"The heads already placed it in {SECTION_OF.get(to or '')}"
+                return {**out, "bucket": "writer", "confidence": "high", "label": None, "extra_labels": [],
+                        "why": f"{who}; the writer or a rule put it in {frm}."}
+            return {**out, "bucket": "head", "confidence": "high", "label": lab, "extra_labels": extra,
+                    "head_said": said, "why": lab["why"]}
+
     # 1. The PM said why: their reason wins.
     if note:
         r = note.get("reason")
@@ -554,13 +592,34 @@ def group_questions(asks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def correction_body(r: dict[str, Any]) -> dict[str, Any]:
-    lab = r["label"]
+def labels_of(r: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every head label one PM fix carries: the main one, plus a section move
+    that came with a party move."""
+    return ([r["label"]] if r.get("label") else []) + list(r.get("extra_labels") or [])
+
+
+def review_verdict(r: dict[str, Any], lab: dict[str, Any]) -> str:
+    """``pm_edit`` only for what the PM's own action says: a move's target, or
+    a delete the PM gave a reason for. A label this script inferred (which
+    atom an added line states, that a bare delete means the head was wrong) is
+    an ``agent_draft``: labels_from_sow never trains on it (owner policy: only
+    real PM corrections train)."""
+    if r.get("kind") == "move":
+        return "pm_edit"
+    if r.get("kind") == "delete" and r.get("note"):
+        return "pm_edit"
+    return "agent_draft"
+
+
+def correction_body(r: dict[str, Any], lab: dict[str, Any] | None = None) -> dict[str, Any]:
+    lab = lab or r["label"]
     head = lab["head"]
-    cands = SOW_SECTION_CANDIDATES if head == "sow_section" else ["keep", "drop"]
+    cands = SOW_SECTION_CANDIDATES if head == "sow_section" else CANDIDATES.get(head, ["keep", "drop"])
+    words = (r.get("note") or {}).get("note")
     return {"head": head, "deal_id": r["deal_id"], "compile_id": r.get("compile_id") or "",
             "target_id": lab["target_id"], "text": lab["text"], "old_value": lab["old_value"],
-            "new_value": lab["new_value"], "scope": "deal", "rationale": f"sow_fix_triage: {r['why']}",
+            "new_value": lab["new_value"], "scope": "deal",
+            "rationale": f"sow_fix_triage (edit {r.get('edit_id')}): {r['why']}" + (f' PM: "{words}"' if words and words not in r["why"] else ""),
             "candidates": cands, "pm": ((r.get("note") or {}).get("by") or "sow_fix_triage")}
 
 
@@ -687,15 +746,18 @@ def main(argv: list[str] | None = None) -> int:
     seen: set[tuple[str, str, str]] = set()
     bodies = []
     for r in to_post:  # one label per atom, head and answer, whichever fix found it first
-        k = (r["label"]["target_id"], r["label"]["head"], r["label"]["new_value"])
-        if k not in seen:
-            seen.add(k)
-            bodies.append(correction_body(r))
+        for lab in labels_of(r):
+            k = (lab["target_id"], lab["head"], lab["new_value"])
+            if k not in seen:
+                seen.add(k)
+                bodies.append(correction_body(r, lab))
     dump("would_post.jsonl", bodies)
-    dump("reviews.jsonl", [{"deal": r["deal"], "atom_id": r["label"]["target_id"], "head": r["label"]["head"],
-                            "value": r["label"]["new_value"], "verdict": "pm_edit", "was": r["label"]["old_value"],
+    dump("reviews.jsonl", [{"deal": r["deal"], "atom_id": lab["target_id"], "head": lab["head"],
+                            "value": lab["new_value"], "verdict": review_verdict(r, lab), "was": lab["old_value"],
+                            "line_id": r.get("edit_id"), "head_said": r.get("head_said"),
+                            "reason": (r.get("note") or {}).get("reason") or "", "note": (r.get("note") or {}).get("note") or "",
                             "by": (r.get("note") or {}).get("by") or "sow_fix_triage", "at": run["at"]}
-                           for r in rows if r["bucket"] == "head" and r.get("label") and r.get("confidence") != "low"])
+                           for r in rows if r["bucket"] == "head" and r.get("confidence") != "low" for lab in labels_of(r)])
     dump("standards_queue.jsonl", [{**r["proposal"], "deal": r["deal"], "status": "pending_owner"} for r in rows if r.get("proposal")])
     dump("writer_bugs.jsonl", [{k: r.get(k) for k in ("deal", "compile_id", "kind", "from", "to", "text", "draft_text", "why", "trace")}
                                | {"pm_note": (r.get("note") or {}).get("note")} for r in rows if r["bucket"] == "writer"])

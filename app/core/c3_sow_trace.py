@@ -176,6 +176,9 @@ def trace_atoms(envelope: dict[str, Any], ids: list[str]) -> dict[str, dict[str,
             sup = it.get("supplier")
             if isinstance(sup, list) and sup:
                 row["supplier"] = [sup[0], _round(sup[1]) if len(sup) > 1 else None]
+            own = it.get("owner")
+            if isinstance(own, list) and own:
+                row["owner"] = [own[0], _round(own[1]) if len(own) > 1 else None]
         else:
             row["section"] = None
         # None of the brief's places: the heads left it out of the brief.

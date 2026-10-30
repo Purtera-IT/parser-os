@@ -41,6 +41,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import os
+
 import numpy as np
 
 from app.core.neural_head import NeuralHead, _l2norm
@@ -120,6 +122,34 @@ def build_adjacency(atoms: list) -> np.ndarray:
     return out
 
 
+def build_adjacency_sparse(atoms: list):
+    """``build_adjacency`` as a scipy CSR matrix (same values): the dense N x N matrix and its N x N x D
+    diffusion cost a 5,922-line deal (010245) ~3 minutes of graph_build; most lines share no key. Falls
+    back to the dense matrix when scipy is missing."""
+    try:
+        from scipy import sparse
+    except Exception:  # pragma: no cover
+        return build_adjacency(atoms)
+    n = len(atoms)
+    if n == 0:
+        return sparse.csr_matrix((0, 0), dtype=np.float32)
+    rows, cols, keys = [], [], {}
+    for i, a in enumerate(atoms):
+        for k in _atom_entity_keys(a):
+            rows.append(i)
+            cols.append(keys.setdefault(k, len(keys)))
+    B = sparse.csr_matrix((np.ones(len(rows), dtype=np.float32), (rows, cols)), shape=(n, max(1, len(keys))))
+    A = (B @ B.T).tocsr()
+    A.setdiag(0)
+    A.eliminate_zeros()
+    A.data[:] = 1.0  # linked when they share at least one key
+    deg = np.asarray(A.sum(axis=1)).ravel()
+    scale = np.where(deg > 0, (1.0 - _DIFFUSION_ALPHA) / np.maximum(deg, 1e-12), 0.0).astype(np.float32)
+    A = sparse.diags(scale) @ A
+    diag = np.where(deg > 0, _DIFFUSION_ALPHA, 1.0).astype(np.float32)
+    return (A + sparse.diags(diag)).tocsr().astype(np.float32)
+
+
 def diffuse(node_vecs: np.ndarray, A: np.ndarray, hops: int = _DIFFUSION_HOPS) -> np.ndarray:
     """Propagate frozen node embeddings over ``A`` for ``hops`` and L2-normalize.
 
@@ -175,8 +205,8 @@ class GraphNeuralClassifier:
             self.n_nodes = node_vecs.shape[0] if node_vecs.ndim == 2 else 0
             if self.n_nodes == 0:
                 return self
-            A = build_adjacency(atoms)
-            self._H = diffuse(node_vecs, A, self.hops)
+            A = build_adjacency_sparse(atoms)
+            self._H = np.asarray(diffuse(node_vecs, A, self.hops), dtype=np.float32)
             if labeled_pairs:
                 feats, labels = [], []
                 for i, j, lbl in labeled_pairs:
@@ -258,15 +288,24 @@ def _build_labeled_pairs(
         if i is not None and j is not None:
             labeled.append((i, j, _edge_type_str(e)))
 
+    # A big deal's positives are capped (seeded sample; SOWSMITH_EDGE_GATE_MAX_TRAIN): the gate's per-deal
+    # projection fit is linear in the pairs at ~12k dims x 250 epochs, and 010245's ~5.6k positives + as
+    # many negatives cost 173 s of graph_build. A deal under the cap trains on exactly what it did before.
+    cap = int(os.environ.get("SOWSMITH_EDGE_GATE_MAX_TRAIN", "1000") or 1000)
+    if cap > 0 and len(labeled) > cap:
+        pick = np.random.default_rng(_SEED).choice(len(labeled), size=cap, replace=False)
+        labeled = [labeled[k] for k in sorted(pick)]
     keysets = [set(_atom_entity_keys(a)) for a in ordered]
     rng = np.random.default_rng(_SEED)
     n = len(ordered)
     tries, want = 0, max(len(labeled), min_train)
-    while len([p for p in labeled if p[2] == NO_EDGE]) < want and tries < want * 20:
+    negatives = sum(1 for p in labeled if p[2] == NO_EDGE)
+    while negatives < want and tries < want * 20:
         tries += 1
         i, j = int(rng.integers(0, n)), int(rng.integers(0, n))
         if i != j and not (keysets[i] & keysets[j]):
             labeled.append((i, j, NO_EDGE))
+            negatives += 1
     return labeled
 
 

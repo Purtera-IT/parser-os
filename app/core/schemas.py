@@ -849,6 +849,9 @@ class CompileResult(BaseModel):
     # survivor, merged/lossy survivors, partly folded lists. Counts plus
     # examples with atom ids -- see app/core/ledger_audit.py.
     ledger_audit: dict[str, Any] = Field(default_factory=dict)
+    # Every rule that overrode, merged, vetoed or filled a head decision: {rule_id: {fires, agree_with_head,
+    # disagree, no_head, mode, examples}} -- see app/core/rule_ledger.py.
+    rule_fires: dict[str, Any] = Field(default_factory=dict)
     # Brief v2 (app/core/c3_brief.py): what the super heads put in the brief,
     # each item marked with the head or rule that decided it. None when off.
     c3_brief: dict[str, Any] | None = None
@@ -881,6 +884,7 @@ class CompileResult(BaseModel):
                 "suppressed_atoms": data.get("suppressed_atoms", []),
                 "text_coverage": data.get("text_coverage", []),
                 "ledger_audit": data.get("ledger_audit", {}),
+                "rule_fires": data.get("rule_fires", {}),
                 "c3_brief": data.get("c3_brief"),
                 "manifest": data.get("manifest"),
                 "trace": data.get("trace"),

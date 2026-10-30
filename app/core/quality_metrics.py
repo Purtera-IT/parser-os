@@ -25,6 +25,11 @@ from app.core.schemas import (
 _LOW_PARSER_CONFIDENCE_THRESHOLD = 0.50
 
 
+
+def _base_version(version: str) -> str:
+    """A parser version without the compile's ``+code<fingerprint>`` suffix."""
+    return version.split("+code", 1)[0]
+
 def _atom_has_real_entity_key(atom: Any) -> bool:
     keys = getattr(atom, "entity_keys", None) or []
     if not keys:
@@ -138,7 +143,7 @@ def compute_quality(
         version = getattr(atom, "parser_version", None)
         if not version:
             continue
-        parser_atoms[str(version)] += 1
+        parser_atoms[_base_version(str(version))] += 1
     parsers_with_zero_atoms: list[str] = []
     parsers_with_low_confidence: list[str] = []
     nonzero_parsers = 0
@@ -149,7 +154,12 @@ def compute_quality(
             continue
         total_parsers_seen += 1
         version = str(entry.get("parser_version") or "")
-        atoms_for_parser = parser_atoms.get(version, 0)
+        # Routing records the version with the compile's "+code<fingerprint>" suffix and atoms carry
+        # it bare: matched raw, every parser read as producing 0 atoms. The routing's own count wins.
+        if entry.get("atom_count") is not None:
+            atoms_for_parser = int(entry.get("atom_count") or 0)
+        else:
+            atoms_for_parser = parser_atoms.get(_base_version(version), 0)
         if atoms_for_parser == 0:
             parsers_with_zero_atoms.append(
                 f"{entry.get('filename', '?')} ({chosen} v{version})"

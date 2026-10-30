@@ -533,7 +533,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
             if isinstance(v, dict) and str(v.get("kind") or "").endswith("_marker"):
                 return True
             t = str(getattr(a, "raw_text", "") or "").lstrip()
-            return t.startswith("[") and "awaiting OCR" in t
+            return t.startswith("[") and ("awaiting OCR" in t or t.startswith(("[Image read:", "[Image skipped:")))
 
         def _is_bare_identity(a: Any) -> bool:
             # A line that is ONLY a person's name, an email, a phone, or a
@@ -702,7 +702,7 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 """(act, answer, p, new type) for a reading the layer would act on, else None."""
                 if res is None or _c3.skipped(a, artifact_sha256):
                     return None
-                if res[1] < _c3.sure_for(res[0]):
+                if res[1] < _c3.overwrite_bar(a, res[0], _c3.sure_for(res[0]), res[1]):
                     # Under the bar the parser's type stands, not the LLM's
                     # (SOWSMITH_C3_UNSURE_KEEP). Pre-quote, the base under 0.5
                     # was right less often than the parser on all three graded
@@ -749,6 +749,17 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                 if answer in _TAXONOMY:
                     try:
                         return "fill", answer, p, _AT(answer)
+                    except ValueError:
+                        return None
+                # Any other parser type the base is sure of (scope_item, risk,
+                # assumption, decision, open_question, action_item ...): the
+                # typing LLM's taxonomy has no name for it, so sending the line
+                # there only let the LLM override a sure head (live 10-28: 15
+                # lines on 000002, 7 scope_item lines on 010447). Assigned as
+                # the base said; SOWSMITH_LLM_WITH_HEADS=typing_untaken restores.
+                if _c3.heads_decide("typing_untaken"):
+                    try:
+                        return "assign", answer, p, _AT(answer)
                     except ValueError:
                         return None
                 return None
@@ -814,17 +825,59 @@ def classify_atoms(atoms: list[Any], *, artifact_sha256: dict[str, str] | None =
                     _dfl["c3"] += 1
                 if fills:
                     filled, back = _fill_values(fills)
+                    # The head decided a filled line's type: its p goes on the label like an
+                    # assignment's (wave 4 read "fill, p None" as an LLM-typed site).
+                    _back_ids = {id(a) for a in back}
+                    for a, _ftuple in fills:
+                        if id(a) not in _back_ids:
+                            _with_head_p(a, _c3_answer.get(id(a)))
                     head_deflected += filled
                     _dfl["c3_fill"] += filled
                     _why["filled"] = filled
-                    _why["fill_back_to_llm"] = len(back)
-                    survivors.extend(back)
+                    # A failed fill batch keeps the base's type with no values: the
+                    # base decided WHAT the line is, and a dead fill endpoint must
+                    # not hand that decision back to the typing LLM.
+                    _why["fill_failed_kept_type"] = len(back)
+                    _fill_type = {id(a): t for a, t in fills}
+                    for a in back:
+                        _ftype, _name = _fill_type[id(a)]
+                        a.atom_type = _ftype
+                        _ans = _c3_answer.get(id(a))
+                        _mark_c3(a, _name, _ans[1] if _ans else None, "assign")
+                        head_deflected += 1
+                # A line set aside before the brief (our kit or calculator, or out of a quoting read) is
+                # never typed by the LLM: it keeps its parser type and the count says why.
+                if os.environ.get("SOWSMITH_C3_SET_ASIDE_NO_LLM", "1").strip().lower() not in ("0", "false", "no", "off"):
+                    _kept_out: dict[str, int] = {}
+                    _rest = []
+                    for a in survivors:
+                        _r = _c3.set_aside(a, artifact_sha256)
+                        if _r:
+                            _kept_out[_r] = _kept_out.get(_r, 0) + 1
+                        else:
+                            _rest.append(a)
+                    if _kept_out:
+                        _why["set_aside_not_typed"] = _kept_out
+                    survivors = _rest
                 promotable = survivors
                 try:
                     _c3.note_typing(_why)
                 except Exception:
                     pass
         except Exception as exc:
+            # SOWSMITH_C3_FALLBACK=never: the heads could not answer, and the
+            # lines must not go to the LLM in their place -- fail the compile.
+            if type(exc).__name__ == "C3HeadsUnavailable":
+                raise
+            # Under never, no error in the layer may hand its lines to the LLM.
+            try:
+                from app.core import c3_type_base as _c3n
+
+                _never_mode = _c3n._never()
+            except Exception:
+                _never_mode = False
+            if _never_mode:
+                raise
             # The layer abstains (every atom goes on to the LLM as before),
             # but never silently: the compile result says why.
             try:
@@ -1170,6 +1223,14 @@ OUTPUT — strict JSON, one line per atom, in the form:
 If a field is not present in the atom text, omit it from value. Do not invent values. Do not echo example fields.
 
 /no_think"""
+
+
+def _with_head_p(atom: Any, answer: tuple[str, float] | None) -> None:
+    """Put the head's p on a ``fill`` label (the LLM only filled the values; the head chose the type)."""
+    v = getattr(atom, "value", None)
+    lab = v.get("c3_label") if isinstance(v, dict) else None
+    if answer and isinstance(lab, dict) and lab.get("act") == "fill" and lab.get("p") is None:
+        lab["p"] = round(float(answer[1] or 0.0), 3)
 
 
 def _mark_c3(atom: Any, answer: str, p: float | None, act: str) -> None:

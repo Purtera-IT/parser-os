@@ -53,6 +53,46 @@ def set_stage_item(item: str) -> None:
     _HB_ITEM[0] = str(item or "")[:200]
 
 
+def stage_item() -> str:
+    """What the running stage last said it is working on ("" when nothing),
+    e.g. "waiting for C3 heads (...)" under SOWSMITH_C3_FALLBACK=never. Read
+    from another thread, like ``stage_progress``."""
+    return _HB_ITEM[0]
+
+
+# What a PM must be told about THIS compile while it runs and after it ends.
+#
+# Keyed notices (``heads_warming``, ``heads_read_degraded``, ``large_deal``),
+# each a small JSON-able dict. The worker copies them into compile-progress.json
+# on every write, so the deal page can say "waking up the model" instead of
+# showing a stage that sits still for four minutes, and can say a big deal was
+# read in smaller pieces instead of letting it pass as a full-size read.
+# Read from another THREAD, like ``stage_progress``.
+_NOTICES: dict[str, dict] = {}
+_NOTICES_LOCK = threading.Lock()
+
+
+def set_compile_notice(key: str, value: dict | None) -> None:
+    """Set (or, with None, clear) one notice for the running compile."""
+    with _NOTICES_LOCK:
+        if value is None:
+            _NOTICES.pop(str(key), None)
+        else:
+            _NOTICES[str(key)] = dict(value)
+
+
+def compile_notices() -> dict[str, dict]:
+    """A copy of this compile's notices ({} when there is nothing to say)."""
+    with _NOTICES_LOCK:
+        return {k: dict(v) for k, v in _NOTICES.items()}
+
+
+def clear_compile_notices() -> None:
+    """A new compile starts with nothing to say."""
+    with _NOTICES_LOCK:
+        _NOTICES.clear()
+
+
 # How far through its own work the current stage is.
 #
 # WHY A NUMBER AND NOT JUST A NAME. `set_stage_item` above makes a wedged stage
@@ -172,10 +212,46 @@ _CALLS_LOCK = _threading.Lock()
 
 def charge(kind: str, seconds: float, n: int = 1) -> None:
     """Add ``n`` calls of ``kind`` ("llm" | "embed") taking ``seconds``."""
+    caller = _caller() if kind == "llm" else ""
     with _CALLS_LOCK:
         row = CALLS_BY_STAGE.setdefault(CURRENT_STAGE, {"llm_calls": 0, "llm_s": 0.0, "embed_calls": 0, "embed_s": 0.0})
         row[f"{kind}_calls"] += n
         row[f"{kind}_s"] = round(row[f"{kind}_s"] + seconds, 2)
+        if caller:
+            # Which module asked: a call outside every stage block is charged to
+            # "setup", and only this says what it was.
+            by = row.setdefault("llm_by", {})
+            by[caller] = by.get(caller, 0) + n
+
+
+_NOT_CALLERS = ("app.core.telemetry", "app.core.llm_client", "app.core.decide", "app.core.semantic_role",
+                "app.core.ollama_host", "app.core.model_gates", "app.core.multi_entity_llm", "app.core.site_llm_verify")
+
+
+def _caller() -> str:
+    """The first app module up the stack that is not LLM plumbing ('' when none)."""
+    import sys as _sys
+
+    f = _sys._getframe(2)
+    first = ""
+    while f is not None:
+        mod = str(f.f_globals.get("__name__") or "")
+        if mod.startswith("app.") and not first:
+            first = mod
+        if mod.startswith("app.") and not mod.startswith(_NOT_CALLERS):
+            return mod.rsplit(".", 1)[-1] + ":" + f.f_code.co_name
+        f = f.f_back
+    return first.rsplit(".", 1)[-1] if first else ""
+
+
+def note_call(kind: str, seconds: float, outcome: str) -> None:
+    """One ``kind`` call ("vision" | "ocr") into this compile's trace: ``{kind}_calls``,
+    ``{kind}_s`` and a count per outcome (``{kind}_ok`` / ``_empty`` / ``_error``)."""
+    with _CALLS_LOCK:
+        row = CALLS_BY_STAGE.setdefault(CURRENT_STAGE, {"llm_calls": 0, "llm_s": 0.0, "embed_calls": 0, "embed_s": 0.0})
+        row[f"{kind}_calls"] = row.get(f"{kind}_calls", 0) + 1
+        row[f"{kind}_s"] = round(row.get(f"{kind}_s", 0.0) + seconds, 2)
+        row[f"{kind}_{outcome}"] = row.get(f"{kind}_{outcome}", 0) + 1
 
 
 class CompileTelemetry:

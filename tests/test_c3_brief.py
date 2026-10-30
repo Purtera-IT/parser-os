@@ -18,6 +18,15 @@ def test_registry_layers_and_trust():
     assert not heads.trusted("col:wants")  # one-sided labels: not trusted
 
 
+def test_no_trusted_head_lost_to_live_on_the_grade():
+    """Test A's registry: a head the held-out grade measured worse than the service's never decides."""
+    for key, h in heads.registry().items():
+        ev = h.get("holdout") or {}
+        if h["status"] == "ready" and ev.get("live") is not None:
+            assert ev["exact"] >= ev["live"] and ev.get("verdict") != "worse", key
+    assert not heads.trusted("read:sow_section")  # test A 0.376 vs live 0.629 on heldout7
+
+
 def test_no_read_falls_back_to_rules():
     atoms = [_atom(1, "scope_item", "Install 4 cameras"), _atom(2, "small_talk", "thanks!"),
              _atom(3, "open_question", "Who owns the lift?")]
@@ -29,7 +38,9 @@ def test_no_read_falls_back_to_rules():
     assert b["decided_by"]["heads_used"] == []
 
 
-def test_trusted_heads_decide_and_say_so():
+def test_trusted_heads_decide_and_say_so(monkeypatch):
+    # The mechanism, not the shipped registry: test A's read:sow_section is not trusted (worse than live).
+    monkeypatch.setenv("SOWSMITH_C3_BRIEF_TRUST", "read:co_action,read:co_reason,read:sow_section")
     atoms = [_atom(1, "scope_item"), _atom(2, "scope_item"), _atom(3, "task")]
     reads = {"a1": {"read:co_action": ["keep", 0.9], "read:sow_section": ["deliverables", 0.8]},
              "a2": {"read:co_action": ["reject", 0.7], "read:co_reason": ["hw_price_not_ours", 0.6]},
@@ -400,3 +411,227 @@ def test_the_rubric_judge_is_off_by_default(monkeypatch):
     reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.6]}}
     b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
     assert "judge" not in b["sections"]["scope_of_work"][0]
+
+
+def test_the_writer_checks_run_side_by_side_and_end_as_one_after_another(monkeypatch):
+    """verify -> cover beside facts-answer -> deal-answered (compile speed, 2026-10-28):
+    each chain keeps its order and neither reads what the other writes, so the brief
+    ends as it did when the four ran one after another."""
+    import threading
+
+    B = c3_brief
+    brief = {"service": {"value": "x"},
+             "sections": {"scope_of_work": [{"id": "atm_a1", "text": "Move the APs, ceiling is 12 ft"}]},
+             "figures": [{"id": "atm_f1", "text": "3 Aruba APs are marked."}],
+             "written": {"summary": "Move APs.",
+                         "sections": {"scope": [{"text": "Move the APs.", "cites": ["atm_a1"]},
+                                                {"text": "Invented.", "cites": ["atm_a1"]}]},
+                         "open_questions": [{"question": "What is the ceiling height?", "kind": "pricing"},
+                                            {"question": "Who has the lift?", "kind": "deal"}]}}
+    order: list[str] = []
+    threads: set[str] = set()
+
+    def fake(p, m, t):
+        threads.add(threading.current_thread().name)
+        if "numbered sentence" in p:
+            order.append("verify")
+            return '{"supported": [0]}'
+        if "does NOT already state" in p:
+            order.append("cover")
+            return '{"add": [{"text": "There are 3 Aruba APs.", "cites": ["atm_f1"]}]}'
+        if '"p0"' in p:
+            order.append("facts")
+            return '{"answered": ["p0"]}'
+        order.append("ask")
+        return '{"answered": []}'
+
+    monkeypatch.setattr(B, "_complete", fake)
+    monkeypatch.setattr(B, "_attach_evidence", lambda probe, atoms: None)
+    B._check_written(brief, [])
+    w = brief["written"]
+    assert [x["text"] for x in w["sections"]["scope"]] == ["Move the APs."]
+    assert [x["text"] for x in w["sections"]["job_details"]] == ["There are 3 Aruba APs."]
+    assert [q["question"] for q in w["pricing_answered_in_deal"]] == ["What is the ceiling height?"]
+    assert [q["question"] for q in w["open_questions"]] == ["Who has the lift?"]
+    assert order.index("verify") < order.index("cover") and order.index("facts") < order.index("ask")
+    assert len(threads) >= 2, "the two chains ran on one thread"
+
+
+def _typed(i, t, text, how="label"):
+    v = ({"c3_label": {"type": t, "p": 0.97, "act": "authority", "was": "task"}} if how == "label"
+         else {"c3_confirm": {"type": t, "p": 0.9, "said": "_keep"}} if how == "confirm" else {})
+    return NS(id=f"a{i}", atom_type=t, raw_text=text, review_status="approved", value=v)
+
+
+def test_a_head_typed_exclusion_keeps_its_section_against_the_owner_head(monkeypatch):
+    """010362: an exclusion (type head 0.96) and a pricing term (0.99) were moved to
+    scope_of_work by read:task_owner_role, because against a rule placement the
+    override compared the owner's p with 0."""
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "exclusion", "Firewall programming performed independently is out of scope"),
+             _typed(2, "pricing_assumption", "After hours work will be billed at a 50% uplift", "confirm"),
+             _typed(3, "dependency", "Customer ensures the circuit is active before the visit")]
+    reads = {f"a{i}": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.88]}
+             for i in (1, 2, 3)}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    secs = {x["id"]: s for s, xs in b["sections"].items() for x in xs}
+    assert secs["a1"] == c3_brief.SECTION_BY_TYPE["exclusion"]
+    assert secs["a2"] == c3_brief.SECTION_BY_TYPE["pricing_assumption"]
+    assert secs["a3"] == c3_brief.SECTION_BY_TYPE["dependency"]
+    assert all(x["type_by"] == "head" and x["section_by"] == "rule:type"
+               for xs in b["sections"].values() for x in xs)
+
+
+def test_the_owner_head_fills_only_where_no_head_typed_the_line_and_says_so(monkeypatch):
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "dependency", "Mount the APs at the new site", how=None),
+             _typed(2, "dependency", "Patch the new switch", how=None)]
+    reads = {"a1": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.86]},
+             "a2": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.51]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    filled = b["sections"]["scope_of_work"]
+    assert [x["id"] for x in filled] == ["a1"]
+    assert filled[0]["section_by"] == "base:read:task_owner_role" and filled[0]["type_by"] == "rule"
+    assert "owner head filled" in filled[0]["section_fill"]
+    # Below the owner bar the rule's placement stands.
+    assert [x["id"] for x in b["sections"][c3_brief.SECTION_BY_TYPE["dependency"]]] == ["a2"]
+
+
+def test_a_parser_typed_exclusion_is_no_duty_for_the_owner_head(monkeypatch):
+    """010355: "Lifts ... are excluded" (no type-head mark) read technician 0.82
+    by the owner head and was filed as our scope."""
+    _trusted_all(monkeypatch)
+    atoms = [_typed(1, "exclusion", "Lifts and scaffolding are excluded", how=None)]
+    reads = {"a1": {"read:co_action": ["keep", 0.95], "read:task_owner_role": ["technician", 0.9]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    assert [x["id"] for x in b["sections"]["out_of_scope"]] == ["a1"]
+
+
+def test_a_kept_line_moved_after_the_keep_loop_says_where_it_went():
+    """010362: 92 lines read "kept" in line_decisions but were moved to
+    ``superseded`` after the keep loop, so the ledger and the brief disagreed."""
+    from types import SimpleNamespace as N
+
+    from app.core.c3_brief import _drop_superseded, reconcile_line_decisions
+
+    atoms = [N(id="d1", artifact_id="draft"), N(id="s1", artifact_id="signed"), N(id="m1", artifact_id="signed")]
+    docs = [{"doc_id": "draft", "kind": "sow_draft", "filename": "Install v1.docx"},
+            {"doc_id": "signed", "kind": "signed_sow", "filename": "SOW signed.pdf"}]
+    brief = {"sections": {"fees": [{"id": "d1", "text": "$7,890"}, {"id": "s1", "text": "$9,150"}]},
+             "also_mentioned": [{"id": "m1"}],
+             "line_decisions": {"cols": ["id", "outcome", "by", "p", "col:admission", "read:co_action"],
+                                "rows": [["d1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["s1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["m1", "also", "base:col:admission", 0.6, None, None],
+                                         ["z1", "kept", "base:col:admission", 0.9, None, None],
+                                         ["n1", "not_admitted", "base:col:admission", 0.2, None, None]]}}
+    assert _drop_superseded(brief, atoms, docs) == 1
+    assert reconcile_line_decisions(brief) == 2
+    got = {r[0]: (r[1], r[2]) for r in brief["line_decisions"]["rows"]}
+    assert got["d1"] == ("superseded", "rule:superseded")
+    assert got["s1"][0] == "kept" and got["m1"][0] == "also" and got["n1"][0] == "not_admitted"
+    assert got["z1"] == ("kept_unplaced", "none:base:col:admission")
+    placed = {x["id"] for v in brief["sections"].values() for x in v} | {"m1"}
+    assert all(r[0] in placed for r in brief["line_decisions"]["rows"] if r[1] in ("kept", "also"))
+
+
+def test_an_untrusted_section_head_is_recorded_where_the_rule_places_the_line(monkeypatch):
+    """Run O answers read:sow_section in the planning view; the registry does not trust it, so the rule
+    places the line, and the line still carries the head's answer (the evidence a promotion needs)."""
+    monkeypatch.setenv("SOWSMITH_C3_BRIEF_TRUST", "read:co_action")
+    atoms = [_atom(1, "scope_item", "Install 4 cameras"), _atom(2, "exclusion", "Lifts are not included")]
+    reads = {"a1": {"read:co_action": ["keep", 0.99], "read:sow_section": ["scope_of_work", 0.9]},
+             "a2": {"read:co_action": ["keep", 0.99], "read:sow_section": ["assumptions", 0.7]}}
+    b = c3_brief.build(atoms, readings={"reads": reads, "links": [], "deal": {}})
+    items = {x["id"]: x for v in b["sections"].values() for x in v}
+    assert {i["section_by"] for i in items.values()} == {"rule:type"}
+    assert items["a1"]["section_head"] == ["scope_of_work", 0.9]
+    assert items["a2"]["section_head"] == ["assumptions", 0.7]
+    part = b["decided_by"]["parts"]["read:sow_section"]
+    assert part["by"] == "rule" and part["head_answered"] == 2 and part["head_agrees"] == 1
+
+
+def test_one_question_per_fact():
+    qs = [{"question": "What are the exact street addresses and floor levels for each site?", "cites": ["a1"]},
+          {"question": "Can you give the street address and floor for every site?", "cites": ["a2"]},
+          {"question": "Is a lift needed for the rafters?", "cites": ["a3"]},
+          {"question": "Will a scissor lift be required?", "cites": ["a3"]},
+          {"question": "Who receives the Palo Alto pair at each store?", "cites": ["a4"]}]
+    out = c3_brief._one_per_fact(qs)
+    assert [q["cites"] for q in out] == [["a1"], ["a3"], ["a4"]]
+
+
+def test_the_writer_is_told_who_asked_and_what_the_roster_answers(monkeypatch):
+    seen = {}
+
+    def fake(prompt, model, tokens):
+        seen.setdefault("prompts", []).append(prompt)
+        return ('{"summary": "x [a1]", "sections": {}, "open_questions": [], "pricing_questions": ['
+                '{"question": "What union rules apply?", "cites": []},'
+                '{"question": "Who stages the APs in the lobby?", "cites": ["a1"]}]}')
+
+    monkeypatch.setattr(c3_brief, "_complete", fake)
+    brief = {"service": {"value": "wireless"}, "conflicts": [], "deal": {},
+             "sections": {"scope_of_work": [{"id": "a1", "text": "Mount 12 APs in the lobby"}]},
+             "questions": [{"id": "a9", "text": "Where else do you have presence?", "owner": "project_manager",
+                            "asked_by": "theirs"}],
+             "roster_facts": "145 sites are listed"}
+    w = c3_brief.write(brief)
+    assert "(asked by the customer/partner) Where else" in seen["prompts"][0]
+    assert "SITE ROSTER (from the heads): 145 sites are listed" in seen["prompts"][0]
+    assert [q["question"] for q in w["open_questions"]] == ["Who stages the APs in the lobby?"]  # uncited dropped
+
+
+def test_a_question_about_purtera_itself_is_not_asked_of_the_customer():
+    rx = c3_brief._ABOUT_US
+    assert rx.search("Where else does PurTera have presence beyond the eastern seaboard?")
+    assert rx.search("Can PurTera's platform give customer access by project size?")
+    assert not rx.search("Who supplies the APs PurTera mounts in the lobby?")
+    assert not rx.search("What access will PurTera need to the IDF?")
+
+
+def test_a_question_to_the_customer_about_what_purtera_supplies_stays():
+    rx = c3_brief._ABOUT_US
+    assert not rx.search("Is PurTera expected to provide lifts or other special equipment?")
+    assert not rx.search("Will PurTera supply the patch cables?")
+    assert rx.search("Can the software be customized and access provided to the customer?")
+    assert rx.search("Where else does PurTera have presence or capabilities to support this project?")
+
+
+def test_each_written_question_carries_its_why(monkeypatch):
+    monkeypatch.setattr(c3_brief, "_complete", lambda p, m, t: (
+        '{"summary": "x [a1]", "sections": {}, "open_questions": [{"question": "Which unit count governs? [a2]", '
+        '"owner": "project_manager", "why": "Picks which of the two unit counts the quote prices [a2]", "cites": ["a2"]}], '
+        '"pricing_questions": [{"question": "Is the 40 ft lift ours to rent?", "why": "Decides crew size and the lift rental", '
+        '"cites": ["a1"]}, {"question": "Who stages the APs?", "why": "for scoping", "cites": ["a3"]}]}'))
+    brief = {"service": {"value": "wireless"}, "conflicts": [], "deal": {},
+             "sections": {"scope_of_work": [{"id": "a1", "text": "Mount 12 APs at 40 ft"}],
+                          "assumptions": [{"id": "a2", "text": "173 units vs 4 units"}],
+                          "customer_responsibilities": [{"id": "a3", "text": "Customer receives the APs"}]},
+             "questions": [{"id": "a2", "text": "Which count?", "owner": "project_manager"}]}
+    qs = c3_brief.write(brief)["open_questions"]
+    by_q = {q["question"]: q.get("why") for q in qs}
+    assert by_q["Is the 40 ft lift ours to rent?"] == "Decides crew size and the lift rental"
+    assert by_q["Who stages the APs?"] is None  # generic why dropped, the question stays
+    assert by_q["Which unit count governs? [a2]"] == "Picks which of the two unit counts the quote prices"
+
+
+def test_each_question_says_where_it_came_from(monkeypatch):
+    monkeypatch.setattr(c3_brief, "_complete", lambda p, m, t: (
+        '{"summary": "x [a1]", "sections": {}, "open_questions": [{"question": "Which count governs?", '
+        '"owner": "project_manager", "why": "Picks the unit count the quote prices", "cites": ["a2"]}], '
+        '"pricing_questions": [{"question": "Is union labor required at the store?", "bank_id": "pb:union_labor", '
+        '"why": "Sets the labor rate", "cites": []}, {"question": "Is the 98 inch display wall-mounted?", '
+        '"bank_id": null, "why": "Decides two techs and the mount kit", "cites": ["a1"]}, '
+        '{"question": "Any other needs?", "bank_id": "made_up", "why": "x y z", "cites": []}]}'))
+    brief = {"service": {"value": "audio_visual"}, "conflicts": [], "deal": {},
+             "sections": {"scope_of_work": [{"id": "a1", "text": "Install a 98 inch display"}],
+                          "assumptions": [{"id": "a2", "text": "173 units vs 4 units"}]},
+             "questions": [{"id": "a2", "text": "Which count?", "owner": "project_manager"}]}
+    qs = {q["question"]: q for q in c3_brief.write(brief)["open_questions"]}
+    assert qs["Is union labor required at the store?"]["origin"] == "bank"
+    assert qs["Is union labor required at the store?"]["bank_id"] == "pb:union_labor"  # uncited bank question stays
+    assert qs["Is the 98 inch display wall-mounted?"]["origin"] == "suggested" and "bank_id" not in qs["Is the 98 inch display wall-mounted?"]
+    assert "Any other needs?" not in qs  # an unknown bank id is a suggestion with no fact behind it
+    assert qs["Which count governs?"]["origin"] == "deal"
+    assert "pb:union_labor: union or prevailing-wage labor" in c3_brief._PROMPT

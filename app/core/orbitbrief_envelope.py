@@ -1175,6 +1175,8 @@ def build_orbitbrief_envelope(
         # Folds that hide content, found after the compile (report only):
         # counts plus examples with atom ids. See app/core/ledger_audit.py.
         "ledger_audit": dict(getattr(compile_result, "ledger_audit", None) or {}),
+        # Rules that overrode a head decision, with the head's agreement (app/core/rule_ledger.py).
+        "rule_fires": dict(getattr(compile_result, "rule_fires", None) or {}),
         "coverage": {
             "unrecovered_regions": unrecovered_regions,
             # Line-level: what the parser read, dropped, or never touched.
@@ -1283,7 +1285,26 @@ def build_orbitbrief_envelope(
     envelope["reconciliation"] = _build_reconciliation(atoms, edges)
     envelope["scope_truth"] = build_scope_truth(atoms=atoms, edges=edges)
     envelope["change_order_timeline"] = build_change_order_timeline(atoms=atoms)
-    envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges)
+    # The site list is the heads' roster when the heads settled the deal's site keys: the same sites, under the
+    # same keys, as the quote (c3_type_base.quote_sites). Its old merges only log (rule ledger, site_readiness.*).
+    _heads_roster = None
+    try:
+        if ((getattr(compile_result, "c3_brief", None) or {}).get("site_keys") or {}).get("by") == "heads:physical_site":
+            from app.core import c3_type_base as _c3_roster
+
+            _heads_roster = _c3_roster.quote_sites(atoms, settled=True)
+    except Exception:  # never fail an envelope over the roster; the old site list stands
+        _heads_roster = None
+    from app.core import rule_ledger as _rl_env
+
+    _rl_env.take("site_readiness.")
+    envelope["site_readiness"] = build_site_readiness(atoms=atoms, edges=edges, heads_roster=_heads_roster)
+    _sr_fires = _rl_env.take("site_readiness.")
+    if _sr_fires:
+        envelope["rule_fires"] = {**(envelope.get("rule_fires") or {}), **_sr_fires}
+        _db = (envelope.get("c3_brief") or {}).get("decided_by")
+        if isinstance(_db, dict):
+            _db["rule_fires"] = {**(_db.get("rule_fires") or {}), **_sr_fires}
     # A deal whose only place is a town named in its scope ("a potential
     # monitor install in Philadelphia", 010426) had no site at all: the roster
     # takes site lines only. With nothing else, the place its lines name most
@@ -1672,6 +1693,22 @@ def build_orbitbrief_envelope(
     # Last, so it gates the corrected picture: a customer document that stopped
     # being called ours a moment ago must be readable by the models that had it.
     _annotate_reader_scope(documents, stage_timeline)
+    # What decided whether each document feeds the brief and the quote (c3_brief.document_gate):
+    # the document-job verdict and who made it, and whether it was barred. Visible per document.
+    try:
+        _gate = {str(g.get("filename")): g for g in
+                 ((getattr(compile_result, "c3_brief", None) or {}).get("documents") or []) if isinstance(g, dict)}
+        for _d in documents:
+            _g = _gate.get(str(_d.get("filename") or ""))
+            if _g:
+                _d["document_job"] = _g.get("document_job")
+                _d["feeds_brief"] = bool(_g.get("feeds"))
+                if _g.get("why_not"):
+                    _d["feeds_brief_why_not"] = _g["why_not"]
+                if _g.get("unsure"):
+                    _d["feeds_brief_unsure"] = _g["unsure"]
+    except Exception:  # pragma: no cover - never fail the envelope
+        pass
     _annotate_quoted_message_scope(envelope, documents, stage_timeline)
     _retype_produced_material_scope(envelope, documents)
     threads = _thread_index(documents)
@@ -2892,6 +2929,19 @@ def _load_manifest_run_cutoff(project_dir: Path) -> str | None:
         text = str(value).strip() if value is not None else ""
         return text or None
     except (json.JSONDecodeError, OSError, TypeError):
+        return None
+
+
+def _load_manifest_read(project_dir: Path) -> str | None:
+    """``context.read`` on the manifest sidecar: "delivery" for the project's delivery read, else None."""
+    path = Path(project_dir) / PARSER_MANIFEST_SIDECAR
+    if not path.is_file():
+        return None
+    try:
+        ctx = json.loads(path.read_text(encoding="utf-8")).get("context")
+        value = str((ctx or {}).get("read") or "").strip().lower() if isinstance(ctx, dict) else ""
+        return value or None
+    except (json.JSONDecodeError, OSError, TypeError, AttributeError):
         return None
 
 

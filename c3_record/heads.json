@@ -1,5 +1,6 @@
 {
- "version": 1,
+ "version": 2,
+ "evidence": null,
  "heads": [
   {
    "key": "col:label_type",
@@ -45,21 +46,22 @@
    ],
    "fallback": "the typing LLM for unsure lines",
    "holdout": {
-    "exact": 0.542,
-    "n": 1207,
-    "guess": 0.127
+    "exact": 0.537,
+    "n": 3516,
+    "guess": 0.155,
+    "live": 0.447,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.658,
-    "n": 1833
-   },
-   "labels": 80972,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 109618,
+   "label_deals": 113,
    "label_mix": {
-    "stakeholder": 15406,
-    "small_talk": 12110,
-    "_keep": 10667,
-    "rate_card": 3561
+    "_keep": 30061,
+    "stakeholder": 17765,
+    "small_talk": 12954,
+    "physical_site": 4666
    },
    "labeling_task": "keep labeling as you go"
   },
@@ -79,15 +81,16 @@
    ],
    "fallback": "the judge LLM for conversations the base does not keep",
    "holdout": {
-    "exact": 0.901,
-    "n": 81,
-    "guess": null
+    "exact": 0.891,
+    "n": 64,
+    "guess": 0.899,
+    "live": 0.75,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.811,
-    "n": 37
-   },
-   "labels": 1049,
+   "validation": null,
+   "labels": 929,
    "label_deals": 18,
    "label_mix": {},
    "labeling_task": "keep labeling as you go"
@@ -119,68 +122,60 @@
    ],
    "fallback": "deal_chatter rules",
    "holdout": {
-    "exact": 0.574,
-    "n": 190,
-    "guess": 0.321
+    "exact": 0.737,
+    "n": 779,
+    "guess": 0.212,
+    "live": 0.569,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.83,
-    "n": 910
-   },
-   "labels": 22756,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 26725,
+   "label_deals": 39,
    "label_mix": {
-    "greeting_thanks": 6120,
-    "signoff_wrapper": 4253,
-    "banter_reassurance": 4091,
-    "automated_wrapper": 3368
+    "greeting_thanks": 6994,
+    "signoff_wrapper": 5236,
+    "banter_reassurance": 4222,
+    "automated_wrapper": 3956
    },
    "labeling_task": "keep labeling as you go"
   },
   {
-   "key": "read:sow_section",
+   "key": "col:supplier",
    "layer": "base",
    "size": "line",
    "kind": "class",
    "answers": [
     "_absent",
-    "overview",
-    "scope_of_work",
-    "deliverables",
-    "acceptance",
-    "out_of_scope",
-    "assumptions",
-    "customer_responsibilities",
-    "provider_responsibilities",
-    "timeline",
-    "fees",
-    "change_control",
-    "terms",
-    "contacts",
-    "other"
+    "us",
+    "partner",
+    "customer",
+    "third_party",
+    "unresolved"
    ],
    "status": "ready",
    "replaces": [
-    "orbit: brain section placement",
-    "sow: section of each fact"
+    "parser: bom_owner (lessons)"
    ],
-   "fallback": "section by line type",
+   "fallback": "lessons",
    "holdout": {
-    "exact": 0.677,
-    "n": 539,
-    "guess": 0.23
+    "exact": 0.711,
+    "n": 2739,
+    "guess": 0.461,
+    "live": 0.572,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.756,
-    "n": 287
-   },
-   "labels": 11023,
-   "label_deals": 16,
+   "validation": null,
+   "labels": 55658,
+   "label_deals": 41,
    "label_mix": {
-    "assumptions": 1757,
-    "scope_of_work": 1663,
-    "fees": 978,
-    "other": 782
+    "us": 25421,
+    "customer": 15060,
+    "partner": 10656,
+    "third_party": 3928
    },
    "labeling_task": "keep labeling as you go"
   },
@@ -209,133 +204,140 @@
    ],
    "fallback": "group by line type",
    "holdout": {
-    "exact": 0.577,
-    "n": 163,
-    "guess": 0.393
+    "exact": 0.58,
+    "n": 457,
+    "guess": 0.479,
+    "live": 0.532,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.612,
-    "n": 67
-   },
-   "labels": 2774,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 6047,
+   "label_deals": 17,
    "label_mix": {
-    "work_step": 994,
-    "responsibility": 380,
-    "other": 251,
-    "schedule": 228
+    "work_step": 2733,
+    "other": 782,
+    "responsibility": 605,
+    "documentation": 345
    },
    "labeling_task": "keep labeling as you go"
   },
   {
-   "key": "read:sow_coverage",
+   "key": "jdg:site",
    "layer": "base",
-   "size": "line",
+   "size": "pair",
    "kind": "class",
    "answers": [
     "_absent",
-    "in_sow",
-    "missing_from_sow",
-    "differs",
-    "sow_not_available",
-    "sow_only"
+    "same_site",
+    "distinct_site"
    ],
-   "status": "ready",
+   "status": "weak",
    "replaces": [
-    "orbit: planner SOW coverage flags"
+    "parser: entity_resolution site fusion",
+    "orbit: site_reality name"
    ],
-   "fallback": "no coverage flag",
+   "fallback": "lessons + LLM",
    "holdout": {
-    "exact": 0.696,
-    "n": 303,
-    "guess": 0.505
+    "exact": 0.984,
+    "n": 182,
+    "guess": 1.0,
+    "live": 0.374,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.769,
-    "n": 143
-   },
-   "labels": 5966,
-   "label_deals": 18,
-   "label_mix": {
-    "in_sow": 3827,
-    "sow_only": 1639,
-    "missing_from_sow": 260,
-    "differs": 215
-   },
-   "labeling_task": "keep labeling as you go"
+   "validation": null,
+   "labels": 771,
+   "label_deals": 76,
+   "label_mix": {},
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
-   "key": "read:sow_fill",
+   "key": "read:blocked_on",
    "layer": "base",
    "size": "line",
    "kind": "class",
    "answers": [
     "_absent",
-    "filled",
-    "template",
-    "template_applies"
+    "us",
+    "customer",
+    "partner"
    ],
-   "status": "ready",
+   "status": "weak",
    "replaces": [
-    "orbit: planner SOW template vs filled"
+    "orbit: blocked flags",
+    "parser: deal_signals regex"
    ],
-   "fallback": "treat as filled",
+   "fallback": "deal_signals regex",
    "holdout": {
-    "exact": 0.789,
-    "n": 175,
-    "guess": 0.64
+    "exact": 0.795,
+    "n": 88,
+    "guess": 0.784,
+    "live": 0.807,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.359,
-    "n": 78
-   },
-   "labels": 6715,
-   "label_deals": 15,
+   "validation": null,
+   "labels": 1789,
+   "label_deals": 18,
    "label_mix": {
-    "filled": 4083,
-    "template": 1359,
-    "template_applies": 1273
+    "customer": 1494,
+    "partner": 149,
+    "_absent": 96,
+    "us": 28
    },
-   "labeling_task": "keep labeling as you go"
+   "labeling_task": "worse than live on the held-out grade (0.795 vs 0.807): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
-   "key": "read:stage_std",
+   "key": "read:sow_section",
    "layer": "base",
    "size": "line",
    "kind": "class",
    "answers": [
     "_absent",
-    "pre_deal",
-    "intake",
-    "scoping",
-    "quoted",
-    "contracting",
-    "planning",
-    "delivery",
-    "closeout",
-    "unknown"
+    "overview",
+    "scope_of_work",
+    "deliverables",
+    "acceptance",
+    "out_of_scope",
+    "assumptions",
+    "customer_responsibilities",
+    "provider_responsibilities",
+    "timeline",
+    "fees",
+    "change_control",
+    "terms",
+    "contacts",
+    "other"
    ],
-   "status": "ready",
-   "replaces": [],
-   "fallback": "",
+   "status": "weak",
+   "replaces": [
+    "orbit: brain section placement",
+    "sow: section of each fact"
+   ],
+   "fallback": "section by line type",
    "holdout": {
-    "exact": 0.281,
-    "n": 1207,
-    "guess": 0.054
+    "exact": 0.52,
+    "n": 811,
+    "guess": 0.253,
+    "live": 0.629,
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.322,
-    "n": 1833
-   },
-   "labels": 80972,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 18221,
+   "label_deals": 39,
    "label_mix": {
-    "quoted": 31755,
-    "contracting": 24392,
-    "scoping": 10912,
-    "intake": 6991
+    "scope_of_work": 5039,
+    "_absent": 4909,
+    "assumptions": 1988,
+    "customer_responsibilities": 1075
    },
-   "labeling_task": "keep labeling as you go"
+   "labeling_task": "worse than live on the held-out grade (0.52 vs 0.629): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:task_owner_role",
@@ -360,59 +362,77 @@
    ],
    "fallback": "LLM",
    "holdout": {
-    "exact": 0.77,
-    "n": 100,
-    "guess": 0.77
+    "exact": 0.769,
+    "n": 295,
+    "guess": 0.742,
+    "live": 0.576,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.811,
-    "n": 37
-   },
-   "labels": 2289,
+   "validation": null,
+   "labels": 3486,
    "label_deals": 18,
    "label_mix": {
-    "technician": 837,
-    "seller": 787,
-    "project_manager": 299,
-    "project_coordinator": 87
+    "technician": 1603,
+    "seller": 919,
+    "project_manager": 312,
+    "partner": 180
    },
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
-   "key": "col:supplier",
+   "key": "rel:answers",
    "layer": "base",
    "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "us",
-    "partner",
-    "customer",
-    "third_party",
-    "unresolved"
-   ],
+   "kind": "relation",
+   "answers": [],
    "status": "weak",
    "replaces": [
-    "parser: bom_owner (lessons)"
+    "parser: open_question_resolution",
+    "orbit: question queue (answered?)"
    ],
-   "fallback": "lessons",
+   "fallback": "key-overlap closing",
    "holdout": {
-    "exact": 0.659,
-    "n": 955,
-    "guess": 0.659
+    "exact": 0.986,
+    "n": 3669,
+    "guess": 0.985,
+    "live": 0.986,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.579,
-    "n": 843
+   "validation": null,
+   "labels": 1222,
+   "label_deals": 17,
+   "label_mix": {},
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "rel:contradicts",
+   "layer": "base",
+   "size": "line",
+   "kind": "relation",
+   "answers": [],
+   "status": "weak",
+   "replaces": [
+    "parser: cross_document_conflicts",
+    "orbit: planner review flags"
+   ],
+   "fallback": "rule-based conflicts",
+   "holdout": {
+    "exact": 0.996,
+    "n": 3665,
+    "guess": 0.996,
+    "live": 0.995,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "labels": 54386,
-   "label_deals": 18,
-   "label_mix": {
-    "us": 31341,
-    "customer": 10616,
-    "partner": 9055,
-    "third_party": 3105
-   },
+   "validation": null,
+   "labels": 1310,
+   "label_deals": 15,
+   "label_mix": {},
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
@@ -433,15 +453,77 @@
    ],
    "fallback": "rule-based conflicts",
    "holdout": {
-    "exact": 0.447,
-    "n": 94,
-    "guess": null
+    "exact": 0.519,
+    "n": 349,
+    "guess": 0.799,
+    "live": 0.556,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.792,
-    "n": 24
+   "validation": null,
+   "labels": 1102,
+   "label_deals": 12,
+   "label_mix": {},
+   "labeling_task": "worse than live on the held-out grade (0.519 vs 0.556): label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "jdg:facility",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "city_office",
+    "keep_facility",
+    "keep_name"
+   ],
+   "status": "weak",
+   "replaces": [
+    "parser: site_facility_head"
+   ],
+   "fallback": "lessons",
+   "holdout": {
+    "exact": 0.264,
+    "n": 140,
+    "guess": 0.721,
+    "live": 0.571,
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "labels": 1338,
+   "validation": null,
+   "labels": 586,
+   "label_deals": 66,
+   "label_mix": {},
+   "labeling_task": "worse than live on the held-out grade (0.264 vs 0.571): label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "jdg:site_role",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "job_site",
+    "vendor_or_billing_address"
+   ],
+   "status": "weak",
+   "replaces": [
+    "parser: site_geo_fallback vendor address (LLM)"
+   ],
+   "fallback": "lessons + LLM",
+   "holdout": {
+    "exact": 0.985,
+    "n": 136,
+    "guess": 0.985,
+    "live": 0.912,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 158,
    "label_deals": 16,
    "label_mix": {},
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
@@ -462,15 +544,115 @@
    ],
    "fallback": "rules",
    "holdout": {
-    "exact": 0.987,
-    "n": 156,
-    "guess": 0.994
+    "exact": 0.986,
+    "n": 219,
+    "guess": 0.991,
+    "live": 0.982,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 33
+   "validation": null,
+   "labels": 1592,
+   "label_deals": 17,
+   "label_mix": {},
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "read:sow_coverage",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "in_sow",
+    "missing_from_sow",
+    "differs",
+    "sow_not_available",
+    "sow_only"
+   ],
+   "status": "weak",
+   "replaces": [
+    "orbit: planner SOW coverage flags"
+   ],
+   "fallback": "no coverage flag",
+   "holdout": {
+    "exact": 0.365,
+    "n": 1267,
+    "guess": 0.418,
+    "live": 0.353,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "labels": 1555,
+   "validation": null,
+   "labels": 10412,
+   "label_deals": 19,
+   "label_mix": {
+    "in_sow": 7345,
+    "sow_only": 1771,
+    "missing_from_sow": 664,
+    "differs": 501
+   },
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "read:sow_fill",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "filled",
+    "template",
+    "template_applies"
+   ],
+   "status": "weak",
+   "replaces": [
+    "orbit: planner SOW template vs filled"
+   ],
+   "fallback": "treat as filled",
+   "holdout": {
+    "exact": 0.525,
+    "n": 434,
+    "guess": 0.509,
+    "live": 0.578,
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 7671,
+   "label_deals": 14,
+   "label_mix": {
+    "filled": 5197,
+    "template_applies": 1299,
+    "template": 1175
+   },
+   "labeling_task": "worse than live on the held-out grade (0.525 vs 0.578): label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "rel:same_as",
+   "layer": "base",
+   "size": "line",
+   "kind": "relation",
+   "answers": [],
+   "status": "weak",
+   "replaces": [
+    "parser: semantic_dedup / stakeholder_dedup"
+   ],
+   "fallback": "embedding dedup",
+   "holdout": {
+    "exact": 0.694,
+    "n": 3467,
+    "guess": 0.755,
+    "live": 0.467,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 87904,
    "label_deals": 18,
    "label_mix": {},
    "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
@@ -491,343 +673,24 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.937,
-    "n": 1052,
-    "guess": 0.973
+    "exact": 0.896,
+    "n": 3100,
+    "guess": 0.991,
+    "live": 0.848,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.444,
-    "n": 923
-   },
-   "labels": 57767,
-   "label_deals": 18,
-   "label_mix": {
-    "deal": 31311,
-    "internal": 15631,
-    "partner": 8535,
-    "account": 2290
-   },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
-  },
-  {
-   "key": "read:deal_stage",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "quoting",
-    "planning",
-    "delivery",
-    "closeout"
-   ],
-   "status": "weak",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 0.45,
-    "n": 1207,
-    "guess": 0.447
-   },
-   "validation": {
-    "exact": 0.803,
-    "n": 1833
-   },
-   "labels": 80972,
-   "label_deals": 18,
-   "label_mix": {
-    "quoting": 74061,
-    "planning": 6162,
-    "delivery": 583,
-    "closeout": 166
-   },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
-  },
-  {
-   "key": "read:doc_kind",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "weak",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 1207,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 1823
-   },
-   "labels": 75758,
-   "label_deals": 18,
-   "label_mix": {
-    "email": 41640,
-    "sow_draft": 8144,
-    "deal_kit": 7627,
-    "call_transcript": 5736
-   },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
-  },
-  {
-   "key": "read:sow_available_at_stage",
-   "layer": "base",
-   "size": "line",
-   "kind": "binary",
-   "answers": [
-    "_absent",
-    "true",
-    "false"
-   ],
-   "status": "weak",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 0.882,
-    "n": 1207,
-    "guess": 0.805
-   },
-   "validation": {
-    "exact": 0.905,
-    "n": 1823
-   },
-   "labels": 74133,
-   "label_deals": 18,
-   "label_mix": {
-    "True": 46033,
-    "False": 28100
-   },
-   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
-  },
-  {
-   "key": "jdg:gap",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "valid",
-    "invalid"
-   ],
-   "status": "unproven",
-   "replaces": [
-    "orbit: gap neural head (LLM teacher+judge)",
-    "parser: gap_valid lessons"
-   ],
-   "fallback": "lessons",
-   "holdout": null,
    "validation": null,
-   "labels": 1364,
-   "label_deals": 18,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "jdg:site",
-   "layer": "base",
-   "size": "pair",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "same_site",
-    "distinct_site"
-   ],
-   "status": "unproven",
-   "replaces": [
-    "parser: entity_resolution site fusion",
-    "orbit: site_reality name"
-   ],
-   "fallback": "lessons + LLM",
-   "holdout": {
-    "exact": 0.5,
-    "n": 2,
-    "guess": null
-   },
-   "validation": {
-    "exact": 0.0,
-    "n": 1
-   },
-   "labels": 220,
-   "label_deals": 11,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:blocked_on",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "us",
-    "customer",
-    "partner"
-   ],
-   "status": "unproven",
-   "replaces": [
-    "orbit: blocked flags",
-    "parser: deal_signals regex"
-   ],
-   "fallback": "deal_signals regex",
-   "holdout": {
-    "exact": 0.935,
-    "n": 31,
-    "guess": 0.968
-   },
-   "validation": {
-    "exact": 0.917,
-    "n": 24
-   },
-   "labels": 1095,
-   "label_deals": 17,
+   "labels": 60152,
+   "label_deals": 48,
    "label_mix": {
-    "customer": 956,
-    "partner": 98,
-    "us": 17,
-    "controller power": 2
+    "deal": 40451,
+    "partner": 9381,
+    "internal": 7562,
+    "account": 2758
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "rel:answers",
-   "layer": "base",
-   "size": "line",
-   "kind": "relation",
-   "answers": [],
-   "status": "unproven",
-   "replaces": [
-    "parser: open_question_resolution",
-    "orbit: question queue (answered?)"
-   ],
-   "fallback": "key-overlap closing",
-   "holdout": {
-    "exact": 0.969,
-    "n": 1204,
-    "guess": null
-   },
-   "validation": {
-    "exact": 0.986,
-    "n": 1833
-   },
-   "labels": 1013,
-   "label_deals": 18,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "rel:contradicts",
-   "layer": "base",
-   "size": "line",
-   "kind": "relation",
-   "answers": [],
-   "status": "unproven",
-   "replaces": [
-    "parser: cross_document_conflicts",
-    "orbit: planner review flags"
-   ],
-   "fallback": "rule-based conflicts",
-   "holdout": {
-    "exact": 0.994,
-    "n": 1197,
-    "guess": null
-   },
-   "validation": {
-    "exact": 0.996,
-    "n": 1833
-   },
-   "labels": 1551,
-   "label_deals": 16,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "jdg:facility",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "city_office",
-    "keep_facility",
-    "keep_name"
-   ],
-   "status": "unproven",
-   "replaces": [
-    "parser: site_facility_head"
-   ],
-   "fallback": "lessons",
-   "holdout": {
-    "exact": 1.0,
-    "n": 4,
-    "guess": 0.0
-   },
-   "validation": {
-    "exact": 0.5,
-    "n": 4
-   },
-   "labels": 253,
-   "label_deals": 17,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "jdg:site_role",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "job_site",
-    "vendor_or_billing_address"
-   ],
-   "status": "unproven",
-   "replaces": [
-    "parser: site_geo_fallback vendor address (LLM)"
-   ],
-   "fallback": "lessons + LLM",
-   "holdout": {
-    "exact": 0.5,
-    "n": 4,
-    "guess": 0.5
-   },
-   "validation": {
-    "exact": 0.5,
-    "n": 2
-   },
-   "labels": 247,
-   "label_deals": 17,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "rel:same_as",
-   "layer": "base",
-   "size": "line",
-   "kind": "relation",
-   "answers": [],
-   "status": "unproven",
-   "replaces": [
-    "parser: semantic_dedup / stakeholder_dedup"
-   ],
-   "fallback": "embedding dedup",
-   "holdout": {
-    "exact": 0.299,
-    "n": 1006,
-    "guess": null
-   },
-   "validation": {
-    "exact": 0.111,
-    "n": 1833
-   },
-   "labels": 77719,
-   "label_deals": 18,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "jdg:image",
@@ -850,15 +713,23 @@
     "signature",
     "empty"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
-   "holdout": null,
+   "holdout": {
+    "exact": 0.551,
+    "n": 107,
+    "guess": 0.879,
+    "live": 0.421,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
    "validation": null,
-   "labels": 157,
-   "label_deals": 9,
+   "labels": 706,
+   "label_deals": 90,
    "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:address_level",
@@ -876,86 +747,64 @@
     "state_only",
     "name_only"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.75,
-    "n": 4,
-    "guess": 0.75
+    "exact": 0.466,
+    "n": 395,
+    "guess": 0.633,
+    "live": 0.375,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.545,
-    "n": 11
-   },
-   "labels": 1611,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 1369,
+   "label_deals": 20,
    "label_mix": {
-    "full": 723,
-    "city_only": 388,
-    "street_only": 316,
-    "name_only": 155
+    "city_only": 1055,
+    "full": 188,
+    "street_only": 38,
+    "street_no_zip": 35
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
-   "key": "read:bom_role",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 19
-   },
-   "labels": 161,
-   "label_deals": 7,
-   "label_mix": {
-    "quantity": 55,
-    "vendor_boilerplate": 24,
-    "item": 16,
-    "unit_price": 9
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:chase",
+   "key": "read:deal_stage",
    "layer": "base",
    "size": "line",
    "kind": "class",
    "answers": [
     "_absent",
-    "conversation",
-    "attachment"
+    "quoting",
+    "planning",
+    "delivery",
+    "closeout"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 7,
-    "guess": 0.0
+    "exact": 0.804,
+    "n": 3675,
+    "guess": 0.81,
+    "live": 0.764,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 305,
-   "label_deals": 12,
+   "labels": 98635,
+   "label_deals": 18,
    "label_mix": {
-    "attachment": 170,
-    "conversation": 38,
-    "confirm with the partner that ": 5,
-    "the signed copy left the work ": 4
+    "quoting": 92587,
+    "planning": 6048
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
-   "key": "read:commitment",
+   "key": "read:doc_kind",
    "layer": "base",
    "size": "line",
    "kind": "presence",
@@ -963,58 +812,28 @@
     "_absent",
     "present"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
     "exact": 1.0,
-    "n": 8,
-    "guess": 1.0
+    "n": 3675,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 3
-   },
-   "labels": 509,
-   "label_deals": 16,
+   "validation": null,
+   "labels": 97206,
+   "label_deals": 18,
    "label_mix": {
-    "send the make/model/volume lis": 92,
-    "finalize and send the project ": 92,
-    "send the hourly rate": 34,
-    "send the field engineer names ": 16
+    "email": 64529,
+    "sow_draft": 7994,
+    "call_transcript": 4864,
+    "rfp": 4390
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:crew_size",
-   "layer": "base",
-   "size": "line",
-   "kind": "number",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 2,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 2
-   },
-   "labels": 179,
-   "label_deals": 12,
-   "label_mix": {
-    "11": 140,
-    "2": 24,
-    "1": 13,
-    "4": 1
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:equipment_qty",
@@ -1025,27 +844,28 @@
     "_absent",
     "present"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 8,
-    "guess": 1.0
+    "exact": 0.986,
+    "n": 146,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 9
-   },
-   "labels": 403,
-   "label_deals": 16,
+   "validation": null,
+   "labels": 860,
+   "label_deals": 18,
    "label_mix": {
-    "914": 116,
-    "100": 92,
-    "1": 82,
-    "3": 17
+    "1": 183,
+    "914": 137,
+    "100": 116,
+    "_absent": 99
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "worse than live on the held-out grade (0.986 vs 1.0): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:hours_stated",
@@ -1057,23 +877,63 @@
     "true",
     "false"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 189,
-   "label_deals": 13,
-   "label_mix": {
-    "False": 110,
-    "True": 59,
-    "2": 5,
-    "0.5-1": 2
+   "holdout": {
+    "exact": 0.0,
+    "n": 108,
+    "guess": 1.0,
+    "live": 0.454,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "validation": null,
+   "labels": 403,
+   "label_deals": 15,
+   "label_mix": {
+    "False": 213,
+    "false": 100,
+    "True": 83,
+    "45 minutes to 1 hour 15 minute": 2
+   },
+   "labeling_task": "worse than live on the held-out grade (0.0 vs 0.454): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
-   "key": "read:introduces_party",
+   "key": "read:labor_hours",
+   "layer": "base",
+   "size": "line",
+   "kind": "number",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "weak",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.134,
+    "n": 149,
+    "guess": 0.933,
+    "live": 0.933,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 1125,
+   "label_deals": 141,
+   "label_mix": {
+    "_absent": 536,
+    "4": 71,
+    "2": 57,
+    "8": 32
+   },
+   "labeling_task": "worse than live on the held-out grade (0.134 vs 0.933): label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "read:location",
    "layer": "base",
    "size": "line",
    "kind": "presence",
@@ -1081,56 +941,28 @@
     "_absent",
     "present"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 2,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 4
-   },
-   "labels": 234,
-   "label_deals": 16,
-   "label_mix": {
-    "project coordinator at the res": 69,
-    "Alvyn Arroyo-Tavara, copied wh": 24,
-    "Danny Spears, asset-logistics ": 14,
-    "Director of Operations (Chase ": 11
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:job_scale",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "small",
-    "large"
-   ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 1,
-    "guess": 0.0
+    "exact": 0.951,
+    "n": 305,
+    "guess": 0.951,
+    "live": 0.951,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 236,
-   "label_deals": 9,
+   "labels": 760,
+   "label_deals": 126,
    "label_mix": {
-    "large": 213,
-    "small": 13,
-    "one day, a few hours": 6,
-    "small (reseller says too small": 2
+    "_absent": 114,
+    "PurTera LLC 11720 Amber Park D": 13,
+    "Alpharetta, GA 30009": 12,
+    "6125 Tyvola Centre Drive, Char": 8
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:location_tier",
@@ -1144,120 +976,28 @@
     "small_town",
     "rural"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 7,
-    "guess": null
+    "exact": 0.954,
+    "n": 108,
+    "guess": 0.963,
+    "live": 0.963,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 11
-   },
-   "labels": 602,
-   "label_deals": 14,
+   "validation": null,
+   "labels": 948,
+   "label_deals": 11,
    "label_mix": {
-    "major_metro": 217,
-    "['major_metro']": 171,
-    "small_town": 97,
-    "mid_metro": 55
+    "major_metro": 437,
+    "small_town": 192,
+    "mid_metro": 110,
+    "['major_metro']": 102
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:needs_artifact",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 3,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 3
-   },
-   "labels": 490,
-   "label_deals": 16,
-   "label_mix": {
-    "provisioning scope": 91,
-    "list of named technicians": 65,
-    "location list": 63,
-    "scope document": 25
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:option_selected",
-   "layer": "base",
-   "size": "line",
-   "kind": "binary",
-   "answers": [
-    "_absent",
-    "true",
-    "false"
-   ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 2,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 1
-   },
-   "labels": 100,
-   "label_deals": 9,
-   "label_mix": {
-    "True": 94,
-    "False": 5,
-    "['Implementation']": 1
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:points_at_artifact",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 1,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 6
-   },
-   "labels": 302,
-   "label_deals": 14,
-   "label_mix": {
-    "install guide": 91,
-    "purchase order": 28,
-    "the reseller's SOW": 25,
-    "commented SOW": 24
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "worse than live on the held-out grade (0.954 vs 0.963): label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:region",
@@ -1268,23 +1008,28 @@
     "_absent",
     "present"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 3
+   "holdout": {
+    "exact": 0.97,
+    "n": 230,
+    "guess": 0.97,
+    "live": 0.97,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "labels": 138,
-   "label_deals": 6,
+   "validation": null,
+   "labels": 571,
+   "label_deals": 96,
    "label_mix": {
-    "Auvergne-Rhone-Alpes, France": 103,
-    "Jackson, MS": 13,
-    "Atlanta, GA": 9,
-    "Charlotte, NC": 6
+    "_absent": 141,
+    "Atlanta, GA": 30,
+    "Auvergne-Rhone-Alpes, France": 25,
+    "New York, NY": 15
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "read:site",
@@ -1295,139 +1040,123 @@
     "_absent",
     "present"
    ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 11
-   },
-   "labels": 1497,
-   "label_deals": 14,
-   "label_mix": {
-    "Whittier, CA": 39,
-    "Pittsburgh, PA": 33,
-    "Fontana, CA": 33,
-    "Apopka, FL": 32
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:start_date",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
     "exact": 1.0,
-    "n": 3,
-    "guess": 1.0
+    "n": 406,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 4
-   },
-   "labels": 413,
-   "label_deals": 10,
+   "validation": null,
+   "labels": 1062,
+   "label_deals": 13,
    "label_mix": {
-    "August 24 or August 25, 2026": 100,
-    "9/9/2026": 45,
-    "9/14/2026": 45,
-    "9/16/2026": 39
+    "Pittsburgh, PA": 65,
+    "Harrisburg, PA": 65,
+    "Whittier, CA": 65,
+    "York, PA": 65
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
-   "key": "read:triggered_task",
+   "key": "read:sow_available_at_stage",
    "layer": "base",
    "size": "line",
-   "kind": "presence",
+   "kind": "binary",
    "answers": [
     "_absent",
-    "present"
+    "true",
+    "false"
    ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 1
-   },
-   "labels": 100,
-   "label_deals": 6,
-   "label_mix": {
-    "finalize the start date once d": 68,
-    "TVs confirmed on site": 7,
-    "assign a project manager": 2,
-    "SOW fully executed and PO rece": 2
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:unreliable_part",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 2
-   },
-   "labels": 100,
-   "label_deals": 9,
-   "label_mix": {
-    "row hidden in the source sheet": 44,
-    "quantity read from the row abo": 10,
-    "Conduit you can type of": 5,
-    "33 | 4 | 132": 5
-   },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:urgency",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 6,
-    "guess": 1.0
+    "exact": 0.691,
+    "n": 3675,
+    "guess": 0.657,
+    "live": 0.55,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 3
-   },
-   "labels": 160,
-   "label_deals": 16,
+   "validation": null,
+   "labels": 95480,
+   "label_deals": 18,
    "label_mix": {
-    "the incumbent keeps failing; n": 25,
-    "the start has moved three time": 24,
-    "the customer was ready to move": 21,
-    "no rush; the customer has wait": 14
+    "False": 51408,
+    "True": 44072
    },
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "read:stage_std",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "pre_deal",
+    "intake",
+    "scoping",
+    "quoted",
+    "contracting",
+    "planning",
+    "delivery",
+    "closeout",
+    "unknown"
+   ],
+   "status": "weak",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.567,
+    "n": 3675,
+    "guess": 0.507,
+    "live": 0.311,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 98635,
+   "label_deals": 18,
+   "label_mix": {
+    "contracting": 29774,
+    "quoted": 29570,
+    "intake": 19335,
+    "scoping": 14097
+   },
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "rel:blocked_by",
+   "layer": "base",
+   "size": "line",
+   "kind": "relation",
+   "answers": [],
+   "status": "weak",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.999,
+    "n": 3675,
+    "guess": 0.999,
+    "live": 0.999,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 119,
+   "label_deals": 11,
+   "label_mix": {},
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "rel:context",
@@ -1435,22 +1164,23 @@
    "size": "line",
    "kind": "relation",
    "answers": [],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.875,
-    "n": 1181,
-    "guess": null
+    "exact": 0.836,
+    "n": 3649,
+    "guess": 0.836,
+    "live": 0.802,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.947,
-    "n": 1833
-   },
-   "labels": 5356,
+   "validation": null,
+   "labels": 7892,
    "label_deals": 18,
    "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "rel:derived_from",
@@ -1458,38 +1188,23 @@
    "size": "line",
    "kind": "relation",
    "answers": [],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.971,
-    "n": 1163,
-    "guess": null
+    "exact": 0.965,
+    "n": 3632,
+    "guess": 0.965,
+    "live": 0.965,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.985,
-    "n": 1833
-   },
-   "labels": 1215,
+   "validation": null,
+   "labels": 988,
    "label_deals": 15,
    "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "rel:governs",
-   "layer": "base",
-   "size": "line",
-   "kind": "relation",
-   "answers": [],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 10514,
-   "label_deals": 17,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "rel:near_miss",
@@ -1497,22 +1212,23 @@
    "size": "line",
    "kind": "relation",
    "answers": [],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.752,
-    "n": 1198,
-    "guess": null
+    "exact": 0.899,
+    "n": 3665,
+    "guess": 0.899,
+    "live": 0.835,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.907,
-    "n": 1833
-   },
-   "labels": 5472,
+   "validation": null,
+   "labels": 6784,
    "label_deals": 18,
    "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "rel:supports",
@@ -1520,343 +1236,23 @@
    "size": "line",
    "kind": "relation",
    "answers": [],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.689,
-    "n": 1156,
-    "guess": null
-   },
-   "validation": {
-    "exact": 0.727,
-    "n": 1833
-   },
-   "labels": 21682,
-   "label_deals": 18,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "rel:triggered_by",
-   "layer": "base",
-   "size": "line",
-   "kind": "relation",
-   "answers": [],
-   "status": "unproven",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 0.998,
-    "n": 1205,
-    "guess": null
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 1833
-   },
-   "labels": 100,
-   "label_deals": 12,
-   "label_mix": {},
-   "labeling_task": "label it on the next unseen deal so it can be scored"
-  },
-  {
-   "key": "read:superseded",
-   "layer": "base",
-   "size": "line",
-   "kind": "binary",
-   "answers": [
-    "_absent",
-    "true",
-    "false"
-   ],
-   "status": "one_sided",
-   "replaces": [
-    "orbit: superseded facts",
-    "parser: reconcile"
-   ],
-   "fallback": "newest document wins",
-   "holdout": {
-    "exact": 1.0,
-    "n": 16,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 8
-   },
-   "labels": 1236,
-   "label_deals": 13,
-   "label_mix": {
-    "True": 1236
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always True')"
-  },
-  {
-   "key": "col:wants",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "nothing",
-    "chase-artifact",
-    "chase-conversation",
-    "confirm-with-customer",
-    "decide-internally"
-   ],
-   "status": "one_sided",
-   "replaces": [
-    "orbit: question queue (chase / confirm / decide)"
-   ],
-   "fallback": "parser open_question lines",
-   "holdout": {
-    "exact": 0.972,
-    "n": 1058,
-    "guess": 0.99
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 923
-   },
-   "labels": 57602,
-   "label_deals": 18,
-   "label_mix": {
-    "nothing": 57017,
-    "confirm-with-customer": 212,
-    "chase-artifact": 188,
-    "decide-internally": 94
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always nothing')"
-  },
-  {
-   "key": "read:deal_summary",
-   "layer": "base",
-   "size": "line",
-   "kind": "binary",
-   "answers": [
-    "_absent",
-    "true",
-    "false"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 1,
-    "guess": 1.0
+    "exact": 0.875,
+    "n": 3623,
+    "guess": 0.875,
+    "live": 0.767,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 17,
-   "label_deals": 14,
-   "label_mix": {
-    "True": 17
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always True')"
-  },
-  {
-   "key": "read:derivation",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "stated",
-    "inferred",
-    "template",
-    "not_derivable"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 146
-   },
-   "labels": 2671,
-   "label_deals": 11,
-   "label_mix": {
-    "stated": 2639,
-    "template": 20,
-    "inferred": 7,
-    "not_derivable": 5
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always stated')"
-  },
-  {
-   "key": "read:list_header",
-   "layer": "base",
-   "size": "line",
-   "kind": "binary",
-   "answers": [
-    "_absent",
-    "true",
-    "false"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 15,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 50
-   },
-   "labels": 1360,
+   "labels": 25843,
    "label_deals": 17,
-   "label_mix": {
-    "True": 1360
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always True')"
-  },
-  {
-   "key": "read:requirement_kind",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 26,
-   "label_deals": 1,
-   "label_mix": {
-    "tech_toolkit": 26
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always tech_toolkit')"
-  },
-  {
-   "key": "read:situational",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 3854,
-   "label_deals": 9,
-   "label_mix": {
-    "old manual Deal Kit: excluded ": 3831,
-    "explains the PO delay / intern": 16,
-    "superseded by a later revision": 3,
-    "meeting-time logistics": 2
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always old manual Deal Kit: excluded ')"
-  },
-  {
-   "key": "read:small_talk",
-   "layer": "base",
-   "size": "line",
-   "kind": "binary",
-   "answers": [
-    "_absent",
-    "true",
-    "false"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 0.988,
-    "n": 688
-   },
-   "labels": 3825,
-   "label_deals": 10,
-   "label_mix": {
-    "True": 3825
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always True')"
-  },
-  {
-   "key": "read:tech_coverage",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 12,
-   "label_deals": 1,
-   "label_mix": {
-    "Findlay, OH is its own micropo": 12
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always Findlay, OH is its own micropo')"
-  },
-  {
-   "key": "read:train_for",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "quote_parser",
-    "delivery_parser"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 1017,
-    "guess": null
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 921
-   },
-   "labels": 50414,
-   "label_deals": 18,
-   "label_mix": {
-    "['quote_parser', 'delivery_par": 50295,
-    "['delivery_parser']": 110,
-    "['quote_parser']": 9
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always ['quote_parser', 'delivery_par')"
-  },
-  {
-   "key": "read:trigger_event",
-   "layer": "base",
-   "size": "line",
-   "kind": "binary",
-   "answers": [
-    "_absent",
-    "true",
-    "false"
-   ],
-   "status": "one_sided",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 22,
-   "label_deals": 3,
-   "label_mix": {
-    "True": 22
-   },
-   "labeling_task": "label the OTHER answer too (it learned 'always True')"
+   "label_mix": {},
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
   },
   {
    "key": "deal:primary_service",
@@ -1891,7 +1287,7 @@
     "professional_services",
     "other"
    ],
-   "status": "thin",
+   "status": "unproven",
    "replaces": [
     "orbit: pack_prior LLM",
     "orbit: scope_router LLM",
@@ -1900,17 +1296,1185 @@
    "fallback": "parser pack routing (domain pack)",
    "holdout": {
     "exact": 0.0,
-    "n": 2,
-    "guess": null
+    "n": 4,
+    "guess": 0.143,
+    "live": 0.0,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.0,
-    "n": 1
-   },
-   "labels": 33,
-   "label_deals": 16,
+   "validation": null,
+   "labels": 121,
+   "label_deals": 51,
    "label_mix": {},
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "jdg:gap",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "valid",
+    "invalid"
+   ],
+   "status": "unproven",
+   "replaces": [
+    "orbit: gap neural head (LLM teacher+judge)",
+    "parser: gap_valid lessons"
+   ],
+   "fallback": "lessons",
+   "holdout": null,
+   "validation": null,
+   "labels": 1381,
+   "label_deals": 18,
+   "label_mix": {},
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:lead_time",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [
+    "orbit: lead-time flags"
+   ],
+   "fallback": "regex",
+   "holdout": {
+    "exact": 0.571,
+    "n": 21,
+    "guess": 0.571,
+    "live": 0.571,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 596,
+   "label_deals": 74,
+   "label_mix": {
+    "_absent": 171,
+    "5-10 business days from SOW ex": 14,
+    "1 business day before visit: 1": 12,
+    "2 weeks for travel": 9
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "jdg:geo_mention",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "job_site",
+    "mention_only"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.364,
+    "n": 22,
+    "guess": 0.591,
+    "live": 0.545,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 642,
+   "label_deals": 62,
+   "label_mix": {},
+   "labeling_task": "worse than live on the held-out grade (0.364 vs 0.545): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "jdg:roster",
+   "layer": "base",
+   "size": "group",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "site_roster",
+    "not_site_roster"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.895,
+    "n": 19,
+    "guess": 0.667,
+    "live": 0.316,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 728,
+   "label_deals": 86,
+   "label_mix": {},
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "jdg:sheet",
+   "layer": "base",
+   "size": "group",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "scope",
+    "reference",
+    "rate_card",
+    "catalog",
+    "financial_summary",
+    "instructions",
+    "empty"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.087,
+    "n": 23,
+    "guess": 0.625,
+    "live": 0.652,
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 939,
+   "label_deals": 52,
+   "label_mix": {},
+   "labeling_task": "worse than live on the held-out grade (0.087 vs 0.652): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:billing_type",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "fixed",
+    "t_and_m",
+    "milestone",
+    "per_site"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.371,
+    "n": 35,
+    "guess": 0.457,
+    "live": 0.171,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 893,
+   "label_deals": 126,
+   "label_mix": {
+    "t_and_m": 250,
+    "fixed": 236,
+    "_absent": 168,
+    "per_site": 124
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:bom_role",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": null,
+   "validation": null,
+   "labels": 256,
+   "label_deals": 5,
+   "label_mix": {
+    "quantity": 106,
+    "vendor_boilerplate": 64,
+    "item": 16,
+    "qty": 10
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:cadence",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.409,
+    "n": 22,
+    "guess": 0.591,
+    "live": 0.409,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 256,
+   "label_deals": 5,
+   "label_mix": {
+    "one week, weekdays only": 114,
+    "per year": 90,
+    "every 60-90 days": 25,
+    "weekly": 12
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:chase",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "conversation",
+    "attachment"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.222,
+    "n": 9,
+    "guess": 0.827,
+    "live": 0.444,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 687,
+   "label_deals": 15,
+   "label_mix": {
+    "_absent": 275,
+    "attachment": 192,
+    "conversation": 68,
+    "confirm CDW rebuilds auto atte": 4
+   },
+   "labeling_task": "worse than live on the held-out grade (0.222 vs 0.444): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:commitment",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.675,
+    "n": 40,
+    "guess": 0.625,
+    "live": 0.625,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 861,
+   "label_deals": 16,
+   "label_mix": {
+    "finalize and send the project ": 182,
+    "send the make/model/volume lis": 115,
+    "_absent": 114,
+    "send the hourly rate": 42
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:crew_size",
+   "layer": "base",
+   "size": "line",
+   "kind": "number",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.63,
+    "n": 27,
+    "guess": 0.63,
+    "live": 0.63,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 316,
+   "label_deals": 21,
+   "label_mix": {
+    "11": 158,
+    "_absent": 90,
+    "2": 35,
+    "1": 26
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:fires_task",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": null,
+   "validation": null,
+   "labels": 120,
+   "label_deals": 10,
+   "label_mix": {
+    "_absent": 105,
+    "SOW: within 5-10 business days": 6,
+    "The provider's project coordin": 5,
+    "issue a survey-only SOW; quote": 1
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:introduces_party",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.571,
+    "n": 21,
+    "guess": 0.571,
+    "live": 0.571,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 383,
+   "label_deals": 15,
+   "label_mix": {
+    "project coordinator at the res": 83,
+    "Alvyn Arroyo-Tavara, copied wh": 24,
+    "Director of Operations (Chase ": 22,
+    "Danny Spears, asset-logistics ": 19
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:job_scale",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "small",
+    "large"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.294,
+    "n": 17,
+    "guess": 0.471,
+    "live": 0.412,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 299,
+   "label_deals": 8,
+   "label_mix": {
+    "large": 253,
+    "small": 28,
+    "one day, a few hours": 14,
+    "small (reseller says too small": 2
+   },
+   "labeling_task": "worse than live on the held-out grade (0.294 vs 0.412): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:material",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.538,
+    "n": 26,
+    "guess": 0.5,
+    "live": 0.5,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 439,
+   "label_deals": 76,
+   "label_mix": {
+    "_absent": 148,
+    "plywood backboard": 12,
+    "conduit": 12,
+    "copper and fiber patch cables": 9
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:needs_artifact",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.72,
+    "n": 25,
+    "guess": 0.68,
+    "live": 0.68,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 677,
+   "label_deals": 17,
+   "label_mix": {
+    "provisioning scope": 113,
+    "_absent": 97,
+    "location list": 78,
+    "list of named technicians": 74
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:option_selected",
+   "layer": "base",
+   "size": "line",
+   "kind": "binary",
+   "answers": [
+    "_absent",
+    "true",
+    "false"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.655,
+    "n": 29,
+    "guess": 0.655,
+    "live": 0.621,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 192,
+   "label_deals": 9,
+   "label_mix": {
+    "True": 172,
+    "False": 20
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:points_at_artifact",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.618,
+    "n": 34,
+    "guess": 0.618,
+    "live": 0.647,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 408,
+   "label_deals": 12,
+   "label_mix": {
+    "install guide": 113,
+    "purchase order": 40,
+    "signed SOW": 40,
+    "the Smarthands work order (SFB": 34
+   },
+   "labeling_task": "worse than live on the held-out grade (0.618 vs 0.647): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:rate",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.78,
+    "n": 41,
+    "guess": 0.78,
+    "live": 0.78,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 602,
+   "label_deals": 84,
+   "label_mix": {
+    "_absent": 205,
+    "$115.00 per hour": 49,
+    "50% increase of Stated Rate": 15,
+    "$655.00 per item": 12
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:rate_for",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.537,
+    "n": 41,
+    "guess": 0.78,
+    "live": 0.78,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 553,
+   "label_deals": 82,
+   "label_mix": {
+    "_absent": 214,
+    "after hours, 5:00 PM to 8:00 A": 18,
+    "travel time": 7,
+    "holidays": 7
+   },
+   "labeling_task": "worse than live on the held-out grade (0.537 vs 0.78): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:remote_miles",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.625,
+    "n": 8,
+    "guess": 1.0,
+    "live": 0.0,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 449,
+   "label_deals": 44,
+   "label_mix": {
+    "_absent": 305,
+    "0": 67,
+    "79": 34,
+    "about 165 miles straight-line ": 14
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:requirement_kind",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.0,
+    "n": 8,
+    "guess": 0.205,
+    "live": 0.0,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 759,
+   "label_deals": 103,
+   "label_mix": {
+    "tech_toolkit": 141,
+    "_absent": 105,
+    "commercial": 87,
+    "personnel": 75
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:start_date",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.304,
+    "n": 23,
+    "guess": 0.696,
+    "live": 0.304,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 356,
+   "label_deals": 15,
+   "label_mix": {
+    "August 24 or August 25, 2026": 118,
+    "_absent": 65,
+    "August 24, 2026": 40,
+    "October 12, 2026": 28
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:tech_level",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.476,
+    "n": 21,
+    "guess": 0.524,
+    "live": 0.524,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 399,
+   "label_deals": 57,
+   "label_mix": {
+    "_absent": 220,
+    "Field Technician": 18,
+    "Low Voltage Tech": 12,
+    "1 Lead and 1 Helper (helper ne": 6
+   },
+   "labeling_task": "worse than live on the held-out grade (0.476 vs 0.524): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:trigger_event",
+   "layer": "base",
+   "size": "line",
+   "kind": "binary",
+   "answers": [
+    "_absent",
+    "true",
+    "false"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.524,
+    "n": 21,
+    "guess": 0.524,
+    "live": 0.238,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 151,
+   "label_deals": 13,
+   "label_mix": {
+    "false": 108,
+    "True": 22,
+    "False": 20,
+    "quote approved": 1
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:triggered_task",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.524,
+    "n": 21,
+    "guess": 0.667,
+    "live": 0.667,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 374,
+   "label_deals": 14,
+   "label_mix": {
+    "_absent": 148,
+    "finalize the start date once d": 79,
+    "equipment delivery confirmed": 79,
+    "book the install date": 20
+   },
+   "labeling_task": "worse than live on the held-out grade (0.524 vs 0.667): label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:unreliable_part",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": null,
+   "validation": null,
+   "labels": 159,
+   "label_deals": 8,
+   "label_mix": {
+    "row hidden in the source sheet": 88,
+    "quantity read from the row abo": 20,
+    "Conduit you can type of": 12,
+    "the whole v1 draft": 6
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:urgency",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.646,
+    "n": 48,
+    "guess": 0.646,
+    "live": 0.646,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 230,
+   "label_deals": 15,
+   "label_mix": {
+    "the incumbent keeps failing; n": 26,
+    "the start has moved three time": 24,
+    "the customer was ready to move": 21,
+    "ASAP": 18
+   },
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "rel:governs",
+   "layer": "base",
+   "size": "line",
+   "kind": "relation",
+   "answers": [],
+   "status": "unproven",
+   "replaces": [],
+   "fallback": "",
+   "holdout": null,
+   "validation": null,
+   "labels": 20825,
+   "label_deals": 17,
+   "label_mix": {},
+   "labeling_task": "label it on the next unseen deal so it can be scored"
+  },
+  {
+   "key": "read:superseded",
+   "layer": "base",
+   "size": "line",
+   "kind": "binary",
+   "answers": [
+    "_absent",
+    "true",
+    "false"
+   ],
+   "status": "one_sided",
+   "replaces": [
+    "orbit: superseded facts",
+    "parser: reconcile"
+   ],
+   "fallback": "newest document wins",
+   "holdout": {
+    "exact": 0.618,
+    "n": 34,
+    "guess": 0.618,
+    "live": 0.618,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 1273,
+   "label_deals": 13,
+   "label_mix": {
+    "True": 1272,
+    "true": 1
+   },
+   "labeling_task": "label the OTHER answer too (it learned 'always True')"
+  },
+  {
+   "key": "col:wants",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "nothing",
+    "chase-artifact",
+    "chase-conversation",
+    "confirm-with-customer",
+    "decide-internally"
+   ],
+   "status": "one_sided",
+   "replaces": [
+    "orbit: question queue (chase / confirm / decide)"
+   ],
+   "fallback": "parser open_question lines",
+   "holdout": {
+    "exact": 0.987,
+    "n": 3130,
+    "guess": 0.994,
+    "live": 0.989,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 61478,
+   "label_deals": 45,
+   "label_mix": {
+    "nothing": 60551,
+    "confirm-with-customer": 468,
+    "chase-artifact": 199,
+    "chase-conversation": 159
+   },
+   "labeling_task": "worse than live on the held-out grade (0.987 vs 0.989): label the OTHER answer too (it learned 'always nothing')"
+  },
+  {
+   "key": "read:deal_summary",
+   "layer": "base",
+   "size": "line",
+   "kind": "binary",
+   "answers": [
+    "_absent",
+    "true",
+    "false"
+   ],
+   "status": "one_sided",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.286,
+    "n": 21,
+    "guess": 0.714,
+    "live": 0.286,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 19,
+   "label_deals": 11,
+   "label_mix": {
+    "True": 19
+   },
+   "labeling_task": "label the OTHER answer too (it learned 'always True')"
+  },
+  {
+   "key": "read:derivation",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "stated",
+    "inferred",
+    "template",
+    "not_derivable"
+   ],
+   "status": "one_sided",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.34,
+    "n": 103,
+    "guess": 0.573,
+    "live": 0.427,
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 5648,
+   "label_deals": 12,
+   "label_mix": {
+    "stated": 5586,
+    "template": 40,
+    "inferred": 14,
+    "not_derivable": 8
+   },
+   "labeling_task": "worse than live on the held-out grade (0.34 vs 0.427): label the OTHER answer too (it learned 'always stated')"
+  },
+  {
+   "key": "read:list_header",
+   "layer": "base",
+   "size": "line",
+   "kind": "binary",
+   "answers": [
+    "_absent",
+    "true",
+    "false"
+   ],
+   "status": "one_sided",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 1.0,
+    "n": 79,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 1715,
+   "label_deals": 16,
+   "label_mix": {
+    "True": 1715
+   },
+   "labeling_task": "label the OTHER answer too (it learned 'always True')"
+  },
+  {
+   "key": "read:miss_cause",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "glued_paragraph",
+    "table_cell_glued",
+    "table_row_dropped",
+    "heading_as_section",
+    "checkbox_cell",
+    "folded_copy",
+    "pasted_quote",
+    "split_mid_sentence",
+    "spreadsheet_cell",
+    "other"
+   ],
+   "status": "one_sided",
+   "replaces": [],
+   "fallback": "",
+   "holdout": null,
+   "validation": null,
+   "labels": 21,
+   "label_deals": 3,
+   "label_mix": {
+    "other": 21
+   },
+   "labeling_task": "label the OTHER answer too (it learned 'always other')"
+  },
+  {
+   "key": "read:small_talk",
+   "layer": "base",
+   "size": "line",
+   "kind": "binary",
+   "answers": [
+    "_absent",
+    "true",
+    "false"
+   ],
+   "status": "one_sided",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 1.0,
+    "n": 55,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 4021,
+   "label_deals": 9,
+   "label_mix": {
+    "True": 4021
+   },
+   "labeling_task": "label the OTHER answer too (it learned 'always True')"
+  },
+  {
+   "key": "read:tech_coverage",
+   "layer": "base",
+   "size": "line",
+   "kind": "presence",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "one_sided",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.65,
+    "n": 20,
+    "guess": 0.55,
+    "live": 0.55,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 32,
+   "label_deals": 1,
+   "label_mix": {
+    "Findlay, OH is its own micropo": 32
+   },
+   "labeling_task": "label the OTHER answer too (it learned 'always Findlay, OH is its own micropo')"
+  },
+  {
+   "key": "read:train_for",
+   "layer": "base",
+   "size": "line",
+   "kind": "class",
+   "answers": [
+    "_absent",
+    "quote_parser",
+    "delivery_parser"
+   ],
+   "status": "one_sided",
+   "replaces": [],
+   "fallback": "",
+   "holdout": {
+    "exact": 0.998,
+    "n": 3485,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "worse",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 69187,
+   "label_deals": 18,
+   "label_mix": {
+    "['quote_parser', 'delivery_par": 69164,
+    "['quote_parser']": 14,
+    "['delivery_parser']": 9
+   },
+   "labeling_task": "worse than live on the held-out grade (0.998 vs 1.0): label the OTHER answer too (it learned 'always ['quote_parser', 'delivery_par')"
   },
   {
    "key": "jdg:billing_type",
@@ -1931,50 +2495,18 @@
    ],
    "fallback": "rules",
    "holdout": {
-    "exact": 0.0,
-    "n": 2,
-    "guess": null
+    "exact": 0.25,
+    "n": 4,
+    "guess": 0.429,
+    "live": 0.25,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.0,
-    "n": 1
-   },
-   "labels": 19,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 46,
+   "label_deals": 24,
    "label_mix": {},
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:lead_time",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [
-    "orbit: lead-time flags"
-   ],
-   "fallback": "regex",
-   "holdout": {
-    "exact": 1.0,
-    "n": 1,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 3
-   },
-   "labels": 60,
-   "label_deals": 11,
-   "label_mix": {
-    "minimum one week before dispat": 9,
-    "5-10 business days from SOW ex": 7,
-    "2 weeks for travel": 7,
-    "5-10 business days from execut": 4
-   },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
   {
@@ -1991,15 +2523,16 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 2,
-    "guess": null
+    "exact": 0.667,
+    "n": 3,
+    "guess": 0.833,
+    "live": 0.667,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 1
-   },
-   "labels": 19,
+   "validation": null,
+   "labels": 34,
    "label_deals": 18,
    "label_mix": {},
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
@@ -2024,35 +2557,8 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 192,
+   "labels": 326,
    "label_deals": 3,
-   "label_mix": {},
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "jdg:geo_mention",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "job_site",
-    "mention_only"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 1.0,
-    "n": 1,
-    "guess": 1.0
-   },
-   "validation": {
-    "exact": 1.0,
-    "n": 1
-   },
-   "labels": 31,
-   "label_deals": 11,
    "label_mix": {},
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -2072,14 +2578,15 @@
    "fallback": "",
    "holdout": {
     "exact": 1.0,
-    "n": 2,
-    "guess": null
+    "n": 3,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 1
-   },
-   "labels": 19,
+   "validation": null,
+   "labels": 34,
    "label_deals": 18,
    "label_mix": {},
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
@@ -2098,61 +2605,17 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.5,
-    "n": 2,
-    "guess": null
+    "exact": 0.333,
+    "n": 3,
+    "guess": 0.667,
+    "live": 0.333,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.0,
-    "n": 1
-   },
-   "labels": 19,
+   "validation": null,
+   "labels": 34,
    "label_deals": 18,
-   "label_mix": {},
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "jdg:roster",
-   "layer": "base",
-   "size": "group",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "site_roster",
-    "not_site_roster"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 1,
-   "label_deals": 1,
-   "label_mix": {},
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "jdg:sheet",
-   "layer": "base",
-   "size": "group",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "scope",
-    "reference",
-    "rate_card",
-    "catalog",
-    "financial_summary",
-    "instructions",
-    "empty"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 23,
-   "label_deals": 6,
    "label_mix": {},
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -2170,73 +2633,18 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 2,
-    "guess": null
+    "exact": 0.667,
+    "n": 3,
+    "guess": 0.667,
+    "live": 0.667,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 1
-   },
-   "labels": 19,
+   "validation": null,
+   "labels": 34,
    "label_deals": 18,
    "label_mix": {},
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:billing_type",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "fixed",
-    "t_and_m",
-    "milestone",
-    "per_site"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": {
-    "exact": 0.0,
-    "n": 3,
-    "guess": 0.0
-   },
-   "validation": {
-    "exact": 0.0,
-    "n": 3
-   },
-   "labels": 69,
-   "label_deals": 15,
-   "label_mix": {
-    "t_and_m": 50,
-    "fixed": 19
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:cadence",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 213,
-   "label_deals": 4,
-   "label_mix": {
-    "one week, weekdays only": 100,
-    "per year": 67,
-    "every 60-90 days": 25,
-    "weekly": 11
-   },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
   {
@@ -2253,13 +2661,13 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 52,
+   "labels": 76,
    "label_deals": 2,
    "label_mix": {
-    "43": 31,
-    "55": 7,
-    "32": 6,
-    "65": 6
+    "43": 36,
+    "55": 15,
+    "65": 11,
+    "32": 10
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -2275,145 +2683,23 @@
    "status": "thin",
    "replaces": [],
    "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 1
+   "holdout": {
+    "exact": 0.316,
+    "n": 19,
+    "guess": 0.684,
+    "live": 0.316,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "labels": 30,
+   "validation": null,
+   "labels": 49,
    "label_deals": 7,
    "label_mix": {
-    "smart-hands work at CheckOut o": 14,
-    "possible future camera rollout": 2,
-    "a larger, separate Sodexo oppo": 2,
-    "the same pull, store and redep": 2
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:fires_task",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 15,
-   "label_deals": 1,
-   "label_mix": {
-    "SOW: within 5-10 business days": 10,
-    "The provider's project coordin": 5
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:labor_hours",
-   "layer": "base",
-   "size": "line",
-   "kind": "number",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 77,
-   "label_deals": 12,
-   "label_mix": {
-    "2": 22,
-    "4": 15,
-    "99": 4,
-    "12": 3
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:location",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 11
-   },
-   "labels": 45,
-   "label_deals": 6,
-   "label_mix": {
-    "6125 Tyvola Centre Drive, Char": 20,
-    "Chicago area IL + Maryland": 7,
-    "Chicago area and Maryland": 3,
-    "6125 Tyvola Centre Dr, Charlot": 2
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:material",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 2,
-   "label_deals": 2,
-   "label_mix": {
-    "1.5 in EMT": 1,
-    "hand tools, PPE, labeling mate": 1
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:miss_cause",
-   "layer": "base",
-   "size": "line",
-   "kind": "class",
-   "answers": [
-    "_absent",
-    "glued_paragraph",
-    "table_cell_glued",
-    "table_row_dropped",
-    "heading_as_section",
-    "checkbox_cell",
-    "folded_copy",
-    "pasted_quote",
-    "split_mid_sentence",
-    "spreadsheet_cell",
-    "other"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 48,
-   "label_deals": 3,
-   "label_mix": {
-    "other": 31,
-    "split_mid_sentence": 10,
-    "table_row_dropped": 7
+    "smart-hands work at CheckOut o": 15,
+    "a larger, separate Sodexo oppo": 6,
+    "the same pull, store and redep": 6,
+    "security cameras, access contr": 4
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -2430,21 +2716,21 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 1,
-    "guess": 1.0
+    "exact": 0.629,
+    "n": 35,
+    "guess": 0.629,
+    "live": 0.629,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 4
-   },
-   "labels": 18,
-   "label_deals": 7,
+   "validation": null,
+   "labels": 17,
+   "label_deals": 4,
    "label_mix": {
-    "True": 11,
-    "the five install steps": 2,
-    "False": 2,
-    "the whole TV install deal: 4 d": 1
+    "the five install steps": 6,
+    "False": 6,
+    "True": 5
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -2463,88 +2749,13 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 39,
-   "label_deals": 7,
+   "labels": 55,
+   "label_deals": 6,
    "label_mix": {
-    "True": 36,
+    "True": 51,
+    "<enter description of project ": 2,
     "[Publish Date]": 1,
-    "<enter description of project ": 1,
     "[Enter Contract Info. here]": 1
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:rate",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 77,
-   "label_deals": 8,
-   "label_mix": {
-    "$370.00 per item": 8,
-    "$655.00 per item": 8,
-    "$85/hour": 6,
-    "$115.00 per hour": 5
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:rate_for",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": null,
-   "labels": 60,
-   "label_deals": 7,
-   "label_mix": {
-    "travel time": 7,
-    "Engineer": 4,
-    "on-site technician labor": 3,
-    "32 inch install": 3
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:remote_miles",
-   "layer": "base",
-   "size": "line",
-   "kind": "presence",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [],
-   "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 11
-   },
-   "labels": 78,
-   "label_deals": 9,
-   "label_mix": {
-    "0": 28,
-    "0 miles; inside the Charlotte-": 22,
-    "79": 14,
-    "about 165 miles straight-line ": 13
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -2560,15 +2771,20 @@
    "status": "thin",
    "replaces": [],
    "fallback": "",
-   "holdout": null,
-   "validation": {
-    "exact": 1.0,
-    "n": 2
+   "holdout": {
+    "exact": 0.625,
+    "n": 24,
+    "guess": 0.625,
+    "live": 0.625,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "labels": 18,
+   "validation": null,
+   "labels": 24,
    "label_deals": 4,
    "label_mix": {
-    "the lift rental (the customer ": 4,
+    "the lift rental (the customer ": 9,
     "technician parking fees, reimb": 3,
     "all hardware and accessories: ": 3,
     "a ladder instead of a lift kee": 2
@@ -2592,16 +2808,16 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 92,
-   "label_deals": 2,
+   "labels": 143,
+   "label_deals": 1,
    "label_mix": {
-    "customer": 66,
-    "provider": 26
+    "customer": 104,
+    "provider": 39
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
   {
-   "key": "read:tech_level",
+   "key": "read:situational",
    "layer": "base",
    "size": "line",
    "kind": "presence",
@@ -2614,18 +2830,16 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 35,
+   "labels": 36,
    "label_deals": 2,
    "label_mix": {
-    "EUC L1 Jr. Technician (the lev": 9,
-    "L2 EUC 2 hour minimum": 8,
-    "PC": 4,
-    "EUC technician": 2
+    "explains the PO delay / intern": 32,
+    "the request that opened the de": 4
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
   {
-   "key": "rel:blocked_by",
+   "key": "rel:triggered_by",
    "layer": "base",
    "size": "line",
    "kind": "relation",
@@ -2634,14 +2848,15 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 1.0,
-    "n": 1207,
-    "guess": null
+    "exact": 0.998,
+    "n": 3673,
+    "guess": 0.998,
+    "live": 0.998,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.999,
-    "n": 1833
-   },
+   "validation": null,
    "labels": 93,
    "label_deals": 11,
    "label_mix": {},
@@ -2663,14 +2878,15 @@
    ],
    "fallback": "lessons",
    "holdout": {
-    "exact": 0.893,
-    "n": 12264,
-    "guess": 0.954
+    "exact": 0.725,
+    "n": 3518,
+    "guess": 0.53,
+    "live": 0.53,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.82,
-    "n": 3520
-   },
+   "validation": null,
    "labels": 0,
    "label_deals": 0,
    "label_mix": {},
@@ -2720,14 +2936,15 @@
    "replaces": [],
    "fallback": "",
    "holdout": {
-    "exact": 0.587,
-    "n": 1207,
-    "guess": null
+    "exact": 0.214,
+    "n": 3675,
+    "guess": 0.736,
+    "live": 0.187,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.365,
-    "n": 1833
-   },
+   "validation": null,
    "labels": 0,
    "label_deals": 0,
    "label_mix": {},
@@ -2992,20 +3209,21 @@
    ],
    "fallback": "the parser's own type filter (small_talk, chatter)",
    "holdout": {
-    "exact": 0.754,
-    "n": 540,
-    "guess": 0.213
+    "exact": 0.918,
+    "n": 1810,
+    "guess": 0.812,
+    "live": 0.686,
+    "verdict": "better",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.706,
-    "n": 729
-   },
-   "labels": 40521,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 52341,
+   "label_deals": 46,
    "label_mix": {
-    "reject": 19974,
-    "ignore": 12876,
-    "keep": 7671
+    "reject": 37517,
+    "keep": 13186,
+    "ignore": 1638
    },
    "labeling_task": "keep labeling as you go"
   },
@@ -3041,21 +3259,22 @@
    ],
    "fallback": "no reason shown",
    "holdout": {
-    "exact": 0.746,
-    "n": 130,
-    "guess": 0.515
+    "exact": 0.792,
+    "n": 341,
+    "guess": 0.557,
+    "live": 0.736,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 0.465,
-    "n": 542
-   },
-   "labels": 32850,
-   "label_deals": 18,
+   "validation": null,
+   "labels": 39099,
+   "label_deals": 27,
    "label_mix": {
-    "contact_from_crm": 14489,
-    "old_manual_deal_kit": 11569,
-    "other": 1277,
-    "seller_promise": 1244
+    "contact_from_crm": 31128,
+    "parser_derived": 1632,
+    "seller_promise": 1512,
+    "date_only_logistics": 1449
    },
    "labeling_task": "keep labeling as you go"
   },
@@ -3073,20 +3292,54 @@
     "sow",
     "delivery"
    ],
-   "status": "unproven",
+   "status": "weak",
    "replaces": [
     "orbit: question owner"
    ],
    "fallback": "project_manager",
+   "holdout": {
+    "exact": 0.0,
+    "n": 215,
+    "guess": 1.0,
+    "live": 0.0,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
+   },
+   "validation": null,
+   "labels": 596,
+   "label_deals": 11,
+   "label_mix": {
+    "['project_manager']": 492,
+    "['delivery']": 24,
+    "['delivery', 'project_manager'": 23,
+    "['atlas']": 16
+   },
+   "labeling_task": "label disagreements: where it is wrong, correct it (it is near guess level)"
+  },
+  {
+   "key": "read:co_hours_estimate",
+   "layer": "purtera",
+   "size": "line",
+   "kind": "number",
+   "answers": [
+    "_absent",
+    "present"
+   ],
+   "status": "unproven",
+   "replaces": [
+    "deal kit: hours"
+   ],
+   "fallback": "kit rules",
    "holdout": null,
    "validation": null,
-   "labels": 325,
+   "labels": 251,
    "label_deals": 14,
    "label_mix": {
-    "['project_manager']": 251,
-    "['delivery', 'project_manager'": 12,
-    "['atlas']": 11,
-    "['delivery']": 10
+    "_absent": 96,
+    "0.05 h per school": 62,
+    "0.1 h per school": 32,
+    "0.2 h per school": 14
    },
    "labeling_task": "label it on the next unseen deal so it can be scored"
   },
@@ -3107,16 +3360,19 @@
    "fallback": "parser open_question lines + gap judgments",
    "holdout": {
     "exact": 1.0,
-    "n": 1,
-    "guess": 1.0
+    "n": 227,
+    "guess": 1.0,
+    "live": 1.0,
+    "verdict": "same",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
    "validation": null,
-   "labels": 415,
-   "label_deals": 12,
+   "labels": 792,
+   "label_deals": 11,
    "label_mix": {
-    "True": 406,
-    "False": 5,
-    "full street address needed": 4
+    "True": 776,
+    "False": 16
    },
    "labeling_task": "label the OTHER answer too (it learned 'always True')"
   },
@@ -3134,10 +3390,10 @@
    "fallback": "",
    "holdout": null,
    "validation": null,
-   "labels": 23322,
+   "labels": 32747,
    "label_deals": 1,
    "label_mix": {
-    "decision_pending": 23322
+    "decision_pending": 32747
    },
    "labeling_task": "label the OTHER answer too (it learned 'always decision_pending')"
   },
@@ -3161,7 +3417,7 @@
    "fallback": "rules",
    "holdout": null,
    "validation": null,
-   "labels": 154,
+   "labels": 88,
    "label_deals": 2,
    "label_mix": {},
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
@@ -3183,15 +3439,16 @@
    ],
    "fallback": "kit default",
    "holdout": {
-    "exact": 0.5,
-    "n": 2,
-    "guess": null
+    "exact": 0.667,
+    "n": 3,
+    "guess": 0.5,
+    "live": 0.667,
+    "verdict": "not measurable",
+    "swap": null,
+    "evidence": "graded heldout7"
    },
-   "validation": {
-    "exact": 1.0,
-    "n": 1
-   },
-   "labels": 19,
+   "validation": null,
+   "labels": 34,
    "label_deals": 18,
    "label_mix": {},
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
@@ -3212,37 +3469,11 @@
    "fallback": "kit rules",
    "holdout": null,
    "validation": null,
-   "labels": 10,
+   "labels": 16,
    "label_deals": 2,
    "label_mix": {
-    "display_50_55in_1_tech": 6,
-    "display_over_55in_2_techs": 4
-   },
-   "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
-  },
-  {
-   "key": "read:co_hours_estimate",
-   "layer": "purtera",
-   "size": "line",
-   "kind": "number",
-   "answers": [
-    "_absent",
-    "present"
-   ],
-   "status": "thin",
-   "replaces": [
-    "deal kit: hours"
-   ],
-   "fallback": "kit rules",
-   "holdout": null,
-   "validation": null,
-   "labels": 58,
-   "label_deals": 2,
-   "label_mix": {
-    "0.05 h per school": 20,
-    "0.1 h per school": 12,
-    "0.15 h per school": 6,
-    "1.0": 5
+    "display_50_55in_1_tech": 8,
+    "display_over_55in_2_techs": 8
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -3262,13 +3493,12 @@
    "fallback": "LLM",
    "holdout": null,
    "validation": null,
-   "labels": 53,
+   "labels": 8,
    "label_deals": 3,
    "label_mix": {
-    "cost_rate": 16,
-    "bill_rate": 15,
-    "tech_level": 12,
-    "loe": 7
+    "tech_level": 3,
+    "loe": 3,
+    "material": 2
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },
@@ -3288,13 +3518,13 @@
    "fallback": "by type",
    "holdout": null,
    "validation": null,
-   "labels": 162,
+   "labels": 277,
    "label_deals": 4,
    "label_mix": {
-    "installation": 24,
-    "router_sim": 21,
-    "laptop_carts": 17,
-    "technician_toolkit": 13
+    "router_sim": 52,
+    "laptop_carts": 47,
+    "technician_toolkit": 26,
+    "classroom_camera": 26
    },
    "labeling_task": "label it on more deals (aim: 10+ deals, 300+ lines)"
   },

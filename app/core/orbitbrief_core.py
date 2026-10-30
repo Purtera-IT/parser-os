@@ -261,6 +261,7 @@ def build_pm_dashboard(
             _noise = (
                 "[image extracted" in _lt
                 or "awaiting ocr" in _lt
+                or _lt.startswith(("[image read:", "[image skipped:"))
                 or (len(_lt) < 25 and ("thought" in _lt or _lt.startswith(("hey ", "hi ", "thanks"))))
             )
             # Purtera asking Purtera is the WORK of getting to a fact, not a
@@ -1036,6 +1037,14 @@ _SRL_REQUIRED_FIELDS: tuple[dict[str, Any], ...] = (
 )
 
 
+def _role_text(role: Any) -> str:
+    """A stakeholder's role as lowercase text. A head can answer a role as a
+    set (["project_manager", "site_contact"]), so a list reads as its parts."""
+    if isinstance(role, (list, tuple, set)):
+        return " ".join(str(r) for r in role if r).lower()
+    return str(role or "").lower()
+
+
 def build_srl_missing_checklist(
     *,
     atoms: list[EvidenceAtom],
@@ -1103,7 +1112,7 @@ def build_srl_missing_checklist(
             hits = [
                 a for a in stakeholders
                 if isinstance(a.value, dict)
-                and any(t in (a.value.get("role") or "").lower() for t in terms)
+                and any(t in _role_text(a.value.get("role")) for t in terms)
             ]
             satisfied = len(hits) > 0
             evidence = {"matching_role_count": len(hits)}
@@ -1609,12 +1618,19 @@ def build_site_readiness(
     atoms: list[EvidenceAtom],
     edges: list[EvidenceEdge],
     alias_groups: Any = None,
+    heads_roster: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a per-site rollup of completeness signals.
 
     For each site mentioned anywhere, surface: device count, named
     constraints, stakeholders attached, contradictions targeting that
     site, and a 0-1 readiness score.
+
+    ``heads_roster``: the heads' site roster (``c3_type_base.quote_sites``), when the heads read the deal. The rows
+    are then exactly its sites, under its keys, so the rail, the Scope tab and the quote cannot disagree. The old
+    merges (alias groups, name / prefix / initials collapse) only log what they would have merged
+    (``site_readiness.*`` in the rule ledger, shadow by default): 010358's alias groups folded three Sugar Land
+    sheet rows the heads typed physical_site at 0.99+ into their ZIP neighbours, 99 rows against the quote's 102.
     """
     sites: dict[str, dict[str, Any]] = defaultdict(lambda: {
         "site_key": "",
@@ -1635,6 +1651,31 @@ def build_site_readiness(
     # "unscoped" (red), instead of both collapsing to readiness 0.0.
     anchored_set: set[str] = set()
     _canon_site = _site_canonical_map(atoms, alias_groups)
+    # The heads' roster decides which keys are one site.
+    _roster: dict[str, str] = {}
+    _roster_ids: dict[str, list[str]] = {}
+    for _e in heads_roster or []:
+        if not isinstance(_e, dict) or not _e.get("site"):
+            continue
+        for _k in _e.get("keys") or [_e["site"]]:
+            _roster[str(_k)] = str(_e["site"])
+            _roster_ids[str(_k)] = [str(x) for x in _e.get("atom_ids") or []]
+    if _roster:
+        from app.core import rule_ledger as _rl
+
+        _merge = {k: c for k, c in _canon_site.items()
+                  if k != c and (k in _roster or c in _roster) and _roster.get(k, k) != _roster.get(c, c)}
+        for _k, _c in sorted(_merge.items()):
+            for _aid in _roster_ids.get(_k) or [""]:
+                # A same-site pair judgment: no head the parser reads answers it (jdg:site is not requested).
+                _rl.fire("site_readiness.alias_merge", _aid or None, None, "same_site", f"{_k} -> {_c}")
+        if not _rl.shadow("site_readiness.alias_merge"):
+            # Active (SOWSMITH_RULE_MODES): the merge wins over the roster; the folded site's keys file under the other.
+            for _k, _c in _merge.items():
+                _src, _dst = _roster.get(_k, _k), _roster.get(_c, _c)
+                for _rk in [x for x, v in _roster.items() if v == _src] + [_src]:
+                    _roster[_rk] = _dst
+        _canon_site = {**{k: c for k, c in _canon_site.items() if k not in _merge}, **_roster}
 
     for atom in atoms:
         atom_type = _atom_type_str(atom)
@@ -1644,6 +1685,9 @@ def build_site_readiness(
         # otherwise fall back to address strings as the slug,
         # producing keys like "site:address_1180_peachtree_st_..."
         # which is just another ghost site.
+        if atom_type == "physical_site" and "site_not_backed_by_heads" in (getattr(atom, "review_flags", None) or []):
+            # site_keys_follow_heads dropped its keys (no site line backs them): no row from its id.
+            continue
         if atom_type == "physical_site":
             val = getattr(atom, "value", None) or {}
             sid = ""
@@ -1896,6 +1940,28 @@ def build_site_readiness(
                         canonical_map[sk] = cslug
                         break
 
+        if _roster:
+            # The heads' roster keys are its sites: a name / prefix / initials collapse that folds one into another
+            # row only logs (site_readiness.name_collapse, shadow by default).
+            from app.core import rule_ledger as _rl
+
+            _sites_of = set(_roster.values())
+            _collapse = {k: c for k, c in canonical_map.items() if k != c and k in _sites_of and
+                         _roster.get(c, c) != k}
+            for _k, _c in sorted(_collapse.items()):
+                for _aid in _roster_ids.get(_k) or [""]:
+                    _rl.fire("site_readiness.name_collapse", _aid or None, None, "same_site", f"{_k} -> {_c}")
+            if _rl.shadow("site_readiness.name_collapse"):
+                for _k in _collapse:
+                    canonical_map.pop(_k, None)
+            else:
+                _sites_of -= set(_collapse)
+                for _rk, _v in list(_roster.items()):
+                    if _v in _collapse:
+                        _roster[_rk] = _roster.get(canonical_map[_v], canonical_map[_v])
+            canonical_set |= _sites_of
+            anchored_set |= _sites_of
+
         # Merge entries
         merged: dict[str, dict[str, Any]] = {}
         for sk, entry in sites.items():
@@ -1938,7 +2004,10 @@ def build_site_readiness(
             "site:all_locations", "site:various_sites",
             "site:site_all",
         }
-        if canonical_set:
+        if _roster:
+            # Exactly the heads' roster: every site it keeps, nothing else.
+            sites = {ck: e for ck, e in merged.items() if ck in _sites_of}
+        elif canonical_set:
             filtered: dict[str, dict[str, Any]] = {}
             for ck, entry in merged.items():
                 if ck in _PLACEHOLDER_SLUGS:
@@ -1950,6 +2019,15 @@ def build_site_readiness(
             sites = {ck: e for ck, e in merged.items() if ck not in _PLACEHOLDER_SLUGS}
     except Exception:
         pass
+    if _roster:
+        # Even if the merge above failed: the rows are the roster's sites, each one present.
+        _sites_of = set(_roster.values())
+        sites = {k: e for k, e in sites.items() if k in _sites_of}
+        for _k in sorted(_sites_of - set(sites)):
+            sites[_k] = {"site_key": _k, "device_keys": set(), "constraint_count": 0, "stakeholder_keys": set(),
+                         "contradiction_count": 0, "scope_atom_count": 0, "money_present": False,
+                         "milestone_present": False}
+        anchored_set |= _sites_of
 
     out: list[dict[str, Any]] = []
     maturity_breakdown: dict[str, int] = {

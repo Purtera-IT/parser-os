@@ -32,6 +32,7 @@ Design invariants (match the rest of the system):
 from __future__ import annotations
 
 import hashlib
+import threading
 import json
 import logging
 import os
@@ -168,8 +169,9 @@ def _iter_image_markers(atoms: list[Any]):
                 continue
             refs = getattr(a, "source_refs", None) or []
             pdf_name = (getattr(refs[0], "filename", "") if refs else "") or ""
-            if not pdf_name.lower().endswith(".pdf"):
-                continue
+            # No filename-extension test: a page{n}/ region with a saved crop is proof the PDF parser
+            # made it (deal cd900267's "TEK_Marcos Pizza New Store Installs_1.2" had no ".pdf" and all
+            # 96 of its images were skipped).
             m = re.match(r"page(\d+)/", region_ref)
             page_index = int(m.group(1)) if m else 0
             caption = val.get("expected_content") or ""
@@ -361,14 +363,16 @@ def _ocr_crop(saved_path: str, crop: bytes | None = None, *, allow_vlm: bool = F
     ``allow_vlm`` defaults False so the cheap classify gate never pays for an
     extra VLM OCR call; only the transcribe/table paths (which need verbatim
     grounding) opt in. Empty on total failure (caller then abstains)."""
+    started = time.monotonic()
     try:
         from app.parsers._ocr_chain import ocr_image_file
         res = ocr_image_file(Path(saved_path))
         text = (res.get("text") or "").strip() if isinstance(res, dict) else ""
+        _note_call("ocr", started, "ok" if text else "empty")
         if text:
             return text
     except Exception:
-        pass
+        _note_call("ocr", started, "error")
     if not allow_vlm:
         return ""
     # VLM OCR fallback over the proven vision path (verbatim anchor).
@@ -414,7 +418,33 @@ def _hosted_vision_enabled() -> bool:
     return bool(os.environ.get("TEACHER_VISION_API_BASE") or os.environ.get("TEACHER_API_BASE"))
 
 
+#: Per image (one image is processed on one pool thread): did a vision call fail while reading it.
+_IMAGE_STATE = threading.local()
+
+
+def _note_call(kind: str, started: float, outcome: str) -> None:
+    """One vision / OCR call into the compile trace (``calls_by_stage``: count, seconds, outcome)."""
+    try:
+        from app.core import telemetry as _tel
+
+        _tel.note_call(kind, time.monotonic() - started, outcome)
+    except Exception:
+        pass
+    if kind == "vision" and outcome != "ok":
+        _IMAGE_STATE.failed = True
+
+
 def _vlm(image_bytes: bytes, prompt: str, *, model: str | None, max_tokens: int) -> str:
+    started = time.monotonic()
+    reply = ""
+    try:
+        reply = _vlm_inner(image_bytes, prompt, model=model, max_tokens=max_tokens)
+        return reply
+    finally:
+        _note_call("vision", started, "ok" if reply else "empty")
+
+
+def _vlm_inner(image_bytes: bytes, prompt: str, *, model: str | None, max_tokens: int) -> str:
     if _hosted_vision_enabled():
         try:
             import base64
@@ -1259,49 +1289,111 @@ def process_image_markers(atoms: list[Any]) -> list[EvidenceAtom]:
     # and three `break`s (the host breaker and the time budget among them), and
     # a tick after any of them would stall on exactly the compiles that are
     # going slowly.
-    _total = min(len(markers), max_images)
-    if _total:
-        _telemetry.set_stage_progress(0, _total)
-    for idx, (marker, pdf_name, page_index, region_ref, saved_path, caption) in enumerate(markers):
-        if _total:
-            _telemetry.set_stage_progress(min(idx, _total), _total)
-        if processed >= max_images:
-            break
-        if _host_tripped():
-            logger.warning(
-                "pdf_image_vision: vision host failed %d call(s) in a row; "
-                "leaving %d of %d image(s) undescribed this compile",
-                _HOST_FAILURES["consecutive"], len(markers) - idx, len(markers),
-            )
-            break
-        spent = time.monotonic() - t_stage
-        if budget_s > 0 and processed > 0 and spent >= budget_s:
-            logger.warning(
-                "pdf_image_vision: stage spent %.0f s of its %.0f s budget; "
-                "leaving %d of %d image(s) undescribed this compile",
-                spent, budget_s, len(markers) - idx, len(markers),
-            )
-            break
+    from app.parsers.binary_markers import mark_marker_outcome
+
+    # Pick the images first (cap, size, duplicates: cheap and in order), then read them on a pool.
+    # Every marker not read says why ("[Image skipped: ...]"); one that was read says how many facts.
+    jobs: list[tuple[Any, str, int, str, str, str, bytes, str]] = []
+    for marker, pdf_name, page_index, region_ref, saved_path, caption in markers:
+        if len(jobs) >= max_images:
+            mark_marker_outcome(marker, "skipped: over the image cap")
+            continue
         crop = _load_crop(saved_path)
         if len(crop) < min_bytes:
+            mark_marker_outcome(marker, "skipped: too small")
             continue
         crop_hash = hashlib.sha256(crop).hexdigest()[:16]
         if crop_hash in seen_hashes:
+            mark_marker_outcome(marker, "skipped: duplicate image")
             continue
         seen_hashes.add(crop_hash)
-        processed += 1
+        jobs.append((marker, pdf_name, page_index, region_ref, saved_path, caption, crop, crop_hash))
+    processed = len(jobs)
+    _total = len(jobs)
+    if _total:
+        _telemetry.set_stage_progress(0, _total)
+    left: list[str] = []  # why images were left unread (host breaker / time budget)
+
+    def _read(job):
+        marker, pdf_name, page_index, region_ref, saved_path, caption, crop, crop_hash = job
+        if _host_tripped():
+            left.append("host")
+            return None
+        spent = time.monotonic() - t_stage
+        if budget_s > 0 and spent >= budget_s:
+            left.append("budget")
+            return None
+        _IMAGE_STATE.failed = False
         try:
-            new_atoms = _process_one(
+            got = _process_one(
                 marker=marker, pdf_name=pdf_name, page_index=page_index,
                 region_ref=region_ref, saved_path=saved_path, caption=caption,
                 crop=crop, crop_hash=crop_hash, neighbor_chars=neighbor_chars,
                 max_page_chars=max_page_chars, guard_min=guard_min,
                 caption_min=caption_min,
             )
-            out.extend(_drop_repeated_steps(new_atoms, page_steps, pdf_name, page_index))
         except Exception as exc:  # one bad image never breaks the compile
             logger.warning("pdf_image_vision: %s %s failed: %s", pdf_name, region_ref, exc)
-            continue
+            return None
+        return got, bool(getattr(_IMAGE_STATE, "failed", False))
+
+    # The Ollama paths point the model through os.environ (_vision_model), which threads would race
+    # on: the pool is for the hosted vision route only.
+    threads = max(1, _int_env("SOWSMITH_PDF_IMAGE_THREADS", 6)) if _hosted_vision_enabled() else 1
+    results: list[Any] = [None] * len(jobs)
+    # One image at a time until the host has answered one read (so a dead host trips the breaker after
+    # exactly its N failures, and the first image is always attempted before the budget is checked);
+    # then the rest on the pool.
+    first = 0
+    while first < len(jobs):
+        results[first] = _read(jobs[first])
+        first += 1
+        _telemetry.set_stage_progress(first, _total)
+        if results[first - 1] is not None and not results[first - 1][1]:
+            break
+        if left:
+            break
+    rest = list(range(first, len(jobs)))
+    if rest and not left:
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(threads, len(rest))) as pool:
+            futs = {pool.submit(_read, jobs[i]): i for i in rest}
+            done = first
+            for fut in concurrent.futures.as_completed(futs):
+                results[futs[fut]] = fut.result()
+                done += 1
+                _telemetry.set_stage_progress(done, _total)
+    elif rest:
+        left.extend([left[-1]] * len(rest))
+    # In the markers' order, so step folding and atom order do not depend on thread timing.
+    for job, res in zip(jobs, results):
+        marker, pdf_name, page_index = job[0], job[1], job[2]
+        if res is None:
+            continue  # not read (breaker, budget or an error): the marker still says awaiting
+        new_atoms, failed = res
+        out.extend(_drop_repeated_steps(new_atoms, page_steps, pdf_name, page_index))
+        verdict = (getattr(marker, "value", None) or {}).get("gate_verdict") if isinstance(
+            getattr(marker, "value", None), dict) else None
+        if new_atoms:
+            n = len(new_atoms)
+            mark_marker_outcome(marker, f"read: {n} fact{'s' if n != 1 else ''}")
+        elif isinstance(verdict, dict) and verdict.get("kind"):
+            mark_marker_outcome(marker, f"skipped: {verdict['kind']}")
+        elif not failed:
+            mark_marker_outcome(marker, "read: 0 facts")
+    if "host" in left:
+        logger.warning(
+            "pdf_image_vision: vision host failed %d call(s) in a row; "
+            "leaving %d of %d image(s) undescribed this compile",
+            _HOST_FAILURES["consecutive"], len(left), len(jobs),
+        )
+    elif left:
+        logger.warning(
+            "pdf_image_vision: stage spent %.0f s of its %.0f s budget; "
+            "leaving %d of %d image(s) undescribed this compile",
+            time.monotonic() - t_stage, budget_s, len(left), len(jobs),
+        )
     if out:
         logger.info(
             "pdf_image_vision: %d atoms from %d images", len(out), processed,
@@ -1458,6 +1550,15 @@ def _process_one(
             region_ref=region_ref, crop=crop, envelope=envelope,
             image_kind=image_kind, ocr_text=ocr_text,
         )
+    if image_kind in _OCR_KINDS:
+        # Text-bearing crop: the OCR the gate already paid for (Doc Intel first, cached) is the
+        # reading, verbatim. Vision only when OCR has nothing.
+        lines = _ocr_line_atoms(
+            marker=marker, pdf_name=pdf_name, page_index=page_index, region_ref=region_ref,
+            image_kind=image_kind, ocr_text=_ocr_crop(saved_path, crop),
+        )
+        if lines:
+            return lines
     if image_kind in _TRANSCRIBE_KINDS:
         return _transcribe(
             marker=marker, pdf_name=pdf_name, page_index=page_index,
@@ -1546,6 +1647,35 @@ def _describe(
     return atoms
 
 
+#: Crops whose content is their text: read by OCR, not described by a vision model.
+_OCR_KINDS = {"screenshot", "label"}
+
+
+def _ocr_line_atoms(
+    *, marker: Any, pdf_name: str, page_index: int, region_ref: str, image_kind: str, ocr_text: str,
+) -> list[EvidenceAtom]:
+    """The crop's OCR text, one atom per line, verbatim (``fact_kind`` image_ocr_line). A reader
+    only extracts: the heads decide what each line is."""
+    cap = _int_env("SOWSMITH_PDF_IMAGE_OCR_LINES", 80)
+    out: list[EvidenceAtom] = []
+    seen: set[str] = set()
+    for raw in (ocr_text or "").splitlines():
+        line = " ".join(raw.split())
+        key = line.lower()
+        if len(line) < 3 or not re.search(r"[A-Za-z0-9]", line) or key in seen:
+            continue
+        seen.add(key)
+        a = _emit_atom(
+            marker=marker, pdf_name=pdf_name, region_ref=region_ref, page_index=page_index,
+            text=line, image_kind=image_kind, fact_kind="image_ocr_line", confidence=0.7,
+        )
+        if a:
+            out.append(a)
+        if len(out) >= cap:
+            break
+    return out
+
+
 def _transcribe(
     *, marker: Any, pdf_name: str, page_index: int, region_ref: str,
     saved_path: str, crop: bytes, envelope: str, image_kind: str,
@@ -1560,12 +1690,13 @@ def _transcribe(
     try:
         from app.core.text_quality import readability as _readability
         if len(ocr_text) >= 400 and _readability(ocr_text) >= 0.8:
-            _stamp_skip_verdict(
-                marker, "page_scan_text", via="ocr_readable",
-                confidence=round(_readability(ocr_text), 2), ocr_preview=ocr_text[:400],
+            # A readable page scan: its OCR lines ARE the reading (verbatim, no vision call). A line
+            # the page's text layer already holds is folded by split_text_layer_copies.
+            logger.info("pdf_image_vision: %s is a readable page scan; its OCR lines are the reading", region_ref)
+            return _ocr_line_atoms(
+                marker=marker, pdf_name=pdf_name, page_index=page_index, region_ref=region_ref,
+                image_kind="page_scan_text", ocr_text=ocr_text,
             )
-            logger.info("pdf_image_vision: %s is a readable page scan; page OCR carries it", region_ref)
-            return []
     except Exception:
         pass
     raw = _vlm(

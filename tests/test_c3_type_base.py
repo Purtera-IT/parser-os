@@ -268,7 +268,8 @@ def test_atoms_to_deal_maps_the_export_fields():
     # A file the lifecycle dataset does not know reads as training's "file".
     assert rows["atm1"].doc_kind == "file" and rows["atm1"].doc_id == "doc"
     assert rows["atm2"].doc_kind == "email"
-    assert (rows["atm2"].speaker_role, rows["atm2"].speaker_side) == ("reseller", "theirs")
+    # c3_record.sender: a reseller on the other side is a partner (training's rule).
+    assert (rows["atm2"].speaker_role, rows["atm2"].speaker_side) == ("reseller", "partner")
     # "customer" is no speaker role training saw: it reads as ''.
     assert rows["atm3"].doc_kind == "meeting" and rows["atm3"].speaker_role == ""
     assert rows["atm1"].entered_at == rows["atm2"].entered_at
@@ -334,7 +335,8 @@ def test_speaker_values_outside_training_read_empty():
               ref=_Ref(artifact_type="email"))
     a.value = {"said_by": {"role_guess": "installer", "side": "OURS"}}
     row = c3.atoms_to_deal([a]).atoms[0]
-    assert (row.speaker_role, row.speaker_side) == ("", "ours")
+    # Our own side is our own staff, whatever role the guess named (c3_record.sender).
+    assert (row.speaker_role, row.speaker_side) == ("internal", "ours")
 
 
 def test_a_deal_kit_found_by_sha_is_never_acted_on(monkeypatch, llm, lifecycle):
@@ -559,7 +561,7 @@ def test_a_sure_value_carrying_type_is_the_bases_and_the_llm_only_fills_its_fiel
     assert c3.status()["typing"]["filled"] == 1
 
 
-def test_a_failed_fill_sends_the_line_back_to_the_full_llm(monkeypatch):
+def test_a_failed_fill_keeps_the_bases_type_and_never_reaches_the_full_llm(monkeypatch):
     monkeypatch.setenv("SOWSMITH_C3_TYPE", "1")
     monkeypatch.setenv("SOWSMITH_C3_TYPES", "stakeholder")
     atoms = _atoms()
@@ -572,8 +574,12 @@ def test_a_failed_fill_sends_the_line_back_to_the_full_llm(monkeypatch):
 
     monkeypatch.setattr(tac, "_call_ollama", _fake)
     tac.classify_atoms(atoms)
-    assert any("a_heavy" in p for p in prompts if "TAXONOMY" in p)
-    assert c3.status()["typing"]["fill_back_to_llm"] == 1
+    # The base decided what the line is; a dead fill call costs its values, never its type.
+    assert not any("a_heavy" in p for p in prompts if "TAXONOMY" in p)
+    heavy = next(a for a in atoms if a.id == "a_heavy")
+    assert str(getattr(heavy.atom_type, "value", heavy.atom_type)) == "stakeholder"
+    assert heavy.value["c3_label"]["act"] == "assign" and c3.base_decided(heavy)
+    assert c3.status()["typing"]["fill_failed_kept_type"] == 1
 
 
 def test_the_typing_layer_runs_without_ml_code(monkeypatch, llm):
@@ -823,3 +829,129 @@ def test_a_town_only_site_line_gets_a_site_id_and_key():
     a = N(atom_type=AtomType("physical_site"), raw_text="Location is Fairfield, CA.", entity_keys=[], value={})
     assert C.own_site_keys([a]) == 1
     assert a.value["site_id"] == "fairfield_ca" and "site:fairfield_ca" in a.entity_keys
+
+
+# ------------------------------------------- sender / stage fields (train/serve parity)
+
+
+def _sender_atoms():
+    """Envelope-like atoms: a said_by line, an email line known only by its
+    message author, a call line known only by its speaker, a file a customer
+    mailed in, and an upload nobody sent. Made-up names and addresses."""
+    def atom(i, text, doc, kind, locator=None, value=None):
+        a = _Atom(f"s{i}", text, ref=_Ref(filename=f"{doc}.file", artifact_type=kind,
+                                          locator=locator or {}, artifact_id=doc))
+        a.artifact_id = doc
+        a.value = value or {}
+        return a
+
+    return [
+        atom(1, "We can supply the cabling at the quoted rate.", "mail1", "email",
+             {"sent_at": "2026-06-02T10:00:00Z", "message_index": 0},
+             {"said_by": {"name": "Rae Partner", "email": "rae@example-reseller.test", "side": "partner",
+                          "role_guess": "reseller"}}),
+        atom(2, "Attached is the updated scope for the lobby.", "mail1", "email",
+             {"sent_at": "2026-06-02T10:00:00Z", "message_index": 1},
+             {"email_thread": {"message": {"index": 1, "author": "Dana Field <dana@purtera-it.com>"}}}),
+        atom(3, "The ceiling in the break room is twelve feet.", "call1", "transcript",
+             {"utterance_index": 3, "speaker": "Sam Client", "sent_at": "2026-06-03T09:00:00Z"}),
+        atom(4, "Mount four displays on the north wall.", "scope1", "docx", {"section_path": ["Scope"]}),
+        atom(5, "Site address: 1 Example Way.", "upload1", "xlsx", {"sheet": "Sites"}),
+    ]
+
+
+_SENDER_DOCS = [
+    {"doc_id": "mail1", "kind": "email", "sent_at": "2026-06-02T10:00:00Z", "authored_at": None,
+     "filename": "mail1.file", "role": "",
+     "origin": {"direction": "customer_inbound", "sender_email": "sam@client-co.test", "sender_name": "Sam Client",
+                "via": "email"}},
+    {"doc_id": "call1", "kind": "meeting", "sent_at": None, "authored_at": "2026-06-03T09:00:00Z",
+     "filename": "call1.file", "role": "", "origin": {}},
+    {"doc_id": "scope1", "kind": "file", "sent_at": "2026-06-04T09:00:00Z", "authored_at": None,
+     "filename": "scope1.file", "role": "",
+     "origin": {"direction": "customer_inbound", "sender_email": "sam@client-co.test", "sender_name": "Sam Client",
+                "via": "email"}},
+    {"doc_id": "upload1", "kind": "file", "sent_at": None, "authored_at": None, "filename": "upload1.file",
+     "role": "", "origin": {"via": "upload"}},
+]
+
+_TIMELINE = {"transitions": [{"ts": "2026-06-01T00:00:00Z", "label": "Qualified to buy"},
+                             {"ts": "2026-06-03T12:00:00Z", "label": "Submitted for Quoting"}]}
+
+
+def _training_rows(docs, timeline):
+    """The training export's rows for the same lines: the labeling page's
+    shape (saidBy, messageOf author, a call line's speaker) through the one
+    deal-record rule, ``c3_record.build_rows`` (ml/c3/export.py on the
+    training branch)."""
+    from c3_record import build_rows
+
+    lines = [
+        {"key": "s1", "doc_id": "mail1", "atom_id": "s1",
+         "said_by": {"name": "Rae Partner", "email": "rae@example-reseller.test", "side": "partner",
+                     "role": "reseller"}},
+        {"key": "s2", "doc_id": "mail1", "atom_id": "s2", "message_author": "Dana Field <dana@purtera-it.com>"},
+        {"key": "s3", "doc_id": "call1", "atom_id": "s3", "speaker_name": "Sam Client"},
+        {"key": "s4", "doc_id": "scope1", "atom_id": "s4"},
+        {"key": "s5", "doc_id": "upload1", "atom_id": "s5"},
+    ]
+    return {r["atom_id"]: r for r in build_rows(lines, docs, latest_fallback=0.0, timeline=timeline)}
+
+
+_FIELDS = ("speaker_side", "speaker_role", "speaker_org", "doc_direction", "stage_at")
+
+
+def test_read_rows_carry_the_trained_sender_and_stage_fields(monkeypatch):
+    monkeypatch.setattr(c3, "_section", lambda a: "")
+    c3.set_deal(_SENDER_DOCS, stage_timeline=_TIMELINE)
+    try:
+        _deal, rows, _keys = c3._rows(_sender_atoms())
+    finally:
+        c3.set_deal(None)
+    got = {r["atom_id"]: r for r in rows}
+    want = _training_rows(_SENDER_DOCS, _TIMELINE)
+    for aid in want:
+        for f in _FIELDS:
+            assert f in got[aid], (aid, f)
+            assert got[aid][f] == want[aid][f], (aid, f, got[aid][f], want[aid][f])
+        # The inputs are read, never sent.
+        assert not {"said_by", "said_to", "message_author", "speaker_name"} & set(got[aid])
+    # Every line, not only the said_by one.
+    assert (got["s1"]["speaker_side"], got["s1"]["speaker_role"], got["s1"]["speaker_org"]) == \
+        ("partner", "reseller", "external")
+    assert (got["s2"]["speaker_side"], got["s2"]["speaker_org"]) == ("ours", "internal")
+    assert (got["s3"]["speaker_side"], got["s3"]["speaker_org"]) == ("theirs", "external")
+    assert (got["s4"]["speaker_side"], got["s4"]["doc_direction"]) == ("theirs", "inbound")
+    assert got["s1"]["doc_direction"] == "inbound"
+    # CRM stage at arrival: before the quoting transition is scoping, after it quoted.
+    assert got["s1"]["stage_at"] == "scoping" and got["s4"]["stage_at"] == "quoted"
+    # An upload nobody sent: no sender, as today ('').
+    assert (got["s5"]["speaker_side"], got["s5"]["speaker_org"], got["s5"]["doc_direction"]) == ("", "", "")
+
+
+def test_sender_fields_are_empty_when_nothing_is_known(monkeypatch):
+    monkeypatch.setattr(c3, "_section", lambda a: "")
+    c3.set_deal(None)
+    a = _Atom("x1", "Mount four displays on the north wall.", ref=_Ref(artifact_type="docx"))
+    _deal, rows, _keys = c3._rows([a])
+    for f in ("speaker_side", "speaker_role", "speaker_org", "doc_direction"):
+        assert rows[0][f] == "", f
+    # No milestone and no CRM history: the deal has not left scoping (training's rule).
+    assert rows[0]["stage_at"] == "scoping"
+
+
+def test_deal_payload_sends_the_sender_and_stage_fields(monkeypatch):
+    monkeypatch.setattr(c3, "_section", lambda a: "")
+
+    class _Line:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    class _Deal:
+        deal_id, company = "d", "purtera"
+        atoms = [_Line(key="k", text="t", entered_at=1.0, doc_id="d1", doc_kind="email", section="",
+                       order=0.0, speaker_role="internal", speaker_side="ours", atom_id="k",
+                       speaker_org="internal", doc_direction="outbound", stage_at="quoted")]
+
+    row = c3.deal_payload(_Deal)["atoms"][0]
+    assert (row["speaker_org"], row["doc_direction"], row["stage_at"]) == ("internal", "outbound", "quoted")

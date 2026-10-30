@@ -7,11 +7,12 @@ before prefill — the same seam pattern as :mod:`app.core.quote_context_head`.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.training_log import TEACHER_STORE, TrainingRow, log_rows
+from app.core.training_log import TEACHER_RULE, TrainingRow, log_rows, rule_rows_enabled
 
 SITE_FACILITY_RELATION = "site_facility_label"
 CITY_OFFICE = "city_office"
@@ -81,6 +82,13 @@ def _facility_corpus(atom: Any) -> str:
     ).strip()
 
 
+def facility_promoted() -> bool:
+    """``SOWSMITH_C3_FACILITY_PROMOTED`` (default off): the facility head is
+    trusted to invent a "<City> Office" name. Off, a city_office verdict keeps
+    the verbatim name the documents gave."""
+    return os.environ.get("SOWSMITH_C3_FACILITY_PROMOTED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _rule_facility_label(atom: Any) -> SiteFacilityDecision:
     val = _atom_value(atom)
     raw_name = str(val.get("facility_name") or val.get("name") or "").strip()
@@ -140,7 +148,11 @@ def decide_site_facility_label(atom: Any) -> SiteFacilityDecision:
                 if hd.verdict and not hd.route_llm:
                     val = _atom_value(atom)
                     city = _title_city(str(val.get("city") or ""))
-                    if hd.verdict == CITY_OFFICE and city:
+                    # "<City> Office" is a name nobody wrote: the rule path
+                    # stopped making it, and jdg:facility (the C3 head that
+                    # replaces this one) scores below live (0.26-0.28). It is
+                    # composed only once facility is promoted.
+                    if hd.verdict == CITY_OFFICE and city and facility_promoted():
                         facility = f"{city} Office"
                     else:
                         facility = str(val.get("facility_name") or val.get("name") or "").strip() or "Site 1"
@@ -210,14 +222,17 @@ def annotate_site_facility_labels(atoms: list[Any], *, project_id: str = "") -> 
             )
         val = dict(_atom_value(atom))
         corpus = _facility_corpus(atom)
-        if decision.route_trainable and corpus:
+        # A rule's own output is not a label (owner rule): logged only under
+        # SOWSMITH_LOG_RULE_ROWS, as teacher=rule, which retrain_all skips.
+        logged = bool(decision.route_trainable and corpus and rule_rows_enabled())
+        if logged:
             log_rows([
                 TrainingRow(
                     relation=SITE_FACILITY_RELATION,
                     label=decision.label,
                     raw_text=corpus[:4000],
                     label_kind="judgment",
-                    teacher=TEACHER_STORE,
+                    teacher=TEACHER_RULE,
                     confidence=decision.confidence,
                     deal_id=project_id,
                     project_id=project_id,
@@ -240,7 +255,7 @@ def annotate_site_facility_labels(atoms: list[Any], *, project_id: str = "") -> 
             flags.append(flag)
         if decision.source == "neural_head" and "facility_label_neural_head" not in flags:
             flags.append("facility_label_neural_head")
-        elif decision.route_trainable and "facility_label_training_row" not in flags:
+        elif logged and "facility_label_training_row" not in flags:
             flags.append("facility_label_training_row")
         # A site the evidence could not name, and a name two rows share,
         # both stay visible to review instead of shipping as a number or

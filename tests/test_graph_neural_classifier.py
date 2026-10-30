@@ -218,3 +218,34 @@ def test_edge_gate_noop_when_undertrained():
         ambiguous_families={"semantic_link"},
     )
     assert kept == edges and dropped == 0
+
+
+def test_sparse_adjacency_equals_the_dense_one():
+    import numpy as np
+    from types import SimpleNamespace as NS
+    from app.core import graph_neural_classifier as g
+
+    atoms = [NS(id=f"a{i}", entity_keys=ks) for i, ks in enumerate(
+        [["site:a", "dev:x"], ["site:a"], ["dev:x", "part:1"], [], ["part:1"], ["site:b"]])]
+    dense = g.build_adjacency(atoms)
+    sparse = g.build_adjacency_sparse(atoms).toarray()
+    assert np.allclose(dense, sparse, atol=1e-6)
+    v = np.random.RandomState(0).rand(len(atoms), 8).astype(np.float32)
+    assert np.allclose(g.diffuse(v, dense), np.asarray(g.diffuse(v, g.build_adjacency_sparse(atoms))), atol=1e-5)
+
+
+def test_a_big_deals_gate_trains_on_a_capped_seeded_sample(monkeypatch):
+    from types import SimpleNamespace as NS
+    from app.core import graph_neural_classifier as g
+
+    monkeypatch.setenv("SOWSMITH_EDGE_GATE_MAX_TRAIN", "10")
+    atoms = [NS(id=f"a{i}", entity_keys=[f"k{i}"]) for i in range(80)]
+    fam = "value_support"
+    edges = [NS(from_atom_id=f"a{i}", to_atom_id=f"a{i + 1}", edge_family=fam, edge_type="supports") for i in range(40)]
+    monkeypatch.setattr(g, "_edge_family", lambda e: e.edge_family)
+    monkeypatch.setattr(g, "_edge_type_str", lambda e: e.edge_type)
+    idx = {a.id: i for i, a in enumerate(atoms)}
+    lab = g._build_labeled_pairs(atoms, edges, idx, high_precision_families={fam}, min_train=6)
+    pos = [p for p in lab if p[2] != g.NO_EDGE]
+    assert len(pos) == 10 and len(lab) - len(pos) == 10
+    assert lab == g._build_labeled_pairs(atoms, edges, idx, high_precision_families={fam}, min_train=6)  # seeded

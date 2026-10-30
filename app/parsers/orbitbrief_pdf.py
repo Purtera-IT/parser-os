@@ -653,6 +653,18 @@ def _looks_like_fragment(text: str) -> bool:
     return False
 
 
+
+class _SchematicPrepassOff(Exception):
+    """The retired schematic pre-pass is off (SOWSMITH_SCHEMATIC_PREPASS)."""
+
+
+def schematic_prepass_enabled() -> bool:
+    """``SOWSMITH_SCHEMATIC_PREPASS`` (default off): the retired schematic pre-pass. Schematics are
+    no longer accepted (PR #44); it produced most of a drawing-heavy deal's atoms, all failing receipts."""
+    import os as _os
+
+    return _os.environ.get("SOWSMITH_SCHEMATIC_PREPASS", "").strip().lower() in ("1", "true", "yes", "on")
+
 class OrbitBriefPdfParser(BaseParser):
     """Parses ``.pdf`` artifacts into the OrbitBrief structured schema and EvidenceAtoms."""
 
@@ -789,6 +801,10 @@ class OrbitBriefPdfParser(BaseParser):
         schematic_atoms: list[EvidenceAtom] = []
         schematic_derived: list[dict[str, Any]] = []
         try:
+            # Retired (schematics are no longer accepted, PR #44): off unless SOWSMITH_SCHEMATIC_PREPASS
+            # is on. On cc9e4450 it made 4,114 atoms (77% of the deal), every receipt failing.
+            if not schematic_prepass_enabled():
+                raise _SchematicPrepassOff
             schematic_atoms, schematic_derived = _run_schematic_pre_pass(
                 project_id=project_id,
                 artifact_id=artifact_id,
@@ -796,6 +812,8 @@ class OrbitBriefPdfParser(BaseParser):
                 parser_version=self.parser_version,
                 domain_pack=domain_pack,
             )
+        except _SchematicPrepassOff:
+            schematic_atoms, schematic_derived = [], []
         except Exception as exc:
             import traceback as _tb
 

@@ -926,6 +926,21 @@ def _speech_or_stated_fact(atom: Any, text: str) -> bool:
 _ROUTING_HEADER_KINDS = frozenset({"email_header", "quoted_message_header", "hubspot_note_meta"})
 
 
+_SCANNED_TYPES = frozenset({"pdf", "image"})
+
+
+def _scanned(atom: Any) -> bool:
+    """The line came off a scan, a picture or a PDF page (where OCR debris lives)."""
+    for ref in getattr(atom, "source_refs", None) or []:
+        at = getattr(ref, "artifact_type", None)
+        if str(getattr(at, "value", at) or "") in _SCANNED_TYPES:
+            return True
+        m = str(getattr(ref, "extraction_method", "") or "").lower()
+        if "ocr" in m or "vision" in m or "image" in m:
+            return True
+    return False
+
+
 def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Drop atoms whose text is OCR debris rather than words (see text_quality).
 
@@ -949,6 +964,14 @@ def drop_unreadable_text(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         # dictionary words, so it scored as debris and every email lost the
         # header that names its sender and date (live 010087).
         if str(_atom_value(atom).get("kind") or "") in _ROUTING_HEADER_KINDS:
+            kept.append(atom)
+            continue
+        # Debris is what a scan or a picture yields. A line somebody typed (a
+        # CRM note, an email, a transcript, a document's text layer other than
+        # a PDF) is words whatever a dictionary thinks: 010238's
+        # "ecu health, novant, duke, wakemed." -- the four health systems the
+        # job is for -- was dropped here before the heads could read it.
+        if not _scanned(atom):
             kept.append(atom)
             continue
         text = _atom_text(atom)
@@ -1486,6 +1509,16 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     """Run all drops. Returns (kept, dropped). ``dropped`` is the union across
     passes; the compiler routes it into the retained-suppression ledger."""
     all_dropped: list[Any] = []
+    # A line the C3 base decided (c3_type_base.base_decided) is the heads' call, not a rule's: each
+    # drop leaves it in place and counts what it would have done (SOWSMITH_C3_RULES_YIELD).
+    try:
+        from app.core.c3_type_base import yield_split as _yield
+    except Exception:  # pragma: no cover - the gate never depends on the C3 layer
+        def _yield(_rule, fn):
+            return fn
+
+    def _guarded(pass_fn, current):
+        return _yield(getattr(pass_fn, "__name__", "substance_gate"), pass_fn)(current)
 
     def _run(pass_fn, current):
         """Run one drop pass. Advisory passes keep the words and lose the claim.
@@ -1496,7 +1529,7 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
         demoted out of scope and flagged, and the labeller's verdict on them is
         what `line_admission` is trained on.
         """
-        surviving, removed = pass_fn(current)
+        surviving, removed = _guarded(pass_fn, current)
         if pass_fn in _ADVISORY_PASSES:
             for atom in removed:
                 _demote_out_of_scope(atom)
@@ -1509,15 +1542,15 @@ def apply_substance_gate(atoms: list[Any]) -> tuple[list[Any], list[Any]]:
     kept = _run(drop_contact_chrome, kept)
     kept = _run(drop_section_headers, kept)
     kept = _run(drop_email_non_scope, kept)
-    kept, d = drop_transcript_conversational(kept)
+    kept, d = _guarded(drop_transcript_conversational, kept)
     all_dropped.extend(d)
-    kept, d = demote_transcript_smalltalk(kept)
+    kept, d = _guarded(demote_transcript_smalltalk, kept)
     all_dropped.extend(d)
-    kept, d = drop_risk_fragments(kept)
+    kept, d = _guarded(drop_risk_fragments, kept)
     all_dropped.extend(d)
     kept, d = collapse_ambiguous_user_quantities(kept)
     all_dropped.extend(d)
-    kept, d = drop_unreadable_text(kept)
+    kept, d = _guarded(drop_unreadable_text, kept)
     all_dropped.extend(d)
     # A drawing is a drawing wherever it was written: a note field, an email
     # sentence, a wrapped Outlook link. Find it before anything decides the

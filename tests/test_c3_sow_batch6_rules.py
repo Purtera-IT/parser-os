@@ -538,3 +538,14 @@ def test_hours_are_stated_only_when_a_source_gives_them():
     c = {"schedule": []}
     m._roles_and_hours(c, [_fact("d", "Two technicians for one full day, 4 hours per tech.")])
     assert "four (4) hours per technician" in c["schedule"][-1]["text"]
+
+
+def test_contract_termination_clauses_are_not_cabling():
+    """010362 / 010395: the only cabling-router hits were the SOW's TERMINATION clauses."""
+    legal = [_fact("a", "Either party may terminate this SOW with thirty days written notice."),
+             _fact("b", "Upon termination, Customer shall pay for services rendered."),
+             _fact("c", "Provide smart hands to validate the circuit at the demarc.")]
+    assert m._route_family("smart_hands_general", legal) == "smart_hands_general"
+    cabling = [_fact("a", "Terminate all Cat6 cables on the patch panel in the IDF."),
+               _fact("b", "Pull and terminate 24 drops to the new jacks.")]
+    assert m._route_family("smart_hands_general", cabling) == "low_voltage_cabling"

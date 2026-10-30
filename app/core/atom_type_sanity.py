@@ -2269,9 +2269,16 @@ def apply_type_sanity(
     :func:`demote_unearned_contract_authority`; omitted, that pass is a
     no-op rather than a guess.
     """
+    # A line the C3 base decided stays: these two passes drop lines, and each leaves a base-decided
+    # line in place and counts what it would have done (c3_type_base.yield_inplace).
+    try:
+        from app.core.c3_type_base import yield_inplace as _yield
+    except Exception:  # pragma: no cover - sanity never depends on the C3 layer
+        def _yield(_rule, fn, *a, **k):
+            return fn(*a, **k)
     demoted = demote_nondeliverable_quantities(atoms)
-    demoted += strip_document_chrome(atoms)
-    demoted += merge_signature_rows(atoms)
+    demoted += _yield("strip_document_chrome", strip_document_chrome, atoms)
+    demoted += _yield("merge_signature_rows", merge_signature_rows, atoms)
     demoted += demote_signatory_chrome(atoms)
     demoted += retype_product_codes(atoms)
     demoted += retype_rate_terms_off_change_orders(atoms)

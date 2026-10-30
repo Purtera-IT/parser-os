@@ -1037,9 +1037,16 @@ class DocxParser(BaseParser):
                 _uniq = _row_texts_once(row_cells)
                 if len(_uniq) >= 4 and len(_uniq) % 2 == 0:
                     _pairs = [(_uniq[i], _uniq[i + 1]) for i in range(0, len(_uniq), 2)]
+                    # Only when every value sits beside a label: a cell merged
+                    # across columns leaves blanks in the grid ("TOTAL | '' |
+                    # '' | $191,000.83"), which pair as (TOTAL, '') and ('',
+                    # $191,000.83) -- not a form row. Read as one, it dropped
+                    # both and the empty row atom aborted the whole document
+                    # (010245 SOW v3/v4, 010355's three revised ROMs).
                     if all(lbl and len(lbl) <= 40 and not re.search(r"\d", lbl) for lbl, _v in _pairs if lbl) \
+                            and all(lbl for lbl, v in _pairs if v) \
                             and any(not v for lbl, v in _pairs if lbl) and any(v for _l, v in _pairs):
-                        row_text = " | ".join(f"{lbl} | {v}" for lbl, v in _pairs if lbl and v)
+                        row_text = " | ".join(f"{lbl} | {v}" for lbl, v in _pairs if lbl and v) or row_text
                 # One value alone on its row ("Chase Smith", the rest blank)
                 # says nothing without its column's name: "Name: Chase Smith".
                 if row_idx > 0:
@@ -1169,6 +1176,13 @@ class DocxParser(BaseParser):
                             review_flags=[CHATTER_FLAG, "table_header"],
                             parser_version=self.parser_version,
                         ))
+                # A row whose text came out empty is skipped, never emitted:
+                # one empty atom fails validation and the whole document is
+                # lost with it.
+                if not row_text.strip():
+                    row_text = " | ".join(t for t in cell_texts if t.strip())
+                if not row_text.strip():
+                    continue
                 # v49.2: emit a raw_table_row atom alongside the legacy
                 # row blob. The centralized _enrich_table_atoms() in
                 # entity_extraction will classify all raw_table_row
@@ -3818,7 +3832,13 @@ class DocxParser(BaseParser):
                     parser_version=self.parser_version,
                 ))
                 if kind == "image_marker":
-                    atoms.extend(self._image_fact_atoms(zf, name, rel, filename, artifact_id, project_id))
+                    facts = self._image_fact_atoms(zf, name, rel, filename, artifact_id, project_id)
+                    atoms.extend(facts)
+                    outcome = getattr(self, "_last_image_outcome", None)
+                    if outcome:
+                        from app.parsers.binary_markers import mark_marker_outcome
+
+                        mark_marker_outcome(atoms[-1 - len(facts)], outcome)
         return atoms
 
     def _image_fact_atoms(self, zf: Any, name: str, rel: str, filename: str, artifact_id: str,
@@ -3827,10 +3847,12 @@ class DocxParser(BaseParser):
         010038's floor plans hold the only AP, TV and printer counts."""
         from app.core import image_describe
 
+        self._last_image_outcome = None  # the marker's status line (binary_markers.mark_marker_outcome)
         if not image_describe.enabled():
             return []
         done = getattr(self, "_described_images", 0)
         if done >= image_describe.MAX_PER_FILE:
+            self._last_image_outcome = "skipped: over the image cap"
             return []
         try:
             data = zf.read(name)
@@ -3844,7 +3866,7 @@ class DocxParser(BaseParser):
             except Exception:
                 ctx = ""
             self._doc_text_for_images = ctx
-        facts = image_describe.describe(data, filename, ctx)
+        facts, self._last_image_outcome = image_describe.describe_outcome(data, filename, ctx)
         self._described_images = done + 1
         out: list[EvidenceAtom] = []
         for i, fact in enumerate(facts):

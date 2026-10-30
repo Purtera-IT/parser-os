@@ -691,6 +691,16 @@ def find_authoritative_site_phrases(atoms: Iterable[Any]) -> set[str]:
     # fallback for when the LLM is unreachable or returns nothing.
     import os
     llm_disabled = bool(os.environ.get("SOWSMITH_SITE_LLM_DISABLE"))
+    # With the C3 heads on, the LLM does not list the deal's sites: the lines
+    # the heads (and the roster extractor) type physical_site are the sites,
+    # and the structural catalog below names the rest. 2-6 calls / up to 12 s
+    # a compile. SOWSMITH_LLM_WITH_HEADS=site_catalog restores.
+    try:
+        from app.core.c3_type_base import heads_decide as _heads_decide
+
+        llm_disabled = llm_disabled or _heads_decide("site_catalog")
+    except Exception:
+        pass
     hygiene_fn = None
     if not llm_disabled:
         try:

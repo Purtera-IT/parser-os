@@ -16,6 +16,7 @@ from app.core.cache import (
     load_cached_artifact_result,
     save_cached_artifact_result,
 )
+from app.core.c3_type_base import C3HeadsUnavailable  # SOWSMITH_C3_FALLBACK=never fails the compile
 from app.core.candidate_adjudicator import adjudicate_candidates
 from app.core.candidates import summarize_candidate_outcomes
 from app.core.entity_extraction import enrich_atoms as enrich_entity_keys
@@ -379,8 +380,16 @@ def _prefetch_parses(
     with ThreadPoolExecutor(max_workers=min(workers, len(plan)),
                             thread_name_prefix="parse") as pool:
         futures = {pool.submit(_one, aid, p, path): aid for aid, p, path in plan}
+        _done = 0
         for fut in as_completed(futures):
             aid = futures[fut]
+            _done += 1
+            try:
+                from app.core import telemetry as _tel_p
+
+                _tel_p.set_stage_progress(_done, len(plan))
+            except Exception:
+                pass
             try:
                 out[aid] = fut.result()
             except Exception:  # noqa: BLE001 - the loop will retry inline and report
@@ -809,6 +818,13 @@ def compile_project(
     try:
         from app.core import c3_type_base
 
+        # This compile's notices for the deal page start empty (heads_warming,
+        # heads_read_degraded, large_deal: compile-progress.json via the worker).
+        c3_type_base.reset_notices()
+        # The rule-fire ledger starts empty too (rule_ledger.py: every rule that overrides a head, per compile).
+        from app.core import rule_ledger as _rule_ledger
+
+        _rule_ledger.reset()
         c3_type_base.warm()
     except Exception:  # pragma: no cover - never break a compile over this
         pass
@@ -934,44 +950,48 @@ def compile_project(
     # just finds the parse already done. Anything missed here it computes
     # inline, so the worst case is the behaviour this replaced.
     _prefetched: dict[str, Any] = {}
+    # The prefetch IS the parse (38-550 s on dev; parse_artifacts then reads it in under 2 s): its
+    # own stage, so the trace times it and the heartbeat names it.
     if PARSE_WORKERS > 1 and len(artifacts) > 1:
-        _plan: list[tuple[str, Any, Any]] = []
-        for _art in artifacts:
-            try:
-                _rel = str(_art.relative_to(project_dir)).replace("\\", "/")
-                _aid = stable_id("art", resolved_project_id, _rel)
-                _p, _m, _ = choose_parser(_art, domain_pack=resolved_domain_pack)
-                if _p is None:
-                    continue
-                # Skip what the cache already holds. Without this a warm
-                # re-compile would parse every artifact concurrently and then
-                # throw all of it away, which is slower than the sequential
-                # path it replaced -- the prefetch has to respect the same
-                # cache the loop consults, or it is not an optimisation.
-                if use_cache:
-                    _pv = f"{_p.capability.parser_version}+code{_parser_code_fingerprint()}"
-                    if load_cached_artifact_result(
-                        artifact_id=_aid,
-                        sha256=compute_artifact_sha256(_art),
-                        parser_name=_m.parser_name,
-                        parser_version=_pv,
-                        domain_pack_id=resolved_domain_pack.pack_id,
-                        domain_pack_version=resolved_domain_pack.version,
-                    ) is not None:
+        with telemetry.stage("parse_prefetch", input_count=len(artifacts)) as _pstage:
+            _plan: list[tuple[str, Any, Any]] = []
+            for _art in artifacts:
+                try:
+                    _rel = str(_art.relative_to(project_dir)).replace("\\", "/")
+                    _aid = stable_id("art", resolved_project_id, _rel)
+                    _p, _m, _ = choose_parser(_art, domain_pack=resolved_domain_pack)
+                    if _p is None:
                         continue
-                _plan.append((_aid, _p, _art))
-            except Exception:  # noqa: BLE001 - planning must not break the compile
-                continue
-        if _plan:
-            try:
-                _prefetched = _prefetch_parses(
-                    _plan, project_id=resolved_project_id,
-                    domain_pack=resolved_domain_pack, workers=PARSE_WORKERS,
-                )
-            except Exception:  # noqa: BLE001 - fall back to the sequential path
-                logging.getLogger(__name__).warning(
-                    "parse prefetch unavailable; parsing inline", exc_info=True)
-                _prefetched = {}
+                    # Skip what the cache already holds. Without this a warm
+                    # re-compile would parse every artifact concurrently and then
+                    # throw all of it away, which is slower than the sequential
+                    # path it replaced -- the prefetch has to respect the same
+                    # cache the loop consults, or it is not an optimisation.
+                    if use_cache:
+                        _pv = f"{_p.capability.parser_version}+code{_parser_code_fingerprint()}"
+                        if load_cached_artifact_result(
+                            artifact_id=_aid,
+                            sha256=compute_artifact_sha256(_art),
+                            parser_name=_m.parser_name,
+                            parser_version=_pv,
+                            domain_pack_id=resolved_domain_pack.pack_id,
+                            domain_pack_version=resolved_domain_pack.version,
+                        ) is not None:
+                            continue
+                    _plan.append((_aid, _p, _art))
+                except Exception:  # noqa: BLE001 - planning must not break the compile
+                    continue
+            if _plan:
+                try:
+                    _prefetched = _prefetch_parses(
+                        _plan, project_id=resolved_project_id,
+                        domain_pack=resolved_domain_pack, workers=PARSE_WORKERS,
+                    )
+                except Exception:  # noqa: BLE001 - fall back to the sequential path
+                    logging.getLogger(__name__).warning(
+                        "parse prefetch unavailable; parsing inline", exc_info=True)
+                    _prefetched = {}
+            telemetry.end_stage(_pstage, output_count=len(_prefetched))
 
     with telemetry.stage("parse_artifacts", input_count=len(artifacts)) as stage:
         # The longest stage in 23% of compiles. It already NAMES the file it is
@@ -2108,7 +2128,9 @@ def compile_project(
     # admission 1,103 s, open questions 120 s, bom_owner 323 s; 655 s the night
     # before, when the store happened to be ready).
     try:
-        if True:
+        from app.core.decide import lesson_lookup_enabled as _lessons_on
+
+        if _lessons_on():
             from app.core.embedding_retrieval import embed_texts as _warm_embed
 
             _t_warm = time.perf_counter()
@@ -2129,8 +2151,24 @@ def compile_project(
         _c3_deal.set_deal(None)
         if _c3_deal.enabled() or _c3_deal.document_job_enabled():
             _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
+            from app.core.orbitbrief_envelope import _load_manifest_crm, _load_manifest_read, _load_manifest_run_cutoff
+            from c3_record import read_with_deal
+
+            # as_of: a run with a cutoff is the quoting read, one without the planning read
+            # (c3_record.view.of_run), the view the training rows carry.
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
-                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")})
+                              {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")},
+                              stage_timeline=(_load_manifest_crm(project_dir) or {}).get("stage_timeline"),
+                              as_of=_load_manifest_run_cutoff(project_dir),
+                              read=_load_manifest_read(project_dir))
+            # The copies a pre-read fold set aside are lines of the deal's read in training
+            # (c3_record.read_with_deal), so the base reads them too.
+            _c3_deal.also_read([
+                a for a in suppressed_atoms
+                if isinstance(getattr(a, "value", None), dict)
+                and a.value.get("_suppression")
+                and read_with_deal(a.value["_suppression"])
+            ] + held_chatter + held_headings)
     except Exception as exc:
         warnings.append(f"WARNING: C3 deal record failed: {type(exc).__name__}: {exc}")
 
@@ -2151,6 +2189,18 @@ def compile_project(
                 # so a brief built from the wrong job can be read back to the
                 # judgement that let it in.
                 _djs_notes.extend(_djs.verdict_note(_v) for _v in _djs_verdicts)
+                # And to the brief (c3_brief.document_gate), so the envelope shows what decided
+                # which documents feed it.
+                try:
+                    from app.core import c3_type_base as _c3_djs
+
+                    _c3_djs._DEAL["document_job"] = [
+                        {k: _v.get(k) for k in ("filenames", "verdict", "model_verdict", "confidence", "source",
+                                                 "c3_verdict", "c3_confidence", "drawing_spared", "content_spared",
+                                                 "share_rule_spared", "reason", "atoms", "c3_bar", "c3_docs")}
+                        for _v in _djs_verdicts]
+                except Exception:
+                    pass
                 if _dropped_djs:
                     # Each set-aside conversation carries ITS reason (who said
                     # other_job, how sure, about which title) onto every atom it
@@ -2175,9 +2225,29 @@ def compile_project(
                         )
                     _djs_dropped = len(_dropped_djs)
                 warnings.extend(_djs_notes)
+        except C3HeadsUnavailable:
+            raise
         except Exception as exc:
             warnings.append(f"WARNING: document_job_scope failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=_djs_dropped, warnings=_djs_notes)
+
+    # A disabled document-job stage must not admit other jobs into a view: training's views drop the
+    # documents the base's document head sets aside (c3_record.document_job.set_aside).
+    try:
+        from app.core import c3_type_base as _c3_view
+        from app.core import document_job_scope as _djs_v
+        from app.core.orbitbrief_envelope import _load_manifest_crm as _c3_crm_v
+
+        if _c3_view.view_name() and not _djs_v.enabled() and _c3_view.view_drops_other_job() \
+                and (_c3_view.enabled() or _c3_view.document_job_enabled()):
+            _other = _c3_view.other_job_by_head(
+                atoms, deal_name=_djs_v.deal_name_from_manifest(project_dir) or "",
+                crm=_c3_crm_v(project_dir) or {})
+            _c3_view.set_other_job(_other)
+    except C3HeadsUnavailable:
+        raise
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 view other-job set-aside failed: {type(exc).__name__}: {exc}")
 
     # v47 typed-atom classification — promotes scope_item / entity
     # into the rich taxonomy (milestone_phase, stakeholder, bom_line,
@@ -2201,6 +2271,8 @@ def compile_project(
         _auth_n = _c3_auth.apply_authority(atoms)
         if _auth_n:
             warnings.append(f"INFO: C3 base typed {_auth_n} line(s) before typing (authority)")
+    except C3HeadsUnavailable:
+        raise
     except Exception as exc:
         warnings.append(f"WARNING: C3 type authority failed: {type(exc).__name__}: {exc}")
 
@@ -2217,6 +2289,8 @@ def compile_project(
                 )
             else:
                 promoted = classify_atoms(atoms)
+        except C3HeadsUnavailable:
+            raise
         except Exception as exc:
             warnings.append(f"WARNING: typed_atom_classifier failed: {type(exc).__name__}: {exc}")
         if promoted:
@@ -2498,6 +2572,16 @@ def compile_project(
                 atoms, dropped_vendor = suppress_vendor_sites(
                     atoms, project_id=resolved_project_id
                 )
+                if dropped_vendor:
+                    from app.core import rule_ledger as _rl_vendor
+
+                    _kept_ids = {id(_a) for _a in atoms}
+                    for _a in before_vendor_atoms:
+                        if id(_a) not in _kept_ids:
+                            _rl_vendor.fire("site_geo_fallback.vendor_suppress", _a, _rl_vendor.head_of(_a),
+                                            "not:physical_site", "vendor letterhead address")
+                    if _rl_vendor.shadow("site_geo_fallback.vendor_suppress"):
+                        atoms, dropped_vendor = before_vendor_atoms, 0
                 if dropped_vendor:
                     merge_suppressed(
                         suppressed_atoms,
@@ -3195,6 +3279,25 @@ def compile_project(
             warnings.append(f"INFO: recalibrated confidence on {recal_count} atoms")
         telemetry.end_stage(stage, output_count=recal_count, warnings=_stage_notes)
 
+    # The heads' types back on every line a rule re-typed since typing, BEFORE the roster, entities
+    # and packets are built from them (the restore at the end of the compile came after all three).
+    # The party-address veto is spared: on 010038 it was right where the site head was wrong.
+    try:
+        from app.core import c3_type_base as _c3_pre
+
+        _pre = _c3_pre.apply_authority(
+            atoms, final=True,
+            spare=lambda a: "party_address" in (getattr(a, "review_flags", None) or []))
+        if _pre:
+            warnings.append(f"INFO: C3 base restored {_pre} line(s) a rule had re-typed, before entity_resolution")
+        for _rule, _n in sorted(_c3_pre.rules_yielded().items()):
+            warnings.append(f"INFO: C3 rule yield: {_rule} left {_n['kept']} base-decided line(s) it would "
+                            f"have dropped; {_n['retyped']} re-typed")
+    except C3HeadsUnavailable:
+        raise
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 restore before entity_resolution failed: {type(exc).__name__}: {exc}")
+
     with telemetry.stage("entity_resolution", input_count=len(atoms)) as stage:
         entities = resolve_aliases(
             extract_entity_records(resolved_project_id, atoms, pack=resolved_domain_pack)
@@ -3669,22 +3772,123 @@ def compile_project(
         _fa = _c3_final.apply_authority(atoms, final=True)
         if _fa:
             warnings.append(f"INFO: C3 base restored {_fa} line(s) a rule had re-typed (authority)")
+        _cf = _c3_final.record_confirms(atoms)
+        if _cf:
+            warnings.append(f"INFO: C3 base confirmed the parser's type on {_cf} line(s) typing never saw")
+        try:
+            from app.core.party_address_veto import follow_party_copies
+
+            _pc = follow_party_copies(atoms, _c3_final._DEAL.get("types"))
+            if _pc:
+                warnings.append(f"INFO: {len(_pc)} bare copy(ies) of a party's address follow its contact line (stakeholder, not a site)")
+        except Exception as exc:
+            warnings.append(f"WARNING: follow_party_copies failed: {type(exc).__name__}: {exc}")
+        try:
+            from app.core.pm_fact_reviews import apply_reviews, load_reviews
+
+            _pmf = apply_reviews(atoms, load_reviews(resolved_project_id), _c3_final._DEAL.get("types"))
+            if _pmf:
+                warnings.append(f"INFO: {len(_pmf)} line(s) take the PM's own fix (deal page reviews)")
+        except Exception as exc:
+            warnings.append(f"WARNING: pm fact reviews skipped: {type(exc).__name__}: {exc}")
         _ok = _c3_final.own_site_keys(atoms)
         if _ok:
             warnings.append(f"INFO: {_ok} site line(s) given their own address's site key")
+        # Site keys follow the heads: split addresses joined, the heads' site
+        # lines keyed, keys no site line backs dropped (listed in the brief).
+        from app.core.site_keys_follow_heads import settle as _settle_sites
+
+        _sk = _settle_sites(atoms, _c3_final._DEAL.get("types") or {})
+        _c3_final._DEAL["site_keys"] = _sk
+        if _sk.get("dropped") or _sk.get("address_lines_joined") or _sk.get("keys_minted_from_head"):
+            warnings.append(
+                f"INFO: site keys follow the heads: {len(_sk.get('dropped') or [])} key(s) no site line backs "
+                f"dropped ({sum(d['lines'] for d in _sk.get('dropped') or [])} line(s)), "
+                f"{_sk.get('address_lines_joined', 0)} split address line(s) joined, "
+                f"{_sk.get('keys_minted_from_head', 0)} head site line(s) keyed")
+    except C3HeadsUnavailable:
+        raise
     except Exception as exc:
         warnings.append(f"WARNING: C3 final labels failed: {type(exc).__name__}: {exc}")
+
+    # A heads read that failed on the default (llm) path sent its lines to the LLM: say so loudly,
+    # and mark the compile degraded (compile_capabilities.compile_state), never a silent "done".
+    # (SOWSMITH_C3_FALLBACK=never raises instead.)
+    _c3_failures: list[dict[str, str]] = []
+    try:
+        from app.core import c3_type_base as _c3_fail
+
+        _c3_failures = _c3_fail.failures()
+        for _f in _c3_failures:
+            warnings.append(f"WARNING: C3 heads unavailable: {_f['where']} {_f['state']}"
+                            f"{' (' + _f['reason'] + ')' if _f['reason'] else ''}; its lines went to the "
+                            "LLM / old judge instead of the heads")
+        if _c3_failures:
+            print(json.dumps({"event": "c3_heads_unavailable", "project_id": str(resolved_project_id or ""),
+                              "failures": _c3_failures}, ensure_ascii=True), file=__import__("sys").stderr)
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 failure check failed: {type(exc).__name__}: {exc}")
+    # A read the service had to cut into smaller windows (out of memory) answered the deal, but
+    # not at the size the heads were trained on: the PM must see it (compile_state degraded,
+    # c3_notices -> compile-progress.json). A big deal is said too, so the page can warn early.
+    _c3_notices: dict[str, Any] = {}
+    try:
+        from app.core import c3_type_base as _c3_note
+
+        _c3_notices = _c3_note.notices()
+        _deg = _c3_notices.get(_c3_note.HEADS_READ_DEGRADED)
+        if _deg:
+            warnings.append(
+                f"WARNING: C3 heads read {_deg.get('lines')} lines in {_deg.get('max_atoms')}-line windows "
+                f"(full size {_deg.get('max_atoms_top')}) after {_deg.get('oom_retries')} out-of-memory "
+                "retr(ies); some line answers may be less accurate")
+        _big = _c3_notices.get(_c3_note.LARGE_DEAL)
+        if _big:
+            warnings.append(f"INFO: large deal: the heads read {_big.get('lines')} lines "
+                            f"(over {_big.get('threshold')}); reading may be reduced")
+        if _c3_notices:
+            print(json.dumps({"event": "c3_heads_notices", "project_id": str(resolved_project_id or ""),
+                              "notices": _c3_notices}, ensure_ascii=True), file=__import__("sys").stderr)
+    except Exception as exc:
+        warnings.append(f"WARNING: C3 notice check failed: {type(exc).__name__}: {exc}")
+    # A compile with no evidence line (e.g. its only file failed to parse) is a failed compile, and
+    # nothing downstream may price or brief a job from it.
+    _evidence_n = sum(1 for _a in atoms if str(getattr(_a, "raw_text", "") or "").strip())
+    if not _evidence_n:
+        warnings.append("ERROR: the compile produced 0 evidence atoms; recorded as failed")
 
     # Brief v2: the super heads decide what the brief says, rules where a head
     # is not yet trusted (c3_brief.py). Off unless SOWSMITH_C3_BRIEF is on.
     _c3_brief = None
+    # The quote heads read the brief's sections, job details and deal, all final before the writer's
+    # LLM calls (~18-20 s); started there, the quote's /v1/quote runs beside the writer.
+    _quote_job: dict[str, Any] = {}
+
+    def _start_quote(_b: dict[str, Any]) -> None:
+        from app.core import c3_type_base as _c3q0
+
+        if not (_c3q0.quote_enabled() and _c3q0.quote_parallel()) or _c3q0.delivery_read():
+            return
+        _snap, _qatoms = _c3q0.quote_snapshot(_b), list(atoms)
+
+        def _go() -> None:
+            try:
+                _quote_job["result"] = _c3q0.quote(_qatoms, _snap, deal_id=str(resolved_project_id or ""))
+            except BaseException as _qexc:  # re-raised on join (C3HeadsUnavailable fails the compile)
+                _quote_job["error"] = _qexc
+
+        import threading as _qthreading
+
+        _quote_job["thread"] = _qthreading.Thread(target=_go, name="c3-quote", daemon=True)
+        _quote_job["thread"].start()
+
     try:
         from app.core import c3_brief as _brief
 
         if _brief.enabled():
             with telemetry.stage("c3_brief", input_count=len(atoms)) as _bstage:
                 _c3_brief = _brief.run(atoms, packets, service_fallback=resolved_domain_pack.pack_id,
-                                        project_dir=project_dir)
+                                        project_dir=project_dir, on_built=_start_quote)
                 telemetry.end_stage(_bstage, output_count=len(_c3_brief.get("questions") or []))
             warnings.append(f"INFO: C3 brief built: heads {len(_c3_brief['decided_by']['heads_used'])}, "
                             f"fell back {len(_c3_brief['decided_by']['fell_back'])}")
@@ -3697,14 +3901,54 @@ def compile_project(
         try:
             from app.core import c3_type_base as _c3q
 
-            if _c3q.quote_enabled():
-                with telemetry.stage("c3_quote", input_count=len(atoms)):
-                    _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
-                if _q:
+            if _c3q.delivery_read():
+                # The delivery read prices nothing: the quote is the quoting read's.
+                _c3_brief["delivery"] = _c3q.delivery_payload()
+                warnings.append(f"INFO: delivery read: {len(_c3_brief['delivery']['lines'])} line(s) "
+                                f"answered by {len(_c3_brief['delivery']['heads'])} head(s)")
+            elif _c3q.quote_enabled() and not _evidence_n:
+                warnings.append("WARNING: quote heads skipped: the compile has no evidence atoms to price")
+            elif _c3q.quote_enabled():
+                with telemetry.stage("c3_quote", input_count=len(atoms)) as _qstage:
+                    if "thread" in _quote_job:
+                        _quote_job["thread"].join()
+                        if "error" in _quote_job:
+                            raise _quote_job["error"]
+                        _q = _quote_job.get("result") or {}
+                    else:
+                        _q = _c3q.quote(atoms, _c3_brief, deal_id=str(resolved_project_id or ""))
+                    # Ends the stage: without it the heartbeat reported c3_quote running for minutes
+                    # after the compile finished.
+                    telemetry.end_stage(_qstage, output_count=len((_q or {}).get("lines") or []))
+                if _q and (_q.get("degraded") or _q.get("error")):
+                    # Visible, never {}: the PM handoff and the Deal Kit prefill show the quote failed
+                    # instead of reading an empty proposal as the heads' answer.
+                    _c3_brief["quote"] = {**_q, "degraded": True, "by": "none"}
+                    warnings.append(f"WARNING: quote heads degraded: {_q.get('error')}")
+                elif _q:
                     _c3_brief["quote"] = _q
                     warnings.append(f"INFO: quote heads: {_q.get('job_type')} {len(_q.get('lines') or [])} line(s)")
+        except C3HeadsUnavailable:
+            raise
         except Exception as exc:
+            _c3_brief["quote"] = {"error": f"{type(exc).__name__}: {exc}"[:300], "by": "none", "degraded": True,
+                                  "lines": []}
             warnings.append(f"WARNING: quote heads failed: {type(exc).__name__}: {exc}")
+    if _c3_brief is not None:
+        # The left-out ids only feed the quote's filter; the envelope keeps the counts.
+        (_c3_brief.get("left_out") or {}).pop("ids", None)
+
+    # Every rule that overrode, merged, vetoed or filled a head decision this compile, with how often the head
+    # already agreed (rule_ledger.py). After the quote: its fallback picks are fires too.
+    try:
+        from app.core import rule_ledger as _rl_out
+
+        _rule_fires = _rl_out.fires()
+    except Exception as exc:  # never fail a compile over a report
+        _rule_fires = {}
+        warnings.append(f"WARNING: rule_ledger failed: {type(exc).__name__}: {exc}")
+    if _c3_brief is not None and isinstance(_c3_brief.get("decided_by"), dict):
+        _c3_brief["decided_by"]["rule_fires"] = _rule_fires
 
     # What did we NOT read? Diff every text artifact against its own atoms, so
     # a paragraph that produced nothing is visible instead of silent.
@@ -3736,6 +3980,7 @@ def compile_project(
         suppressed_atoms=sorted(suppressed_atoms, key=lambda x: x.id),
         text_coverage=_coverage,
         ledger_audit=_ledger_audit,
+        rule_fires=_rule_fires,
         c3_brief=_c3_brief,
         entities=entities,
         edges=edges,
@@ -3929,6 +4174,23 @@ def compile_project(
         from app.core.ml_capabilities import build_compile_capabilities
 
         result.compile_capabilities = build_compile_capabilities()
+        # failed: no evidence atoms; degraded: a heads read fell back to the LLM, or was read in
+        # smaller windows than full size. The worker reads this to record the compile's status
+        # instead of "done". Notices again here: a brief read after the check above counts too.
+        try:
+            from app.core import c3_type_base as _c3_note_end
+
+            _c3_notices = {**_c3_notices, **_c3_note_end.notices()}
+        except Exception:
+            pass
+        result.compile_capabilities["compile_state"] = (
+            "failed" if not _evidence_n
+            else "degraded" if (_c3_failures or _c3_notices.get("heads_read_degraded")) else "ok")
+        result.compile_capabilities["c3_ok"] = not _c3_failures
+        if _c3_failures:
+            result.compile_capabilities["c3_failures"] = _c3_failures
+        if _c3_notices:
+            result.compile_capabilities["c3_notices"] = _c3_notices
         try:
             from app.core import telemetry as _tel_calls
 
@@ -3936,6 +4198,15 @@ def compile_project(
                 _tel_calls.CALLS_BY_STAGE.items(), key=lambda kv: -(kv[1].get("llm_s", 0) + kv[1].get("embed_s", 0))))
         except Exception:
             pass
+        # Who decided what: heads vs rules vs the LLM, per kind of decision (c3_share).
+        try:
+            from app.core import c3_share as _c3_share
+
+            if _c3_brief is not None or (result.compile_capabilities.get("deflect_counts") or {}).get("c3"):
+                result.compile_capabilities["c3_decisions"] = _c3_share.summarize(
+                    list(result.atoms or []), _c3_brief, result.compile_capabilities)
+        except Exception as exc:
+            result.compile_capabilities["c3_decisions"] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
     except Exception:
         result.compile_capabilities = None
 

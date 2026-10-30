@@ -168,7 +168,18 @@ def extract_entity_records(
     # if yes, which is better". Union-find merges the entity records
     # that pass the test.
     import os as _os
-    if not _os.environ.get("SOWSMITH_FINAL_DEDUP_DISABLE") and len(records) >= 4:
+    # With the C3 heads on, the LLM does not decide which entity names are one
+    # entity: 40 calls / 32 s on 010447, renaming roster ids (dc7340 vs
+    # dc7341) by embedding similarity. Line identity is the heads' rel:same_as
+    # link (not yet ready to merge entities); until it is, names stay as the
+    # parser extracted them. SOWSMITH_LLM_WITH_HEADS=entity_dedup restores.
+    try:
+        from app.core.c3_type_base import heads_decide as _heads_decide
+
+        _heads_on = _heads_decide("entity_dedup")
+    except Exception:
+        _heads_on = False
+    if not _os.environ.get("SOWSMITH_FINAL_DEDUP_DISABLE") and not _heads_on and len(records) >= 4:
         try:
             from app.core.rag_extras import run_tournament
             from app.core.embedding_retrieval import (

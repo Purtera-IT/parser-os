@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core import rule_ledger
+
 
 def _type_str(atom: Any) -> str:
     t = getattr(atom, "atom_type", None)
@@ -89,11 +91,19 @@ def veto_party_page_sites(atoms: list[Any]) -> int:
             keys = list(getattr(a, "entity_keys", None) or [])
             kept = [k for k in keys if not str(k).startswith("site:")]
             if len(kept) != len(keys):
+                rid = "party_address_veto.signature_keys"
+                rule_ledger.fire(rid, a, rule_ledger.head_of(a), "not:physical_site", "site keys stripped")
+                if rule_ledger.shadow(rid):
+                    continue
                 try:
                     a.entity_keys = kept
                     n += 1
                 except Exception:
                     pass
+            continue
+        rid = "party_address_veto.signature_page"
+        rule_ledger.fire(rid, a, rule_ledger.head_of(a), "not:physical_site", "retyped deal_metadata")
+        if rule_ledger.shadow(rid):
             continue
         try:
             from app.core.schemas import AtomType
@@ -120,4 +130,73 @@ def veto_party_page_sites(atoms: list[Any]) -> int:
     return n
 
 
-__all__ = ["veto_party_page_sites"]
+_CONTACT_MARK = __import__("re").compile(r"@|\b\d{3}[-. )]+\d{3}[-. ]\d{4}\b|\|")
+
+
+def follow_party_copies(atoms: list[Any], types: dict[str, Any] | None = None) -> list[str]:
+    """A bare copy of a party's address takes the answer of its full-context copy.
+
+    Live 010358 (2026-10-29): the heads read "Scott Morgan | 1361 N Glenville Dr | scott@traversa.net | 214…"
+    as ``stakeholder`` (0.62), and every copy of that address that lost its name, phone and email -- a stand-alone
+    "1361 N Glenville Dr" in the email, "Richardson TX 75081" and the street in a scrambled meeting invite -- as
+    ``physical_site`` at 0.84-0.997: six false sites from the customer's own office. The heads decided the
+    address; the copies only lost the words that showed it. So a short ``physical_site`` line whose street (or
+    "City ST ZIP") sits inside a line the heads typed ``stakeholder`` / ``signatory`` (a signature line, or its
+    "City ST ZIP" line read in context) anywhere in the deal is retyped to ``stakeholder``, and the heads'
+    read in ``types`` follows, so no later pass re-keys it as a site. Site-roster rows (a sheet or table) never
+    move: a roster can list the customer's own office as a job site. Owner-approved 2026-10-29.
+    Returns the ids retyped."""
+    party = []
+    for a in atoms:
+        if _type_str(a) not in ("stakeholder", "signatory"):
+            continue
+        raw = str(getattr(a, "raw_text", None) or getattr(a, "text", None) or "")
+        party.append(_norm(raw))
+    if not party:
+        return []
+    blob = " | ".join(party)
+    moved: list[str] = []
+    for a in atoms:
+        if _type_str(a) != "physical_site":
+            continue
+        raw = str(getattr(a, "raw_text", None) or "")
+        refs = getattr(a, "source_refs", None) or []
+        loc = getattr(refs[0], "locator", None) if refs else None
+        if isinstance(loc, dict) and (loc.get("sheet") or loc.get("table") or loc.get("row") is not None):
+            continue
+        if len(raw) > 80 or _CONTACT_MARK.search(raw):
+            continue
+        whole = _norm(raw)
+        street = _street_of(a)
+        if not ((street and street in blob) or (len(whole.split()) >= 2 and any(ch.isdigit() for ch in whole) and whole in blob)):
+            continue
+        # The heads' read of THIS copy (not the contact line's): it said physical_site, so the rule disagrees.
+        rid = "party_address_veto.follow_party_copies"
+        rule_ledger.fire(rid, a, rule_ledger.head_of(a), "stakeholder", "bare copy of a party address")
+        if rule_ledger.shadow(rid):
+            continue
+        try:
+            from app.core.schemas import AtomType
+            a.atom_type = AtomType.stakeholder
+        except Exception:
+            a.atom_type = "stakeholder"
+        v = getattr(a, "value", None)
+        if isinstance(v, dict):
+            was = v.get("c3_label") if isinstance(v.get("c3_label"), dict) else {}
+            v["c3_label"] = {"type": "stakeholder", "p": was.get("p"), "act": "follows_copy", "was": "physical_site"}
+            v["kind"] = "party_address"
+            v["why"] = "the same address as a contact line the heads read as stakeholder; the party's office, not a work site"
+        try:
+            a.entity_keys = [k for k in (getattr(a, "entity_keys", None) or []) if not str(k).startswith("site:")]
+        except Exception:
+            pass
+        aid = str(getattr(a, "id", "") or "")
+        if types is not None and aid in types:
+            old = types[aid]
+            p_old = old[1] if isinstance(old, (list, tuple)) and len(old) > 1 else None
+            types[aid] = ["stakeholder", p_old]
+        moved.append(aid)
+    return moved
+
+
+__all__ = ["follow_party_copies", "veto_party_page_sites"]
