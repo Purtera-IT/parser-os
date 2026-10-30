@@ -2151,7 +2151,7 @@ def compile_project(
         _c3_deal.set_deal(None)
         if _c3_deal.enabled() or _c3_deal.document_job_enabled():
             _c3_fps = {fp.artifact_id: {"filename": fp.filename, "sha256": fp.sha256} for fp in fingerprints}
-            from app.core.orbitbrief_envelope import _load_manifest_crm, _load_manifest_run_cutoff
+            from app.core.orbitbrief_envelope import _load_manifest_crm, _load_manifest_read, _load_manifest_run_cutoff
             from c3_record import read_with_deal
 
             # as_of: a run with a cutoff is the quoting read, one without the planning read
@@ -2159,7 +2159,8 @@ def compile_project(
             _c3_deal.set_deal(_c3_deal.deal_documents(atoms, _c3_fps, project_dir),
                               {k: v["sha256"] for k, v in _c3_fps.items() if v.get("sha256")},
                               stage_timeline=(_load_manifest_crm(project_dir) or {}).get("stage_timeline"),
-                              as_of=_load_manifest_run_cutoff(project_dir))
+                              as_of=_load_manifest_run_cutoff(project_dir),
+                              read=_load_manifest_read(project_dir))
             # The copies a pre-read fold set aside are lines of the deal's read in training
             # (c3_record.read_with_deal), so the base reads them too.
             _c3_deal.also_read([
@@ -3866,7 +3867,7 @@ def compile_project(
     def _start_quote(_b: dict[str, Any]) -> None:
         from app.core import c3_type_base as _c3q0
 
-        if not (_c3q0.quote_enabled() and _c3q0.quote_parallel()):
+        if not (_c3q0.quote_enabled() and _c3q0.quote_parallel()) or _c3q0.delivery_read():
             return
         _snap, _qatoms = _c3q0.quote_snapshot(_b), list(atoms)
 
@@ -3900,7 +3901,12 @@ def compile_project(
         try:
             from app.core import c3_type_base as _c3q
 
-            if _c3q.quote_enabled() and not _evidence_n:
+            if _c3q.delivery_read():
+                # The delivery read prices nothing: the quote is the quoting read's.
+                _c3_brief["delivery"] = _c3q.delivery_payload()
+                warnings.append(f"INFO: delivery read: {len(_c3_brief['delivery']['lines'])} line(s) "
+                                f"answered by {len(_c3_brief['delivery']['heads'])} head(s)")
+            elif _c3q.quote_enabled() and not _evidence_n:
                 warnings.append("WARNING: quote heads skipped: the compile has no evidence atoms to price")
             elif _c3q.quote_enabled():
                 with telemetry.stage("c3_quote", input_count=len(atoms)) as _qstage:
