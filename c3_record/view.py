@@ -224,6 +224,18 @@ def planning_end(rows: Iterable[dict[str, Any]], *, cut: Any = None, timeline_ma
     return best
 
 
+def delivery_start(docs: Iterable[dict[str, Any]], cut: Any) -> tuple[float, str]:
+    """When the delivery read starts, and why (owner 2026-10-30: from the signed SOW, the quote can be
+    ignored): the first signed SOW's arrival, else the first purchase order's, else the quoting cut for a
+    deal with neither on file. ``docs``: ``kind`` and ``arrival``."""
+    rows = [(epoch(d.get("arrival")) or 0.0, str(d.get("kind") or "")) for d in docs]
+    for kinds, why in ((("sow_signed", "signed_sow"), "signed SOW"), (("purchase_order",), "purchase order")):
+        at = [w for w, k in rows if w > 0 and k in kinds]
+        if at:
+            return min(at), why
+    return (float("inf") if cut in (None, float("inf")) else float(cut)), "quoting cut"
+
+
 def planning_inputs(rows: list[dict[str, Any]], end: float, *, exclude: Iterable[str] = (),
                     other_job: Iterable[str] = (), key: str = "label_key") -> list[int]:
     """Indices of the planning view's input lines: dated, arrived before ``end``, not another job's
@@ -240,4 +252,4 @@ def planning_inputs(rows: list[dict[str, Any]], end: float, *, exclude: Iterable
 __all__ = ["QUOTING", "PLANNING", "VIEWS", "QUOTE_HEADS", "QUOTE_PREFIXES", "PM_HEADS", "PM_IN_QUOTE_VIEW",
            "PLANNING_HEADS", "PLANNING_HEAD_FAMILIES", "is_planning_head", "planning_heads_enabled", "train_scale",
            "name", "of_run", "is_quote_head", "is_pm_head", "head_scale", "heads", "runs_quote", "tag",
-           "clamp_stage", "stamp", "KICKOFF", "planning_end", "planning_inputs"]
+           "clamp_stage", "stamp", "KICKOFF", "planning_end", "planning_inputs", "delivery_start"]

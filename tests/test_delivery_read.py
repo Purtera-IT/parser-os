@@ -8,8 +8,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.core import c3_type_base as tb
 from app.core.orbitbrief_envelope import PARSER_MANIFEST_SIDECAR, _load_manifest_read
+
+
+@pytest.fixture(autouse=True)
+def _clean_deal():
+    yield
+    tb._DEAL.clear()
 
 
 def _deal(read=None, as_of=None):
@@ -64,3 +72,26 @@ def test_manifest_read(tmp_path):
     assert _load_manifest_read(tmp_path) == "delivery"
     (tmp_path / PARSER_MANIFEST_SIDECAR).write_text(json.dumps({"context": {}}))
     assert _load_manifest_read(tmp_path) is None
+
+
+def test_set_valued_and_odd_readings():
+    assert tb._delivery_answer(["present", 0.8]) == ["present", 0.8]
+    assert tb._delivery_answer([["site_contact", "access_note"], {"site_contact": 0.9, "access_note": 0.6, "x": 0.1}]) == [
+        "site_contact, access_note", 0.6]
+    assert tb._delivery_answer([[], {"a": 0.2}]) is None
+    assert tb._delivery_answer([None, 0.9]) is None
+    assert tb._delivery_answer(["x", {"bad": 1}]) is None
+    _deal("delivery")
+    tb._DEAL["reads"] = {"a1": {"read:needs_artifact": [["present"], {"present": 0.7}]}}
+    assert tb.delivery_payload()["lines"] == {"a1": {"read:needs_artifact": ["present", 0.7]}}
+
+
+def test_delivery_starts_at_the_signed_sow():
+    from c3_record.view import delivery_start
+
+    docs = [{"kind": "sow_draft", "arrival": 100.0}, {"kind": "purchase_order", "arrival": 200.0},
+            {"kind": "sow_signed", "arrival": 300.0}, {"kind": "sow_signed", "arrival": 250.0}]
+    assert delivery_start(docs, 90.0) == (250.0, "signed SOW")
+    assert delivery_start(docs[:2], 90.0) == (200.0, "purchase order")
+    assert delivery_start(docs[:1], 90.0) == (90.0, "quoting cut")
+    assert delivery_start([], float("inf"))[0] == float("inf")

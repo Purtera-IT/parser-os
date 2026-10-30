@@ -860,15 +860,17 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         end = cview.planning_end(lines, cut=P.cut, timeline_marks=marks, won_at=won)
         keep = cview.planning_inputs(lines, end, exclude=dk, other_job=other)
         if delivery_read():
-            # The opposite of the quoting read (owner 2026-10-30): every dated line from the quoting cut
-            # (our first priced paper or message) on, with no end -- our quote and signed SOW, the PO,
-            # kickoff and delivery mail. Our pricing workbooks and another job's documents stay out, as in
-            # every read. A deal never quoted has no delivery lines yet.
+            # Delivery starts at the signed SOW (owner 2026-10-30, upstream rule view.delivery_window): every
+            # dated line from it on, with no end -- the PO, kickoff and delivery mail. Our pricing workbooks
+            # and another job's documents stay out, as in every read. A deal with no signed SOW or PO on
+            # file starts at the quoting cut; one never quoted has no delivery lines yet.
             end = float("inf")
+            start, start_why = cview.delivery_start(P.doc.values(), P.cut)
+            _DEAL["delivery_start"] = {"at": None if start == float("inf") else start, "why": start_why}
             dks, oth = set(dk), set(other)
             keep = [i for i, x in enumerate(lines)
                     if x["label_key"] not in dks and x.get("doc_id") not in oth
-                    and (w := epoch(x.get("entered_at")) or 0.0) > 0 and w >= P.cut]
+                    and (w := epoch(x.get("entered_at")) or 0.0) > 0 and w >= start]
     _DEAL["view_prov"] = P          # the last view's provenance (audits read it; never sent)
     def _out_why(inside: set[int]) -> dict[str, str]:
         dks = set(dk)
@@ -1054,8 +1056,8 @@ QUOTE_DEAL_HEADS = ("jdg:billing_type", "jdg:travel_scope", "deal:declared_site_
 
 
 #: The delivery read (owner 2026-10-29/30): the project's Delivery sources page. Manifest ``context.read``
-#: = "delivery" (parser-os-worker ``compile_options.read``). It reads every line from the quoting cut on
-#: (the opposite of the quoting read) and asks the heads that decide delivery facts; their answers ride in
+#: = "delivery" (parser-os-worker ``compile_options.read``). It reads every line from the signed SOW on
+#: (``c3_record.view.delivery_start``) and asks the heads that decide delivery facts; their answers ride in
 #: ``c3_brief.delivery`` for the page to show.
 DELIVERY_READ = "delivery"
 #: Who does it, what it triggers, when, what blocks it, who chases, what supplies and which site: the PM
@@ -1071,6 +1073,27 @@ def delivery_read() -> bool:
     return _DEAL.get("read") == DELIVERY_READ
 
 
+def _delivery_answer(v: Any) -> list[Any] | None:
+    """One reading as ``[answer, p]``. serve gives a class head ``[answer, p]`` and a set-valued head
+    ``[[answers over 0.5], {answer: p}]`` (serve.py); a set is its answers joined, at the lowest p among
+    them. None when the head said nothing (an empty set). Clayton 000043 (2026-10-30): a set-valued
+    reading's ``{answer: p}`` reached ``float()`` and the whole payload was lost."""
+    if not isinstance(v, (list, tuple)) or len(v) < 2 or v[0] is None:
+        return None
+    answer, p = v[0], v[1]
+    if isinstance(answer, (list, tuple)):
+        picked = [str(a) for a in answer]
+        if not picked:
+            return None
+        probs = p if isinstance(p, dict) else {}
+        conf = min((float(probs.get(a) or 0.0) for a in picked), default=0.0)
+        return [", ".join(picked), round(conf, 4)]
+    try:
+        return [str(answer), round(float(p or 0.0), 4)]
+    except (TypeError, ValueError):
+        return None
+
+
 def delivery_payload() -> dict[str, Any]:
     """Every delivery head's answer on every line it read, with the registry's trust in that head. Facts
     only: nothing here re-decides an answer (owner rule: downstream never edits head facts)."""
@@ -1080,14 +1103,17 @@ def delivery_payload() -> dict[str, Any]:
     asked = _view_heads(view_name(), DELIVERY_LINE_HEADS)
     lines: dict[str, dict[str, list[Any]]] = {}
     for atom_id, got in (_DEAL.get("reads") or {}).items():
-        row = {h: [v[0], round(float(v[1] or 0.0), 4)] for h in asked
-               if (v := (got or {}).get(h)) and v[0] is not None}
+        row = {}
+        for h in asked:
+            ans = _delivery_answer((got or {}).get(h))
+            if ans is not None:
+                row[h] = ans
         if row:
             lines[str(atom_id)] = row
     trust = {h: str((reg.head(h) or {}).get("status") or "unregistered") for h in asked}
     return {"read": DELIVERY_READ, "view": view_name(), "heads": asked, "trust": trust,
             "trusted": [h for h in asked if reg.trusted(h)], "lines": lines,
-            "window": dict(_STATUS.get("view") or {})}
+            "window": dict(_STATUS.get("view") or {}), "start": _DEAL.get("delivery_start")}
 
 
 def line_reading(atom_id: str, head: str) -> tuple[str, float] | None:
@@ -1227,8 +1253,8 @@ def set_deal(documents: list[dict[str, Any]] | None, artifact_sha256: dict[str, 
 
         _DEAL.update(view=of_run(as_of), as_of=as_of or None)
     if str(read or "").strip().lower() == DELIVERY_READ:
-        # The delivery read is the planning view from the quoting cut on, with no end (owner 2026-10-30:
-        # delivery is the opposite of the pre-quote read). An as_of never reaches it (the worker strips it).
+        # The delivery read is the planning view from the signed SOW on, with no end (owner 2026-10-30).
+        # An as_of never reaches it (the worker strips it).
         _DEAL.update(read=DELIVERY_READ, as_of=None, **({"view": "planning"} if views_enabled() else {}))
 
 

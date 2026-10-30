@@ -3902,10 +3902,16 @@ def compile_project(
             from app.core import c3_type_base as _c3q
 
             if _c3q.delivery_read():
-                # The delivery read prices nothing: the quote is the quoting read's.
-                _c3_brief["delivery"] = _c3q.delivery_payload()
-                warnings.append(f"INFO: delivery read: {len(_c3_brief['delivery']['lines'])} line(s) "
-                                f"answered by {len(_c3_brief['delivery']['heads'])} head(s)")
+                # The delivery read prices nothing: the quote is the quoting read's. A failure here is the
+                # delivery payload's, recorded on it -- never in the quote slot.
+                try:
+                    _c3_brief["delivery"] = _c3q.delivery_payload()
+                    warnings.append(f"INFO: delivery read: {len(_c3_brief['delivery']['lines'])} line(s) "
+                                    f"answered by {len(_c3_brief['delivery']['heads'])} head(s)")
+                except Exception as _dexc:
+                    _c3_brief["delivery"] = {"read": "delivery", "error": f"{type(_dexc).__name__}: {_dexc}"[:300],
+                                             "heads": [], "trust": {}, "trusted": [], "lines": {}}
+                    warnings.append(f"WARNING: delivery read payload failed: {type(_dexc).__name__}: {_dexc}")
             elif _c3q.quote_enabled() and not _evidence_n:
                 warnings.append("WARNING: quote heads skipped: the compile has no evidence atoms to price")
             elif _c3q.quote_enabled():
