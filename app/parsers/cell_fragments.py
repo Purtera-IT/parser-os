@@ -20,6 +20,8 @@ the atom was made) do not move.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import re
 from typing import Any, Callable, Iterable
 
@@ -47,9 +49,12 @@ def _fold_char(ch: str) -> str:
     return low if len(low) == 1 else ch
 
 
+@lru_cache(maxsize=256)
 def fold_with_map(text: str) -> tuple[str, list[int]]:
     """``text`` lower-cased with every whitespace and invisible character
-    dropped, and for each kept character its index in ``text``."""
+    dropped, and for each kept character its index in ``text``. Remembered:
+    every atom of a page folds that page's whole text again (000043's SOW: 20M
+    characters in Python for 3,000 atoms). The map is shared, so callers read it."""
     out: list[str] = []
     idx: list[int] = []
     for i, ch in enumerate(text or ""):
