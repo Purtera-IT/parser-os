@@ -8,8 +8,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.core import c3_type_base as tb
 from app.core.orbitbrief_envelope import PARSER_MANIFEST_SIDECAR, _load_manifest_read
+
+
+@pytest.fixture(autouse=True)
+def _clean_deal():
+    yield
+    tb._DEAL.clear()
 
 
 def _deal(read=None, as_of=None):
@@ -76,3 +84,14 @@ def test_set_valued_and_odd_readings():
     _deal("delivery")
     tb._DEAL["reads"] = {"a1": {"read:needs_artifact": [["present"], {"present": 0.7}]}}
     assert tb.delivery_payload()["lines"] == {"a1": {"read:needs_artifact": ["present", 0.7]}}
+
+
+def test_delivery_starts_at_the_signed_sow():
+    from c3_record.view import delivery_start
+
+    docs = [{"kind": "sow_draft", "arrival": 100.0}, {"kind": "purchase_order", "arrival": 200.0},
+            {"kind": "sow_signed", "arrival": 300.0}, {"kind": "sow_signed", "arrival": 250.0}]
+    assert delivery_start(docs, 90.0) == (250.0, "signed SOW")
+    assert delivery_start(docs[:2], 90.0) == (200.0, "purchase order")
+    assert delivery_start(docs[:1], 90.0) == (90.0, "quoting cut")
+    assert delivery_start([], float("inf"))[0] == float("inf")
