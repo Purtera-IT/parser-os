@@ -2131,17 +2131,29 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
     if _never():
-        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
-            _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id)))
+        return _pm_confirms(_note_quote_rules(_with_site_groups(_with_site_row_hours(_with_not_work(_with_seen_only(
+            _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id), sites)))
     try:
-        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
+        return _pm_confirms(_note_quote_rules(_with_site_groups(_with_site_row_hours(_with_not_work(_with_seen_only(
             _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
-            not_work), sites, by_id)))
+            not_work), sites, by_id), sites)))
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
 
 
 _ROW_HOURS = re.compile(r"^\s*total\s*(?:hours|hrs?)\s*$", re.I)
+
+
+def _with_site_groups(q: dict[str, Any], sites: list[dict[str, Any]]) -> dict[str, Any]:
+    """The heads' roster as the compile grouped it: one entry per site with every line it came from.
+
+    ``sites.atom_ids`` lists the lines flat, which loses which lines are one site (010447: 379 lines, 366
+    sites). Downstream models (the Deal Kit quote, Atlas) read one site per entry from here
+    (Platform-infra ``shared/head-facts.js``), so no consumer regroups lines by its own rule."""
+    if isinstance(q, dict) and isinstance(q.get("sites"), dict) and sites:
+        q["sites"]["groups"] = [{"site": st.get("site"), "keys": list(st.get("keys") or [st.get("site")]),
+                                 "atom_ids": [str(x) for x in st.get("atom_ids") or []]} for st in sites]
+    return q
 
 
 def _with_site_row_hours(q: dict[str, Any], sites: list[dict[str, Any]], by_id: dict[str, Any]) -> dict[str, Any]:

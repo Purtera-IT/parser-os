@@ -115,3 +115,18 @@ def test_quote_without_a_url_is_degraded_or_raises_under_never(monkeypatch):
     monkeypatch.setenv("SOWSMITH_C3_FALLBACK", "never")
     with pytest.raises(c.C3HeadsUnavailable):
         c.quote(_atoms(), {})
+
+
+def test_quote_sites_keep_the_compiles_grouping():
+    # 010447: 379 lines, 366 sites. The flat atom_ids lose which lines are one site;
+    # groups keep it so no consumer regroups by its own rule.
+    from app.core.c3_type_base import _with_site_groups
+
+    q = {"sites": {"count": 2, "atom_ids": ["a1", "a2", "b1"]}, "lines": []}
+    sites = [{"site": "site:a", "keys": ["site:a", "site:a_st"], "atom_ids": ["a1", "a2"]},
+             {"site": "site:b", "atom_ids": ["b1"]}]
+    out = _with_site_groups(q, sites)
+    assert out["sites"]["groups"] == [
+        {"site": "site:a", "keys": ["site:a", "site:a_st"], "atom_ids": ["a1", "a2"]},
+        {"site": "site:b", "keys": ["site:b"], "atom_ids": ["b1"]}]
+    assert _with_site_groups({"error": "x"}, sites) == {"error": "x"}
