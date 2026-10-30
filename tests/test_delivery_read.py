@@ -64,3 +64,15 @@ def test_manifest_read(tmp_path):
     assert _load_manifest_read(tmp_path) == "delivery"
     (tmp_path / PARSER_MANIFEST_SIDECAR).write_text(json.dumps({"context": {}}))
     assert _load_manifest_read(tmp_path) is None
+
+
+def test_set_valued_and_odd_readings():
+    assert tb._delivery_answer(["present", 0.8]) == ["present", 0.8]
+    assert tb._delivery_answer([["site_contact", "access_note"], {"site_contact": 0.9, "access_note": 0.6, "x": 0.1}]) == [
+        "site_contact, access_note", 0.6]
+    assert tb._delivery_answer([[], {"a": 0.2}]) is None
+    assert tb._delivery_answer([None, 0.9]) is None
+    assert tb._delivery_answer(["x", {"bad": 1}]) is None
+    _deal("delivery")
+    tb._DEAL["reads"] = {"a1": {"read:needs_artifact": [["present"], {"present": 0.7}]}}
+    assert tb.delivery_payload()["lines"] == {"a1": {"read:needs_artifact": ["present", 0.7]}}

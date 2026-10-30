@@ -1071,6 +1071,27 @@ def delivery_read() -> bool:
     return _DEAL.get("read") == DELIVERY_READ
 
 
+def _delivery_answer(v: Any) -> list[Any] | None:
+    """One reading as ``[answer, p]``. serve gives a class head ``[answer, p]`` and a set-valued head
+    ``[[answers over 0.5], {answer: p}]`` (serve.py); a set is its answers joined, at the lowest p among
+    them. None when the head said nothing (an empty set). Clayton 000043 (2026-10-30): a set-valued
+    reading's ``{answer: p}`` reached ``float()`` and the whole payload was lost."""
+    if not isinstance(v, (list, tuple)) or len(v) < 2 or v[0] is None:
+        return None
+    answer, p = v[0], v[1]
+    if isinstance(answer, (list, tuple)):
+        picked = [str(a) for a in answer]
+        if not picked:
+            return None
+        probs = p if isinstance(p, dict) else {}
+        conf = min((float(probs.get(a) or 0.0) for a in picked), default=0.0)
+        return [", ".join(picked), round(conf, 4)]
+    try:
+        return [str(answer), round(float(p or 0.0), 4)]
+    except (TypeError, ValueError):
+        return None
+
+
 def delivery_payload() -> dict[str, Any]:
     """Every delivery head's answer on every line it read, with the registry's trust in that head. Facts
     only: nothing here re-decides an answer (owner rule: downstream never edits head facts)."""
@@ -1080,8 +1101,11 @@ def delivery_payload() -> dict[str, Any]:
     asked = _view_heads(view_name(), DELIVERY_LINE_HEADS)
     lines: dict[str, dict[str, list[Any]]] = {}
     for atom_id, got in (_DEAL.get("reads") or {}).items():
-        row = {h: [v[0], round(float(v[1] or 0.0), 4)] for h in asked
-               if (v := (got or {}).get(h)) and v[0] is not None}
+        row = {}
+        for h in asked:
+            ans = _delivery_answer((got or {}).get(h))
+            if ans is not None:
+                row[h] = ans
         if row:
             lines[str(atom_id)] = row
     trust = {h: str((reg.head(h) or {}).get("status") or "unregistered") for h in asked}
