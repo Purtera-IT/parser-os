@@ -333,6 +333,127 @@ def _mint_for_head_sites(atoms: list[Any], types: dict[str, Any]) -> int:
     return n
 
 
+_ID_COLUMN = re.compile(r"^[a-z][a-z_# ]{0,7}$")
+_ID_VALUE = re.compile(r"^\d{1,6}$")
+_NOT_ID = re.compile(r"zip|postal|zone|floor|week|qty|count|visits?|hours?|hrs|phone|year")
+_JOIN_STREET = re.compile(r"^\s*(\d{1,6}(?:-?[A-Za-z])?)\s+(?:[NSEW]{1,2}\.?\s+)?([A-Za-z0-9][A-Za-z0-9.']*)")
+#: An id column names a different thing on nearly every row of its sheet.
+_ID_UNIQUE = 0.9
+_ID_MIN_ROWS = 5
+#: Share of a deal's site lines that must name a place before a line naming none stops counting.
+_NAMED_SHARE = 0.6
+
+
+def _locator(atom: Any) -> dict[str, Any]:
+    loc = getattr(_ref(atom), "locator", None)
+    return loc if isinstance(loc, dict) else {}
+
+
+def _cells(atom: Any, by_id: dict[str, Any]) -> dict[str, str]:
+    """A site line's {column: value}: its table row by the row's header, else its "Key: value" parts."""
+    loc = _locator(atom)
+    header = by_id.get(str(loc.get("header_atom_id") or ""))
+    frags = loc.get("cell_fragments") or []
+    if header is not None and frags:
+        names = [x.strip().lower() for x in _text(header).split("|")]
+        return {names[f["col"]]: str(f.get("text") or "").strip() for f in frags
+                if isinstance(f, dict) and isinstance(f.get("col"), int) and f["col"] < len(names)}
+    out: dict[str, str] = {}
+    for part in _text(atom).split(" | "):
+        k, sep, v = part.partition(":")
+        if sep:
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def _id_columns(rows: list[tuple[Any, dict[str, str]]]) -> set[str]:
+    """Columns that identify a place: short names holding numbers, different on nearly every row of a sheet.
+    A count or a zone repeats; a store number does not (010447's Visits, Clayton's Zone)."""
+    seen: dict[tuple[str, str], list[str]] = {}
+    for atom, cells in rows:
+        ref, loc = _ref(atom), _locator(atom)
+        where = f"{getattr(ref, 'artifact_id', '')}/{loc.get('sheet') or loc.get('table_index') or ''}"
+        for k, v in cells.items():
+            if _ID_COLUMN.match(k) and not _NOT_ID.search(k) and _ID_VALUE.match(v):
+                seen.setdefault((where, k), []).append(v)
+    return {k for (_w, k), vals in seen.items() if len(vals) >= _ID_MIN_ROWS and len(set(vals)) >= _ID_UNIQUE * len(vals)}
+
+
+def _place_ids(atom: Any, cells: dict[str, str], id_columns: set[str]) -> list[str]:
+    """What names this line's place, from what the parser extracted: street number, street and ZIP, or a
+    store number in an id column. A line with neither (010358's look-alike buildings) joins nothing."""
+    v = _value(atom)
+    out = []
+    street = str(v.get("street_address") or v.get("address") or cells.get("address") or "")
+    zipm = re.search(r"\b(\d{5})\b", str(v.get("zip") or cells.get("zip") or ""))
+    m = _JOIN_STREET.match(street)
+    if m and zipm:
+        out.append(f"addr:{m.group(1)}:{m.group(2).lower().rstrip('.')}:{zipm.group(1)}")
+    for k in sorted(id_columns):
+        if _ID_VALUE.match(cells.get(k, "")):
+            out.append(f"id:{k}:{int(cells[k])}")
+    return out
+
+
+def _join_same_place(atoms: list[Any], types: dict[str, Any]) -> int:
+    """One place under several keys is one site: the lines the heads typed that name the same street and
+    ZIP, or the same store number, take one shared key across documents. Clayton (000043): a store was
+    site:hc_37 on the schedule, site:37 in the draft and site:4860_south_hwy_27 in the SOW. No head answers
+    same-site yet (jdg:site cannot be asked of a pair), so this runs here, marked, as a removal target."""
+    by_id = {str(getattr(a, "id", "")): a for a in atoms}
+    rows = [(a, _cells(a, by_id)) for a in atoms if _is_site_line(a, types)]
+    id_columns = _id_columns(rows)
+    parent: dict[str, str] = {}
+
+    def root(k: str) -> str:
+        while parent.setdefault(k, k) != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    named = []
+    for atom, cells in rows:
+        ids = _place_ids(atom, cells, id_columns)
+        if ids:
+            named.append((atom, ids))
+            for k in ids[1:]:
+                parent[root(k)] = root(ids[0])
+    groups: dict[str, list[Any]] = {}
+    for atom, ids in named:
+        groups.setdefault(root(ids[0]), []).append(atom)
+    joined = 0
+    for atoms_of in groups.values():
+        keys = {k for a in atoms_of for k in _site_keys(a)}
+        if not keys:
+            continue
+        shared = sorted(keys, key=lambda k: (len(k), k))[0]
+        for atom in atoms_of:
+            mine = _site_keys(atom)
+            if mine == [shared]:
+                continue
+            rule_ledger.fire("site_keys.join_same_place", atom, None, "same_site", shared[:80])
+            if rule_ledger.shadow("site_keys.join_same_place"):
+                continue
+            # The one key, not one more: a loose key left beside it would chain every store it touches.
+            atom.entity_keys = [k for k in _keys(atom) if not k.startswith(_PREFIX)] + [shared]
+            joined += 1
+    # On a deal whose site lines name their places, a line that names none is not one: a schedule's bundle
+    # row, a table's header. On a list with no street or id (010358) nothing is named and nothing changes.
+    named_ids = {id(a) for a, _ids in named}
+    if rows and len(named) >= _NAMED_SHARE * len(rows):
+        for atom, cells in rows:
+            v = _value(atom)
+            if id(atom) in named_ids or v.get("zip") or v.get("city") or cells.get("zip") or cells.get("city"):
+                continue
+            rule_ledger.fire("site_keys.names_no_place", atom, None, "not:physical_site", _text(atom)[:80])
+            if rule_ledger.shadow("site_keys.names_no_place"):
+                continue
+            flags = list(getattr(atom, "review_flags", None) or [])
+            if NOT_BACKED not in flags:
+                atom.review_flags = flags + [NOT_BACKED]
+    return joined
+
+
 def _backed(atoms: list[Any], types: dict[str, Any], floor: float) -> set[str]:
     out: set[str] = set()
     for a in atoms:
@@ -371,6 +492,7 @@ def settle(atoms: list[Any], types: dict[str, Any] | None) -> dict[str, Any]:
     joined = _join_split_addresses(atoms, types)
     joined += _fold_street_copies(atoms, types)
     minted = _mint_for_head_sites(atoms, types)
+    same_place = _join_same_place(atoms, types)
     backed = _backed(atoms, types, float(floor))
     dropped: dict[str, int] = {}
     for a in atoms:
@@ -402,6 +524,7 @@ def settle(atoms: list[Any], types: dict[str, Any] | None) -> dict[str, Any]:
         "kept": sorted(backed),
         "address_lines_joined": joined,
         "keys_minted_from_head": minted,
+        "same_place_lines_joined": same_place,
         "dropped": [{"site": k, "lines": n} for k, n in sorted(dropped.items(), key=lambda x: -x[1])],
     }
 

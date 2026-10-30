@@ -74,6 +74,14 @@ RULES: dict[str, dict[str, Any]] = {
     "site_keys.mint_from_head": {
         "stage": "upstream",
         "what": "a head physical_site line with no key gets one from its words", "can_shadow": True},
+    "site_keys.join_same_place": {
+        "stage": "upstream",
+        "what": "site lines naming one street and ZIP or one store number take one key; no head answers same-site yet",
+        "can_shadow": True},
+    "site_keys.names_no_place": {
+        "stage": "upstream",
+        "what": "on a deal whose site lines name places, a site line naming no street, ZIP or id is no roster site",
+        "can_shadow": True},
     "site_keys.drop_unbacked": {
         "stage": "downstream",
         "what": "a site key no site line backs is dropped from a line", "can_shadow": True},
