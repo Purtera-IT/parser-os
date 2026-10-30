@@ -80,6 +80,10 @@ RULES: dict[str, dict[str, Any]] = {
     "semantic_dedup.site_alias": {
         "stage": "downstream",
         "what": "a name-only physical_site is removed as an alias of a located site", "can_shadow": True},
+    "semantic_dedup.hallucinated_site": {
+        "stage": "downstream",
+        "what": "a physical_site whose name, address and facility are one string is dropped as an LLM ghost "
+                "(never a site-list row read cell by cell)", "can_shadow": True},
     "semantic_dedup.site_demote": {
         "stage": "downstream",
         "what": "a physical_site loses its site claim (kept for its words, typed deal_metadata)", "can_shadow": True},
