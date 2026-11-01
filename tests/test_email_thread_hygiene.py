@@ -221,3 +221,25 @@ def test_sentences_of_one_paragraph_keep_the_order_they_were_written(tmp_path):
         if a.raw_text.startswith(("Here are the details", "If this is a successful", "If you all would be")):
             seqs[a.raw_text[:20]] = loc.get("sentence_index", 0)
     assert sorted(seqs.values()) == [0, 1, 2]
+
+
+def test_a_quoted_message_keeps_one_copy_of_its_header_fields_and_short_lines(tmp_path):
+    # Live 010082: every reply re-quoted To, Cc and Subject of the same message,
+    # 167 lines, and a one-word sign-off came back in each.
+    quoted = "Got it.\n\n" + "________________________________\nFrom: Bo Lee <bo@acme.example>\n" \
+        "Sent: Wednesday, September 2, 2026 10:38 AM\nTo: Alec <alec@vendor-partner.example>\n" \
+        "Cc: Sam Ray <sam@acme.example>\nSubject: Access Control at the plant\n\n" \
+        "Please quote the access control work.\n\nBo\n"
+    r1 = _eml(tmp_path, "1.eml", quoted, frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:00:00 +0000", subject="RE: Access Control", msgid="<m1@x>")
+    r2 = _eml(tmp_path, "2.eml", "Thanks all.\n\n" + quoted, frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:30:00 +0000", subject="RE: Access Control", msgid="<m2@x>", reply_to="<m1@x>")
+    atoms = _parse(r1) + _parse(r2)
+    atoms, _ = thread_emails(atoms, project_id="p")
+    kept, _ = dedup_quoted_history(atoms, project_id="p")
+    texts = [a.raw_text for a in kept]
+    assert sum(t.startswith("To: Alec") for t in texts) == 1
+    assert sum(t.startswith("Cc: Sam") for t in texts) == 1
+    assert sum(t.startswith("Subject: Access") for t in texts) == 1
+    assert texts.count("Bo") <= 1
+    assert texts.count("Please quote the access control work.") == 1

@@ -2814,7 +2814,8 @@ class EmailParser(BaseParser):
                             raw_text=field_text,
                             normalized_text=normalize_text(field_text),
                             value={"kind": "quoted_message_field", "field": field.lower(), "text": value,
-                                   "sender": sender, "sent_at": sent_at, "message_index": index},
+                                   "sender": sender, "sent_at": sent_at, "message_index": index,
+                                   "quoted": True, "author": sender, "authored_at": sent_at},
                             source_refs=[src.model_copy(update={
                                 "id": stable_id("src", artifact_id, "quoted_header", index, field),
                                 # The block's own line, like the From atom, so the field
