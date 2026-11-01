@@ -18,6 +18,8 @@ from pathlib import Path
 from app.core.atom_substance_gate import drop_email_non_scope
 from app.core.email_threading import dedup_quoted_history, thread_emails
 from app.core.email_threading import fold_repeated_quoted_lines
+from types import SimpleNamespace
+
 from app.parsers.email_parser import EmailParser
 
 ASK = """Hey AJ,
@@ -276,3 +278,32 @@ def test_the_last_sweep_folds_a_quoted_line_but_keeps_contact_cards(tmp_path):
     assert [a.raw_text for a in kept].count("Please quote the access control work.") == 1
     cards = [a for a in atoms if (a.value or {}).get("kind") == "person"]
     assert all(c in kept for c in cards)
+
+
+def test_the_sweep_ignores_a_list_heading_and_a_wrapped_line(tmp_path):
+    # Live 010082: a later file read a footer as a list under "Click the
+    # button below:", and one copy lost its last word to a line wrap.
+    def fake(art, text, **extra):
+        return SimpleNamespace(
+            artifact_id=art, raw_text=text, normalized_text=text.lower(), id=art + text,
+            value={"quoted": True, "message_index": 1, "author": "Bo Lee <bo@acme.example>",
+                   "authored_at": "Wednesday, September 2, 2026 10:38 AM",
+                   "email_thread": {"thread_id": "t", "thread_index": int(art)}, **extra})
+
+    first = fake("1", "A world leader in services www.acme.example")
+    listed = fake("2", "A world leader in services www.acme.example", list_item=True, list_label="Click below:")
+    cut = fake("3", "A world leader in services", list_item=True, list_label="Click below:")
+    other = fake("3", "A different line entirely here")
+    assert fold_repeated_quoted_lines([first, listed, cut, other]) == [first, other]
+
+
+def test_the_sweep_keeps_one_signature_card_and_every_recipient_card():
+    def card(art, source=None):
+        return SimpleNamespace(
+            artifact_id=art, raw_text="Bo Lee", normalized_text="bo lee", id=art,
+            value={"kind": "person", "quoted": True, "message_index": 1, "source": source,
+                   "author": "Bo Lee <bo@acme.example>", "authored_at": "Wednesday, September 2, 2026 10:38 AM",
+                   "email_thread": {"thread_id": "t", "thread_index": int(art)}})
+
+    a, b, c = card("1"), card("2"), card("3", "email_header_display_name")
+    assert fold_repeated_quoted_lines([a, b, c]) == [a, c]
