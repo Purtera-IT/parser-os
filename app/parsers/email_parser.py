@@ -2124,6 +2124,26 @@ def _quoted_header_source_lines(lines: list[str], sender: str, sent_at: str, sta
     return out
 
 
+def _header_first_in_quoted_block(atoms: list[EvidenceAtom]) -> None:
+    """A quoted message's header reads first: other atoms that share its
+    block line, like the sender's contact card, sort after From, To, Cc and
+    Subject."""
+    kinds = ("quoted_message_header", "quoted_message_field")
+    lines = set()
+    for a in atoms:
+        if isinstance(a.value, dict) and a.value.get("kind") == kinds[0]:
+            lines.update((a.artifact_id, r.locator.get("message_index"), r.locator.get("line_start")) for r in a.source_refs)
+    for a in atoms:
+        if isinstance(a.value, dict) and a.value.get("kind") in kinds:
+            continue
+        a.source_refs = [
+            r.model_copy(update={"locator": {**r.locator, "sentence_index": len(_QUOTED_FIELD_ORDER) + 1}})
+            if (a.artifact_id, r.locator.get("message_index"), r.locator.get("line_start")) in lines
+            else r
+            for r in a.source_refs
+        ]
+
+
 def _logo_images_are_chatter(atoms: list[EvidenceAtom]) -> None:
     """An inline image whose whole reading is a name or a word -- a company
     logo or a signature badge ("AMTIVO", "ASCDI") -- is signature chrome.
@@ -3080,6 +3100,7 @@ class EmailParser(BaseParser):
                     )
 
         _logo_images_are_chatter(atoms)
+        _header_first_in_quoted_block(atoms)
         return atoms
 
     def _unresolved_cid_atom(
