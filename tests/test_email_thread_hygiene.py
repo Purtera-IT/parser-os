@@ -243,3 +243,20 @@ def test_a_quoted_message_keeps_one_copy_of_its_header_fields_and_short_lines(tm
     assert sum(t.startswith("Subject: Access") for t in texts) == 1
     assert texts.count("Bo") <= 1
     assert texts.count("Please quote the access control work.") == 1
+
+
+def test_a_quoted_line_folds_when_only_its_rewritten_link_differs(tmp_path):
+    # Live 010082: each delivery rewrote the signature's links, so the same
+    # footer line survived in every later file.
+    body = "Got it.\n\n" + "________________________________\nFrom: Bo Lee <bo@acme.example>\n" \
+        "Sent: Wednesday, September 2, 2026 10:38 AM\nTo: Alec <alec@vendor-partner.example>\n" \
+        "Subject: Access Control\n\nPlease quote the access control work.\n\n" \
+        "A world leader in facilities services www.acme.example<https://safe.example/{}>\n"
+    r1 = _eml(tmp_path, "1.eml", body.format("aaa"), frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:00:00 +0000", subject="RE: Access Control", msgid="<m1@x>")
+    r2 = _eml(tmp_path, "2.eml", "Thanks.\n\n" + body.format("bbb"), frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:30:00 +0000", subject="RE: Access Control", msgid="<m2@x>", reply_to="<m1@x>")
+    atoms = _parse(r1) + _parse(r2)
+    atoms, _ = thread_emails(atoms, project_id="p")
+    kept, _ = dedup_quoted_history(atoms, project_id="p")
+    assert sum(a.raw_text.startswith("A world leader") for a in kept) <= 1

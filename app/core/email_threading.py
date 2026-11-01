@@ -552,6 +552,10 @@ def _message_blocks(atoms: list[EvidenceAtom]) -> dict[int, dict[str, str]]:
     return out
 
 
+_LINK_RE = re.compile(r"<\s*(?:https?://|mailto:)[^>]*>", re.I)
+_CID_RE = re.compile(r"\[cid:[^\]]*\]", re.I)
+
+
 def _norm_key(atom: EvidenceAtom) -> str:
     """Collapse key for quoted-history matching: normalized text, whitespace-
     folded. Quote markers were already stripped at parse time.
@@ -561,7 +565,10 @@ def _norm_key(atom: EvidenceAtom) -> str:
     same item under the same label is the same fact. Live 010289: the ask's
     "Relay" came back quoted in 9 replies."""
     txt = (getattr(atom, "normalized_text", "") or getattr(atom, "raw_text", "") or "").strip()
-    key = re.sub(r"\s+", " ", txt).lower()
+    # Mail gateways rewrite a link and an inline image's id per delivery, so the
+    # same quoted line differs file to file (live 010082: 96 signature lines).
+    txt = _CID_RE.sub("[image]", _LINK_RE.sub(" ", txt))
+    key = re.sub(r"\s+", " ", txt).lower().strip()
     v = atom.value if isinstance(atom.value, dict) else {}
     if v.get("list_item") and v.get("list_label") and key:
         return f"{str(v['list_label']).strip().lower()}|{key}"
