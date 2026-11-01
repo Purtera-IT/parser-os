@@ -2545,6 +2545,7 @@ class EmailParser(BaseParser):
         # out of the stages between parse and packetize and puts it back for
         # coverage and the result, so no head ever reads one.
         atoms.extend(admission_rejects)
+        _header_first_in_quoted_block(atoms)
         return ParserOutput(
             atoms=atoms,
             derived_files=derived_files_for(artifact_path=path, structured_doc=structured_doc),
@@ -3092,7 +3093,6 @@ class EmailParser(BaseParser):
                     )
 
         _logo_images_are_chatter(atoms)
-        _header_first_in_quoted_block(atoms)
         return atoms
 
     def _unresolved_cid_atom(

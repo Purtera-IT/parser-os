@@ -655,24 +655,48 @@ def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
 
     seen: dict[tuple, EvidenceAtom] = {}
     counts: dict[tuple, int] = {}
+    # The longer lines of each message, so a copy cut short by a line wrap
+    # still finds its whole line.
+    lines_of: dict[tuple, list[tuple[str, EvidenceAtom]]] = {}
+    cards: dict[tuple, EvidenceAtom] = {}
     gone: set[int] = set()
     for _i, atom in sorted(enumerate(atoms), key=_rank):
         v = atom.value if isinstance(atom.value, dict) else {}
-        if not v.get("quoted") or v.get("kind") == "person":
+        if not v.get("quoted"):
             continue
-        key = _norm_key(atom)
         ident = _message_identity(atom)
-        if not key or ident is None or not ident[2]:
+        if ident is None or not ident[2]:
+            continue
+        who = (ident[1], min(ident[2]))
+        if v.get("kind") == "person":
+            # A second card of one message repeats its signature; a card read
+            # off a To or Cc line is the only entry for that person.
+            if v.get("source") == "email_header_display_name":
+                continue
+            if who in cards and str(atom.artifact_id or "") != str(cards[who].artifact_id or ""):
+                note_folded_into(atom, cards[who])
+                gone.add(id(atom))
+            else:
+                cards.setdefault(who, atom)
+            continue
+        # Bare words: a later file can read the same line as a list item under
+        # a heading, which keys it differently in the stages above. The same
+        # author and minute already say it is the same message.
+        key = _norm_key(atom).rsplit("|", 1)[-1] if v.get("list_item") else _norm_key(atom)
+        if not key:
             continue
         slot = (str(atom.artifact_id or ""), v.get("message_index"), key)
         nth = counts.get(slot, 0)
         counts[slot] = nth + 1
-        mark = (key, nth, ident[1], min(ident[2]))
-        if mark in seen:
-            note_folded_into(atom, seen[mark])
+        mark = (key, nth) + who
+        whole = next((a for k, a in lines_of.get(who, ()) if len(key) >= _MIN_DEDUP_LEN and k.startswith(key)
+                      and str(a.artifact_id or "") != slot[0]), None)
+        if mark in seen or whole is not None:
+            note_folded_into(atom, seen.get(mark) or whole)
             gone.add(id(atom))
         else:
             seen[mark] = atom
+            lines_of.setdefault(who, []).append((key, atom))
     return [a for a in atoms if id(a) not in gone]
 
 

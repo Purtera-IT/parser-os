@@ -1991,25 +1991,29 @@ def compile_project(
             warnings.append(f"INFO: collapsed {dropped} duplicate atoms (intra-doc)")
         telemetry.end_stage(stage, output_count=len(atoms))
 
-    # The dedup stages above can leave a quoted line standing in a later file.
+    # The dedup stages above can leave a quoted line standing in a later file:
+    # a chatter copy waits in held_chatter, so a body copy never met it.
     with telemetry.stage("quoted_copy_sweep", input_count=len(atoms)) as stage:
         try:
             from app.core.email_threading import fold_repeated_quoted_lines
             from app.core.suppression_ledger import take_folds as _take_folds
 
-            before_sweep_atoms = list(atoms)
+            before_sweep_atoms = list(held_chatter) + list(atoms)
             _take_folds()
-            atoms = fold_repeated_quoted_lines(atoms)
-            atoms, _ = _settle_folds(before_sweep_atoms, atoms, [], "quoted_copy_sweep", make_copies=False)
-            if len(atoms) < len(before_sweep_atoms):
+            swept = fold_repeated_quoted_lines(before_sweep_atoms)
+            swept, _ = _settle_folds(before_sweep_atoms, swept, [], "quoted_copy_sweep", make_copies=False)
+            if len(swept) < len(before_sweep_atoms):
                 merge_suppressed(
                     suppressed_atoms,
                     capture_suppressed(
-                        before_sweep_atoms, atoms,
+                        before_sweep_atoms, swept,
                         stage="quoted_copy_sweep",
                         reason="quoted email history already present in the thread (authored original kept)",
                     ),
                 )
+                kept_ids = {id(a) for a in swept}
+                atoms = [a for a in atoms if id(a) in kept_ids]
+                held_chatter = [a for a in held_chatter if id(a) in kept_ids]
         except Exception as exc:
             warnings.append(f"WARNING: quoted_copy_sweep failed: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=len(atoms))
