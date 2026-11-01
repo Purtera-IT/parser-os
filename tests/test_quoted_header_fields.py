@@ -25,19 +25,15 @@ def test_header_with_no_fields_gives_nothing():
     assert _quoted_header_fields(["From: A", "Sent: Monday", "", "Body"], 0) == []
 
 
-def _atom(kind, line):
+def test_contact_card_reads_after_the_header():
     class Ref(SimpleNamespace):
         def model_copy(self, update):
             return Ref(locator=update["locator"])
 
-    return SimpleNamespace(artifact_id="a", value={"kind": kind},
-                           source_refs=[Ref(locator={"message_index": 1, "line_start": line})])
-
-
-def test_contact_on_the_header_line_reads_after_the_header():
-    head, field, card, body = (_atom("quoted_message_header", 9), _atom("quoted_message_field", 9),
-                               _atom("person", 9), _atom("person", 12))
-    _header_first_in_quoted_block([head, field, card, body])
+    card = SimpleNamespace(value={"kind": "person", "quoted": True}, source_refs=[Ref(locator={"line_start": 9})])
+    own = SimpleNamespace(value={"kind": "person", "quoted": False}, source_refs=[Ref(locator={"line_start": 1})])
+    head = SimpleNamespace(value={"kind": "quoted_message_header", "quoted": True}, source_refs=[Ref(locator={})])
+    _header_first_in_quoted_block([head, card, own])
     assert card.source_refs[0].locator["sentence_index"] == 4
+    assert "sentence_index" not in own.source_refs[0].locator
     assert "sentence_index" not in head.source_refs[0].locator
-    assert "sentence_index" not in body.source_refs[0].locator

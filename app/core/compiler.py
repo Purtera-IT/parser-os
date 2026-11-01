@@ -1991,6 +1991,29 @@ def compile_project(
             warnings.append(f"INFO: collapsed {dropped} duplicate atoms (intra-doc)")
         telemetry.end_stage(stage, output_count=len(atoms))
 
+    # The dedup stages above can leave a quoted line standing in a later file.
+    with telemetry.stage("quoted_copy_sweep", input_count=len(atoms)) as stage:
+        try:
+            from app.core.email_threading import fold_repeated_quoted_lines
+            from app.core.suppression_ledger import take_folds as _take_folds
+
+            before_sweep_atoms = list(atoms)
+            _take_folds()
+            atoms = fold_repeated_quoted_lines(atoms)
+            atoms, _ = _settle_folds(before_sweep_atoms, atoms, [], "quoted_copy_sweep", make_copies=False)
+            if len(atoms) < len(before_sweep_atoms):
+                merge_suppressed(
+                    suppressed_atoms,
+                    capture_suppressed(
+                        before_sweep_atoms, atoms,
+                        stage="quoted_copy_sweep",
+                        reason="quoted email history already present in the thread (authored original kept)",
+                    ),
+                )
+        except Exception as exc:
+            warnings.append(f"WARNING: quoted_copy_sweep failed: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(atoms))
+
     # Execution-block hygiene: SOW signature pages ("Signature:",
     # "Name: ___ Date: ___", "Services By: PurTera | Agreed By:") get
     # swept into scope_item / raw_table_row atoms and masquerade as
