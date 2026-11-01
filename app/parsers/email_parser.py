@@ -2083,6 +2083,7 @@ def _without_automated_senders(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     return out
 
 _QUOTED_FIELD_RE = re.compile(r"^\s*(?:>+\s*)?\*?(To|Cc|Subject):\*?\s*(.*)$", re.I)
+_QUOTED_FIELD_ORDER = {"to": 1, "cc": 2, "subject": 3}
 _MAILTO_RE = re.compile(r"<mailto:[^>]*>")
 
 
@@ -2798,7 +2799,8 @@ class EmailParser(BaseParser):
                                 "id": stable_id("src", artifact_id, "quoted_header", index, field),
                                 # The block's own line, like the From atom, so the field
                                 # reads under it; raw-file lines sort into the body.
-                                "locator": {**src.locator, "source_line": line + 1, "field": field.lower()},
+                                "locator": {**src.locator, "source_line": line + 1, "field": field.lower(),
+                                            "sentence_index": _QUOTED_FIELD_ORDER[field.lower()]},
                             })],
                             authority_class=AuthorityClass.quoted_old_email,
                             confidence=0.45,
