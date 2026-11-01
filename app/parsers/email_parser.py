@@ -2796,7 +2796,9 @@ class EmailParser(BaseParser):
                                    "sender": sender, "sent_at": sent_at, "message_index": index},
                             source_refs=[src.model_copy(update={
                                 "id": stable_id("src", artifact_id, "quoted_header", index, field),
-                                "locator": {**src.locator, "line_start": line + 1, "line_end": line + 1, "field": field.lower()},
+                                # The block's own line, like the From atom, so the field
+                                # reads under it; raw-file lines sort into the body.
+                                "locator": {**src.locator, "source_line": line + 1, "field": field.lower()},
                             })],
                             authority_class=AuthorityClass.quoted_old_email,
                             confidence=0.45,
