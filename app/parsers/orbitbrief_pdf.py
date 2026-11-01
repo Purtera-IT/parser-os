@@ -2416,6 +2416,17 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     # optimization could spawn a process per page (multiprocessing
     # with each worker opening its own fitz doc), at the cost of
     # ~2 s per-fork startup on macOS.
+    # Table cells reach the semantic rules too, and page lines never name them: a dry pass collects
+    # the cells, one request embeds them, and the real pass below finds them cached.
+    try:
+        from app.core.semantic_rules import collect_misses, prewarm as _prewarm_cells
+
+        with collect_misses() as _cells:
+            for _i in range(page_count):
+                _build_one_page(_i)
+        _prewarm_cells(_cells)
+    except Exception:  # pragma: no cover — a warm-up must never fail a parse
+        pass
     pages: list[dict[str, Any]] = [_build_one_page(i) for i in range(page_count)]
     _stitch_cross_page_continuations(pages)
     _carry_list_nesting_across_pages(pages)
