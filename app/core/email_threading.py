@@ -637,6 +637,45 @@ def _minute_stamps_around(raw: str) -> set[str]:
     return {f"{(d + timedelta(days=k)).isoformat()}|{minute}" for k in (-1, 0, 1)}
 
 
+def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
+    """A last pass after the dedup stages: the same line of the same author's
+    same message, quoted again in a later file, goes. Earlier stages can take
+    the first copy out and put it back, which leaves a later copy standing
+    (live 010082: a signature line survived in the second reply only).
+
+    Contact cards stay: they are the deal's contact list, not repeated words.
+    Returns the kept atoms in their original order."""
+    def _rank(item: tuple[int, EvidenceAtom]) -> tuple[int, int, int]:
+        i, atom = item
+        v = atom.value if isinstance(atom.value, dict) else {}
+        et = v.get("email_thread") if isinstance(v.get("email_thread"), dict) else {}
+        ti = et.get("thread_index")
+        mi = v.get("message_index")
+        return (ti if isinstance(ti, int) else 10**6, -mi if isinstance(mi, int) else 0, i)
+
+    seen: dict[tuple, EvidenceAtom] = {}
+    counts: dict[tuple, int] = {}
+    gone: set[int] = set()
+    for _i, atom in sorted(enumerate(atoms), key=_rank):
+        v = atom.value if isinstance(atom.value, dict) else {}
+        if not v.get("quoted") or v.get("kind") == "person":
+            continue
+        key = _norm_key(atom)
+        ident = _message_identity(atom)
+        if not key or ident is None or not ident[2]:
+            continue
+        slot = (str(atom.artifact_id or ""), v.get("message_index"), key)
+        nth = counts.get(slot, 0)
+        counts[slot] = nth + 1
+        mark = (key, nth, ident[1], min(ident[2]))
+        if mark in seen:
+            note_folded_into(atom, seen[mark])
+            gone.add(id(atom))
+        else:
+            seen[mark] = atom
+    return [a for a in atoms if id(a) not in gone]
+
+
 def dedup_quoted_history(
     atoms: list[EvidenceAtom], *, project_id: str = ""
 ) -> tuple[list[EvidenceAtom], list[EvidenceAtom]]:

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from app.core.atom_substance_gate import drop_email_non_scope
 from app.core.email_threading import dedup_quoted_history, thread_emails
+from app.core.email_threading import fold_repeated_quoted_lines
 from app.parsers.email_parser import EmailParser
 
 ASK = """Hey AJ,
@@ -260,3 +261,18 @@ def test_a_quoted_line_folds_when_only_its_rewritten_link_differs(tmp_path):
     atoms, _ = thread_emails(atoms, project_id="p")
     kept, _ = dedup_quoted_history(atoms, project_id="p")
     assert sum(a.raw_text.startswith("A world leader") for a in kept) <= 1
+
+
+def test_the_last_sweep_folds_a_quoted_line_but_keeps_contact_cards(tmp_path):
+    quoted = "Got it.\n\n" + "________________________________\nFrom: Bo Lee <bo@acme.example>\n" \
+        "Sent: Wednesday, September 2, 2026 10:38 AM\nTo: Sam Ray <sam@acme.example>\nSubject: Access Control\n\n" \
+        "Please quote the access control work.\n"
+    r1 = _eml(tmp_path, "1.eml", quoted, frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:00:00 +0000", subject="RE: Access Control", msgid="<m1@x>")
+    r2 = _eml(tmp_path, "2.eml", "Thanks.\n\n" + quoted, frm="AJ Evans <aj@purtera-it.com>",
+              date="Wed, 02 Sep 2026 15:30:00 +0000", subject="RE: Access Control", msgid="<m2@x>", reply_to="<m1@x>")
+    atoms, _ = thread_emails(_parse(r1) + _parse(r2), project_id="p")
+    kept = fold_repeated_quoted_lines(atoms)
+    assert [a.raw_text for a in kept].count("Please quote the access control work.") == 1
+    cards = [a for a in atoms if (a.value or {}).get("kind") == "person"]
+    assert all(c in kept for c in cards)
