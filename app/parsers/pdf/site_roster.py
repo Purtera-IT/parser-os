@@ -35,6 +35,73 @@ def site_row_address_text(site_row: Any) -> str | None:
     return street or None
 
 
+#: Below this text height a page is a shrunk spreadsheet: rows sit 3 pt apart, no rules, no block order.
+_TINY_TEXT_PT = 5.0
+#: A shrunk table has at least this many columns in its header row.
+_TINY_MIN_COLUMNS = 6
+
+
+class _TinyTable:
+    """A spreadsheet printed in tiny type, read off word positions (000043's SOW exhibit: 2.5 pt, no
+    rules, the text stream runs column by column, so every store merged into a block of emails)."""
+
+    def __init__(self, rows: list[list[str]], bbox: tuple[float, float, float, float]) -> None:
+        self.rows = rows
+        self.bbox = bbox
+
+
+def _word_rows(page: Any) -> tuple[list[list[Any]], float]:
+    words = [w for w in (page.get_text("words") or []) if str(w[4]).strip()]
+    if len(words) < 40:
+        return [], 0.0
+    heights = sorted(w[3] - w[1] for w in words)
+    h = heights[len(heights) // 2]
+    if not 0 < h < _TINY_TEXT_PT:
+        return [], 0.0
+    rows: list[list[Any]] = []
+    for w in sorted(words, key=lambda w: (w[1], w[0])):
+        if rows and abs(w[1] - rows[-1][0][1]) <= 0.45 * h:
+            rows[-1].append(w)
+        else:
+            rows.append([w])
+    return [sorted(r, key=lambda w: w[0]) for r in rows], h
+
+
+def _column_starts(row: list[Any], h: float) -> list[tuple[float, str]]:
+    """The header row's columns: words a clear gap apart start a new column."""
+    cols: list[list[Any]] = []
+    for w in row:
+        if cols and w[0] - cols[-1][-1][2] < 0.35 * h:
+            cols[-1].append(w)
+        else:
+            cols.append([w])
+    return [(c[0][0], " ".join(str(x[4]) for x in c)) for c in cols]
+
+
+def _tiny_table(page: Any, columns: list[tuple[float, str]] | None) -> tuple[_TinyTable | None, list[tuple[float, str]] | None]:
+    """The page's shrunk table, using ``columns`` from an earlier page when this one has no header."""
+    rows, h = _word_rows(page)
+    if len(rows) < 3:
+        return None, columns
+    body = rows
+    head = rows[0]
+    if not any(any(c.isdigit() for c in str(w[4])) for w in head) and len(head) >= _TINY_MIN_COLUMNS:
+        columns, body = _column_starts(head, h), rows[1:]
+    if not columns or len(columns) < _TINY_MIN_COLUMNS:
+        return None, columns
+    starts = [x for x, _ in columns]
+    out = [[name for _, name in columns]]
+    for row in body:
+        cells = [""] * len(columns)
+        for w in row:
+            i = max((n for n, x in enumerate(starts) if x <= w[0] + 1.5), default=0)
+            cells[i] = f"{cells[i]} {w[4]}".strip()
+        out.append(cells)
+    xs = [w for r in rows for w in r]
+    bbox = (min(w[0] for w in xs), min(w[1] for w in xs), max(w[2] for w in xs), max(w[3] for w in xs))
+    return _TinyTable(out, bbox), columns
+
+
 def _fitz_site_roster_fallback(
     *,
     pdf_path: Path,
@@ -82,6 +149,7 @@ def _fitz_site_roster_fallback(
             page_texts = []
         document_text = "\n".join(page_texts)
 
+        tiny_columns: list[tuple[float, str]] | None = None
         for page_index, page in enumerate(doc):
             try:
                 tables_finder = page.find_tables()
@@ -89,10 +157,16 @@ def _fitz_site_roster_fallback(
                 continue
             tables = list(getattr(tables_finder, "tables", []) or [])
             if not tables:
+                try:
+                    tiny, tiny_columns = _tiny_table(page, tiny_columns)
+                except Exception:
+                    tiny = None
+                tables = [tiny] if tiny is not None else []
+            if not tables:
                 continue
             for table_index, table in enumerate(tables):
                 try:
-                    extracted = _table_rows_repaired(page, table)
+                    extracted = table.rows if isinstance(table, _TinyTable) else _table_rows_repaired(page, table)
                 except Exception:
                     continue
                 if not extracted or len(extracted) < 2:
@@ -121,8 +195,10 @@ def _fitz_site_roster_fallback(
                     for i in range(len(header) if header else (len(rows[0]) if rows else 0))
                 ]
                 try:
+                    # A shrunk table stands on its own columns: the contract around it talks about anything.
+                    context = "" if isinstance(table, _TinyTable) else document_text
                     is_roster = looks_like_site_roster(
-                        columns=columns, rows=rows, surrounding_text=document_text
+                        columns=columns, rows=rows, surrounding_text=context
                     )
                 except Exception:
                     is_roster = False
@@ -171,7 +247,8 @@ def _fitz_site_roster_fallback(
                     continue
                 try:
                     roster_rows = extract_site_roster(
-                        columns=columns, rows=rows, surrounding_text=document_text
+                        columns=columns, rows=rows,
+                        surrounding_text="" if isinstance(table, _TinyTable) else document_text,
                     )
                 except Exception:
                     roster_rows = []
