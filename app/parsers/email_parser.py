@@ -2082,6 +2082,29 @@ def _without_automated_senders(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
         out.append(atom)
     return out
 
+_QUOTED_FIELD_RE = re.compile(r"^\s*(?:>+\s*)?\*?(To|Cc|Subject):\*?\s*(.*)$", re.I)
+_MAILTO_RE = re.compile(r"<mailto:[^>]*>")
+
+
+def _quoted_header_fields(lines: list[str], start: int) -> list[tuple[str, str, int]]:
+    """To, Cc and Subject of a quoted header, read from the lines after its From.
+
+    Stops at the blank line that ends the header. A wrapped address list
+    continues on the next line. Returns (field, value, 0-based line).
+    """
+    out: list[tuple[str, str, int]] = []
+    for i in range(start + 1, min(start + 14, len(lines))):
+        line = lines[i]
+        if not line.strip():
+            break
+        m = _QUOTED_FIELD_RE.match(line)
+        if m:
+            out.append((m.group(1).capitalize(), m.group(2).strip(), i))
+        elif out and out[-1][0] != "Subject" and not re.match(r"^\s*(?:>+\s*)?\*?(From|Sent|Date):", line, re.I):
+            out[-1] = (out[-1][0], f"{out[-1][1]} {line.strip()}".strip(), out[-1][2])
+    return [(f, _MAILTO_RE.sub("", v).strip(), i) for f, v, i in out if v.strip()]
+
+
 def _quoted_header_source_lines(lines: list[str], sender: str, sent_at: str, start: int = 0) -> list[dict[str, Any]]:
     """The quoted block's own "From: <sender>" line (and the Sent/Date line
     under it), verbatim, wherever the chain put it."""
@@ -2756,6 +2779,31 @@ class EmailParser(BaseParser):
             if _lines:
                 _cursor = _lines[0]["line"]
             mark_synthetic(atoms[-1], _lines)
+            # To, Cc and Subject are facts of their own: the job's name and who
+            # is on the thread. Lines, not locators, so a person can answer them.
+            if _lines:
+                for field, value, line in _quoted_header_fields(file_lines or [], _lines[0]["line"] - 1):
+                    field_text = f"{field}: {value}"
+                    atoms.append(
+                        EvidenceAtom(
+                            id=stable_id("atm", project_id, artifact_id, "quoted_header", index, field),
+                            project_id=project_id,
+                            artifact_id=artifact_id,
+                            atom_type=AtomType.deal_metadata,
+                            raw_text=field_text,
+                            normalized_text=normalize_text(field_text),
+                            value={"kind": "quoted_message_field", "field": field.lower(), "text": value,
+                                   "sender": sender, "sent_at": sent_at, "message_index": index},
+                            source_refs=[src.model_copy(update={
+                                "id": stable_id("src", artifact_id, "quoted_header", index, field),
+                                "locator": {**src.locator, "line_start": line + 1, "line_end": line + 1, "field": field.lower()},
+                            })],
+                            authority_class=AuthorityClass.quoted_old_email,
+                            confidence=0.45,
+                            review_status=ReviewStatus.auto_accepted,
+                            parser_version=self.parser_version,
+                        )
+                    )
         return atoms
 
     def _header_atom(
