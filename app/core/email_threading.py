@@ -782,6 +782,7 @@ def dedup_quoted_history(
 
     seen_quoted: dict[str, set[tuple[str, int]]] = {}
     seen_headers: dict[str, set[tuple[str, str]]] = {}
+    seen_short: set[tuple] = set()
     kept: list[EvidenceAtom] = []
     dropped: list[EvidenceAtom] = []
     for _i, atom in sorted(enumerate(atoms), key=_file_rank):
@@ -789,7 +790,8 @@ def dedup_quoted_history(
         v = atom.value if isinstance(atom.value, dict) else {}
         if et is not None and v.get("kind") == "quoted_message_header":
             tid = et["thread_id"]
-            key = (_address(str(v.get("sender") or "")), _minute_stamp(str(v.get("sent_at") or "")))
+            sender = str(v.get("sender") or "")
+            key = (_address(sender) or _name_identity(sender), _minute_stamp(str(v.get("sent_at") or "")))
             if key[0] and key[1] and (key in originals.get(tid, ()) or key in seen_headers.get(tid, ())
                                       or key in all_originals):
                 note_folded_into(atom, survivor_of.get(("h", key)) or survivor_of.get(("sh", tid, key)))
@@ -804,6 +806,17 @@ def dedup_quoted_history(
             continue
         key = _norm_key(atom)
         if len(key) < _MIN_DEDUP_LEN:
+            # Too short to match on words alone ("AJ"), but the same line of the
+            # same author's same message is still the same line.
+            ident = _message_identity(atom)
+            short = (key, occurrence.get(id(atom), 0), ident[1], min(ident[2])) if ident and ident[2] and key else None
+            if short is not None and short in seen_short:
+                note_folded_into(atom, survivor_of.get(("s", short)))
+                dropped.append(atom)
+                continue
+            if short is not None:
+                seen_short.add(short)
+                survivor_of.setdefault(("s", short), atom)
             kept.append(atom)
             continue
         tid = et["thread_id"]
