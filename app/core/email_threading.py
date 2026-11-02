@@ -552,6 +552,7 @@ def _message_blocks(atoms: list[EvidenceAtom]) -> dict[int, dict[str, str]]:
     return out
 
 
+_NO_WORDS_RE = re.compile(r"\[cid:[^\]]*\](?:<[^>]*>)?$|Some people who received this message don.t often get email from", re.I)
 _LINK_RE = re.compile(r"<\s*(?:https?://|mailto:)[^>]*>", re.I)
 _CID_RE = re.compile(r"\[cid:[^\]]*\]", re.I)
 
@@ -637,6 +638,21 @@ def _minute_stamps_around(raw: str) -> set[str]:
     return {f"{(d + timedelta(days=k)).isoformat()}|{minute}" for k in (-1, 0, 1)}
 
 
+def _name_of_address(addr: str) -> str:
+    """``name:quinton james`` for quinton.james@cdw.com: a quoted "From: Quinton
+    James" carries no address to match the file's own header on."""
+    return "name:" + addr.split("@")[0].replace(".", " ").lower()
+
+
+def _near_minutes(stamp: str) -> list[str]:
+    """A day|minute stamp and the minute either side."""
+    day, _, minute = stamp.partition("|")
+    if not minute.isdigit():
+        return [stamp]
+    m = int(minute)
+    return [f"{day}|{(m + d) % 60:02d}" for d in (0, -1, 1)]
+
+
 def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     """A last pass after the dedup stages: the same line of the same author's
     same message, quoted again in a later file, goes. Earlier stages can take
@@ -657,11 +673,26 @@ def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     # copy's separate To, Cc and Subject lines match no other line; the message
     # itself is what they repeat. The send time may be written in another zone.
     own_header: dict[tuple[str, str], EvidenceAtom] = {}
+    # The same for the lines of a file's own message: a quoted copy of "Best,"
+    # is that message's line, however short. A mail client rounds seconds, so
+    # 13:50:55 quotes as 8:51: a stamp matches its neighbouring minute too.
+    own_lines: dict[tuple[str, str, str], EvidenceAtom] = {}
     for atom in atoms:
         v = atom.value if isinstance(atom.value, dict) else {}
         addr = _address(str(v.get("from") or "")) if v.get("kind") == "email_header" else ""
         for stamp in _minute_stamps_around(str(v.get("date") or "")) if addr else ():
-            own_header.setdefault((addr, stamp), atom)
+            for near in _near_minutes(stamp):
+                own_header.setdefault((addr, near), atom)
+                own_header.setdefault((_name_of_address(addr), near), atom)
+        if v.get("quoted") or v.get("kind") in ("email_header", "person"):
+            continue
+        ident = _message_identity(atom)
+        key = _norm_key(atom).rsplit("|", 1)[-1] if v.get("list_item") else _norm_key(atom)
+        if key and ident is not None:
+            for stamp in ident[2]:
+                for near in _near_minutes(stamp):
+                    own_lines.setdefault((key, ident[1], near), atom)
+                    own_lines.setdefault((key, _name_of_address(ident[1]), near), atom)
 
     seen: dict[tuple, EvidenceAtom] = {}
     counts: dict[tuple, int] = {}
@@ -672,13 +703,18 @@ def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     gone: set[int] = set()
     for _i, atom in sorted(enumerate(atoms), key=_rank):
         v = atom.value if isinstance(atom.value, dict) else {}
+        # A bare inline image id, or the mail gateway's sender banner, says
+        # nothing about the message, quoted or not.
+        if v.get("message_index") is not None and _NO_WORDS_RE.match((atom.raw_text or "").strip()):
+            gone.add(id(atom))
+            continue
         if not v.get("quoted"):
             continue
         ident = _message_identity(atom)
         if ident is None or not ident[2]:
             continue
         who = (ident[1], min(ident[2]))
-        if v.get("kind") == "quoted_message_field":
+        if v.get("kind") in ("quoted_message_field", "quoted_message_header"):
             header = next((own_header[(ident[1], st)] for st in ident[2] if (ident[1], st) in own_header), None)
             if header is not None:
                 note_folded_into(atom, header)
@@ -700,6 +736,11 @@ def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
         # author and minute already say it is the same message.
         key = _norm_key(atom).rsplit("|", 1)[-1] if v.get("list_item") else _norm_key(atom)
         if not key:
+            continue
+        own = next((own_lines[(key, ident[1], st)] for st in ident[2] if (key, ident[1], st) in own_lines), None)
+        if own is not None and str(own.artifact_id or "") != str(atom.artifact_id or ""):
+            note_folded_into(atom, own)
+            gone.add(id(atom))
             continue
         slot = (str(atom.artifact_id or ""), v.get("message_index"), key)
         nth = counts.get(slot, 0)

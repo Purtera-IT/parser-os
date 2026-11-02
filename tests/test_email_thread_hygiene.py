@@ -323,3 +323,18 @@ def test_a_quoted_copy_of_a_files_own_message_loses_its_field_lines(tmp_path):
     kept = fold_repeated_quoted_lines(atoms)
     texts = [a.raw_text for a in kept]
     assert not any(t.startswith(("To: Bo", "Cc: Sam")) for t in texts)
+
+
+def test_a_quote_with_no_address_and_a_rounded_minute_is_still_the_same_message(tmp_path):
+    # Live 010082: 13:50:55 quotes as "8:51 AM" and "From: Quinton James" has no
+    # address, so the wrapper and "Best," stayed as rows in every later file.
+    r1 = _eml(tmp_path, "1.eml", "Works for me.\n\nBest,\n", frm="Quinton.james@cdw.com",
+              date="Tue, 07 Jul 2026 13:50:55 +0000", subject="RE: Access Control", msgid="<m1@x>")
+    quoted = "Thanks.\n\n" + "________________________________\nFrom: Quinton James\n" \
+        "Sent: Tuesday, July 7, 2026 8:51 AM\nTo: Chase Smith <chase@acme.example>\n" \
+        "Subject: RE: Access Control\n\nWorks for me.\n\nBest,\n"
+    r2 = _eml(tmp_path, "2.eml", quoted, frm="Chase Smith <chase@acme.example>",
+              date="Tue, 07 Jul 2026 15:30:00 +0000", subject="RE: Access Control", msgid="<m2@x>", reply_to="<m1@x>")
+    atoms, _ = thread_emails(_parse(r1) + _parse(r2), project_id="p")
+    kept = fold_repeated_quoted_lines(atoms)
+    assert not [a for a in kept if (a.value or {}).get("quoted") and a.raw_text.startswith(("To: Chase", "Best"))]
