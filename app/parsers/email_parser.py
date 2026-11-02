@@ -2125,14 +2125,17 @@ def _quoted_header_source_lines(lines: list[str], sender: str, sent_at: str, sta
 
 
 def _header_first_in_quoted_block(atoms: list[EvidenceAtom]) -> None:
-    """A quoted message's header reads first: its sender's contact card shares
-    the block's first line, and sorts after From, To, Cc and Subject."""
+    """A sender's contact card is built from the signature, so it reads where
+    the signature is, not above the body at the start of its span."""
     for a in atoms:
-        if isinstance(a.value, dict) and a.value.get("kind") == "person" and a.value.get("quoted"):
-            a.source_refs = [
-                r.model_copy(update={"locator": {**r.locator, "sentence_index": len(_QUOTED_FIELD_ORDER) + 1}})
-                for r in a.source_refs
-            ]
+        if not (isinstance(a.value, dict) and a.value.get("kind") == "person"):
+            continue
+        a.source_refs = [
+            r.model_copy(update={"locator": {**r.locator, "line_start": r.locator.get("line_end")}})
+            if isinstance(r.locator.get("line_end"), int) and r.locator.get("line_end") > (r.locator.get("line_start") or 0)
+            else r
+            for r in a.source_refs
+        ]
 
 
 def _logo_images_are_chatter(atoms: list[EvidenceAtom]) -> None:

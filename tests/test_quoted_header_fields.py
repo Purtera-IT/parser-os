@@ -25,15 +25,13 @@ def test_header_with_no_fields_gives_nothing():
     assert _quoted_header_fields(["From: A", "Sent: Monday", "", "Body"], 0) == []
 
 
-def test_contact_card_reads_after_the_header():
+def test_contact_card_reads_at_the_signature():
     class Ref(SimpleNamespace):
         def model_copy(self, update):
             return Ref(locator=update["locator"])
 
-    card = SimpleNamespace(value={"kind": "person", "quoted": True}, source_refs=[Ref(locator={"line_start": 9})])
-    own = SimpleNamespace(value={"kind": "person", "quoted": False}, source_refs=[Ref(locator={"line_start": 1})])
-    head = SimpleNamespace(value={"kind": "quoted_message_header", "quoted": True}, source_refs=[Ref(locator={})])
-    _header_first_in_quoted_block([head, card, own])
-    assert card.source_refs[0].locator["sentence_index"] == 4
-    assert "sentence_index" not in own.source_refs[0].locator
-    assert "sentence_index" not in head.source_refs[0].locator
+    card = SimpleNamespace(value={"kind": "person"}, source_refs=[Ref(locator={"line_start": 9, "line_end": 30})])
+    head = SimpleNamespace(value={"kind": "quoted_message_header"}, source_refs=[Ref(locator={"line_start": 9})])
+    _header_first_in_quoted_block([head, card])
+    assert card.source_refs[0].locator["line_start"] == 30
+    assert head.source_refs[0].locator["line_start"] == 9
