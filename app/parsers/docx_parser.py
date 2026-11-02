@@ -961,6 +961,44 @@ class DocxParser(BaseParser):
             # A block caption ("The Buyer" over "Signature: | Name: | Date:")
             # names the fields beneath it: it rides on their section path.
             _caption = header_cells[0] if _titled_block and is_caption_row(table_rows, 0) else None
+
+            def _emit_section_heading(row: int, text: str, section: list[str]) -> None:
+                """A form's band heading ("Installation Details") is a pointer
+                atom: not a fact, but a line the rows under it can name."""
+                from app.core.deal_chatter import CHATTER_FLAG
+
+                _heading = " ".join(text.split())
+                _sid = stable_id("atm", artifact_id, "docx_section_heading", table_idx, row, _heading)
+                atoms.append(EvidenceAtom(
+                    id=_sid,
+                    project_id=project_id,
+                    artifact_id=artifact_id,
+                    atom_type=AtomType.deal_metadata,
+                    raw_text=_heading,
+                    normalized_text=normalize_text(_heading),
+                    value={"text": _heading, "kind": "table_section_heading", "structure": True,
+                           "chatter": True, "rejected_by": "table_section_heading"},
+                    entity_keys=[],
+                    source_refs=[SourceRef(
+                        id=stable_id("src", _sid),
+                        artifact_id=artifact_id,
+                        artifact_type=ArtifactType.docx,
+                        filename=path.name,
+                        locator={"table_index": table_idx, "row": row, "section_path": section,
+                                 "block_kind": "table_header",
+                                 "extraction": "docx_table_header_v1"},
+                        extraction_method="docx_table_header_v1",
+                        parser_version=self.parser_version,
+                    )],
+                    authority_class=AuthorityClass.contractual_scope,
+                    confidence=0.1,
+                    review_status=ReviewStatus.needs_review,
+                    review_flags=[CHATTER_FLAG, "table_section_heading"],
+                    parser_version=self.parser_version,
+                ))
+
+            if _titled_block and header_cells and is_label_cell(header_cells[0]) and not is_caption_row(table_rows, 0):
+                _emit_section_heading(0, header_cells[0], list(table_section.get(table_idx, [])))
             for row_idx, row_cells in enumerate(table.rows):
                 _once = _row_texts_once(row_cells)
                 cell_texts = [t for t in _once if t]
@@ -1025,6 +1063,8 @@ class DocxParser(BaseParser):
                             len(_pos_cells[0].split()) <= 8 and not re.search(r"[.;:!?]", _pos_cells[0]))))
                     )
                 ):
+                    if len(set(_pos_cells)) == 1:
+                        _emit_section_heading(row_idx, _pos_cells[0], list(_sp))
                     continue
                 _seen_data = True
                 row_text = " | ".join(cell_texts)
