@@ -653,6 +653,16 @@ def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
         mi = v.get("message_index")
         return (ti if isinstance(ti, int) else 10**6, -mi if isinstance(mi, int) else 0, i)
 
+    # A file's own header is one line ("From | To | Cc | Subject"), so a later
+    # copy's separate To, Cc and Subject lines match no other line; the message
+    # itself is what they repeat. The send time may be written in another zone.
+    own_header: dict[tuple[str, str], EvidenceAtom] = {}
+    for atom in atoms:
+        v = atom.value if isinstance(atom.value, dict) else {}
+        addr = _address(str(v.get("from") or "")) if v.get("kind") == "email_header" else ""
+        for stamp in _minute_stamps_around(str(v.get("date") or "")) if addr else ():
+            own_header.setdefault((addr, stamp), atom)
+
     seen: dict[tuple, EvidenceAtom] = {}
     counts: dict[tuple, int] = {}
     # The longer lines of each message, so a copy cut short by a line wrap
@@ -668,6 +678,12 @@ def fold_repeated_quoted_lines(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
         if ident is None or not ident[2]:
             continue
         who = (ident[1], min(ident[2]))
+        if v.get("kind") == "quoted_message_field":
+            header = next((own_header[(ident[1], st)] for st in ident[2] if (ident[1], st) in own_header), None)
+            if header is not None:
+                note_folded_into(atom, header)
+                gone.add(id(atom))
+                continue
         if v.get("kind") == "person":
             # A second card of one message repeats its signature; a card read
             # off a To or Cc line is the only entry for that person.
