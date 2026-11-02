@@ -233,3 +233,25 @@ def test_esign_caption_is_the_name_of_its_fields_not_an_atom(tmp_path):
     assert chase.source_refs[0].locator["section_path"][-1] == "The Buyer"
     lee = next(a for a in atoms if a.raw_text == "Name: | Lee Park")
     assert lee.source_refs[0].locator["section_path"][-1] == "The Seller"
+
+
+def test_a_form_band_heading_is_a_pointer_row(tmp_path):
+    """010082: Sodexo's form has grey one-cell bands over its fields. They were
+    read as empty fields and lost, so nothing could point at them."""
+    docx = pytest.importorskip("docx")
+    from app.parsers.docx_parser import DocxParser
+
+    p = tmp_path / "form.docx"
+    d = docx.Document()
+    t = d.add_table(rows=4, cols=4)
+    t.cell(0, 0).merge(t.cell(0, 3)).text = "Requestor Information"
+    for i, v in enumerate(("Request Date", "7/2/2026", "Ticket", "981827")):
+        t.cell(1, i).text = v
+    t.cell(2, 0).merge(t.cell(2, 3)).text = "Installation Details"
+    for i, v in enumerate(("Days", "Monday", "Hours", "8am")):
+        t.cell(3, i).text = v
+    d.save(p)
+    atoms = DocxParser().parse(p)
+    atoms = getattr(atoms, "atoms", atoms)
+    heads = [a.raw_text for a in atoms if (a.value or {}).get("kind") == "table_section_heading"]
+    assert heads == ["Requestor Information", "Installation Details"]

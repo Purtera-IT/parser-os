@@ -2707,7 +2707,7 @@ class EmailParser(BaseParser):
                     authority_class=AuthorityClass.machine_extractor,
                     confidence=0.75,
                     review_status=ReviewStatus.auto_accepted,
-                    review_flags=[],
+                    review_flags=["chatter"],  # A contact row, not words in the mail: the deal keeps it, a reader skips it.
                     parser_version=self.parser_version,
                 )
             )

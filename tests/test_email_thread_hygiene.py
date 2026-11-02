@@ -307,3 +307,19 @@ def test_the_sweep_keeps_one_signature_card_and_every_recipient_card():
 
     a, b, c = card("1"), card("2"), card("3", "email_header_display_name")
     assert fold_repeated_quoted_lines([a, b, c]) == [a, c]
+
+
+def test_a_quoted_copy_of_a_files_own_message_loses_its_field_lines(tmp_path):
+    # Live 010082: the first file's own header is one line, so a later copy's
+    # separate Cc line had nothing to fold into. The zone differs too.
+    r1 = _eml(tmp_path, "1.eml", "Sounds good, thanks.", frm="AJ Evans <aj@purtera-it.com>",
+              date="Mon, 06 Jul 2026 14:37:35 +0000", subject="RE: Access Control", msgid="<m1@x>")
+    quoted = "Got it.\n\n" + "________________________________\nFrom: AJ Evans <aj@purtera-it.com>\n" \
+        "Sent: Monday, July 6, 2026 9:37 AM\nTo: Bo Lee <bo@acme.example>\nCc: Sam Ray <sam@acme.example>\n" \
+        "Subject: RE: Access Control\n\nSounds good, thanks.\n"
+    r2 = _eml(tmp_path, "2.eml", quoted, frm="Bo Lee <bo@acme.example>",
+              date="Mon, 06 Jul 2026 15:30:00 +0000", subject="RE: Access Control", msgid="<m2@x>", reply_to="<m1@x>")
+    atoms, _ = thread_emails(_parse(r1) + _parse(r2), project_id="p")
+    kept = fold_repeated_quoted_lines(atoms)
+    texts = [a.raw_text for a in kept]
+    assert not any(t.startswith(("To: Bo", "Cc: Sam")) for t in texts)
