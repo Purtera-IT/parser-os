@@ -455,6 +455,15 @@ def test_skip_stamp_added_fields_only(monkeypatch, tmp_path):
 # ── skip veto: recorded second opinion, routing untouched ───────────
 
 
+def _head(prob=None, *, band=None, model="loaded", reason=None):
+    """One canned :func:`pdf_image_veto.check` receipt (the head is consulted
+    exactly once per image, for both the band decision and the receipt)."""
+    rec = {"model": model, "meaningful_prob": prob, "band": band}
+    if reason:
+        rec["reason"] = reason
+    return lambda *a, **k: rec
+
+
 def test_vlm_skip_veto_extends_verdict_and_logs(monkeypatch, tmp_path):
     """vlm_gate skip + confident veto -> gate_verdict.veto + trn_veto_ row."""
     from app.core import pdf_image_veto
@@ -464,7 +473,7 @@ def test_vlm_skip_veto_extends_verdict_and_logs(monkeypatch, tmp_path):
     monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "18 Total Data Outlets")
     monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
                         '{"image_kind": "decorative", "has_text": false, "meaningful": false}')
-    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: 0.93)
+    monkeypatch.setattr(pdf_image_veto, "check", _head(0.93, band="hard"))
     log = _fresh_log()
     try:
         m = _marker(tmp_path)
@@ -500,9 +509,9 @@ def test_cpu_gate_skip_never_veto_checked(monkeypatch, tmp_path):
 
     def _boom(*a, **k):
         called["n"] += 1
-        return 0.99
+        return {"model": "loaded", "meaningful_prob": 0.99, "band": "hard"}
 
-    monkeypatch.setattr(pdf_image_veto, "veto", _boom)
+    monkeypatch.setattr(pdf_image_veto, "check", _boom)
     log = _fresh_log()
     try:
         m = _marker(tmp_path)
@@ -511,6 +520,7 @@ def test_cpu_gate_skip_never_veto_checked(monkeypatch, tmp_path):
         assert m.value["gate_verdict"]["kind"] == "skip"
         assert m.value["gate_verdict"]["via"] == "cpu_gate"
         assert "veto" not in m.value["gate_verdict"]
+        assert "veto_checked" not in m.value["gate_verdict"]  # never consulted
         assert log.count(relation="pdf_image_veto") == 0
     finally:
         _clear_log()
@@ -531,6 +541,9 @@ def test_veto_off_leaves_routing_identical(monkeypatch, tmp_path):
         assert m.value["gate_verdict"]["kind"] == "logo"
         assert m.value["gate_verdict"]["via"] == "vlm_gate"
         assert "veto" not in m.value["gate_verdict"]
+        # Configured OFF is a config choice, not a dead head: no consultation,
+        # so no liveness receipt either (same rule as the crop-blob gate).
+        assert "veto_checked" not in m.value["gate_verdict"]
         assert log.count(relation="pdf_image_veto") == 0
     finally:
         _clear_log()
@@ -545,8 +558,7 @@ def test_veto_abstain_does_not_extend_verdict(monkeypatch, tmp_path):
     monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "ocr")
     monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
                         '{"image_kind": "logo", "has_text": false, "meaningful": false}')
-    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: None)
-    monkeypatch.setattr(pdf_image_veto, "soft_veto", lambda *a, **k: None)
+    monkeypatch.setattr(pdf_image_veto, "check", _head(0.04))
     log = _fresh_log()
     try:
         m = _marker(tmp_path)
@@ -569,7 +581,7 @@ def test_hard_veto_row_carries_band_hard(monkeypatch, tmp_path):
     monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "18 Total Data Outlets")
     monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
                         '{"image_kind": "decorative", "has_text": false, "meaningful": false}')
-    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: 0.93)
+    monkeypatch.setattr(pdf_image_veto, "check", _head(0.93, band="hard"))
     log = _fresh_log()
     try:
         m = _marker(tmp_path)
@@ -579,6 +591,123 @@ def test_hard_veto_row_carries_band_hard(monkeypatch, tmp_path):
         assert "crop_ref" not in row.provenance  # blob gate off -> no upload
     finally:
         _clear_log()
+
+
+# ── veto liveness receipt: an abstain must not look like a dead head ─
+#
+# Doctrine silent-zero-for-infra (docs/IMAGE_GATE_LOOP.md): a best-effort path
+# must say it ran. The veto abstains identically whether it judged the image a
+# real skip or was never installed — so every consultation stamps
+# gate_verdict['veto_checked'] with the head's state and what it said.
+
+
+def _skip_gate(monkeypatch, *, ocr="18 Total Data Outlets"):
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO", "1")
+    _mock_reachable(monkeypatch)
+    monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: ocr)
+    monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
+                        '{"image_kind": "logo", "has_text": false, "meaningful": false}')
+
+
+def test_abstaining_head_receipts_that_it_ran(monkeypatch, tmp_path):
+    """Model present, judged the image a REAL skip: the envelope carries the
+    probability it produced, so 'it agreed' is provable — not inferred from a
+    missing veto key."""
+    from app.core import pdf_image_veto
+    _skip_gate(monkeypatch)
+    monkeypatch.setattr(pdf_image_veto, "check", _head(0.03))
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["veto_checked"] == {"model": "loaded", "meaningful_prob": 0.03}
+        assert "veto" not in gv and "veto_soft" not in gv  # abstain: no dispute
+        assert log.count(relation="pdf_image_veto") == 0   # receipts are not rows
+    finally:
+        _clear_log()
+
+
+def test_missing_model_receipt_says_absent(monkeypatch, tmp_path):
+    """The case this receipt exists for: no checkpoint on disk. Same abstain,
+    but the envelope now says the head was never there. Real check(), no stub."""
+    from app.core import pdf_image_veto
+    _skip_gate(monkeypatch)
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO_DIR", "/nope/no-such-veto-head")
+    pdf_image_veto._holder.clear()
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["veto_checked"] == {
+            "model": "absent", "meaningful_prob": None, "reason": "model_absent",
+        }
+        assert "veto" not in gv and "veto_soft" not in gv
+        assert log.count(relation="pdf_image_veto") == 0
+    finally:
+        _clear_log()
+        pdf_image_veto._holder.clear()
+
+
+def test_fired_veto_carries_the_receipt_too(monkeypatch, tmp_path):
+    """A fired veto is receipted as well — every consultation, not just the
+    quiet ones (the receipt is the audit of the head, not of the dispute)."""
+    from app.core import pdf_image_veto
+    _skip_gate(monkeypatch)
+    monkeypatch.setattr(pdf_image_veto, "check", _head(0.93, band="hard"))
+    log = _fresh_log()
+    try:
+        m = _marker(tmp_path)
+        assert piv.process_image_markers([m]) == []
+        gv = m.value["gate_verdict"]
+        assert gv["veto"] == {"meaningful_prob": 0.93, "model": "pdf_image_veto"}
+        assert gv["veto_checked"] == {"model": "loaded", "meaningful_prob": 0.93}
+        assert log.count(relation="pdf_image_veto") == 1
+    finally:
+        _clear_log()
+
+
+def test_receipt_adds_a_recorded_field_only(monkeypatch, tmp_path):
+    """RECORDED ONLY: the skip still emits no atoms and the verdict gains
+    exactly one key — nothing routes on the receipt."""
+    from app.core import pdf_image_veto
+    _skip_gate(monkeypatch)
+    monkeypatch.setattr(pdf_image_veto, "check", _head(0.03))
+    m = _marker(tmp_path)
+    assert piv.process_image_markers([m]) == []          # routing untouched
+    gv = m.value["gate_verdict"]
+    assert set(gv) == {"kind", "via", "ocr_preview", "veto_checked"}
+    assert gv["kind"] == "logo" and gv["via"] == "vlm_gate"
+
+
+def test_receipt_never_touches_the_meaningful_path(monkeypatch, tmp_path):
+    """Atoms for a meaningful image are byte-identical with the veto on and
+    off — the head is only ever consulted on skips, so no receipt appears."""
+    from app.core import pdf_image_veto
+    monkeypatch.setattr(pdf_image_veto, "check", _head(0.99, band="hard"))
+
+    def _run():
+        monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VISION", "1")
+        _mock_reachable(monkeypatch)
+        monkeypatch.setattr(piv, "_page_context", lambda *a, **k: ("", "", "", 0))
+        monkeypatch.setattr(piv, "_vlm", _route_vlm(
+            "photo",
+            describe='{"description": "Battery charger mounted on the north wall",'
+                     ' "facts": []}',
+        ))
+        m = _marker(tmp_path)
+        out = piv.process_image_markers([m])
+        return m, [(a.value, a.raw_text) for a in out]
+
+    monkeypatch.delenv("SOWSMITH_PDF_IMAGE_VETO", raising=False)
+    off_marker, off_atoms = _run()
+    monkeypatch.setenv("SOWSMITH_PDF_IMAGE_VETO", "1")
+    on_marker, on_atoms = _run()
+    assert on_atoms and on_atoms == off_atoms
+    assert "gate_verdict" not in on_marker.value
+    assert "gate_verdict" not in off_marker.value
 
 
 # ── soft veto band: harvest signal only, never a PM card ────────────
@@ -592,8 +721,9 @@ def _soft_setup(monkeypatch, *, soft=0.75, hard=None):
     monkeypatch.setattr(piv, "_ocr_crop", lambda *a, **k: "18 Total Data Outlets")
     monkeypatch.setattr(piv, "_vlm", lambda *a, **k:
                         '{"image_kind": "decorative", "has_text": false, "meaningful": false}')
-    monkeypatch.setattr(pdf_image_veto, "veto", lambda *a, **k: hard)
-    monkeypatch.setattr(pdf_image_veto, "soft_veto", lambda *a, **k: soft)
+    prob = hard if hard is not None else soft
+    band = "hard" if hard is not None else ("soft" if soft is not None else None)
+    monkeypatch.setattr(pdf_image_veto, "check", _head(prob, band=band))
 
 
 def test_soft_veto_stamps_veto_soft_never_veto(monkeypatch, tmp_path):
@@ -617,15 +747,10 @@ def test_soft_veto_stamps_veto_soft_never_veto(monkeypatch, tmp_path):
         _clear_log()
 
 
-def test_soft_not_checked_when_hard_fires(monkeypatch, tmp_path):
-    """Hard band wins; soft_veto is only consulted when the hard veto abstains."""
-    from app.core import pdf_image_veto
+def test_hard_band_never_also_stamps_soft(monkeypatch, tmp_path):
+    """One consultation, one band: a hard verdict stamps 'veto' only — the
+    soft key (harvest-only) must never ride along with it."""
     _soft_setup(monkeypatch, hard=0.93)
-
-    def _boom(*a, **k):
-        raise AssertionError("soft_veto must not be called when hard fired")
-
-    monkeypatch.setattr(pdf_image_veto, "soft_veto", _boom)
     log = _fresh_log()
     try:
         m = _marker(tmp_path)
@@ -633,25 +758,31 @@ def test_soft_not_checked_when_hard_fires(monkeypatch, tmp_path):
         gv = m.value["gate_verdict"]
         assert gv["veto"] == {"meaningful_prob": 0.93, "model": "pdf_image_veto"}
         assert "veto_soft" not in gv
+        (row,) = log.rows(relation="pdf_image_veto")
+        assert row.provenance["band"] == "hard"
     finally:
         _clear_log()
 
 
-def test_soft_veto_failure_means_no_soft_veto(monkeypatch, tmp_path):
-    """Guess-free: soft_veto raising -> plain skip receipt, nothing else."""
+def test_veto_head_exploding_means_no_veto(monkeypatch, tmp_path):
+    """Guess-free: the head raising -> no veto, no row, and a receipt that
+    says the state is UNKNOWN (never a fabricated verdict)."""
     from app.core import pdf_image_veto
     _soft_setup(monkeypatch, soft=None)
 
     def _boom(*a, **k):
-        raise RuntimeError("soft head died")
+        raise RuntimeError("veto head died")
 
-    monkeypatch.setattr(pdf_image_veto, "soft_veto", _boom)
+    monkeypatch.setattr(pdf_image_veto, "check", _boom)
     log = _fresh_log()
     try:
         m = _marker(tmp_path)
         assert piv.process_image_markers([m]) == []
         gv = m.value["gate_verdict"]
         assert "veto" not in gv and "veto_soft" not in gv
+        assert gv["veto_checked"] == {
+            "model": "unknown", "meaningful_prob": None, "reason": "RuntimeError",
+        }
         assert log.count(relation="pdf_image_veto") == 0
     finally:
         _clear_log()
@@ -683,9 +814,7 @@ def _sha16(m):
 
 
 def test_hard_veto_uploads_crop_and_stamps_ref(monkeypatch, tmp_path):
-    from app.core import pdf_image_veto
     _soft_setup(monkeypatch, hard=0.93, soft=None)
-    monkeypatch.setattr(pdf_image_veto, "soft_veto", lambda *a, **k: None)
     fake = _FakeContainer()
     _blob_on(monkeypatch, fake)
     log = _fresh_log()
