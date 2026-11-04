@@ -113,7 +113,7 @@ def test_sync_merges_every_batch_and_is_idempotent(monkeypatch):
     added: list[TrainingRow] = []
 
     class Log:
-        def add_many(self, rows):
+        def add_many(self, rows, mirror=True):
             added.extend(rows)
             return len(rows)
 
@@ -159,7 +159,7 @@ def test_one_unreadable_batch_does_not_stop_the_others(monkeypatch):
             return self._cur.encode("utf-8")
 
     class Log:
-        def add_many(self, rows):
+        def add_many(self, rows, mirror=True):
             return len(rows)
 
     monkeypatch.setattr(trb, "_container_client", lambda: Fake())
@@ -189,6 +189,92 @@ def test_keep_rows_never_reach_the_training_log():
     junk = trb.rows_to_jsonl([_row(label="_keep")])
     rows = trb.jsonl_to_rows(good + "\n" + junk)
     assert [r.label for r in rows] == ["service_line"]
+
+
+# ── add_many-level mirroring (the silver_audit erasure, 2026-08-27) ─────────
+#
+# log_rows mirrored its batches, but importers that call TrainingLog.add_many
+# directly (tools/import_image_silver.py) bypassed it — so the 584-row
+# silver_audit set existed only in the DB file, and one stale whole-DB
+# write-back erased it. The mirror now lives in add_many itself: every batch
+# gets a blob, whoever writes it, even when the local INSERT fails. The
+# blob→log sync paths opt out (mirror=False), or every nightly would
+# re-upload every batch it just merged, forever.
+
+
+class _Recorder:
+    def __init__(self):
+        self.sent: list[tuple[str, bytes]] = []
+
+    def upload_blob(self, name, data, overwrite=False):
+        self.sent.append((name, data))
+
+
+def test_direct_add_many_mirrors_the_batch(monkeypatch):
+    from app.core.training_log import TrainingLog
+
+    rec = _Recorder()
+    monkeypatch.setattr(trb, "_container_client", lambda: rec)
+    log = TrainingLog(":memory:")
+    r = _row()
+    assert log.add_many([r]) == 1
+    assert len(rec.sent) == 1, "an importer's batch must reach blob too"
+    assert r.id.encode() in rec.sent[0][1]
+
+
+def test_log_rows_mirrors_exactly_once(monkeypatch):
+    from app.core.training_log import TrainingLog, log_rows, set_training_log
+
+    rec = _Recorder()
+    monkeypatch.setattr(trb, "_container_client", lambda: rec)
+    set_training_log(TrainingLog(":memory:"))
+    try:
+        assert log_rows([_row()]) == 1
+    finally:
+        set_training_log(None)
+    assert len(rec.sent) == 1, "one batch, one blob — no double mirror"
+
+
+def test_mirror_survives_a_local_insert_failure(monkeypatch):
+    """The mirror exists because the local /tmp DB is the unreliable half —
+    a batch the DB refuses must still reach blob or it is lost twice."""
+    from app.core.training_log import TrainingLog, log_rows, set_training_log
+
+    rec = _Recorder()
+    monkeypatch.setattr(trb, "_container_client", lambda: rec)
+    log = TrainingLog(":memory:")
+    log._conn.close()  # the recycle/disk-full case: the INSERT will raise
+    set_training_log(log)
+    try:
+        assert log_rows([_row()]) == 0  # still never raises into the compile
+    finally:
+        set_training_log(None)
+    assert len(rec.sent) == 1, "the batch must reach blob even so"
+
+
+def test_sync_does_not_remirror_what_it_downloads(monkeypatch):
+    from app.core.training_log import TrainingLog
+
+    batch = trb.rows_to_jsonl([_row()])
+
+    class Fake:
+        class _Blob:
+            name = "_training_rows/a.jsonl"
+
+        def list_blobs(self, name_starts_with=""):
+            return [self._Blob()]
+
+        def download_blob(self, name):
+            return self
+
+        def readall(self):
+            return batch.encode("utf-8")
+
+        def upload_blob(self, name, data, overwrite=False):
+            raise AssertionError("nightly must not re-upload merged batches")
+
+    monkeypatch.setattr(trb, "_container_client", lambda: Fake())
+    assert trb.sync_into_log(TrainingLog(":memory:")) == 1
 
 
 def test_placeholder_rows_are_not_even_uploaded(monkeypatch):

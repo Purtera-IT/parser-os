@@ -27,7 +27,11 @@ Contract mirrors :mod:`app.core.feedback_blob`:
 * **Offline-safe**: every failure is swallowed — mirroring must NEVER break a
   compile. Losing a row is bad; failing a customer's compile is worse.
 
-Layout: ``<container>/_training_rows/<batch_id>.jsonl`` (one JSON row per line).
+Layout: ``<container>/_training_rows/<batch_id>.jsonl`` (one JSON row per line),
+where ``<container>`` is ``SOWSMITH_FEEDBACK_BLOB_CONTAINER`` defaulting to
+``orbitbrief-artifacts`` — the SAME container as the corrections mirror, NOT
+``ml-artifacts`` where the training DB itself lives. A blob dropped into
+``ml-artifacts/_training_rows/`` by hand is invisible to :func:`sync_into_log`.
 """
 from __future__ import annotations
 
@@ -185,7 +189,9 @@ def sync_into_log(log: "TrainingLog" | None = None) -> int:
                 raw = raw.decode("utf-8", errors="replace")
             rows = jsonl_to_rows(raw)
             if rows:
-                imported += log.add_many(rows)
+                # mirror=False: these rows just CAME from blob — re-uploading
+                # them would mint a fresh batch blob per merge, every night.
+                imported += log.add_many(rows, mirror=False)
         except Exception:
             # One unreadable batch must not stop the rest.
             continue

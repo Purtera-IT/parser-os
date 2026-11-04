@@ -247,7 +247,10 @@ def sync_training_rows_into_log(log) -> int:
             try:
                 raw = cc.download_blob(b.name).readall()
                 rows = [TrainingRow(**d) for d in json.loads(raw)]
-                added += log.add_many(rows)
+                # mirror=False: these gold rows already live durably under
+                # ``_feedback/training_rows/`` — re-mirroring them into
+                # ``_training_rows/`` would duplicate them on every import.
+                added += log.add_many(rows, mirror=False)
             except Exception:
                 continue
     except Exception:
