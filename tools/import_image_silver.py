@@ -191,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Imported {written} rows ({len(errors)} rejected as unimportable).")
     print(f"After: {json.dumps(after, indent=2)}")
     print(
-        "\nNOT uploaded anywhere. To publish (after human confirmation):\n"
+        "\nDB not uploaded anywhere (the batch itself mirrors to a blob under "
+        "_training_rows/ iff SOWSMITH_FEEDBACK_BLOB=1 — off means fully local)."
+        "\nTo publish the DB (after human confirmation):\n"
         f"  az storage blob upload --account-name purpulsedevstg01 "
         f"--container-name ml-artifacts --name _training_deepseek.db "
         f"--file {args.db} --auth-mode login --overwrite"

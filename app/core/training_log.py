@@ -165,8 +165,25 @@ class TrainingLog:
     def add(self, row: TrainingRow) -> None:
         self.add_many([row])
 
-    def add_many(self, rows: list[TrainingRow]) -> int:
-        """Insert rows; fills masked_text/weight/split when unset. Returns count."""
+    def add_many(self, rows: list[TrainingRow], *, mirror: bool = True) -> int:
+        """Insert rows; fills masked_text/weight/split when unset. Returns count.
+
+        Every batch is also mirrored to its own blob (gated + best-effort, see
+        :mod:`app.core.training_row_blob`). The mirror lives HERE and not only
+        in :func:`log_rows` because the importers that call ``add_many``
+        directly (``tools/import_image_silver.py``) bypassed the old
+        log_rows-level mirror — which is how the 584-row silver_audit set came
+        to exist only in the DB file, and one stale whole-DB write-back erased
+        it. The mirror fires even when the INSERT fails: the local ``/tmp``
+        SQLite is the unreliable half of this pair, and a batch the DB refuses
+        must still reach blob or it is lost twice.
+
+        ``mirror=False`` is for the blob→log sync paths only
+        (:func:`app.core.training_row_blob.sync_into_log`,
+        :func:`app.core.feedback_blob.sync_training_rows_into_log`): they must
+        not re-upload what they just downloaded, or every nightly re-mirrors
+        every batch it merges, forever.
+        """
         prepared: list[dict[str, Any]] = []
         for r in rows:
             if not r.masked_text and r.raw_text:
@@ -185,8 +202,17 @@ class TrainingLog:
             return 0
         placeholders = ", ".join("?" for _ in _COLUMNS)
         sql = f"INSERT OR REPLACE INTO training_rows ({', '.join(_COLUMNS)}) VALUES ({placeholders})"
-        with self._conn:
-            self._conn.executemany(sql, [[p[c] for c in _COLUMNS] for p in prepared])
+        try:
+            with self._conn:
+                self._conn.executemany(sql, [[p[c] for c in _COLUMNS] for p in prepared])
+        finally:
+            if mirror:
+                try:
+                    from app.core.training_row_blob import upload_rows
+
+                    upload_rows(rows)
+                except Exception:  # pragma: no cover - must never break a write
+                    pass
         return len(prepared)
 
     # ── read / inspect ──────────────────────────────────────────────────
@@ -286,19 +312,11 @@ def log_rows(rows: list[TrainingRow]) -> int:
     log = get_training_log()
     if log is None:
         return 0
+    # add_many mirrors the batch to blob itself (the log lives on ephemeral
+    # container storage — see its docstring), and does so even when the local
+    # INSERT raises, so the swallow below cannot lose the rows.
     try:
         written = log.add_many(rows)
     except Exception:
         return 0
-    # The log lives on ephemeral container storage, so without this every row a
-    # compile produces dies on recycle — which is why the shared log sat at 3
-    # rows and the eval gate had no holdout to score anything against. Mirror
-    # the batch to its own blob; the nightly merges them. Gated + best-effort:
-    # losing a training row is bad, failing a customer's compile is worse.
-    try:
-        from app.core.training_row_blob import upload_rows
-
-        upload_rows(rows)
-    except Exception:  # pragma: no cover - mirroring must never break a compile
-        pass
     return written
