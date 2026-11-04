@@ -1071,6 +1071,15 @@ def _maybe_veto_skip(
     per-compile budget stamps ``gate_verdict['crop_thumb_error']`` — same
     never-silent doctrine. Soft vetoes get no thumbnail: they never reach a PM.
 
+    ABSTAINS ARE RECEIPTED TOO. Whenever the head is consulted, the verdict
+    carries ``gate_verdict['veto_checked'] = {'model': ..., 'meaningful_prob':
+    ...}`` — the same doctrine as ``crop_ref_error``: a head that judged the
+    image a real skip and a head that is not installed must not look alike
+    from an envelope. ``model`` is ``'loaded'`` / ``'absent'`` / ``'unknown'``
+    and ``meaningful_prob`` is what the head actually said (``None`` when it
+    said nothing, with a ``reason``). It is a RECEIPT ONLY — nothing routes on
+    it, no PM card reads it, no row is logged for it.
+
     cpu_gate verdicts are NEVER veto-checked: once the distilled gate serves,
     the veto second-guessing its sibling student (trained on the same feature
     text) is self-review, not independent signal. Never raises.
@@ -1080,20 +1089,42 @@ def _maybe_veto_skip(
     try:
         from app.core import pdf_image_veto
         if not pdf_image_veto.enabled():
-            return
+            return  # configured OFF: not consulted, so nothing to receipt
         if ocr is None:
             ocr = _ocr_crop(saved_path, crop)  # cheap chain only, same as the gate
-        prob = pdf_image_veto.veto(caption, ocr or "")
-        band = "hard"
-        if prob is None:
-            prob = pdf_image_veto.soft_veto(caption, ocr or "")
-            band = "soft"
-        if prob is None:
-            return
-        crop_ref, crop_err = _upload_disputed_crop(crop, attribution)
+        try:
+            # One consultation serves both the band decision and the receipt;
+            # the head's lazy singleton loads at most once per process.
+            checked = pdf_image_veto.check(caption, ocr or "")
+        except Exception as exc:
+            # Guess-free: we could not determine the head's state. Say so.
+            checked = {
+                "model": "unknown", "meaningful_prob": None, "band": None,
+                "reason": type(exc).__name__,
+            }
+        prob = checked.get("meaningful_prob")
+        band = checked.get("band")
         val = getattr(marker, "value", None)
-        if isinstance(val, dict) and isinstance(val.get("gate_verdict"), dict):
-            gv = val["gate_verdict"]
+        gv = val.get("gate_verdict") if isinstance(val, dict) else None
+        gv = gv if isinstance(gv, dict) else None
+        if gv is not None:
+            stated = (
+                float(prob)
+                if isinstance(prob, (int, float)) and not isinstance(prob, bool)
+                else None
+            )
+            receipt: dict[str, Any] = {
+                "model": checked.get("model") or "unknown",
+                "meaningful_prob": stated,
+            }
+            reason = checked.get("reason")
+            if stated is None and reason:
+                receipt["reason"] = str(reason)
+            gv["veto_checked"] = receipt
+        if band is None or prob is None:
+            return  # abstain: the receipt above is the entire record
+        crop_ref, crop_err = _upload_disputed_crop(crop, attribution)
+        if gv is not None:
             if band == "hard":
                 gv["veto"] = {"meaningful_prob": prob, "model": "pdf_image_veto"}
                 # Card-worthy: carry the pixels inline so the PM sees the image

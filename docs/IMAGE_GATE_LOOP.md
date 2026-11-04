@@ -23,6 +23,11 @@ channel -> veto -> cards -> taps -> eval-gated retrain -> (better veto) -> ...
    * either band = disputed image -> crop pixels persisted to blob
      (`orbitbrief-artifacts`, `deals/<deal>/orbitbrief/disputed_crops/<sha16>.png`),
      stamped as `gate_verdict.crop_ref` (or `crop_ref_error` on failure).
+   * EVERY consultation (fired or not) stamps `gate_verdict.veto_checked` =
+     `{model: loaded|absent|unknown, meaningful_prob: <float|null>}` (+ a
+     `reason` when there is no probability). One `check()` call serves the
+     bands and the receipt, so the head loads once. Recorded only — no card,
+     no row, no routing reads it. Veto OFF = no consultation = no receipt.
 3. **Cards** — Orbitbrief-Core builds "Images we skipped — but doubt" PM
    culprit cards from `gate_verdict.veto` ONLY (hard band).
 4. **Taps** — PM chips + `tools/build_image_review_queue.py` (hard > soft >
@@ -51,6 +56,12 @@ vanished, and nothing distinguished "no rows" from "dead mirror" until the
 584-row silver set got erased by a stale write-back. Hence: disputed-crop
 upload failure stamps `gate_verdict.crop_ref_error` with the exception class
 instead of nothing — a dead uploader is observable in every envelope it fails.
+Second receipt, same doctrine: the veto abstained identically whether it had
+judged the image a real skip or had no checkpoint at all (5 skips on
+veto-enabled code at 2026-08-26 22:52 UTC produced zero veto rows and zero
+proof the head was ever loaded), so `veto_checked` now records the head's
+state and the probability it produced — and `unknown` when we cannot tell,
+never a stand-in verdict.
 
 **3. Variety-over-volume.** Row counts lie; deal-held-out splits expose
 variety shift. Receipt: the chart class — the 8-way kind classifier sat at
