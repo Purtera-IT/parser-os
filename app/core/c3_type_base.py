@@ -1929,6 +1929,11 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
             bare[hosts[0]] = [_key_words(k, zip_too=False) for k in host["keys"]]
 
 
+def _why(dropped: dict[str, str], aid: str, why: str) -> None:
+    """First reason wins: the gate that actually rejected the line."""
+    dropped.setdefault(str(aid), why)
+
+
 def quote_sites(atoms: list[Any], *, outside: bool = False,
                 left_out: set[str] | frozenset[str] | None = None, settled: bool = False,
                 record: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -1953,6 +1958,11 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     #: roster so a dropped place is visible instead of being a number that silently got smaller.
     held: list[tuple[str, str, list[str], str, float]] = []
     vetoed: list[dict[str, Any]] = []
+    #: Why each candidate line did not make the roster. A roster that comes back EMPTY is the one
+    #: answer nobody can act on: 010171 and 010452 both priced `site_count 0` with a real address in
+    #: the corpus, and finding out which of six gates did it took re-running the function by hand on
+    #: a saved envelope, four times, on three wrong guesses. The compile says it now.
+    dropped: dict[str, str] = {}
     for a in atoms:
         aid, text, kind = _text_type(a)
         # The role head may NAME a site, not only veto one. A work address can
@@ -1981,8 +1991,15 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         parsed_address = (v_role.get("inferred") is not True) and any(
             str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or []))
         job_site = bool(role and role[0] == "job_site" and parsed_address)
+        cand = kind == "physical_site" or job_site or bool(
+            [k for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")])
         if (kind != "physical_site" and not job_site) or _deal_kit(a) \
                 or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
+            if cand:
+                _why(dropped, aid, "deal_kit line" if _deal_kit(a)
+                     else "flagged site_not_backed_by_heads" if "site_not_backed_by_heads" in (
+                         getattr(a, "review_flags", None) or [])
+                     else f"type {kind!r} and the role head did not name it a job site")
             continue
         # A line outside the quoting read never counts (``outside``: only those, for seen-only sites)
         # -- EXCEPT a work address the heads name.
@@ -2005,6 +2022,7 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
             if aid not in out:
                 continue
         elif aid in out and not job_site:
+            _why(dropped, aid, f"out of the quoting read: {out[aid]}")
             continue
         if aid in skip and not (job_site and aid in out):
             # `quote()` folds `out` INTO left_out (`left_out | also | set(out)`),
@@ -2013,10 +2031,12 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
             # which is why 010452 still priced site_count 0 after the first pass.
             # Only the "ours" part is exempt: a line the heads dropped from the
             # brief, or kept as "also mentioned", still names no site.
+            _why(dropped, aid, "left out of the brief (the keep head dropped it, or 'also mentioned')")
             continue
         keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")]
         if not keys:
             if settled:
+                _why(dropped, aid, "no site: key survived site_keys_follow_heads.settle")
                 continue
             keys = [f"site-line:{aid}"]
         # ``jdg:site_role`` reading this line as somebody else's address holds it back -- but a veto
@@ -2076,6 +2096,9 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         if len(e["keys"]) <= 1:
             e.pop("keys")
     out_rows = list(roster.values())
+    if not out_rows and dropped and record is not None:
+        record.extend({"atom_id": aid, "why": why, "head": None, "answer": None, "p": None,
+                       "roster": "empty"} for aid, why in sorted(dropped.items())[:40])
     by_id = {str(v["atom_id"]): v for v in vetoed}
     for e in out_rows:
         hit = [by_id[i] for i in e.get("atom_ids") or [] if i in by_id]
