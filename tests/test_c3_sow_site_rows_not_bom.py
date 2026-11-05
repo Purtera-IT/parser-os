@@ -23,3 +23,14 @@ def test_parts_rows_still_go_to_the_customer():
     c = {}
     m._customer_bom_rows(c, fs, lambda i: i == "b1")
     assert [x["text"] for x in c["customer_materials"]] == ["12 x PA-440 firewall", "4 x SFP-10G-SR"]
+
+
+def test_a_schedule_line_the_facts_state_is_cited_not_dropped():
+    lines = {"f1": "Assume regular business hours.", "f2": "Site No.: dc 5837 | State: TX"}
+    c = {k: [] for k in m.LISTS}
+    c["schedule"] = [{"text": "Work Window: regular business hours", "cites": [], "kind": "method"},
+                     {"text": "Work Window: overnight weekends only", "cites": [], "kind": "method"}]
+    m.check(c, lines)
+    kept = {x["text"]: x.get("cites") for x in c["schedule"]}
+    assert kept.get("Work Window: regular business hours") == ["f1"]
+    assert "Work Window: overnight weekends only" not in kept
