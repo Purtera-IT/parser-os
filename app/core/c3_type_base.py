@@ -2107,8 +2107,20 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     out_rows = list(roster.values())
     if not out_rows and record is not None:
         if dropped:
-            record.extend({"atom_id": aid, "why": why, "head": None, "answer": None, "p": None,
-                           "roster": "empty"} for aid, why in sorted(dropped.items())[:40])
+            # Each rejected candidate carries what the role head actually said about it, and
+            # whether this compile read that line at ALL. Without the second fact an absent
+            # answer cannot be told apart from a head that was asked and said nothing -- the
+            # difference between "wire the head in" and "the head is wrong here".
+            reads_of = _DEAL.get("reads") or {}
+            for aid, why in sorted(dropped.items())[:40]:
+                got = line_reading(aid, "jdg:site_role")
+                line_read = reads_of.get(str(aid))
+                record.append({"atom_id": aid, "why": why, "head": "jdg:site_role",
+                               "answer": got[0] if got else None,
+                               "p": round(got[1], 4) if got else None,
+                               "line_was_read": line_read is not None,
+                               "heads_on_line": sorted(line_read)[:30] if isinstance(line_read, dict) else None,
+                               "roster": "empty"})
         else:
             # No gate here rejected anything: nothing arrived to reject. Say so with the
             # counts, so the next question is "who took it out before the quote" and not
@@ -2116,6 +2128,8 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
             # guesses, because an empty receipt looked the same as a deal with no address).
             record.append({"atom_id": None, "head": None, "answer": None, "p": None,
                            "roster": "empty",
+                           "lines_offered": seen, "typed_physical_site": typed_site,
+                           "lines_with_a_read": sum(1 for _ in (_DEAL.get("reads") or {})),
                            "why": (f"no candidate line reached the roster: {seen} line(s) offered, "
                                    f"{typed_site} typed physical_site. The place was taken out "
                                    f"before the quote, not by a site gate.")})
