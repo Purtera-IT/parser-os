@@ -1930,7 +1930,8 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
 
 
 def quote_sites(atoms: list[Any], *, outside: bool = False,
-                left_out: set[str] | frozenset[str] | None = None, settled: bool = False) -> list[dict[str, Any]]:
+                left_out: set[str] | frozenset[str] | None = None, settled: bool = False,
+                record: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The heads' site roster for the quote: one entry per site on a line the heads typed
     ``physical_site`` (the compile's final types, after the C3 authority pass), never a Deal Kit line,
     and not a line ``jdg:site_role`` surely reads as somebody else's address. Each carries the atom
@@ -1948,6 +1949,10 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     out = out_of_quote()
     skip = set() if outside else {str(i) for i in (left_out or ())}
     lines: list[tuple[str, str, list[str]]] = []
+    #: Lines the role head read as somebody else's address, and what became of them. Reported on the
+    #: roster so a dropped place is visible instead of being a number that silently got smaller.
+    held: list[tuple[str, str, list[str], str, float]] = []
+    vetoed: list[dict[str, Any]] = []
     for a in atoms:
         aid, text, kind = _text_type(a)
         # The role head may NAME a site, not only veto one. A work address can
@@ -2009,14 +2014,31 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
             # Only the "ours" part is exempt: a line the heads dropped from the
             # brief, or kept as "also mentioned", still names no site.
             continue
-        if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
-            continue
         keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")]
         if not keys:
             if settled:
                 continue
             keys = [f"site-line:{aid}"]
+        # ``jdg:site_role`` reading this line as somebody else's address holds it back -- but a veto
+        # may not empty the roster. 010171 priced site_count 0 with one address in the corpus, read
+        # `job_site` 0.9562 when the head is asked the deal in one batch; the compile's own read of
+        # the same line is what the roster saw, and a quote that prices no place is never the right
+        # answer (the 010452 lesson). Held-back lines are kept aside and restored below if nothing
+        # else stands, each one named. Never a silent zero.
+        if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
+            held.append((aid, text, keys, role[0], round(float(role[1]), 4)))
+            continue
         lines.append((aid, text, keys))
+    if held and not lines:
+        for aid, text, keys, ans, p_ in held:
+            lines.append((aid, text, keys))
+            vetoed.append({"site": keys[0], "atom_id": aid, "head": "jdg:site_role",
+                           "answer": ans, "p": p_,
+                           "why": "kept: vetoing it would leave the deal with no site"})
+    else:
+        vetoed.extend({"site": keys[0], "atom_id": aid, "head": "jdg:site_role", "answer": ans, "p": p_,
+                       "why": "held back: the role head reads it as somebody else's address"}
+                      for aid, text, keys, ans, p_ in held)
     # Keys that share a line are one site.
     parent: dict[str, str] = {}
 
@@ -2053,7 +2075,15 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     for e in roster.values():
         if len(e["keys"]) <= 1:
             e.pop("keys")
-    return list(roster.values())
+    out_rows = list(roster.values())
+    by_id = {str(v["atom_id"]): v for v in vetoed}
+    for e in out_rows:
+        hit = [by_id[i] for i in e.get("atom_ids") or [] if i in by_id]
+        if hit:
+            e["role_head_held_back"] = hit
+    if record is not None:
+        record.extend(vetoed)
+    return out_rows
 
 
 def sites_seen_only_out_of_view(atoms: list[Any], sites: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -2143,7 +2173,8 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     jd_ids = [str(c) for j in brief.get("job_details") or [] if isinstance(j, dict) for c in j.get("cites") or []]
     not_work = {i: why for i in dict.fromkeys(work_ids + jd_ids)
                 if i in by_id and (why := not_quote_work(by_id[i]))}
-    sites = quote_sites(atoms, left_out=left_out | also | set(out))
+    role_held: list[dict[str, Any]] = []
+    sites = quote_sites(atoms, left_out=left_out | also | set(out), record=role_held)
     seen_only = sites_seen_only_out_of_view(atoms, sites)
     deal_reads = {k: list(v) for k in QUOTE_DEAL_HEADS
                   if isinstance((v := (_DEAL.get("deal") or {}).get(k)), (list, tuple))}
@@ -2160,6 +2191,10 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                                   "not_work": not_work}}}
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
+    if role_held:
+        # What the role head held back, and whether the roster kept it anyway. A place that leaves
+        # the roster is named here, so site_count never just gets smaller with nothing to read.
+        body["deal"]["site_role_held_back"] = role_held
     if _never():
         return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
             _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id)))
