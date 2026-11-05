@@ -9490,7 +9490,11 @@ def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | N
 def _weekend(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     """A weekend date is weekend work, not "regular business hours"."""
     # A weekend date is weekend work, not "regular business hours" (010198 Sunday).
-    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or [])
+    # Only the days the work happens: a completion date or deadline on a Sunday is not weekend work (010447,
+    # 2026-11-05: "Requested Completion Date: August 1, 2027" made the job weekend work and dropped the business
+    # hours the deal states).
+    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or []
+                     if not re.match(r"(?i)\s*requested completion|\s*deadline|\s*due\b", str(x.get("text") if isinstance(x, dict) else x)))
     # The calendar date says the weekday when the line does not (010198:
     # "August 16, 2026" is a Sunday).
     from datetime import date as _date

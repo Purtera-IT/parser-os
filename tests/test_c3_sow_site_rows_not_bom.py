@@ -62,3 +62,19 @@ def test_a_completion_date_no_fact_gives_is_still_redated():
     c = {"schedule": [{"text": "Requested Completion Date: Aug 1, 2027", "cites": ["f1"], "kind": "fact"}], "overview": []}
     m._fix_dates(c, fs, "2026-10-20")
     assert "Aug" not in c["schedule"][0]["text"]
+
+
+def test_a_sunday_deadline_is_not_weekend_work():
+    fs = [{"id": "f2", "text": "Assume regular business hours.", "section": "assumptions"}]
+    c = {"schedule": [{"text": "Requested Start Date: February 1, 2027", "cites": ["f1"], "kind": "fact"},
+                      {"text": "Requested Completion Date: August 1, 2027", "cites": ["f1"], "kind": "fact"},
+                      {"text": "Work Window: regular business hours", "cites": ["f2"], "kind": "fact"}],
+         "assumptions": []}
+    m._weekend(c, fs)
+    assert [x["text"] for x in c["schedule"]][-1] == "Work Window: regular business hours"
+
+
+def test_a_sunday_start_is_still_weekend_work():
+    c = {"schedule": [{"text": "Requested Start Date: August 16, 2026", "cites": ["f1"], "kind": "fact"}], "assumptions": []}
+    m._weekend(c, [])
+    assert any("Weekend (Sunday)" in x["text"] for x in c["schedule"])
