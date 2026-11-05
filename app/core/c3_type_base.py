@@ -220,7 +220,9 @@ def overwrite_bar(atom: Any, answer: str, bar: float, p: float | None = None) ->
 _STREET = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][A-Za-z0-9'.-]*\s+){1,4}?(?i:street|st|road|rd|avenue|ave|"
                      r"boulevard|blvd|drive|dr|lane|ln|way|pike|highway|hwy|bypass|parkway|pkwy|court|ct|place|pl|circle|"
                      r"cir|trail|trl|route|rte|turnpike|tpke|plaza|square|sq|terrace|ter|expressway|expy|freeway|fwy|loop|"
-                     r"crossing|xing|crescent|cres|grove|commons|mall|landing|ridge|hollow|pointe)\b\.?")
+                     r"crossing|xing|crescent|cres|grove|commons|mall|landing|ridge|hollow|pointe)\b\.?"
+                     # the street word first: "4119 Avenue of the Cities", "1200 Highway 51", "50 Route 9"
+                     r"|\b\d{1,6}\s+(?i:avenue|highway|hwy|route|rte|state route|county road|farm road)\s+(?:of\s+the\s+)?[A-Z0-9]")
 
 def _overwrite_bar(atom: Any, answer: str, bar: float) -> float:
     t = getattr(atom, "atom_type", None)
