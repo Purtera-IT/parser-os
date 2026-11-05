@@ -22,9 +22,17 @@ OVER = 1.2
 
 
 def _loc(a: Any) -> dict[str, Any]:
+    """The line's locator: on a compile atom it sits on its first source ref (``source_refs[0].locator``); an
+    envelope atom carries it directly."""
     loc = getattr(a, "locator", None)
     if loc is None and isinstance(a, dict):
         loc = a.get("locator")
+    if not isinstance(loc, dict) or not loc:
+        refs = getattr(a, "source_refs", None) or (a.get("source_refs") if isinstance(a, dict) else None) or []
+        for r in refs:
+            got = getattr(r, "locator", None) if not isinstance(r, dict) else r.get("locator")
+            if isinstance(got, dict) and got:
+                return got
     return loc if isinstance(loc, dict) else {}
 
 
@@ -94,6 +102,8 @@ def question(atoms: list[Any], type_of) -> dict[str, Any] | None:
     bigger = {k: v for k, v in rows.items() if len(v) > (1 + TOLERANCE) * stated and k not in match}
     if not match or not bigger:
         return None
+    text_of = {str(getattr(a, "id", "") or (a.get("id") if isinstance(a, dict) else "")):
+               str(getattr(a, "raw_text", None) or (a.get("raw_text") if isinstance(a, dict) else "") or "") for a in atoms}
     m_key, m_ids = max(match.items(), key=lambda kv: len(kv[1]))
     b_key, b_ids = max(bigger.items(), key=lambda kv: len(kv[1]))
     from app.core import rule_ledger
@@ -103,4 +113,4 @@ def question(atoms: list[Any], type_of) -> dict[str, Any] | None:
             "by": "rule:" + RULE_ID,
             "text": (f"The deal states {stated} sites. The site list \"{m_key[1]}\" has {len(m_ids)} rows and "
                      f"\"{b_key[1]}\" has {len(b_ids)}. Which list is this job's?"),
-            "evidence": [m_ids[0], b_ids[0]]}
+            "evidence": [{"id": i, "text": text_of.get(i, "")[:240], "sim": 1.0} for i in (m_ids[0], b_ids[0])]}
