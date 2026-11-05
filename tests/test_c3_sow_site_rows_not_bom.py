@@ -46,3 +46,19 @@ def test_cited_schedule_lines_say_what_their_cites_say():
     m.check(c, lines)
     kept = {x["text"]: x["cites"] for x in c["schedule"]}
     assert kept == {"Requested Start Date: February 1, 2027": ["f1"], "Work Window: regular business hours": ["f2"]}
+
+
+def test_a_completion_date_from_start_plus_span_is_kept():
+    fs = [{"id": "f1", "text": "Start date Feb 1st , 2027, and have a 6-month deadline.", "section": "timeline", "type": "milestone_phase"}]
+    c = {"schedule": [{"text": "Requested Start Date: Feb 1, 2027", "cites": ["f1"], "kind": "fact"},
+                      {"text": "Requested Completion Date: Aug 1, 2027", "cites": ["f1"], "kind": "fact"}],
+         "overview": []}
+    m._fix_dates(c, fs, "2026-10-20")
+    assert [x["text"] for x in c["schedule"]][1] == "Requested Completion Date: Aug 1, 2027"
+
+
+def test_a_completion_date_no_fact_gives_is_still_redated():
+    fs = [{"id": "f1", "text": "Start date Feb 1st , 2027.", "section": "timeline", "type": "milestone_phase"}]
+    c = {"schedule": [{"text": "Requested Completion Date: Aug 1, 2027", "cites": ["f1"], "kind": "fact"}], "overview": []}
+    m._fix_dates(c, fs, "2026-10-20")
+    assert "Aug" not in c["schedule"][0]["text"]

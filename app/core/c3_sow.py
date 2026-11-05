@@ -9543,6 +9543,37 @@ def _dates_ok(text: str, cited: str) -> bool:
     return all((mo, d) in have for _m, mo, d, _y in _dates_in(text)) if have or _dates_in(text) else True
 
 
+_SPAN = re.compile(r"(?i)\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[- ]?(month|week|day)s?\b")
+_SPAN_N = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())}
+
+
+def _start_plus_span(text: str, cited: str, stated: list) -> set[tuple[int, int]]:
+    """A completion date the cites give as a start plus a span is stated (010447, 2026-11-05: "Start date Feb 1st,
+    2027, and have a 6-month deadline" -> "Requested Completion Date: Aug 1, 2027", which _fix_dates had re-dated
+    to the start date). Returns the (month, day) it allows, or nothing."""
+    from datetime import date as _date, timedelta as _td
+    if not re.match(r"(?i)\s*requested completion", text) or not stated:
+        return set()
+    sp = _SPAN.search(cited)
+    if not sp:
+        return set()
+    n = int(sp.group(1)) if sp.group(1).isdigit() else _SPAN_N.get(sp.group(1).lower(), 0)
+    _m, mo, d, y = stated[0]
+    y = y or next((int(v) for v in re.findall(r"\b(20\d\d)\b", cited)), None)  # "Feb 1st , 2027": the stray space hides the year
+    if not (n and y):
+        return set()
+    try:
+        if sp.group(2).lower() == "month":
+            yy, mm = divmod(mo - 1 + n, 12)
+            end = _date(y + yy, mm + 1, min(d, 28))
+            end = end.replace(day=d) if d <= 28 else end
+        else:
+            end = _date(y, mo, d) + _td(days=n * (7 if sp.group(2).lower() == "week" else 1))
+    except ValueError:
+        return set()
+    return {(end.month, end.day)}
+
+
 def _fix_dates(content: dict[str, Any], fs: list[dict[str, Any]], as_of: str) -> None:
     """The writer never re-dates a dated fact: a schedule or summary date its
     cited lines do not state takes the month and day they do state (010198:
@@ -9561,6 +9592,7 @@ def _fix_dates(content: dict[str, Any], fs: list[dict[str, Any]], as_of: str) ->
                 continue
             have = {(mo, d) for _m, mo, d, _y in stated}
             t = str(x.get("text"))
+            have |= _start_plus_span(t, cited, stated)
             for m, mo, d, y in sorted(_dates_in(t), key=lambda z: -z[0].start()):
                 if (mo, d) in have:
                     continue
