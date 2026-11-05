@@ -203,10 +203,23 @@ def slug_of_line(text: str) -> str:
 
 
 def _is_site_line(atom: Any, types: dict[str, Any]) -> bool:
-    if _type_of(atom) != "physical_site":
-        return False
+    """Whether this line names a place. The HEAD decides; the parser's type stands only where
+    the head did not answer, or answered ``_keep`` (the parser's type stands by the head's own
+    account).
+
+    It used to require the PARSER's type to be physical_site AND the head to agree, so a line
+    the two disagreed about was a place line to neither -- invisible to every join here. 010171
+    names one place on two lines, and the read typed the PROSE line physical_site and the bare
+    address line as something else, so BOTH were invisible: the prose line failed the parser
+    test, the address line failed the head test, and nothing folded them. A parser type
+    vetoing a head's answer is the wrong way round.
+    """
     h = _head(atom, types)
-    return h is None or h[0] in ("physical_site", "_keep")
+    if h and h[0] == "physical_site":
+        return True
+    if h and h[0] not in ("physical_site", "_keep", "_absent", None):
+        return False
+    return _type_of(atom) == "physical_site"
 
 
 def _join_split_addresses(atoms: list[Any], types: dict[str, Any]) -> int:
