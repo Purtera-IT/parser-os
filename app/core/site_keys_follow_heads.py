@@ -337,6 +337,16 @@ _ID_COLUMN = re.compile(r"^[a-z][a-z_# ]{0,7}$")
 _ID_VALUE = re.compile(r"^\d{1,6}$")
 _NOT_ID = re.compile(r"zip|postal|zone|floor|week|qty|count|visits?|hours?|hrs|phone|year")
 _JOIN_STREET = re.compile(r"^\s*(\d{1,6}(?:-?[A-Za-z])?)\s+(?:[NSEW]{1,2}\.?\s+)?([A-Za-z0-9][A-Za-z0-9.']*)")
+#: A labelled site number the line itself states: "Site No.: dc 5509", "Store #: 4471". A roster row
+#: carries the place's identity in this field, and the SAME row keyed by its location name instead
+#: ("Site No.: dc 5509 | Site Location: San Diego MDO") is the same place twice. 010447 priced 366
+#: sites from 235 stated numbers because 126 of them carried two keys, one by number and one by name.
+#: The place noun must be followed by a number word, so "Qty: 4471" and "Bldg SqFt: 42648" are not
+#: places. This only tells the join which rows are one place; it mints no key of its own.
+_STATED_SITE_NO = re.compile(
+    r"\b(?:site|store|location|loc|branch|facility|dc|bldg|building)\s*"
+    r"(?:no|num|number|nbr|#|id|code)\s*\.?\s*[:|]\s*"
+    r"([A-Za-z]{0,5}[-_\s]{0,3}\d{2,6}[A-Za-z]?(?:[-/][A-Za-z0-9]{1,6})?)", re.I)
 #: An id column names a different thing on nearly every row of its sheet.
 _ID_UNIQUE = 0.9
 _ID_MIN_ROWS = 5
@@ -392,6 +402,13 @@ def _place_ids(atom: Any, cells: dict[str, str], id_columns: set[str]) -> list[s
     for k in sorted(id_columns):
         if _ID_VALUE.match(cells.get(k, "")):
             out.append(f"id:{k}:{int(cells[k])}")
+    # The row states its own number. A flattened roster row ("Site No.: dc 5509 | net-new ...")
+    # has no table cells for the column test above, so this is the only place its identity shows.
+    stated = _STATED_SITE_NO.search(_text(atom))
+    if stated:
+        slug = re.sub(r"[^a-z0-9]+", "", stated.group(1).lower())
+        if len(slug) >= 3:
+            out.append(f"id:site_no:{slug}")
     return out
 
 
