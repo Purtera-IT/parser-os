@@ -2072,6 +2072,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _agreed_arrival(content, envelope)
     _weekend(content, fs)
     _schedule_from_facts(content, fs, envelope)
+    _site_rows_not_schedule(content, envelope)
     _roles_and_hours(content, fs)
     if transition:
         _traced(content, "role_groups", _role_groups, content)
@@ -9489,6 +9490,18 @@ def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | N
         haul = bool(re.search(r"(?i)\bhaul|dispos|trash", t)) and not re.search(r"(?i)\bhaul|dispos|trash|debris", ov_txt)
         if (missing_count or haul) and not _said(t, ov, 0.7):
             ov.append({"text": "Provider will " + t[0].lower() + t[1:].rstrip(".") + ".", "cites": list(x["cites"]), "kind": "fact"})
+
+
+def _site_rows_not_schedule(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """One site's row is that site's detail, never the job's schedule (010447, 2026-11-05: a single store's cutover
+    row "Day 1 ... 2:00 PM to 2:00 AM" became "Work Hours: Fri, December 1, 2026, 2:00 PM to 2:00 AM" for all 145
+    sites). A schedule line every cite of which is a site-list row goes; counts (resources, hardware) stay."""
+    rows = {a.get("id") for a in envelope.get("atoms") or [] if a.get("atom_type") in ("physical_site", "site_attribute")}
+    if not rows:
+        return
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not (isinstance(x, dict) and x.get("cites") and all(c in rows for c in x["cites"])
+                                   and not re.match(r"(?i)\s*(number of resources|hardware quantity)", str(x.get("text"))))]
 
 
 def _weekend(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:

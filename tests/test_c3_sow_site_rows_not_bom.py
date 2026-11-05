@@ -87,3 +87,12 @@ def test_site_rows_do_not_crowd_out_the_deals_lines(monkeypatch):
     env = {"atoms": atoms, "c3_brief": {"sections": {"scope_of_work": [{"id": a["id"], "text": a["text"]} for a in atoms]}}}
     ids = [f["id"] for f in m.facts(env)]
     assert "d1" in ids and len(ids) == 5
+
+
+def test_one_sites_row_is_not_the_jobs_schedule():
+    env = {"atoms": [{"id": "s1", "atom_type": "physical_site", "text": "Site No.: dc 8615 | Day 1 ... 2:00 PM to 2:00 AM"},
+                     {"id": "f1", "atom_type": "milestone_phase", "text": "Start date Feb 1st , 2027"}]}
+    c = {"schedule": [{"text": "Requested Start Date: February 1, 2027", "cites": ["f1"], "kind": "fact"},
+                      {"text": "Work Hours: Fri, December 1, 2026, 2:00 PM to 2:00 AM", "cites": ["s1"], "kind": "fact"}]}
+    m._site_rows_not_schedule(c, env)
+    assert [x["text"] for x in c["schedule"]] == ["Requested Start Date: February 1, 2027"]
