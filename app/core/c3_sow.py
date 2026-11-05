@@ -10306,6 +10306,16 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                     src = next((i for i, ln in lines.items() if _stated_by(dt, _digits(ln))), None)
                     if src:
                         x["cites"], x["kind"], x["recited"] = [src], "fact", True
+                # A labeled schedule line with no date ("Work Window: regular business hours", "Number of
+                # Resources: two (2)") is the fact that states its value: cite it, never drop it (010447,
+                # 2026-11-05: "Assume regular business hours." was in the facts and the line was dropped).
+                m_lab = _SCHEDULE_LABEL.match(str(x["text"])) if k == "schedule" else None
+                if not x["cites"] and m_lab and not _dates_in(str(x["text"])):
+                    val = _digits(m_lab.group(2))
+                    if len({w for w in _toks(val) if len(w) > 2}) >= 2:
+                        src = next((i for i, ln in lines.items() if _stated_by(val, _digits(ln))), None)
+                        if src:
+                            x["cites"], x["kind"], x["recited"] = [src], "fact", True
             if x["kind"] == "fact" and not x["cites"]:
                 # A deal claim with nothing behind it reads as method only if
                 # it carries nothing deal-specific.
@@ -10548,6 +10558,9 @@ def _content_covered(text: str, cited: str) -> bool:
         (w == "instal" and any(h.startswith("instal") for h in have))
     return len(want) >= 2 and all(hit(w) for w in want) and set(re.findall(r"\d+", text)) <= set(re.findall(r"\d+", cited))
 
+
+#: Schedule labels whose value a fact can state without a date (dates keep their own checks).
+_SCHEDULE_LABEL = re.compile(r"(?i)^\s*(work window|number of resources|hardware quantity|pace)\s*:\s*(.+)$")
 
 def _stated_by(text: str, cited: str) -> bool:
     """Most of a bullet's content words, and every number in it, appear in its cited lines."""
