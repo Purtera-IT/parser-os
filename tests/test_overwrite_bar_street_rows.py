@@ -17,3 +17,7 @@ def test_a_store_row_with_a_street_takes_the_normal_bar():
 
 def test_a_counted_item_keeps_the_raised_bar():
     assert m._overwrite_bar(_atom("200 AP's"), "physical_site", 0.5) > 0.5
+
+
+def test_a_loop_is_a_street_too():
+    assert m._overwrite_bar(_atom("2842: 250 McWhirt Loop"), "physical_site", 0.5) == 0.5

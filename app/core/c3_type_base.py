@@ -216,10 +216,11 @@ def overwrite_bar(atom: Any, answer: str, bar: float, p: float | None = None) ->
     return bar if rule_ledger.shadow(rid) else raised
 
 
-#: A street address on the line: a house number, up to four words, and a street word.
-_STREET = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Za-z0-9'.-]+\s+){0,4}?(?:street|st|road|rd|avenue|ave|boulevard|blvd|"
-                     r"drive|dr|lane|ln|way|pike|highway|hwy|bypass|parkway|pkwy|court|ct|place|pl|circle|cir|trail|trl|"
-                     r"route|rte|turnpike|tpke|plaza|square|sq|terrace|ter|expressway|expy|freeway|fwy)\b\.?", re.I)
+#: A street address on the line: a house number, one to four capitalized name words, and a street word.
+_STREET = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][A-Za-z0-9'.-]*\s+){1,4}?(?i:street|st|road|rd|avenue|ave|"
+                     r"boulevard|blvd|drive|dr|lane|ln|way|pike|highway|hwy|bypass|parkway|pkwy|court|ct|place|pl|circle|"
+                     r"cir|trail|trl|route|rte|turnpike|tpke|plaza|square|sq|terrace|ter|expressway|expy|freeway|fwy|loop|"
+                     r"crossing|xing|crescent|cres|grove|commons|mall|landing|ridge|hollow|pointe)\b\.?")
 
 def _overwrite_bar(atom: Any, answer: str, bar: float) -> float:
     t = getattr(atom, "atom_type", None)
