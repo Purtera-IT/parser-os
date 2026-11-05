@@ -131,3 +131,53 @@ def test_the_stated_address_does_not_displace_what_the_parser_extracted():
     ids = _place_ids(atom, {}, set())
     assert "addr:1:main:44301" in ids
     assert len([i for i in ids if i.startswith("addr:")]) == 1
+
+
+def _site_atom(aid, atom_type, keys, text=""):
+    return types.SimpleNamespace(id=aid, atom_type=atom_type, entity_keys=list(keys),
+                                 review_flags=[], value=None, text=text, raw_text=text,
+                                 decision_provenance=None)
+
+
+def test_a_line_that_states_its_place_joins_whatever_the_head_types_it():
+    """010447: 140 of its roster rows are typed `site_infrastructure` -- what is AT the site, not the
+    site -- and those are the rows carrying the location-name keys. "Site No.: dc 5841 | Site
+    Location: Hialeah Miami DFC" is keyed site:hialeah_miami_dfc while the bare row is keyed
+    site:dc5841: same place, two keys, and 116 of 239 stated numbers were still in that state after
+    the first pass, because the fold only looked at lines typed physical_site.
+
+    Which place a line REFERS to is not the same question as what the line IS.
+    """
+    from app.core import rule_ledger, site_keys_follow_heads as sk
+
+    bare = _site_atom("a1", "physical_site", ["site:dc5841"], "Site No.: dc 5841 | net-new (y/n): No")
+    named = _site_atom("a2", "site_infrastructure", ["site:hialeah_miami_dfc"],
+                       "Site No.: dc 5841 | Site Location: Hialeah Miami DFC | State: FL")
+    atoms = [bare, named]
+    types = {"a1": ["physical_site", 0.95], "a2": ["site_infrastructure", 0.95]}
+    assert not rule_ledger.shadow("site_keys.join_same_place")
+    joined = sk._join_same_place(atoms, types)
+    keys = {k for a in atoms for k in sk._site_keys(a)}
+    assert joined == 1, "the site_infrastructure row was not folded"
+    assert keys == {"site:dc5841"}, keys
+
+
+def test_two_different_numbers_are_two_places():
+    from app.core import site_keys_follow_heads as sk
+
+    a = _site_atom("a1", "physical_site", ["site:dc5841"], "Site No.: dc 5841 | net-new: No")
+    b = _site_atom("a2", "physical_site", ["site:dc5842"], "Site No.: dc 5842 | net-new: Yes")
+    atoms = [a, b]
+    sk._join_same_place(atoms, {"a1": ["physical_site", 0.95], "a2": ["physical_site", 0.95]})
+    assert {k for x in atoms for k in sk._site_keys(x)} == {"site:dc5841", "site:dc5842"}
+
+
+def test_a_line_with_no_site_key_is_not_pulled_into_the_fold():
+    from app.core import site_keys_follow_heads as sk
+
+    a = _site_atom("a1", "physical_site", ["site:dc5841"], "Site No.: dc 5841 | net-new: No")
+    chat = _site_atom("a2", "small_talk", [], "Site No.: dc 5841 was mentioned on the call")
+    atoms = [a, chat]
+    sk._join_same_place(atoms, {"a1": ["physical_site", 0.95], "a2": ["small_talk", 0.99]})
+    assert sk._site_keys(chat) == []
+    assert sk._site_keys(a) == ["site:dc5841"]

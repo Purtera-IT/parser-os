@@ -460,7 +460,17 @@ def _join_same_place(atoms: list[Any], types: dict[str, Any]) -> int:
     site:hc_37 on the schedule, site:37 in the draft and site:4860_south_hwy_27 in the SOW. No head answers
     same-site yet (jdg:site cannot be asked of a pair), so this runs here, marked, as a removal target."""
     by_id = {str(getattr(a, "id", "")): a for a in atoms}
-    rows = [(a, _cells(a, by_id)) for a in atoms if _is_site_line(a, types)]
+    # A line that carries a site key and STATES which place it is belongs in the fold whatever
+    # the head types it. 010447: 140 of its roster rows are typed `site_infrastructure` (what is
+    # AT the site, not the site), and those are the rows carrying the location-name keys --
+    # "Site No.: dc 5841 | Site Location: Hialeah Miami DFC" is keyed site:hialeah_miami_dfc
+    # while the bare row is keyed site:dc5841. Same place, two keys, and 116 of 239 stated
+    # numbers were still in that state. Which place a line refers to is not the same question
+    # as what the line is, so the type does not gate it; the stated number does.
+    def _names_its_place(a: Any) -> bool:
+        return bool(_site_keys(a)) and _STATED_SITE_NO.search(_text(a)) is not None
+
+    rows = [(a, _cells(a, by_id)) for a in atoms if _is_site_line(a, types) or _names_its_place(a)]
     id_columns = _id_columns(rows)
     parent: dict[str, str] = {}
 
