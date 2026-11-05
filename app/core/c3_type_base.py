@@ -1929,8 +1929,40 @@ def _fold_contained(roster: dict[str, dict[str, Any]]) -> None:
             bare[hosts[0]] = [_key_words(k, zip_too=False) for k in host["keys"]]
 
 
+def _why(dropped: dict[str, str], aid: str, why: str) -> None:
+    """First reason wins: the gate that actually rejected the line."""
+    dropped.setdefault(str(aid), why)
+
+
+#: Types the head gives a PARTY, not a place. A line typed one of these names somebody, and the
+#: street and ZIP in it is their address, not a job site -- which is why `jdg:site_role` answering
+#: job_site on it (as it does on nearly every line) may not put it on the roster.
+#: Flags on a line the parser MADE rather than read: the geo fallback minting a site from an address
+#: it found, and the site backfills. A place on such a line is ours, not the document's.
+MADE_UP_SITE_FLAGS = frozenset({"geo_fallback_site", "geo_mention_site"})
+
+
+PARTY_TYPES = frozenset({"stakeholder", "contact", "signature_block"})
+
+
+def _stated_place(text: str) -> bool:
+    """Whether the line's own words state a place: a street and ZIP, or a labelled site number.
+
+    This is extraction, not judgment -- the head decides whether the line is a job site; this only
+    says the parser had a place to read there. Shared with ``site_keys_follow_heads`` so the roster
+    and the key joins agree on what counts as a stated place.
+    """
+    try:
+        from app.core.site_keys_follow_heads import _STATED_SITE_NO, _stated_address_id
+    except Exception:  # noqa: BLE001 - a roster read without it, never a failed read
+        return False
+    t = str(text or "")
+    return _stated_address_id(t) is not None or _STATED_SITE_NO.search(t) is not None
+
+
 def quote_sites(atoms: list[Any], *, outside: bool = False,
-                left_out: set[str] | frozenset[str] | None = None, settled: bool = False) -> list[dict[str, Any]]:
+                left_out: set[str] | frozenset[str] | None = None, settled: bool = False,
+                record: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The heads' site roster for the quote: one entry per site on a line the heads typed
     ``physical_site`` (the compile's final types, after the C3 authority pass), never a Deal Kit line,
     and not a line ``jdg:site_role`` surely reads as somebody else's address. Each carries the atom
@@ -1948,8 +1980,26 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     out = out_of_quote()
     skip = set() if outside else {str(i) for i in (left_out or ())}
     lines: list[tuple[str, str, list[str]]] = []
+    #: Lines the role head read as somebody else's address, and what became of them. Reported on the
+    #: roster so a dropped place is visible instead of being a number that silently got smaller.
+    held: list[tuple[str, str, list[str], str, float]] = []
+    vetoed: list[dict[str, Any]] = []
+    #: Why each candidate line did not make the roster. A roster that comes back EMPTY is the one
+    #: answer nobody can act on: 010171 and 010452 both priced `site_count 0` with a real address in
+    #: the corpus, and finding out which of six gates did it took re-running the function by hand on
+    #: a saved envelope, four times, on three wrong guesses. The compile says it now.
+    dropped: dict[str, str] = {}
+    #: How many lines the roster was offered, and how many the compile had already typed
+    #: ``physical_site``. An empty roster with an empty ``dropped`` means no candidate line
+    #: ever reached this function -- the place was taken out upstream, not by a gate here --
+    #: and that is the case the first receipt could not tell apart from "no sites in the deal".
+    seen = 0
+    typed_site = 0
     for a in atoms:
         aid, text, kind = _text_type(a)
+        seen += 1
+        if kind == "physical_site":
+            typed_site += 1
         # The role head may NAME a site, not only veto one. A work address can
         # read ``deal_metadata`` -- 010452's "Address: 2283 Sachs Ct., Green Bay,
         # WI 54313", under the SOW's own "WORK ADDRESS" heading, at p 0.605, which
@@ -1962,22 +2012,52 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         # line still needs its own ``site:`` key to name a site, so this admits a
         # place the parser already keyed, not a new guess.
         role = line_reading(aid, "jdg:site_role")
-        # The head names the site; the parser must have read an ADDRESS there and
-        # not invented the line. Asked directly, this head reads 010452's JPMorgan
+        # The head names the site; the parser must have read a PLACE there and not
+        # invented the line. Asked directly, this head reads 010452's JPMorgan
         # lockbox letterhead as job_site at 0.987 and a "new Access Point" scope
         # line at 0.9474, beside the real work address at 0.9918 -- its holdout
         # `guess` equals its `exact` (0.985), so it carries little of the minority
-        # answer and no confidence bar separates them. What does: the parser keyed
-        # an `address:` on the real line and nothing on the other two, and the
-        # letterhead is a line the geo fallback MADE (`inferred`). Heads decide,
-        # parser extracts -- ask both.
+        # answer and no confidence bar separates them. Heads decide, parser
+        # extracts -- ask both.
+        #
+        # This asked for an `address:` entity key, and 010452's work address does
+        # not have one: "Address: 2283 Sachs Ct., Green Bay, WI 54313" is keyed
+        # `site:green_bay` and `site:2283_sachs_ct_green_bay_wi_54313`, no
+        # `address:` at all. So the exemption could never fire, the site stayed
+        # `seen_only_in_ours`, and that deal priced site_count 0 through four
+        # builds while I recorded it as fixed. The precondition was wrong, not the
+        # rule: a street-and-ZIP the line states IS the parser having read a place.
+        #
+        # What still keeps the letterhead out is what it always was -- the line was
+        # MADE by the geo fallback (`geo_fallback_site`), where the work address is
+        # a backfill of a line the document really has (`site_entity_backfill`).
         v_role = getattr(a, "value", None)
         v_role = v_role if isinstance(v_role, dict) else {}
-        parsed_address = (v_role.get("inferred") is not True) and any(
-            str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or []))
-        job_site = bool(role and role[0] == "job_site" and parsed_address)
-        if (kind != "physical_site" and not job_site) or _deal_kit(a) \
+        _flags = set(getattr(a, "review_flags", None) or [])
+        invented = v_role.get("inferred") is True or "geo_fallback_site" in _flags
+        read_a_place = any(str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or [])) \
+            or _stated_place(text)
+        parsed_address = not invented and read_a_place
+        # ...and the TYPE head must not have called the line a party. `jdg:site_role` is a constant
+        # (job_site on 1905 of 1914 lines on 010452), so on its own it rescued two signature blocks:
+        # 010452's "JPMorgan Chase-Lockbox Processing Box 24386 IT ServicePoint 4 Chase Metrotech
+        # Center ... Brooklyn, NY 11245" (role head job_site, keyed site:floor_east_brooklyn_ny_11245)
+        # and 010358's "Scott Morgan | 1361 N Glenville Dr | scott@traversa.net | 214-707-0631"
+        # (keyed site:scott_morgan). Both carry a real street and ZIP, so no address test separates
+        # them -- but the type head types both `stakeholder`, and a party is not a place. That is the
+        # strong head (col:label_type) answering over a constant one, not a rule about addresses.
+        job_site = bool(role and role[0] == "job_site" and parsed_address and kind not in PARTY_TYPES)
+        cand = kind == "physical_site" or job_site or bool(
+            [k for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")])
+        made_up = bool(MADE_UP_SITE_FLAGS & set(getattr(a, "review_flags", None) or []))
+        if (kind != "physical_site" and not job_site) or _deal_kit(a) or made_up \
                 or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
+            if cand:
+                _why(dropped, aid, "the parser made this line, it did not read it" if made_up
+                     else "deal_kit line" if _deal_kit(a)
+                     else "flagged site_not_backed_by_heads" if "site_not_backed_by_heads" in (
+                         getattr(a, "review_flags", None) or [])
+                     else f"type {kind!r} and the role head did not name it a job site")
             continue
         # A line outside the quoting read never counts (``outside``: only those, for seen-only sites)
         # -- EXCEPT a work address the heads name.
@@ -2000,23 +2080,56 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
             if aid not in out:
                 continue
         elif aid in out and not job_site:
+            _why(dropped, aid, f"out of the quoting read: {out[aid]}")
             continue
-        if aid in skip and not (job_site and aid in out):
+        if aid in skip and not job_site:
             # `quote()` folds `out` INTO left_out (`left_out | also | set(out)`),
             # so a line excluded only for being ours is in `skip` as well as in
             # `out` -- exempting it above and not here dropped it one line later,
             # which is why 010452 still priced site_count 0 after the first pass.
-            # Only the "ours" part is exempt: a line the heads dropped from the
-            # brief, or kept as "also mentioned", still names no site.
-            continue
-        if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
+            #
+            # The exemption used to require `aid in out`, so ONLY our own lines
+            # came through and a line the keep head dropped from the brief named
+            # no site. That is 010171: `col:admission` dropped both of its site
+            # lines (0.833 and 0.620), the roster came back empty, and the deal
+            # priced site_count 0 with its one address sitting in the corpus. The
+            # brief's keep decision is about what the brief SAYS; where the work
+            # happens is a fact about the customer's premises either way -- the
+            # same reason our own SOW may name the job site without pricing it.
+            #
+            # `job_site` is not the role head alone (it answers job_site on nearly
+            # every line): it also needs the parser to have read a place on the
+            # line and not invented it. Measured over 3,146 keep-head drops on
+            # four deals, that admits exactly 010171's two lines and nothing on
+            # 010447, 010358 or 010452.
+            _why(dropped, aid, "left out of the brief (the keep head dropped it, or 'also mentioned')")
             continue
         keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")]
         if not keys:
             if settled:
+                _why(dropped, aid, "no site: key survived site_keys_follow_heads.settle")
                 continue
             keys = [f"site-line:{aid}"]
+        # ``jdg:site_role`` reading this line as somebody else's address holds it back -- but a veto
+        # may not empty the roster. 010171 priced site_count 0 with one address in the corpus, read
+        # `job_site` 0.9562 when the head is asked the deal in one batch; the compile's own read of
+        # the same line is what the roster saw, and a quote that prices no place is never the right
+        # answer (the 010452 lesson). Held-back lines are kept aside and restored below if nothing
+        # else stands, each one named. Never a silent zero.
+        if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
+            held.append((aid, text, keys, role[0], round(float(role[1]), 4)))
+            continue
         lines.append((aid, text, keys))
+    if held and not lines:
+        for aid, text, keys, ans, p_ in held:
+            lines.append((aid, text, keys))
+            vetoed.append({"site": keys[0], "atom_id": aid, "head": "jdg:site_role",
+                           "answer": ans, "p": p_,
+                           "why": "kept: vetoing it would leave the deal with no site"})
+    else:
+        vetoed.extend({"site": keys[0], "atom_id": aid, "head": "jdg:site_role", "answer": ans, "p": p_,
+                       "why": "held back: the role head reads it as somebody else's address"}
+                      for aid, text, keys, ans, p_ in held)
     # Keys that share a line are one site.
     parent: dict[str, str] = {}
 
@@ -2053,7 +2166,43 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     for e in roster.values():
         if len(e["keys"]) <= 1:
             e.pop("keys")
-    return list(roster.values())
+    out_rows = list(roster.values())
+    if not out_rows and record is not None:
+        if dropped:
+            # Each rejected candidate carries what the role head actually said about it, and
+            # whether this compile read that line at ALL. Without the second fact an absent
+            # answer cannot be told apart from a head that was asked and said nothing -- the
+            # difference between "wire the head in" and "the head is wrong here".
+            reads_of = _DEAL.get("reads") or {}
+            for aid, why in sorted(dropped.items())[:40]:
+                got = line_reading(aid, "jdg:site_role")
+                line_read = reads_of.get(str(aid))
+                record.append({"atom_id": aid, "why": why, "head": "jdg:site_role",
+                               "answer": got[0] if got else None,
+                               "p": round(got[1], 4) if got else None,
+                               "line_was_read": line_read is not None,
+                               "heads_on_line": sorted(line_read)[:30] if isinstance(line_read, dict) else None,
+                               "roster": "empty"})
+        else:
+            # No gate here rejected anything: nothing arrived to reject. Say so with the
+            # counts, so the next question is "who took it out before the quote" and not
+            # another pass over these gates (010171: six gates cleared by hand, four wrong
+            # guesses, because an empty receipt looked the same as a deal with no address).
+            record.append({"atom_id": None, "head": None, "answer": None, "p": None,
+                           "roster": "empty",
+                           "lines_offered": seen, "typed_physical_site": typed_site,
+                           "lines_with_a_read": sum(1 for _ in (_DEAL.get("reads") or {})),
+                           "why": (f"no candidate line reached the roster: {seen} line(s) offered, "
+                                   f"{typed_site} typed physical_site. The place was taken out "
+                                   f"before the quote, not by a site gate.")})
+    by_id = {str(v["atom_id"]): v for v in vetoed}
+    for e in out_rows:
+        hit = [by_id[i] for i in e.get("atom_ids") or [] if i in by_id]
+        if hit:
+            e["role_head_held_back"] = hit
+    if record is not None:
+        record.extend(vetoed)
+    return out_rows
 
 
 def sites_seen_only_out_of_view(atoms: list[Any], sites: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -2143,7 +2292,8 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     jd_ids = [str(c) for j in brief.get("job_details") or [] if isinstance(j, dict) for c in j.get("cites") or []]
     not_work = {i: why for i in dict.fromkeys(work_ids + jd_ids)
                 if i in by_id and (why := not_quote_work(by_id[i]))}
-    sites = quote_sites(atoms, left_out=left_out | also | set(out))
+    role_held: list[dict[str, Any]] = []
+    sites = quote_sites(atoms, left_out=left_out | also | set(out), record=role_held)
     seen_only = sites_seen_only_out_of_view(atoms, sites)
     deal_reads = {k: list(v) for k in QUOTE_DEAL_HEADS
                   if isinstance((v := (_DEAL.get("deal") or {}).get(k)), (list, tuple))}
@@ -2160,13 +2310,20 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                                   "not_work": not_work}}}
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
+    # An empty roster carries its own receipt (``roster == "empty"``): which gate rejected each
+    # candidate, or -- when nothing was rejected -- that no candidate ever arrived. It is read
+    # apart from the role head's held-back lines, because the two answer different questions.
+    empty_why = [r for r in role_held if r.get("roster") == "empty"]
+    held_back = [r for r in role_held if r.get("roster") != "empty"]
     if _never():
-        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
-            _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id)))
+        return _with_declared_sites(_with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(
+            _with_not_work(_with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only),
+            not_work), sites, by_id))), held_back, empty_why), _declared_sites(atoms), len(sites))
     try:
-        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
-            _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
-            not_work), sites, by_id)))
+        return _with_declared_sites(_with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(
+            _with_not_work(_with_seen_only(_request("/v1/quote", body,
+                                     timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
+            not_work), sites, by_id))), held_back, empty_why), _declared_sites(atoms), len(sites))
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
 
@@ -2350,6 +2507,71 @@ def _with_not_work(q: Any, not_work: dict[str, str]) -> Any:
         q["not_work"] = {"count": len(not_work), "ids": sorted(not_work),
                          "why": dict(sorted(Counter(w.split(" ", 1)[0] if w.startswith(("type", "under")) else w
                                                     for w in not_work.values()).items()))}
+    return q
+
+
+def _declared_sites(atoms: list[Any]) -> tuple[int, str] | None:
+    """(count, the line that says it) when the deal's documents DECLARE how many places there are.
+
+    Read, not decided: the number is the document's own words. ``declared_scope`` already reads it
+    (highest claim, a confirmed authority beating a quoted one) and nothing downstream of the roster
+    ever asked. On 010447 it reads 145 from "The Home Depot has 145 locations nationwide that need
+    new Palo Alto firewalls", which the deal repeats as "145 sites in scope" and "145 Location Palo
+    Alto deployment", against a roster of 243 keys. On 010171 it reads nothing, which is right.
+    """
+    try:
+        from app.core.declared_scope import _declared_site_count
+
+        got = _declared_site_count(atoms)
+    except Exception:  # noqa: BLE001 - a quote without the check, never a failed quote
+        return None
+    if not got:
+        return None
+    n, atom, _confirmed = got
+    return int(n), str(getattr(atom, "raw_text", "") or "")[:200]
+
+
+def _with_declared_sites(q: Any, declared: tuple[int, str] | None, roster: int) -> Any:
+    """Say so when the roster and the count the documents declare disagree.
+
+    The roster is not overruled -- which number is right is a judgment, and a quote that quietly
+    prices 243 places on a deal whose documents say 145 three times is the one answer nobody can
+    act on. It is reported, with the line that says it, so a PM sees both.
+    """
+    if not isinstance(q, dict) or not declared:
+        return q
+    n, text = declared
+    rec: dict[str, Any] = {"declared": n, "roster": roster, "said_on": text,
+                           "by": "rule:declared_scope (the documents' own words)"}
+    sites = q.get("sites")
+    if roster and n and roster != n:
+        rec["disagrees"] = True
+        flags = q.get("flags")
+        if isinstance(flags, list):
+            flags.append(f"the documents declare {n} places and the roster has {roster}: "
+                         f"check the site list before pricing per site")
+    if isinstance(sites, dict):
+        q["sites"] = {**sites, "declared": rec}
+    else:
+        q["sites_declared"] = rec
+    return q
+
+
+def _with_roster_why(q: Any, held_back: list[dict[str, Any]], empty_why: list[dict[str, Any]]) -> Any:
+    """The roster's own receipts, carried on the quote the envelope keeps.
+
+    These were first written onto the request body (``body["deal"]``), which the service reads and
+    never echoes, so the envelope held the service's reply and the receipt was invisible by
+    construction -- a diagnostic that cost a compile to learn nothing. The quote's own record is the
+    reply, so a fact about the roster has to be merged into the reply, the way ``_with_seen_only``
+    merges the seen-only sites.
+    """
+    if not isinstance(q, dict):
+        return q
+    if held_back:
+        q["site_role_held_back"] = held_back
+    if empty_why:
+        q["site_roster_empty_why"] = empty_why
     return q
 
 

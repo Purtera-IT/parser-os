@@ -917,6 +917,7 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
         "evidence_ms": evidence_ms,
     }
     _stamp_layers(brief)
+    _stamp_head_reads(brief, atoms, reads)
     return brief
 
 
@@ -1064,6 +1065,51 @@ def _layer_of(by: str) -> str:
     company head; rule: by a fallback rule until a head is trusted."""
     head = by.split("+")[-1]
     return "purtera" if head.startswith("purtera:") else "base" if head.startswith("base:") else "rule"
+
+
+#: Lines whose head readings the brief always carries: the ones a place decision turns on. The
+#: compile reads ~63 heads on every line and the envelope used to show three columns, so answering
+#: "what did the head actually say about this line" needed a hand-built probe against the service --
+#: and a probe that sends different row fields is a different read, which is how I came to report a
+#: head disagreeing with itself when the real difference was my own payload. The compile says it now.
+SITE_READ_LINES = 60
+#: ``SOWSMITH_C3_READS_DUMP``: every line's readings, for a deliberate diagnostic compile.
+READS_DUMP_MAX = 400
+
+
+def _stamp_head_reads(brief: dict[str, Any], atoms: list[Any], reads: dict[str, dict[str, list]]) -> None:
+    """``head_reads``: every head's answer on the lines a place decision turns on, and on every line
+    when ``SOWSMITH_C3_READS_DUMP`` is on. Answers are the read's own, untouched."""
+    if not reads:
+        return
+    everything = os.environ.get("SOWSMITH_C3_READS_DUMP", "").strip().lower() in ("1", "true", "yes", "on")
+    picked: list[tuple[str, str]] = []
+    for a in atoms:
+        aid = str(getattr(a, "id", "") or "")
+        if not aid or aid not in reads:
+            continue
+        if everything:
+            picked.append((aid, "every line (SOWSMITH_C3_READS_DUMP)"))
+            continue
+        keys = [str(k) for k in (getattr(a, "entity_keys", None) or [])]
+        why = ("typed physical_site" if str(getattr(getattr(a, "atom_type", ""), "value",
+                                                   getattr(a, "atom_type", "")) or "") == "physical_site"
+               else "carries a site: key" if any(k.startswith("site:") for k in keys)
+               else "carries an address: key" if any(k.startswith("address:") for k in keys)
+               else "")
+        if why:
+            picked.append((aid, why))
+    cap = READS_DUMP_MAX if everything else SITE_READ_LINES
+    out: dict[str, Any] = {}
+    for aid, why in picked[:cap]:
+        got = reads.get(aid) or {}
+        out[aid] = {"why_here": why,
+                    "heads": {h: list(v) for h, v in sorted(got.items()) if isinstance(v, (list, tuple))}}
+    if out:
+        brief["head_reads"] = {"lines": out, "shown": len(out), "candidates": len(picked),
+                               "every_line": everything,
+                               "note": ("every head's answer on these lines, as the read gave it. "
+                                        "Set SOWSMITH_C3_READS_DUMP=1 for every line.")}
 
 
 def _stamp_layers(brief: dict[str, Any]) -> None:

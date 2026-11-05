@@ -606,6 +606,13 @@ def _form_question(t: str) -> bool:
         not re.search(r"(?i)\b(?:no|yes|n/?a)\s*[:|]|[:|]\s*(?:no|yes|n/?a)\b", t)
 
 
+try:  # the roster's own notion of "this row states which place it is"
+    from app.core.site_keys_follow_heads import _STATED_SITE_NO
+except Exception:  # pragma: no cover - a SOW written without it, never a failed write
+    import re as _re
+    _STATED_SITE_NO = _re.compile(r"(?!)")
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -761,9 +768,20 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     _lead_ins(out, envelope.get("atoms") or [])
     _list_siblings(out, envelope.get("atoms") or [], vetoed)
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
+    # Site-list rows go last: the writer gets the site list as SITES, and on a store roll-out they filled the
+    # MAX_FACTS budget before the deal's own lines (010035, 2026-11-05: 1,072 store rows filed under scope pushed
+    # out "all sites completed by Thanksgiving 2026 ... Mon thru Sat 7am to 7pm"; the schedule came out empty).
+    # The type list used to be ("physical_site", "site_attribute") and missed `site_infrastructure`
+    # -- what is AT a site rather than the site itself, which is how 141 of 010447's 416 writer facts
+    # are typed. Its roster rows therefore stayed FIRST: the first 381 facts were store rows and the
+    # deal's own 22 scope lines came after them. A row that states its own site number is a roster
+    # row whatever it is typed, so that is asked too.
+    site_rows = {a.get("id") for a in envelope.get("atoms") or []
+                 if a.get("atom_type") in ("physical_site", "site_attribute", "site_infrastructure")
+                 or _STATED_SITE_NO.search(str(a.get("raw_text") or a.get("text") or ""))}
     seen_text: set[str] = set()
     uniq = []
-    for f in sorted(out, key=lambda f: rank.get(f["section"], len(rank))):
+    for f in sorted(out, key=lambda f: (f["id"] in site_rows, rank.get(f["section"], len(rank)))):
         key = re.sub(r"\W+", " ", f["text"].lower()).strip()
         if key in seen_text:
             continue
@@ -1522,6 +1540,23 @@ def _family(brief: dict[str, Any], writer_says: str, fs: list[dict[str, Any]]) -
     return _route_family(writer_says, fs), "rule:route_family"
 
 
+_BOM_ROW = re.compile(r"^\s*\d{1,4}\s*[:|x]\s*(?:\d{1,4}\s*\|\s*)?\|?\s*[A-Z0-9][A-Z0-9./_-]{3,30}\b")
+# Lines the heads type as a place are never a parts row: a store list's "1139 | 1663 Penfield Road | Rochester"
+# matches the BOM pattern (010035, 2026-11-05: 168 Goodyear store rows listed as customer-supplied materials).
+_NOT_BOM_TYPES = frozenset({"physical_site", "site_attribute", "site_allocation", "site_access_window"})
+
+
+def _customer_bom_rows(content: dict[str, Any], fs: list[dict[str, Any]], cust) -> None:
+    """A BOM block the supplier head reads as the customer's is the customer's, row by row (010116: three rows
+    read "customer" at the bar, the rest none). Only parts rows: never a line the heads read as a site."""
+    bom_facts = [f for f in fs if _BOM_ROW.match(f["text"]) and f.get("type") not in _NOT_BOM_TYPES]
+    if bom_facts and any(cust(f["id"]) for f in bom_facts):
+        cm = content.setdefault("customer_materials", [])
+        for f in bom_facts:
+            if not _said(f["text"], cm, 0.6):
+                cm.append({"text": re.sub(r"^\s*(\d+)\s*[:|]\s*", r"\1 x ", f["text"]).strip(), "cites": [f["id"]], "kind": "fact"})
+
+
 def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
           model: str | None = None) -> dict[str, Any]:
     """The SOW content for one deal: four focused calls (header, tasks, who
@@ -1752,15 +1787,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     cust = lambda c: bool(sup_of.get(c)) and sup_of[c][0] == "customer" and float(sup_of[c][1] or 0) >= SUPPLIER_BAR
     eq = content.get("equipment_in_scope") or []
     to_cust = [x for x in eq if isinstance(x, dict) and x.get("cites") and all(cust(c) for c in x["cites"])]
-    # A BOM block the supplier head reads as the customer's is the customer's,
-    # row by row (010116: three rows read "customer" at the bar, the rest none).
-    bom_row = re.compile(r"^\s*\d{1,4}\s*[:|x]\s*(?:\d{1,4}\s*\|\s*)?\|?\s*[A-Z0-9][A-Z0-9./_-]{3,30}\b")
-    bom_facts = [f for f in fs if bom_row.match(f["text"])]
-    if bom_facts and any(cust(f["id"]) for f in bom_facts):
-        cm = content.setdefault("customer_materials", [])
-        for f in bom_facts:
-            if not _said(f["text"], cm, 0.6):
-                cm.append({"text": re.sub(r"^\s*(\d+)\s*[:|]\s*", r"\1 x ", f["text"]).strip(), "cites": [f["id"]], "kind": "fact"})
+    _customer_bom_rows(content, fs, cust)
     if to_cust:  # 010116: the supplier head read "customer" on every BOM line
         content["equipment_in_scope"] = [x for x in eq if x not in to_cust]
         content.setdefault("customer_materials", []).extend(to_cust)
@@ -2059,6 +2086,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     _agreed_arrival(content, envelope)
     _weekend(content, fs)
     _schedule_from_facts(content, fs, envelope)
+    _site_rows_not_schedule(content, envelope)
     _roles_and_hours(content, fs)
     if transition:
         _traced(content, "role_groups", _role_groups, content)
@@ -9478,10 +9506,26 @@ def _overview_covers_scope(content: dict[str, Any], fs: list[dict[str, Any]] | N
             ov.append({"text": "Provider will " + t[0].lower() + t[1:].rstrip(".") + ".", "cites": list(x["cites"]), "kind": "fact"})
 
 
+def _site_rows_not_schedule(content: dict[str, Any], envelope: dict[str, Any]) -> None:
+    """One site's row is that site's detail, never the job's schedule (010447, 2026-11-05: a single store's cutover
+    row "Day 1 ... 2:00 PM to 2:00 AM" became "Work Hours: Fri, December 1, 2026, 2:00 PM to 2:00 AM" for all 145
+    sites). A schedule line every cite of which is a site-list row goes; counts (resources, hardware) stay."""
+    rows = {a.get("id") for a in envelope.get("atoms") or [] if a.get("atom_type") in ("physical_site", "site_attribute")}
+    if not rows:
+        return
+    content["schedule"] = [x for x in content.get("schedule") or []
+                           if not (isinstance(x, dict) and x.get("cites") and all(c in rows for c in x["cites"])
+                                   and not re.match(r"(?i)\s*(number of resources|hardware quantity)", str(x.get("text"))))]
+
+
 def _weekend(content: dict[str, Any], fs: list[dict[str, Any]]) -> None:
     """A weekend date is weekend work, not "regular business hours"."""
     # A weekend date is weekend work, not "regular business hours" (010198 Sunday).
-    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or [])
+    # Only the days the work happens: a completion date or deadline on a Sunday is not weekend work (010447,
+    # 2026-11-05: "Requested Completion Date: August 1, 2027" made the job weekend work and dropped the business
+    # hours the deal states).
+    sched = " ".join(str(x.get("text") if isinstance(x, dict) else x) for x in content.get("schedule") or []
+                     if not re.match(r"(?i)\s*requested completion|\s*deadline|\s*due\b", str(x.get("text") if isinstance(x, dict) else x)))
     # The calendar date says the weekday when the line does not (010198:
     # "August 16, 2026" is a Sunday).
     from datetime import date as _date
@@ -9534,6 +9578,37 @@ def _dates_ok(text: str, cited: str) -> bool:
     return all((mo, d) in have for _m, mo, d, _y in _dates_in(text)) if have or _dates_in(text) else True
 
 
+_SPAN = re.compile(r"(?i)\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[- ]?(month|week|day)s?\b")
+_SPAN_N = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())}
+
+
+def _start_plus_span(text: str, cited: str, stated: list) -> set[tuple[int, int]]:
+    """A completion date the cites give as a start plus a span is stated (010447, 2026-11-05: "Start date Feb 1st,
+    2027, and have a 6-month deadline" -> "Requested Completion Date: Aug 1, 2027", which _fix_dates had re-dated
+    to the start date). Returns the (month, day) it allows, or nothing."""
+    from datetime import date as _date, timedelta as _td
+    if not re.match(r"(?i)\s*requested completion", text) or not stated:
+        return set()
+    sp = _SPAN.search(cited)
+    if not sp:
+        return set()
+    n = int(sp.group(1)) if sp.group(1).isdigit() else _SPAN_N.get(sp.group(1).lower(), 0)
+    _m, mo, d, y = stated[0]
+    y = y or next((int(v) for v in re.findall(r"\b(20\d\d)\b", cited)), None)  # "Feb 1st , 2027": the stray space hides the year
+    if not (n and y):
+        return set()
+    try:
+        if sp.group(2).lower() == "month":
+            yy, mm = divmod(mo - 1 + n, 12)
+            end = _date(y + yy, mm + 1, min(d, 28))
+            end = end.replace(day=d) if d <= 28 else end
+        else:
+            end = _date(y, mo, d) + _td(days=n * (7 if sp.group(2).lower() == "week" else 1))
+    except ValueError:
+        return set()
+    return {(end.month, end.day)}
+
+
 def _fix_dates(content: dict[str, Any], fs: list[dict[str, Any]], as_of: str) -> None:
     """The writer never re-dates a dated fact: a schedule or summary date its
     cited lines do not state takes the month and day they do state (010198:
@@ -9552,6 +9627,7 @@ def _fix_dates(content: dict[str, Any], fs: list[dict[str, Any]], as_of: str) ->
                 continue
             have = {(mo, d) for _m, mo, d, _y in stated}
             t = str(x.get("text"))
+            have |= _start_plus_span(t, cited, stated)
             for m, mo, d, y in sorted(_dates_in(t), key=lambda z: -z[0].start()):
                 if (mo, d) in have:
                     continue
@@ -10253,6 +10329,67 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         content["provider_tools"] = [x for x in content.get("provider_tools") or [] if not _FAMILY_TOOLS_NOT[fam].search(tx(x))]
 
 
+def _schedule_stated(content: dict[str, Any], lines: dict[str, str], unsupported: list[dict[str, Any]]) -> int:
+    """A cited schedule line says what its cites say (010447, 2026-11-05: "Work Window: Weekend (Sunday)" and
+    "Requested Completion Date: Monday, February 1, 2027" both cited "Start date Feb 1st, 2027, and have a 6-month
+    deadline"). A labeled value its cites do not state takes the fact that does state it, else it goes; a completion
+    date that is only the start date again goes."""
+    dropped = 0
+    keep = []
+    sched = content.get("schedule") or []
+    start = next((tuple(d[1:]) for x in sched if isinstance(x, dict)
+                  and re.match(r"(?i)\s*requested start date\s*:", str(x.get("text"))) for d in _dates_in(str(x.get("text")))[:1]), None)
+    def says(val: str, text: str) -> bool:
+        # every number, and half the words (a writer paraphrases a long window)
+        want = {w for w in _toks(val) if len(w) > 2}
+        nums = set(re.findall(r"\d+", val))
+        return nums <= set(re.findall(r"\d+", text)) and bool(nums or want) and \
+            (not want or len(want & _toks(text)) >= 0.5 * len(want))
+    for x in sched:
+        if isinstance(x, dict) and not x.get("cites") and re.match(r"(?i)\s*requested (start|completion) date\s*:", str(x.get("text"))):
+            # An uncited start or completion date the deal's own dated line states (010447, 2026-11-05: the writer
+            # left "Requested Start Date: February 1, 2027" uncited one run in three and it was dropped).
+            t = str(x.get("text"))
+            want = {(mo, d) for _m, mo, d, _y in _dates_in(t)}
+            for i, ln in lines.items():
+                if not re.search(r"(?i)\b(start|begin|complet|finish|deadline|due)\w*", ln):
+                    continue
+                st = _dates_in(ln)
+                if want and (want <= {(mo, d) for _m, mo, d, _y in st} or want <= _start_plus_span(t, ln, st)):
+                    x["cites"], x["kind"], x["recited"] = [i], "fact", True
+                    break
+        if not isinstance(x, dict) or not x.get("cites"):
+            keep.append(x)
+            continue
+        t = str(x.get("text"))
+        cited = " ".join(lines.get(c, "") for c in x["cites"])
+        if re.match(r"(?i)\s*requested start date\s*:", t) and re.search(r"(?i)\beffective date\b", cited) \
+                and not re.search(r"(?i)\b(start|begin|commenc|kick ?off)\w*", cited):
+            # A contract's effective date is not the work's start (010035, 2026-11-05: "Effective Date: June 17, 2026").
+            dropped += 1
+            unsupported.append({"list": "schedule", **x, "reason": "an effective date is not the start date"})
+            continue
+        m_lab = _SCHEDULE_LABEL.match(t)
+        if m_lab and not _dates_in(t):
+            val = _digits(m_lab.group(2))
+            if not says(val, _digits(cited)):
+                src = next((i for i, ln in lines.items() if says(val, _digits(ln))), None)
+                if not src:
+                    dropped += 1
+                    unsupported.append({"list": "schedule", **x, "reason": "schedule value its cites do not state"})
+                    continue
+                x["cites"], x["recited"] = [src], True
+        elif re.match(r"(?i)\s*requested completion date\s*:", t) and start:
+            d = _dates_in(t)
+            if d and tuple(d[0][1:]) == start and not re.search(r"(?i)\b(complet|finish|end(s|ed|ing)?\b|done|wrap)", cited):
+                dropped += 1
+                unsupported.append({"list": "schedule", **x, "reason": "completion date is the start date again"})
+                continue
+        keep.append(x)
+    content["schedule"] = keep
+    return dropped
+
+
 def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     """Drop what the facts do not support: a fact bullet whose cited lines do
     not state it, and a method bullet that carries a number or a name no fact
@@ -10263,6 +10400,7 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     # Every drop says why (010279 pass T: the terminal overview line sat in
     # "dropped" with no reason anywhere).
     unsupported = content.setdefault("dropped_unsupported", [])
+    dropped["fact"] += _schedule_stated(content, lines, unsupported)
     for k in LISTS:
         keep = []
         for i, x in enumerate(content.get(k) or []):
@@ -10297,6 +10435,16 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
                     src = next((i for i, ln in lines.items() if _stated_by(dt, _digits(ln))), None)
                     if src:
                         x["cites"], x["kind"], x["recited"] = [src], "fact", True
+                # A labeled schedule line with no date ("Work Window: regular business hours", "Number of
+                # Resources: two (2)") is the fact that states its value: cite it, never drop it (010447,
+                # 2026-11-05: "Assume regular business hours." was in the facts and the line was dropped).
+                m_lab = _SCHEDULE_LABEL.match(str(x["text"])) if k == "schedule" else None
+                if not x["cites"] and m_lab and not _dates_in(str(x["text"])):
+                    val = _digits(m_lab.group(2))
+                    if len({w for w in _toks(val) if len(w) > 2}) >= 2:
+                        src = next((i for i, ln in lines.items() if _stated_by(val, _digits(ln))), None)
+                        if src:
+                            x["cites"], x["kind"], x["recited"] = [src], "fact", True
             if x["kind"] == "fact" and not x["cites"]:
                 # A deal claim with nothing behind it reads as method only if
                 # it carries nothing deal-specific.
@@ -10539,6 +10687,9 @@ def _content_covered(text: str, cited: str) -> bool:
         (w == "instal" and any(h.startswith("instal") for h in have))
     return len(want) >= 2 and all(hit(w) for w in want) and set(re.findall(r"\d+", text)) <= set(re.findall(r"\d+", cited))
 
+
+#: Schedule labels whose value a fact can state without a date (dates keep their own checks).
+_SCHEDULE_LABEL = re.compile(r"(?i)^\s*(work window|number of resources|hardware quantity|pace)\s*:\s*(.+)$")
 
 def _stated_by(text: str, cited: str) -> bool:
     """Most of a bullet's content words, and every number in it, appear in its cited lines."""

@@ -203,10 +203,23 @@ def slug_of_line(text: str) -> str:
 
 
 def _is_site_line(atom: Any, types: dict[str, Any]) -> bool:
-    if _type_of(atom) != "physical_site":
-        return False
+    """Whether this line names a place. The HEAD decides; the parser's type stands only where
+    the head did not answer, or answered ``_keep`` (the parser's type stands by the head's own
+    account).
+
+    It used to require the PARSER's type to be physical_site AND the head to agree, so a line
+    the two disagreed about was a place line to neither -- invisible to every join here. 010171
+    names one place on two lines, and the read typed the PROSE line physical_site and the bare
+    address line as something else, so BOTH were invisible: the prose line failed the parser
+    test, the address line failed the head test, and nothing folded them. A parser type
+    vetoing a head's answer is the wrong way round.
+    """
     h = _head(atom, types)
-    return h is None or h[0] in ("physical_site", "_keep")
+    if h and h[0] == "physical_site":
+        return True
+    if h and h[0] not in ("physical_site", "_keep", "_absent", None):
+        return False
+    return _type_of(atom) == "physical_site"
 
 
 def _join_split_addresses(atoms: list[Any], types: dict[str, Any]) -> int:
@@ -337,6 +350,40 @@ _ID_COLUMN = re.compile(r"^[a-z][a-z_# ]{0,7}$")
 _ID_VALUE = re.compile(r"^\d{1,6}$")
 _NOT_ID = re.compile(r"zip|postal|zone|floor|week|qty|count|visits?|hours?|hrs|phone|year")
 _JOIN_STREET = re.compile(r"^\s*(\d{1,6}(?:-?[A-Za-z])?)\s+(?:[NSEW]{1,2}\.?\s+)?([A-Za-z0-9][A-Za-z0-9.']*)")
+#: The "..., ST 12345" tail of a US address, and the street number and first street word before it.
+#: A line can state its address in prose with nothing in `value`: 010171's two lines are
+#: "4250 Executive Square, Suite 900, La Jolla, CA 92037" and "San Diego Office - 4250 Executive
+#: Square, Suite 900, La Jolla, CA 92037" -- one place, named twice. `_place_ids` read the address
+#: only out of `value.street_address`, which is empty on both, so the join saw no shared place, the
+#: read typed the PROSE line as the site, and the bare address line's keys came back unbacked.
+#: The street head is taken as the LAST one before the tail, so a count earlier in the sentence
+#: ("37 locations ...") is not read as a street number.
+_ADDR_TAIL = re.compile(r",\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b")
+_ADDR_HEAD = re.compile(r"\b(\d{1,6}(?:-?[A-Za-z])?)\s+(?:[NSEW]{1,2}\.?\s+)?([A-Za-z][A-Za-z0-9.']*)")
+
+
+def _stated_address_id(text: str) -> str | None:
+    """``addr:<number>:<street word>:<zip>`` from an address the line states in its own words."""
+    tail = _ADDR_TAIL.search(text or "")
+    if not tail:
+        return None
+    heads = list(_ADDR_HEAD.finditer(text[:tail.start()]))
+    if not heads:
+        return None
+    m = heads[-1]
+    return f"addr:{m.group(1)}:{m.group(2).lower().rstrip('.')}:{tail.group(2)}"
+
+
+#: A labelled site number the line itself states: "Site No.: dc 5509", "Store #: 4471". A roster row
+#: carries the place's identity in this field, and the SAME row keyed by its location name instead
+#: ("Site No.: dc 5509 | Site Location: San Diego MDO") is the same place twice. 010447 priced 366
+#: sites from 235 stated numbers because 126 of them carried two keys, one by number and one by name.
+#: The place noun must be followed by a number word, so "Qty: 4471" and "Bldg SqFt: 42648" are not
+#: places. This only tells the join which rows are one place; it mints no key of its own.
+_STATED_SITE_NO = re.compile(
+    r"\b(?:site|store|location|loc|branch|facility|dc|bldg|building)\s*"
+    r"(?:no|num|number|nbr|#|id|code)\s*\.?\s*[:|]\s*"
+    r"([A-Za-z]{0,5}[-_\s]{0,3}\d{2,6}[A-Za-z]?(?:[-/][A-Za-z0-9]{1,6})?)", re.I)
 #: An id column names a different thing on nearly every row of its sheet.
 _ID_UNIQUE = 0.9
 _ID_MIN_ROWS = 5
@@ -392,6 +439,18 @@ def _place_ids(atom: Any, cells: dict[str, str], id_columns: set[str]) -> list[s
     for k in sorted(id_columns):
         if _ID_VALUE.match(cells.get(k, "")):
             out.append(f"id:{k}:{int(cells[k])}")
+    # The row states its own number. A flattened roster row ("Site No.: dc 5509 | net-new ...")
+    # has no table cells for the column test above, so this is the only place its identity shows.
+    if not out:
+        # The line states its address in prose and `value` holds none.
+        said = _stated_address_id(_text(atom))
+        if said:
+            out.append(said)
+    stated = _STATED_SITE_NO.search(_text(atom))
+    if stated:
+        slug = re.sub(r"[^a-z0-9]+", "", stated.group(1).lower())
+        if len(slug) >= 3:
+            out.append(f"id:site_no:{slug}")
     return out
 
 
@@ -401,7 +460,24 @@ def _join_same_place(atoms: list[Any], types: dict[str, Any]) -> int:
     site:hc_37 on the schedule, site:37 in the draft and site:4860_south_hwy_27 in the SOW. No head answers
     same-site yet (jdg:site cannot be asked of a pair), so this runs here, marked, as a removal target."""
     by_id = {str(getattr(a, "id", "")): a for a in atoms}
-    rows = [(a, _cells(a, by_id)) for a in atoms if _is_site_line(a, types)]
+    # A line that carries a site key and STATES which place it is belongs in the fold whatever
+    # the head types it. 010447: 140 of its roster rows are typed `site_infrastructure` (what is
+    # AT the site, not the site), and those are the rows carrying the location-name keys --
+    # "Site No.: dc 5841 | Site Location: Hialeah Miami DFC" is keyed site:hialeah_miami_dfc
+    # while the bare row is keyed site:dc5841. Same place, two keys, and 116 of 239 stated
+    # numbers were still in that state. Which place a line refers to is not the same question
+    # as what the line is, so the type does not gate it; the stated number does.
+    def _names_its_place(a: Any) -> bool:
+        # A stated street-and-ZIP counts the same way a stated site number does: 010452 names one
+        # place on two lines the head types `deal_metadata` ("2283 Sachs Ct., Green Bay, WI 54313"
+        # keyed site:loc_2283_sachs_ct, "Address: 2283 Sachs Ct., Green Bay, WI 54313" keyed
+        # site:green_bay), so neither was a site line and the deal priced the one place twice.
+        if not _site_keys(a):
+            return False
+        t = _text(a)
+        return _STATED_SITE_NO.search(t) is not None or _stated_address_id(t) is not None
+
+    rows = [(a, _cells(a, by_id)) for a in atoms if _is_site_line(a, types) or _names_its_place(a)]
     id_columns = _id_columns(rows)
     parent: dict[str, str] = {}
 
