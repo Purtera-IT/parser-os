@@ -2167,6 +2167,10 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         if len(e["keys"]) <= 1:
             e.pop("keys")
     out_rows = list(roster.values())
+    if not outside:
+        from app.core import stated_roster
+
+        out_rows = stated_roster.apply(out_rows, atoms)
     if not out_rows and record is not None:
         if dropped:
             # Each rejected candidate carries what the role head actually said about it, and
