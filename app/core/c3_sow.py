@@ -10325,7 +10325,25 @@ def _schedule_stated(content: dict[str, Any], lines: dict[str, str], unsupported
     sched = content.get("schedule") or []
     start = next((tuple(d[1:]) for x in sched if isinstance(x, dict)
                   and re.match(r"(?i)\s*requested start date\s*:", str(x.get("text"))) for d in _dates_in(str(x.get("text")))[:1]), None)
+    def says(val: str, text: str) -> bool:
+        # every number, and half the words (a writer paraphrases a long window)
+        want = {w for w in _toks(val) if len(w) > 2}
+        nums = set(re.findall(r"\d+", val))
+        return nums <= set(re.findall(r"\d+", text)) and bool(nums or want) and \
+            (not want or len(want & _toks(text)) >= 0.5 * len(want))
     for x in sched:
+        if isinstance(x, dict) and not x.get("cites") and re.match(r"(?i)\s*requested (start|completion) date\s*:", str(x.get("text"))):
+            # An uncited start or completion date the deal's own dated line states (010447, 2026-11-05: the writer
+            # left "Requested Start Date: February 1, 2027" uncited one run in three and it was dropped).
+            t = str(x.get("text"))
+            want = {(mo, d) for _m, mo, d, _y in _dates_in(t)}
+            for i, ln in lines.items():
+                if not re.search(r"(?i)\b(start|begin|complet|finish|deadline|due)\w*", ln):
+                    continue
+                st = _dates_in(ln)
+                if want and (want <= {(mo, d) for _m, mo, d, _y in st} or want <= _start_plus_span(t, ln, st)):
+                    x["cites"], x["kind"], x["recited"] = [i], "fact", True
+                    break
         if not isinstance(x, dict) or not x.get("cites"):
             keep.append(x)
             continue
@@ -10334,8 +10352,8 @@ def _schedule_stated(content: dict[str, Any], lines: dict[str, str], unsupported
         m_lab = _SCHEDULE_LABEL.match(t)
         if m_lab and not _dates_in(t):
             val = _digits(m_lab.group(2))
-            if not _stated_by(val, _digits(cited)):
-                src = next((i for i, ln in lines.items() if _stated_by(val, _digits(ln))), None)
+            if not says(val, _digits(cited)):
+                src = next((i for i, ln in lines.items() if says(val, _digits(ln))), None)
                 if not src:
                     dropped += 1
                     unsupported.append({"list": "schedule", **x, "reason": "schedule value its cites do not state"})
