@@ -1934,6 +1934,21 @@ def _why(dropped: dict[str, str], aid: str, why: str) -> None:
     dropped.setdefault(str(aid), why)
 
 
+def _stated_place(text: str) -> bool:
+    """Whether the line's own words state a place: a street and ZIP, or a labelled site number.
+
+    This is extraction, not judgment -- the head decides whether the line is a job site; this only
+    says the parser had a place to read there. Shared with ``site_keys_follow_heads`` so the roster
+    and the key joins agree on what counts as a stated place.
+    """
+    try:
+        from app.core.site_keys_follow_heads import _STATED_SITE_NO, _stated_address_id
+    except Exception:  # noqa: BLE001 - a roster read without it, never a failed read
+        return False
+    t = str(text or "")
+    return _stated_address_id(t) is not None or _STATED_SITE_NO.search(t) is not None
+
+
 def quote_sites(atoms: list[Any], *, outside: bool = False,
                 left_out: set[str] | frozenset[str] | None = None, settled: bool = False,
                 record: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -1986,19 +2001,32 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         # line still needs its own ``site:`` key to name a site, so this admits a
         # place the parser already keyed, not a new guess.
         role = line_reading(aid, "jdg:site_role")
-        # The head names the site; the parser must have read an ADDRESS there and
-        # not invented the line. Asked directly, this head reads 010452's JPMorgan
+        # The head names the site; the parser must have read a PLACE there and not
+        # invented the line. Asked directly, this head reads 010452's JPMorgan
         # lockbox letterhead as job_site at 0.987 and a "new Access Point" scope
         # line at 0.9474, beside the real work address at 0.9918 -- its holdout
         # `guess` equals its `exact` (0.985), so it carries little of the minority
-        # answer and no confidence bar separates them. What does: the parser keyed
-        # an `address:` on the real line and nothing on the other two, and the
-        # letterhead is a line the geo fallback MADE (`inferred`). Heads decide,
-        # parser extracts -- ask both.
+        # answer and no confidence bar separates them. Heads decide, parser
+        # extracts -- ask both.
+        #
+        # This asked for an `address:` entity key, and 010452's work address does
+        # not have one: "Address: 2283 Sachs Ct., Green Bay, WI 54313" is keyed
+        # `site:green_bay` and `site:2283_sachs_ct_green_bay_wi_54313`, no
+        # `address:` at all. So the exemption could never fire, the site stayed
+        # `seen_only_in_ours`, and that deal priced site_count 0 through four
+        # builds while I recorded it as fixed. The precondition was wrong, not the
+        # rule: a street-and-ZIP the line states IS the parser having read a place.
+        #
+        # What still keeps the letterhead out is what it always was -- the line was
+        # MADE by the geo fallback (`geo_fallback_site`), where the work address is
+        # a backfill of a line the document really has (`site_entity_backfill`).
         v_role = getattr(a, "value", None)
         v_role = v_role if isinstance(v_role, dict) else {}
-        parsed_address = (v_role.get("inferred") is not True) and any(
-            str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or []))
+        _flags = set(getattr(a, "review_flags", None) or [])
+        invented = v_role.get("inferred") is True or "geo_fallback_site" in _flags
+        read_a_place = any(str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or [])) \
+            or _stated_place(text)
+        parsed_address = not invented and read_a_place
         job_site = bool(role and role[0] == "job_site" and parsed_address)
         cand = kind == "physical_site" or job_site or bool(
             [k for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")])
@@ -2033,13 +2061,26 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         elif aid in out and not job_site:
             _why(dropped, aid, f"out of the quoting read: {out[aid]}")
             continue
-        if aid in skip and not (job_site and aid in out):
+        if aid in skip and not job_site:
             # `quote()` folds `out` INTO left_out (`left_out | also | set(out)`),
             # so a line excluded only for being ours is in `skip` as well as in
             # `out` -- exempting it above and not here dropped it one line later,
             # which is why 010452 still priced site_count 0 after the first pass.
-            # Only the "ours" part is exempt: a line the heads dropped from the
-            # brief, or kept as "also mentioned", still names no site.
+            #
+            # The exemption used to require `aid in out`, so ONLY our own lines
+            # came through and a line the keep head dropped from the brief named
+            # no site. That is 010171: `col:admission` dropped both of its site
+            # lines (0.833 and 0.620), the roster came back empty, and the deal
+            # priced site_count 0 with its one address sitting in the corpus. The
+            # brief's keep decision is about what the brief SAYS; where the work
+            # happens is a fact about the customer's premises either way -- the
+            # same reason our own SOW may name the job site without pricing it.
+            #
+            # `job_site` is not the role head alone (it answers job_site on nearly
+            # every line): it also needs the parser to have read a place on the
+            # line and not invented it. Measured over 3,146 keep-head drops on
+            # four deals, that admits exactly 010171's two lines and nothing on
+            # 010447, 010358 or 010452.
             _why(dropped, aid, "left out of the brief (the keep head dropped it, or 'also mentioned')")
             continue
         keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")]
