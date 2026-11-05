@@ -37,6 +37,11 @@ from typing import Any
 _SITE_PREFIX = "site:"
 
 
+#: Flags on a line the parser MADE rather than read (the geo fallback minting a site from an
+#: address it found, the geo-mention sites). Kept in step with c3_type_base.MADE_UP_SITE_FLAGS.
+MADE_UP_SITE_FLAGS = frozenset({"geo_fallback_site", "geo_mention_site"})
+
+
 def _keys(atom: Any) -> list[str]:
     return [str(k) for k in (getattr(atom, "entity_keys", None) or [])]
 
@@ -82,6 +87,16 @@ def document_site_map(atoms: list[Any]) -> dict[str, str]:
             continue
         art = str(getattr(atom, "artifact_id", "") or "")
         if not art or is_conversation(atom):
+            continue
+        if MADE_UP_SITE_FLAGS & set(getattr(atom, "review_flags", None) or []):
+            # A line the parser MADE may not say what a document is about. 010452's SOW resolved to
+            # `site:floor_east_brooklyn_ny_11245` -- a JPMorgan lockbox letterhead the geo fallback
+            # minted -- and this join then stamped that key onto 154 of its atoms, "Date: 4/6/2026"
+            # and "2.0 | Scope of Work" included, while the job's own Green Bay address reached 4.
+            # A Green Bay job was relabelled, document-wide, as an address in Brooklyn.
+            #
+            # A document resolving to no site is the safe answer the docstring already relies on:
+            # its rows keep whatever they say themselves and nothing is invented for them.
             continue
         by_artifact.setdefault(art, set()).update(_site_keys(atom))
     return {art: next(iter(keys)) for art, keys in by_artifact.items() if len(keys) == 1}
