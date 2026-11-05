@@ -1962,7 +1962,20 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         # line still needs its own ``site:`` key to name a site, so this admits a
         # place the parser already keyed, not a new guess.
         role = line_reading(aid, "jdg:site_role")
-        job_site = bool(role and role[0] == "job_site" and role[1] >= 0.9)
+        # The head names the site; the parser must have read an ADDRESS there and
+        # not invented the line. Asked directly, this head reads 010452's JPMorgan
+        # lockbox letterhead as job_site at 0.987 and a "new Access Point" scope
+        # line at 0.9474, beside the real work address at 0.9918 -- its holdout
+        # `guess` equals its `exact` (0.985), so it carries little of the minority
+        # answer and no confidence bar separates them. What does: the parser keyed
+        # an `address:` on the real line and nothing on the other two, and the
+        # letterhead is a line the geo fallback MADE (`inferred`). Heads decide,
+        # parser extracts -- ask both.
+        v_role = getattr(a, "value", None)
+        v_role = v_role if isinstance(v_role, dict) else {}
+        parsed_address = (v_role.get("inferred") is not True) and any(
+            str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or []))
+        job_site = bool(role and role[0] == "job_site" and parsed_address)
         if (kind != "physical_site" and not job_site) or _deal_kit(a) \
                 or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             continue

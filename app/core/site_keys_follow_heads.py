@@ -468,6 +468,25 @@ def _role_job_site(atom: Any) -> bool:
     asked here. Ask it: where it says job_site, the line backs its own keys
     whatever its type label says.
     """
+    if _inferred(atom):
+        # A line the parser INVENTED (geo fallback, entity backfill) is not
+        # rescued by this head. Asked directly, it reads 010452's JPMorgan
+        # lockbox letterhead -- "Box 24386 IT ServicePoint, 4 Chase Metrotech
+        # Center, Brooklyn NY", a remittance address in the SOW's approval
+        # block -- as job_site at 0.987, the same breath it reads the real work
+        # address at 0.9918. Its holdout `guess` is 0.985 against an `exact` of
+        # 0.985: on that set "everything is a job site" scores what the head
+        # scores, so it carries very little of the minority answer. It is good
+        # evidence ON a line the parser read; it cannot also be the thing that
+        # decides a line the parser made up.
+        return False
+    if not any(str(k).startswith("address:") for k in (getattr(atom, "entity_keys", None) or [])):
+        # ...and the parser must have read an ADDRESS here, not just a place
+        # word. The same head reads "install one (1) new Access Point and (1)
+        # new Cat 6 cable run" as job_site at 0.9474, which is how
+        # `site:access_point` reached the roster. The heads decide; the parser
+        # extracts. This asks both.
+        return False
     try:
         from app.core.c3_type_base import line_reading
 

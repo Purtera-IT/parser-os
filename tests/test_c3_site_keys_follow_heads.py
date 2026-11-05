@@ -247,3 +247,35 @@ def test_no_site_role_reading_leaves_the_old_behaviour_alone(monkeypatch):
     settle([addr, real], {"w": ["deal_metadata", 0.605], "r": ["physical_site", 0.98]})
     assert _site_keys(addr) == [], "unread and not typed a site: unchanged"
     assert _site_keys(real) == ["site:40_harbor_road"]
+
+
+def test_a_job_site_reading_without_a_parsed_address_backs_nothing(monkeypatch):
+    """The head names the site; the parser must have read an address there.
+
+    Asked directly, jdg:site_role reads 010452's "installation of one (1) new
+    Access Point and (1) new Cat 6 cable run" as job_site at 0.9474 -- which is
+    how `site:access_point` reached that deal's roster. Its holdout `guess`
+    equals its `exact` (0.985), so it carries little of the minority answer and
+    no confidence bar separates that line from the real work address at 0.9918.
+    The parser keyed an `address:` on one and nothing on the other.
+    """
+    scope = _atom("s", "Service Point will provide onsite resource(s) to complete installation "
+                       "of one (1) new Access Point and (1) new Cat 6 cable run", "scope_item",
+                  ["site:access_point"], line=40)
+    addr = _atom("w", "Address: 2283 Sachs Ct., Green Bay, WI 54313", "deal_metadata",
+                 ["address:2283_sachs_ct", "site:green_bay"], line=98)
+    _with_site_role(monkeypatch, {"s": "job_site", "w": "job_site"})
+    settle([scope, addr], {"s": ["scope_item", 0.986], "w": ["deal_metadata", 0.605]})
+    assert _site_keys(scope) == [], "a place word is not an address the parser read"
+    assert _site_keys(addr) == ["site:green_bay"], "the work address still stands"
+
+
+def test_an_invented_line_is_not_rescued_by_the_role_head(monkeypatch):
+    """A geo-fallback line the head calls job_site at 0.987 is still not a site."""
+    made = _atom("g", "24386 IT ServicePoint 4 Chase Metrotech Center 7th, Floor East Brooklyn, NY 11245",
+                 "physical_site", ["address:4_chase_metrotech", "site:floor_east_brooklyn_ny_11245"],
+                 flags=["geo_fallback_site"], value={"inferred": True})
+    other = _atom("o", "Scope: install one access point", "scope_item", [])
+    _with_site_role(monkeypatch, {"g": "job_site"})
+    settle([made, other], {"o": ["scope_item", 0.9]})
+    assert _site_keys(made) == [], "the parser made this line up; the head does not rescue it"
