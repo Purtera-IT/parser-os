@@ -847,6 +847,13 @@ def build(atoms: list[Any], packets: list[Any] = (), *, service_fallback: str | 
                           "family": "deal_ask", "layer": "base",
                           "by": "rule:packet", "owner": "project_manager"})
 
+    # The deal's site lists disagree with its stated count: ask the PM, never pick a list here.
+    from app.core import stated_roster as _stated_roster
+
+    _sq = _stated_roster.question(atoms, _type)
+    if _sq:
+        questions.append(_sq)
+
     # ---- conflicts
     conflicts: list[dict[str, Any]] = []
     if use["rel:contradicts"]:

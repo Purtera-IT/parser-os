@@ -24,7 +24,8 @@ def _deal(n_stated=10, n_list=10, n_super=25, overlap=8):
     return sites, atoms
 
 
-def test_superset_only_sites_leave():
+def test_superset_only_sites_leave_when_active(monkeypatch):
+    monkeypatch.setenv("SOWSMITH_RULE_MODES", "roster.stated_count_wins:active")
     sites, atoms = _deal()
     kept = R.apply(sites, atoms)
     assert len(kept) == 10
@@ -47,3 +48,19 @@ def test_lines_outside_any_list_stay():
     atoms.append({"id": "mail", "raw_text": "Also the warehouse at 1 Main St", "locator": {}})
     sites.append({"atom_ids": ["mail"]})
     assert any(s["atom_ids"] == ["mail"] for s in R.apply(sites, atoms))
+
+
+def test_shadow_by_default_keeps_every_site():
+    sites, atoms = _deal()
+    assert len(R.apply(sites, atoms)) == len(sites)
+
+
+def test_the_brief_asks_which_list():
+    _, atoms = _deal()
+    q = R.question(atoms, lambda a: "physical_site" if a.get("locator") else "requirement")
+    assert q and q["id"] == "q:site_list_scope" and "10 sites" in q["text"] and '"superset" has 25' in q["text"]
+
+
+def test_no_question_when_the_lists_agree():
+    _, atoms = _deal(n_super=10, overlap=10)
+    assert R.question(atoms, lambda a: "physical_site") is None

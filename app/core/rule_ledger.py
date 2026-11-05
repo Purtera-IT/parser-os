@@ -56,8 +56,9 @@ RULES: dict[str, dict[str, Any]] = {
         "stage": "downstream",
         "what": "a quote site whose keys sit inside ONE other site's key is folded into it", "can_shadow": True},
     "roster.stated_count_wins": {
-        "stage": "upstream",
-        "what": "when the deal states N sites and one site list has N, sites only a larger list names leave the quote",
+        "stage": "upstream", "default": "shadow",
+        "what": "when the deal states N sites and one site list has N, sites only a larger list names would leave the "
+                "quote; shadow by default (owner 2026-11-05: the heads decide the sites, the PM is asked)",
         "can_shadow": True},
     "quote_sites.fold_mention": {
         "stage": "downstream",

@@ -4,7 +4,9 @@ roster: sites that only a LARGER list names (a superset tab of every store) are 
 010447 (2026-11-05): the deal says 145 sites nine times and its "2027_145_Sites" tab lists them; the workbook's
 "annette source" tab lists 244 real Home Depot stores. The type head reads every row right (they are places), and no
 head says which places are in this job, so the quote priced 239-366 sites. Upstream of the quote, ledgered as
-``roster.stated_count_wins`` (no head answers scope membership: every fire is ``no_head``), shadow-able.
+``roster.stated_count_wins`` (no head answers scope membership: every fire is ``no_head``). Shadow by default (owner,
+2026-11-05: the heads decide the sites; when the data does not settle it, the brief asks the PM): ``apply`` only logs
+unless the mode is set active, and ``question`` puts the conflict in the brief.
 """
 
 from __future__ import annotations
@@ -74,3 +76,31 @@ def apply(sites: list[dict[str, Any]], atoms: list[Any]) -> list[dict[str, Any]]
         if rule_ledger.shadow(RULE_ID):
             keep.append(s)
     return keep
+
+
+def question(atoms: list[Any], type_of) -> dict[str, Any] | None:
+    """The brief's question when the deal's site lists disagree with its stated count: the deal states N sites, one
+    list the heads read as places holds about N and another holds clearly more. ``type_of(atom)`` is the heads' type.
+    The PM's answer (a site fix on the deal page) settles it and becomes a label; nothing is dropped here."""
+    stated = stated_count(atoms)
+    if not stated:
+        return None
+    rows: dict[tuple[str, str], list[str]] = {}
+    for a in atoms or []:
+        lst = _list_of(a)
+        if lst is not None and type_of(a) == "physical_site":
+            rows.setdefault(lst, []).append(str(getattr(a, "id", "") or (a.get("id") if isinstance(a, dict) else "")))
+    match = {k: v for k, v in rows.items() if abs(len(v) - stated) <= TOLERANCE * stated}
+    bigger = {k: v for k, v in rows.items() if len(v) > (1 + TOLERANCE) * stated and k not in match}
+    if not match or not bigger:
+        return None
+    m_key, m_ids = max(match.items(), key=lambda kv: len(kv[1]))
+    b_key, b_ids = max(bigger.items(), key=lambda kv: len(kv[1]))
+    from app.core import rule_ledger
+
+    rule_ledger.fire(RULE_ID, None, None, "ask", note=f"stated {stated}; lists {len(m_ids)} vs {len(b_ids)}")
+    return {"id": "q:site_list_scope", "family": "sites", "layer": "base", "owner": "project_manager",
+            "by": "rule:" + RULE_ID,
+            "text": (f"The deal states {stated} sites. The site list \"{m_key[1]}\" has {len(m_ids)} rows and "
+                     f"\"{b_key[1]}\" has {len(b_ids)}. Which list is this job's?"),
+            "evidence": [m_ids[0], b_ids[0]]}
