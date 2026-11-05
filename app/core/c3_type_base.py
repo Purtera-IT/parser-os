@@ -1963,8 +1963,17 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     #: the corpus, and finding out which of six gates did it took re-running the function by hand on
     #: a saved envelope, four times, on three wrong guesses. The compile says it now.
     dropped: dict[str, str] = {}
+    #: How many lines the roster was offered, and how many the compile had already typed
+    #: ``physical_site``. An empty roster with an empty ``dropped`` means no candidate line
+    #: ever reached this function -- the place was taken out upstream, not by a gate here --
+    #: and that is the case the first receipt could not tell apart from "no sites in the deal".
+    seen = 0
+    typed_site = 0
     for a in atoms:
         aid, text, kind = _text_type(a)
+        seen += 1
+        if kind == "physical_site":
+            typed_site += 1
         # The role head may NAME a site, not only veto one. A work address can
         # read ``deal_metadata`` -- 010452's "Address: 2283 Sachs Ct., Green Bay,
         # WI 54313", under the SOW's own "WORK ADDRESS" heading, at p 0.605, which
@@ -2096,9 +2105,20 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         if len(e["keys"]) <= 1:
             e.pop("keys")
     out_rows = list(roster.values())
-    if not out_rows and dropped and record is not None:
-        record.extend({"atom_id": aid, "why": why, "head": None, "answer": None, "p": None,
-                       "roster": "empty"} for aid, why in sorted(dropped.items())[:40])
+    if not out_rows and record is not None:
+        if dropped:
+            record.extend({"atom_id": aid, "why": why, "head": None, "answer": None, "p": None,
+                           "roster": "empty"} for aid, why in sorted(dropped.items())[:40])
+        else:
+            # No gate here rejected anything: nothing arrived to reject. Say so with the
+            # counts, so the next question is "who took it out before the quote" and not
+            # another pass over these gates (010171: six gates cleared by hand, four wrong
+            # guesses, because an empty receipt looked the same as a deal with no address).
+            record.append({"atom_id": None, "head": None, "answer": None, "p": None,
+                           "roster": "empty",
+                           "why": (f"no candidate line reached the roster: {seen} line(s) offered, "
+                                   f"{typed_site} typed physical_site. The place was taken out "
+                                   f"before the quote, not by a site gate.")})
     by_id = {str(v["atom_id"]): v for v in vetoed}
     for e in out_rows:
         hit = [by_id[i] for i in e.get("atom_ids") or [] if i in by_id]
@@ -2214,10 +2234,17 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
                                   "not_work": not_work}}}
     if seen_only:
         body["deal"]["sites_seen_only_out_of_view"] = seen_only
-    if role_held:
+    # An empty roster carries its own receipt (``roster == "empty"``): which gate rejected each
+    # candidate, or -- when nothing was rejected -- that no candidate ever arrived. It is read
+    # apart from the role head's held-back lines, because the two answer different questions.
+    empty_why = [r for r in role_held if r.get("roster") == "empty"]
+    held_back = [r for r in role_held if r.get("roster") != "empty"]
+    if held_back:
         # What the role head held back, and whether the roster kept it anyway. A place that leaves
         # the roster is named here, so site_count never just gets smaller with nothing to read.
-        body["deal"]["site_role_held_back"] = role_held
+        body["deal"]["site_role_held_back"] = held_back
+    if empty_why:
+        body["deal"]["site_roster_empty_why"] = empty_why
     if _never():
         return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
             _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id)))
