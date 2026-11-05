@@ -55,6 +55,10 @@ RULES: dict[str, dict[str, Any]] = {
     "quote_sites.fold_contained": {
         "stage": "downstream",
         "what": "a quote site whose keys sit inside ONE other site's key is folded into it", "can_shadow": True},
+    "roster.stated_count_wins": {
+        "stage": "upstream",
+        "what": "when the deal states N sites and one site list has N, sites only a larger list names leave the quote",
+        "can_shadow": True},
     "quote_sites.fold_mention": {
         "stage": "downstream",
         "what": "a quote site whose keys sit inside SEVERAL sites is dropped as a mention", "can_shadow": True},
