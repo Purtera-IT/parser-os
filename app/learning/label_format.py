@@ -107,7 +107,9 @@ DUPLICATE_AFTER_EXCLUDE = re.compile(r"\bduplicate of parser atom", re.I)
 #: customer task"). Training never looks for these words: the teacher reads
 #: every WHY sentence by meaning. This only reminds the labeler to write one.
 FLIP_WORDS = re.compile(r"\b(?:if|unless|were|would|had|otherwise|instead|rather than|only when)\b", re.I)
-_QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|'[^'\n]{3,}'")
+#: A single-quoted span opens and closes at a word edge, so the apostrophes in
+#: "the draft's scope ... the customer's list" never read as a quote.
+_QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|(?<!\w)'[^'\n]{3,}'(?!\w)")
 
 
 def _reads(row: dict[str, Any]) -> dict[str, Any]:
