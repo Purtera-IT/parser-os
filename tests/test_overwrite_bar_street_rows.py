@@ -25,3 +25,8 @@ def test_a_loop_is_a_street_too():
 
 def test_a_street_word_first_is_a_street():
     assert m._overwrite_bar(_atom("1434: 4119 Avenue of the Cities"), "physical_site", 0.5) == 0.5
+
+
+def test_a_store_number_then_a_house_number_is_a_street():
+    assert m._overwrite_bar(_atom("6940: 12 N Broadway"), "physical_site", 0.5) == 0.5
+    assert m._overwrite_bar(_atom("220: 24 Cat6 drops"), "physical_site", 0.5) > 0.5
