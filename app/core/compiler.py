@@ -2591,9 +2591,57 @@ def compile_project(
                             f"INFO: site_geo_mention {_mv.get('name')} ({_mv.get('geo_mention_source')} "
                             f"{float(_mv.get('geo_mention_confidence') or 0):.2f}): {str(_mv.get('mention') or '')[:60]}"
                         )
+                # 1c) Let the heads READ the lines 1) and 1b) just minted, before
+                #    the gate below judges them.
+                #
+                #    The gate asks ``jdg:site_role`` (job_site vs
+                #    vendor_or_billing_address; right 241/243 on the labeled deals,
+                #    against 234/243 for the LLM/parser) through
+                #    ``c3_type_base.line_reading``, which only holds answers from
+                #    the base's read in document_job_scope. These atoms are created
+                #    HERE, ~6 stages later, so that lookup can never have an answer
+                #    for them: the guard built to catch a vendor letterhead was
+                #    unreachable for precisely the atoms it exists to judge, from
+                #    both sides at once (with the heads on, the LLM budget is 0).
+                #    "A line with no reading keeps its site" then kept them.
+                #
+                #    Live 010452: a JPMorgan lockbox line in the SOW's signature
+                #    block ("Box 24386 IT ServicePoint, 4 Chase Metrotech Center,
+                #    Brooklyn NY") became the deal's only job site at confidence
+                #    0.99, while the real work address under the "WORK ADDRESS"
+                #    heading backed nothing -- the quote priced site_count 0.
+                #
+                #    reread_if_new is the mechanism already built for this ("lines
+                #    created after the base's read (signature splits, site
+                #    backfills, geo mentions)"); it just ran only at the very end of
+                #    the compile, long after this decision was taken. Run it here
+                #    too, and only when this stage actually minted lines -- deals
+                #    that mint none pay nothing, and the late re-read then finds
+                #    nothing new rather than reading twice.
+                #    Cost: the re-read is a full deal read (010452: the first one
+                #    was 142.6 s, though this one skips the doc-kind pass). It is
+                #    paid ONLY by deals where this stage minted a site -- which is
+                #    the fallback path, taken when no confirmed site was found, so
+                #    exactly the deals whose sites are wrong today. Healthy deals
+                #    mint nothing and pay nothing. SOWSMITH_GEO_SITE_ROLE_REREAD=0
+                #    turns it off if a compile cannot afford it.
+                if added_geo and os.environ.get(
+                        "SOWSMITH_GEO_SITE_ROLE_REREAD", "1").strip().lower() not in ("0", "false", "no", "off"):
+                    try:
+                        from app.core import c3_type_base as _c3_geo
+
+                        _geo_reread = _c3_geo.reread_if_new(atoms)
+                        if _geo_reread:
+                            _geo_typed = _c3_geo.apply_authority(atoms)
+                            warnings.append(
+                                f"INFO: C3 base re-read the deal for {_geo_reread} line(s) minted by "
+                                f"site_geo_fallback, so jdg:site_role judges them; typed {_geo_typed}")
+                    except Exception as _exc:  # pragma: no cover - never break the stage
+                        warnings.append(
+                            f"WARNING: site_role re-read failed: {type(_exc).__name__}: {_exc}")
                 # 2) Demote any physical_site that is actually the vendor's own
-                #    letterhead / billing address (semantic role gate, LLM-backed;
-                #    a no-op when the LLM is unreachable, only one site exists, or
+                #    letterhead / billing address (semantic role gate, head-backed;
+                #    a no-op when no head read the line, only one site exists, or
                 #    suppression would remove every site).
                 before_vendor_atoms = list(atoms)
                 atoms, dropped_vendor = suppress_vendor_sites(

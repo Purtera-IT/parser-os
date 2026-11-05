@@ -454,6 +454,29 @@ def _join_same_place(atoms: list[Any], types: dict[str, Any]) -> int:
     return joined
 
 
+def _role_job_site(atom: Any) -> bool:
+    """``jdg:site_role`` read this line as a job site.
+
+    A line's TYPE is not its site role. "Address: 2283 Sachs Ct., Green Bay, WI
+    54313", under a SOW's own "WORK ADDRESS" heading, reads ``deal_metadata``
+    (p 0.605) -- defensibly, because it IS a labeled field -- and the parser had
+    already minted ``site:green_bay`` and ``address:2283_sachs_ct`` from it.
+    Backing a key on the type label alone then threw the deal's only work site
+    away: 010452 priced with ``site_count`` 0 while its one address sat in the
+    corpus three times. The head that answers THIS question (job_site vs
+    vendor_or_billing_address, right 241/243 on the labeled deals) was never
+    asked here. Ask it: where it says job_site, the line backs its own keys
+    whatever its type label says.
+    """
+    try:
+        from app.core.c3_type_base import line_reading
+
+        got = line_reading(str(getattr(atom, "id", "") or ""), "jdg:site_role")
+    except Exception:
+        return False
+    return bool(got and got[0] == "job_site")
+
+
 def _backed(atoms: list[Any], types: dict[str, Any], floor: float) -> set[str]:
     out: set[str] = set()
     for a in atoms:
@@ -469,7 +492,7 @@ def _backed(atoms: list[Any], types: dict[str, Any], floor: float) -> set[str]:
             continue
         h = _head(a, types)
         head_site = bool(h and h[0] == "physical_site" and h[1] >= floor)
-        if head_site or roster:
+        if head_site or roster or _role_job_site(a):
             out.update(own)
         elif _type_of(a) == "physical_site" and not _inferred(a) and not (
                 h and h[0] not in ("physical_site", "_keep") and h[1] >= floor):
