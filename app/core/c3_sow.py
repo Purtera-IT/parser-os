@@ -10349,6 +10349,12 @@ def _schedule_stated(content: dict[str, Any], lines: dict[str, str], unsupported
             continue
         t = str(x.get("text"))
         cited = " ".join(lines.get(c, "") for c in x["cites"])
+        if re.match(r"(?i)\s*requested start date\s*:", t) and re.search(r"(?i)\beffective date\b", cited) \
+                and not re.search(r"(?i)\b(start|begin|commenc|kick ?off)\w*", cited):
+            # A contract's effective date is not the work's start (010035, 2026-11-05: "Effective Date: June 17, 2026").
+            dropped += 1
+            unsupported.append({"list": "schedule", **x, "reason": "an effective date is not the start date"})
+            continue
         m_lab = _SCHEDULE_LABEL.match(t)
         if m_lab and not _dates_in(t):
             val = _digits(m_lab.group(2))

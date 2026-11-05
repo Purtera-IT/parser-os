@@ -112,3 +112,11 @@ def test_counts_and_paraphrased_windows_stand_and_uncited_dates_take_their_line(
     assert kept == {"Number of Resources: two (2)": ["f3"],
                     "Work Window: business hours for six (6) no-after-hours-access sites": ["f2"],
                     "Requested Start Date: February 1, 2027": ["f1"], "Requested Completion Date: August 1, 2027": ["f1"]}
+
+
+def test_an_effective_date_is_not_the_start_date():
+    lines = {"f1": "Effective Date: June 17, 2026"}
+    c = {k: [] for k in m.LISTS}
+    c["schedule"] = [{"text": "Requested Start Date: June 17, 2026", "cites": ["f1"], "kind": "fact"}]
+    m.check(c, lines)
+    assert c["schedule"] == []
