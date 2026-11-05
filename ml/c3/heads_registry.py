@@ -212,14 +212,30 @@ def _worse_than_live(h: dict | None) -> bool:
 #: ahead of live AND decent on its own.
 BEATS_LIVE_BY = 0.05
 READY_FLOOR = 0.60
+#: ...and it must show SOME skill over answering the common label, or a head that
+#: has learned nothing but the majority class reaches ``ready`` on the strength of
+#: a worse incumbent alone. Live case: ``jdg:site_role`` grades 0.985 where
+#: always-saying "job_site" also grades 0.985. Asked on 010452 with the whole deal
+#: for context it answered job_site on 1905 of 1914 lines -- including the JPMorgan
+#: lockbox letterhead in the SOW's signature block, at 0.9698 -- and said
+#: vendor_or_billing_address 9 times, never on the actual letterhead. It beats live
+#: by 7 points and is still a constant. Small on purpose: this asks for evidence of
+#: skill, not for the 10 points the guess-only route demands.
+BEATS_GUESS_BY = 0.02
 
 
 def _beats_live(h: dict) -> bool:
-    """Graded clearly ahead of the path in service, and accurate enough to trust."""
+    """Graded clearly ahead of the path in service, accurate enough to trust, and
+    not merely reproducing the common answer."""
     live = h.get("live")
     if not isinstance(live, (int, float)):
         return False
-    return h["exact"] >= live + BEATS_LIVE_BY and h["exact"] >= READY_FLOOR
+    if h["exact"] < live + BEATS_LIVE_BY or h["exact"] < READY_FLOOR:
+        return False
+    guess = h.get("guess")
+    if isinstance(guess, (int, float)) and h["exact"] < guess + BEATS_GUESS_BY:
+        return False
+    return True
 
 
 def build(holdout_log: str | None, validation: str | None, label_files: list[str],
