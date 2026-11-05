@@ -1950,14 +1950,27 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
     lines: list[tuple[str, str, list[str]]] = []
     for a in atoms:
         aid, text, kind = _text_type(a)
-        if kind != "physical_site" or _deal_kit(a) or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
+        # The role head may NAME a site, not only veto one. A work address can
+        # read ``deal_metadata`` -- 010452's "Address: 2283 Sachs Ct., Green Bay,
+        # WI 54313", under the SOW's own "WORK ADDRESS" heading, at p 0.605, which
+        # is fair for a labeled field -- and still be the only place the job
+        # happens. Gating the roster on the type label alone priced that deal with
+        # site_count 0 while its one address sat in the corpus three times.
+        # ``jdg:site_role`` answers exactly this question (job_site vs
+        # vendor_or_billing_address, right 241/243 on the labeled deals) and was
+        # already read here, but only ever to DROP a line -- never to keep one. A
+        # line still needs its own ``site:`` key to name a site, so this admits a
+        # place the parser already keyed, not a new guess.
+        role = line_reading(aid, "jdg:site_role")
+        job_site = bool(role and role[0] == "job_site" and role[1] >= 0.9)
+        if (kind != "physical_site" and not job_site) or _deal_kit(a) \
+                or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             continue
         # A line outside the quoting read never counts (``outside``: only those, for seen-only sites).
         if (aid in out) != outside:
             continue
         if aid in skip:
             continue
-        role = line_reading(aid, "jdg:site_role")
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
             continue
         keys = [str(k) for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")]
