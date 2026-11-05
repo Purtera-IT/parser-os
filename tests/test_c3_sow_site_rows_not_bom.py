@@ -96,3 +96,19 @@ def test_one_sites_row_is_not_the_jobs_schedule():
                       {"text": "Work Hours: Fri, December 1, 2026, 2:00 PM to 2:00 AM", "cites": ["s1"], "kind": "fact"}]}
     m._site_rows_not_schedule(c, env)
     assert [x["text"] for x in c["schedule"]] == ["Requested Start Date: February 1, 2027"]
+
+
+def test_counts_and_paraphrased_windows_stand_and_uncited_dates_take_their_line():
+    lines = {"f1": "Start date Feb 1st , 2027, and have a 6-month deadline.",
+             "f2": "Two techs will survey business hours at the six sites with no after-hours access.",
+             "f3": "We will staff 2 resources."}
+    c = {k: [] for k in m.LISTS}
+    c["schedule"] = [{"text": "Number of Resources: two (2)", "cites": ["f3"], "kind": "fact"},
+                     {"text": "Work Window: business hours for six (6) no-after-hours-access sites", "cites": ["f2"], "kind": "fact"},
+                     {"text": "Requested Start Date: February 1, 2027", "cites": [], "kind": "method"},
+                     {"text": "Requested Completion Date: August 1, 2027", "cites": [], "kind": "method"}]
+    m.check(c, lines)
+    kept = {x["text"]: x["cites"] for x in c["schedule"]}
+    assert kept == {"Number of Resources: two (2)": ["f3"],
+                    "Work Window: business hours for six (6) no-after-hours-access sites": ["f2"],
+                    "Requested Start Date: February 1, 2027": ["f1"], "Requested Completion Date: August 1, 2027": ["f1"]}
