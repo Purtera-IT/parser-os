@@ -2253,19 +2253,15 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     # apart from the role head's held-back lines, because the two answer different questions.
     empty_why = [r for r in role_held if r.get("roster") == "empty"]
     held_back = [r for r in role_held if r.get("roster") != "empty"]
-    if held_back:
-        # What the role head held back, and whether the roster kept it anyway. A place that leaves
-        # the roster is named here, so site_count never just gets smaller with nothing to read.
-        body["deal"]["site_role_held_back"] = held_back
-    if empty_why:
-        body["deal"]["site_roster_empty_why"] = empty_why
     if _never():
-        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
-            _wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only), not_work), sites, by_id)))
+        return _with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(
+            _with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only),
+            not_work), sites, by_id))), held_back, empty_why)
     try:
-        return _pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(_with_seen_only(
-            _request("/v1/quote", body, timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
-            not_work), sites, by_id)))
+        return _with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(
+            _with_seen_only(_request("/v1/quote", body,
+                                     timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
+            not_work), sites, by_id))), held_back, empty_why)
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
 
@@ -2449,6 +2445,24 @@ def _with_not_work(q: Any, not_work: dict[str, str]) -> Any:
         q["not_work"] = {"count": len(not_work), "ids": sorted(not_work),
                          "why": dict(sorted(Counter(w.split(" ", 1)[0] if w.startswith(("type", "under")) else w
                                                     for w in not_work.values()).items()))}
+    return q
+
+
+def _with_roster_why(q: Any, held_back: list[dict[str, Any]], empty_why: list[dict[str, Any]]) -> Any:
+    """The roster's own receipts, carried on the quote the envelope keeps.
+
+    These were first written onto the request body (``body["deal"]``), which the service reads and
+    never echoes, so the envelope held the service's reply and the receipt was invisible by
+    construction -- a diagnostic that cost a compile to learn nothing. The quote's own record is the
+    reply, so a fact about the roster has to be merged into the reply, the way ``_with_seen_only``
+    merges the seen-only sites.
+    """
+    if not isinstance(q, dict):
+        return q
+    if held_back:
+        q["site_role_held_back"] = held_back
+    if empty_why:
+        q["site_roster_empty_why"] = empty_why
     return q
 
 

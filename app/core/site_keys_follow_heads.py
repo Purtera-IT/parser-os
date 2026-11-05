@@ -337,6 +337,30 @@ _ID_COLUMN = re.compile(r"^[a-z][a-z_# ]{0,7}$")
 _ID_VALUE = re.compile(r"^\d{1,6}$")
 _NOT_ID = re.compile(r"zip|postal|zone|floor|week|qty|count|visits?|hours?|hrs|phone|year")
 _JOIN_STREET = re.compile(r"^\s*(\d{1,6}(?:-?[A-Za-z])?)\s+(?:[NSEW]{1,2}\.?\s+)?([A-Za-z0-9][A-Za-z0-9.']*)")
+#: The "..., ST 12345" tail of a US address, and the street number and first street word before it.
+#: A line can state its address in prose with nothing in `value`: 010171's two lines are
+#: "4250 Executive Square, Suite 900, La Jolla, CA 92037" and "San Diego Office - 4250 Executive
+#: Square, Suite 900, La Jolla, CA 92037" -- one place, named twice. `_place_ids` read the address
+#: only out of `value.street_address`, which is empty on both, so the join saw no shared place, the
+#: read typed the PROSE line as the site, and the bare address line's keys came back unbacked.
+#: The street head is taken as the LAST one before the tail, so a count earlier in the sentence
+#: ("37 locations ...") is not read as a street number.
+_ADDR_TAIL = re.compile(r",\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b")
+_ADDR_HEAD = re.compile(r"\b(\d{1,6}(?:-?[A-Za-z])?)\s+(?:[NSEW]{1,2}\.?\s+)?([A-Za-z][A-Za-z0-9.']*)")
+
+
+def _stated_address_id(text: str) -> str | None:
+    """``addr:<number>:<street word>:<zip>`` from an address the line states in its own words."""
+    tail = _ADDR_TAIL.search(text or "")
+    if not tail:
+        return None
+    heads = list(_ADDR_HEAD.finditer(text[:tail.start()]))
+    if not heads:
+        return None
+    m = heads[-1]
+    return f"addr:{m.group(1)}:{m.group(2).lower().rstrip('.')}:{tail.group(2)}"
+
+
 #: A labelled site number the line itself states: "Site No.: dc 5509", "Store #: 4471". A roster row
 #: carries the place's identity in this field, and the SAME row keyed by its location name instead
 #: ("Site No.: dc 5509 | Site Location: San Diego MDO") is the same place twice. 010447 priced 366
@@ -404,6 +428,11 @@ def _place_ids(atom: Any, cells: dict[str, str], id_columns: set[str]) -> list[s
             out.append(f"id:{k}:{int(cells[k])}")
     # The row states its own number. A flattened roster row ("Site No.: dc 5509 | net-new ...")
     # has no table cells for the column test above, so this is the only place its identity shows.
+    if not out:
+        # The line states its address in prose and `value` holds none.
+        said = _stated_address_id(_text(atom))
+        if said:
+            out.append(said)
     stated = _STATED_SITE_NO.search(_text(atom))
     if stated:
         slug = re.sub(r"[^a-z0-9]+", "", stated.group(1).lower())
