@@ -10,6 +10,14 @@ Chain, the way a quoter thinks:
   what the job is -> deal name + kept work lines matched to described job types
   how long        -> typical hours per tech for the job type; scaled by a checked unit count where counts drive the work
   context         -> effort or crew the documents state outright; height, after-hours, multi-site flags
+
+The heads decide, the parser extracts: when the compile sends the C3 heads' line readings (atom
+``reads``: read:co_hours_estimate / read:hours_stated / read:labor_hours, read:crew_size /
+read:co_crew_rule, read:tech_level, read:billing_type / jdg:commercial, and the deal answers
+jdg:billing_type / jdg:travel_scope), a sure reading picks the line and the number comes off that
+line. The EFF / TECHS regex and the family medians answer only when no head is sure, and every number
+says which (``by_*``: ``head:<key>`` | ``regex (head unsure)`` | ``regex (heads not asked)`` |
+``family median`` ...). Old Deal Kit lines and lines the heads left out are never read.
 """
 from __future__ import annotations
 import json,math,os,re,urllib.request
@@ -31,6 +39,18 @@ AFTER=re.compile(r'\bafter[- ]hours\b|\bovernight\b|\bweekends?\b|\bnights?\b',r
 NOISE=re.compile(r'net\s*\d+|warranty|licen|within \d+ (?:hours|days)|notice|24-48|24\s*/\s*7|quotes? (?:delivered|in)|business days|window',re.I)
 HB=(2,4,6,8,10,12,16,24,32,40,48,64,80,120,200,400,600)
 SKIP_TYPES={'small_talk','stakeholder','deal_metadata'}
+#: A head reading at or above this decides (SOWSMITH_C3_QUOTE_SURE).
+SURE=float(os.environ.get('SOWSMITH_C3_QUOTE_SURE','0.8') or 0.8)
+#: Hours heads, in the order they decide: the kit's own hours estimate, then hours the documents state.
+HOURS_HEADS=('read:co_hours_estimate','read:hours_stated','read:labor_hours')
+CREW_HEADS=('read:crew_size','read:co_crew_rule')
+BILLING_LINE_HEADS=('read:billing_type','jdg:commercial')
+#: Heads that score below live; an answer from one is used but marked (AUDIT_dealkit_heads item 12).
+CAVEATS={'read:labor_hours':'read:labor_hours scores below live (0.03-0.04 held-out): check these hours'}
+HOURS_ON_LINE=re.compile(r"(\d{1,3}(?:\.\d)?)(?:\s*(?:-|to)\s*(\d{1,3}(?:\.\d)?))?\s*(?:hours?|hrs?|h)\b",re.I)
+CREW_ON_LINE=re.compile(r"\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:\(\d+\)\s*)?(?:onsite\s+|field\s+|dedicated\s+)?(?:techs?|technicians?|engineers?|installers?|people|resources?|guys)\b",re.I)
+SITES_SAID=re.compile(r"\b(\d{1,4})\s+(?:[\w-]+\s+){0,2}?(?:sites?|locations?|stores?|hotels?|offices?|branches)\b",re.I)
+LEVEL_ON_LINE=re.compile(r"\b(?:l|level|lvl|tier)\s*-?\s*([1-4])\b",re.I)
 
 def _snap(h): return min(HB,key=lambda x:abs(math.log(x)-math.log(max(h,1))))
 
@@ -53,12 +73,78 @@ class QuoteHeads:
         out=self._post('/api/embed',{'model':self.b['embed_model'],'input':['Instruct: Identify the type of onsite IT field-services job.\nQuery: '+t for t in texts]})
         return [self._norm(v) for v in out['embeddings']]
     # -- reading the deal ---------------------------------------------------
+    @staticmethod
+    def _readable(p):
+        """The atoms the quote may read: never an old Deal Kit line (a requote would price itself off
+        the last kit) and never a line the heads left out of the brief (co_action reject etc.)."""
+        out=set((p.get('c3_brief') or {}).get('left_out') or [])
+        return [a for a in p.get('atoms') or [] if not a.get('deal_kit') and not a.get('left_out') and a.get('id') not in out]
+    @staticmethod
+    def _heads_asked(p):
+        h=p.get('heads')
+        return bool(h.get('asked')) if isinstance(h,dict) else any(a.get('reads') for a in p.get('atoms') or [])
+    @staticmethod
+    def _sure(a,head):
+        r=(a.get('reads') or {}).get(head)
+        if not r or r[0] in (None,'_absent','false','none') or float(r[1] or 0)<SURE: return None
+        return r
+    def _head_number(self,atoms,heads,rx,cap):
+        """(value, head, atom id, p) from the surest line a head reads as stating it: the read's value
+        when the server sends one, else the number on that line. None when no head is sure."""
+        best=None
+        for head in heads:
+            for a in atoms:
+                r=self._sure(a,head)
+                if not r: continue
+                v=r[2] if len(r)>2 and isinstance(r[2],(int,float)) and r[2]>0 else None
+                if v is None:
+                    for m in rx.finditer(a.get('text') or ''):
+                        g=[x for x in m.groups() if x]; n=[float(NUM.get(x.lower(),x)) for x in g]
+                        v=sum(n)/len(n); break
+                if v is None or not 0<v<=cap: continue
+                if best is None or float(r[1])>best[3]: best=(v,head,a.get('id'),float(r[1]))
+            if best: return best
+        return None
+    def _head_level(self,atoms):
+        for a in sorted(atoms,key=lambda a:-float(((a.get('reads') or {}).get('read:tech_level') or [0,0])[1] or 0)):
+            r=self._sure(a,'read:tech_level')
+            if not r: continue
+            m=LEVEL_ON_LINE.search(a.get('text') or '')
+            if m: return int(m.group(1)),a.get('id'),float(r[1])
+        return None
+    def _billing(self,p,atoms):
+        d=((p.get('heads') or {}).get('deal') or {})
+        for k in ('jdg:billing_type',):
+            r=d.get(k)
+            if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by=f'heads:{k}',atom_ids=[])
+        votes={}
+        for a in atoms:
+            for h in BILLING_LINE_HEADS:
+                r=self._sure(a,h)
+                if r: votes.setdefault(r[0],[]).append((a.get('id'),float(r[1]),h))
+        if votes:
+            v,ev=max(votes.items(),key=lambda kv:(len(kv[1]),max(x[1] for x in kv[1])))
+            return dict(answer=v,p=round(max(x[1] for x in ev),3),by=f'heads:{ev[0][2]}',atom_ids=[x[0] for x in ev][:8])
+        return dict(answer=None,p=None,by='none',reason='no billing head sure' if self._heads_asked(p) else 'heads not asked',atom_ids=[])
+    def _travel(self,p):
+        r=((p.get('heads') or {}).get('deal') or {}).get('jdg:travel_scope')
+        if r and r[0] not in (None,'_absent') and r[1] is not None and float(r[1])>=SURE: return dict(answer=r[0],p=round(float(r[1]),3),by='heads:jdg:travel_scope')
+        return dict(answer=None,p=None,by='none',reason='travel head unsure' if self._heads_asked(p) else 'heads not asked')
+    @staticmethod
+    def _sites_said(atoms):
+        n=0
+        for a in atoms:
+            t=a.get('text') or ''
+            for m in SITES_SAID.finditer(t):
+                v=int(m.group(1))
+                if v<=2000 and not SIZE.match(t[m.start(1):m.end(1)+7]): n=max(n,v)
+        return n
     def _work(self,p):
         brief=p.get('c3_brief') or {}; secs=brief.get('sections') or {}
         kept={x.get('id') for x in (secs.get('scope_of_work') or [])}
         cited={c for j in (brief.get('job_details') or []) for c in (j.get('cites') or [])}
         work=[]
-        for a in p.get('atoms') or []:
+        for a in self._readable(p):
             t=(a.get('text') or '').strip(); ty=a.get('type') or a.get('atom_type')
             if not t or ty in SKIP_TYPES: continue
             if a.get('id') in kept or a.get('id') in cited or ty=='deal_summary': work.append(a)
@@ -66,7 +152,7 @@ class QuoteHeads:
     def _quantity(self,p,work,cited):
         name=(p.get('deal_name') or '').lower(); groups={}
         wid={a.get('id') for a in work}
-        for a in p.get('atoms') or []:
+        for a in self._readable(p):
             if (a.get('type') or a.get('atom_type')) in SKIP_TYPES: continue
             t=a.get('text') or ''
             found=[]
@@ -109,7 +195,7 @@ class QuoteHeads:
         return (max(ts) if ts else None),(h if h and h<=16 else None)
     def _profile(self,p):
         P=self.b['profiles']; acc=(p.get('account') or '').strip()
-        emails={m.group(0).lower() for a in p.get('atoms') or [] for m in re.finditer(r'[\w.\-]+@[\w\-]+\.(?:com|net|org|io)',a.get('text') or '') if 'purtera' not in m.group(0).lower()}
+        emails={m.group(0).lower() for a in self._readable(p) for m in re.finditer(r'[\w.\-]+@[\w\-]+\.(?:com|net|org|io)',a.get('text') or '') if 'purtera' not in m.group(0).lower()}
         seller=next((P[f'seller:{e}'] for e in sorted(emails) if f'seller:{e}' in P),None)
         account=None
         for k,v in P.items():
@@ -125,34 +211,72 @@ class QuoteHeads:
         fam=self.fams[max(range(len(sims)),key=lambda i:sims[i])]; F=self.b['families'][fam]
         seller,account=self._profile(p); prof=seller or (account if account and account['kits']>=2 else None)
         st_t,st_h=self._stated(work); q=self._quantity(p,work,cited)
-        # techs
-        if st_t: techs=min(st_t,4); why_t='stated in the documents'
-        elif prof and prof.get('usual_techs') and (prof.get('techs_share') or 0)>=0.75 and prof['kits']>=2: techs=prof['usual_techs']; why_t=f"{prof['key']} usually gets {prof['usual_techs']}"
+        readable=self._readable(p); asked=self._heads_asked(p)
+        unsure='fallback:regex_head_unsure' if asked else 'fallback:regex_heads_not_asked'
+        caveats=[]; used={}
+        # techs: a sure crew head picks the line, the number comes off it; regex / profile / family only after
+        hc=self._head_number(readable,CREW_HEADS,CREW_ON_LINE,20)
+        if hc: techs=int(round(hc[0])); why_t=f'stated on the line {hc[1]} reads as the crew'; by_t=f'heads:{hc[1]}'; used['techs']=dict(head=hc[1],atom_id=hc[2],p=round(hc[3],3))
+        elif st_t: techs=min(st_t,4); why_t='stated in the documents'; by_t=unsure
+        elif prof and prof.get('usual_techs') and (prof.get('techs_share') or 0)>=0.75 and prof['kits']>=2: techs=prof['usual_techs']; why_t=f"{prof['key']} usually gets {prof['usual_techs']}"; by_t='fallback:account_profile'
         else:
-            ut={int(k):v for k,v in F['usual_techs'].items()}; techs=max(ut,key=ut.get) if ut else 1; why_t=f'usual crew for {fam} jobs'
+            ut={int(k):v for k,v in F['usual_techs'].items()}; techs=max(ut,key=ut.get) if ut else 1; why_t=f'usual crew for {fam} jobs'; by_t='fallback:family_usual'
         # hours per tech
         n=q['count'] if q and q['unit'] not in ('site','user') and q['p']>=0.5 else None
-        if st_h: hpt=st_h; why_h='stated in the documents'
+        hh=self._head_number(readable,HOURS_HEADS,HOURS_ON_LINE,2000)
+        if hh:
+            hpt=hh[0]; why_h=f'stated on the line {hh[1]} reads as the hours'; by_h=f'heads:{hh[1]}'; used['hours']=dict(head=hh[1],atom_id=hh[2],p=round(hh[3],3))
+            if hh[1] in CAVEATS: caveats.append(CAVEATS[hh[1]])
+        elif st_h: hpt=st_h; why_h='stated in the documents'; by_h=unsure
         elif n and F.get('per_unit_crew_hours') and fam in self.b['count_scaled_families'] and n<=(300 if fam in ('ap','camera','power') else 60):
-            hpt=max(min(F['median_hours_per_tech'],8),n*F['per_unit_crew_hours']/techs); why_h=f'{n} {q["unit"]}s at the usual time each for {fam} jobs'
-        else: hpt=F['median_hours_per_tech']; why_h=f'typical for {fam} jobs'
+            hpt=max(min(F['median_hours_per_tech'],8),n*F['per_unit_crew_hours']/techs); why_h=f'{n} {q["unit"]}s at the usual time each for {fam} jobs'; by_h='fallback:family_per_unit_x_regex_count'
+        else: hpt=F['median_hours_per_tech']; why_h=f'typical for {fam} jobs'; by_h='fallback:family_median'
+        if not by_h.startswith('heads:') and asked: caveats.append('hours not stated on any line the heads read: '+by_h)
         hpt=_snap(hpt)
         # rate line and price
         rp=seller or (account if account and account['rate_line_share']>=0.6 else None)
         rate_line=rp['rate_line'] if rp else F['usual_rate_line']; price=rp['price'] if rp else F['usual_price']
         why_r=f"{rp['key']} profile ({rp['kits']} kits)" if rp else f'usual for {fam} jobs'
+        by_r='fallback:account_profile' if rp else 'fallback:family_usual'
+        lv=self._head_level(readable)
+        if lv:
+            m=re.match(r'L\d\s+(.*)',rate_line or '')
+            new=f'L{lv[0]} '+(m.group(1) if m else (rate_line or '')).strip()
+            if new!=rate_line: caveats.append(f'price {price} is for {rate_line}; check the {new} rate'); why_r=f'level stated on a line read:tech_level reads ({why_r} for the track)'
+            rate_line=new; by_r='heads:read:tech_level'; used['level']=dict(head='read:tech_level',atom_id=lv[1],p=round(lv[2],3))
+        billing=self._billing(p,readable); travel=self._travel(p)
         alltext=' '.join(a.get('text') or '' for a in work)
         flags=[]
-        if AFTER.search(alltext): flags.append('after-hours work mentioned')
+        after=bool(AFTER.search(alltext))
+        if after: flags.append('after-hours work mentioned')
+        # No day-type head yet: after-hours wording is a rule, and "reg" otherwise is a marked default.
+        day_type,by_d=('ot','rule:after_hours_text') if after else ('reg','fallback:default')
         if HEIGHT.search(alltext): flags.append('height / lift access mentioned')
         if (p.get('site_count') or 0)>=2: flags.append(f"{p['site_count']} places in the documents: check the site list")
+        # A larger site count in the wording is a flag beside the heads' roster, never a replacement for it.
+        said=self._sites_said(readable)
+        if said>=2 and said>(p.get('site_count') or 0):
+            flags.append(f"documents mention {said} sites, the heads list {p.get('site_count') or 0}")
         if fam=='program': flags.append('ongoing or multi-site engagement: confirm the duration and site count')
         checked=(q['unit'],q['count']) if q and q['p']>=0.5 and q['unit'] not in ('site','user','device') and re.search(r'\b('+UNITS[q['unit']]+r')\b',scope,re.I) else None
         task=self._word(name,work,p.get('c3_brief') or {},checked,p.get('account')) if word else None
         verdict=f"hours={hpt*techs:g};per=job;qty=1;role={rate_line};techs={techs};hpt={hpt:g}"
+        # the atoms each line came from, so a kit edit can become a label on the line that caused it
+        src=list(dict.fromkeys([c for j in ((p.get('c3_brief') or {}).get('job_details') or []) for c in (j.get('cites') or [])]
+                               +[u['atom_id'] for u in used.values()]+([q['atom_id']] if q else [])))
+        src=[x for x in src if x]
+        cites=[c for j in ((p.get('c3_brief') or {}).get('job_details') or []) for c in (j.get('cites') or [])]
+        by_id={a.get('id'):a for a in readable}
+        lead=(used.get('hours') or used.get('techs') or {}).get('atom_id')
+        source_text=((by_id.get(lead) or {}).get('text') or '')[:300] if lead else (q['text'] if q else ((work[0].get('text') or '')[:300] if work else ''))
         return dict(version=self.version,job_type=fam,job_type_p=round(max(sims),3),
+            heads=dict(asked=asked,used=used,sure=SURE),billing=billing,travel=travel,site_count=p.get('site_count') or 0,after_hours=after,
+            sites=dict(count=p.get('site_count') or 0,by='heads:physical_site' if 'sites' in p else 'none (not sent)',
+                       atom_ids=[i for st in (p.get('sites') or []) for i in (st.get('atom_ids') or [])]),
             lines=[dict(site='job site',task=task or {'av':'Install AV equipment','camera':'Install cameras','ap':'Install access points','power':'Replace UPS / batteries','rack':'Rack and stack equipment','cabling':'Run network cabling','device':'Install and configure devices','survey':'Site survey and report','program':'Onsite support (staff augmentation)'}[fam],
-                techs=techs,hours_per_tech=hpt,crew_hours=hpt*techs,rate_line=rate_line,price=price,why_techs=why_t,why_hours=why_h,why_rate=why_r,proposed_hours=verdict)],
+                techs=techs,hours_per_tech=hpt,crew_hours=hpt*techs,rate_line=rate_line,price=price,why_techs=why_t,why_hours=why_h,why_rate=why_r,
+                by=dict(techs=by_t,hours=by_h,rate=by_r,day_type=by_d),day_type=day_type,after_hours=after,caveats=caveats,
+                atom_ids=src,cites=cites,source_text=source_text,proposed_hours=verdict)],
             quantity=({'unit':q['unit'],'count':q['count'],'p':round(q['p'],2),'text':q['text'],'atom_id':q['atom_id']} if q else None),flags=flags)
     def _word(self,name,work,brief,checked,account=None):
         jd=[(j.get('text') or '').strip() for j in (brief.get('job_details') or [])][:4]
