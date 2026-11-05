@@ -26,9 +26,15 @@ Layers: ``base`` heads say what a line IS and are the same for any company;
 only that layer. Status is computed, never hand-set:
 
 * ``live``          wired into a parser stage and switched on;
-* ``ready``         beats always-guessing-the-common-answer by 10+ points on the
-                    unseen holdout (n >= 50), or no baseline but >= 0.85 there
-                    (not for links: their exact score is mostly "no link");
+* ``ready``         grades clearly ahead of the path IN SERVICE on the unseen
+                    holdout (n >= 50): ``live`` + 5 points and >= 0.60 on its own
+                    (``BEATS_LIVE_BY`` / ``READY_FLOOR``). Still ready on the old
+                    test too -- beats always-guessing-the-common-answer by 10+
+                    points, or no baseline but >= 0.85 there (not for links: their
+                    exact score is mostly "no link"). The majority answer is not
+                    what a head replaces, and on a lopsided question the two come
+                    apart: a head can tie the baseline, beat what ships, and still
+                    read ``weak`` forever;
 * ``one_sided``     its labels are (nearly) all one answer, so it learned "always
                     that": label the other answer too;
 * ``thin``          fewer than 100 labels or 5 deals;
@@ -188,6 +194,34 @@ def _worse_than_live(h: dict | None) -> bool:
     return h.get("verdict") == "worse" or h["exact"] < h["live"]
 
 
+#: How much better than the SHIPPING path a head must grade to take the decision,
+#: and the accuracy it must reach on its own regardless.
+#:
+#: ``ready`` used to mean only "beats always-answering-the-most-common-label by 10
+#: points". That asks the wrong question. The majority answer is not what a head
+#: replaces -- ``live`` is -- and on a lopsided question the two come apart
+#: completely: ``jdg:site_role`` grades 0.985 where always-saying-"job_site" also
+#: grades 0.985, so it scored ZERO against the baseline while beating the shipping
+#: path by 7 points, and sat at ``weak``. ``jdg:site`` beats live by 61 points
+#: (0.984 vs 0.374) and sat at ``weak`` too. Thirteen heads were in that position:
+#: measurably better than what ships, and never promoted.
+#:
+#: The floor matters as much as the margin. ``read:billing_type`` beats live
+#: (0.371 vs 0.171) and is still wrong on two lines in three; "better than a worse
+#: incumbent" must not buy a head the right to stop asking the PM. So: clearly
+#: ahead of live AND decent on its own.
+BEATS_LIVE_BY = 0.05
+READY_FLOOR = 0.60
+
+
+def _beats_live(h: dict) -> bool:
+    """Graded clearly ahead of the path in service, and accurate enough to trust."""
+    live = h.get("live")
+    if not isinstance(live, (int, float)):
+        return False
+    return h["exact"] >= live + BEATS_LIVE_BY and h["exact"] >= READY_FLOOR
+
+
 def build(holdout_log: str | None, validation: str | None, label_files: list[str],
           grade: dict[str, dict] | None = None) -> list[dict]:
     schema = load_schema()
@@ -214,7 +248,8 @@ def build(holdout_log: str | None, validation: str | None, label_files: list[str
         elif n < 100 or nd < 5:
             status = "thin"
         elif h and h["n"] >= 50 and not _worse_than_live(h) and (
-                (h["guess"] is not None and h["exact"] >= h["guess"] + 0.10)
+                _beats_live(h)
+                or (h["guess"] is not None and h["exact"] >= h["guess"] + 0.10)
                 or (h["guess"] is None and h["exact"] >= 0.85 and o.kind != "relation")):
             status = "ready"
         elif h and h["n"] >= 50 and not (o.kind == "relation" and h["guess"] is None):
