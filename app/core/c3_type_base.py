@@ -1979,10 +1979,35 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         if (kind != "physical_site" and not job_site) or _deal_kit(a) \
                 or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             continue
-        # A line outside the quoting read never counts (``outside``: only those, for seen-only sites).
-        if (aid in out) != outside:
+        # A line outside the quoting read never counts (``outside``: only those, for seen-only sites)
+        # -- EXCEPT a work address the heads name.
+        #
+        # Our own documents are held out of the quoting view so the quote cannot
+        # read its hours, crew and price off the SOW we wrote. A work ADDRESS is
+        # not that answer: it is where the customer's job is, a fact about their
+        # premises that our document merely repeats. 010452 is the whole case --
+        # the deal's one site, "Address: 2283 Sachs Ct., Green Bay, WI 54313",
+        # sits in our own SOW, so the roster came back empty and the quote priced
+        # site_count 0 while reporting the site under `sites.seen_only_in_ours`.
+        #
+        # Only the PLACE comes through, and only on the same test the roster uses
+        # everywhere else: the head reads the line job_site AND the parser read an
+        # `address:` there AND did not invent the line. On this deal that admits
+        # Green Bay and still leaves out the JPMorgan lockbox letterhead sitting
+        # beside it in the same "ours" set (the geo fallback made that line).
+        # Hours, crew, rate and price stay held out exactly as before.
+        if outside:
+            if aid not in out:
+                continue
+        elif aid in out and not job_site:
             continue
-        if aid in skip:
+        if aid in skip and not (job_site and aid in out):
+            # `quote()` folds `out` INTO left_out (`left_out | also | set(out)`),
+            # so a line excluded only for being ours is in `skip` as well as in
+            # `out` -- exempting it above and not here dropped it one line later,
+            # which is why 010452 still priced site_count 0 after the first pass.
+            # Only the "ours" part is exempt: a line the heads dropped from the
+            # brief, or kept as "also mentioned", still names no site.
             continue
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
             continue
@@ -2016,6 +2041,9 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
                              "keys": []}
             if outside:
                 e.setdefault("why", out[aid])
+            elif aid in out:
+                # Says so: this place is named only by a document of ours.
+                e["from_ours"] = out[aid]
         for k in keys:
             if k not in e["keys"]:
                 e["keys"].append(k)

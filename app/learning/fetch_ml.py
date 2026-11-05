@@ -45,8 +45,10 @@ def configured_artifacts() -> dict[str, str]:
     for key, val in os.environ.items():
         if not key.startswith("SOWSMITH_") or not str(val).strip():
             continue
-        if not (key.endswith("_DIR") or key.endswith("_DB") or key.endswith("_PATH")):
-            continue
+        # Keyed on what the VALUE is, not what the NAME looks like: matching
+        # `_DIR`/`_DB`/`_PATH` suffixes skipped SOWSMITH_ADMISSION_REGISTRY
+        # (=/tmp/ml/_admission_heads), the one artifact with a live call path and
+        # no C3 replacement. Mirrors the worker's `_required_paths`.
         p = str(val).strip()
         try:
             rp = os.path.realpath(p)
@@ -94,13 +96,23 @@ def artifact_self_check() -> dict[str, Any]:
     if isinstance(receipt.get("downloaded"), int):
         out["fetch_ml_files"] = receipt["downloaded"]
 
+    # Paths the blob store has no source for: dead config, not a failed fetch.
+    # The worker records these separately so a capability configured where no
+    # artifact exists is visible every compile instead of reading as breakage
+    # (SOWSMITH_CALIBRATOR_PATH is the live case -- set on dev and prod, with
+    # nothing in ml-artifacts to satisfy it and no reader in the worker).
+    no_source = [str(x) for x in (receipt.get("no_source") or []) if x]
+    if no_source:
+        out["artifacts_dead_config"] = sorted(no_source)
+
     configured = configured_artifacts()
     if not configured:
         # Nothing is configured to load from the ML dir: there is no claim to check.
         out["artifacts"] = "unknown" if out["fetch_ml"] == "absent" else out["fetch_ml"]
         return out
-    missing = sorted(k for k, p in configured.items() if not os.path.exists(p))
-    out["artifacts_present"] = len(configured) - len(missing)
+    dead = set(no_source)
+    missing = sorted(k for k, p in configured.items() if not os.path.exists(p) and k not in dead)
+    out["artifacts_present"] = len(configured) - len(missing) - len(dead & set(configured))
     out["artifacts_configured"] = len(configured)
     if missing:
         out["artifacts"] = "missing"
