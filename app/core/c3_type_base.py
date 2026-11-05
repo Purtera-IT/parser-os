@@ -1934,6 +1934,17 @@ def _why(dropped: dict[str, str], aid: str, why: str) -> None:
     dropped.setdefault(str(aid), why)
 
 
+#: Types the head gives a PARTY, not a place. A line typed one of these names somebody, and the
+#: street and ZIP in it is their address, not a job site -- which is why `jdg:site_role` answering
+#: job_site on it (as it does on nearly every line) may not put it on the roster.
+#: Flags on a line the parser MADE rather than read: the geo fallback minting a site from an address
+#: it found, and the site backfills. A place on such a line is ours, not the document's.
+MADE_UP_SITE_FLAGS = frozenset({"geo_fallback_site", "geo_mention_site"})
+
+
+PARTY_TYPES = frozenset({"stakeholder", "contact", "signature_block"})
+
+
 def _stated_place(text: str) -> bool:
     """Whether the line's own words state a place: a street and ZIP, or a labelled site number.
 
@@ -2027,13 +2038,23 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         read_a_place = any(str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or [])) \
             or _stated_place(text)
         parsed_address = not invented and read_a_place
-        job_site = bool(role and role[0] == "job_site" and parsed_address)
+        # ...and the TYPE head must not have called the line a party. `jdg:site_role` is a constant
+        # (job_site on 1905 of 1914 lines on 010452), so on its own it rescued two signature blocks:
+        # 010452's "JPMorgan Chase-Lockbox Processing Box 24386 IT ServicePoint 4 Chase Metrotech
+        # Center ... Brooklyn, NY 11245" (role head job_site, keyed site:floor_east_brooklyn_ny_11245)
+        # and 010358's "Scott Morgan | 1361 N Glenville Dr | scott@traversa.net | 214-707-0631"
+        # (keyed site:scott_morgan). Both carry a real street and ZIP, so no address test separates
+        # them -- but the type head types both `stakeholder`, and a party is not a place. That is the
+        # strong head (col:label_type) answering over a constant one, not a rule about addresses.
+        job_site = bool(role and role[0] == "job_site" and parsed_address and kind not in PARTY_TYPES)
         cand = kind == "physical_site" or job_site or bool(
             [k for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")])
-        if (kind != "physical_site" and not job_site) or _deal_kit(a) \
+        made_up = bool(MADE_UP_SITE_FLAGS & set(getattr(a, "review_flags", None) or []))
+        if (kind != "physical_site" and not job_site) or _deal_kit(a) or made_up \
                 or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             if cand:
-                _why(dropped, aid, "deal_kit line" if _deal_kit(a)
+                _why(dropped, aid, "the parser made this line, it did not read it" if made_up
+                     else "deal_kit line" if _deal_kit(a)
                      else "flagged site_not_backed_by_heads" if "site_not_backed_by_heads" in (
                          getattr(a, "review_flags", None) or [])
                      else f"type {kind!r} and the role head did not name it a job site")

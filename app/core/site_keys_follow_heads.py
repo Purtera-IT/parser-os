@@ -468,7 +468,14 @@ def _join_same_place(atoms: list[Any], types: dict[str, Any]) -> int:
     # numbers were still in that state. Which place a line refers to is not the same question
     # as what the line is, so the type does not gate it; the stated number does.
     def _names_its_place(a: Any) -> bool:
-        return bool(_site_keys(a)) and _STATED_SITE_NO.search(_text(a)) is not None
+        # A stated street-and-ZIP counts the same way a stated site number does: 010452 names one
+        # place on two lines the head types `deal_metadata` ("2283 Sachs Ct., Green Bay, WI 54313"
+        # keyed site:loc_2283_sachs_ct, "Address: 2283 Sachs Ct., Green Bay, WI 54313" keyed
+        # site:green_bay), so neither was a site line and the deal priced the one place twice.
+        if not _site_keys(a):
+            return False
+        t = _text(a)
+        return _STATED_SITE_NO.search(t) is not None or _stated_address_id(t) is not None
 
     rows = [(a, _cells(a, by_id)) for a in atoms if _is_site_line(a, types) or _names_its_place(a)]
     id_columns = _id_columns(rows)
