@@ -606,6 +606,13 @@ def _form_question(t: str) -> bool:
         not re.search(r"(?i)\b(?:no|yes|n/?a)\s*[:|]|[:|]\s*(?:no|yes|n/?a)\b", t)
 
 
+try:  # the roster's own notion of "this row states which place it is"
+    from app.core.site_keys_follow_heads import _STATED_SITE_NO
+except Exception:  # pragma: no cover - a SOW written without it, never a failed write
+    import re as _re
+    _STATED_SITE_NO = _re.compile(r"(?!)")
+
+
 def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """The deal's facts: every line a head placed in a job section, plus the
     lines kept with less certainty and the figures read off its images."""
@@ -764,7 +771,14 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     # Site-list rows go last: the writer gets the site list as SITES, and on a store roll-out they filled the
     # MAX_FACTS budget before the deal's own lines (010035, 2026-11-05: 1,072 store rows filed under scope pushed
     # out "all sites completed by Thanksgiving 2026 ... Mon thru Sat 7am to 7pm"; the schedule came out empty).
-    site_rows = {a.get("id") for a in envelope.get("atoms") or [] if a.get("atom_type") in ("physical_site", "site_attribute")}
+    # The type list used to be ("physical_site", "site_attribute") and missed `site_infrastructure`
+    # -- what is AT a site rather than the site itself, which is how 141 of 010447's 416 writer facts
+    # are typed. Its roster rows therefore stayed FIRST: the first 381 facts were store rows and the
+    # deal's own 22 scope lines came after them. A row that states its own site number is a roster
+    # row whatever it is typed, so that is asked too.
+    site_rows = {a.get("id") for a in envelope.get("atoms") or []
+                 if a.get("atom_type") in ("physical_site", "site_attribute", "site_infrastructure")
+                 or _STATED_SITE_NO.search(str(a.get("raw_text") or a.get("text") or ""))}
     seen_text: set[str] = set()
     uniq = []
     for f in sorted(out, key=lambda f: (f["id"] in site_rows, rank.get(f["section"], len(rank)))):
