@@ -195,3 +195,55 @@ def test_a_row_naming_no_place_stops_counting_on_a_deal_whose_rows_do():
     lines = rows + [junk]
     _join_same_place(lines, _types(lines))
     assert NOT_BACKED in junk.review_flags and NOT_BACKED not in rows[0].review_flags
+
+
+def _with_site_role(monkeypatch, readings):
+    """Stub this compile's jdg:site_role readings ({atom_id: verdict})."""
+    import app.core.c3_type_base as c3
+
+    monkeypatch.setattr(
+        c3, "line_reading",
+        lambda aid, head: ((readings[aid], 0.93) if head == "jdg:site_role" and aid in readings else None),
+    )
+
+
+def test_work_address_backs_its_key_when_the_head_reads_it_a_job_site(monkeypatch):
+    """A line's TYPE is not its site role (010452).
+
+    "Address: 2283 Sachs Ct., Green Bay, WI 54313" sits under a SOW's own
+    "WORK ADDRESS" heading and reads `deal_metadata` -- defensibly, it IS a
+    labeled field. Backing on the type label alone threw away the parser's own
+    `site:green_bay` and the deal priced with no site at all.
+    """
+    addr = _atom("w", "Address: 2283 Sachs Ct., Green Bay, WI 54313", "deal_metadata",
+                 ["address:2283_sachs_ct", "site:green_bay"], line=98)
+    _with_site_role(monkeypatch, {"w": "job_site"})
+    settle([addr], {"w": ["deal_metadata", 0.605]})
+    assert _site_keys(addr) == ["site:green_bay"], "the head called it a job site; the key stands"
+    assert "address:2283_sachs_ct" in addr.entity_keys, "only site keys are touched"
+
+
+def test_a_vendor_letterhead_is_not_backed_by_the_role_head(monkeypatch):
+    """The same head that saves the work site must not save the letterhead."""
+    letterhead = _atom("v", "JPMorgan Chase-Lockbox Processing Box 24386 IT ServicePoint "
+                            "4 Chase Metrotech Center 7th Floor East Brooklyn, NY 11245",
+                       "physical_site", ["site:floor_east_brooklyn_ny_11245"],
+                       flags=["geo_fallback_site"], value={"inferred": True})
+    other = _atom("o", "Scope: install one access point", "scope_item", [])
+    _with_site_role(monkeypatch, {"v": "vendor_or_billing_address"})
+    # The heads read the deal (settle is a no-op otherwise) but never read this
+    # line: it is minted after their read, which is the whole 010452 failure.
+    settle([letterhead, other], {"o": ["scope_item", 0.9]})
+    assert _site_keys(letterhead) == [], "an inferred line the head calls a vendor address backs nothing"
+
+
+def test_no_site_role_reading_leaves_the_old_behaviour_alone(monkeypatch):
+    """With no reading the pass decides exactly as before -- no guessing."""
+    addr = _atom("w", "Address: 2283 Sachs Ct., Green Bay, WI 54313", "deal_metadata",
+                 ["site:green_bay"], line=98)
+    real = _atom("r", "Install at 40 Harbor Road, Springfield, IL 62701", "physical_site",
+                 ["site:40_harbor_road"], line=3)
+    _with_site_role(monkeypatch, {})
+    settle([addr, real], {"w": ["deal_metadata", 0.605], "r": ["physical_site", 0.98]})
+    assert _site_keys(addr) == [], "unread and not typed a site: unchanged"
+    assert _site_keys(real) == ["site:40_harbor_road"]
