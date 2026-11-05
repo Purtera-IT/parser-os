@@ -78,3 +78,12 @@ def test_a_sunday_start_is_still_weekend_work():
     c = {"schedule": [{"text": "Requested Start Date: August 16, 2026", "cites": ["f1"], "kind": "fact"}], "assumptions": []}
     m._weekend(c, [])
     assert any("Weekend (Sunday)" in x["text"] for x in c["schedule"])
+
+
+def test_site_rows_do_not_crowd_out_the_deals_lines(monkeypatch):
+    monkeypatch.setattr(m, "MAX_FACTS", 5)
+    atoms = [{"id": f"s{i}", "atom_type": "physical_site", "text": f"{1000+i} | {i} Main St | Town | NY"} for i in range(8)]
+    atoms.append({"id": "d1", "atom_type": "scope_item", "text": "All sites completed by Thanksgiving 2026"})
+    env = {"atoms": atoms, "c3_brief": {"sections": {"scope_of_work": [{"id": a["id"], "text": a["text"]} for a in atoms]}}}
+    ids = [f["id"] for f in m.facts(env)]
+    assert "d1" in ids and len(ids) == 5

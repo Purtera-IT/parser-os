@@ -761,9 +761,13 @@ def facts(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     _lead_ins(out, envelope.get("atoms") or [])
     _list_siblings(out, envelope.get("atoms") or [], vetoed)
     rank = {k: i for i, k in enumerate(SECTION_ORDER)}
+    # Site-list rows go last: the writer gets the site list as SITES, and on a store roll-out they filled the
+    # MAX_FACTS budget before the deal's own lines (010035, 2026-11-05: 1,072 store rows filed under scope pushed
+    # out "all sites completed by Thanksgiving 2026 ... Mon thru Sat 7am to 7pm"; the schedule came out empty).
+    site_rows = {a.get("id") for a in envelope.get("atoms") or [] if a.get("atom_type") in ("physical_site", "site_attribute")}
     seen_text: set[str] = set()
     uniq = []
-    for f in sorted(out, key=lambda f: rank.get(f["section"], len(rank))):
+    for f in sorted(out, key=lambda f: (f["id"] in site_rows, rank.get(f["section"], len(rank)))):
         key = re.sub(r"\W+", " ", f["text"].lower()).strip()
         if key in seen_text:
             continue
