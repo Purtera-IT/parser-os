@@ -2295,14 +2295,14 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
     empty_why = [r for r in role_held if r.get("roster") == "empty"]
     held_back = [r for r in role_held if r.get("roster") != "empty"]
     if _never():
-        return _with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(
-            _with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only),
-            not_work), sites, by_id))), held_back, empty_why)
+        return _with_declared_sites(_with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(
+            _with_not_work(_with_seen_only(_wait_for_heads("/v1/quote", body, {}, "quote read"), seen_only),
+            not_work), sites, by_id))), held_back, empty_why), _declared_sites(atoms), len(sites))
     try:
-        return _with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(_with_not_work(
-            _with_seen_only(_request("/v1/quote", body,
+        return _with_declared_sites(_with_roster_why(_pm_confirms(_note_quote_rules(_with_site_row_hours(
+            _with_not_work(_with_seen_only(_request("/v1/quote", body,
                                      timeout=float(os.environ.get("SOWSMITH_C3_QUOTE_S", "60"))), seen_only),
-            not_work), sites, by_id))), held_back, empty_why)
+            not_work), sites, by_id))), held_back, empty_why), _declared_sites(atoms), len(sites))
     except Exception as exc:  # noqa: BLE001 - the compile goes on, but the quote says it failed
         return _degraded(f"quote heads unavailable: {type(exc).__name__}: {str(exc)[:160]}", deal_id)
 
@@ -2486,6 +2486,53 @@ def _with_not_work(q: Any, not_work: dict[str, str]) -> Any:
         q["not_work"] = {"count": len(not_work), "ids": sorted(not_work),
                          "why": dict(sorted(Counter(w.split(" ", 1)[0] if w.startswith(("type", "under")) else w
                                                     for w in not_work.values()).items()))}
+    return q
+
+
+def _declared_sites(atoms: list[Any]) -> tuple[int, str] | None:
+    """(count, the line that says it) when the deal's documents DECLARE how many places there are.
+
+    Read, not decided: the number is the document's own words. ``declared_scope`` already reads it
+    (highest claim, a confirmed authority beating a quoted one) and nothing downstream of the roster
+    ever asked. On 010447 it reads 145 from "The Home Depot has 145 locations nationwide that need
+    new Palo Alto firewalls", which the deal repeats as "145 sites in scope" and "145 Location Palo
+    Alto deployment", against a roster of 243 keys. On 010171 it reads nothing, which is right.
+    """
+    try:
+        from app.core.declared_scope import _declared_site_count
+
+        got = _declared_site_count(atoms)
+    except Exception:  # noqa: BLE001 - a quote without the check, never a failed quote
+        return None
+    if not got:
+        return None
+    n, atom, _confirmed = got
+    return int(n), str(getattr(atom, "raw_text", "") or "")[:200]
+
+
+def _with_declared_sites(q: Any, declared: tuple[int, str] | None, roster: int) -> Any:
+    """Say so when the roster and the count the documents declare disagree.
+
+    The roster is not overruled -- which number is right is a judgment, and a quote that quietly
+    prices 243 places on a deal whose documents say 145 three times is the one answer nobody can
+    act on. It is reported, with the line that says it, so a PM sees both.
+    """
+    if not isinstance(q, dict) or not declared:
+        return q
+    n, text = declared
+    rec: dict[str, Any] = {"declared": n, "roster": roster, "said_on": text,
+                           "by": "rule:declared_scope (the documents' own words)"}
+    sites = q.get("sites")
+    if roster and n and roster != n:
+        rec["disagrees"] = True
+        flags = q.get("flags")
+        if isinstance(flags, list):
+            flags.append(f"the documents declare {n} places and the roster has {roster}: "
+                         f"check the site list before pricing per site")
+    if isinstance(sites, dict):
+        q["sites"] = {**sites, "declared": rec}
+    else:
+        q["sites_declared"] = rec
     return q
 
 
