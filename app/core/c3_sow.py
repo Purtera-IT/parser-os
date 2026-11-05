@@ -1522,6 +1522,23 @@ def _family(brief: dict[str, Any], writer_says: str, fs: list[dict[str, Any]]) -
     return _route_family(writer_says, fs), "rule:route_family"
 
 
+_BOM_ROW = re.compile(r"^\s*\d{1,4}\s*[:|x]\s*(?:\d{1,4}\s*\|\s*)?\|?\s*[A-Z0-9][A-Z0-9./_-]{3,30}\b")
+# Lines the heads type as a place are never a parts row: a store list's "1139 | 1663 Penfield Road | Rochester"
+# matches the BOM pattern (010035, 2026-11-05: 168 Goodyear store rows listed as customer-supplied materials).
+_NOT_BOM_TYPES = frozenset({"physical_site", "site_attribute", "site_allocation", "site_access_window"})
+
+
+def _customer_bom_rows(content: dict[str, Any], fs: list[dict[str, Any]], cust) -> None:
+    """A BOM block the supplier head reads as the customer's is the customer's, row by row (010116: three rows
+    read "customer" at the bar, the rest none). Only parts rows: never a line the heads read as a site."""
+    bom_facts = [f for f in fs if _BOM_ROW.match(f["text"]) and f.get("type") not in _NOT_BOM_TYPES]
+    if bom_facts and any(cust(f["id"]) for f in bom_facts):
+        cm = content.setdefault("customer_materials", [])
+        for f in bom_facts:
+            if not _said(f["text"], cm, 0.6):
+                cm.append({"text": re.sub(r"^\s*(\d+)\s*[:|]\s*", r"\1 x ", f["text"]).strip(), "cites": [f["id"]], "kind": "fact"})
+
+
 def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
           model: str | None = None) -> dict[str, Any]:
     """The SOW content for one deal: four focused calls (header, tasks, who
@@ -1752,15 +1769,7 @@ def write(envelope: dict[str, Any], pm_handoff: dict[str, Any] | None = None, *,
     cust = lambda c: bool(sup_of.get(c)) and sup_of[c][0] == "customer" and float(sup_of[c][1] or 0) >= SUPPLIER_BAR
     eq = content.get("equipment_in_scope") or []
     to_cust = [x for x in eq if isinstance(x, dict) and x.get("cites") and all(cust(c) for c in x["cites"])]
-    # A BOM block the supplier head reads as the customer's is the customer's,
-    # row by row (010116: three rows read "customer" at the bar, the rest none).
-    bom_row = re.compile(r"^\s*\d{1,4}\s*[:|x]\s*(?:\d{1,4}\s*\|\s*)?\|?\s*[A-Z0-9][A-Z0-9./_-]{3,30}\b")
-    bom_facts = [f for f in fs if bom_row.match(f["text"])]
-    if bom_facts and any(cust(f["id"]) for f in bom_facts):
-        cm = content.setdefault("customer_materials", [])
-        for f in bom_facts:
-            if not _said(f["text"], cm, 0.6):
-                cm.append({"text": re.sub(r"^\s*(\d+)\s*[:|]\s*", r"\1 x ", f["text"]).strip(), "cites": [f["id"]], "kind": "fact"})
+    _customer_bom_rows(content, fs, cust)
     if to_cust:  # 010116: the supplier head read "customer" on every BOM line
         content["equipment_in_scope"] = [x for x in eq if x not in to_cust]
         content.setdefault("customer_materials", []).extend(to_cust)
