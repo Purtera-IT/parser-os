@@ -104,3 +104,19 @@ def test_dead_config_is_not_counted_as_a_failed_fetch(ml_dir, monkeypatch):
     assert got["artifacts_dead_config"] == ["SOWSMITH_CALIBRATOR_PATH"]
     assert got["artifacts"] == "ok", "dead config does not make the fetch look broken"
     assert "artifacts_missing" not in got
+
+
+def test_a_head_is_checked_for_its_path_not_its_variable_name(ml_dir, monkeypatch):
+    """SOWSMITH_ADMISSION_REGISTRY is an artifact path with no _DIR/_DB/_PATH suffix.
+
+    Matching name suffixes let it straight through the gate -- and it is the one
+    artifact here with a live call path and no C3 replacement (`col:admission`
+    is `no_labels`, replacing "parser: span_admission (lessons)"). What decides
+    is the path, not the spelling of the variable.
+    """
+    monkeypatch.setenv("SOWSMITH_ADMISSION_REGISTRY", str(ml_dir / "_admission_heads"))
+    assert "SOWSMITH_ADMISSION_REGISTRY" in configured_artifacts()
+    _receipt(ml_dir, ok=True, downloaded=9)
+    got = artifact_self_check()
+    assert got["artifacts"] == "missing"
+    assert got["artifacts_missing"] == ["SOWSMITH_ADMISSION_REGISTRY"]

@@ -45,8 +45,10 @@ def configured_artifacts() -> dict[str, str]:
     for key, val in os.environ.items():
         if not key.startswith("SOWSMITH_") or not str(val).strip():
             continue
-        if not (key.endswith("_DIR") or key.endswith("_DB") or key.endswith("_PATH")):
-            continue
+        # Keyed on what the VALUE is, not what the NAME looks like: matching
+        # `_DIR`/`_DB`/`_PATH` suffixes skipped SOWSMITH_ADMISSION_REGISTRY
+        # (=/tmp/ml/_admission_heads), the one artifact with a live call path and
+        # no C3 replacement. Mirrors the worker's `_required_paths`.
         p = str(val).strip()
         try:
             rp = os.path.realpath(p)
