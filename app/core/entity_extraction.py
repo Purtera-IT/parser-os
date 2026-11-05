@@ -227,6 +227,24 @@ _SITE_SUFFIX_REGEXES = [re.compile(p) for p in _SITE_SUFFIX_PATTERNS]
 # suffix ("Building 13A"), or unicode-digit. We deliberately
 # require the building-word + space + number form so that a bare
 # number elsewhere in text never becomes a site.
+# A site list that arrives in two sheets keys the same store twice: one sheet by its
+# number, the other by its name. 010447 (Computacenter / Home Depot, 145 locations) published
+# 366 physical_site lines carrying 366 distinct site keys -- which resolve to 239 distinct
+# store numbers, with 127 numbers carrying TWO keys each ("site:dc5841" from one sheet,
+# "site:hialeah_miami_dfc" from the other). Both lines state the number outright in a LABELLED
+# field: "Site No.: dc 5841 | Site Location: Hialeah - Miami DFC | State: FL". Keying that
+# number on the line lets the roster's own code identity and the quote roster's "keys that
+# share a line are one site" fold the two into one place, with no new join and no similarity.
+#
+# The label is what carries the weight. A bare number anywhere in a row is not a site id --
+# this requires a field the document itself labels as the site's number, so a quantity, a part
+# number or a square footage can never become a place.
+_LABELLED_SITE_NO = re.compile(
+    r"\b(?:site|store|location|loc|branch|facility|dc|bldg|building)\s*"
+    r"(?:no|num|number|nbr|#|id|code)\s*\.?\s*[:|]\s*"
+    r"([A-Za-z]{0,5}[-_ ]?\d{2,6}[A-Za-z]?(?:[-/][A-Za-z0-9]{1,6})?)\b",
+    re.I)
+
 _NUMBERED_SITE_REGEX = re.compile(
     r"\b("
     r"(?:Building|Bldg|Site|Branch|Office|Facility|Warehouse|"
@@ -1662,6 +1680,17 @@ def _emit_sites(text: str) -> set[str]:
     # deals where every facility is identified only by a number
     # within a brand chain. We slug the full match so different
     # numbers produce different sites.
+    # A labelled site-number field names the place by its own number, whatever else the row
+    # calls it: "Site No.: dc 5841 | Site Location: Hialeah - Miami DFC". See _LABELLED_SITE_NO.
+    for match in _LABELLED_SITE_NO.finditer(text):
+        slug = _slugify(re.sub(r"\s+", "", match.group(1)))
+        if slug and slug not in {"_"} and not slug.isdigit():
+            keys.add(f"site:{slug}")
+        elif slug.isdigit():
+            # A bare number is a site key only with its label's word, so "Site No.: 4471" and
+            # a part count of 4471 can never collide: site:site_no_4471 is unmistakable.
+            keys.add(f"site:{_slugify(match.group(0))}")
+
     for match in _NUMBERED_SITE_REGEX.finditer(text):
         full = match.group(1).strip()
         if not full:
