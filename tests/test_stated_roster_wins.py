@@ -64,3 +64,21 @@ def test_the_brief_asks_which_list():
 def test_no_question_when_the_lists_agree():
     _, atoms = _deal(n_super=10, overlap=10)
     assert R.question(atoms, lambda a: "physical_site") is None
+
+
+def test_a_compile_atom_keeps_its_sheet_on_the_source_ref():
+    from types import SimpleNamespace as NS
+
+    def atom(i, sheet):
+        return NS(id=i, artifact_id="wb", raw_text=f"Site No.: {i}", atom_type="physical_site",
+                  source_refs=[NS(locator={"sheet": sheet, "extraction": "xlsx_site_roster_v1", "roster_rank": 1})])
+    atoms = [NS(id="say", artifact_id="m", raw_text="Plan for 10 sites in total.", atom_type="requirement", source_refs=[])]
+    atoms += [atom(f"L{k}", "145") for k in range(10)] + [atom(f"S{k}", "superset") for k in range(25)]
+    q = R.question(atoms, lambda a: a.atom_type)
+    assert q and '"superset" has 25' in q["text"]
+
+
+def test_the_question_evidence_has_the_catalog_shape():
+    _, atoms = _deal()
+    q = R.question(atoms, lambda a: "physical_site" if a.get("locator") else "requirement")
+    assert all(isinstance(e, dict) and e["id"] and "text" in e for e in q["evidence"])
