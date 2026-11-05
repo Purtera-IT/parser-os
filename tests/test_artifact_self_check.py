@@ -84,3 +84,23 @@ def test_paths_outside_the_ml_dir_are_not_claimed(ml_dir, monkeypatch):
     """SOWSMITH_FEEDBACK_STORE_DB=/tmp/_feedback.db is not fetched into /tmp/ml."""
     monkeypatch.setenv("SOWSMITH_FEEDBACK_STORE_DB", "/tmp/_feedback.db")
     assert configured_artifacts() == {}
+
+
+def test_dead_config_is_not_counted_as_a_failed_fetch(ml_dir, monkeypatch):
+    """A path the blob store has no source for is dead config, not breakage.
+
+    SOWSMITH_CALIBRATOR_PATH is set on dev AND prod while the only calibrator
+    ever in ml-artifacts is `_quarantine/calibrator_leaked_20260804.joblib`
+    (quarantined 2026-08-04) and nothing reads it. Counting it as a missing
+    artifact made the worker's strict boot refuse to start for something no
+    fetch could ever fix.
+    """
+    head = ml_dir / "_type_head_gpu" / "best"
+    head.mkdir(parents=True)
+    monkeypatch.setenv("SOWSMITH_TYPE_HEAD_GPU_DIR", str(head))
+    monkeypatch.setenv("SOWSMITH_CALIBRATOR_PATH", str(ml_dir / "_calibrator" / "calibrator.joblib"))
+    _receipt(ml_dir, ok=True, downloaded=42, no_source=["SOWSMITH_CALIBRATOR_PATH"])
+    got = artifact_self_check()
+    assert got["artifacts_dead_config"] == ["SOWSMITH_CALIBRATOR_PATH"]
+    assert got["artifacts"] == "ok", "dead config does not make the fetch look broken"
+    assert "artifacts_missing" not in got

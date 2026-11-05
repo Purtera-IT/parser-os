@@ -2001,7 +2001,13 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
                 continue
         elif aid in out and not job_site:
             continue
-        if aid in skip:
+        if aid in skip and not (job_site and aid in out):
+            # `quote()` folds `out` INTO left_out (`left_out | also | set(out)`),
+            # so a line excluded only for being ours is in `skip` as well as in
+            # `out` -- exempting it above and not here dropped it one line later,
+            # which is why 010452 still priced site_count 0 after the first pass.
+            # Only the "ours" part is exempt: a line the heads dropped from the
+            # brief, or kept as "also mentioned", still names no site.
             continue
         if role and role[0] not in ("job_site", "_absent") and role[1] >= 0.9:
             continue
