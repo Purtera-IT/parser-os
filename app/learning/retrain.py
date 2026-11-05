@@ -33,7 +33,8 @@ CLI (the "do it for me" entrypoint)::
     SOWSMITH_TRAINING_LOG_DB=_training_cloud.db \\
     SOWSMITH_HEAD_REGISTRY_DIR=_head_registry \\
     SOWSMITH_SHADOW_HISTORY_DB=_shadow_history.db \\
-    OLLAMA_HOST=http://... python -X utf8 -m app.learning.retrain
+    PARSER_OS_NO_LOCAL_MODELS=1 AZURE_OPENAI_EMBED_BASE=... AZURE_OPENAI_EMBED_KEY=... \\
+        python -X utf8 -m app.learning.retrain
 
 Run it after each batch of compiles (or on a schedule); it advances the
 champions only when the data earns it.
@@ -401,11 +402,12 @@ def retrain_all(
 # ── CLI ─────────────────────────────────────────────────────────────────────
 def _embed_model_id() -> str:
     # The head is only valid for the embedder it was fit on; capture the SAME id
-    # the pipeline resolves (OLLAMA_EMBED_MODEL or the pinned default) so the
-    # registry can enforce embedder-pinning at serve time.
+    # the vectors were keyed under, so the registry can enforce embedder-pinning
+    # at serve time. Under the azure backend that is the azure model: recording
+    # OLLAMA_EMBED_MODEL there labelled 1536-d azure heads as 4096-d qwen3 ones.
     try:
         from app.core import embedding_retrieval as er
-        v = er._embed_model()
+        v = er._cache_model_key()
         if isinstance(v, str) and v:
             return v
     except Exception:
