@@ -34,3 +34,15 @@ def test_a_schedule_line_the_facts_state_is_cited_not_dropped():
     kept = {x["text"]: x.get("cites") for x in c["schedule"]}
     assert kept.get("Work Window: regular business hours") == ["f1"]
     assert "Work Window: overnight weekends only" not in kept
+
+
+def test_cited_schedule_lines_say_what_their_cites_say():
+    lines = {"f1": "Start date Feb 1st , 2027, and have a 6-month deadline.", "f2": "Assume regular business hours."}
+    c = {k: [] for k in m.LISTS}
+    c["schedule"] = [{"text": "Requested Start Date: February 1, 2027", "cites": ["f1"], "kind": "fact"},
+                     {"text": "Requested Completion Date: Monday, February 1, 2027", "cites": ["f1"], "kind": "fact"},
+                     {"text": "Work Window: Weekend (Sunday)", "cites": ["f1"], "kind": "fact"},
+                     {"text": "Work Window: regular business hours", "cites": ["f1"], "kind": "fact"}]
+    m.check(c, lines)
+    kept = {x["text"]: x["cites"] for x in c["schedule"]}
+    assert kept == {"Requested Start Date: February 1, 2027": ["f1"], "Work Window: regular business hours": ["f2"]}

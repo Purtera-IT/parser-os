@@ -10262,6 +10262,43 @@ def _tidy(content: dict[str, Any], facts_say_permit: bool = False) -> None:
         content["provider_tools"] = [x for x in content.get("provider_tools") or [] if not _FAMILY_TOOLS_NOT[fam].search(tx(x))]
 
 
+def _schedule_stated(content: dict[str, Any], lines: dict[str, str], unsupported: list[dict[str, Any]]) -> int:
+    """A cited schedule line says what its cites say (010447, 2026-11-05: "Work Window: Weekend (Sunday)" and
+    "Requested Completion Date: Monday, February 1, 2027" both cited "Start date Feb 1st, 2027, and have a 6-month
+    deadline"). A labeled value its cites do not state takes the fact that does state it, else it goes; a completion
+    date that is only the start date again goes."""
+    dropped = 0
+    keep = []
+    sched = content.get("schedule") or []
+    start = next((tuple(d[1:]) for x in sched if isinstance(x, dict)
+                  and re.match(r"(?i)\s*requested start date\s*:", str(x.get("text"))) for d in _dates_in(str(x.get("text")))[:1]), None)
+    for x in sched:
+        if not isinstance(x, dict) or not x.get("cites"):
+            keep.append(x)
+            continue
+        t = str(x.get("text"))
+        cited = " ".join(lines.get(c, "") for c in x["cites"])
+        m_lab = _SCHEDULE_LABEL.match(t)
+        if m_lab and not _dates_in(t):
+            val = _digits(m_lab.group(2))
+            if not _stated_by(val, _digits(cited)):
+                src = next((i for i, ln in lines.items() if _stated_by(val, _digits(ln))), None)
+                if not src:
+                    dropped += 1
+                    unsupported.append({"list": "schedule", **x, "reason": "schedule value its cites do not state"})
+                    continue
+                x["cites"], x["recited"] = [src], True
+        elif re.match(r"(?i)\s*requested completion date\s*:", t) and start:
+            d = _dates_in(t)
+            if d and tuple(d[0][1:]) == start and not re.search(r"(?i)\b(complet|finish|end(s|ed|ing)?\b|done|wrap)", cited):
+                dropped += 1
+                unsupported.append({"list": "schedule", **x, "reason": "completion date is the start date again"})
+                continue
+        keep.append(x)
+    content["schedule"] = keep
+    return dropped
+
+
 def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     """Drop what the facts do not support: a fact bullet whose cited lines do
     not state it, and a method bullet that carries a number or a name no fact
@@ -10272,6 +10309,7 @@ def check(content: dict[str, Any], lines: dict[str, str]) -> dict[str, int]:
     # Every drop says why (010279 pass T: the terminal overview line sat in
     # "dropped" with no reason anywhere).
     unsupported = content.setdefault("dropped_unsupported", [])
+    dropped["fact"] += _schedule_stated(content, lines, unsupported)
     for k in LISTS:
         keep = []
         for i, x in enumerate(content.get(k) or []):
