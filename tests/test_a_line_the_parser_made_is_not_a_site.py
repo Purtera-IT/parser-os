@@ -104,3 +104,12 @@ def test_a_geo_rebuilt_line_the_head_did_not_confirm_stays_out():
     a.value = {"inferred": True, "street_address": "24386 IT ServicePoint", "source_context": LETTERHEAD,
                "c3_confirm": {"type": "physical_site", "p": 0.5}}
     assert _roster([a]) == []
+
+
+def test_a_sure_type_head_site_names_the_job_site_when_the_role_head_was_not_asked():
+    """010097, 2026-11-05: the keep head left the address out of the brief, no jdg:site_role reading; the type head
+    confirmed physical_site at 0.83 and the heads' site-key settle kept it. The quote still prices that site."""
+    a = _atom("a1", "100 south ashley drive suite 500, tampa, FL 33602", ["site:tampa_fl_33602"], ["hubspot_note_physical_site"])
+    a.value = {"c3_confirm": {"type": "physical_site", "p": 0.834}}
+    c3._DEAL.clear(); c3._DEAL["site_keys"] = {"by": "heads:physical_site"}; c3._DEAL["reads"] = {}
+    assert [s["site"] for s in c3.quote_sites([a], left_out={"a1"})] == ["site:tampa_fl_33602"]

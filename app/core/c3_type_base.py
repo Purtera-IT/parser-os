@@ -2077,7 +2077,12 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         # (keyed site:scott_morgan). Both carry a real street and ZIP, so no address test separates
         # them -- but the type head types both `stakeholder`, and a party is not a place. That is the
         # strong head (col:label_type) answering over a constant one, not a rule about addresses.
-        job_site = bool(role and role[0] == "job_site" and parsed_address and kind not in PARTY_TYPES)
+        # When the role head was not asked on the line, the type head's sure confirm of physical_site answers the same
+        # question (010097: "100 south ashley drive suite 500, tampa, FL 33602" confirmed at 0.83, kept by the heads'
+        # site-key settle, no jdg:site_role reading -- the SOW named Tampa and the quote priced site_count 0).
+        sure_site = _conf.get("type") == "physical_site" and float(_conf.get("p") or 0) >= SITE_CONFIRM_SURE
+        job_site = bool(((role and role[0] == "job_site") or (not role and sure_site))
+                        and parsed_address and kind not in PARTY_TYPES)
         cand = kind == "physical_site" or job_site or bool(
             [k for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")])
         made_up = bool(MADE_UP_SITE_FLAGS & set(getattr(a, "review_flags", None) or [])) and not (read_off_note or heads_confirm_read)
