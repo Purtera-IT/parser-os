@@ -1975,6 +1975,10 @@ def _stated_place(text: str) -> bool:
     return _stated_address_id(t) is not None or _STATED_SITE_NO.search(t) is not None
 
 
+#: The type head's confirm of a site line at or above this lets a geo-rebuilt line of a stated address count.
+SITE_CONFIRM_SURE = 0.8
+
+
 def quote_sites(atoms: list[Any], *, outside: bool = False,
                 left_out: set[str] | frozenset[str] | None = None, settled: bool = False,
                 record: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -2053,7 +2057,15 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         # not made up because a later geo pass also flagged it (010185 / 000036, 2026-11-05: the type head confirmed
         # them physical_site at 0.90 / 0.97 and the role head read job_site, yet the roster dropped them as invented).
         read_off_note = "hubspot_note_physical_site" in _flags and v_role.get("inferred") is not True
-        invented = not read_off_note and (v_role.get("inferred") is True or "geo_fallback_site" in _flags)
+        # A line the geo pass rebuilt from an address the document states word for word, which the type head then
+        # confirmed as a site, is read, not made up: 000036's note says "Adress: CHECKOUT SAN FRANCISCO, 30 HOTALING
+        # PL FL 3, SAN FRANCISCO, CA 94111" (the misspelling kept the note parser off it), the geo pass rebuilt the
+        # line, the type head confirmed physical_site at 0.97 -- and the roster dropped the deal's only site.
+        _conf = v_role.get("c3_confirm") if isinstance(v_role.get("c3_confirm"), dict) else {}
+        _street = str(v_role.get("street_address") or "").strip().lower()
+        heads_confirm_read = (_conf.get("type") == "physical_site" and float(_conf.get("p") or 0) >= SITE_CONFIRM_SURE
+                              and len(_street) >= 6 and _street in str(v_role.get("source_context") or "").lower())
+        invented = not (read_off_note or heads_confirm_read) and (v_role.get("inferred") is True or "geo_fallback_site" in _flags)
         read_a_place = any(str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or [])) \
             or _stated_place(text)
         parsed_address = not invented and read_a_place
@@ -2068,7 +2080,7 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         job_site = bool(role and role[0] == "job_site" and parsed_address and kind not in PARTY_TYPES)
         cand = kind == "physical_site" or job_site or bool(
             [k for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")])
-        made_up = bool(MADE_UP_SITE_FLAGS & set(getattr(a, "review_flags", None) or [])) and not read_off_note
+        made_up = bool(MADE_UP_SITE_FLAGS & set(getattr(a, "review_flags", None) or [])) and not (read_off_note or heads_confirm_read)
         if (kind != "physical_site" and not job_site) or _deal_kit(a) or made_up \
                 or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             if cand:
