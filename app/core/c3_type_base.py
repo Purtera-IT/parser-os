@@ -216,6 +216,16 @@ def overwrite_bar(atom: Any, answer: str, bar: float, p: float | None = None) ->
     return bar if rule_ledger.shadow(rid) else raised
 
 
+#: A street address on the line: a house number, one to four capitalized name words, and a street word.
+_STREET = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][A-Za-z0-9'.-]*\s+){1,4}?(?i:street|st|road|rd|avenue|ave|"
+                     r"boulevard|blvd|drive|dr|lane|ln|way|pike|highway|hwy|bypass|parkway|pkwy|court|ct|place|pl|circle|"
+                     r"cir|trail|trl|route|rte|turnpike|tpke|plaza|square|sq|terrace|ter|expressway|expy|freeway|fwy|loop|"
+                     r"crossing|xing|crescent|cres|grove|commons|mall|landing|ridge|hollow|pointe)\b\.?"
+                     # the street word first: "4119 Avenue of the Cities", "1200 Highway 51", "50 Route 9"
+                     r"|\b\d{1,6}\s+(?i:avenue|highway|hwy|route|rte|state route|county road|farm road)\s+(?:of\s+the\s+)?[A-Z0-9]"
+                     # a store list's "<store no>: <house no> <Name>" ("6940: 12 N Broadway")
+                     r"|^\s*\d{3,5}\s*:\s*\d{1,6}\s+(?:[NSEW]\.?\s+)?[A-Z][a-z]+\b")
+
 def _overwrite_bar(atom: Any, answer: str, bar: float) -> float:
     t = getattr(atom, "atom_type", None)
     # Our own sheet reader's summary of a column ("City: HOUSTON (85), AUSTIN (25)… 27 distinct values over 222
@@ -224,6 +234,11 @@ def _overwrite_bar(atom: Any, answer: str, bar: float) -> float:
     if answer == "physical_site" and str(getattr(t, "value", t) or "") == "derived_finding":
         return float("inf")
     if answer in _KEEPS or answer not in _DROPS_VALUES:
+        return bar
+    # A store list's row ("0220: 6034 Baltimore National Pike") carries a store NUMBER the parser read as a
+    # quantity; the street on the line is what it is. The head reading it as a place clears the normal bar
+    # (010035, 2026-11-05: 18 store rows the head read physical_site stayed bom_line under the 0.85 bar).
+    if answer == "physical_site" and _STREET.search(str(getattr(atom, "raw_text", "") or "")):
         return bar
     if str(getattr(t, "value", t) or "") == answer or not carries_extracted(atom):
         return bar
