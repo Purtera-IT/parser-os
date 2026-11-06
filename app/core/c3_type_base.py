@@ -2049,7 +2049,11 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         v_role = getattr(a, "value", None)
         v_role = v_role if isinstance(v_role, dict) else {}
         _flags = set(getattr(a, "review_flags", None) or [])
-        invented = v_role.get("inferred") is True or "geo_fallback_site" in _flags
+        # A place the parser READ off a note field ("Location: Hillsboro, OR 97123", hubspot_note_physical_site) is
+        # not made up because a later geo pass also flagged it (010185 / 000036, 2026-11-05: the type head confirmed
+        # them physical_site at 0.90 / 0.97 and the role head read job_site, yet the roster dropped them as invented).
+        read_off_note = "hubspot_note_physical_site" in _flags and v_role.get("inferred") is not True
+        invented = not read_off_note and (v_role.get("inferred") is True or "geo_fallback_site" in _flags)
         read_a_place = any(str(k).startswith("address:") for k in (getattr(a, "entity_keys", None) or [])) \
             or _stated_place(text)
         parsed_address = not invented and read_a_place
@@ -2064,7 +2068,7 @@ def quote_sites(atoms: list[Any], *, outside: bool = False,
         job_site = bool(role and role[0] == "job_site" and parsed_address and kind not in PARTY_TYPES)
         cand = kind == "physical_site" or job_site or bool(
             [k for k in (getattr(a, "entity_keys", None) or []) if str(k).startswith("site:")])
-        made_up = bool(MADE_UP_SITE_FLAGS & set(getattr(a, "review_flags", None) or []))
+        made_up = bool(MADE_UP_SITE_FLAGS & set(getattr(a, "review_flags", None) or [])) and not read_off_note
         if (kind != "physical_site" and not job_site) or _deal_kit(a) or made_up \
                 or "site_not_backed_by_heads" in (getattr(a, "review_flags", None) or []):
             if cand:

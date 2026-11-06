@@ -77,3 +77,11 @@ def test_a_party_line_is_not_rescued_by_the_role_head():
                               raw_text="Scott Morgan | 1361 N Glenville Dr | scott@traversa.net",
                               text="Scott Morgan | 1361 N Glenville Dr | scott@traversa.net")
     assert _roster([a], {"a1": {"jdg:site_role": ["job_site", 0.99]}}) == []
+
+
+def test_a_place_read_off_a_note_field_is_a_site_even_with_a_geo_flag():
+    """010185, 2026-11-05: "Location: Hillsboro, OR 97123" from a HubSpot note field; a later geo pass flagged it,
+    and the roster dropped it as made up although the type head confirmed physical_site at 0.90."""
+    a = _atom("a1", "Location: Hillsboro, OR 97123", ["site:hillsboro_or_97123"],
+              ["hubspot_note_physical_site", "hubspot_note_parser", "geo_fallback_site"])
+    assert [s["site"] for s in _roster([a])] == ["site:hillsboro_or_97123"]
