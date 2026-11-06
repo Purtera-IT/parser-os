@@ -325,6 +325,9 @@ def mint_work_line_atoms(
                 if line.get("object")
                 else None,
                 "site_count": site_count if isinstance(site_count, (int, float)) else None,
+                "site_count_status": work_order.get("site_count_status"),
+                "site_count_reason": work_order.get("site_count_reason"),
+                "site_count_evidence": work_order.get("site_count_evidence") or [],
                 "after_hours": bool(work_order.get("after_hours")),
                 "no_onsite_hands": bool(work_order.get("no_onsite_hands")),
                 "customer_supplies_equipment": bool(
@@ -396,10 +399,27 @@ def apply_work_order(
     if not work_order:
         return atoms, 0, report
 
+    # The extractor's site_count is null whenever the documents never SAY "n
+    # sites" (a single ship-to quote). Resolve it from evidence already in the
+    # kept documents, with provenance, and say why when it stays null (PUR-10).
+    from app.core.work_order_site_count import resolve_site_count
+
+    _sc = resolve_site_count(
+        support_pool,
+        llm_site_count=work_order.get("site_count"),
+        no_onsite_hands=bool(work_order.get("no_onsite_hands")),
+    )
+    work_order["site_count"] = _sc["site_count"]
+    work_order["site_count_status"] = _sc["status"]
+    work_order["site_count_reason"] = _sc["reason"]
+    work_order["site_count_evidence"] = _sc["evidence"]
+
     report["summary"] = {
         k: work_order.get(k)
         for k in (
             "site_count",
+            "site_count_status",
+            "site_count_reason",
             "after_hours",
             "no_onsite_hands",
             "customer_supplies_equipment",
