@@ -1676,6 +1676,7 @@ def build_site_readiness(
                 for _rk in [x for x, v in _roster.items() if v == _src] + [_src]:
                     _roster[_rk] = _dst
         _canon_site = {**{k: c for k, c in _canon_site.items() if k not in _merge}, **_roster}
+    _roster_sites = set(_roster.values())
 
     for atom in atoms:
         atom_type = _atom_type_str(atom)
@@ -1751,6 +1752,19 @@ def build_site_readiness(
         # Two surface forms of one place become one row. Without this the
         # entity roster merges and the site COUNT does not.
         site_keys = [_canon_site.get(k, k) for k in site_keys]
+        if heads_roster is not None:
+            # The heads settled the deal's sites: a key off their roster names no site row, so the SOW and
+            # the Scope tab list exactly the quote's sites (000036, 2026-11-05: a geo-fallback line the heads
+            # never read put CDW's own office in the SOW while the quote, rightly, had no site).
+            off = [k for k in site_keys if k not in _roster_sites]
+            if off and atom_type == "physical_site":
+                from app.core import rule_ledger as _rl_off
+
+                _rl_off.fire("site_readiness.off_heads_roster", atom, _rl_off.head_of(atom), "not:physical_site",
+                             "site key not on the heads' roster")
+                if _rl_off.shadow("site_readiness.off_heads_roster"):
+                    off = []
+            site_keys = [k for k in site_keys if k not in off]
         if not site_keys:
             continue
         for sk in site_keys:

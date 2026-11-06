@@ -60,6 +60,10 @@ RULES: dict[str, dict[str, Any]] = {
         "what": "when the deal states N sites and one site list has N, sites only a larger list names would leave the "
                 "quote; shadow by default (owner 2026-11-05: the heads decide the sites, the PM is asked)",
         "can_shadow": True},
+    "site_readiness.off_heads_roster": {
+        "stage": "upstream",
+        "what": "with the heads settling the deal's sites, a site key off their roster makes no site-list (SOW) row",
+        "can_shadow": True},
     "quote_sites.fold_mention": {
         "stage": "downstream",
         "what": "a quote site whose keys sit inside SEVERAL sites is dropped as a mention", "can_shadow": True},
