@@ -184,6 +184,13 @@ def split_inline_dash_list(text: str, *, min_items: int = 3, max_item_words: int
         lead, items = parts[0], parts[1:]
     if len(items) < min_items or any(not p for p in items):
         return []
+    # One site per line: "Tucson, AZ - Acme Vault - Boxed servers - just need
+    # pack/ship" is ONE site entry whose fields happen to be dash-separated,
+    # not a flattened bullet list. Split by item case, its sibling "... - Need
+    # de-rack, pack and ship" came apart into four atoms while this one stayed
+    # whole. A line led by a place is kept whole whatever its words' case.
+    if _is_place_lead(lead if lead else items[0]):
+        return []
     for item in items:
         if not _ITEM_START.match(item):
             return []
@@ -192,6 +199,81 @@ def split_inline_dash_list(text: str, *, min_items: int = 3, max_item_words: int
         if re.search(r"[.!?]\s+[A-Z]", item):
             return []
     return [lead, *items]
+
+
+#: A street address lead: a house number, words, then a street suffix -- with
+#: or without the city, state and ZIP after it ("120 Main St, Tucson, AZ").
+_STREET_LEAD_RE = re.compile(
+    r"^\d{1,6}\s+[\w.\-/'’ ]+?\b(?:st|street|ave|avenue|rd|road|dr|drive|ln|lane|blvd|"
+    r"boulevard|hwy|highway|ct|court|pl|place|pkwy|parkway|ter|terrace|cir|circle|way|"
+    r"route|rte)\b\.?(?:[\s,#].*)?$",
+    re.I,
+)
+#: "..., ST 12345" / "..., ST" closing a lead that opens with a house number.
+_NUMBERED_STATE_TAIL_RE = re.compile(r"^\d{1,6}\s+\S.*,\s*[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$")
+
+
+def _is_place_lead(text: str) -> bool:
+    """The lead piece of a dash line names a place: "City, ST" (or a full
+    state name) or a street address. Shape only, no city vocabulary."""
+    s = " ".join(str(text or "").split()).strip(" ;:.")
+    if not s or len(s) > 80:
+        return False
+    if _STREET_LEAD_RE.match(s) or _NUMBERED_STATE_TAIL_RE.match(s):
+        return True
+    if "," not in s and "/" not in s:
+        return False
+    try:
+        from app.core.address_parse import split_city_state_strict
+    except Exception:  # pragma: no cover - never fail a parse over this
+        return False
+    city, state = split_city_state_strict(s)
+    return bool(city and state)
+
+
+def _dash_separator_count(text: str) -> int:
+    s = " ".join(str(text or "").split())
+    s = re.sub(r"^[-–]\s+", "", s)
+    return len(_INLINE_DASH_SEP.findall(s))
+
+
+def split_inline_dash_lines(
+    lines: list[str], *, min_items: int = 3, max_item_words: int = 20
+) -> list[list[str]]:
+    """:func:`split_inline_dash_list` for each line of one block, decided
+    consistently across siblings.
+
+    Lines of a block written in the same dash shape (the same number of " - "
+    separators) are one kind of line: either every one of them is a flattened
+    list or none is. When they disagree -- one sibling's last field happens to
+    open with a capital and the next one's does not -- every one stays whole,
+    so the same shape never gives two different answers. A line alone in its
+    shape is decided on its own, exactly as :func:`split_inline_dash_list`.
+    A blank line ends the block.
+    """
+    out = [split_inline_dash_list(ln, min_items=min_items, max_item_words=max_item_words)
+           for ln in lines]
+    block: list[int] = []
+
+    def _settle(idx: list[int]) -> None:
+        by_shape: dict[int, list[int]] = {}
+        for i in idx:
+            n = _dash_separator_count(lines[i])
+            if n >= min_items:
+                by_shape.setdefault(n, []).append(i)
+        for members in by_shape.values():
+            if len(members) > 1 and not all(out[i] for i in members):
+                for i in members:
+                    out[i] = []
+
+    for i, ln in enumerate(lines):
+        if str(ln or "").strip():
+            block.append(i)
+        else:
+            _settle(block)
+            block = []
+    _settle(block)
+    return out
 
 
 # ── sentence kinds: banter, talk, work ─────────────────────────────────────
