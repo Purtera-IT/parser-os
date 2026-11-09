@@ -755,6 +755,24 @@ class OrbitBriefPdfParser(BaseParser):
                 parser_version=self.parser_version,
             )
         )
+        # What the person filling in a form marked (typed widget values,
+        # ticked boxes, highlights / carets over the options): additive, one
+        # "Question: Answer" atom per question, placed after its page's text.
+        try:
+            from app.parsers.pdf.form_answers import form_answer_atoms
+
+            answers_by_page = form_answer_atoms(
+                pdf_path=path,
+                project_id=project_id,
+                artifact_id=artifact_id,
+                filename=path.name,
+                parser_version=self.parser_version,
+            )
+            if answers_by_page:
+                atoms = _insert_after_page(atoms, answers_by_page)
+        except Exception:  # pragma: no cover - never fail the parse
+            import logging
+            logging.getLogger(__name__).debug("form answers skipped", exc_info=True)
         # Universal OCR fallback: for text-poor pages where the
         # structured pipeline produced no atoms, try Tesseract OCR
         # and emit scope_item atoms from recovered words. Handles
@@ -1014,6 +1032,32 @@ class OrbitBriefPdfParser(BaseParser):
 _TOC_LEADER_RE = re.compile(r"\.{4,}|…{2,}|(?:\.\s){4,}")
 
 
+def _insert_after_page(
+    atoms: list[EvidenceAtom], by_page: dict[int, list[EvidenceAtom]]
+) -> list[EvidenceAtom]:
+    """``atoms`` with each page's extra atoms placed right after that page's
+    last atom (pages with none go after the last atom of an earlier page, or
+    at the end)."""
+    def _page(a: EvidenceAtom) -> Any:
+        try:
+            return (a.source_refs[0].locator or {}).get("page") if a.source_refs else None
+        except Exception:
+            return None
+
+    pending = dict(by_page)
+    out: list[EvidenceAtom] = []
+    for i, a in enumerate(atoms):
+        out.append(a)
+        p = _page(a)
+        nxt = _page(atoms[i + 1]) if i + 1 < len(atoms) else None
+        if isinstance(p, int) and nxt != p:
+            for q in sorted(k for k in pending if k <= p or (isinstance(nxt, int) and k < nxt)):
+                out.extend(pending.pop(q))
+    for q in sorted(pending):
+        out.extend(pending[q])
+    return out
+
+
 def _collapse_toc_atoms(atoms: list[EvidenceAtom]) -> list[EvidenceAtom]:
     """Collapse a Table-of-Contents atom to a compact marker. A TOC page is rows
     of 'Section Title .......... <page>' dotted leaders — navigation furniture, not
@@ -1143,8 +1187,12 @@ def _fold_answers_into_questions(atoms: list[EvidenceAtom]) -> list[EvidenceAtom
             #   2. embedding answer      — needs a clearly question-ish prev (online);
             #   3. positional, no marker — a STRONG question (ends '?') followed by a
             #      declarative line is the answer (offline-safe; no colon needed).
+            # A form-grid row already pairs its own label and value; a row is
+            # never the answer to the row above it.
             prev_mergeable = (
                 _page(prev) == _page(a)
+                and not v.get("form_grid") and not pv.get("form_grid")
+                and v.get("kind") != "form_answer" and pv.get("kind") != "form_answer"
                 and not _ANSWER_PREFIX_RE.match(ptxt)
                 and pv.get("kind") != "image_marker"
                 and "binary_region_marker" not in (prev.review_flags or [])
@@ -1995,6 +2043,8 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     page_text_lengths: list[int] = []
     page_texts: list[str] = []
     page_image_counts: list[int] = []
+    # Fill-in widgets per page: a page that carries them is a form.
+    page_widget_counts: list[int] = []
     with fitz.open(str(pdf_path)) as doc:
         # Encrypted PDF detection — explicit signal for PM_HANDOFF so
         # the file gets routed to manual unlock rather than silently
@@ -2049,6 +2099,11 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
                 page_image_counts.append(len(doc[page_idx].get_images()))
             except Exception:  # pragma: no cover — bad page shouldn't kill compile
                 page_image_counts.append(0)
+            try:
+                page_widget_counts.append(
+                    sum(1 for _ in (doc[page_idx].widgets() or [])) if doc.is_form_pdf else 0)
+            except Exception:  # pragma: no cover — bad page shouldn't kill compile
+                page_widget_counts.append(0)
 
     # Page bucketing thresholds:
     #   < LOW_TEXT_PAGE_THRESHOLD       → marker page only (scanned)
@@ -2056,6 +2111,7 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
     #   else                             → heavyweight layout pipeline
     LOW_TEXT_PAGE_THRESHOLD = 80
     TEXT_RICH_PAGE_THRESHOLD = 1200
+    FORM_PAGE_MIN_WIDGETS = 3
 
     def _build_low_text_page(page_index: int) -> dict[str, Any]:
         # A genuinely sparse text page (a trailing line, a short final page) is
@@ -2184,7 +2240,8 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
             else _extract_header_grids(pdf_path, page_index, ruled_bboxes)
         if grid_blocks:
             ruled_blocks, ruled_bboxes = _merge_table_extractions(
-                ruled_blocks, ruled_bboxes, grid_blocks, grid_bboxes
+                ruled_blocks, ruled_bboxes, grid_blocks, grid_bboxes,
+                min_cover=HEADER_GRID_MIN_COVER,
             )
         table_blocks, table_bboxes = _merge_table_extractions(
             ruled_blocks, ruled_bboxes, col_blocks, col_bboxes
@@ -2205,6 +2262,9 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         )
         if laid_out is not None:
             prose_text = laid_out
+        # A Wingdings box / ZapfDingbats tick reads as ☐ / ☑, not as a
+        # private-use character the splitter takes for a bullet.
+        prose_text = _map_page_glyphs(pdf_path, page_index, prose_text)
         prose_text, _doc_stamps = _extract_doc_stamps(prose_text)
 
         # Diarized transcript pages (meeting summary + full transcript exports)
@@ -2365,7 +2425,10 @@ def build_structured_document(pdf_path: Path) -> dict[str, Any]:
         # one glued mega-atom (solicitation + award + rejection rights + contact
         # all in one), whereas the prose splitter respects the paragraph breaks.
         # The letterhead image is still captured by the separate image-marker pass.
+        # A page carrying fill-in widgets is a form: its grid and its answers
+        # are read by the text / form path, not by the visual layout one.
         if page_image_counts[page_index] == 0 \
+                or page_widget_counts[page_index] >= FORM_PAGE_MIN_WIDGETS \
                 or _is_multi_paragraph_prose(page_texts[page_index]) \
                 or _is_bulleted_list_page(page_texts[page_index]) \
                 or _is_form_page(page_texts[page_index]):
@@ -3829,7 +3892,14 @@ def _atoms_for_block(
             # CONTACT NAME/TITLE | FEDERAL TAXPAYER NUMBER (ID#)"
             # rows).  A table row is a form template when its text
             # would qualify as one if it appeared as a paragraph.
-            if _looks_like_form_field(row_text):
+            row_fields = None
+            if block.get("form_fields") and row_index < len(block["form_fields"]):
+                row_fields = block["form_fields"][row_index]
+            # A form-grid row that carries a filled value is an answer, not
+            # a blank vendor template.
+            filled = bool(row_fields) and any(
+                str(f.get("value") or "").strip() for f in row_fields)
+            if not filled and _looks_like_form_field(row_text):
                 continue
             # P1.3: skip table rows that are repeated page-footer
             # bands (some PDF extractors fold multi-line footers into
@@ -3851,6 +3921,9 @@ def _atoms_for_block(
                 value.update(_line_item_fields(row))
             if block.get("key_value"):
                 value["key_value"] = True
+            if row_fields is not None:
+                value["form_grid"] = True
+                value["fields"] = list(row_fields)
             if row_trunc:
                 value["truncated_cols"] = list(row_trunc)
             yield _make_atom(
@@ -4047,6 +4120,10 @@ def _atoms_for_bullet(
         )
 
 
+#: The placeholder name a column gets when the table has no header for it.
+_COL_PLACEHOLDER_NAME = re.compile(r"^col_\d+$")
+
+
 def _row_to_text(row: dict[str, Any]) -> str:
     parts: list[str] = []
     for col, val in row.items():
@@ -4054,6 +4131,11 @@ def _row_to_text(row: dict[str, Any]) -> str:
             continue
         s = str(val).strip()
         if not s:
+            continue
+        # A ``col_N`` placeholder is our name, not the document's: the cell
+        # reads as written. It stays the key in the structured cells.
+        if _COL_PLACEHOLDER_NAME.match(str(col).strip()):
+            parts.append(s)
             continue
         # A header that carries its own colon ("QUOTED BY:") is not given a
         # second one ("QUOTED BY:: Octavian Mitroi").
@@ -4718,7 +4800,19 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
             except Exception:
                 return [], []
             tables = list(getattr(finder, "tables", []) or [])
-            for table in tables:
+            # Form-grid helpers (pdf/form_grid.py): the page's symbol glyphs,
+            # rules / fills and styled spans, read once per page.
+            from app.parsers.pdf import form_grid as _fg
+
+            nested = _fg.nested_table_indexes(tables) if len(tables) > 1 else set()
+            gmap = _fg.page_glyph_map(page)
+            fgeo = _fg.page_geometry(page)
+            fspans = _fg.page_spans(page)
+            for t_index, table in enumerate(tables):
+                # An option grid drawn inside a form cell: the outer table
+                # already reads its text.
+                if t_index in nested:
+                    continue
                 # A grid drawn through the words is a figure's lines, not a
                 # table (see page_kind.table_cuts_words).
                 if table_cuts_words(page, table):
@@ -4727,6 +4821,15 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                     extracted = _table_rows_repaired(page, table)
                 except Exception:
                     continue
+                if gmap:
+                    extracted = [[_fg.apply_glyph_map(c, gmap) for c in r] for r in extracted]
+                # A cell find_tables split into sub-rows (a wrapped label, a
+                # caption under its label) goes back into its row.
+                try:
+                    extracted, table = _fg.merge_continuation_rows(
+                        page, table, extracted, geometry=fgeo, spans=fspans, gmap=gmap)
+                except Exception:
+                    pass
                 # A LABEL | VALUE grid has no header row: one row per field.
                 kv = _key_value_rows(page, table, extracted)
                 if kv:
@@ -4734,6 +4837,28 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
                         "kind": "table", "columns": ["col_0"],
                         "rows": [{"col_0": t} for t in kv],
                         "self_labelled": True, "key_value": True,
+                    })
+                    try:
+                        bboxes.append(fitz.Rect(table.bbox))
+                    except Exception:
+                        pass
+                    continue
+                # A fill-in form drawn as a grid: each row read as the
+                # label -> value pairs it holds, never under row 0's text.
+                try:
+                    form_rows = _fg.read_form_grid(
+                        page, table, extracted, geometry=fgeo, spans=fspans)
+                except Exception:
+                    form_rows = None
+                if form_rows:
+                    table_blocks.append({
+                        "kind": "table", "columns": ["col_0"],
+                        "rows": [{"col_0": r["text"]} for r in form_rows],
+                        "self_labelled": True, "key_value": True, "form_grid": True,
+                        "form_fields": [
+                            [{"label": lab, "value": val} for lab, val in r["fields"]]
+                            for r in form_rows
+                        ],
                     })
                     try:
                         bboxes.append(fitz.Rect(table.bbox))
@@ -4786,9 +4911,14 @@ def _extract_ruled_tables(pdf_path: Path, page_index: int) -> tuple[list[dict[st
 
 
 
+#: A header grid replaces a ruled table only when it covers this share of it.
+HEADER_GRID_MIN_COVER = 0.8
+
+
 def _merge_table_extractions(
     ruled_blocks: list[dict[str, Any]], ruled_bboxes: list[Any],
     col_blocks: list[dict[str, Any]], col_bboxes: list[Any],
+    *, min_cover: float = 0.0,
 ) -> tuple[list[dict[str, Any]], list[Any]]:
     """Combine ruled + whitespace-column tables, resolving overlap.
 
@@ -4797,12 +4927,26 @@ def _merge_table_extractions(
     fitz mis-splitting a header into bogus columns (the ACE ``Factor | Weight``
     grid came out as 6 columns). A CLEAN ruled table (real header names — a site
     roster, a BOM) always wins, so this never clobbers good ruled extraction.
+
+    ``min_cover``: the replacing table must also cover at least this share of
+    the ruled table's area. A header grid found in one corner of a big ruled
+    form (two rows of a 40-row grid) must not throw the rest of the grid
+    into the prose stream.
     """
     def _overlaps(a, b) -> bool:
         try:
             inter = a & b
             return inter.is_valid and inter.get_area() > 0.4 * min(
                 max(a.get_area(), 1.0), max(b.get_area(), 1.0))
+        except Exception:
+            return False
+
+    def _covers(a, b, share: float) -> bool:
+        if share <= 0:
+            return True
+        try:
+            inter = a & b
+            return inter.is_valid and inter.get_area() >= share * max(b.get_area(), 1.0)
         except Exception:
             return False
 
@@ -4817,7 +4961,7 @@ def _merge_table_extractions(
         clobber = False
         if _degenerate(rb) and rbox is not None:
             for cbox in col_bboxes:
-                if cbox is not None and _overlaps(rbox, cbox):
+                if cbox is not None and _overlaps(rbox, cbox) and _covers(cbox, rbox, min_cover):
                     clobber = True
                     break
         if not clobber:
@@ -4889,6 +5033,27 @@ def _drop_side_by_side_box_tables(
     except Exception:
         return blocks, bboxes
     return [b for b, _ in keep], [bb for _, bb in keep]
+
+
+#: Characters a symbol font leaves in extracted text (private-use, control).
+_SYMBOL_GLYPH_HINT = re.compile("[\uf000-\uf0ff\x00-\x08\x0b\x0c\x0e-\x1f\u00a8\u00fe\u00fd]")
+
+
+def _map_page_glyphs(pdf_path: Path, page_index: int, text: str) -> str:
+    """``text`` with the page's symbol-font box / tick glyphs mapped to ☐ / ☑
+    (``pdf/form_grid.page_glyph_map``); unchanged on any failure."""
+    if not text or not _SYMBOL_GLYPH_HINT.search(text):
+        return text
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        from app.parsers.pdf.form_grid import apply_glyph_map, page_glyph_map
+
+        with fitz.open(str(pdf_path)) as doc:
+            gmap = page_glyph_map(doc[page_index])
+    except Exception:
+        return text
+    return apply_glyph_map(text, gmap) if gmap else text
 
 
 def _page_heading_lines(pdf_path: Path, page_index: int, bboxes: list[Any]) -> set[str]:
@@ -5860,6 +6025,14 @@ _CONTACT_FIELD_LABEL_RE = re.compile(
 )
 
 
+_HASH_HEADING_RE = re.compile(r"^#{1,6}\s+(?!of\b)[A-Za-z]", re.I)
+_OPTION_BOX_RE = re.compile("[\u2610\u2611\u2612\u25a1\u274f\u2750\u2751\u2752\uf0a8\uf06f\uf0fe\uf0fd]")
+
+
+def _has_option_box(text: str) -> bool:
+    return bool(_OPTION_BOX_RE.search(text or ""))
+
+
 def _looks_like_section_heading(stripped: str) -> bool:
     """True when an all-caps line is a real section heading, not a sentence tail
     or an identifier code.
@@ -5869,8 +6042,13 @@ def _looks_like_section_heading(stripped: str) -> bool:
     ``MOCK-MSA-2026-OPTBOT-001.`` (the tail of a sentence) — which would both
     truncate the preceding paragraph and stamp a garbage section on the next.
     """
+    # A line holding a checkbox is a form option ("☐YES ☐NO"), not a heading.
+    if _has_option_box(stripped):
+        return False
     if stripped.startswith("#"):
-        return True
+        # A markdown heading marker comes before a space and a word; "# of
+        # pallets" is a count's label and "#12" a number.
+        return bool(_HASH_HEADING_RE.match(stripped))
     if not (stripped.isupper() and len(stripped) >= 3):
         return False
     # "NEW YORK, NY 10014" is the city line of an address, written in caps the
