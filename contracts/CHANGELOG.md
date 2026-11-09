@@ -27,6 +27,19 @@ Internal parser refactors with no output shape change do **not** need an entry.
 
 <!-- Developer: add newest entries at the top -->
 
+### 2026-11-09 — additive — manifest `artifact_role`: PurTera-made deliverables are outputs, not evidence
+
+**Schemas:** parser-manifest.v1 | orbitbrief.input.v2
+
+**Summary:** Purpulse marks our own Deal Kit, pricing sheet, proposal and SOW files on the manifest; the compile rules them ours.
+
+**Details:**
+- Added optional manifest artifact keys `artifact_role` (`purtera_deliverable` | `evidence`) and `artifact_role_reason` (`pm_marked` | `purpulse_generated` | `heuristic`).
+- `_load_manifest_provenance` reads them; each envelope document carries them when set.
+- `c3_record.provenance.decide` treats `purtera_deliverable` as an owner ruling "ours" (out of the quoting view and the quote, kept by the delivery read) and `evidence` as "theirs". `RULINGS` win; a `heuristic` role gives way when the paper names another provider.
+
+**Purpulse action required:** none (Platform-infra writes the keys; older manifests have none and read as before)
+
 ### 2026-05-27c — additive — parser-os-service + SowSmith verified end-to-end
 
 **Schemas:** DEVELOPER_INTEGRATION_PLAYBOOK.md §2.1, §2.4, §5.1 (added service env vars), §5.3 (compile_options state), §7.2 (full scope_process_v1 paths), §8 (master functions)

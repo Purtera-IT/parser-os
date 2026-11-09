@@ -22,6 +22,9 @@ artifacts_row_optional:
   - mime_type
   - source          # manual | hubspot | ...
   - modality_hint
+  - artifact_role         # purtera_deliverable | evidence; absent = no call (Platform purtera-deliverable.js).
+                          # parser-os reads it as an owner ruling: ours / theirs (c3_record.provenance.manifest_ruling)
+  - artifact_role_reason  # pm_marked | purpulse_generated | heuristic
 
 optional_top_level:
   - org_id
