@@ -852,7 +852,11 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
             "kind": "" if kind == "file" else kind,
             "carrier": ("email", direction, sender) if o.get("via") == "email" else None,
             "carrier_at": parse_when(o.get("sent_at")) if o.get("via") == "email" else 0.0,
-            "message": kind in ("email", "note"), "filename": str(d.get("filename") or "")}
+            "message": kind in ("email", "note"), "filename": str(d.get("filename") or ""),
+            # Purpulse's artifact_role as an owner ruling (c3_record.provenance.manifest_ruling): our deliverable
+            # is ours (out of the quoting view and the quote, kept by the delivery read), a person's "evidence"
+            # mark is theirs.
+            "ruling": prov.manifest_ruling(d.get("artifact_role"), d.get("artifact_role_reason"))}
     lines = [{"label_key": r["key"], "atom_id": r.get("atom_id") or r["key"], "doc_id": r.get("doc_id"),
               "text": r.get("text"), "entered_at": r.get("entered_at"), "doc_kind": r.get("doc_kind"),
               "speaker_side": r.get("speaker_side"), "section": r.get("section"), "order": r.get("order")}
@@ -1369,7 +1373,10 @@ def deal_documents(atoms: list[Any], fingerprints: dict[str, dict[str, Any]],
             kind, kind_by = "file", None
         docs.append({"doc_id": d, "kind": kind, "sent_at": sent, "authored_at": authored,
                      "filename": name, "pos": pos, "role": role, "origin": origin,
-                     **({"kind_by": kind_by} if kind_by else {})})
+                     **({"kind_by": kind_by} if kind_by else {}),
+                     # Whose paper it is, by Purpulse's manifest: our deliverable is ruled ours below.
+                     **({"artifact_role": p["artifact_role"], "artifact_role_reason": p.get("artifact_role_reason")}
+                        if p.get("artifact_role") else {})})
     from c3_record import EVENT_KINDS
 
     def arrival(doc):

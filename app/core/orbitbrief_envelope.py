@@ -995,6 +995,9 @@ def build_orbitbrief_envelope(
                 "authored_at_precision": prov.get("authored_at_precision"),
                 "direction": prov.get("direction"),
                 "sender_domain": prov.get("sender_domain"),
+                # Our own deliverable (an output, never the customer's evidence), when Purpulse said so.
+                **({"artifact_role": prov["artifact_role"], "artifact_role_reason": prov.get("artifact_role_reason")}
+                   if prov.get("artifact_role") else {}),
                 "deal_stage": deal_stage,
                 "scope": {
                     **_scope_info,
@@ -2857,8 +2860,24 @@ def _load_manifest_provenance(project_dir: Path) -> dict[str, dict[str, Any]]:
             # The email or HubSpot note that brought this artifact in, joined
             # by Purpulse from HubSpot's attachment ids. See doc_origin.py.
             "carried_by": art.get("carried_by") if isinstance(art.get("carried_by"), dict) else None,
+            # Whose paper the file is, by Purpulse (purtera-deliverable.js): "purtera_deliverable" for our own
+            # Deal Kit, pricing sheet, proposal or SOW (an output, never the customer's evidence), "evidence"
+            # when a person marked a file the customer's; absent when nobody decided. Reason: pm_marked,
+            # purpulse_generated or heuristic. c3_record.provenance reads it as an owner ruling.
+            "artifact_role": _artifact_role(art.get("artifact_role")),
+            "artifact_role_reason": (str(art.get("artifact_role_reason") or "").strip() or None)
+            if _artifact_role(art.get("artifact_role")) else None,
         }
     return out
+
+
+#: The manifest's artifact roles (Purpulse purtera-deliverable.js) this compile knows.
+ARTIFACT_ROLES = ("purtera_deliverable", "evidence")
+
+
+def _artifact_role(value: Any) -> str | None:
+    v = str(value or "").strip().lower()
+    return v if v in ARTIFACT_ROLES else None
 
 
 def _deal_timeline_section(

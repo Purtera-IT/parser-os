@@ -15,6 +15,9 @@ A document (``docinfo[doc_id]``):
     filename    the source file's name
     third_party the paper's party block names another provider and none of us (optional; serving reads it with
                 app.core.document_parties, training's views do not gather it yet)
+    ruling      Purpulse's manifest ruling, ``manifest_ruling(artifact_role, reason)``: ``("ours", by)`` for our own
+                deliverable, ``("theirs", by)`` for a file a person marked the customer's (optional; serving
+                only). RULINGS, the owner's, win over it.
 
 A line (``atoms``): ``label_key``, ``atom_id``, ``doc_id``, ``text``, ``entered_at`` (its document's
 arrival, epoch or ISO), ``doc_kind``, ``speaker_side``, ``section``. ``lines[atom_id]`` is the message
@@ -117,6 +120,24 @@ RULINGS = {
     # install guide. Owner ruled THEIRS (the customer's runbook we probably retyped): an input.
     "art_4e0b98f29cdd4175": "theirs",     # owner ruling 2026-10-23
 }
+
+
+def manifest_ruling(role: Any, reason: Any = None) -> tuple[str, str] | None:
+    """Purpulse's ``artifact_role`` on a manifest artifact as a ruling on the document, ``(ruling, by)``.
+
+    ``purtera_deliverable`` (our own Deal Kit, pricing sheet, proposal or SOW; Purpulse
+    purtera-deliverable.js) is "ours": an output, never the customer's evidence, so out of the quoting view
+    and the quote and kept by the delivery read, as an owner ruling in RULINGS is. ``evidence`` is a person
+    marking a file the customer's: "theirs". ``by`` is Purpulse's reason (``pm_marked``,
+    ``purpulse_generated``, ``heuristic``). None when the manifest made no call."""
+    r = str(role or "").strip().lower()
+    by = str(reason or "").strip().lower() or "manifest"
+    if r == "purtera_deliverable":
+        return "ours", by
+    if r == "evidence":
+        return "theirs", by
+    return None
+
 
 
 def t(value: Any) -> float:
@@ -328,9 +349,16 @@ def decide(atoms: list[dict[str, Any]], docinfo: dict[str, dict[str, Any]], line
                 and paper and d not in P.other_job)
         if side == "ours_side" and not i["message"] and not ours and paper:
             why = "another party's authorship (docRole)" if other_author else "a blank template"
-        ruling = RULINGS.get(d)
+        ruling, ruled_by = RULINGS.get(d), "owner ruling"
+        mr = i.get("ruling")
+        if not ruling and mr:
+            # Purpulse's manifest said whose paper it is (manifest_ruling). A person's mark and PurPulse's own
+            # generated SOW are firm; a guess from the file's name gives way when the paper itself names another
+            # provider (document_parties, docRole), and our paper is never another job's.
+            if mr[0] == "theirs" or (d not in P.other_job and (mr[1] != "heuristic" or not other_author)):
+                ruling, ruled_by = mr[0], f"manifest ruling ({mr[1]})"
         if ruling:
-            ours, why = ruling == "ours", f"owner ruling: {ruling}"
+            ours, why = ruling == "ours", f"{ruled_by}: {ruling}"
             side = "ours_side" if ours else "theirs"
         P.doc[d] = {"side": side, "arrival": arrival, "paper": paper, "priced": priced, "ours": ours,
                     "why": why if not ours else f"ours: {why}; kind {i['kind'] or '-'}" + ("; priced" if priced else ""),
@@ -584,6 +612,6 @@ def estimator_sources(atoms: list[dict[str, Any]], artifacts: dict[str, dict[str
     return cut, why, ours
 
 
-__all__ = ["DOC_KINDS", "DOC_KIND_HEAD", "DOC_KIND_SYNONYMS", "head_kind", "PAPER", "SOW_LIKE", "INBOUND", "DK_KINDS", "PRICE", "RULINGS", "Prov", "decide", "is_input",
+__all__ = ["DOC_KINDS", "DOC_KIND_HEAD", "DOC_KIND_SYNONYMS", "head_kind", "PAPER", "SOW_LIKE", "INBOUND", "DK_KINDS", "PRICE", "RULINGS", "manifest_ruling", "Prov", "decide", "is_input",
            "theirs_line", "quoting_inputs", "pricing_workbook_docs", "pricing_workbook_keys", "supplier_domains",
            "estimate_lines", "their_asks", "ASK_OPEN", "ASK_CLOSE", "estimator_sources", "parse_when", "zoned", "zone_fix", "is_ours_addr", "t"]
