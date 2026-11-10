@@ -84,7 +84,7 @@ def _bare(text: Any) -> str:
 
 def _line_lists(atoms: list[Any]) -> list[list[Any]]:
     """The atoms of each source line that the parser split as an inline list."""
-    from app.core.sentences import split_inline_dash_list
+    from app.core.sentences import are_dash_list_pieces
 
     by_line: dict[tuple, list[Any]] = {}
     for a in atoms:
@@ -98,9 +98,8 @@ def _line_lists(atoms: list[Any]) -> list[list[Any]]:
             continue
         members = sorted(members, key=_seq)
         texts = [_bare(getattr(m, "raw_text", "")) for m in members]
-        parts = split_inline_dash_list(" - ".join(texts))
         # Every atom of the line is one segment of the list, and nothing else.
-        if parts and [p for p in parts if p] == texts:
+        if all(" - " not in t and " – " not in t for t in texts) and are_dash_list_pieces(texts):
             out.append(members)
     return out
 

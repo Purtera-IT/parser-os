@@ -1365,66 +1365,110 @@ class HubspotNoteParser(BaseParser):
             # own evidence, the way email and transcript lines already are;
             # the paragraph travels on each as context.
             from app.core.sentences import (
-                split_inline_dash_list, split_sentences, split_trigger_clause, strip_list_marker,
+                split_inline_dash_lines, split_sentences, split_trigger_clause, strip_list_marker,
             )
 
             # The author's own line breaks come first: "Hi Trent," on its own
             # line is a greeting, not the start of the request beneath it
             # (010095), and no sentence segmenter splits after a comma.
-            sentences: list[str] = []
-            markers: dict[str, str] = {}
-            for line in str(prose or "").splitlines() or [str(prose or "")]:
+            # Each piece is (text, list marker, where): ``where`` is the raw
+            # file line it came from and its span on that line, or None when
+            # the line cannot be found as written (a block joined from several
+            # lines) and the piece is located by search instead.
+            pieces: list[tuple[str, str, tuple[int, int, int] | None, int]] = []
+            prose_lines = str(prose or "").splitlines() or [str(prose or "")]
+            # The marker comes off before the dash decision, so a bulleted line
+            # is judged on its item text; siblings of one dash shape are then
+            # decided together (all split or all whole).
+            marked = [strip_list_marker(ln) for ln in prose_lines]
+            dash_all = split_inline_dash_lines([ln for _m, ln in marked])
+            for k, raw_line in enumerate(prose_lines):
+                line_at = _locate_body_line(raw_line)
+                char_cur = [0]
+
+                def _add(text: str, marker: str, *, _k: int = k, _at: int | None = line_at,
+                         _cur: list[int] = char_cur) -> None:
+                    where = None
+                    if _at is not None:
+                        span = _raw_span(raw_lines[_at][_cur[0]:], text)
+                        if span is not None:
+                            where = (_at, _cur[0] + span[0], _cur[0] + span[1])
+                            _cur[0] += span[1]
+                    pieces.append((text, marker, where, _k))
+
+                line = raw_line
                 # A pasted HTML list ("<ul><li>A</li><li>B</li></ul>") is one
                 # item per <li>; the tags are markup, not text.
                 if re.search(r"<li\b", line, re.I):
                     lead, *lis = re.split(r"<li\b[^>]*>", line, flags=re.I)
                     lead = re.sub(r"<[^>]+>", " ", lead).strip()
                     if lead:
-                        sentences.append(" ".join(lead.split()))
+                        _add(" ".join(lead.split()), "")
                     for li in lis:
                         item = " ".join(re.sub(r"<[^>]+>", " ", li).split())
                         if item:
-                            sentences.append(item)
-                            markers.setdefault(item, "li")
+                            _add(item, "li")
                     continue
                 # A bullet on its own line ("- 24/7 on-call availability",
                 # live 000132 note 110373542437) is the item after the marker,
                 # exactly as the same bullet flattened into a " - " run is.
-                marker, line = strip_list_marker(line)
+                marker, line = marked[k]
                 # A bullet list flattened onto one line ("Support for ... -
                 # Support for ... - 24/7 on-call availability", live 000132)
                 # is one item per " - " segment, not one atom.
-                dash_items = split_inline_dash_list(line)
+                dash_items = dash_all[k]
                 if dash_items:
-                    for k, p in enumerate(dash_items):
+                    for j, p in enumerate(dash_items):
                         if p.strip():
-                            sentences.append(p)
-                            if k or marker:
-                                markers.setdefault(p, marker or "-")
+                            _add(p, (marker or "-") if (j or marker) else "")
                     continue
                 for _s in split_sentences(line):
                     for p in split_trigger_clause(_s.strip()):
                         if p:
-                            sentences.append(p)
-                            if marker:
-                                markers.setdefault(p, marker)
-            # A note file repeats its title as the body's first line; a body
-            # that IS the title ("Need Troy and Wilmington sites removed.",
-            # live 000132) is one statement, not two.
-            sentences = list(dict.fromkeys(sentences))
-            if len(sentences) > 1:
-                for sentence in sentences:
-                    _mint_prose_one(sentence, paragraph=" ".join(str(prose or "").split()),
-                                    list_marker=markers.get(sentence, ""))
+                            _add(p, marker)
+            # The same words twice on ONE line are one statement. On two lines
+            # they are two: a facility named on two site lines is two entries,
+            # and dropping the second lost its line. The exception is the
+            # title: a note file repeats its title as the body's first line,
+            # and a body that IS the title ("Need Troy and Wilmington sites
+            # removed.", live 000132) is one statement, not two.
+            title_key = " ".join(str(title or "").lower().split())
+            seen_keys: set = set()
+            kept: list[tuple[str, str, tuple[int, int, int] | None]] = []
+            for text, marker, where, k in pieces:
+                norm = " ".join(text.lower().split())
+                key = ("title", norm) if title_key and norm == title_key else (k, text)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                kept.append((text, marker, where))
+            if len(kept) > 1:
+                for text, marker, where in kept:
+                    _mint_prose_one(text, paragraph=" ".join(str(prose or "").split()),
+                                    list_marker=marker, at=where)
                 return
-            if len(sentences) == 1:
-                _mint_prose_one(" ".join(sentences[0].split()), paragraph=None,
-                                list_marker=markers.get(sentences[0], ""))
+            if len(kept) == 1:
+                text, marker, where = kept[0]
+                _mint_prose_one(" ".join(text.split()), paragraph=None, list_marker=marker, at=where)
                 return
             _mint_prose_one(" ".join(str(prose or "").split()), paragraph=None)
 
         raw_lines = [str(ln) for ln in (parsed.get("raw_lines") or [])]
         body_line_index = int(parsed.get("body_line_index") or 0)
+        # Body lines are found in the file in order, each after the last, so a
+        # line written twice resolves to its own copy and not the first one.
+        _body_cursor = [body_line_index]
+
+        def _locate_body_line(line: str) -> int | None:
+            target = " ".join(str(line or "").split())
+            if not target:
+                return None
+            for i in range(_body_cursor[0], len(raw_lines)):
+                if " ".join(raw_lines[i].split()) == target:
+                    _body_cursor[0] = i + 1
+                    return i
+            return None
+
         from app.core.city_site_list import find_city_site_lists
 
         _city_sites = {
@@ -1435,14 +1479,29 @@ class HubspotNoteParser(BaseParser):
         # name the one it revises.
         statements: list[list[EvidenceAtom]] = []
 
-        def _prose_source_ref(prose: str) -> SourceRef:
+        def _prose_source_ref(prose: str, at: tuple[int, int, int] | None = None) -> SourceRef:
             """The BODY line(s) this prose came from. A note's first line is
             also its title, so matching the text anywhere in the file finds the
-            ``HubSpot Note:`` header first and the viewer highlights that."""
+            ``HubSpot Note:`` header first and the viewer highlights that.
+
+            ``at`` -- (raw line index, char start, char end) -- is where the
+            caller cut this piece from. Searching the body instead finds the
+            FIRST line holding the words, so a facility named on two site lines
+            pointed both atoms at the first line and the page ordered the
+            second one out of place."""
             words = " ".join(str(prose or "").split())
             if not words or not raw_lines:
                 return source_ref
             probe = words[: min(len(words), 40)]
+            if at is not None and 0 <= at[0] < len(raw_lines):
+                i, c0, c1 = at
+                locator = dict(source_ref.locator or {})
+                locator.update({"line_start": i + 1, "line_end": i + 1, "region": "body",
+                                "char_start": c0, "char_end": c1})
+                return source_ref.model_copy(update={
+                    "id": stable_id("src", artifact_id, "hubspot_note", str(i + 1), probe),
+                    "locator": locator,
+                })
             # The line that holds the WHOLE text wins over the first line that
             # merely starts the same way: a note repeats its title, truncated
             # ("Maintenance and support of their technical IT infrastructure
@@ -1484,16 +1543,27 @@ class HubspotNoteParser(BaseParser):
                 })
             return source_ref
 
-        def _mint_prose_one(prose: str, paragraph: str | None, list_marker: str = "") -> None:
+        def _mint_prose_one(prose: str, paragraph: str | None, list_marker: str = "",
+                            at: tuple[int, int, int] | None = None) -> None:
             is_title = bool(
                 prose and title
                 and " ".join(prose.lower().split()) == " ".join(title.lower().split())
             )
             first_atom = len(atoms)
-            _mint_prose_typed(prose, paragraph, is_title)
+            _mint_prose_typed(prose, paragraph, is_title, at)
             minted = atoms[first_atom:]
             if not minted:
                 return
+            # The same words on another line mint the same id (ids hash the
+            # text). The first copy keeps it -- no existing id moves -- and a
+            # later copy is told apart by where it sits.
+            taken = {a.id for a in atoms[:first_atom]}
+            for a in minted:
+                if a.id in taken:
+                    loc = (a.source_refs[0].locator or {}) if a.source_refs else {}
+                    a.id = stable_id("atm", a.id, "at", str(loc.get("line_start", "")),
+                                     str(loc.get("char_start", "")))
+                taken.add(a.id)
             if list_marker:
                 # The marker is list metadata, never atom text.
                 for a in minted:
@@ -1509,8 +1579,9 @@ class HubspotNoteParser(BaseParser):
                     a.value["superseded_by"] = minted[0].id
             statements.append(minted)
 
-        def _mint_prose_typed(prose: str, paragraph: str | None, is_title: bool) -> None:
-            prose_ref = _prose_source_ref(prose)
+        def _mint_prose_typed(prose: str, paragraph: str | None, is_title: bool,
+                              at: tuple[int, int, int] | None = None) -> None:
+            prose_ref = _prose_source_ref(prose, at)
             if is_title and _is_placeholder_note_title(prose):
                 # "Note", "Call" -- the CRM's default title with nothing under
                 # it. Genuinely empty; the header atom already records the note.

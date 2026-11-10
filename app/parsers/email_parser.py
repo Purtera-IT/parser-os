@@ -1659,10 +1659,17 @@ def _expand_lines_to_sentences(
     line number is the ORIGINAL one for every piece: splitting changes what a
     single atom covers, never where it came from.
     """
-    from app.core.sentences import split_by_kind, split_inline_dash_list, split_sentences, split_trigger_clause
+    from app.core.sentences import split_by_kind, split_inline_dash_lines, split_sentences, split_trigger_clause
 
     out: list[tuple[int, int, str]] = []
-    for line_idx, line in _unwrap_hard_wrapped(lines):
+    unwrapped = _unwrap_hard_wrapped(lines)
+    # Sibling lines of one dash shape get one decision: two site lines
+    # "City, ST - Facility - Equipment - Task" either both split or both stay
+    # whole, never one of each by the case of a word.
+    _dash_all = split_inline_dash_lines([
+        ((ln or "").strip().lstrip("> ") if "|" not in (ln or "") else "") for _i, ln in unwrapped
+    ])
+    for _n, (line_idx, line) in enumerate(unwrapped):
         line_num = line_start + line_idx
         stripped = (line or "").strip()
         # A bullet list flattened onto one line (live 000132, quoted from a
@@ -1670,7 +1677,7 @@ def _expand_lines_to_sentences(
         # each item is typed as the bullet it was.
         if stripped and "|" not in stripped:
             prefix = line[: len(line) - len(line.lstrip("> "))]
-            dash_items = split_inline_dash_list(stripped.lstrip("> "))
+            dash_items = _dash_all[_n]
             if dash_items:
                 lead, items = dash_items[0], dash_items[1:]
                 seq = 0
@@ -3791,6 +3798,14 @@ class EmailParser(BaseParser):
                             _s.value["site_phone"] = re.sub(r"^[A-Za-z]+\s*:\s*", "", _core)
                             _s.value.setdefault("phone", _s.value["site_phone"])
                     continue
+            # A dash record under the label ("ASPN   643 Main St, City, ST -
+            # 33 APs - After Hours Install - Clinic") is a whole site row, not
+            # one of the label's name / street / city lines: collecting it
+            # swallowed the row when no address came out of it (live 010065
+            # lost three site rows). End the label and read the row as a line.
+            if location_label is not None and len(re.findall(r"\s+[-–]\s+", cleaned)) >= 2:
+                location_label = None
+                location_lines = []
             if location_label is not None:
                 from app.parsers.value_shapes import classify_value as _cv
 
