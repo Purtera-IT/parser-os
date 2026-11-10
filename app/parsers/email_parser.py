@@ -3798,6 +3798,14 @@ class EmailParser(BaseParser):
                             _s.value["site_phone"] = re.sub(r"^[A-Za-z]+\s*:\s*", "", _core)
                             _s.value.setdefault("phone", _s.value["site_phone"])
                     continue
+            # A dash record under the label ("ASPN   643 Main St, City, ST -
+            # 33 APs - After Hours Install - Clinic") is a whole site row, not
+            # one of the label's name / street / city lines: collecting it
+            # swallowed the row when no address came out of it (live 010065
+            # lost three site rows). End the label and read the row as a line.
+            if location_label is not None and len(re.findall(r"\s+[-–]\s+", cleaned)) >= 2:
+                location_label = None
+                location_lines = []
             if location_label is not None:
                 from app.parsers.value_shapes import classify_value as _cv
 

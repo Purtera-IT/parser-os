@@ -154,8 +154,85 @@ def strip_list_marker(text: str) -> tuple[str, str]:
 #: "4-8 hours" and "on-call" have no spaces, so they never match.
 _INLINE_DASH_SEP = re.compile(r"\s+[-–]\s+")
 
-#: A list item opens with a capital, a digit or a bracket ("24/7 on-call").
-_ITEM_START = re.compile(r"^[A-Z0-9(\"']")
+#: A list item opens with a word, a digit, a bracket or a quote -- any case.
+_ITEM_START = re.compile(r"^[\w(\"'$#]")
+
+#: A lead-in that announces a list: it ends in ":" or in a word that
+#: introduces items ("... includes", "... such as", "... as follows").
+_LIST_CUE_END_RE = re.compile(
+    r"(?:[:;]|\b(?:includes?|including|included|consists?\s+of|consisting\s+of|comprises?|"
+    r"comprising|covers?|covering|such\s+as|as\s+follows|the\s+following|following|below|"
+    r"are|will\s+be|needs?|needed|requires?|required)\s*[:]?)\s*$",
+    re.I,
+)
+
+#: A topic lead this long, followed by multi-word items, is the heading of a
+#: flattened list (000132), not the first field of a record.
+_LONG_LEAD_WORDS = 5
+
+
+def _has_list_cue(lead: str) -> bool:
+    return bool(lead) and bool(_LIST_CUE_END_RE.search(lead.strip()))
+
+
+def _piece_shape(piece: str) -> tuple[int, bool, bool]:
+    """A case-free shape of one dash piece: its length bucket, whether it
+    holds a digit, whether it holds a comma."""
+    n = len(piece.split())
+    bucket = 0 if n <= 1 else 1 if n <= 3 else 2 if n <= 6 else 3
+    return bucket, bool(re.search(r"\d", piece)), "," in piece
+
+
+def _pieces_parallel(lead: str, items: list[str]) -> bool:
+    """The pieces are items of one kind: every item opens with the same word
+    ("Support for ... - Support for ..."), or the lead and every item have the
+    same short shape with a model number in each ("Cisco 9300 - Meraki MR46 -
+    Palo Alto 440 - Fortinet 60F"). A record's pieces are different kinds of
+    attribute -- a place, a facility, equipment, a task -- so their shapes
+    differ."""
+    firsts = {it.split()[0].lower().strip(",.:;") for it in items if it.split()}
+    if len(firsts) == 1 and all(len(it.split()) >= 2 for it in items):
+        return True
+    shapes = {_piece_shape(p) for p in [lead, *items] if p}
+    if len(shapes) == 1:
+        bucket, digit, comma = next(iter(shapes))
+        return digit and not comma and bucket <= 1
+    return False
+
+
+def _split_dash_pieces(text: str) -> tuple[bool, str, list[str]] | None:
+    s = " ".join(str(text or "").split())
+    if not s:
+        return None
+    lead_dash = bool(re.match(r"^[-–]\s+", s))
+    if lead_dash:
+        s = re.sub(r"^[-–]\s+", "", s)
+    parts = [p.strip() for p in _INLINE_DASH_SEP.split(s)]
+    return lead_dash, parts[0], parts[1:]
+
+
+def _dash_items_ok(items: list[str], max_item_words: int = 20) -> bool:
+    """Every piece reads as a list item: it opens with a word, digit or
+    bracket, is short, and holds no sentence break."""
+    for item in items:
+        if not item or not _ITEM_START.match(item):
+            return False
+        if len(item.split()) > max_item_words:
+            return False
+        if re.search(r"[a-z0-9)\]]{2}[.!?]\s+\w", item, re.I):
+            return False
+    return True
+
+
+def are_dash_list_pieces(texts: list[str], *, min_items: int = 3) -> bool:
+    """The atoms of one line, in order, are the pieces of a dash list the
+    parser already split: a lead-in plus at least ``min_items`` items that
+    each read as a list item. Unlike :func:`split_inline_dash_list` this does
+    not re-decide list against record -- a line that was split was a list."""
+    texts = [t.strip() for t in texts]
+    if len(texts) < min_items + 1 or not all(texts):
+        return False
+    return _dash_items_ok(texts[1:])
 
 
 def split_inline_dash_list(text: str, *, min_items: int = 3, max_item_words: int = 20) -> list[str]:
@@ -165,70 +242,41 @@ def split_inline_dash_list(text: str, *, min_items: int = 3, max_item_words: int
     "Maintenance and support of ... virtualization - Support for physical
     network components (LAN, WLAN) - ... - 24/7 on-call availability" -- and
     the whole scope became one atom. Returns ``[]`` (do not split) unless
-    there are at least ``min_items`` " - " separators and every segment after
-    the lead-in reads as a list item: it opens with a capital or a digit, is
-    short, and holds no sentence break. Prose with a single dash ("the router
-    - if it arrives - goes in rack 2") or a range ("4-8 hours") is untouched.
-    The lead-in may be empty when the text itself starts with "- ".
+    there are at least ``min_items`` " - " separators, every segment after the
+    first is a short item with no sentence break, and the line reads as a
+    list rather than one record.
+
+    Decided by shape, never by letter case or by recognising a place name:
+
+    * a list: the lead announces it (ends in ":" or "includes", "such as",
+      ...); or a long topic lead (7+ words) is followed by multi-word items;
+      or the items are parallel -- of one kind (see :func:`_pieces_parallel`);
+    * a record, kept whole: short pieces that are different attributes of the
+      same thing -- "Tucson, AZ - Acme Vault - Boxed servers - just need
+      pack/ship", "Rack 4 - Cisco 9300 - needs reimage - ship back".
+
+    Prose with a single dash ("the router - if it arrives - goes in rack 2")
+    or a range ("4-8 hours") is untouched. When the text itself starts with
+    "- " the first piece is judged as the lead and the result's lead-in is
+    empty.
     """
-    s = " ".join(str(text or "").split())
-    if not s:
+    got = _split_dash_pieces(text)
+    if got is None:
         return []
-    lead_dash = bool(re.match(r"^[-–]\s+", s))
-    if lead_dash:
-        s = re.sub(r"^[-–]\s+", "", s)
-    parts = [p.strip() for p in _INLINE_DASH_SEP.split(s)]
-    if lead_dash:
-        lead, items = "", parts
-    else:
-        lead, items = parts[0], parts[1:]
-    if len(items) < min_items or any(not p for p in items):
+    lead_dash, lead, items = got
+    if len(items) < min_items or not lead or any(not p for p in items):
         return []
-    # One site per line: "Tucson, AZ - Acme Vault - Boxed servers - just need
-    # pack/ship" is ONE site entry whose fields happen to be dash-separated,
-    # not a flattened bullet list. Split by item case, its sibling "... - Need
-    # de-rack, pack and ship" came apart into four atoms while this one stayed
-    # whole. A line led by a place is kept whole whatever its words' case.
-    if _is_place_lead(lead if lead else items[0]):
+    if not _dash_items_ok(items, max_item_words):
         return []
-    for item in items:
-        if not _ITEM_START.match(item):
-            return []
-        if len(item.split()) > max_item_words:
-            return []
-        if re.search(r"[.!?]\s+[A-Z]", item):
-            return []
-    return [lead, *items]
-
-
-#: A street address lead: a house number, words, then a street suffix -- with
-#: or without the city, state and ZIP after it ("120 Main St, Tucson, AZ").
-_STREET_LEAD_RE = re.compile(
-    r"^\d{1,6}\s+[\w.\-/'’ ]+?\b(?:st|street|ave|avenue|rd|road|dr|drive|ln|lane|blvd|"
-    r"boulevard|hwy|highway|ct|court|pl|place|pkwy|parkway|ter|terrace|cir|circle|way|"
-    r"route|rte)\b\.?(?:[\s,#].*)?$",
-    re.I,
-)
-#: "..., ST 12345" / "..., ST" closing a lead that opens with a house number.
-_NUMBERED_STATE_TAIL_RE = re.compile(r"^\d{1,6}\s+\S.*,\s*[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$")
-
-
-def _is_place_lead(text: str) -> bool:
-    """The lead piece of a dash line names a place: "City, ST" (or a full
-    state name) or a street address. Shape only, no city vocabulary."""
-    s = " ".join(str(text or "").split()).strip(" ;:.")
-    if not s or len(s) > 80:
-        return False
-    if _STREET_LEAD_RE.match(s) or _NUMBERED_STATE_TAIL_RE.match(s):
-        return True
-    if "," not in s and "/" not in s:
-        return False
-    try:
-        from app.core.address_parse import split_city_state_strict
-    except Exception:  # pragma: no cover - never fail a parse over this
-        return False
-    city, state = split_city_state_strict(s)
-    return bool(city and state)
+    lens = [len(it.split()) for it in items]
+    is_list = (
+        _has_list_cue(lead)
+        or (len(lead.split()) >= _LONG_LEAD_WORDS and min(lens) >= 2 and sum(lens) / len(lens) >= 3)
+        or _pieces_parallel(lead, items)
+    )
+    if not is_list:
+        return []
+    return ["", lead, *items] if lead_dash else [lead, *items]
 
 
 def _dash_separator_count(text: str) -> int:
@@ -244,10 +292,12 @@ def split_inline_dash_lines(
     consistently across siblings.
 
     Lines of a block written in the same dash shape (the same number of " - "
-    separators) are one kind of line: either every one of them is a flattened
-    list or none is. When they disagree -- one sibling's last field happens to
-    open with a capital and the next one's does not -- every one stays whole,
-    so the same shape never gives two different answers. A line alone in its
+    separators, and the same kind of lead: one that announces a list with ":"
+    or "includes", or one that does not) are one kind of line: either every
+    one of them is a flattened list or none is. When they disagree -- one
+    sibling's pieces happen to look parallel and the next one's do not --
+    every one stays whole, so the same shape never gives two different
+    answers. A line alone in its
     shape is decided on its own, exactly as :func:`split_inline_dash_list`.
     A blank line ends the block.
     """
@@ -256,11 +306,13 @@ def split_inline_dash_lines(
     block: list[int] = []
 
     def _settle(idx: list[int]) -> None:
-        by_shape: dict[int, list[int]] = {}
+        by_shape: dict[tuple[int, bool], list[int]] = {}
         for i in idx:
             n = _dash_separator_count(lines[i])
             if n >= min_items:
-                by_shape.setdefault(n, []).append(i)
+                got = _split_dash_pieces(lines[i])
+                cue = bool(got and _has_list_cue(got[1]))
+                by_shape.setdefault((n, cue), []).append(i)
         for members in by_shape.values():
             if len(members) > 1 and not all(out[i] for i in members):
                 for i in members:
