@@ -77,3 +77,39 @@ def test_a_party_line_is_not_rescued_by_the_role_head():
                               raw_text="Scott Morgan | 1361 N Glenville Dr | scott@traversa.net",
                               text="Scott Morgan | 1361 N Glenville Dr | scott@traversa.net")
     assert _roster([a], {"a1": {"jdg:site_role": ["job_site", 0.99]}}) == []
+
+
+def test_a_place_read_off_a_note_field_is_a_site_even_with_a_geo_flag():
+    """010185, 2026-11-05: "Location: Hillsboro, OR 97123" from a HubSpot note field; a later geo pass flagged it,
+    and the roster dropped it as made up although the type head confirmed physical_site at 0.90."""
+    a = _atom("a1", "Location: Hillsboro, OR 97123", ["site:hillsboro_or_97123"],
+              ["hubspot_note_physical_site", "hubspot_note_parser", "geo_fallback_site"])
+    assert [s["site"] for s in _roster([a])] == ["site:hillsboro_or_97123"]
+
+
+def test_a_geo_rebuilt_line_of_a_stated_address_the_head_confirmed_is_a_site():
+    """000036, 2026-11-05: the note says "Adress: ... 30 HOTALING PL FL 3, SAN FRANCISCO, CA 94111" (misspelled, so the
+    note parser missed it); the geo pass rebuilt the line and the type head confirmed physical_site at 0.97."""
+    a = _atom("a1", "30 HOTALING PL FL 3, SAN FRANCISCO, CA 94111", ["site:san_francisco_ca_94111"],
+              ["geo_fallback_site", "hubspot_note_physical_site"])
+    a.value = {"inferred": True, "street_address": "30 HOTALING PL FL 3",
+               "source_context": "Adress: CHECKOUT SAN FRANCISCO, 30 HOTALING PL FL 3, SAN FRANCISCO, CA 94111-2201",
+               "c3_confirm": {"type": "physical_site", "p": 0.969}}
+    assert [s["site"] for s in _roster([a])] == ["site:san_francisco_ca_94111"]
+
+
+def test_a_geo_rebuilt_line_the_head_did_not_confirm_stays_out():
+    """The letterhead case: rebuilt, but no sure head confirm, so the geo pass made it."""
+    a = _atom("a1", LETTERHEAD, ["site:floor_east_brooklyn_ny_11245"], ["geo_fallback_site"])
+    a.value = {"inferred": True, "street_address": "24386 IT ServicePoint", "source_context": LETTERHEAD,
+               "c3_confirm": {"type": "physical_site", "p": 0.5}}
+    assert _roster([a]) == []
+
+
+def test_a_sure_type_head_site_names_the_job_site_when_the_role_head_was_not_asked():
+    """010097, 2026-11-05: the keep head left the address out of the brief, no jdg:site_role reading; the type head
+    confirmed physical_site at 0.83 and the heads' site-key settle kept it. The quote still prices that site."""
+    a = _atom("a1", "100 south ashley drive suite 500, tampa, FL 33602", ["site:tampa_fl_33602"], ["hubspot_note_physical_site"])
+    a.value = {"c3_confirm": {"type": "physical_site", "p": 0.834}}
+    c3._DEAL.clear(); c3._DEAL["site_keys"] = {"by": "heads:physical_site"}; c3._DEAL["reads"] = {}
+    assert [s["site"] for s in c3.quote_sites([a], left_out={"a1"})] == ["site:tampa_fl_33602"]

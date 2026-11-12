@@ -1325,6 +1325,14 @@ def build_orbitbrief_envelope(
                 for _k in getattr(_a, "entity_keys", None) or []:
                     if isinstance(_k, str) and _k.startswith("site:") and not re.search(r"\d", _k):
                         _named[_k] += 1
+            if _named and _heads_roster is not None:
+                # The heads settled the deal's sites and found none: the most-named place is not made a site
+                # (000036, 2026-11-05: CDW's own office, off a contact card, became the SOW's job site). Logged only.
+                from app.core import rule_ledger as _rl_np
+
+                _rl_np.fire("site_readiness.named_place_fallback", None, None, "physical_site",
+                            f"{_named.most_common(1)[0][0]} not added: the heads' roster is empty")
+                _named = _Ctr()
             if _named:
                 _key, _n = _named.most_common(1)[0]
                 _sr.setdefault("sites", []).append({
