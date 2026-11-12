@@ -14,7 +14,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
 
 #: Separates cells of one table row in the flattened text stream. Chosen
@@ -646,6 +646,51 @@ def _extract_email_text(path: Path) -> str:
     return email_content_to_text(content)
 
 
+#: A list marker alone on its line: Outlook's plain-text rendering puts each bullet's "*" (or "1.", "o", "·")
+#: on its own line and the item on the next one.
+_LONE_LIST_MARKER = re.compile(r"^(\s*)((?:[*•·▪◦‣o]|[-–—]|\(?\d{1,2}[.)]|\(?[A-Za-z]\)))\s*$")
+
+
+def join_lone_list_markers(text: str) -> str:
+    """Put a list marker that sits alone on its line onto the item below it.
+
+    Live 010482 (AJ's Nov 12 email): "White Glove Installation Services:" then "  *" / "Delivery" / "  *" /
+    "Unpacking" ... The bullet reader only sees a marker followed by text on the same line, so the lone "*" was
+    dropped and "Delivery" came through as a bare one-word line, read as a place. The marker line becomes blank
+    and the item takes "* " in front, so every line keeps its line number. A marker with no item after it (or
+    another marker next) is left as it is.
+    """
+    lines = str(text or "").split("\n")
+    for i, line in enumerate(lines):
+        m = _LONE_LIST_MARKER.match(line)
+        if not m:
+            continue
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j >= len(lines) or _LONE_LIST_MARKER.match(lines[j]):
+            continue
+        lines[j] = f"{m.group(1)}{m.group(2)} {lines[j].strip()}"
+        lines[i] = ""
+    return "\n".join(lines)
+
+
+def _mark_list_items_in_place(soup: BeautifulSoup) -> int:
+    """Give each <li> its marker ("•", or its number in an <ol>) before the text is pulled out: get_text drops
+    the list itself, and an HTML list item came out as a bare line (the same miss as the lone plain-text marker)."""
+    n = 0
+    for li in soup.find_all("li"):
+        parent = li.find_parent(["ol", "ul"])
+        if parent is not None and parent.name == "ol":
+            items = [x for x in parent.find_all("li", recursive=False)]
+            marker = f"{items.index(li) + 1}." if li in items else "•"
+        else:
+            marker = "•"
+        li.insert(0, NavigableString(f"{marker} "))
+        n += 1
+    return n
+
+
 def email_content_to_text(content: str, *, is_html: bool | None = None) -> str:
     """One mail body (plain or HTML) as the lines the reader sees.
 
@@ -664,11 +709,12 @@ def email_content_to_text(content: str, *, is_html: bool | None = None) -> str:
             tag.decompose()
         # Inline markup first: a table cell's contents must be whole before the
         # table is flattened, or the cell is split and then joined by "|".
+        _mark_list_items_in_place(soup)
         _unwrap_inline_in_place(soup)
         _flatten_tables_in_place(soup)
-        return split_notes_entries(strip_meeting_invite(rejoin_split_heading(
-            rejoin_label_and_value(decode_html_entities(soup.get_text(separator="\n", strip=True))))))
+        return split_notes_entries(strip_meeting_invite(rejoin_split_heading(rejoin_label_and_value(
+            join_lone_list_markers(decode_html_entities(soup.get_text(separator="\n", strip=True)))))))
     return split_notes_entries(strip_meeting_invite(rejoin_split_heading(
-        rejoin_label_and_value(decode_html_entities(content)))))
+        rejoin_label_and_value(join_lone_list_markers(decode_html_entities(content))))))
 
 
