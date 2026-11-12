@@ -1738,6 +1738,17 @@ def build_orbitbrief_envelope(
             c3_sow_trace.attach(envelope)
     except Exception as exc:  # pragma: no cover - a failed SOW draft never costs the envelope
         envelope["c3_sow"] = {"error": type(exc).__name__}
+    # What each source tells the person quoting (source_briefs): one cited
+    # brief per call, file, email thread and the notes, for the Sources tab.
+    # Last, so it reads the same atoms, threads and documents the tab shows.
+    try:
+        from app.core import source_briefs
+
+        _sb = source_briefs.for_envelope(envelope)
+        if _sb is not None:
+            envelope["source_briefs"] = _sb
+    except Exception as exc:  # pragma: no cover - a failed source brief never costs the envelope
+        envelope["source_briefs"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
     return envelope
 
 
