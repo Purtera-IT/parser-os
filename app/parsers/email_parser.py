@@ -3860,7 +3860,12 @@ class EmailParser(BaseParser):
                     location_label = None
                     location_lines = []
                 continue
-            if _is_identity_only_line(cleaned, allow_name=not is_bullet):
+            # A Title Case heading that ends in ":" opens a list ("White Glove Installation Services:", live 010482):
+            # name-shaped, but a name never ends in a colon. Rejected here it took the list's heading with it, and
+            # its items ("Delivery", "Unpacking") reached the typer as bare words; "Delivery" became a site.
+            if (_is_identity_only_line(cleaned, allow_name=not is_bullet)
+                    and not (not in_signature and _LIST_LABEL_RE.match(cleaned)
+                             and not _PSEUDO_HEADER_RE.match(cleaned) and len(cleaned.split()) >= 2)):
                 # "Hi Trent," is name-shaped and lands here before the greeting
                 # rule below; "Stephanie Hechsel" under "Thank you," too.
                 _reject("greeting" if _is_greeting_line(cleaned)
