@@ -1849,6 +1849,15 @@ def compile_project(
                 _pval = getattr(parent, "value", None)
                 if isinstance(_pval, dict) and _pval.get("kind") == "table_row" and _pval.get("columns"):
                     continue
+                # A form answer is one question and what was marked on it.
+                # Its "; " joins the options ticked for that one question
+                # ("PACKING MATERIALS (check all that apply): Pallets; Shrink
+                # wrap; OTHER (Please describe): ..."), so splitting it cut
+                # the options off their question: live 000037, two answers
+                # became eleven label-less rows that labelers dropped as
+                # fragments.
+                if isinstance(_pval, dict) and _pval.get("kind") == "form_answer":
+                    continue
                 _ptext = getattr(parent, "raw_text", "") or ""
                 items = split_prose_paragraph(_ptext)
                 if not items:
