@@ -5140,6 +5140,13 @@ def _structural_people_atoms(atom_list: list[Any], project_id: str) -> list[Any]
         _at = getattr(atom, "atom_type", None)
         if str(getattr(_at, "value", _at) or "") == "stakeholder":
             continue
+        # A note's own "note_id=... | author=..." line says who posted the
+        # note, which is metadata of the note, not a person on the job. Read
+        # as prose it minted the author as a bare-name stakeholder row (live
+        # 000037: "Trent Torrence" under every note he wrote).
+        _av = getattr(atom, "value", None)
+        if isinstance(_av, dict) and _av.get("kind") == "hubspot_note_meta":
+            continue
         stakeholder_keys = [
             k[len("stakeholder:"):]
             for k in (getattr(atom, "entity_keys", []) or [])
