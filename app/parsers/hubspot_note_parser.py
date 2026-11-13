@@ -641,7 +641,9 @@ def _is_author_line(line: str, author: str, author_email: str) -> bool:
         return False
     key = _name_key(t)
     names: list[str] = []
-    a = _name_key(author)
+    # "Trent Torrence (Purtera)", "Trent Torrence - Purtera": the name is the
+    # part before the company.
+    a = _name_key(re.split(r"\s[-\u2013\u2014|(]\s*|\(", str(author or ""), maxsplit=1)[0])
     if a and a not in _UNRESOLVED_AUTHORS:
         names.append(a)
     local = str(author_email or "").split("@", 1)[0]
@@ -650,6 +652,21 @@ def _is_author_line(line: str, author: str, author_email: str) -> bool:
     for n in names:
         parts = n.split()
         if key == n or (len(parts) >= 2 and key == parts[0]):
+            return True
+        # The metadata has the first name only ("Author: Trent") and the line
+        # is the full name ("Trent Torrence").
+        kparts = key.split()
+        if len(parts) == 1 and 2 <= len(kparts) <= 3 and kparts[0] == parts[0]:
+            return True
+    # The author's name typed as the body's first line (000037's note shows
+    # one), under an export whose author metadata is only an address ("t.torrence@",
+    # "ttorrence@", "trent@", "trenttorrence@"). The line must be a bare full
+    # name whose first and last name spell the address's local part.
+    kparts = key.split()
+    loc = re.sub(r"[^a-z]", "", local.lower()) if "@" in str(author_email or "") else ""
+    if loc and 2 <= len(kparts) <= 3 and all(p.isalpha() for p in kparts):
+        first, last = kparts[0], kparts[-1]
+        if loc in {first + last, first[0] + last, first, first + last[0], last + first, last + first[0]}:
             return True
     return False
 

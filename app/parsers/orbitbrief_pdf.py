@@ -968,6 +968,11 @@ class OrbitBriefPdfParser(BaseParser):
         atoms = _collapse_toc_atoms(atoms)
         atoms = _fold_answers_into_questions(atoms)
         atoms = _fold_photo_requests_into_images(atoms)
+        # One form record, one atom: a form's CITY / STATE / ZIP fields join
+        # the address they belong to, and a form answer the page text already
+        # carries is not emitted twice. See app/parsers/pdf/form_records.
+        from app.parsers.pdf.form_records import join_form_records
+        atoms = join_form_records(atoms)
         _tag_vendor_quote_document(atoms)
 
         # Universal hybrid summary+transcript rewrite: when filename/title/

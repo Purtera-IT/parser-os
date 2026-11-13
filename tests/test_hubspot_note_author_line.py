@@ -70,3 +70,31 @@ def test_author_from_email_when_name_unresolved(tmp_path):
     )
     parsed = parse_hubspot_note_text(head + "Megan Blevins\nSpoke with the site lead today.\n")
     assert parsed["author_line"] == "Megan Blevins"
+
+
+_HEAD_EMAIL_ONLY = (
+    "HubSpot Note: Note\nHubSpot Note ID: 78\nDate: 2026-04-16T13:08:00Z\n"
+    "Author-Email: {email}\n\n"
+)
+
+
+@pytest.mark.parametrize("email", ["ttorrence@example.com", "trent@example.com",
+                                   "trenttorrence@example.com", "t.torrence@example.com"])
+def test_full_name_line_matches_an_email_only_author(tmp_path, email):
+    body = "Trent Torrence\nHey Guys -\nTwo small decomm jobs in Phoenix.\n"
+    atoms = _parse(tmp_path, body, head=_HEAD_EMAIL_ONLY.format(email=email)).atoms
+    texts = [a.raw_text for a in atoms]
+    assert "Trent Torrence" not in texts
+    assert "Two small decomm jobs in Phoenix." in texts
+
+
+def test_first_name_author_strips_full_name_line(tmp_path):
+    head = _HEAD.replace("Author: Megan Blevins", "Author: Megan (Purtera)")
+    atoms = _parse(tmp_path, "Megan Blevins\nSpoke with the site lead today.\n", head=head).atoms
+    assert "Megan Blevins" not in [a.raw_text for a in atoms]
+
+
+def test_someone_elses_name_line_stays(tmp_path):
+    body = "Adam Smith\nSpoke with the site lead today.\n"
+    atoms = _parse(tmp_path, body, head=_HEAD_EMAIL_ONLY.format(email="ttorrence@example.com")).atoms
+    assert any(a.raw_text.startswith("Adam Smith") for a in atoms)

@@ -354,9 +354,15 @@ def test_form_answers_read_widgets_highlights_and_notes(tmp_path):
 
 
 def test_form_answers_become_atoms_after_their_page(tmp_path):
-    answers = _answers(_with_marks(tmp_path))
+    pdf = _with_marks(tmp_path)
+    answers = _answers(pdf)
     assert "Is a forklift on site?: NO" in answers
-    assert "Pallet count: 3" in answers
+    # The typed "3" is also in the page text ("Pallet count: 3" row), so the
+    # answer is not emitted a second time; the row lists the copy it absorbed.
+    assert "Pallet count: 3" not in answers
+    atoms = getattr(OrbitBriefPdfParser().parse(pdf), "atoms", [])
+    row = next(a for a in atoms if a.raw_text.strip() == "Pallet count: 3")
+    assert {"text": "Pallet count: 3", "role": "duplicate"} in row.value["joined_from"]
 
 
 def test_a_pdf_with_no_widgets_or_markups_has_no_answers(tmp_path):
