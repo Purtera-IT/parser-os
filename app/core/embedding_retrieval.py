@@ -241,7 +241,9 @@ _AZURE_EMBED_MODEL_DEFAULT = "text-embedding-3-small"
 
 def no_local_models() -> bool:
     """True when this run must not touch the local (tailnet) model host."""
-    return str(os.environ.get("PARSER_OS_NO_LOCAL_MODELS", "")).strip().lower() in {"1", "true", "yes"}
+    from app.core import model_gates
+
+    return model_gates.no_local_models()
 
 
 def embed_backend() -> str:
