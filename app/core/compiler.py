@@ -2178,6 +2178,32 @@ def compile_project(
     except Exception as exc:
         warnings.append(f"WARNING: lesson-lookup warm-up failed: {type(exc).__name__}: {exc}")
 
+    # The PM's Before Deal Kit answers (Platform-infra pre_dealkit_answers.json):
+    # one fixed PM statement per answered question, admitted HERE -- before the
+    # deal record and its one base read -- so the C3 heads read them like every
+    # other line and decide their type, keep, SOW section and what the quote
+    # reads. Extraction only (pre_dealkit_atoms); gated, cut at as_of,
+    # best-effort: no file is a normal no-op.
+    with telemetry.stage("pre_dealkit_answers", input_count=len(atoms)) as stage:
+        _pdk_atoms: list = []
+        try:
+            from app.core.pre_dealkit_atoms import load_pre_dealkit_atoms
+
+            _have_ids = {a.id for a in atoms}
+            _pdk_atoms = [
+                a for a in load_pre_dealkit_atoms(
+                    project_id=resolved_project_id, deal_id=resolved_project_id,
+                    as_of=_run_as_of(project_dir),
+                )
+                if a.id not in _have_ids
+            ]
+            atoms = atoms + _pdk_atoms
+            if _pdk_atoms:
+                warnings.append(f"INFO: {len(_pdk_atoms)} Before Deal Kit answer(s) added before the C3 read")
+        except Exception as exc:  # never let the answers file break a compile
+            warnings.append(f"WARNING: Before Deal Kit answers skipped: {type(exc).__name__}: {exc}")
+        telemetry.end_stage(stage, output_count=len(_pdk_atoms))
+
     # The C3 base reads this compile's deal as ONE record (ml/c3/record.py):
     # every line with its document's arrival and kind, built the way the
     # training export builds it, and read once for every stage that asks it.
@@ -2311,6 +2337,21 @@ def compile_project(
         raise
     except Exception as exc:
         warnings.append(f"WARNING: C3 type authority failed: {type(exc).__name__}: {exc}")
+
+    # The Before Deal Kit answers have had their read (and the base's sure types, just above). The
+    # rule stages from here to packetize are built for document lines -- type sanity caps authority
+    # whose source is not a compile file, dedup folds look-alikes, noise and substance gates drop
+    # lines -- and none of them has anything to say about a PM's statement. They are held out until
+    # the evidence joins the graph (the pm_answers stage), unchanged.
+    _held_pdk: list = []
+    try:
+        from app.core.pre_dealkit_atoms import is_pre_dealkit_atom as _is_pdk
+
+        _held_pdk = [a for a in atoms if _is_pdk(a)]
+        if _held_pdk:
+            atoms = [a for a in atoms if not _is_pdk(a)]
+    except Exception as exc:
+        warnings.append(f"WARNING: Before Deal Kit hold failed: {type(exc).__name__}: {exc}")
 
     with telemetry.stage("typed_atom_classification", input_count=len(atoms)) as stage:
         promoted = 0
@@ -3644,6 +3685,10 @@ def compile_project(
         except Exception as exc:  # never let the ledger break a compile
             warnings.append(f"WARNING: pm_answer atoms skipped: {type(exc).__name__}: {exc}")
         telemetry.end_stage(stage, output_count=len(pm_atoms))
+    if _held_pdk:
+        # The Before Deal Kit answers rejoin here, read and typed by the base, before graph_build.
+        _have = {a.id for a in atoms}
+        atoms = atoms + [a for a in _held_pdk if a.id not in _have]
 
     with telemetry.stage("declared_scope", input_count=len(atoms)) as stage:
         # Declared-vs-found reconciliation (Marion County lesson): a customer

@@ -610,7 +610,14 @@ def judge_documents(
         return list(atoms), [], []
 
     by_doc: "OrderedDict[str, list[Any]]" = OrderedDict()
+    # The PM's Before Deal Kit answers are this deal's by construction (typed on
+    # this deal's brief): no conversation to judge, never set aside. They stay
+    # in ``atoms`` so the base read below reads them with every other line.
+    from app.core.pre_dealkit_atoms import is_pre_dealkit_atom
+
     for a in atoms:
+        if is_pre_dealkit_atom(a):
+            continue
         key = str(getattr(a, "source_artifact_id", None) or getattr(a, "artifact_id", None) or "")
         by_doc.setdefault(key, []).append(a)
 
