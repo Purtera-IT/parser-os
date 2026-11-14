@@ -74,7 +74,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, Iterable
 
 from app.core import rule_ledger
 
@@ -818,6 +818,28 @@ def doc_kind_reads(deal_id: str, rows: list[dict[str, Any]]) -> dict[str, str]:
     return out
 
 
+def _with_pre_dealkit(keep: Iterable[int], lines: list[dict[str, Any]]) -> list[int]:
+    """The quoting inputs plus every Before Deal Kit answer line (owner 2026-11-14).
+
+    A quoting read leaves our own lines out (``ours``) and anything after our first pricing (``after_cut``):
+    a quote is made from what the customer sent before we priced. The PM's answers on the brief are the
+    pre-pricing inputs the Deal Kit waits on, so the heads read them and the quote's inputs keep them. The
+    run's ``as_of`` already cut them when they were loaded (``pre_dealkit_atoms``). Ledgered as
+    ``view.pm_pre_dealkit_in``; in shadow mode the fire is logged and the view is unchanged."""
+    from app.core.pre_dealkit_atoms import ATOM_PREFIX
+
+    kept = list(keep)
+    have = set(kept)
+    add = [i for i, x in enumerate(lines)
+           if i not in have and str(x.get("atom_id") or x.get("label_key") or "").startswith(ATOM_PREFIX)]
+    for i in add:
+        rule_ledger.fire("view.pm_pre_dealkit_in", str(lines[i].get("atom_id") or lines[i].get("label_key")),
+                         None, "in", "Before Deal Kit answer kept in the quoting inputs")
+    if not add or rule_ledger.shadow("view.pm_pre_dealkit_in"):
+        return kept
+    return sorted(have | set(add))
+
+
 def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages: dict[str, tuple],
                said_to: dict[str, Any], kinds: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """The rows of this compile's view (c3_record.provenance / c3_record.view, the rules training's
@@ -872,7 +894,7 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
     marks = crm_marks(_DEAL.get("stage_timeline"))
     end = None
     if v == cview.QUOTING:
-        keep = prov.quoting_inputs(P, lines, exclude=dk, as_of=_DEAL.get("as_of"))
+        keep = _with_pre_dealkit(prov.quoting_inputs(P, lines, exclude=dk, as_of=_DEAL.get("as_of")), lines)
     else:
         won = min((x["arrival"] for x in P.doc.values() if x["ours"] and x["kind"] in ("sow_signed", "signed_sow",
                                                                                      "purchase_order")), default=None)
@@ -914,7 +936,8 @@ def _view_rows(rows: list[dict[str, Any]], docs: list[dict[str, Any]], messages:
         # The quote is made from what existed before we quoted, whatever the compile's view: a planning
         # compile reads our SOW, the PO and post-award mail for delivery, never for the quote (owner rule
         # 2026-10-28; memory dealkit-cutoff-leakage). The same provenance cut as a quoting read.
-        _DEAL["quote_out_why"] = _out_why(set(prov.quoting_inputs(P, lines, exclude=dk, as_of=_DEAL.get("as_of"))))
+        _DEAL["quote_out_why"] = _out_why(set(_with_pre_dealkit(
+            prov.quoting_inputs(P, lines, exclude=dk, as_of=_DEAL.get("as_of")), lines)))
     kept = [rows[i] for i in keep]
     cview.stamp(kept, v, crm=marks is not None, cut=P.cut)
     _STATUS["view"] = {"view": v, "cut": None if P.cut == float("inf") else P.cut, "cut_why": P.cut_why,
