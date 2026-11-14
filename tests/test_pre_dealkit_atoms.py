@@ -153,3 +153,16 @@ def test_every_answerable_question_has_a_starting_type_per_answer_and_each_is_le
     no["answers"][1]["statement"] = "PM confirmed: no site is union, prevailing wage, or a regulated environment."
     assert pdk.answers_to_atoms(pdk.parse_document(no), project_id="d1")[0].atom_type == AtomType.pricing_assumption
     rule_ledger.reset()
+
+
+def test_the_answers_are_never_read_as_our_deal_kit():
+    """The base never reads a Deal Kit line and the brief drops it (old_manual_deal_kit): the
+    answers' source must not look like one by name, or no head ever reads them."""
+    from c3_record import file_kind, is_deal_kit
+    from app.core.c3_type_base import doc_kind, set_aside, skipped
+
+    for a in pdk.answers_to_atoms(pdk.parse_document(DOC), project_id="d1", deal_id="d1"):
+        ref = a.source_refs[0]
+        assert not is_deal_kit(file_kind(ref.filename)) and file_kind(ref.filename) == "file"
+        assert "dealkit" not in "".join(ch for ch in (a.artifact_id + ref.filename + str(ref.path)).lower() if ch.isalpha())
+        assert not skipped(a, {}) and doc_kind(a, {}) == "file" and set_aside(a, {}) == ""
