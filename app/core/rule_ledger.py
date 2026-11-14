@@ -150,6 +150,12 @@ RULES: dict[str, dict[str, Any]] = {
         "stage": "downstream",
         "what": "the site list's Total Hrs column replaces the quote line's hours (average per site)",
         "can_shadow": True},
+    # Owner 2026-11-14: the super heads read the PM's Before Deal Kit answers in the quoting view.
+    "view.pm_pre_dealkit_in": {
+        "stage": "upstream",
+        "what": "a Before Deal Kit answer (the PM's pre-pricing input on the brief) is kept in the quoting view and "
+                "the quote's inputs, which leave our own lines out; the run's as_of still cuts it",
+        "can_shadow": True},
 }
 
 _MAX_EXAMPLES = 5
