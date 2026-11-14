@@ -34,7 +34,8 @@ def test_one_atom_per_statement_verbatim_pm_confirmed_and_flagged():
     assert [a.raw_text for a in atoms] == [DOC["answers"][1]["statement"], DOC["answers"][2]["statement"]]
     a = atoms[0]
     assert a.id.startswith(pdk.ATOM_PREFIX)
-    assert a.atom_type == AtomType.decision  # a starting type: the C3 base types it
+    assert a.atom_type == AtomType.compliance_rule  # starting type by question; the C3 base retypes where sure
+    assert atoms[1].atom_type == AtomType.site_access_window
     assert a.authority_class == AuthorityClass.pm_confirmed
     assert a.review_status == ReviewStatus.approved
     assert "pm_pre_dealkit" in a.review_flags and "pm_authored" in a.review_flags
@@ -138,3 +139,17 @@ def test_document_job_scope_never_judges_or_drops_the_answers(monkeypatch):
     kept, dropped, _ = djs.judge_documents(atoms, deal_name="Deal", project_id="d1")
     assert seen["docs"] == []
     assert kept == atoms and dropped == []
+
+
+def test_every_answerable_question_has_a_starting_type_per_answer_and_each_is_ledgered():
+    rule_ledger.reset()
+    for key, (yes, no) in pdk.TYPE_BY_QUESTION.items():
+        assert yes and no, key
+    atoms = pdk.answers_to_atoms(pdk.parse_document(DOC), project_id="d1")
+    rec = rule_ledger.fires().get("pre_dealkit.type_by_question") or {}
+    assert rec.get("fires") == len(atoms) == 2 and rec.get("no_head") == 2 and rec.get("stage") == "upstream"
+    no = json.loads(json.dumps(DOC))
+    no["answers"][1]["answer"] = False
+    no["answers"][1]["statement"] = "PM confirmed: no site is union, prevailing wage, or a regulated environment."
+    assert pdk.answers_to_atoms(pdk.parse_document(no), project_id="d1")[0].atom_type == AtomType.pricing_assumption
+    rule_ledger.reset()
