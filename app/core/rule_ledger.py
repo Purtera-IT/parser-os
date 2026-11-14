@@ -132,6 +132,8 @@ RULES: dict[str, dict[str, Any]] = {
     "pm_fix.address": {"stage": "pm", "what": "a PM gave this site's right address, with a why", "can_shadow": False},
     "pm_fix.set_aside": {"stage": "pm", "what": "a PM set this line aside", "can_shadow": False},
     "pm_fix.looks_right": {"stage": "pm", "what": "a PM confirmed the heads' answer on this line", "can_shadow": False},
+    # A PM's Sites-tab edit (name, tier, access constraints), applied upstream of the site roster (site_edits.json).
+    "pm_fix.site_edit": {"stage": "pm", "what": "a PM edited this site on the Sites tab (name, tier, access)", "can_shadow": False},
     "authority_final.restore": {
         "stage": "upstream",
         "what": "apply_authority(final=True) puts back the head's type a rule changed", "can_shadow": False},

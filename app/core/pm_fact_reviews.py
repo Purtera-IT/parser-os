@@ -12,6 +12,11 @@ records it (``pm_fix.*``): a PM fix is an approved label for the heads' next ref
 
 Lines are matched by atom id first, then by the review's own words and file (ids change across compiles).
 Never raises; no blob, no reviews, or no SOWSMITH_FEEDBACK_BLOB is a normal no-op.
+
+A PM's edit of a site on the Sites tab (name, tier, access constraints) comes the same way, from
+``deals/<deal>/orbitbrief/latest/site_edits.json`` (Platform-infra ``quote-sites-from-heads.js``): it is applied
+here, upstream of the site roster, so the heads' roster, the Sites tab and the quote all carry the PM's version
+(``pm_fix.site_edit``; owner 2026-11-14). It never changes what a line IS: a site stays a site.
 """
 from __future__ import annotations
 
@@ -41,7 +46,31 @@ def load_reviews(deal_id: str) -> list[dict[str, Any]]:
     except Exception:
         return []
     rows = doc.get("reviews") if isinstance(doc, dict) else None
-    return [r for r in rows or [] if isinstance(r, dict) and r.get("status")]
+    return [r for r in rows or [] if isinstance(r, dict) and r.get("status")] + load_site_edits(deal_id, cc)
+
+
+def load_site_edits(deal_id: str, cc: Any = None) -> list[dict[str, Any]]:
+    """The PM's Sites-tab edits as reviews (``status: "site_edit"``). ``[]`` when unavailable."""
+    if not deal_id:
+        return []
+    cc = cc if cc is not None else _container_client()
+    if cc is None:
+        return []
+    try:
+        raw = cc.download_blob(f"deals/{deal_id}/orbitbrief/latest/site_edits.json").readall()
+        doc = json.loads(raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw)
+    except Exception:
+        return []
+    rows = doc.get("edits") if isinstance(doc, dict) else None
+    return [dict(r, status="site_edit") for r in rows or [] if isinstance(r, dict) and (r.get("atomIds") or r.get("siteKey"))]
+
+
+def _site_edit_hits(r: dict[str, Any], atoms: list[Any], by_id: dict[str, Any]) -> list[Any]:
+    """The site lines a Sites-tab edit was made on: its atom ids, else (a later compile) its site key."""
+    hits = [by_id[i] for i in r.get("atomIds") or [] if i in by_id]
+    if hits or not r.get("siteKey"):
+        return hits
+    return [a for a in atoms if _type(a) == "physical_site" and r["siteKey"] in (getattr(a, "entity_keys", None) or [])]
 
 
 def _filename(atom: Any) -> str:
@@ -67,6 +96,9 @@ def apply_reviews(atoms: list[Any], reviews: list[dict[str, Any]], types: dict[s
         by_text.setdefault(_fold(getattr(a, "raw_text", None) or getattr(a, "text", None)), []).append(a)
     changed: list[str] = []
     for r in reviews:
+        if r.get("status") == "site_edit":
+            changed.extend(_apply_site_edit(r, _site_edit_hits(r, atoms, by_id)))
+            continue
         hits = [by_id[r["atomId"]]] if r.get("atomId") in by_id else [
             a for a in by_text.get(_fold(r.get("factText")), [])
             if not r.get("sourceFilename") or _filename(a) == r.get("sourceFilename")]
@@ -117,4 +149,44 @@ def apply_reviews(atoms: list[Any], reviews: list[dict[str, Any]], types: dict[s
     return changed
 
 
-__all__ = ["apply_reviews", "load_reviews"]
+def _apply_site_edit(r: dict[str, Any], hits: list[Any]) -> list[str]:
+    """Rename / tier / access constraints from the Sites tab, on site lines only. The line's id and site keys stay,
+    so the roster's grouping and the quote's site code do not move; the PM's name becomes the site's name."""
+    from app.core import rule_ledger
+
+    changed: list[str] = []
+    name = str(r.get("name") or "").strip()
+    tier = r.get("tier")
+    constraints = r.get("constraints")
+    for a in hits:
+        if _type(a) != "physical_site":
+            continue
+        v = getattr(a, "value", None)
+        if not isinstance(v, dict):
+            v = {}
+            try:
+                a.value = v
+            except Exception:
+                continue
+        why = f"Sites tab edit by {r.get('reviewer') or 'a PM'}"
+        if name:
+            if not v.get("pm_name_was"):
+                v["pm_name_was"] = v.get("facility_name") or v.get("name") or v.get("canonical_name")
+            v["facility_name"] = name
+            v["name"] = name
+            v["display_name"] = name
+        site = dict(v.get("pm_site") or {})
+        if isinstance(tier, str):
+            site["tier"] = tier
+        if isinstance(constraints, list):
+            site["constraints"] = [str(c) for c in constraints if isinstance(c, str)]
+        if site:
+            v["pm_site"] = site
+        v["pm_fix"] = {"status": "site_edit", "value": name or None, "why": why, "by": r.get("reviewer"), "at": r.get("reviewedAt")}
+        v["c3_label"] = {**(v.get("c3_label") or {}), "pm_confirmed": True, "act": "pm", "why": why}
+        rule_ledger.fire("pm_fix.site_edit", a, "physical_site", "physical_site", why)
+        changed.append(str(getattr(a, "id", "") or ""))
+    return changed
+
+
+__all__ = ["apply_reviews", "load_reviews", "load_site_edits"]
