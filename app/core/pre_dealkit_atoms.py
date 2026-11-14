@@ -51,6 +51,10 @@ from app.core.schemas import (
 
 BLOB_NAME = "pre_dealkit_answers.json"
 SCHEMA = "purpulse.pre-dealkit-answers.v1"
+#: The source name the atoms carry. Never the blob's name: a file named with "dealkit" is read as our
+#: own Deal Kit (c3_record.file_kind), which the base never reads and the brief drops as
+#: old_manual_deal_kit -- the answers would never reach a head.
+SOURCE_NAME = "pm_answers_before_quote.json"
 PARSER_NAME = "pre_dealkit"
 PARSER_VERSION = "pre_dealkit_v1"
 #: The review flag every one of these atoms carries. The labeling page hides
@@ -127,14 +131,14 @@ def answer_to_atom(row: dict[str, Any], *, project_id: str, deal_id: str = "") -
     yes_no = TYPE_BY_QUESTION.get(key)
     atom_type = (yes_no[0] if row["answer"] else yes_no[1]) if yes_no else AtomType.decision
     atom_id = f"{ATOM_PREFIX}{h}"
-    art_id = f"art_pm_pre_dealkit_{(deal_id or project_id)[:24]}"
+    art_id = f"art_pm_answers_{(deal_id or project_id)[:24]}"
     answered_at = _norm(row.get("answered_at"))
     question = _norm(row.get("question"))
     source = SourceRef(
         id=f"src_pdk_{h}",
         artifact_id=art_id,
         artifact_type=ArtifactType.pm_answer,
-        filename=BLOB_NAME,
+        filename=SOURCE_NAME,
         # The time is the answer's, so the view and an as_of cut place it where it was said.
         locator={
             "key": key,
@@ -147,7 +151,7 @@ def answer_to_atom(row: dict[str, Any], *, project_id: str, deal_id: str = "") -
         extraction_method="pre_dealkit",
         parser_version=PARSER_VERSION,
         parser=PARSER_NAME,
-        path=BLOB_NAME,
+        path=SOURCE_NAME,
     )
     return EvidenceAtom(
         id=atom_id,
