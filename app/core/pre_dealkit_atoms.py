@@ -39,6 +39,7 @@ import os
 import re
 from typing import Any, Iterable
 
+from app.core import rule_ledger
 from app.core.schemas import (
     ArtifactType,
     AtomType,
@@ -58,6 +59,25 @@ FLAG = "pm_pre_dealkit"
 ATOM_PREFIX = "atm_pdk_"
 #: A PM stated it on a fixed question; same headroom as a PM answer.
 CONFIDENCE = 0.95
+
+#: The starting type of each answer, by question and answer (owner 2026-11-14: route by the kind of
+#: question). The question fixes what kind of fact the PM is stating, so the line starts where the SOW
+#: reads that kind of fact (c3_brief.SECTION_BY_TYPE): nights or weekends is a work window (timeline),
+#: union / prevailing wage a compliance term, the contract's paper a contract term, the customer's portal
+#: a requirement of the work, a customer prerequisite a customer responsibility, crew concurrency and the
+#: "no" answers an assumption the price rests on, the channel the deal's own metadata. It is a STARTING
+#: type: the C3 base reads these lines and retypes every one it is sure of (apply_authority), and each
+#: assignment is a fire of ``pre_dealkit.type_by_question`` in the rule-fire ledger.
+TYPE_BY_QUESTION: dict[str, tuple[AtomType, AtomType]] = {
+    # key: (type when yes, type when no)
+    "through_partner": (AtomType.project_metadata, AtomType.project_metadata),
+    "concurrent_crews": (AtomType.assumption, AtomType.assumption),
+    "regulated_labor": (AtomType.compliance_rule, AtomType.pricing_assumption),
+    "customer_paper": (AtomType.contract_term, AtomType.contract_term),
+    "customer_systems": (AtomType.requirement, AtomType.assumption),
+    "prerequisites": (AtomType.dependency, AtomType.assumption),
+    "after_hours": (AtomType.site_access_window, AtomType.site_access_window),
+}
 
 
 def enabled() -> bool:
@@ -104,6 +124,8 @@ def answer_to_atom(row: dict[str, Any], *, project_id: str, deal_id: str = "") -
     if not statement or not key or not isinstance(row.get("answer"), bool):
         return None
     h = hashlib.sha1(f"{project_id}|{key}|{statement}".encode("utf-8")).hexdigest()[:16]
+    yes_no = TYPE_BY_QUESTION.get(key)
+    atom_type = (yes_no[0] if row["answer"] else yes_no[1]) if yes_no else AtomType.decision
     atom_id = f"{ATOM_PREFIX}{h}"
     art_id = f"art_pm_pre_dealkit_{(deal_id or project_id)[:24]}"
     answered_at = _norm(row.get("answered_at"))
@@ -132,9 +154,9 @@ def answer_to_atom(row: dict[str, Any], *, project_id: str, deal_id: str = "") -
         atom_id=atom_id,
         project_id=project_id,
         artifact_id=art_id,
-        # A starting type only: the C3 base types every line it is sure of
-        # (apply_authority), and these atoms are in its read.
-        atom_type=AtomType.decision,
+        # A starting type only (TYPE_BY_QUESTION): the C3 base types every
+        # line it is sure of (apply_authority), and these atoms are in its read.
+        atom_type=atom_type,
         raw_text=statement,
         normalized_text=statement.lower(),
         value={
@@ -168,6 +190,12 @@ def answers_to_atoms(rows: Iterable[dict[str, Any]], *, project_id: str, deal_id
         atom = answer_to_atom(row, project_id=project_id, deal_id=deal_id)
         if atom is not None:
             by_key[str(row.get("key"))] = atom
+    for atom in by_key.values():
+        t = getattr(atom.atom_type, "value", atom.atom_type)
+        # No head has read the line yet: a no_head fire. The base's own answer for it shows in the
+        # brief's head reads; where the base was sure, it replaced this type.
+        rule_ledger.fire("pre_dealkit.type_by_question", atom.id, None, str(t),
+                         f"{atom.value.get('key')}={atom.value.get('answer')} starts as {t}")
     return list(by_key.values())
 
 

@@ -148,6 +148,12 @@ RULES: dict[str, dict[str, Any]] = {
         "stage": "downstream",
         "what": "the site list's Total Hrs column replaces the quote line's hours (average per site)",
         "can_shadow": True},
+    # Owner 2026-11-14: route each Before Deal Kit answer by the kind of question it answers.
+    "pre_dealkit.type_by_question": {
+        "stage": "upstream",
+        "what": "a Before Deal Kit answer starts with the type its question fixes (nights/weekends a work window, "
+                "union a compliance term, ...); the C3 base retypes it where sure",
+        "can_shadow": False},
     # Owner 2026-11-14: the super heads read the PM's Before Deal Kit answers in the quoting view.
     "view.pm_pre_dealkit_in": {
         "stage": "upstream",
