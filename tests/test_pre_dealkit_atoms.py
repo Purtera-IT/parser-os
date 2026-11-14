@@ -182,7 +182,8 @@ def test_the_nights_weekends_answer_is_its_lines_work_window_in_the_quotes_read(
     atoms = pdk.answers_to_atoms(pdk.parse_document(yes), project_id="d1")
     after = next(a for a in atoms if a.value["key"] == "after_hours")
     union = next(a for a in atoms if a.value["key"] == "regulated_labor")
-    reads = {after.id: {"read:work_window": ["business_hours", 0.87]}}
+    # The served read's shape for a set head: [[answers], {answer: p}].
+    reads = {after.id: {"read:work_window": [["business_hours"], {"_absent": 0.1, "business_hours": 0.87, "after_hours": 0.05}]}}
     monkeypatch.setattr(c3_type_base, "_DEAL", {"reads": reads, "deal": {}, "view": "quoting"})
 
     def fake(path, body, timeout):
@@ -192,7 +193,7 @@ def test_the_nights_weekends_answer_is_its_lines_work_window_in_the_quotes_read(
     monkeypatch.setattr(c3_type_base, "_request", fake)
     c3_type_base.quote(atoms, {"deal": {}, "sections": {}}, deal_id="d1")
     rows = {r["id"]: r for r in seen["body"]["deal"]["atoms"]}
-    assert rows[after.id]["reads"]["read:work_window"] == ["after_hours", 0.99]
+    assert rows[after.id]["reads"]["read:work_window"] == [["after_hours"], {"after_hours": 0.99}]
     assert "reads" not in rows[union.id]  # only the nights/weekends answer
     rec = rule_ledger.fires()["pre_dealkit.work_window"]
     assert rec["fires"] == 1 and rec["disagree"] == 1 and rec["stage"] == "upstream"
@@ -202,8 +203,17 @@ def test_the_nights_weekends_answer_is_its_lines_work_window_in_the_quotes_read(
     monkeypatch.setenv("SOWSMITH_RULE_MODES", "pre_dealkit.work_window:shadow")
     c3_type_base.quote(atoms, {"deal": {}, "sections": {}}, deal_id="d1")
     rows = {r["id"]: r for r in seen["body"]["deal"]["atoms"]}
-    assert rows[after.id]["reads"]["read:work_window"] == ["business_hours", 0.87]
+    assert rows[after.id]["reads"]["read:work_window"][0] == ["business_hours"]
     assert rule_ledger.fires()["pre_dealkit.work_window"]["fires"] == 1
+
+
+def test_sure_answer_reads_both_reading_shapes():
+    from app.core.c3_type_base import _sure_answer
+
+    assert _sure_answer([["_absent"], {"_absent": 0.66, "business_hours": 0.07}]) is None
+    assert _sure_answer([["business_hours"], {"business_hours": 0.87}]) == "business_hours"
+    assert _sure_answer(["after_hours", 0.9]) == "after_hours" and _sure_answer(["after_hours", 0.3]) is None
+    assert _sure_answer(None) is None and _sure_answer(["x"]) is None
 
 
 def test_work_window_by_answer():

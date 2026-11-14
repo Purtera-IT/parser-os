@@ -1873,6 +1873,22 @@ def quote_snapshot(brief: dict[str, Any]) -> dict[str, Any]:
             "also_mentioned_more_ids": list(brief.get("also_mentioned_more_ids") or [])}
 
 
+def _sure_answer(r: Any, bar: float = 0.5) -> str | None:
+    """A reading's surest real answer at or above ``bar``: a set head's ``[[answers], {answer: p}]`` or a
+    plain ``[answer, p]``. None when nothing is that sure or the line was not read."""
+    try:
+        if not r:
+            return None
+        if isinstance(r[1], dict):
+            best = max(((str(k), float(v or 0)) for k, v in r[1].items() if str(k) not in ("_absent", "")),
+                       key=lambda kv: kv[1], default=None)
+            return best[0] if best and best[1] >= bar else None
+        ans = r[0][0] if isinstance(r[0], (list, tuple)) and r[0] else r[0]
+        return str(ans) if ans not in (None, "_absent", "") and float(r[1] or 0) >= bar else None
+    except Exception:
+        return None
+
+
 def _pdk_work_window(atom: Any) -> str | None:
     try:
         from app.core.pre_dealkit_atoms import work_window
@@ -2342,11 +2358,11 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
         if ww:
             # The PM stated it (Before Deal Kit, nights/weekends): the line's own work window, ledgered beside
             # the head's read. The quote reads it like a sure head answer on a line it may read.
-            head = reads.get("read:work_window")
-            rule_ledger.fire("pre_dealkit.work_window", aid, head[0] if head and float(head[1] or 0) >= 0.5 else None,
+            rule_ledger.fire("pre_dealkit.work_window", aid, _sure_answer(reads.get("read:work_window")),
                              ww, f"PM answered nights/weekends: {ww}")
             if not rule_ledger.shadow("pre_dealkit.work_window"):
-                reads["read:work_window"] = [ww, 0.99]
+                # The read's own shape for a set head: [answers], {answer: p}.
+                reads["read:work_window"] = [[ww], {ww: 0.99}]
         if reads:
             row["reads"] = reads
         if _deal_kit(a):
