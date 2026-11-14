@@ -84,6 +84,20 @@ TYPE_BY_QUESTION: dict[str, tuple[AtomType, AtomType]] = {
 }
 
 
+#: The work window a nights/weekends answer states, in the work-window head's own answers.
+WORK_WINDOW_BY_ANSWER = {"yes": "after_hours", "no": "business_hours"}
+
+
+def work_window(atom: Any) -> str | None:
+    """The work window the PM's nights/weekends answer states for its own line, else None."""
+    if not is_pre_dealkit_atom(atom):
+        return None
+    v = getattr(atom, "value", None) if not isinstance(atom, dict) else atom.get("value")
+    if not isinstance(v, dict) or v.get("key") != "after_hours":
+        return None
+    return WORK_WINDOW_BY_ANSWER.get(str(v.get("answer") or ""))
+
+
 def enabled() -> bool:
     if os.getenv("SOWSMITH_PRE_DEALKIT_ATOMS", "1").strip().lower() in {"0", "false", "no", "off"}:
         return False

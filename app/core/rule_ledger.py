@@ -162,6 +162,13 @@ RULES: dict[str, dict[str, Any]] = {
         "what": "a Before Deal Kit answer (the PM's pre-pricing input on the brief) is kept in the quoting view and "
                 "the quote's inputs, which leave our own lines out; the run's as_of still cuts it",
         "can_shadow": True},
+    # Owner 2026-11-14 (decision card): the PM's nights/weekends answer sets the work window on its own line in
+    # the quote's read, until the work-window head (almost no labels yet; the V4 relabel) reads it itself.
+    "pre_dealkit.work_window": {
+        "stage": "upstream",
+        "what": "a Before Deal Kit nights/weekends answer is the work window of its own line in the quote's read "
+                "(yes: after_hours, no: business_hours); the head's own read is logged beside it",
+        "can_shadow": True},
 }
 
 _MAX_EXAMPLES = 5

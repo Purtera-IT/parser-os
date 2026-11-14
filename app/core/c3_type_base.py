@@ -1873,6 +1873,15 @@ def quote_snapshot(brief: dict[str, Any]) -> dict[str, Any]:
             "also_mentioned_more_ids": list(brief.get("also_mentioned_more_ids") or [])}
 
 
+def _pdk_work_window(atom: Any) -> str | None:
+    try:
+        from app.core.pre_dealkit_atoms import work_window
+
+        return work_window(atom)
+    except Exception:
+        return None
+
+
 def _raw_reading(atom_id: str, head: str) -> list[Any] | None:
     """The read's raw entry for one line and head: ``[answer, p]`` or, when the server sends a number
     head's value, ``[answer, p, value]``."""
@@ -2329,6 +2338,15 @@ def quote(atoms: list[Any], brief: dict[str, Any], deal_id: str = "") -> dict[st
             continue
         row: dict[str, Any] = {"id": aid, "text": text[:4000], "type": kind}
         reads = {h: r for h in QUOTE_LINE_HEADS if (r := _raw_reading(aid, h))}
+        ww = _pdk_work_window(a)
+        if ww:
+            # The PM stated it (Before Deal Kit, nights/weekends): the line's own work window, ledgered beside
+            # the head's read. The quote reads it like a sure head answer on a line it may read.
+            head = reads.get("read:work_window")
+            rule_ledger.fire("pre_dealkit.work_window", aid, head[0] if head and float(head[1] or 0) >= 0.5 else None,
+                             ww, f"PM answered nights/weekends: {ww}")
+            if not rule_ledger.shadow("pre_dealkit.work_window"):
+                reads["read:work_window"] = [ww, 0.99]
         if reads:
             row["reads"] = reads
         if _deal_kit(a):

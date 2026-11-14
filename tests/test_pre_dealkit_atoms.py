@@ -166,3 +166,47 @@ def test_the_answers_are_never_read_as_our_deal_kit():
         assert not is_deal_kit(file_kind(ref.filename)) and file_kind(ref.filename) == "file"
         assert "dealkit" not in "".join(ch for ch in (a.artifact_id + ref.filename + str(ref.path)).lower() if ch.isalpha())
         assert not skipped(a, {}) and doc_kind(a, {}) == "file" and set_aside(a, {}) == ""
+
+
+def test_the_nights_weekends_answer_is_its_lines_work_window_in_the_quotes_read(fresh_ledger, monkeypatch):
+    """Owner 2026-11-14: the PM's nights/weekends answer sets the work window on its own line (ledgered), until
+    the work-window head reads it itself (it read business_hours for every after-hours wording on dev)."""
+    from app.core import c3_type_base
+
+    seen = {}
+    monkeypatch.delenv("SOWSMITH_RULE_MODES", raising=False)
+    monkeypatch.setenv("SOWSMITH_C3_QUOTE", "on")
+    monkeypatch.setenv("SOWSMITH_C3_URL", "http://c3")
+    yes = json.loads(json.dumps(DOC))
+    yes["answers"][2].update(answer=True, statement="PM confirmed: work will be performed after hours, nights and weekends.")
+    atoms = pdk.answers_to_atoms(pdk.parse_document(yes), project_id="d1")
+    after = next(a for a in atoms if a.value["key"] == "after_hours")
+    union = next(a for a in atoms if a.value["key"] == "regulated_labor")
+    reads = {after.id: {"read:work_window": ["business_hours", 0.87]}}
+    monkeypatch.setattr(c3_type_base, "_DEAL", {"reads": reads, "deal": {}, "view": "quoting"})
+
+    def fake(path, body, timeout):
+        seen.update(body=body)
+        return {"job_type": "cabling", "lines": []}
+
+    monkeypatch.setattr(c3_type_base, "_request", fake)
+    c3_type_base.quote(atoms, {"deal": {}, "sections": {}}, deal_id="d1")
+    rows = {r["id"]: r for r in seen["body"]["deal"]["atoms"]}
+    assert rows[after.id]["reads"]["read:work_window"] == ["after_hours", 0.99]
+    assert "reads" not in rows[union.id]  # only the nights/weekends answer
+    rec = rule_ledger.fires()["pre_dealkit.work_window"]
+    assert rec["fires"] == 1 and rec["disagree"] == 1 and rec["stage"] == "upstream"
+
+    # Shadow: logged, the head's own read is what the quote gets.
+    rule_ledger.reset()
+    monkeypatch.setenv("SOWSMITH_RULE_MODES", "pre_dealkit.work_window:shadow")
+    c3_type_base.quote(atoms, {"deal": {}, "sections": {}}, deal_id="d1")
+    rows = {r["id"]: r for r in seen["body"]["deal"]["atoms"]}
+    assert rows[after.id]["reads"]["read:work_window"] == ["business_hours", 0.87]
+    assert rule_ledger.fires()["pre_dealkit.work_window"]["fires"] == 1
+
+
+def test_work_window_by_answer():
+    no = pdk.answers_to_atoms(pdk.parse_document(DOC), project_id="d1")
+    assert [pdk.work_window(a) for a in no] == [None, "business_hours"]
+    assert pdk.work_window({"id": "x", "value": {"key": "after_hours", "answer": "yes"}}) is None  # not ours
